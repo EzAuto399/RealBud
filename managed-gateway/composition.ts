@@ -14,8 +14,10 @@ import type { ModelviaOperatorClient } from './modelvia-keys.ts';
 import { connectorRegistry, ManagedConnectors, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer, type PortalIdentity } from './http.ts';
 import { composeProvisioning, fileSecretStore, modelviaOperatorState, type SecretStore } from './provisioning.ts';
-import { composeOperatorRoutes, operatorAccessState } from './office-ai-access.ts';
-import { BillingService } from './billing.ts';
+import { composeOperatorRoutes, composeResaleTermsClient, operatorAccessState } from './office-ai-access.ts';
+import { officeAiTermsRoutes, syncOfficeResalePolicy } from './office-ai-terms.ts';
+import { officeAiUsageCsv } from './office-ai-usage-csv.ts';
+import { BillingService, type Invoice } from './billing.ts';
 import { composeModelviaClientBilling } from './modelvia-client-billing.ts';
 import { customerTermsPolicy } from './modelvia-keys.ts';
 import { officeMargins } from './office-ai-billing.ts';
@@ -104,11 +106,17 @@ export function composeGateway(options: {
   const care = composeCareCollection({ env, ledger, fetch: options.fetch });
   // The owner's margin view: care from this ledger, AI from Modelvia under the
   // client key (read only, behind the same provider gate).
+  const clientBilling = composeModelviaClientBilling({ env, fetch: gatedFetch });
+  const policy = customerTermsPolicy(env);
+  const clientFundedCompanies = 'unavailable' in policy ? new Set<string>() : policy.clientFundedCompanies;
+  const defaultMarkupBasisPoints = 'unavailable' in policy ? undefined : policy.resale?.clientMarkupBasisPoints;
+  // Each office's accepted markup reaches Modelvia as a new resale policy.
+  const resaleTerms = composeResaleTermsClient({ env, fetch: gatedFetch, ...(options.modelvia ? { modelvia: options.modelvia } : {}) });
+  const afterTermsAccepted = resaleTerms && !('unavailable' in policy)
+    ? (companyId: string) => syncOfficeResalePolicy({ ledger, modelvia: resaleTerms, clientFundedCompanies }, companyId) : undefined;
   if (operator) {
-    const modelvia = composeModelviaClientBilling({ env, fetch: gatedFetch });
-    const policy = customerTermsPolicy(env);
-    const clientFundedCompanies = 'unavailable' in policy ? new Set<string>() : policy.clientFundedCompanies;
-    operator.margins = period => officeMargins({ billing: care.billing, ...(modelvia ? { modelvia } : {}), clientFundedCompanies }, period);
+    operator.margins = period => officeMargins({ billing: care.billing, ...(clientBilling ? { modelvia: clientBilling } : {}), clientFundedCompanies, ...(defaultMarkupBasisPoints !== undefined ? { defaultMarkupBasisPoints } : {}) }, period);
+    operator.officeAiTerms = officeAiTermsRoutes({ ledger, clientFundedCompanies, ...(defaultMarkupBasisPoints !== undefined ? { defaultMarkupBasisPoints } : {}), ...(resaleTerms ? { modelvia: resaleTerms } : {}) });
   }
   // The store provisioning writes. When provisioning is not composed, the same
   // directory is still read, so devices it admitted earlier keep working.
@@ -127,6 +135,8 @@ export function composeGateway(options: {
       portal: options.portal,
       modelviaOperator, operatorAccess,
       billing: care.billing, squareWebhooks: care.squareWebhooks,
+      ...(afterTermsAccepted ? { afterTermsAccepted } : {}),
+      ...(clientBilling ? { aiUsageCsv: (invoice: Invoice) => officeAiUsageCsv({ ledger, modelvia: clientBilling }, invoice) } : {}),
       ...(operator ? { operator } : {}),
       ...('provisioning' in provisioning ? { provisioning: provisioning.provisioning } : { provisioningUnavailable: provisioning.unavailable }),
       ...(registry ? { connectors: new ManagedConnectors({ ledger,

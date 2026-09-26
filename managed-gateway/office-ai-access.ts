@@ -22,20 +22,23 @@
  * of a customer RealBud's client pays for until an active commercial policy is in
  * force (`customer_terms_required`). A company listed in
  * `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` gets a client-funded policy (RealBud
- * absorbs its AI); any other office gets a resale policy only when resale is
- * explicitly configured AND its billing owner accepted RealBud's monthly terms
- * carrying that AI resale (`terms.state: "acceptance_required"` until then), under
- * the office's own acceptance reference; otherwise nothing (`"unconfigured"`).
- * An existing policy is never replaced here: changing how an office is billed is
- * a dated migration at Modelvia.
+ * absorbs its AI); any other office gets a resale policy only once its billing
+ * owner accepted RealBud's monthly terms carrying AI resale, at the markup THOSE
+ * terms stated and under that acceptance's own reference (`terms.state:
+ * "acceptance_required"` until then; `"unconfigured"` when resale is not
+ * configured and nothing was accepted). A resale office whose accepted markup
+ * differs from the policy in force gets one NEW policy effective at Modelvia's
+ * own time (`syncResaleTerms`); no policy is ever changed. A client-funded
+ * policy is never replaced here: changing who pays is a dated migration at Modelvia.
  */
 import { exact, GatewayError, id, object, requireThat } from './contracts.ts';
 import type { HttpTransport } from './composio-org.ts';
 import type { UsageLedger } from './ledger.ts';
 import { DEFAULT_OFFICE_AI_CAP_NANO_AUD, parseOfficeAiAccess, type ModelviaOperatorClient } from './modelvia-keys.ts';
-import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTermsPolicy, type CustomerTermsResult, type OfficeTermsDecision } from './modelvia-keys.ts';
-import { officeResaleAcceptance } from './commercial-terms.ts';
+import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTermsPolicy, type CustomerTermsResult, type ModelviaTermsClient, type OfficeTermsDecision, type ResaleSyncResult } from './modelvia-keys.ts';
+import { latestResaleAcceptance } from './commercial-terms.ts';
 import type { MarginReport } from './office-ai-billing.ts';
+import type { OfficeAiTermsRoutes } from './office-ai-terms.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
 import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
 
@@ -46,7 +49,7 @@ export interface OfficeAiAccessResult {
    * composed with a terms policy and AI is on. `unconfigured`: this deployment
    * has not said how the office is billed, so nothing was written and the office
    * cannot be provisioned until it does. `failed` carries a code only. */
-  terms?: CustomerTermsResult | { state: 'unconfigured' } | { state: 'acceptance_required' } | { state: 'failed'; error: string };
+  terms?: CustomerTermsResult | ResaleSyncResult | { state: 'unconfigured' } | { state: 'acceptance_required' } | { state: 'failed'; error: string };
 }
 
 export class OfficeAiAccessService {
@@ -81,7 +84,7 @@ export class OfficeAiAccessService {
       // A resale office's policy carries its own acceptance reference, recorded
       // when its billing owner accepted RealBud's monthly terms with AI resale.
       const terms = access.mode === 'disabled' || !this.options.terms ? undefined : await officeTerms(modelvia, customerId,
-        termsForCompany(this.options.terms, companyId, resale => officeResaleAcceptance(ledger, companyId, resale)?.acceptanceReference));
+        termsForCompany(this.options.terms, companyId, () => latestResaleAcceptance(ledger, companyId)));
       try {
         ledger.db.transaction(() => ledger.db.append(companyId, 'office_ai_access_set', null, ledger.now(),
           { subject: actor.subject, companyId, mode: access.mode, active: customer.active, monthlyCapNanoAud: customer.monthlyCapNanoAud, created: customer.created, projects, ...(terms ? { terms } : {}) }));
@@ -97,7 +100,12 @@ async function officeTerms(modelvia: ModelviaOperatorClient, customerId: string,
   if (!('terms' in decision)) return decision;
   const terms = decision.terms;
   if (!hasCustomerTerms(modelvia)) return { state: 'failed', error: 'modelvia_terms_unsupported' };
-  try { return await modelvia.ensureCustomerTerms(customerId, terms); }
+  try {
+    // Resale follows the office's accepted markup; client-funded is written once.
+    if (terms.customerBilling === 'resale' && modelvia.syncResaleTerms)
+      return await modelvia.syncResaleTerms(customerId, { clientMarkupBasisPoints: terms.clientMarkupBasisPoints, acceptanceReference: terms.acceptanceReference });
+    return await modelvia.ensureCustomerTerms(customerId, terms);
+  }
   catch (error) { return { state: 'failed', error: error instanceof GatewayError ? error.code : 'modelvia_terms_failed' }; }
 }
 
@@ -106,6 +114,9 @@ async function officeTerms(modelvia: ModelviaOperatorClient, customerId: string,
 export interface OperatorRoutes {
   authenticate(bearer: string): Promise<OperatorPrincipal>;
   officeAiAccess?: Pick<OfficeAiAccessService, 'set'>;
+  /** Per-office AI billing: proposed markup and invoice charge detail
+   * (`office-ai-terms.ts`). Local writes only; composed with care billing. */
+  officeAiTerms?: OfficeAiTermsRoutes;
   /** The owner's per-office margin for one month (`office-ai-billing.ts`). Composed
    * with care billing; absent answers `billing_unavailable`. */
   margins?: (period: string) => Promise<MarginReport>;
@@ -137,4 +148,14 @@ export function composeOperatorRoutes(options: { env: NodeJS.ProcessEnv; ledger:
   const terms = customerTermsPolicy(env);
   if ('unavailable' in terms) return { authenticate };
   return { authenticate, officeAiAccess: new OfficeAiAccessService({ ledger: options.ledger, modelvia: options.modelvia ?? composed.modelvia, requestCapNanoAud: composed.requestCapNanoAud, terms }) };
+}
+
+/** The Modelvia operator terms client for resale sync, from the environment:
+ * undefined unless the provider gate is open and every Modelvia operator
+ * variable is present. `modelvia` is a test seam. */
+export function composeResaleTermsClient(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport; modelvia?: ModelviaOperatorClient }): Pick<ModelviaTermsClient, 'syncResaleTerms'> | undefined {
+  const value = (name: string) => (options.env[name] ?? '').trim();
+  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_OPERATOR_ENV.some(name => !value(name))) return undefined;
+  const client = options.modelvia ?? (() => { const composed = composeModelvia({ env: options.env, fetch: options.fetch }); return 'unavailable' in composed ? undefined : composed.modelvia; })();
+  return client && hasCustomerTerms(client) && client.syncResaleTerms ? client : undefined;
 }

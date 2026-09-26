@@ -30,9 +30,10 @@
  */
 import { GatewayError, requireThat } from './contracts.ts';
 import type { UsageLedger } from './ledger.ts';
-import { consolidatedAiInvoices, ensureAiConsolidationTable, type BillingService, type ConsolidatedAiInvoice, type Invoice } from './billing.ts';
+import { consolidatedAiInvoices, ensureAiConsolidationTable, type AiInvoiceInput, type AiLineInput, type BillingService, type Invoice } from './billing.ts';
 import type { CommercialTerms, ResaleAcceptance } from './commercial-terms.ts';
-import type { ModelviaClientBilling, ModelviaCustomerMargin } from './modelvia-client-billing.ts';
+import type { ModelviaClientBilling, ModelviaCustomerMargin, ModelviaInvoiceLine } from './modelvia-client-billing.ts';
+import { officeChargeDetail, officeMarkup } from './office-ai-terms.ts';
 import { cents, periodAt } from './money.ts';
 import { serialized } from './provisioning.ts';
 
@@ -42,11 +43,13 @@ export interface OfficeBilling {
   modelvia?: ModelviaClientBilling;
   /** `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES`: AI is free for these offices. */
   clientFundedCompanies: ReadonlySet<string>;
+  /** The deployment's default markup for new terms, for the margin view only. */
+  defaultMarkupBasisPoints?: number;
 }
 export interface MonthClose { invoice: Invoice; ai: 'care_only' | 'consolidated' | 'no_ai_usage' | 'deferred' | 'already_closed' }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
-const officeCustomer = (ledger: UsageLedger, companyId: string): string | undefined => {
+export const officeCustomer = (ledger: UsageLedger, companyId: string): string | undefined => {
   ledger.db.run('CREATE TABLE IF NOT EXISTS office_modelvia_customer (tenant TEXT PRIMARY KEY, customer TEXT NOT NULL UNIQUE)');
   return ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId)?.customer;
 };
@@ -89,22 +92,37 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     // Terms without AI resale cannot carry AI that is owed: refuse rather than drop it.
     requireThat(terms.aiUsage || (!due.length && !outstanding.length), 'ai_usage_unconsolidated', 409);
     if (outstanding.length && !close.deferAi) throw new GatewayError('modelvia_invoice_not_finalized', 409);
-    const invoices: ConsolidatedAiInvoice[] = [];
+    const invoices: AiInvoiceInput[] = [];
+    let usedBy: string | undefined;
     for (const entry of due) {
       const found = await options.modelvia.customerInvoice(customerId, entry.id);
       requireThat(found.period === entry.period && found.totalCents === entry.totalCents && found.gstCents === entry.gstCents, 'modelvia_invoice_changed', 409);
       requireThat(found.seller.abn === terms.seller.abn, 'modelvia_invoice_seller_mismatch', 409);
       requireThat(!found.paid && found.paymentState === 'not_started' && !found.checkoutAvailable && !found.directPaymentAvailable, 'modelvia_invoice_payment_started', 409);
-      invoices.push({ id: found.id, period: found.period, totalCents: found.totalCents, gstCents: found.gstCents });
+      invoices.push({ id: found.id, period: found.period, totalCents: found.totalCents, gstCents: found.gstCents, lines: found.lines.map(officeLine) });
+      usedBy ??= found.usedBy?.displayName;
     }
     if (!terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only');
-    const closed = finalize(billing, companyId, period, termsVersion, { invoices, ...(outstanding.length ? { deferredPeriods: outstanding } : {}) },
+    const closed = finalize(billing, companyId, period, termsVersion, { invoices, ...(outstanding.length ? { deferredPeriods: outstanding } : {}),
+      modelviaCustomerId: customerId, ...(usedBy ? { usedBy } : {}), chargeDetail: officeChargeDetail(ledger, companyId) },
       outstanding.length ? 'deferred' : invoices.length ? 'consolidated' : 'no_ai_usage');
     if (outstanding.length && closed.ai === 'deferred') {
       try { ledger.db.transaction(() => ledger.db.append(companyId, 'ai_usage_deferred', null, ledger.now(), { periods: outstanding, invoiceId: closed.invoice.id })); } catch { /* the invoice records it too */ }
     }
     return closed;
   });
+}
+/** A Modelvia invoice line as the office's invoice shows it: Modelvia's own
+ * description with the request count written for people ("1,234 requests"), who
+ * used it, and Modelvia's split (kept only for an itemized office at close). */
+function officeLine(line: ModelviaInvoiceLine): AiLineInput {
+  const count = line.requestCount;
+  const description = count !== undefined && count >= 1000
+    ? line.description.replace(new RegExp(`— ${count} (requests?)`), `— ${count.toLocaleString('en-AU')} $1`) : line.description;
+  const usedBy = line.usedBy ? `${line.usedBy.displayName}${line.usedBy.projectId ? ` · project ${line.usedBy.projectId}` : ''}` : undefined;
+  return { description, amountCents: line.amountCents, gstCents: line.gstCents,
+    ...(line.model !== undefined ? { model: line.model } : {}), ...(count !== undefined ? { requestCount: count } : {}),
+    ...(usedBy ? { usedBy } : {}), ...(line.components ? { components: line.components } : {}) };
 }
 /** Close, reporting `already_closed` when another process closed the month first. */
 function finalize(billing: BillingService, companyId: string, period: string, termsVersion: string, ai: Parameters<BillingService['finalizeCommercialInvoice']>[3], outcome: MonthClose['ai']): MonthClose {
@@ -123,6 +141,12 @@ const deferredPeriods = (ledger: UsageLedger, companyId: string): string[] => [.
 export type OfficeBillingKind = 'resale' | 'client_funded' | 'unconfigured';
 export interface MarginRow {
   companyId: string; customerName: string; billing: OfficeBillingKind;
+  /** The office's accepted markup (basis points), what it is billed at; null before acceptance. */
+  markupBasisPoints: number | null;
+  /** An operator's proposal the office has not accepted yet. */
+  proposedMarkupBasisPoints: number | null;
+  /** Whether Modelvia was last seen pricing at the accepted markup. */
+  markupPolicy: 'synced' | 'sync_failed' | 'not_synced' | null;
   /** What the office pays for the month's AI: Modelvia price incl. RealBud's markup. */
   aiRetailCents: string | null;
   /** Modelvia's wholesale incl. its platform fee. */
@@ -182,8 +206,10 @@ export async function officeMargins(options: OfficeBilling, period: string): Pro
       margin && !margin.complete ? 'Modelvia figures are provisional: requests are pending or unpriced.' : null,
       invoice?.aiUsage?.deferredPeriods?.length ? `AI for ${invoice.aiUsage.deferredPeriods.join(', ')} deferred to a later invoice.` : null,
     ].filter((n): n is string => !!n);
+    const markup_ = officeMarkup(ledger, tenant.companyId, options.defaultMarkupBasisPoints);
     return {
       companyId: tenant.companyId, customerName: tenant.customerName, billing: kind,
+      markupBasisPoints: markup_.acceptedBasisPoints, proposedMarkupBasisPoints: markup_.proposedBasisPoints, markupPolicy: markup_.policy,
       aiRetailCents: retail?.toString() ?? null, modelviaCostCents: cost?.toString() ?? null, markupCents: markup?.toString() ?? null,
       careCents: care.toString(), totalCents: retail !== null ? (retail + care).toString() : null, marginCents: markup !== null ? (markup + care).toString() : null,
       invoiceId: invoice?.id ?? null, invoiceState: !invoice ? 'not_closed' : paid ? 'paid' : 'closed',
@@ -217,10 +243,12 @@ export function marginCsv(report: MarginReport): string {
     return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   const header = ['period', 'company_id', 'office', 'billing', 'ai_retail_aud', 'modelvia_cost_aud', 'realbud_markup_aud', 'care_fee_aud', 'total_aud', 'margin_aud',
-    'realbud_invoice', 'invoice_state', 'ai_billed_aud', 'modelvia_invoices', 'modelvia_source', 'note'];
+    'realbud_invoice', 'invoice_state', 'ai_billed_aud', 'modelvia_invoices', 'modelvia_source', 'note', 'markup_percent', 'proposed_markup_percent', 'markup_policy'];
+  const percent = (bps: number | null) => bps === null ? '' : `${Math.trunc(bps / 100)}.${String(bps % 100).padStart(2, '0')}`;
   const lines = report.rows.map(r => [report.period, text(r.companyId), text(r.customerName), r.billing, dollars(r.aiRetailCents), dollars(r.modelviaCostCents), dollars(r.markupCents),
-    dollars(r.careCents), dollars(r.totalCents), dollars(r.marginCents), text(r.invoiceId), r.invoiceState, dollars(r.aiBilledCents), text(r.modelviaInvoices.join(' ')), r.modelviaSource, text(r.note)].join(','));
+    dollars(r.careCents), dollars(r.totalCents), dollars(r.marginCents), text(r.invoiceId), r.invoiceState, dollars(r.aiBilledCents), text(r.modelviaInvoices.join(' ')), r.modelviaSource, text(r.note),
+    percent(r.markupBasisPoints), percent(r.proposedMarkupBasisPoints), r.markupPolicy ?? ''].join(','));
   const t = report.totals;
-  lines.push([report.period, '', 'Total', '', dollars(t.aiRetailCents), dollars(t.modelviaCostCents), dollars(t.markupCents), dollars(t.careCents), dollars(t.totalCents), dollars(t.marginCents), '', '', '', '', '', ''].join(','));
+  lines.push([report.period, '', 'Total', '', dollars(t.aiRetailCents), dollars(t.modelviaCostCents), dollars(t.markupCents), dollars(t.careCents), dollars(t.totalCents), dollars(t.marginCents), '', '', '', '', '', '', '', '', ''].join(','));
   return [header.join(','), ...lines].join('\r\n') + '\r\n';
 }

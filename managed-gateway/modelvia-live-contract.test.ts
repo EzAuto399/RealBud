@@ -201,7 +201,8 @@ function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; 
     if (path === '/v1/operator/customers' && method === 'POST') return putAccount('customer', customers, body!);
     if (path === '/v1/operator/projects' && method === 'GET') return Response.json({ accounts: [...projects.values()] });
     if (path === '/v1/operator/projects' && method === 'POST') return putAccount('project', projects, body!);
-    if (path === '/v1/operator/commercial-policies' && method === 'GET') return Response.json({ policies });
+    // Modelvia's node:http server stamps every response with a Date header (whole seconds).
+    if (path === '/v1/operator/commercial-policies' && method === 'GET') return Response.json({ policies }, { headers: { date: new Date(now()).toUTCString() } });
     if (path === '/v1/operator/commercial-policies' && method === 'POST') return putPolicy(body!);
     if (path === '/v1/operator/keys' && method === 'GET') {
       const projectId = parsed.searchParams.get('projectId'), environment = parsed.searchParams.get('environment');
@@ -393,17 +394,24 @@ test('resale is written only from explicit configuration, and its receipt is a r
     // Until the office's billing owner accepts RealBud's terms carrying AI resale, nothing is written.
     assert.deepEqual((await g.setAccess('realbud-company-a')).terms, { state: 'acceptance_required' });
     assert.deepEqual(m.posts('/v1/operator/commercial-policies'), []);
-    // Terms at another markup or reference are not this acceptance either.
+    // The office is priced at the markup ITS accepted terms state, not the
+    // deployment default (3000 here): 20% first, then 30% as a NEW policy.
     const store = new CommercialTermsStore(g.f.ledger, 'realbud-internal');
     const accept = (version: string, aiUsage: { billing: 'resale'; markupBasisPoints: number; termsReference: string }) => {
       const published = store.publish(careTermsDraft(g.f, version, '12500', { aiUsage }));
       return store.accept(g.f.owner, '2026-09', version, published.digest);
     };
     accept('care-v1', { billing: 'resale', markupBasisPoints: 2000, termsReference: 'fictional-signed-order-7' });
-    assert.deepEqual((await g.setAccess('realbud-company-a')).terms, { state: 'acceptance_required' });
+    const first = (await g.setAccess('realbud-company-a')).terms as Row;
+    assert.deepEqual([first.state, first.created, first.clientMarkupBasisPoints, first.supersedes], ['active', true, 2000, undefined]);
+    // Idempotent: the same accepted markup writes nothing more.
+    assert.equal(((await g.setAccess('realbud-company-a')).terms as Row).created, false);
     const acceptance = accept('care-v2', { billing: 'resale', markupBasisPoints: 3000, termsReference: 'fictional-signed-order-7' });
-    assert.deepEqual({ ...(await g.setAccess('realbud-company-a')).terms, policyId: undefined }, { state: 'active', created: true, policyId: undefined, customerBilling: 'resale' });
-    const [policy] = m.posts('/v1/operator/commercial-policies').map(call => call.body!);
+    const second = (await g.setAccess('realbud-company-a')).terms as Row;
+    assert.deepEqual([second.state, second.created, second.clientMarkupBasisPoints, second.supersedes], ['active', true, 3000, first.policyId]);
+    const [older, policy] = m.posts('/v1/operator/commercial-policies').map(call => call.body!);
+    assert.equal(older!.clientMarkupBasisPoints, 2000);
+    assert.ok((policy!.effectiveAt as number) > (older!.effectiveAt as number), 'the new policy starts after the one it supersedes');
     // The office's own reference: RealBud's terms reference plus its acceptance digest.
     assert.deepEqual({ markup: policy!.clientMarkupBasisPoints, fee: policy!.platformFeeBasisPoints, reference: policy!.acceptanceReference, billing: policy!.customerBilling, payer: policy!.payer, issuer: policy!.invoiceIssuer },
       { markup: 3000, fee: 0, reference: resaleAcceptanceReference('fictional-signed-order-7', acceptance), billing: 'resale', payer: 'client', issuer: 'client' });
