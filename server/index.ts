@@ -84,6 +84,7 @@ import {
   browserTasks,
   type BrowserTaskEnd,
 } from "./browser-grants.ts";
+import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask } from "./portal-recipe-task.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
   ATTEND_ERRORS,
@@ -162,7 +163,7 @@ import { legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
-import { stopBrowserApprovalCards } from "./browser-approval-card.ts";
+import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
@@ -781,6 +782,8 @@ const askTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const askTaskStartedAt = new Map<string, number>();
 /** Each running Ask task's completed browser actions, for a sign-in pause. */
 const askTaskDone = new Map<string, string[]>();
+/** Running portal recipe tasks (server/portal-recipe-task.ts): ending the task stops its runner. */
+const recipeTaskStops = new Map<string, AbortController>();
 
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
@@ -804,6 +807,7 @@ function reportBrowserTaskFailure(): void {
  * step limit and a sign-in request also say so in the conversation. */
 async function endAskBrowserTask(threadId: string, grantId: string, status: BrowserTaskEnd, note?: string) {
   if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
+  recipeTaskStops.get(grantId)?.abort(); recipeTaskStops.delete(grantId); releasePortalRecipeGrant(grantId);
   const timer = askTaskTimers.get(grantId);
   if (timer) clearTimeout(timer);
   askTaskTimers.delete(grantId);
@@ -818,6 +822,51 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
     } catch { /* the card still shows how the task ended */ }
   }
   return ended;
+}
+
+/** A started portal recipe task: RealBud's runner (no model turn) with the task's
+ * saved grant. Anything the recipe cannot answer for is shown as the ordinary
+ * approval card and answered through /api/threads/:id/respond. The task ends
+ * with the run; Stop, time and the step limit end the run (endAskBrowserTask). */
+function runAskRecipeTask(threadId: string, botId: string, record: Awaited<ReturnType<ReturnType<typeof browserTasks>["start"]>>): void {
+  const grant = record.grant;
+  const stop = new AbortController();
+  recipeTaskStops.set(grant.id, stop);
+  const bot = store.bot(botId);
+  const instance = bot ? registry.get(bot.modelSelection.instanceId) : undefined;
+  const base = () => ({ eventId: randomBytes(16).toString("hex"), provider: instance!.driverKind, providerInstanceId: instance!.instanceId, threadId, createdAt: new Date().toISOString() });
+  const approve = portalRecipeApprovalChannel(threadId, ask => {
+    // Only the broker's own decision is shown: without its projection, or with facts that cannot be shown, nothing is asked.
+    if (!instance || !ask.projection) throw new Error("no approval channel");
+    const browserApproval = browserApprovalCardFrom(ask.params);
+    bus.publish({ ...base(), requestId: ask.requestId, type: "request.opened", requestType: "permission", tool: ask.tool, params: ask.params, summary: ask.summary,
+      fence: ask.projection.fence, ...(ask.projection.approvalPolicy ? { approvalPolicy: ask.projection.approvalPolicy } : {}), ...(browserApproval ? { browserApproval, approvalPolicy: "once" as const } : {}) });
+  }, (requestId, allowed, byPerson) => {
+    if (instance) bus.publish({ ...base(), requestId, type: "request.resolved", behavior: allowed ? "allow" : "deny", source: byPerson ? "user" : "runtime" });
+  });
+  void (async () => {
+    let reply: string;
+    let end: BrowserTaskEnd = "finished";
+    try {
+      const result = await runPortalRecipeTask({ record, grant, runtime: browserRuntime, approve, signal: stop.signal,
+        isActive: () => !stop.signal.aborted && fenceContextFor(threadId)?.grant?.id === grant.id });
+      reply = portalRecipeTaskReply(result);
+      if (result.outcome === "stopped") end = "stopped";
+      else if (result.outcome !== "completed") end = "interrupted";
+    } catch (error) {
+      reply = `The portal read could not run: ${error instanceof Error ? error.message : "unknown error"} The read did not start in your browser.`;
+      end = "interrupted";
+    }
+    recipeTaskStops.delete(grant.id);
+    // A sign-in the person did not finish ends a recipe task: its saved sign-in request closes too (Continue would start a model turn).
+    const pause = signInHandoffs().activeFor(grant.runId);
+    if (pause && pause.value.state !== "stopped") await signInHandoffs().stop(pause.id, pause.revision).catch(() => {});
+    try {
+      const message = store.appendMessage(threadId, { role: "bot", kind: "text", text: reply });
+      broadcast({ kind: "message", threadId, message });
+    } catch { /* the task card still shows how it ended */ }
+    await endAskBrowserTask(threadId, grant.id, end).catch(() => {});
+  })();
 }
 
 /** Today's saved-job draft path for a site request ("Save as a job instead"). */
@@ -1956,7 +2005,18 @@ async function startSeatTurn(
           if (proposalIntegration) integrations.memoryProposals = proposalIntegration;
         }
         const handoffOk = !signInHandoffs().isHolding() || signInHandoffs().canResume(opts?.signInResumeId);
-        const browserJob = handoffOk ? fenceContextFor(threadId) : undefined;
+        const seenJob = handoffOk ? fenceContextFor(threadId) : undefined;
+        // RealBud's recipe runner holds a recipe task's grant; a model turn never shares it.
+        // Also after a restart or a sign-in pause: the saved task record says whether the grant is a recipe task's.
+        const recipeBusy = new Error("A portal read is running in this conversation. Wait for it or stop it first.");
+        if (seenJob && (portalRecipeTaskRunning(seenJob.grant?.id) ||
+          (seenJob.grant?.route === "ask" && (await browserTasks().get(seenJob.grant.id))?.recipe))) throw Object.assign(recipeBusy, { status: 409 });
+        // The record read awaited: mount only the browser work that is still current, checked again.
+        const stillOk = !signInHandoffs().isHolding() || signInHandoffs().canResume(opts?.signInResumeId);
+        const browserJob = handoffOk && stillOk ? fenceContextFor(threadId) : undefined;
+        if (browserJob !== seenJob || portalRecipeTaskRunning(browserJob?.grant?.id)) {
+          throw Object.assign(new Error("Browser work in this conversation changed while this turn started. Try again."), { status: 409 });
+        }
         if (browserJob) {
           const binding = opts?.signInResumeId ? signInHandoffs().get(opts.signInResumeId).value.binding : undefined;
           if (opts?.signInResumeId && !binding?.browser) throw new Error("Choose and check the connected browser page before resuming this step.");
@@ -3642,6 +3702,27 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         browser: { ready: browser.state === "ready" && Boolean(browser.selectedBrowserId), name: chosen?.name ?? null },
       });
     }
+    // A portal recipe task card (server/portal-recipe-task.ts): the person names a
+    // pack's read recipe or batch and the account; pressing Start on the card is
+    // what grants anything. Recipes and sites come from the pack, never the request.
+    if (path === "/api/browser/tasks/recipe" && method === "POST") {
+      const body = await readBody(req);
+      const threadId = typeof body.threadId === "string" ? body.threadId : "";
+      const bud = store.productBud();
+      if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
+      try {
+        const proposal = await portalRecipeTaskProposal({ threadId, messageId: "pending", portal: body.portal, target: body.target, inputs: body.inputs, account: body.account });
+        let reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: BROWSER_TASK_OFFER });
+        let task;
+        try { task = await browserTasks().propose({ ...proposal, messageId: reply.id }); }
+        catch (error) { reply = store.patchMessage(threadId, reply.id, { text: BROWSER_TASK_UNAVAILABLE }) ?? reply; broadcast({ kind: "message", threadId, message: reply }); throw error; }
+        broadcast({ kind: "message", threadId, message: reply });
+        return json(res, 200, { task: browserTaskCardView(task) });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
     const browserTaskRoute = path.match(/^\/api\/browser\/tasks\/([0-9a-f-]{36})\/(start|decline|save-job|stop)$/);
     if (browserTaskRoute && method === "POST") {
       const [, taskId, action] = browserTaskRoute;
@@ -3680,10 +3761,17 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (browser.state !== "ready" || !browser.selectedBrowserId) return json(res, 409, { error: "Connect your browser before starting this task.", code: "browser_not_connected" });
         const started = await browserTasks().start(taskId, { threadId, browserId: browser.selectedBrowserId, site: body.site });
         const grant = started.grant;
+        // Held in the same tick the grant goes live, and released only when the task ends: no model turn can mount it.
+        if (started.recipe) holdPortalRecipeGrant(grant.id);
         setFenceContext(threadId, { botId: bud.id, runId: grant.runId, allowedOrigins: [...grant.sites], capabilities: browserTaskCapabilities(grant.actions), grant });
         askTaskStartedAt.set(grant.id, started.startedAt ?? Date.now());
         askTaskDone.set(grant.id, []);
         armAskTaskTimer(threadId, grant);
+        // A portal recipe task runs RealBud's recipe runner with this grant, not a model turn.
+        if (started.recipe) {
+          runAskRecipeTask(threadId, bud.id, started);
+          return json(res, 202, { task: browserTaskCardView(started) });
+        }
         try {
           await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
         } catch (error) {
@@ -4767,6 +4855,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const liveMessageId = askMessageByRequest.get(`${bot.threadId}:${requestId}`);
       const card = store.messagesFor(bot.threadId).find(message => message.id === liveMessageId)?.card;
       const decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
+      if (answerPortalRecipeAsk(bot.threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
       const instance = registry.get(bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
       await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
@@ -4807,6 +4896,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (ruleError) return json(res, 400, { error: ruleError });
         addPortalRule(parsed.rule.surface, parsed.rule.origin);
       }
+      // A running portal recipe task's ask is answered by its runner's channel, never a provider.
+      if (answerPortalRecipeAsk(threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
       const group = store.groupByThread(threadId);
       const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
       if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });

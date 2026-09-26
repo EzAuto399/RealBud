@@ -31,7 +31,7 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
   const calls: string[][] = [];
   const command = async (args: string[]): Promise<BrowserJson> => {
     calls.push(args);
-    if (args[0] === "status") return { daemon_version: "0.3.0", protocol_version: "1.3", browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: "0.3.0", extension_protocol_version: "1.3" }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction: { borrow_confirmation: "always", request_help: "enabled" } }] : [] };
+    if (args[0] === "status") return { daemon_version: "0.3.1", protocol_version: "1.3", browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: "0.3.1", extension_protocol_version: "1.3" }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction: { borrow_confirmation: "always", request_help: "enabled" } }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "owned", browser_instance_id: "work", interaction: { borrow_confirmation: "always", request_help: "enabled" } }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; return { stopped: ["owned"], failed: [], return_failures: [] }; }
     if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "Private work", scope }, { tab_id: 2, url: "https://unrelated.example", title: "Private unrelated tab", scope: "user" }, ...(checkpoint ? [{ tab_id: 3, url, title: "Other account", scope: "user" }] : [])] };

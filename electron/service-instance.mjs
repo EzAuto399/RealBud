@@ -93,3 +93,30 @@ export async function findRunningService(identity, options = {}) {
   }
   return null;
 }
+
+/** @typedef {ProbeOptions & { isPortFree: (port: number) => Promise<boolean> }} BusyProbeOptions */
+
+/**
+ * Before anything spawns: ask each port of this installation that is already
+ * bound, with patience, whether our own service holds it.
+ *
+ * A service busy with slow work (a long Recheck, a backup pause) can miss the
+ * quick probe while it still holds its port. Starting then either fails with
+ * EADDRINUSE or, worse, picks the next port for a second service over the same
+ * data directory. A free port cannot hide a service, so only bound ports are
+ * asked again; a stranger's answer is ignored exactly as in findRunningService.
+ */
+/**
+ * @param {ServiceIdentity} identity
+ * @param {BusyProbeOptions} options
+ * @returns {Promise<{ port: number, body: unknown } | null>}
+ */
+export async function findBusyService(identity, options) {
+  const { isPortFree, ...probe } = options;
+  for (const port of identity.ports) {
+    if (await isPortFree(port)) continue;
+    const found = await probeService(port, { timeoutMs: 10_000, ...probe });
+    if (found && isOurService(found.body, identity)) return found;
+  }
+  return null;
+}

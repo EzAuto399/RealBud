@@ -289,3 +289,32 @@ test('findCustomer refuses an unsafe id before the network and a malformed or am
     assert.match((error as Error).message, /modelvia_rejected/); assert.ok(!(error as Error).message.includes(OPERATOR_SECRET)); return true;
   });
 });
+
+/** Modelvia's customer write for a new office, per the paying mode of RealBud's
+ * client (`accounts.ts` put): client-paid needs no binding; customer-paid needs
+ * the office's billing account; mixed needs payer too. */
+test('a new office customer carries the billing binding its client billing mode requires', async () => {
+  const create = async (billingMode: string, billingCompanyId?: string, refuse?: string) => {
+    const t = transport((url, method) => {
+      if (url.endsWith('/v1/operator/clients')) return { body: { accounts: [{ id: 'other', billingMode: 'client' }, { id: 'realbud', billingMode }] } };
+      if (method === 'GET') return { body: { accounts: [] } };
+      if (refuse) return { status: 404, body: { error: refuse } };
+      return { body: { ...t.seen.at(-1)!.body, version: 1 } };
+    });
+    const result = await client(t).setCustomerAccess('realbud-office-c', { name: 'Fictional Office C', access: { mode: 'default' }, ...(billingCompanyId ? { billingCompanyId } : {}) });
+    return { result, written: t.seen.filter(call => call.method === 'POST').map(call => call.body) };
+  };
+  const base = { id: 'realbud-office-c', name: 'Fictional Office C', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: ['auto'], version: 0, clientId: 'realbud' };
+  assert.deepEqual((await create('client', 'office-c')).written, [base]);
+  assert.deepEqual((await create('customer', 'office-c')).written, [{ ...base, billingCompanyId: 'office-c' }]);
+  assert.deepEqual((await create('mixed', 'office-c')).written, [{ ...base, payer: 'customer', billingCompanyId: 'office-c' }]);
+  assert.equal((await create('customer', 'office-c')).result.created, true);
+  // Without the office's billing account nothing is written; a missing one at Modelvia is named.
+  await assert.rejects(() => create('customer'), /modelvia_billing_binding_required/);
+  await assert.rejects(() => create('customer', 'office-c', 'billing_account_not_found'), /modelvia_billing_account_missing/);
+});
+
+test('findCustomer reports the billing account a customer-paid customer is bound to', async () => {
+  const t = transport(() => ({ body: { accounts: [{ id: 'realbud-office-a', clientId: 'realbud', active: true, monthlyCapNanoAud: '1', maxConcurrent: 1, billingCompanyId: 'office-a' }] } }));
+  assert.deepEqual(await client(t).findCustomer('realbud-office-a'), { active: true, monthlyCapNanoAud: '1', maxConcurrent: 1, billingCompanyId: 'office-a' });
+});

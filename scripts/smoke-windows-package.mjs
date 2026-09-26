@@ -21,10 +21,10 @@ checks.push("Installed resources include native helpers, speech helper, SDK, ser
 checks.push("Installed resources include private-profile provisioning code and shipped property safeguards");
 const browser = join(resources, "browser");
 const browserManifest = JSON.parse(readFileSync(join(browser, "runtime.json"), "utf8"));
-assert.equal(browserManifest.version, "0.3.0");
+assert.equal(browserManifest.version, "0.3.1");
 assert.equal(browserManifest.platform, "win32"); assert.equal(browserManifest.arch, "x64");
 assert.equal(createHash("sha256").update(readFileSync(join(browser, "bsk.exe"))).digest("hex"), browserManifest.sha256);
-assert.equal(execFileSync(join(browser, "bsk.exe"), ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }).trim(), "bsk 0.3.0");
+assert.equal(execFileSync(join(browser, "bsk.exe"), ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }).trim(), "bsk 0.3.1");
 checks.push("Installed BrowserSkill executable matches its manifest and runs at the pinned version");
 const postgres = join(resources, "postgres");
 const pgManifest = JSON.parse(readFileSync(join(postgres, "runtime.json"), "utf8"));

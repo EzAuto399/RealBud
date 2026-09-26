@@ -21,6 +21,29 @@ export function createFirstRunApi(request: (path: string, init?: RequestInit) =>
   };
 }
 
+/** How long the first screen waits for the saved setup before offering Try again. */
+export const SAVED_SETUP_TIMEOUT_MS = 20_000;
+export const SAVED_SETUP_SLOW =
+  'Your saved setup did not answer in time. The office service may still be starting. Try again in a moment.';
+
+/**
+ * The first screen's one read, bounded: a busy or restarting office service
+ * must surface as a message with Try again, never an endless "Checking…".
+ * A timeout reads nothing into completion; the saved state stays on the server.
+ */
+export async function readSavedSetup(
+  request: (path: string, init?: RequestInit, opts?: { timeoutMs?: number }) => Promise<unknown>,
+  timeoutMs = SAVED_SETUP_TIMEOUT_MS,
+): Promise<OnboardingState> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(SAVED_SETUP_SLOW)), timeoutMs); });
+  try {
+    return await Promise.race([createFirstRunApi((path, init) => request(path, init, { timeoutMs })).read(), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Person names RealBud writes for itself while someone explores the sample
  * book. They identify a fixture, not the office, so they never count as a

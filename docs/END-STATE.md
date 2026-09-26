@@ -1,10 +1,18 @@
 # RealBud end state
 
+Latest QA checkpoint: [QA fixes and 0.1.20 Mac candidate](QA-FIXES-2026-09-25.md) records the REI recipe runner (fictional simulation only), provisioning and billing fixes on a local rig, Electron 43.7.5 and BrowserSkill 0.3.1, and installed 0.1.20 QA on the owner's Mac with disposable data. Windows 0.1.20, live vendors, live REI and customer acceptance remain open.
+
 Latest continuation: [External test lab](EXTERNAL-TEST-LAB-2026-09-24.md) records package qualification plus 8 native cancellation/setup and 14 restore groups on the same signed Mac candidate, with root-verified hashes, cleanup and screenshots. The sealed Mac/Windows test kit and installer transfer ISO have also passed artifact-integrity verification. Earlier failures remain preserved; OS custody remains fixture-only. VirtualBox is installed and the external Windows Arm VM has started successfully without an OS; the official Windows media has passed its checksum and the VM has reached Windows 11 Setup. Installation is still pending. No Windows guest/device acceptance is claimed.
 
 Parallel work: [REI browser first and API access](REI-BROWSER-FIRST-2026-09-24.md) records the owner's browser-first sequencing, 240 passing candidate source checks and an unsent API request. Root verified retained report/source hashes; the browser owner observed signed-in Brave access and left the installed Mac 0.1.18/profile unchanged. RealBud live connection, workflow acceptance and API entitlement remain unverified.
 
 25 September browser-engine decision: [Bud browser engine candidate](BUD-BROWSER-ENGINE-2026-09-25.md) keeps the pinned native transport internal and dormant. RealBud owns the visible browser flow and broker controls; integration and installed-platform proof are still required before any runtime switch.
+
+25 September Windows run sheet: [Next Windows run](NEXT-WINDOWS-RUN-2026-09-25.md) lists the hosted setup, office setup and installed Windows 11 steps in order, each with its check and the known failures to watch for. It records steps, not results.
+
+25 September Mac run sheet: [Next Mac run](NEXT-MAC-RUN-2026-09-25.md) is its macOS twin for a separate test account, sharing hosted and office setup. It records steps, not results; Mac notarization stays blocked until the notary credentials are stored again and Apple accepts them.
+
+24 September Windows QA handoff: [Windows QA candidate](WINDOWS-QA-HANDOFF-2026-09-24.md) records the disposable-CI install and Bud setup passes, the ARM VM's welcome and Desk checks, its failed backup export, and the 25 September backup diagnosis. It is not a release or customer acceptance.
 
 Previous continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
 

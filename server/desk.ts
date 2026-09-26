@@ -757,16 +757,29 @@ export class Desk {
     }
     const prepared = this.prepareProperty(input);
     this.insertProperty(prepared);
-    writePropertyNote(prepared.property.id, "", { address: prepared.property.address }, this.vaultRoot);
     // Book membership changed — recompute cards from facts already on the book.
     // Do not stamp lastRunAt: adding a row is not a Recheck. Unchecked books
     // stay empty of cards until a real check (same honesty as patchProperty).
+    // A failed save (disk full) puts the book back as desk.json holds it, so the
+    // row is not "already on the book" in memory and gone after a restart.
+    let snapshot: DeskSnapshot;
     if (this.store.data.lastRunAt != null) {
-      return this.reevaluateOrKeepMiss({ stampRun: false });
+      snapshot = this.reevaluateOrKeepMiss({ stampRun: false });
+    } else {
+      this.store.persist();
+      this.emit();
+      snapshot = this.snapshot();
     }
-    this.store.persist();
-    this.emit();
-    return this.snapshot();
+    // The empty note is a convenience (a missing note reads as empty), so it is
+    // written only once the row is saved and cannot undo that save.
+    try {
+      writePropertyNote(prepared.property.id, "", { address: prepared.property.address }, this.vaultRoot);
+    } catch (cause) {
+      console.warn("RealBud saved the property but could not start its private note", {
+        error: cause instanceof Error ? cause.name : "UnknownError",
+      });
+    }
+    return snapshot;
   }
 
   private prepareProperty(
@@ -830,13 +843,24 @@ export class Desk {
     this.store.data.results = this.store.data.results.filter((r) => r.propertyId !== id);
     this.store.data.workItems = this.store.data.workItems.filter((w) => w.propertyId !== id);
     this.invalidateCapabilities({ propertyId: id });
-    archivePropertyNote(id, this.vaultRoot);
+    let snapshot: DeskSnapshot;
     if (this.store.data.lastRunAt != null) {
-      return this.reevaluateOrKeepMiss({ stampRun: false });
+      snapshot = this.reevaluateOrKeepMiss({ stampRun: false });
+    } else {
+      this.store.persist();
+      this.emit();
+      snapshot = this.snapshot();
     }
-    this.store.persist();
-    this.emit();
-    return this.snapshot();
+    // Archive the note only after the removal is saved: a failed save keeps the
+    // property, and its note must stay live with it.
+    try {
+      archivePropertyNote(id, this.vaultRoot);
+    } catch (cause) {
+      console.warn("RealBud removed the property but could not mark its private note archived", {
+        error: cause instanceof Error ? cause.name : "UnknownError",
+      });
+    }
+    return snapshot;
   }
 
   writeNotes(id: string, body: string): { id: string; body: string } {
@@ -933,6 +957,7 @@ export class Desk {
     if ("expectedRevision" in cmd && cmd.expectedRevision != null && cmd.expectedRevision !== this.store.data.revision) {
       throw Object.assign(new Error("stale desk revision"), { status: 409, code: "revision-conflict" });
     }
+    let afterSave: (() => void) | undefined;
     switch (cmd.type) {
       case "check-demo":
         return this.runMorningCheck();
@@ -941,10 +966,10 @@ export class Desk {
       case "propose":
         return this.proposeFromAsk(cmd);
       case "allow":
-        this.decide(cmd.draftId, "approved", cmd.approver ?? "pm", cmd.via);
+        afterSave = this.decide(cmd.draftId, "approved", cmd.approver ?? "pm", cmd.via);
         break;
       case "deny":
-        this.decide(cmd.draftId, "denied", "pm", cmd.via);
+        afterSave = this.decide(cmd.draftId, "denied", "pm", cmd.via);
         break;
       case "edit":
         this.edit(cmd.draftId, cmd.body);
@@ -963,6 +988,7 @@ export class Desk {
         break;
     }
     this.store.persist();
+    afterSave?.();
     this.emit();
     return this.snapshot();
   }
@@ -1138,7 +1164,9 @@ export class Desk {
     }
   }
 
-  private decide(id: string, state: "approved" | "denied", approver = "pm", via?: string): void {
+  /** Returns the note line to write once the decision is saved: a decision that
+   * fails to save (disk full) must not leave "approved" in the property note. */
+  private decide(id: string, state: "approved" | "denied", approver = "pm", via?: string): () => void {
     const draft = this.requirePending(id);
     const work = this.workForDraft(draft);
     assertTransition(work.state, state);
@@ -1154,12 +1182,16 @@ export class Desk {
     const verb = state === "approved" ? "approved" : "denied";
     const kind =
       draft.kind === "levy-from-rent" ? "levy flag" : draft.kind === "owner-letter" ? "owner letter" : "courtesy SMS";
-    appendAllowedLine(
-      draft.propertyId,
-      `${new Date(this.now()).toISOString().slice(0, 10)} — ${verb} ${kind} for ${property?.address ?? draft.propertyId} (not sent by RealBud).`,
-      this.vaultRoot,
-      property?.address,
-    );
+    const line = `${new Date(this.now()).toISOString().slice(0, 10)} — ${verb} ${kind} for ${property?.address ?? draft.propertyId} (not sent by RealBud).`;
+    return () => {
+      try {
+        appendAllowedLine(draft.propertyId, line, this.vaultRoot, property?.address);
+      } catch (cause) {
+        console.warn("RealBud saved the decision but could not add it to the private property note", {
+          error: cause instanceof Error ? cause.name : "UnknownError",
+        });
+      }
+    };
   }
 
   private edit(id: string, body: string): void {

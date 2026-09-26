@@ -38,6 +38,7 @@ for name in \
   REALBUD_MODELVIA_OPERATOR_SECRET \
   REALBUD_MODELVIA_OPERATOR_SUBJECT \
   REALBUD_MODELVIA_CLIENT_ID \
+  REALBUD_MODELVIA_MODELS \
   REALBUD_GATEWAY_PUBLIC_ORIGIN
 do
   [[ -n "${!name:-}" ]] || missing+=("$name")
@@ -47,6 +48,9 @@ if (( ${#missing[@]} )); then
 fi
 # Modelvia's verifier refuses a shorter operator secret outright.
 (( ${#REALBUD_MODELVIA_OPERATOR_SECRET} >= 32 )) || fail "REALBUD_MODELVIA_OPERATOR_SECRET must be at least 32 characters"
+# Modelvia matches allowedModels against real route ids; `auto` is a request
+# value, never an allowlist entry, and would admit no model at all.
+[[ ",${REALBUD_MODELVIA_MODELS// /}," != *",auto,"* && ",${REALBUD_MODELVIA_MODELS// /}," != *",AUTO,"* ]] || fail "REALBUD_MODELVIA_MODELS must name Modelvia route ids, not auto"
 
 # --- Care-fee collection through Square -----------------------------------
 # REALBUD_PAYMENT_MODE is local (default: invoices close and read, no checkout),
@@ -101,7 +105,7 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_MODELVIA_OPERATOR_SECRET=%s\n' "$REALBUD_MODELVIA_OPERATOR_SECRET"
   printf 'REALBUD_MODELVIA_OPERATOR_SUBJECT=%s\n' "$REALBUD_MODELVIA_OPERATOR_SUBJECT"
   printf 'REALBUD_MODELVIA_CLIENT_ID=%s\n' "$REALBUD_MODELVIA_CLIENT_ID"
-  [[ -z "${REALBUD_MODELVIA_MODELS:-}" ]] || printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
+  printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
   printf 'REALBUD_PAYMENT_MODE=%s\n' "$payment_mode"
   # Modelvia commercial terms and the per-request cap: non-secret, set only when
   # exported (DEPLOY.md, "Live Modelvia integration values").

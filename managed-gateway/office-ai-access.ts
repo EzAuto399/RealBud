@@ -33,7 +33,7 @@ import type { UsageLedger } from './ledger.ts';
 import { DEFAULT_OFFICE_AI_CAP_NANO_AUD, parseOfficeAiAccess, type ModelviaOperatorClient } from './modelvia-keys.ts';
 import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTerms, type CustomerTermsPolicy, type CustomerTermsResult } from './modelvia-keys.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
-import { applyCustomerCaps, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
+import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
 
 export interface OfficeAiAccessResult {
   customer: { active: boolean; monthlyCapNanoAud: string; created: boolean };
@@ -65,7 +65,11 @@ export class OfficeAiAccessService {
       // Journalled before any Modelvia call. No customer id, no secret.
       ledger.db.transaction(() => ledger.db.append(companyId, 'office_ai_access_requested', null, ledger.now(),
         { subject: actor.subject, companyId, mode: access.mode, ...(requestedCap ? { monthlyCapNanoAud: requestedCap } : {}) }));
-      const customer = await modelvia.setCustomerAccess(customerId, { name, access });
+      // The binding provisioning checks, recorded before any Modelvia call. A
+      // customer another office already holds is refused here.
+      bindOfficeCustomer(ledger, companyId, customerId);
+      // An office's Modelvia billing account is its company id.
+      const customer = await modelvia.setCustomerAccess(customerId, { name, access, billingCompanyId: companyId });
       const projects = access.mode === 'disabled' ? [] : await applyCustomerCaps({ ledger, modelvia, requestCapNanoAud: this.options.requestCapNanoAud }, companyId);
       // Commercial terms once the customer exists (Modelvia's order: customer,
       // then policy). Reported, never thrown: the customer and caps above are

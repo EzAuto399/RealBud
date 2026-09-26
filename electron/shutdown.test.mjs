@@ -7,6 +7,7 @@ const event = () => ({ preventDefault: vi.fn() });
 function fixture(overrides = {}) {
   const app = new EventEmitter();
   app.quit = vi.fn();
+  app.exit = vi.fn();
   const cleanup = { stopServer: vi.fn(), stopSpeech: vi.fn(), closeControl: vi.fn(), stopComputer: vi.fn(), timeoutMs: 100, ...overrides };
   registerDesktopShutdown(app, cleanup);
   return { app, cleanup };
@@ -19,6 +20,7 @@ describe("desktop shutdown", () => {
     app.emit("will-prevent-unload", event());
     for (const stop of [cleanup.stopServer, cleanup.stopSpeech, cleanup.closeControl, cleanup.stopComputer]) expect(stop).not.toHaveBeenCalled();
     expect(app.quit).not.toHaveBeenCalled();
+    expect(app.exit).not.toHaveBeenCalled();
   });
 
   it("cleans up once and permits the final quit without looping", async () => {
@@ -29,8 +31,11 @@ describe("desktop shutdown", () => {
     app.emit("will-quit", event());
     await vi.runAllTimersAsync();
     expect(first.preventDefault).toHaveBeenCalledOnce();
+    // Electron 43 ignores a second app.quit() once will-quit was prevented (the
+    // 0.1.19 quit hang); completion must exit.
     for (const stop of [cleanup.stopServer, cleanup.stopSpeech, cleanup.closeControl, cleanup.stopComputer]) expect(stop).toHaveBeenCalledOnce();
-    expect(app.quit).toHaveBeenCalledOnce();
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(app.quit).not.toHaveBeenCalled();
     const last = event(); app.emit("will-quit", last);
     expect(last.preventDefault).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -41,9 +46,10 @@ describe("desktop shutdown", () => {
     const { app } = fixture({ stopComputer: () => new Promise(() => {}) });
     app.emit("will-quit", event());
     await vi.advanceTimersByTimeAsync(99);
-    expect(app.quit).not.toHaveBeenCalled();
+    expect(app.exit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(app.quit).toHaveBeenCalledOnce();
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(app.quit).not.toHaveBeenCalled();
   });
 
   it("runs the remaining cleanup after a synchronous failure", async () => {
@@ -53,6 +59,7 @@ describe("desktop shutdown", () => {
     await vi.runAllTimersAsync();
     expect(cleanup.stopServer).toHaveBeenCalledOnce();
     expect(cleanup.stopComputer).toHaveBeenCalledOnce();
-    expect(app.quit).toHaveBeenCalledOnce();
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(app.quit).not.toHaveBeenCalled();
   });
 });

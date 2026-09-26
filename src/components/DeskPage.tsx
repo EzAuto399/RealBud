@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { bindMenuDismiss, closeMenu } from "@/lib/menu-dismiss";
 import type { CsvColumnMapping, CsvImportPreview, DeskSnapshot, Draft, Property } from "@/lib/desk";
 import {
   buildDeskQueue,
@@ -75,6 +76,19 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const [queueOpen, setQueueOpen] = useState(false);
   const autoOpenedForNeedRef = useRef(false);
   const [railOpen, setRailOpen] = useState(false);
+  // "More" is a <details> menu: close it on Escape, on a press outside it, and
+  // once an item is chosen, so it never sits over the header.
+  const moreRef = useRef<HTMLDetailsElement | null>(null);
+  const moreUnbind = useRef<(() => void) | null>(null);
+  const moreMenuRef = useCallback((node: HTMLDetailsElement | null) => {
+    moreUnbind.current?.();
+    moreUnbind.current = node ? bindMenuDismiss(node) : null;
+    moreRef.current = node;
+  }, []);
+  const chooseMore = (action: () => void) => () => {
+    action();
+    closeMenu(moreRef.current);
+  };
   const [railTab, setRailTab] = useState<"bud" | "evidence">("bud");
   const [announce, setAnnounce] = useState("");
   const [query, setQuery] = useDeskViewState("query");
@@ -434,10 +448,10 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             <button type="button" onClick={() => dispatch({ type: "showAsk" })} className="desk-secondary-button desk-chat-button">
               <MessageSquare size={16} aria-hidden />Ask Bud
             </button>
-            <details className="desk-more">
+            <details ref={moreMenuRef} className="desk-more">
               <summary className="desk-secondary-button">More</summary>
               <div className="desk-more-panel" role="group" aria-label="More Desk tools">
-                <button type="button" className="desk-more-item" aria-pressed={jobRunsOpen} onClick={() => setJobRunsOpen((value) => !value)}>
+                <button type="button" className="desk-more-item" aria-pressed={jobRunsOpen} onClick={chooseMore(() => setJobRunsOpen((value) => !value))}>
                   {jobRunsOpen ? "Hide activity" : "Activity"}
                 </button>
                 {mode === "cases" ? (
@@ -445,15 +459,15 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                     type="button"
                     className={cn("desk-more-item", preferences.showBud && "min-[1320px]:hidden")}
                     aria-expanded={railOpen}
-                    onClick={() => setRailOpen((value) => !value)}
+                    onClick={chooseMore(() => setRailOpen((value) => !value))}
                   >
                     Bud & evidence
                   </button>
                 ) : null}
-                <button type="button" className="desk-more-item" aria-pressed={mode === "book"} onClick={() => setMode("book")}>
+                <button type="button" className="desk-more-item" aria-pressed={mode === "book"} onClick={chooseMore(() => setMode("book"))}>
                   Book · import & addresses
                 </button>
-                <button type="button" className="desk-more-item" aria-pressed={mode === "batch"} onClick={() => setMode("batch")}>
+                <button type="button" className="desk-more-item" aria-pressed={mode === "batch"} onClick={chooseMore(() => setMode("batch"))}>
                   Batch prepare
                 </button>
                 <div className="desk-more-layout">
