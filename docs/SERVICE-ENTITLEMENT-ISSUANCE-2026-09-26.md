@@ -68,3 +68,26 @@ remove the lock merely because it is old; a PID can be reused.
 The local signed gate is an offline admission check, not immediate suspension.
 Off-device Modelvia and gateway requests still enforce their own live grants;
 renew the desktop bundle before its printed expiry.
+
+## First hosted and Mac handoff receipt — 26 September 2026
+
+The issuer and installer shipped in RealBud PR #23, merged as `eb5223bd`.
+Fly release v8 ran image `deployment-01M3ER0ABNQB0BDGGYW7GC472A`; the issuer
+file was present in that image and the gateway `/ready` endpoint returned HTTP
+200. This proves the issuer was deployed and the gateway was responding, not
+that a desktop request completed.
+
+For the sole ready installation at this checkpoint, an operator issued one
+signed grant using a private signer held on the attached encrypted volume. The
+Mac installer checked the public-key digest supplied separately from the
+bundle, verified the signature and local installation binding, and installed
+the grant locally. No private signer material was transferred to the Mac or
+recorded here. The later manual volume snapshot includes the signer, but that
+snapshot has not been restored; see
+[the Fly recovery receipt](FLY-GATEWAY-RECOVERY-2026-09-26.md).
+
+The RealBud UI then showed **Service access available**. Its Ask screen still
+showed **Setup needed**, with **Start this work** disabled, because local
+service administration and a workroom were not set up. No in-app question,
+Modelvia generation record, or end-to-end billing result was proven by this
+grant installation.
