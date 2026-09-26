@@ -85,6 +85,8 @@ export class BillingService {
     this.ledger=ledger; this.payment=payment; this.internalCompanyId=options.internalCompanyId;
     this.commercialTerms=options.internalCompanyId?new CommercialTermsStore(ledger,options.internalCompanyId):undefined;
   }
+  /** Current collection capability, derived from the authorized payment adapter. */
+  get collectionMode(): 'off'|'sandbox'|'live' { return this.payment?.mode??'off'; }
   /** Care credits not yet applied to an invoice or reserved for a refund. */
   private unappliedCareCredits(companyId:string,period:string):EventRow[] {
     return this.ledger.db.all<EventRow>(`SELECT e.seq,e.kind,e.request,e.body FROM events e LEFT JOIN invoice_events i ON i.event=e.seq

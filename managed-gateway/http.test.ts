@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { careTermsDraft, fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
-import { BillingService } from './billing.ts';
+import { BillingService, type HostedPaymentAdapter } from './billing.ts';
 import { GatewayError } from './contracts.ts';
 import { fileSecretStore, InstallationProvisioning, modelviaOperatorState } from './provisioning.ts';
 import { modelviaKeyClient } from './modelvia-keys.ts';
@@ -71,22 +71,24 @@ test('AI rate, usage, limit and model routes are gone; care routes answer 503 wi
   assert.deepEqual(f.modelviaCalls,[]);
 });
 
-test('care invoice routes are tenant-scoped, render the document and refuse checkout without a payment adapter', async()=>{
+test('care invoice routes report collection mode, stay tenant-scoped and refuse checkout without a payment adapter', async()=>{
   const f=await serverFixture();
   f.setTime(Date.parse('2026-10-01T00:00:00Z'));
   const billing=new BillingService(f.ledger,undefined,{internalCompanyId:'realbud-internal'});
   const published=billing.commercialTerms!.publish(careTermsDraft(f,'care-v1','12500'));
   billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
   const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
-  const server=createGatewayServer({allowedOrigins:new Set(),billing,portal:{async authenticate(bearer){
-    if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader'};if(bearer===UNKNOWN)return {...f.owner,companyId:'company-unentitled'};
-    throw new GatewayError('unauthenticated',401);}}});
+  const portal={async authenticate(bearer:string){
+    if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader' as const};if(bearer===UNKNOWN)return {...f.owner,companyId:'company-unentitled'};
+    throw new GatewayError('unauthenticated',401);}};
+  const server=createGatewayServer({allowedOrigins:new Set(),billing,portal});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
   const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request=(method:string,path:string,bearer:string=OWNER)=>fetch(base+path,{method,headers:{Authorization:`Bearer ${bearer}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:'{}'}:{})});
   const list=await request('GET','/v1/portal/invoices');assert.equal(list.status,200);
-  assert.deepEqual(await list.json(),{invoices:[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false}]});
+  const expectedInvoices=[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false}];
+  assert.deepEqual(await list.json(),{collectionMode:'off',invoices:expectedInvoices});
   assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),{...invoice,links:{document:`/api/account/invoices/${invoice.id}?kind=document`}});
   assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}/ai-usage`)).json(),{error:'ai_usage_not_on_invoice'});
   const document=await request('GET',`/v1/portal/invoices/${invoice.id}/document`,READER);
@@ -94,11 +96,23 @@ test('care invoice routes are tenant-scoped, render the document and refuse chec
   const html=await document.text();assert.match(html,/monthly care/);assert.doesNotMatch(html,/AI usage —/);
   assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}/receipt`)).status,409);
   assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}`,UNKNOWN)).status,404);
-  assert.deepEqual(await (await request('GET','/v1/portal/invoices',UNKNOWN)).json(),{invoices:[]});
+  assert.deepEqual(await (await request('GET','/v1/portal/invoices',UNKNOWN)).json(),{collectionMode:'off',invoices:[]});
   assert.equal((await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`,READER)).status,403);
   const checkout=await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`);
   assert.equal(checkout.status,503);assert.deepEqual(await checkout.json(),{error:'payment_provider_unselected'});
   assert.equal(f.ledger.db.get('SELECT * FROM checkouts'),undefined);
+
+  const liveAdapter:HostedPaymentAdapter={id:'square-live',mode:'live',
+    async createCheckout(){throw new Error('checkout must not be called');},async verifyWebhook(){return null;},
+    async requestRefund(){throw new Error('refund must not be called');},async verifyRefundWebhook(){return null;}};
+  const liveBilling=new BillingService(f.ledger,liveAdapter,{authorizeCollection:true,internalCompanyId:'realbud-internal'});
+  const liveServer=createGatewayServer({allowedOrigins:new Set(),billing:liveBilling,portal});
+  liveServer.listen(0,'127.0.0.1');await once(liveServer,'listening');
+  cleanups.push(async()=>{liveServer.closeAllConnections();await new Promise<void>(resolve=>liveServer.close(()=>resolve()));});
+  const liveUrl=`http://127.0.0.1:${(liveServer.address() as AddressInfo).port}/v1/portal/invoices`;
+  assert.equal((await fetch(liveUrl)).status,401);
+  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${OWNER}`}})).json(),{collectionMode:'live',invoices:expectedInvoices});
+  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${UNKNOWN}`}})).json(),{collectionMode:'live',invoices:[]});
 });
 
 test('an unentitled company is refused on provision before any Modelvia call; revoke needs no entitlement', async()=>{

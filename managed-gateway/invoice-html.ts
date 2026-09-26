@@ -29,7 +29,7 @@ export function invoiceHtml(invoice:Invoice):string {
   const aiNote=ai
     ?`AI usage lines are the exact lines, GST-inclusive amounts and GST of the named Modelvia invoice${modelviaIds.length===1?'':'s'}, and are paid with this invoice, not separately.${deferred?` AI usage for ${escape(deferred)} was not yet finalized and will appear on a later invoice.`:''}`
     :deferred?`AI usage for ${escape(deferred)} was not yet finalized and will appear on a later invoice.`
-    :'AI usage is billed separately by Modelvia and never appears on this invoice.';
+    :'No AI usage is charged on this invoice.';
   const usage=ai||deferred?`<section class="usage"><h2>Usage by ${escape(office)}</h2><p>${invoice.aiUsage?.usedBy?`Modelvia account name ${escape(invoice.aiUsage.usedBy)} · `:''}${invoice.aiUsage?.modelviaCustomerId?`Modelvia customer ID <b>${escape(invoice.aiUsage.modelviaCustomerId)}</b> · `:''}RealBud account ${escape(invoice.companyId)}${modelviaIds.length?` · Modelvia invoice${modelviaIds.length===1?'':'s'} ${modelviaIds.map(escape).join(', ')}`:''}</p></section>`:'';
   const line=(l:Invoice['lines'][number])=>{
     const notes=[

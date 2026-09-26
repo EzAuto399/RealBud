@@ -21,7 +21,7 @@ Off-device service with four jobs:
 | `POST /v1/operator/offices/ai-access` | operator bearer, `realbud_operator` | sets one office's AI access at Modelvia: default A$200 monthly cap, a custom cap, or disabled ([DEPLOY.md](DEPLOY.md#office-ai-access)) |
 | `GET /v1/portal/commercial-terms?period=YYYY-MM` | portal bearer | the month's published care terms for the principal's office, with its acceptance if any |
 | `POST /v1/portal/commercial-terms/accept` | portal bearer, `billing_owner` | accepts exactly `{period, version, digest}` |
-| `GET /v1/portal/invoices` | portal bearer | the office's care invoices with a `paid` flag |
+| `GET /v1/portal/invoices` | portal bearer | the office's invoices in `invoices`, each with a `paid` flag, plus top-level `collectionMode` (`off`, `sandbox`, or `live`); mode alone does not make checkout available |
 | `GET /v1/portal/invoices/{id}` · `/document` · `/receipt` | portal bearer | one invoice as JSON, as printable HTML, or its settlement receipt (409 `payment_not_settled` until paid) |
 | `POST /v1/portal/invoices/{id}/checkout` | portal bearer, `billing_owner` | one idempotent Square-hosted checkout for a collectible invoice (503 `payment_provider_unselected` in `local` mode) |
 | `POST /v1/webhooks/square` | Square signature | payment and refund notifications; a trigger only, settlement is re-read from Square |
