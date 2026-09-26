@@ -80,6 +80,29 @@ case "$payment_mode" in
   *) fail "REALBUD_PAYMENT_MODE must be local, sandbox or live" ;;
 esac
 
+# --- Modelvia commercial terms (owner decision, 26 September 2026) ---------
+# Customer offices buy AI at Modelvia's rate + 30% (3000 basis points), billed on
+# their one monthly RealBud invoice; the owner's own and internal offices stay
+# client-funded (free). These defaults ARE the production values; exporting a
+# different markup or reference is an explicit override. Non-secret.
+: "${REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS:=3000}"
+: "${REALBUD_MODELVIA_RESALE_TERMS_REFERENCE:=realbud-office-terms-2026-09-26-ai-resale-30pct}"
+[[ "$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS" =~ ^(0|[1-9][0-9]{0,5})$ ]] && (( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS <= 100000 )) ||
+  fail "REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS must be a whole number of basis points from 0 to 100000 (production: 3000)"
+[[ "$REALBUD_MODELVIA_RESALE_TERMS_REFERENCE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$ ]] ||
+  fail "REALBUD_MODELVIA_RESALE_TERMS_REFERENCE must be an id of at most 160 characters (letters, digits, _ . : / -)"
+(( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS == 3000 )) ||
+  echo "Note: REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS=$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS overrides the owner decision (3000)" >&2
+# With resale on, an office missing from this list is billed once it accepts
+# AI resale terms, so the free offices must be named explicitly.
+[[ -n "${REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES:-}" ]] ||
+  fail "REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES must list the owner's and internal offices' companyIds (their AI stays free)"
+# RealBud's Modelvia client integration key: month close reads each resale
+# office's finalized Modelvia customer invoice with it, and the margin view its
+# analytics. A secret; read-only use.
+[[ "${REALBUD_MODELVIA_CLIENT_KEY:-}" =~ ^mgt_[a-f0-9]{16}_[A-Za-z0-9_-]{43}$ ]] ||
+  fail "REALBUD_MODELVIA_CLIENT_KEY must be RealBud's Modelvia client integration key (mgt_…); value not echoed"
+
 if [[ "${1:-}" == "--check" ]]; then
   echo "Deployment preflight passed for REALBUD_PAYMENT_MODE=$payment_mode (no Fly changes made)"
   exit 0
@@ -106,6 +129,7 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_MODELVIA_OPERATOR_SUBJECT=%s\n' "$REALBUD_MODELVIA_OPERATOR_SUBJECT"
   printf 'REALBUD_MODELVIA_CLIENT_ID=%s\n' "$REALBUD_MODELVIA_CLIENT_ID"
   printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
+  printf 'REALBUD_MODELVIA_CLIENT_KEY=%s\n' "$REALBUD_MODELVIA_CLIENT_KEY"
   printf 'REALBUD_PAYMENT_MODE=%s\n' "$payment_mode"
   # Modelvia commercial terms and the per-request cap: non-secret, set only when
   # exported (DEPLOY.md, "Live Modelvia integration values").

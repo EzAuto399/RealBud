@@ -23,7 +23,9 @@
  * force (`customer_terms_required`). A company listed in
  * `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` gets a client-funded policy (RealBud
  * absorbs its AI); any other office gets a resale policy only when resale is
- * explicitly configured, and otherwise nothing (`terms.state: "unconfigured"`).
+ * explicitly configured AND its billing owner accepted RealBud's monthly terms
+ * carrying that AI resale (`terms.state: "acceptance_required"` until then), under
+ * the office's own acceptance reference; otherwise nothing (`"unconfigured"`).
  * An existing policy is never replaced here: changing how an office is billed is
  * a dated migration at Modelvia.
  */
@@ -31,7 +33,9 @@ import { exact, GatewayError, id, object, requireThat } from './contracts.ts';
 import type { HttpTransport } from './composio-org.ts';
 import type { UsageLedger } from './ledger.ts';
 import { DEFAULT_OFFICE_AI_CAP_NANO_AUD, parseOfficeAiAccess, type ModelviaOperatorClient } from './modelvia-keys.ts';
-import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTerms, type CustomerTermsPolicy, type CustomerTermsResult } from './modelvia-keys.ts';
+import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTermsPolicy, type CustomerTermsResult, type OfficeTermsDecision } from './modelvia-keys.ts';
+import { officeResaleAcceptance } from './commercial-terms.ts';
+import type { MarginReport } from './office-ai-billing.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
 import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
 
@@ -42,7 +46,7 @@ export interface OfficeAiAccessResult {
    * composed with a terms policy and AI is on. `unconfigured`: this deployment
    * has not said how the office is billed, so nothing was written and the office
    * cannot be provisioned until it does. `failed` carries a code only. */
-  terms?: CustomerTermsResult | { state: 'unconfigured' } | { state: 'failed'; error: string };
+  terms?: CustomerTermsResult | { state: 'unconfigured' } | { state: 'acceptance_required' } | { state: 'failed'; error: string };
 }
 
 export class OfficeAiAccessService {
@@ -74,7 +78,10 @@ export class OfficeAiAccessService {
       // Commercial terms once the customer exists (Modelvia's order: customer,
       // then policy). Reported, never thrown: the customer and caps above are
       // already applied. An existing policy is left exactly as it is.
-      const terms = access.mode === 'disabled' || !this.options.terms ? undefined : await officeTerms(modelvia, customerId, termsForCompany(this.options.terms, companyId));
+      // A resale office's policy carries its own acceptance reference, recorded
+      // when its billing owner accepted RealBud's monthly terms with AI resale.
+      const terms = access.mode === 'disabled' || !this.options.terms ? undefined : await officeTerms(modelvia, customerId,
+        termsForCompany(this.options.terms, companyId, resale => officeResaleAcceptance(ledger, companyId, resale)?.acceptanceReference));
       try {
         ledger.db.transaction(() => ledger.db.append(companyId, 'office_ai_access_set', null, ledger.now(),
           { subject: actor.subject, companyId, mode: access.mode, active: customer.active, monthlyCapNanoAud: customer.monthlyCapNanoAud, created: customer.created, projects, ...(terms ? { terms } : {}) }));
@@ -86,8 +93,9 @@ export class OfficeAiAccessService {
 
 /** Ensure the office's terms, as a result rather than an exception. The policy
  * id is Modelvia's and carries no customer id, so it may be audited. */
-async function officeTerms(modelvia: ModelviaOperatorClient, customerId: string, terms: CustomerTerms | undefined): Promise<NonNullable<OfficeAiAccessResult['terms']>> {
-  if (!terms) return { state: 'unconfigured' };
+async function officeTerms(modelvia: ModelviaOperatorClient, customerId: string, decision: OfficeTermsDecision): Promise<NonNullable<OfficeAiAccessResult['terms']>> {
+  if (!('terms' in decision)) return decision;
+  const terms = decision.terms;
   if (!hasCustomerTerms(modelvia)) return { state: 'failed', error: 'modelvia_terms_unsupported' };
   try { return await modelvia.ensureCustomerTerms(customerId, terms); }
   catch (error) { return { state: 'failed', error: error instanceof GatewayError ? error.code : 'modelvia_terms_failed' }; }
@@ -98,6 +106,9 @@ async function officeTerms(modelvia: ModelviaOperatorClient, customerId: string,
 export interface OperatorRoutes {
   authenticate(bearer: string): Promise<OperatorPrincipal>;
   officeAiAccess?: Pick<OfficeAiAccessService, 'set'>;
+  /** The owner's per-office margin for one month (`office-ai-billing.ts`). Composed
+   * with care billing; absent answers `billing_unavailable`. */
+  margins?: (period: string) => Promise<MarginReport>;
 }
 
 export const OPERATOR_SECRET_ENV = 'REALBUD_GATEWAY_OPERATOR_SECRET';

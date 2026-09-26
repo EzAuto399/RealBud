@@ -19,8 +19,17 @@ export interface CommercialTerms {
    * are Modelvia's: entries are references only and never gate acceptance,
    * close or collection. */
   rateCards:{version:string;digest:string}[];
+  /** Present only for an office that buys its AI through RealBud (owner decision,
+   * 26 September 2026): the billing owner's acceptance of these terms is the
+   * office's acceptance of AI usage at Modelvia's price plus this markup, billed
+   * as one "AI usage" line on this month's RealBud invoice from the office's
+   * finalized Modelvia customer invoice (`office-ai-billing.ts`). Absent (every
+   * earlier terms row, and client-funded offices): the invoice is care only. An
+   * absent field leaves the terms digest unchanged (`canonical`). */
+  aiUsage?:AiUsageTerms;
   publishedAt:number;
 }
+export interface AiUsageTerms { billing:'resale'; markupBasisPoints:number; termsReference:string }
 export type CommercialTermsDraft=Omit<CommercialTerms,'publishedAt'>;
 export interface CommercialAcceptance { companyId:string;period:string;version:string;digest:string;subject:string;acceptedAt:number }
 export interface CollectionInvoiceBinding {invoiceId:string;companyId:string;period:string;invoiceDigest:string;termsVersion:string;termsDigest:string;acceptanceDigest:string;sellerBasisDigest:string;amountCents:string}
@@ -55,7 +64,7 @@ export class CommercialTermsStore {
   /** Trusted operator publication. No HTTP route: the authenticated customer
    * must separately accept the exact published digest. */
   publish(draft:CommercialTermsDraft) {
-    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards']);
+    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards',...(draft.aiUsage===undefined?[]:['aiUsage'])]);
     object(draft.customer);exact(draft.customer as Record<string,unknown>,draft.customer.abn===undefined?['name','address']:['name','address','abn']);
     object(draft.seller);exact(draft.seller as unknown as Record<string,unknown>,['legalName','product','abn','address','gstRegistered']);
     object(draft.tax);exact(draft.tax as unknown as Record<string,unknown>,['currency','gstInclusive','gstBasisPoints','treatmentRef']);
@@ -76,6 +85,7 @@ export class CommercialTermsStore {
       object(entry);exact(entry as Record<string,unknown>,['version','digest']);
       id(entry.version);requireThat(!versions.has(entry.version) && hex(entry.digest),'commercial_rate_card_invalid',409);versions.add(entry.version);
     }
+    if(draft.aiUsage!==undefined) validAiUsage(draft.aiUsage);
     const terms:CommercialTerms={...draft,publishedAt:this.ledger.now()};const termsDigest=digest(terms);
     this.ledger.db.transaction(()=>{
       requireThat(!this.ledger.db.get('SELECT id FROM invoices WHERE tenant=? AND period=?',draft.companyId,draft.period),'commercial_period_already_closed',409);
@@ -95,6 +105,11 @@ export class CommercialTermsStore {
       const acceptance:CommercialAcceptance={companyId:actor.companyId,period,version,digest:expectedDigest,subject:actor.subject,acceptedAt:this.ledger.now()};
       this.ledger.db.run('INSERT INTO commercial_acceptances(tenant,period,version,digest,body) VALUES(?,?,?,?,?)',actor.companyId,period,version,expectedDigest,canonical(acceptance));
       this.ledger.db.append(actor.companyId,'commercial_terms_accepted',null,this.ledger.now(),acceptance);
+      // The office's own AI resale acceptance, recorded once with the reference
+      // its Modelvia resale policy carries (office-ai-access.ts).
+      const ai=current.terms.aiUsage;
+      if(ai) this.ledger.db.append(actor.companyId,'ai_resale_terms_accepted',null,this.ledger.now(),
+        {period,version,markupBasisPoints:ai.markupBasisPoints,termsReference:ai.termsReference,acceptanceReference:resaleAcceptanceReference(ai.termsReference,acceptance)} satisfies ResaleAcceptance);
       return acceptance;
     });
   }
@@ -139,4 +154,29 @@ export class CommercialTermsStore {
     requireThat(binding.invoiceDigest===digest(invoice) && binding.companyId===invoice.companyId && binding.period===invoice.period && binding.invoiceId===invoice.id && binding.termsDigest===accepted.digest && binding.termsVersion===reference.version && binding.acceptanceDigest===reference.acceptanceDigest && binding.sellerBasisDigest===reference.sellerBasisDigest && binding.amountCents===invoice.totalCents,'commercial_invoice_binding_mismatch',409);
     return binding;
   }
+}
+
+/** One office's recorded acceptance of AI resale (the `ai_resale_terms_accepted`
+ * ledger event). `acceptanceReference` is what its Modelvia resale policy carries. */
+export interface ResaleAcceptance { period:string; version:string; markupBasisPoints:number; termsReference:string; acceptanceReference:string }
+function validAiUsage(value:unknown):asserts value is AiUsageTerms {
+  object(value);exact(value,['billing','markupBasisPoints','termsReference']);
+  requireThat(value.billing==='resale' && Number.isSafeInteger(value.markupBasisPoints) && (value.markupBasisPoints as number)>=0 && (value.markupBasisPoints as number)<=100_000,'ai_usage_terms_invalid',409);
+  id(value.termsReference);
+}
+/** The per-office acceptance reference: RealBud's resale terms reference plus
+ * the digest of this office's acceptance, which names exactly one acceptance
+ * row (and one `commercialTerms.acceptanceDigest` on its invoices). At most 193
+ * printable characters, inside Modelvia's 200. */
+export function resaleAcceptanceReference(termsReference:string,acceptance:CommercialAcceptance):string {
+  id(termsReference);
+  return `${termsReference}@${digest(acceptance).slice(0,32)}`;
+}
+/** The office's latest acceptance of AI resale at exactly this markup and terms
+ * reference, or undefined when its billing owner has accepted none. Read from
+ * the hash-chained event log; nothing here writes. */
+export function officeResaleAcceptance(ledger:UsageLedger,companyId:string,resale:{markupBasisPoints:number;termsReference:string}):ResaleAcceptance|undefined {
+  return ledger.db.all<{body:string}>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' ORDER BY seq DESC",companyId)
+    .map(row=>JSON.parse(row.body) as ResaleAcceptance)
+    .find(entry=>entry.markupBasisPoints===resale.markupBasisPoints && entry.termsReference===resale.termsReference);
 }

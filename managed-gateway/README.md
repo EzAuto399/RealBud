@@ -7,7 +7,7 @@ Off-device service with four jobs:
 3. **Service entitlement.** Whether an office's RealBud service is active, which licence it holds, and its go-live and expiry dates.
 4. **The monthly care fee.** One invoice per office and month from the commercial terms the office's billing owner accepted, collected automatically through Square.
 
-**Modelvia is the only source of AI rates, caps, usage and AI invoices** (owner decision, [24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). This service has no AI rate, usage, limit or model-forwarding route, and a care invoice never carries AI usage. It never loads into the desktop and never changes Hermes.
+**Modelvia is the only source of AI rates, caps, usage and AI invoices** (owner decision, [24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). This service has no AI rate, usage, limit or model-forwarding route. A customer office's monthly invoice carries its finalized Modelvia customer invoices as "AI usage" lines at their exact totals (owner decision, [26 September 2026](../docs/decisions/2026-09-26-modelvia-commercial-terms.md)); the gateway prices no AI itself. It never loads into the desktop and never changes Hermes.
 
 ## Routes
 
