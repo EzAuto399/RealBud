@@ -209,7 +209,9 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         if(options.afterTermsAccepted) { try { await options.afterTermsAccepted(actor.companyId); } catch { /* journalled by the sync */ } }
         reply(res,200,accepted); return;
       }
-      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') { reply(res,200,{invoices:billing().portalInvoices(actor)}); return; }
+      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') {
+        const service=billing(); reply(res,200,{collectionMode:service.collectionMode,invoices:service.portalInvoices(actor)}); return;
+      }
       const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document|ai-usage))?$/.exec(url.pathname);
       if(match) {
         const invoice=billing().invoice(actor,match[1]);

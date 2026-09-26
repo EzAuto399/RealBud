@@ -144,6 +144,19 @@ test('month close: one invoice = care + the finalized Modelvia AI invoice at its
   f.db.verify();
 });
 
+test('accepted resale with zero AI usage closes care only without claiming Modelvia bills it separately', async () => {
+  const { f, billing, close, acceptance } = resaleOffice();
+  const current = billing.commercialTerms!.current(f.owner, '2026-09');
+  assert.equal(current.terms.aiUsage?.billing, 'resale');
+  assert.deepEqual(current.acceptance, acceptance);
+  const closed = await close();
+  assert.equal(closed.ai, 'no_ai_usage');
+  assert.deepEqual(closed.invoice.lines.map(line => line.amountCents), ['12500']);
+  const html = invoiceHtml(closed.invoice);
+  assert.match(html, /No AI usage is charged on this invoice\./);
+  assert.doesNotMatch(html, /billed separately by Modelvia|never appears on this invoice/);
+});
+
 test('not finalized at Modelvia: the close waits by default; --defer-ai issues care only and the next month consolidates it once', async () => {
   const { f, billing, m, close } = resaleOffice();
   m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '50000000000' });
