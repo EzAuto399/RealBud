@@ -37,28 +37,38 @@ def clean_environment(home):
 def resolve(request):
     # Never auto-select or invoke an external CLI/provider on this path. OAuth,
     # opaque pools and cloud SDK routing need their own isolated adapter proof.
-    from hermes_cli.config import require_parseable_user_config, load_config_readonly, get_env_value_prefer_dotenv
+    from hermes_cli.config import require_parseable_user_config, load_config_readonly
     require_parseable_user_config()
     config = load_config_readonly()
     model_config = config.get("model", {})
     model, provider = model_config.get("default"), model_config.get("provider")
     if not isinstance(model, str) or not model or not isinstance(provider, str):
         raise ValueError("routing")
-    supported = {"custom", "openrouter", "openai", "deepseek", "anthropic", "kimi", "moonshot"}
-    if provider not in supported or model.startswith(("moa:", "http:", "https:")):
+    # Managed-only: the profile's named `providers.realbud` entry, keyed by the
+    # RealBud-owned env name, with one of the three admitted (model, effort)
+    # pairs. Flash never carries xhigh; Sonnet refuses tool_choice, which the
+    # custom runtime never sends.
+    admitted = {("deepseek-v4.1-flash", "high"), ("claude-sonnet-5.5", "high"), ("claude-sonnet-5.5", "xhigh")}
+    entry = (config.get("providers") or {}).get("realbud") if isinstance(config.get("providers"), dict) else None
+    key_env = "REALBUD_MODEL_API_KEY"
+    if provider != "custom:realbud" or not isinstance(entry, dict) or entry.get("key_env") != key_env \
+            or entry.get("api_mode") != "chat_completions" or model.startswith(("moa:", "http:", "https:")):
+        raise ValueError("routing")
+    from hermes_constants import resolve_reasoning_config
+    reasoning = resolve_reasoning_config(config, model)
+    if not isinstance(reasoning, dict) or reasoning.get("enabled") is not True or (model, reasoning.get("effort")) not in admitted:
         raise ValueError("routing")
     from hermes_cli.runtime_provider import resolve_runtime_provider
-    key_env = {"custom": "OPENAI_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
-               "deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "kimi": "KIMI_API_KEY", "moonshot": "MOONSHOT_API_KEY"}[provider]
-    profile_key = get_env_value_prefer_dotenv(key_env)
+    # The granted key arrives only in this launch environment, never from a
+    # profile dotenv line that could shadow or outlive the grant.
+    profile_key = os.environ.get(key_env)
     if not isinstance(profile_key, str) or not profile_key:
         raise ValueError("routing")
-    route = resolve_runtime_provider(requested=provider, target_model=model, explicit_api_key=profile_key,
-                                     explicit_base_url=model_config.get("base_url") or None)
+    route = resolve_runtime_provider(requested=provider, target_model=model, explicit_api_key=profile_key)
     if route.get("api_key") != profile_key:
         raise ValueError("routing")
     # Other wire protocols need their own native relay captures before admission.
-    if route.get("provider") != provider or route.get("api_mode") != "chat_completions":
+    if route.get("provider") != "custom" or route.get("api_mode") != "chat_completions":
         raise ValueError("routing")
     if route.get("credential_pool") is not None or route.get("command") or route.get("extra_headers"):
         raise ValueError("routing")
@@ -74,8 +84,9 @@ def resolve(request):
     key = route.get("api_key")
     if not isinstance(key, str) or not key or len(key) > 16384:
         raise ValueError("routing")
-    return {"model": model, "provider": provider, "requested_provider": provider,
-            "base_url": endpoint, "api_key": key, "api_mode": route["api_mode"]}
+    return {"model": model, "provider": "custom", "requested_provider": provider,
+            "base_url": endpoint, "api_key": key, "api_mode": route["api_mode"],
+            "reasoning_config": {"enabled": True, "effort": reasoning["effort"]}}
 
 
 def run_isolated(value):

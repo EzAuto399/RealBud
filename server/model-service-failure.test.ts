@@ -5,13 +5,13 @@ import { workerMissReason } from "./hermes-hands.ts";
 
 describe("managed model failure messages", () => {
   it.each([
-    ["key_expired", /access has expired/],
-    ["key_revoked", /access was withdrawn/],
+    ["key_expired", /AI access has expired; RealBud support needs to renew it/],
+    ["key_revoked", /AI access was withdrawn; RealBud support needs to renew it/],
     ["concurrency_limit", /another model request is still running/i],
     ["client_concurrency_limit", /another model request is still running/i],
     ["customer_concurrency_limit", /another model request is still running/i],
     ["project_concurrency_limit", /another model request is still running/i],
-    ["monthly_cap_exceeded", /including reserved work/],
+    ["monthly_cap_exceeded", /monthly AI limit is reached/],
     ["client_monthly_cap_exceeded", /including reserved work/],
     ["customer_monthly_cap_exceeded", /including reserved work/],
     ["project_monthly_cap_exceeded", /including reserved work/],
@@ -36,6 +36,12 @@ describe("managed model failure messages", () => {
     [409, "request_already_processed", /already handled this exact request/],
     [409, "idempotency_conflict", /did not match the original request/],
     [503, "model_route_unavailable", /no model your office may use/i],
+    [403, "mode_not_allowed", /not included in this office's AI plan/],
+    [400, "unsupported_parameter:reasoning_effort", /refused a setting Bud sent/],
+    [400, "unsupported_parameter:parallel_tool_calls", /refused a setting Bud sent/],
+    [400, "unsupported_tool_choice", /refused a setting Bud sent/],
+    [422, "reasoning_context_expired", /start a new conversation/],
+    [502, "provider_request_failed", /did not complete this request/],
     [403, "model_scope_denied", /no model your office may use/i],
   ])("names Modelvia's live %s %s refusal through Ask and readiness wrappers", (status, code, expected) => {
     // Modelvia's OpenAI-shaped error body (http.ts), as the worker's SDK reports it.
@@ -48,8 +54,20 @@ describe("managed model failure messages", () => {
     expect(ask).not.toMatch(/fictional-secret|Error code|invalid_request_error/i);
   });
 
+  it("never tells a managed office to reconnect or retype a model it cannot set", () => {
+    for (const code of ["key_expired", "key_revoked", "mode_not_allowed", "unsupported_parameter:reasoning_effort", "unsupported_tool_choice",
+      "reasoning_context_expired", "provider_request_failed", "customer_terms_required", "project_request_cap_exceeded", "model_route_unavailable", "monthly_cap_exceeded"]) {
+      const reason = modelServiceFailure(`Error code: 400 - {'error': {'code': '${code}'}}`)!;
+      expect(reason).toBeTruthy();
+      expect(reason).not.toMatch(/reconnect|api key|provider key|model id|Hermes|MCP/i);
+    }
+    expect(productAskFailure("HTTP 401 Unauthorized")).toMatch(/RealBud support needs to check this computer's AI access/);
+    expect(productAskFailure("HTTP 429 Too Many Requests")).toMatch(/AI service is busy right now/);
+    for (const raw of ["HTTP 401 Unauthorized", "HTTP 429 Too Many Requests"]) expect(productAskFailure(raw)).not.toMatch(/reconnect|change the model/i);
+  });
+
   it("does not invent a known cause for HTTP status alone or partial code names", () => {
-    for (const raw of ["HTTP 402", "HTTP 429", "quota", "not_key_expired", "key_expired_extra", "network timeout", "", "HTTP 409", "customer_terms_required_soon", "not_request_already_processed"]) {
+    for (const raw of ["HTTP 402", "HTTP 429", "quota", "not_key_expired", "key_expired_extra", "network timeout", "", "HTTP 409", "customer_terms_required_soon", "not_request_already_processed", "not_mode_not_allowed", "reasoning_context_expired_later"]) {
       expect(modelServiceFailure(raw)).toBeNull();
     }
   });

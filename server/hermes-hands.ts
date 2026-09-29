@@ -7,7 +7,7 @@ import { modelServiceFailure } from "./model-service-failure.ts";
 import { randomUUID } from "node:crypto";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
-import { applyWorkerModelAccessEnv, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 
@@ -115,8 +115,12 @@ async function scopedHermesPing(opts?: {
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(done(false, serviceFailure));
     hardenHermesChildEnv(env);
-    // Strip ambient credentials first, then use the same installation grant as Ask.
-    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+    // Strip ambient credentials first, then use the same installation grant as
+    // Ask — only while the profile names the granted endpoint. The selected
+    // worker is refused outright without usable access; a caller-supplied
+    // (development) CLI just gets no key.
+    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    if (refusal && !opts?.cli) return resolve(done(false, refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? TIMEOUT_MS,
       cwd: opts?.cwd ?? seedVault(),
@@ -265,8 +269,9 @@ async function scopedHermesLedger(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    // Strip ambient credentials first, then use the same installation grant as Ask.
-    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+    // Same guarded grant as Ask; see the ping above.
+    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    if (refusal && !opts?.cli) return resolve(miss(refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? LEDGER_TIMEOUT_MS,
       cwd: opts?.cwd ?? seedVault(),

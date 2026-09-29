@@ -5,12 +5,13 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { isMap, isSeq, parseDocument, YAMLMap } from "yaml";
+import { Document, isMap, isSeq, parseDocument, YAMLMap } from "yaml";
 
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
+import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, managedModelChoiceFor, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
 export { hermesHome } from "./hermes-paths.ts";
 
 export const PACK_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "pack", "property");
@@ -243,9 +244,15 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   const result = policyDocument(existing.trim() ? existing : defaults);
   const policy = policyDocument(defaults);
   const keys = ["approvals", "agent", "toolsets", "security", "delegation", "terminal", "file_read_max_chars", "tool_output", "tool_loop_guardrails"];
+  // The office's managed model choice is the one `agent` key that is not
+  // policy. Carry it through the policy rewrite only while it still pairs with
+  // the saved model as one of the three choices (never Flash with `xhigh`).
+  const savedEffort = result.getIn(["agent", "reasoning_effort"]);
+  const keepEffort = managedModelChoiceFor(result.getIn(["model", "default"]), savedEffort) ? savedEffort : null;
   for (const key of keys) {
     if (policy.has(key)) result.set(key, policy.get(key));
   }
+  if (keepEffort && isMap(result.get("agent"))) result.setIn(["agent", "reasoning_effort"], keepEffort);
   // Own the write gate and a floor of hidden upstream skills; retain memory
   // preferences and any further skills the office has hidden itself.
   for (const key of ["skills", "memory", "auxiliary", "browser"]) {
@@ -406,77 +413,98 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
 
 // ── managed model attach (provisioned installations) ─────────────────────────
 //
-// An installation provisioned by the RealBud service gets its model access from
-// the vendor: a revocable, spend-capped gateway key that reaches the worker only
-// through the launch environment. The profile still has to SELECT that gateway,
-// and the keys below are the ones the pinned runtime actually reads. They were
-// taken from the installed release (`HERMES_RECOMMENDED`, hermes-agent 0.21.3,
-// commit 345cd2b0), not from assumption:
+// RealBud is managed-only: every office reasons through its paired Modelvia
+// grant, with one of the three choices in `shared/managed-model-choices.ts`.
+// The key reaches the worker only through the launch environment; the profile
+// SELECTS the gateway. Every key below was taken from the installed release
+// (`HERMES_RECOMMENDED`, hermes-agent 0.21.3, commit 345cd2b0) and proven by
+// `server/managed-model-wire.native.test.ts` against the real CLI:
 //
-//   model.provider  hermes_cli/auth.py `_config_model_provider()` — rung 2 of
-//                   `resolve_provider("auto")`, above every env-key and OAuth
-//                   rung. `openai-api` is the registry's OpenAI-compatible
-//                   api-key row: ("openai-api", "OpenAI API",
-//                   "https://api.openai.com/v1", ("OPENAI_API_KEY",),
-//                   "OPENAI_BASE_URL").
-//   model.default   hermes_cli/auth_model_picker.py `_save_model_choice()`;
-//                   every runtime reader spells it `model_cfg.get("default")`
-//                   (hermes_cli/runtime_provider.py `_effective_model`).
-//   model.base_url  hermes_cli/auth.py `_config_model_provider()`. The launch
-//                   env `OPENAI_BASE_URL` also overrides the provider default
-//                   (agent/client_lifecycle.py `_resolve_env_credentials`:
-//                   `base_url = env_url or default_base`); writing it here too
-//                   means a CLI path that never sees the launch env still
-//                   resolves the gateway rather than api.openai.com.
-//   model.api_mode  hermes_cli/runtime_provider.py `_configured_api_mode()`.
-//                   Pinned deliberately: the `openai-api` overlay declares
-//                   transport `codex_responses` (hermes_cli/providers.py
-//                   HERMES_OVERLAYS), and `_detect_api_mode_for_url` only
-//                   mandates Responses for official OpenAI hosts — so without
-//                   this key the worker would POST /responses to a gateway that
-//                   publishes an OpenAI-compatible /chat/completions surface.
+//   model.provider  `custom:realbud` names the `providers.realbud` entry
+//                   (hermes_cli/runtime_provider_custom.py
+//                   `_get_named_custom_provider`). It resolves to the `custom`
+//                   runtime, whose provider profile
+//                   (plugins/model-providers/custom) is the one that puts
+//                   top-level `reasoning_effort` on the wire. The earlier
+//                   `openai-api` row never sends it (agent/transports/
+//                   chat_completions.py), so `sonnet-xhigh` was unreachable.
+//   providers.realbud.key_env
+//                   `_resolve_named_custom_runtime` reads the key from the env
+//                   var this names, BEFORE the host-gated fallbacks. Without it
+//                   a bare custom endpoint derives a key name from the host
+//                   (`_host_derived_api_key`: nothing for localhost/IPs, and
+//                   OPENAI_API_KEY only for openai.com), so one fixed name
+//                   works for any granted gateway host.
+//   providers.realbud.api_mode
+//                   `chat_completions`: the gateway publishes an
+//                   OpenAI-compatible /chat/completions surface.
+//   agent.reasoning_effort
+//                   hermes_constants.py `resolve_reasoning_config`, clamped by
+//                   the custom profile to OPENAI_COMPAT_WIRE_EFFORTS (which
+//                   includes `xhigh`). `mergePropertyPolicy` carries it through
+//                   a policy rewrite while it still pairs with the saved model.
 //
-// Nothing here edits Hermes source: this is the same profile-file write the
-// bridge's manual attach already performs, through the same admitted helpers.
-export const MANAGED_MODEL_PROVIDER = "openai-api";
+// Nothing here edits Hermes source: this is a profile-file write through the
+// same admitted helpers the pack install uses.
+export const MANAGED_MODEL_PROVIDER = "custom:realbud";
+/** The `providers:` entry `MANAGED_MODEL_PROVIDER` names. */
+export const MANAGED_MODEL_PROVIDER_ENTRY = "realbud";
 export const MANAGED_MODEL_API_MODE = "chat_completions";
-/** The gateway's own router entry: it picks an eligible model per turn. Proven
- * by live-usage QA settling a receipt against `/v1/chat/completions`. Written
- * only when the profile names no model, so an office choice is never replaced. */
-export const MANAGED_MODEL_DEFAULT = "auto";
-/** The one profile `.env` name that can shadow the launch-env grant: upstream
- * `agent/credential_pool.get_env_prefer_dotenv()` prefers the profile dotenv
- * over `os.environ`, so a stale line there would win over the granted key. */
-export const MANAGED_MODEL_ENV_KEY = "OPENAI_API_KEY";
+/** The one env name the worker reads the granted key from. RealBud-owned, so
+ * no ambient provider variable can stand in for the grant. */
+export const MANAGED_MODEL_KEY_ENV = "REALBUD_MODEL_API_KEY";
+/** Profile `.env` names that could shadow or stand in for the launch-env
+ * grant: upstream prefers the profile dotenv over `os.environ`, so a stale
+ * line would win over the granted key. `OPENAI_API_KEY` is the pre-29-Sep
+ * managed name and older manual attaches. */
+export const MANAGED_MODEL_ENV_KEYS = [MANAGED_MODEL_KEY_ENV, "OPENAI_API_KEY"] as const;
 
 export interface ManagedModelProfile {
   provider: string | null;
   model: string | null;
   baseUrl: string | null;
   apiMode: string | null;
+  keyEnv: string | null;
+  reasoningEffort: string | null;
+  /** The saved (model, effort) pair as one of the three choices, else null. */
+  choice: ManagedModelChoiceId | null;
   /** True while a `.env` line could still shadow the granted key. */
   envKeyPresent: boolean;
 }
 
-function modelField(block: string | null, key: string): string | null {
-  if (!block) return null;
-  const raw = new RegExp(`^[ \\t]+${key}:\\s*(.+?)\\s*$`, "m").exec(block)?.[1];
-  if (!raw) return null;
-  const unquoted = /^(['"])([\s\S]*)\1$/.exec(raw);
-  const value = (unquoted ? unquoted[2] : raw).trim();
-  return value ? value : null;
+function scalarText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function envKeyPattern(): RegExp {
+  return new RegExp(`^(?:export\\s+)?(?:${MANAGED_MODEL_ENV_KEYS.join("|")})\\s*=`);
 }
 
 /** What the profile currently selects, for readiness. Never returns a secret. */
 export function managedModelProfile(root?: string): ManagedModelProfile {
   const dir = propertyProfileDir(root);
-  const block = yamlBlock(readIf(join(dir, "config.yaml")).replace(/\r\n/g, "\n"), "model");
+  let parsed: Record<string, unknown> = {};
+  // The same strict reader the writer uses: a damaged or duplicate-key config
+  // reads as nothing selected, never as a choice the writer would refuse.
+  try {
+    const raw = readIf(join(dir, "config.yaml"));
+    const value = raw.trim() ? policyDocument(raw).toJS({ maxAliasCount: 50 }) : null;
+    if (value && typeof value === "object" && !Array.isArray(value)) parsed = value as Record<string, unknown>;
+  } catch { /* unreadable config reads as nothing selected */ }
+  const section = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const model = section(parsed.model), agent = section(parsed.agent);
+  const entry = section(section(parsed.providers)[MANAGED_MODEL_PROVIDER_ENTRY]);
+  const modelId = scalarText(model.default), effort = scalarText(agent.reasoning_effort);
   return {
-    provider: modelField(block, "provider"),
-    model: modelField(block, "default"),
-    baseUrl: modelField(block, "base_url"),
-    apiMode: modelField(block, "api_mode"),
-    envKeyPresent: new RegExp(`^${MANAGED_MODEL_ENV_KEY}=.+`, "m").test(readIf(join(dir, ".env"))),
+    provider: scalarText(model.provider),
+    model: modelId,
+    baseUrl: scalarText(entry.base_url),
+    apiMode: scalarText(entry.api_mode),
+    keyEnv: scalarText(entry.key_env),
+    reasoningEffort: effort,
+    choice: managedModelChoiceFor(modelId, effort),
+    envKeyPresent: readIf(join(dir, ".env")).replace(/\r\n/g, "\n").split("\n").some(line => envKeyPattern().test(line.trim())),
   };
 }
 
@@ -484,60 +512,77 @@ export interface ManagedModelApply {
   provider: string;
   apiMode: string;
   baseUrl: string;
-  model: string | null;
+  choice: ManagedModelChoiceId;
+  model: string;
+  reasoningEffort: ManagedReasoningEffort;
+  keyEnv: string;
   /** Receipt fact: a stale `.env` key existed and was removed by this apply. */
   envKeyRemoved: boolean;
   appliedAt: string;
 }
 
+/** The profile config with the managed selection written in. Other settings,
+ * including comments, are kept; the `model` and `providers` sections are
+ * owned whole, so no leftover provider can be selected beside the grant. */
+export function managedModelConfig(raw: string, baseUrl: string, choiceId: ManagedModelChoiceId): string {
+  const choice = managedModelChoice(choiceId);
+  const doc: Document = raw.trim() ? policyDocument(raw) : new Document({}, { version: "1.1" });
+  if (doc.has("agent") && !isMap(doc.get("agent"))) throw new Error("Bud’s profile has unreadable or duplicate settings. The existing file has been kept.");
+  doc.set("model", doc.createNode({ default: choice.model, provider: MANAGED_MODEL_PROVIDER }));
+  doc.set("providers", doc.createNode({
+    [MANAGED_MODEL_PROVIDER_ENTRY]: { base_url: baseUrl, key_env: MANAGED_MODEL_KEY_ENV, api_mode: MANAGED_MODEL_API_MODE },
+  }));
+  if (!doc.has("agent")) doc.set("agent", new YAMLMap(doc.schema));
+  doc.setIn(["agent", "reasoning_effort"], choice.effort);
+  return doc.toString();
+}
+
 /**
- * Point the worker profile at the provisioned gateway.
+ * Point the worker profile at the provisioned gateway with one of the three
+ * choices.
  *
- * The `.env` key is dropped FIRST, so there is never a moment where the profile
- * names the gateway while a stale provider key still outranks the granted one.
- * The granted key itself is never written here — it exists only in the private
- * vault and in the environment of one worker launch.
+ * The new config is built and validated first; then the `.env` keys are
+ * dropped before the config is written, so there is never a moment where the
+ * profile names the gateway while a stale provider key still outranks the
+ * granted one. The granted key itself is never written here — it exists only
+ * in the private vault and in the environment of one worker launch.
  *
- * An existing `model.default` is preserved: it is the office's own last choice.
- * Only when the profile names none does this write `auto`, the gateway's own
- * router entry, so a fresh computer is ready without a second setup step.
+ * Without an explicit choice the office's saved choice is kept. A profile that
+ * holds no valid choice — including the earlier `auto` router entry or a
+ * retired model id — moves to `flash-high`.
  */
-export function applyManagedModelProfile(baseUrl: string, opts?: { root?: string; model?: string }): ManagedModelApply {
+export function applyManagedModelProfile(baseUrl: string, opts?: { root?: string; choice?: ManagedModelChoiceId }): ManagedModelApply {
   const url = String(baseUrl ?? "").trim();
   if (!/^https?:\/\/[^\s"']+$/.test(url) || url.length > 2_048) {
     throw new Error("The model access for this computer needs recovery. Contact service support.");
   }
   const dir = propertyProfileDir(opts?.root);
   ensureProfileDirectory(dir);
-  const envKeyRemoved = removeManagedEnvKey(dir);
-
   const configPath = join(dir, "config.yaml");
   const existing = readProfileFile(configPath);
   const raw = existing?.toString("utf8") ?? "";
-  const model = opts?.model?.trim()
-    || modelField(yamlBlock(raw.replace(/\r\n/g, "\n"), "model"), "default")
-    || MANAGED_MODEL_DEFAULT;
-  const block =
-    "model:\n" +
-    `  default: ${model}\n` +
-    `  provider: ${MANAGED_MODEL_PROVIDER}\n` +
-    `  base_url: ${JSON.stringify(url)}\n` +
-    `  api_mode: ${MANAGED_MODEL_API_MODE}\n`;
-  writeProfileFile(configPath, withYamlBlock(raw, "model", block), true, existing);
+  const choiceId = opts?.choice ?? managedModelProfile(opts?.root).choice ?? DEFAULT_MANAGED_MODEL_CHOICE;
+  const choice = managedModelChoice(choiceId);
+  // Build and validate first: a damaged config is refused before anything,
+  // including the `.env`, changes.
+  const next = managedModelConfig(raw, url, choiceId);
+  const envKeyRemoved = removeManagedEnvKey(dir);
+  writeProfileFile(configPath, next, true, existing);
   return {
-    provider: MANAGED_MODEL_PROVIDER, model, baseUrl: url, apiMode: MANAGED_MODEL_API_MODE,
+    provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE, baseUrl: url,
+    choice: choiceId, model: choice.model, reasoningEffort: choice.effort, keyEnv: MANAGED_MODEL_KEY_ENV,
     envKeyRemoved, appliedAt: new Date().toISOString(),
   };
 }
 
-/** Drop any `OPENAI_API_KEY` line from the profile `.env`, keeping every other
- * line. Returns whether one was there to remove. */
+/** Drop every managed-key line (`MANAGED_MODEL_ENV_KEYS`) from the profile
+ * `.env`, keeping every other line. Returns whether one was there to remove. */
 export function removeManagedEnvKey(profileDir: string): boolean {
   const envPath = join(profileDir, ".env");
   const before = readProfileFile(envPath);
   if (!before) return false;
   const body = before.toString("utf8");
-  const kept = body.replace(/\r\n/g, "\n").split("\n").filter(line => !new RegExp(`^${MANAGED_MODEL_ENV_KEY}=`).test(line));
+  const kept = body.replace(/\r\n/g, "\n").split("\n").filter(line => !envKeyPattern().test(line.trim()));
   const next = kept.join("\n").replace(/\n+$/, "");
   const rewritten = next ? `${next}\n` : "";
   if (rewritten === body) return false;

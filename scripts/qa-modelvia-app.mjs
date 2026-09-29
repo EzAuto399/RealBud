@@ -27,7 +27,8 @@ assert(!existsSync(join(resolve(dirname(cli), '../..'), '.env')), 'Runtime has a
 const mvRepo = process.env.REALBUD_QA_MODELVIA_REPO ?? '/Users/yoda/projects/modelvia';
 const mvRevision = process.env.REALBUD_QA_MODELVIA_REVISION ?? 'd5a355dab049aca8e51d9290d2c6b618bae3e720';
 const company = 'fictional-app-company', customer = 'fictional-app-customer', client = 'fictional-app-client';
-const model = 'deepseek-chat', rateVersion = 'fictional-app-rate-1', cap = '1000000000';
+// The managed default choice (`flash-high`); the app sends nothing else.
+const model = 'deepseek-v4.1-flash', rateVersion = 'fictional-app-rate-1', cap = '1000000000';
 const portalSecret = 'fictional-realbud-app-portal-secret-20260923';
 const mvSecret = 'fictional-modelvia-app-operator-secret-20260923';
 const password = 'Fictional-QA-administrator-20260923!';
@@ -217,8 +218,8 @@ try {
   });
   await step('trusted-entitlement-and-real-worker-readiness', async () => {
     entitlement(websiteState.id); assert.equal((await api('/api/service/status')).body.state, 'active');
-    // The existing model route applies the selection and invokes the real ping.
-    const connected = await api('/api/hermes/model', 'POST', { model, apiKey: '' }, true);
+    // The managed-only model route takes exactly one of the three choices and invokes the real ping.
+    const connected = await api('/api/hermes/model', 'POST', { choice: 'flash-high' }, true);
     assert.equal(connected.status, 200, `model selection ${connected.status}`); assert.equal(connected.body.ping?.ok, true, redact(connected.body.ping?.detail ?? connected.body.error ?? 'missing ping'));
     const tested = await api('/api/hermes/test', 'POST', {}, true); assert.equal(tested.status, 200); assert.equal(tested.body.ok, true, redact(tested.body.detail));
     const calls = readFileSync(join(scratch, 'upstream.jsonl'), 'utf8').trim().split('\n').map(x => JSON.parse(x));

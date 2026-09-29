@@ -117,7 +117,10 @@ describe("managed service through the real HTTP boundary", () => {
     expect(config.body.composio.configured).toBe(true);
     expect(config.body.serviceAdmin).toMatchObject({ managed: true, authenticated: false });
     expect(JSON.stringify(config.body)).not.toContain("ak_fictional");
-    expect((await request(a, "/api/hermes/oauth/status?sessionId=fixture")).body.code).toBe("service_admin_required");
+    // Provider sign-in was removed: gone for staff and administrators alike.
+    const oauth = await request(a, "/api/hermes/oauth/status?sessionId=fixture");
+    expect(oauth.status).toBe(410);
+    expect(oauth.body.error).toMatch(/managed AI access/);
   });
 
   it("blocks key replacement, removal, provider switching and technical setup without changing stored data", async () => {

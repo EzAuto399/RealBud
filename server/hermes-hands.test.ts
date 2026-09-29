@@ -1,5 +1,5 @@
 import { withWorkerProfile } from "./hermes-profile.ts";
-import { applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -478,8 +478,9 @@ describe("one-shot managed model access", () => {
       'import { writeFileSync } from "node:fs";',
       'if (process.argv.includes("--version")) { process.stdout.write("Hermes Agent v0.20.3 (2026.8.16.2)\\n"); process.exit(0); }',
       `writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({`,
-      `  keyMatchesGrant: process.env.OPENAI_API_KEY === ${JSON.stringify(grantKey)},`,
-      '  keyPresent: Boolean(process.env.OPENAI_API_KEY),',
+      `  keyMatchesGrant: process.env.REALBUD_MODEL_API_KEY === ${JSON.stringify(grantKey)},`,
+      '  keyPresent: Boolean(process.env.REALBUD_MODEL_API_KEY),',
+      '  ambientKeyPresent: Boolean(process.env.OPENAI_API_KEY),',
       '  baseUrl: process.env.OPENAI_BASE_URL ?? null,',
       '  unrelatedCredentialPresent: Boolean(process.env.OPENROUTER_API_KEY || process.env.COMPOSIO_KEY),',
       '  args: process.argv.slice(2),',
@@ -496,27 +497,37 @@ describe("one-shot managed model access", () => {
   it.each(["ping", "ledger"] as const)("gives the %s child only its managed key after stripping ambient credentials", async kind => {
     const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
     vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
+    vi.stubEnv("OPENAI_BASE_URL", "https://ambient.invalid/v1");
+    vi.stubEnv("REALBUD_MODEL_API_KEY", "fictional-ambient-grant");
     vi.stubEnv("OPENROUTER_API_KEY", "fictional-unrelated-key");
     vi.stubEnv("COMPOSIO_KEY", "fictional-unrelated-connector");
+    // The profile must name the granted endpoint, or the key is never placed.
+    applyManagedModelProfile(baseUrl, { root: test.dir, choice: "flash-high" });
     setWorkerModelGrant({ state: "active", baseUrl, keyId: "fictional-key-id", spendCapLabel: "fictional-cap" });
-    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: grantKey });
     const result = await run(kind, test);
     const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
-    expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent: true, baseUrl, unrelatedCredentialPresent: false });
+    // The endpoint lives in the profile; no ambient endpoint or key survives.
+    expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent: true, ambientKeyPresent: false, baseUrl: null, unrelatedCredentialPresent: false });
     expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
     expect(JSON.stringify(result)).not.toContain(grantKey);
     expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
     expect(kind === "ping" ? "ok" in result && result.ok : "rows" in result && result.rows).toBeTruthy();
+    // A tampered profile endpoint never receives the key.
+    const config = join(test.dir, "profiles", "property", "config.yaml");
+    writeFileSync(config, readFileSync(config, "utf8").replace(baseUrl, "https://attacker.invalid/v1"));
+    await run(kind, test);
+    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false });
   });
 
   it.each(["ping", "ledger"] as const)("does not retain the managed key for a %s child after disconnect", async kind => {
     const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
     vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
-    vi.stubEnv("OPENAI_BASE_URL", "");
-    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    vi.stubEnv("REALBUD_MODEL_API_KEY", "fictional-ambient-grant");
+    setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: grantKey });
     setWorkerModelAccessSnapshot({});
     await run(kind, test);
-    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false });
+    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false, ambientKeyPresent: false });
     expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
   });
 

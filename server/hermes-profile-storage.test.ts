@@ -3,8 +3,7 @@ import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, rea
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles } from './hermes-profile-storage.ts';
-import { applyPropertyPack, ensurePropertyPack, migratePropertyProfileFromLegacyHermes, propertyProfileDir } from './hermes-pack.ts';
-import { attachModel } from './hermes-bridge.ts';
+import { applyManagedModelProfile, applyPropertyPack, ensurePropertyPack, migratePropertyProfileFromLegacyHermes, propertyProfileDir } from './hermes-pack.ts';
 
 type Operation = { path: string; kind: 'file' | 'directory'; action: 'restrict' | 'verify' };
 // `privacy` keeps recording one entry per admitted path, batched or not, so the
@@ -384,12 +383,12 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     });
   });
 
-  it('rejected config privacy prevents a credential from being stored', () => {
+  it('rejected config privacy prevents a managed model choice from being written', () => {
     const root = fixture(); applyPropertyPack(root);
     const profile = propertyProfileDir(root), env = join(profile, '.env'), config = join(profile, 'config.yaml');
     const before = readFileSync(config);
     privacy.mockImplementation((path) => { if (path === config) throw refusal(); });
-    expect(() => attachModel({ providerId: 'xai', apiKey: 'fictional-new-key', model: 'grok-4' }, { root })).toThrow('Private storage refused.');
+    expect(() => applyManagedModelProfile('https://gateway.fictional.test/v1', { root, choice: 'sonnet-high' })).toThrow('Private storage refused.');
     expect(existsSync(env)).toBe(false); expect(readFileSync(config)).toEqual(before);
   });
 

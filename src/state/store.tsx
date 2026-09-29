@@ -1,3 +1,4 @@
+import type { ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
 import { budStatusObserverRevision, hasBudStatusObservers } from "@/lib/bud-status-monitor";
 import { ensureSession } from "@/lib/local-session";
@@ -265,7 +266,7 @@ export interface HermesStatus {
   ready: boolean;
   lastTest?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
   lastPing?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
-  model?: { attached: boolean; provider: string | null; model: string | null };
+  model?: { attached: boolean; provider: string | null; model: string | null; choice?: ManagedModelChoiceId | null };
   /** How this office's model access is held. A provisioned installation never
    * collects a provider key; a withdrawn grant is a hold, not a missing model. */
   modelAccess?: { managed: boolean; withdrawn: boolean; attached: boolean; detail: string };

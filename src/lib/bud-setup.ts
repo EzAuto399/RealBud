@@ -1,4 +1,5 @@
 import type { HermesStatus } from "@/state/store";
+import { isManagedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
 
 export type BudSetupStage = "checking" | "install" | "safeguards" | "model" | "verify" | "ready";
 export type BudSetupStep = Exclude<BudSetupStage, "checking" | "ready">;
@@ -134,7 +135,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   if (stage === "model") {
     return status.modelAccess?.managed
       ? unavailable("Model choice needed", status.modelAccess.detail, "Choose a model", "attach-model")
-      : unavailable("Model needed", "Connect a model for Bud. Your request stays here while you finish setup.", "Connect a model", "attach-model");
+      : unavailable("Pairing needed", "Pair this computer from realbud.app to give Bud its AI access. Your request stays here while you finish setup.", "Pair this computer", "attach-model");
   }
   if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
   if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");
@@ -184,10 +185,39 @@ export function parseBudStatus(value: unknown): HermesStatus {
     || ![value.pack.installed, value.pack.approvalsManual, value.pack.workroomReady].every(flag => typeof flag === "boolean")
     || (value.bootstrapPending !== undefined && typeof value.bootstrapPending !== "boolean")
     || (value.restartRequired !== undefined && typeof value.restartRequired !== "boolean")
-    || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)))
+    || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)
+      || (value.model.choice !== undefined && value.model.choice !== null && !isManagedModelChoice(value.model.choice))))
     || (value.modelAccess !== undefined && (!record(value.modelAccess) || typeof value.modelAccess.managed !== "boolean" || typeof value.modelAccess.withdrawn !== "boolean" || typeof value.modelAccess.attached !== "boolean" || typeof value.modelAccess.detail !== "string"))
     || !receipt(value.lastPing) || !receipt(value.lastTest)) {
     throw new Error("Bud's status could not be confirmed. Try checking again.");
   }
   return value as unknown as HermesStatus;
+}
+
+/** `GET/POST /api/hermes/model` reply. Managed-only: a choice is one of the
+ * three ids or null, and the server never returns a key. */
+export interface ManagedModelStatus {
+  provider: string | null;
+  model: string | null;
+  choice: ManagedModelChoiceId | null;
+  keyPresent: boolean;
+  keyHint: string | null;
+  managed: boolean;
+  managedWithdrawn?: boolean;
+}
+
+export function parseManagedModelStatus(value: unknown): ManagedModelStatus {
+  const row = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const nullableString = (input: unknown) => input === null || typeof input === "string";
+  if (!row || !nullableString(row.provider) || !nullableString(row.model) || !nullableString(row.keyHint)
+    || !(row.choice === null || isManagedModelChoice(row.choice))
+    || typeof row.keyPresent !== "boolean" || typeof row.managed !== "boolean"
+    || (row.managedWithdrawn !== undefined && typeof row.managedWithdrawn !== "boolean")) {
+    throw new Error("Bud's model choice could not be confirmed. Try checking again.");
+  }
+  return {
+    provider: row.provider as string | null, model: row.model as string | null, choice: row.choice as ManagedModelChoiceId | null,
+    keyPresent: row.keyPresent, keyHint: row.keyHint as string | null, managed: row.managed,
+    ...(row.managedWithdrawn !== undefined ? { managedWithdrawn: row.managedWithdrawn as boolean } : {}),
+  };
 }

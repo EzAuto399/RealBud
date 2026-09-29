@@ -166,10 +166,18 @@ describe("model access readiness", () => {
       cpSync(home, dir, { recursive: true });
       const profile = join(dir, "profiles", HERMES_PIN.profile);
       writeFileSync(join(profile, "config.yaml"),
-        'approvals:\n  mode: manual\nmodel:\n  default: gpt-5.6-sol\n  provider: openai-api\n  base_url: "https://api.modelvia.dev/v1"\n  api_mode: chat_completions\n');
+        'approvals:\n  mode: manual\nmodel:\n  default: claude-sonnet-5.5\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: https://api.modelvia.dev/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\nagent:\n  reasoning_effort: xhigh\n');
       setWorkerModelGrant({ state: "active", baseUrl: "https://api.modelvia.dev/v1", keyId: "rbkkey-01", spendCapLabel: "AU$40 per month" });
       const access = modelAccessStatus(dir);
       expect(access).toMatchObject({ managed: true, withdrawn: false, attached: true });
+      // The pre-29-Sep openai-api profile cannot put reasoning_effort on the wire: not attached.
+      writeFileSync(join(profile, "config.yaml"),
+        'approvals:\n  mode: manual\nmodel:\n  default: auto\n  provider: openai-api\n  base_url: "https://api.modelvia.dev/v1"\n  api_mode: chat_completions\n');
+      expect(modelAccessStatus(dir).attached).toBe(false);
+      // Flash with extra-high reasoning is not one of the choices.
+      writeFileSync(join(profile, "config.yaml"),
+        'model:\n  default: deepseek-v4.1-flash\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: https://api.modelvia.dev/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\nagent:\n  reasoning_effort: xhigh\n');
+      expect(modelAccessStatus(dir)).toMatchObject({ managed: true, attached: false });
       expect(access.detail).toContain("managed by RealBud service (Modelvia)");
       expect(access.detail).not.toMatch(/OpenAI/i);
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -181,8 +189,8 @@ describe("model access readiness", () => {
       cpSync(home, dir, { recursive: true });
       const profile = join(dir, "profiles", HERMES_PIN.profile);
       writeFileSync(join(profile, "config.yaml"),
-        'model:\n  default: gpt-5.6-sol\n  provider: openai-api\n  base_url: "https://api.modelvia.dev/v1"\n  api_mode: chat_completions\n');
-      writeFileSync(join(profile, ".env"), "OPENAI_API_KEY=sk-stale\n");
+        'model:\n  default: deepseek-v4.1-flash\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: https://api.modelvia.dev/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\nagent:\n  reasoning_effort: high\n');
+      writeFileSync(join(profile, ".env"), "REALBUD_MODEL_API_KEY=sk-stale\n");
       setWorkerModelGrant({ state: "active", baseUrl: "https://api.modelvia.dev/v1", keyId: "rbkkey-01", spendCapLabel: "cap" });
       expect(modelAccessStatus(dir).attached).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); }

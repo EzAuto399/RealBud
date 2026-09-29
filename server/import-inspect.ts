@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
+import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -153,6 +154,12 @@ export async function inspectLedgerColumns(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
+    // Strip first, then place only the grant RealBud resolved for this
+    // installation, and only while the checked profile names the granted
+    // endpoint. The selected worker is refused without usable access; a
+    // caller-supplied (development) CLI just gets no key.
+    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    if (refusal && !opts?.cli) return resolve(miss(refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? INSPECT_TIMEOUT_MS,
       cwd: seedVault(),

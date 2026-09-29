@@ -514,18 +514,20 @@ describe("harness HTTP API", () => {
     expect(body).toHaveProperty("lastPing");
     expect(body.ready).toBe(false);
     expect(body.model).toEqual({
-      attached: expect.any(Boolean),
+      attached: false,
       provider: body.model.provider ?? null,
       model: body.model.model ?? null,
+      choice: null,
     });
     expect(body.model).not.toHaveProperty("keyHint");
     expect(JSON.stringify(body.model)).not.toMatch(/keyHint/);
 
-    const providers = await api("GET", "/api/hermes/providers");
-    expect(providers.status).toBe(200);
-    const ids = providers.body.providers.map((p: { id: string }) => p.id);
-    expect(ids).toEqual(expect.arrayContaining(["anthropic", "deepseek", "moonshotai", "google", "xai"]));
-    expect(ids).not.toContain("kimi-for-coding");
+    // Bring-your-own-key catalogues and provider sign-in are gone.
+    for (const [method, path] of [["GET", "/api/hermes/providers"], ["GET", "/api/hermes/models?provider=xai"], ["POST", "/api/hermes/oauth/start"], ["GET", "/api/hermes/oauth/status?sessionId=fixture"], ["POST", "/api/hermes/oauth/cancel"]] as const) {
+      const gone = await api(method, path, method === "POST" ? { providerId: "openai-codex" } : undefined);
+      expect(gone.status).toBe(410);
+      expect(gone.body.error).toMatch(/managed AI access/);
+    }
   });
 
   it("applies the property pack on demand and rejects non-JSON calls", async () => {
@@ -575,31 +577,33 @@ describe("harness HTTP API", () => {
     expect(restored.body.pack.installed).toBe(true);
   });
 
-  it("persists the model connection hands check across a status reload", async () => {
+  it("accepts only a managed model choice, and only on a paired computer", async () => {
     const noJson = await api("POST", "/api/hermes/model");
     expect(noJson.status).toBe(415);
 
-    const connected = await api("POST", "/api/hermes/model", {
-      providerId: "deepseek",
-      apiKey: "test-only-key",
-      model: "deepseek-test",
-    });
-    expect(connected.status).toBe(200);
-    expect(connected.body.model).toMatchObject({ provider: "deepseek", model: "deepseek-test", keyPresent: true });
-    expect(connected.body.model.keyHint).not.toContain("test-only-key");
-    expect(connected.body.ping).toMatchObject({ ok: false, detail: "tests do not ping the live worker" });
+    for (const body of [
+      { providerId: "deepseek", apiKey: "test-only-key", model: "deepseek-test" },
+      { choice: "flash-high", apiKey: "test-only-key" },
+      { choice: "flash-xhigh" },
+      { model: "claude-sonnet-5.5" },
+    ]) {
+      const refused = await api("POST", "/api/hermes/model", body);
+      expect(refused.status).toBe(400);
+      expect(JSON.stringify(refused.body)).not.toContain("test-only-key");
+    }
+
+    // This test server holds no service grant: a valid choice still has no access.
+    const unpaired = await api("POST", "/api/hermes/model", { choice: "sonnet-xhigh" });
+    expect(unpaired.status).toBe(409);
+    expect(unpaired.body.error).toMatch(/Pair it from realbud\.app/);
 
     const reloaded = await api("GET", "/api/hermes");
     expect(reloaded.status).toBe(200);
-    expect(reloaded.body.model).toEqual({ attached: true, provider: "deepseek", model: "deepseek-test" });
+    expect(reloaded.body.model).toMatchObject({ attached: false, choice: null });
     expect(reloaded.body.model).not.toHaveProperty("keyHint");
-    expect(reloaded.body.lastPing).toMatchObject({
-      ok: false,
-      detail: "tests do not ping the live worker",
-      kind: "ping",
-      at: expect.any(Number),
-    });
     expect(reloaded.body.ready).toBe(false);
+    const model = await api("GET", "/api/hermes/model");
+    expect(model.body.model).toMatchObject({ managed: false, keyPresent: false, choice: null });
   });
 
   it("adds, patches, and removes a property with its facts", async () => {

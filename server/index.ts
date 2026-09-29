@@ -178,16 +178,15 @@ import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
 import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { attachModel, installInFlight, installStatus, listModelOptions, listModels, modelStatus, PROVIDER_OPTIONS, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
-import { cancelOAuth, oauthStatus, startOAuth } from "./hermes-oauth.ts";
-import { workerLoginMethods, WORKER_OAUTH_LOGINS } from "../shared/worker-providers.ts";
+import { installInFlight, installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
+import { productSelectionApproved, rebindProductBud } from "./product-bud-selection.ts";
 import { repairExistingProfile, uninstallWorker } from "./hermes-lifecycle.ts";
 import { checkUpstreamRelease, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
 import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
 import { managedService } from "./managed-service.ts";
-import { isPrivilegedServiceMutation, isPrivilegedServiceRead } from "./service-admin.ts";
+import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
@@ -408,6 +407,14 @@ function isProductBud(id: string): boolean {
 function productHermesSelection(model = "default") {
   const instance = registry.instances().find((candidate) => candidate.driverKind === "hermesAgent");
   return instance ? { instanceId: instance.instanceId, model } : undefined;
+}
+
+/** After any managed-profile write, point the product Bud at the profile's
+ * current model so the managed turn gate keeps admitting its turns. */
+function syncProductBud(): void {
+  if (!PRODUCT_MODE) return;
+  const bud = rebindProductBud(store, productHermesSelection(modelStatus().model || "default"));
+  if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
 }
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
@@ -1926,7 +1933,7 @@ async function startSeatTurn(
   const instanceId = instance.instanceId;
   if (serviceAdmin.status().managed) {
     const approved = productHermesSelection(modelStatus().model || "default");
-    if (!approved || bot.modelSelection.instanceId !== approved.instanceId || (bot.modelSelection.model !== approved.model && bot.modelSelection.model !== "default")) {
+    if (!productSelectionApproved(bot.modelSelection, approved)) {
       throw Object.assign(new Error("The stored model selection is not approved for this managed service. Ask service administration to reconnect Bud."), { status: 403 });
     }
   }
@@ -2808,6 +2815,15 @@ const refreshWorkerModelAccess = async () => {
     if (revision === workerModelAccessRevision) setWorkerModelAccessSnapshot({});
     oplog("boot", `model access needs recovery: ${error instanceof Error ? error.message : String(error)}`);
   }
+  // An upgraded installation's profile may still name the pre-29-Sep provider
+  // or the old `auto` model; bring it onto the managed choice. A failed write
+  // leaves readiness reporting "Repair Bud", never a cleared grant.
+  try {
+    if (revision === workerModelAccessRevision && await reconcileManagedModelProfile()) {
+      syncProductBud();
+      oplog("boot", "worker profile moved onto the managed model choice");
+    }
+  } catch { oplog("boot", "worker profile could not take up the managed model choice; Repair Bud finishes it"); }
 };
 const officeLink = createOfficeLink({
   directory: DATA_DIR,
@@ -2872,8 +2888,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     // Privileged service settings use an independent per-renderer identity.
     const adminState = serviceAdmin.status(req);
-    if (adminState.managed && isPrivilegedServiceRead(path, method) && !adminState.authenticated) {
-      return json(res, 403, { error: "Sign in to service administration to view provider setup.", code: "service_admin_required" });
+    // Bring-your-own-key provider lists, model catalogues and provider sign-in
+    // were removed with the managed-only model decision (29 Sep 2026). Gone for
+    // everyone, before any administrator gate: there is nothing left to protect.
+    if (path === "/api/hermes/providers" || path === "/api/hermes/models" || path === "/api/hermes/oauth" || path.startsWith("/api/hermes/oauth/")) {
+      return json(res, 410, { error: "RealBud uses this office's managed AI access. Choose one of the three RealBud models in Bud setup." });
     }
     if (adminState.managed && !["GET", "HEAD", "OPTIONS"].includes(method)) {
       const bodyDependent = path === "/api/config" || path.startsWith("/api/bots/") || path.startsWith("/api/channels/");
@@ -4277,9 +4296,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         model: {
-          attached: Boolean(current.model && current.keyPresent),
+          attached: Boolean(current.managed && current.choice),
           provider: current.provider,
           model: current.model,
+          choice: current.choice,
         },
       });
     }
@@ -4320,20 +4340,13 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const body = await readBody(req);
-      // zero-terminal: write the profile config/.env directly, never a CLI
+      // Managed-only: exactly `{ choice }`, written into the profile directly
+      // (never a CLI). A provider, key or model name is refused with 400.
       try {
-        const status = attachModel({
-          providerId: String(body.providerId ?? ""),
-          apiKey: String(body.apiKey ?? ""),
-          model: String(body.model ?? ""),
-          baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
-        });
-        const bud = PRODUCT_MODE
-          ? store.adoptBud(productHermesSelection(status.model || "default"))
-          : null;
-        if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
+        const status = await setManagedModelChoice(body);
+        syncProductBud();
         const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
-        // Connecting a model performs the same authoritative hands check as
+        // Choosing a model performs the same authoritative hands check as
         // the standalone action. Persist it so a reload cannot forget a
         // successful check or falsely present a failed one as ready.
         writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
@@ -4343,58 +4356,6 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const status = (e as { status?: number }).status ?? 500;
         return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
-    }
-    if (path === "/api/hermes/providers" && method === "GET") {
-      return json(res, 200, {
-        providers: PROVIDER_OPTIONS.map((provider) => ({
-          ...provider,
-          loginMethods: workerLoginMethods(provider.id),
-          oauth: WORKER_OAUTH_LOGINS[provider.id]
-            ? {
-                providerId: WORKER_OAUTH_LOGINS[provider.id].oauthId,
-                signInLabel: WORKER_OAUTH_LOGINS[provider.id].signInLabel,
-              }
-            : null,
-        })),
-      });
-    }
-    if (path === "/api/hermes/oauth/start" && method === "POST") {
-      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      const body = await readBody(req);
-      try {
-        const session = startOAuth(String(body.providerId ?? ""));
-        return json(res, 200, { ok: true, oauth: session });
-      } catch (e) {
-        const status = (e as { status?: number }).status ?? 500;
-        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    if (path === "/api/hermes/oauth/status" && method === "GET") {
-      const sessionId = url.searchParams.get("sessionId") ?? "";
-      try {
-        return json(res, 200, { oauth: oauthStatus(sessionId) });
-      } catch (e) {
-        const status = (e as { status?: number }).status ?? 500;
-        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    if (path === "/api/hermes/oauth/cancel" && method === "POST") {
-      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      const body = await readBody(req);
-      try {
-        return json(res, 200, { ok: true, oauth: cancelOAuth(String(body.sessionId ?? "")) });
-      } catch (e) {
-        const status = (e as { status?: number }).status ?? 500;
-        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    if (path === "/api/hermes/models" && method === "GET") {
-      const provider = url.searchParams.get("provider") ?? "";
-      return json(res, 200, { models: listModels(provider), options: listModelOptions(provider) });
     }
     if (path === "/api/hermes/model" && method === "GET") {
       return json(res, 200, { model: modelStatus() });
@@ -4406,6 +4367,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       await readBody(req);
       try {
         applyPropertyPack();
+        await reconcileManagedModelProfile();
+        syncProductBud();
       } catch (e) {
         return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
       }
@@ -4442,6 +4405,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       // before a working version command can be treated as a successful install.
       const existingProfile = bootstrapPending(hermesHome()) ? null : await repairExistingProfile();
       if (existingProfile) {
+        syncProductBud();
         writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
         return json(res, 200, { install: { state: "done", lines: ["Private setup repaired."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, hermes: existingProfile });
       }

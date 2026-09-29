@@ -3,7 +3,7 @@
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 
 import { DATA_DIR } from "./config.ts";
-import { installInFlight, startInstall, type InstallJob } from "./hermes-bridge.ts";
+import { installInFlight, reconcileManagedModelProfile, startInstall, type InstallJob } from "./hermes-bridge.ts";
 import {
   applyPropertyPack,
   hermesAgentDir,
@@ -43,6 +43,7 @@ export async function repairExistingProfile(opts?: { root?: string; cli?: string
   if (!status.cli.compatible) throw Object.assign(new Error(`${status.detail} Your separate Hermes installation has been kept.`), { status: 409 });
   if (installInFlight()) throw Object.assign(new Error("an install is already running"), { status: 409 });
   applyPropertyPack(opts?.root);
+  await reconcileManagedModelProfile(opts?.root);
   return hermesStatus(opts);
 }
 

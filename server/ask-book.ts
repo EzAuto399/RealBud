@@ -3,6 +3,7 @@ import type { DeskSnapshot } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { RENT_EVIDENCE_REVIEW_RULES } from "../shared/rent-workflow.ts";
 import { modelServiceFailure } from "./model-service-failure.ts";
+import { MANAGED_ACCESS_REFUSALS } from "./hermes-runtime-env.ts";
 
 import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 import { morningBrief, shortStreet } from "../src/lib/morning-brief.ts";
@@ -149,6 +150,9 @@ export function productWorkerDump(text: string): string | null {
 
 /** Worker 404s and retry dumps are not PM language. */
 export function productAskFailure(message: string): string {
+  // A refused launch already speaks office language; say exactly that.
+  const refusal = MANAGED_ACCESS_REFUSALS.find(text => message.includes(text));
+  if (refusal) return refusal;
   const serviceFailure = modelServiceFailure(message);
   if (serviceFailure) {
     const sentence = serviceFailure[0]!.toUpperCase() + serviceFailure.slice(1);
@@ -161,10 +165,10 @@ export function productAskFailure(message: string): string {
     return "Bud's workroom is not ready yet. Open Set up Bud and set up the workroom. Review this task's activity before trying again.";
   }
   if (/401|403|unauthori[sz]ed|authentication|api key|invalid key/i.test(message)) {
-    return "Bud's model connection needs attention. Open Set up Bud and reconnect the model. Review this task's activity before trying again.";
+    return "The AI service did not accept this computer's access. RealBud support needs to check this computer's AI access. Review this task's activity before trying again.";
   }
   if (/429|rate.?limit|quota|too many requests|at capacity|overloaded|high demand/i.test(message)) {
-    return "Bud's model is busy or has reached its provider limit. Wait a moment or change the model under Set up Bud, then try again.";
+    return "Bud's AI service is busy right now. Wait a moment, then try again.";
   }
   if (/timed? out|timeout|econn|network|fetch failed|socket/i.test(message)) {
     return "Bud's connection did not finish in time. Open **Set up Bud** here and review this task's activity before trying again.";

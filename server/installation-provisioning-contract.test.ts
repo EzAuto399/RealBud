@@ -91,7 +91,7 @@ describe('gateway descriptor → desktop grant', WINDOWS_PROFILE_TEST_OPTIONS, (
 
       await d.access.apply(parsed, 'fictional-link-id');
       expect(await d.access.state()).toMatchObject({ provisioned: true, withdrawn: false, installationId: 'fictional-link-id', projectId: 'rb-install-one', keyId: descriptor.model.keyId, baseUrl: 'https://api.modelvia.dev/v1', spendCapLabel: label, apps: ['gmail'] });
-      expect(await d.access.env()).toEqual({ OPENAI_BASE_URL: 'https://api.modelvia.dev/v1', OPENAI_API_KEY: descriptor.model.key });
+      expect(await d.access.env()).toEqual({ REALBUD_MODEL_API_KEY: descriptor.model.key });
       // The scoped connector credential reaches the workspace; the office's project key never left the gateway.
       expect(d.saved).toEqual([{ composio: { managed: { endpoint: 'https://managed.example.invalid', credential: descriptor.connector.credential, profile: HERMES_PIN.profile }, key: '', apiKey: '', url: '', selectedAccounts: {} } }]);
       expect(JSON.stringify(descriptor)).not.toContain('ak_fictional');

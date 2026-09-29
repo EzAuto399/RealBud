@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { execCli } from "./procs.ts";
 import { HERMES_PIN, HERMES_COMPATIBLE_RELEASES, hermesCli, hermesInstallCommand, hermesMatchesPin, hermesIsCompatible, parseHermesVersion } from "./hermes-pin.ts";
-import { approvalsAreManual, hermesHome, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
+import { approvalsAreManual, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
 import type { HandsLast } from "./hands-last.ts";
 import { readRuntimeSelection } from "./hermes-runtime-selection.ts";
@@ -59,14 +59,16 @@ export function modelAccessStatus(root?: string): ModelAccessStatus {
     return { managed: false, withdrawn: true, attached: false,
       detail: "Model access was withdrawn for this computer. Your records are kept. Ask service support to restore access." };
   }
+  // Not paired: no model access at all. Setup shows the pairing path.
   if (grant.state !== "active") return { managed: false, withdrawn: false, attached: false, detail: "" };
   const profile = managedModelProfile(root);
-  const selects = profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl === grant.baseUrl;
+  const selects = profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl === grant.baseUrl &&
+    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE;
   if (!selects || profile.envKeyPresent) {
     return { managed: true, withdrawn: false, attached: false,
       detail: "Model access is managed by RealBud service (Modelvia), but Bud's private setup has not taken it up yet. Repair Bud to finish." };
   }
-  if (!profile.model) {
+  if (!profile.choice) {
     return { managed: true, withdrawn: false, attached: false,
       detail: "Model access: managed by RealBud service (Modelvia). Choose which model Bud should use to finish setup." };
   }

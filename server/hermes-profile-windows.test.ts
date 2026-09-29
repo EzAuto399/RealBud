@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { attachModel } from './hermes-bridge.ts';
-import { ensurePropertyPack, propertyProfileDir, propertyWorkroomReady } from './hermes-pack.ts';
+import { applyManagedModelProfile, ensurePropertyPack, propertyProfileDir, propertyWorkroomReady } from './hermes-pack.ts';
+
+const GATEWAY = 'https://gateway.fictional.test/v1';
 import { ensureProfileDirectories, writeProfileFiles } from './hermes-profile-storage.ts';
 import { windowsFilePrivacySync } from './windows-file-privacy.ts';
 import { addFixtureUsersRead, privateFixtureDirectory, privateFixtureRoot, profileAclWitness, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
@@ -20,7 +21,7 @@ const fixture = () => {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WINDOWS_PROFILE_TEST_OPTIONS, () => {
-  it('creates a private profile, attaches and replaces a fictional key, and preserves it after a fresh process starts', () => {
+  it('creates a private profile, writes and replaces a managed model choice, and preserves it after a fresh process starts', () => {
     const root = fixture(), home = join(root, 'owned-home');
     expect(existsSync(home)).toBe(false);
     const installed = ensurePropertyPack(home), profile = propertyProfileDir(home);
@@ -32,16 +33,11 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
       protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
     });
 
-    expect(attachModel({ providerId: 'xai', apiKey: 'fictional-first-key', model: 'grok-4' }, { root: home }))
-      .toMatchObject({ provider: 'xai', model: 'grok-4', keyPresent: true });
-    expect(attachModel({ providerId: 'xai', apiKey: 'fictional-replacement-key', model: 'grok-4' }, { root: home }))
-      .toMatchObject({ keyPresent: true });
-    const envPath = join(profile, '.env');
-    paths.push(envPath);
-    const savedEnv = readFileSync(envPath, 'utf8');
-    expect(savedEnv).toContain('fictional-replacement-key');
-    expect(savedEnv).not.toContain('fictional-first-key');
-    expect(savedEnv.match(/^XAI_API_KEY=/gm)).toHaveLength(1);
+    // Managed-only: the choice is written to config; no key is ever stored here.
+    expect(applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-high' })).toMatchObject({ choice: 'sonnet-high' });
+    expect(applyManagedModelProfile(GATEWAY, { root: home, choice: 'flash-high' })).toMatchObject({ choice: 'flash-high', model: 'deepseek-v4.1-flash' });
+    expect(existsSync(join(profile, '.env'))).toBe(false);
+    expect(readFileSync(join(profile, 'config.yaml'), 'utf8')).toContain('reasoning_effort: high');
     const before = paths.map(path => ({ data: readFileSync(path), stat: statSync(path, { bigint: true }) }));
     const aclBefore = profileAclWitness([...parents, ...paths]);
     expect(aclBefore.every(witness => witness.protected && witness.currentOwner && witness.onlyPrivateGrants && witness.currentFullControl && !witness.hasDeny)).toBe(true);
@@ -78,11 +74,12 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
     }
   });
 
-  it.each(['inherited', 'users-read'] as const)('refuses %s config before changing credentials and preserves its rejected ACL', kind => {
+  it.each(['inherited', 'users-read'] as const)('refuses %s config before changing the model choice and preserves its rejected ACL', kind => {
     const root = fixture(), home = join(root, 'owned-home');
     ensurePropertyPack(home);
-    attachModel({ providerId: 'xai', apiKey: 'fictional-retained-key', model: 'grok-4' }, { root: home });
+    applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-high' });
     const profile = propertyProfileDir(home), config = join(profile, 'config.yaml'), env = join(profile, '.env');
+    writePrivateFixtureFile(env, 'OTHER_SETTING=fictional-retained\n');
     const configBytes = readFileSync(config), envBytes = readFileSync(env);
     if (kind === 'inherited') {
       unlinkSync(config);
@@ -94,7 +91,7 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
     else expect(before[4]).toMatchObject({ protected: true, onlyPrivateGrants: false, currentFullControl: true, hasDeny: false });
     const diagnostic = kind === 'inherited' ? /windows-acl:inheritance-not-protected/ : /windows-acl:grant-not-allowed/;
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(() => attachModel({ providerId: 'xai', apiKey: 'fictional-refused-key', model: 'grok-4' }, { root: home }))
+      expect(() => applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-xhigh' }))
         .toThrow(diagnostic);
       expect(() => ensurePropertyPack(home)).toThrow(diagnostic);
       expect(readFileSync(config).equals(configBytes)).toBe(true);
@@ -166,7 +163,7 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
     const config = join(actual, 'config.yaml'), data = readFileSync(config);
     const paths = [root, home, join(home, 'profiles'), actual, config];
     const before = profileAclWitness(paths);
-    expect(() => attachModel({ providerId: 'xai', apiKey: 'fictional-refused-key', model: 'grok-4' }, { root: home })).toThrow(/recovery/);
+    expect(() => applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-xhigh' })).toThrow(/recovery/);
     expect(readFileSync(config).equals(data)).toBe(true);
     expect(existsSync(join(actual, '.env'))).toBe(false);
     expect(profileAclWitness(paths)).toEqual(before);

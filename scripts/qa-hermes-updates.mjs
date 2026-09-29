@@ -38,7 +38,7 @@ try {
     installCommand: null, installerAvailable: true, ready: false, detail: 'Fictional setup status', homeDir: '', profileDir: '', signInCommand: '',
     model: { attached: false, provider: null, model: null },
   }));
-  await context.route('**/api/hermes/model', route => json(route, { model: { provider: null, model: null, keyPresent: false, keyHint: null } }));
+  await context.route('**/api/hermes/model', route => json(route, { model: { provider: null, model: null, choice: null, keyPresent: false, keyHint: null, managed: false } }));
   await context.route('**/api/hermes/install/status', route => failedReads-- > 0 ? json(route, { error: 'Fictional connection interruption' }, 503) : json(route, { install: job }));
   await context.route('**/api/hermes/install', route => {
     installs++;
@@ -90,7 +90,7 @@ try {
     await page.screenshot({ path: join(out, `setup-${width}.png`) });
   }
   installed = true; job = { state: 'done', error: null };
-  await setup.getByRole('button', { name: /Connect model/ }).first().waitFor({ timeout: 10000 });
+  await setup.getByRole('button', { name: /Pair this computer/ }).first().waitFor({ timeout: 10000 });
   assert.equal(await setup.getByText('Bud is ready', { exact: true }).count(), 0, 'installed is not ready without a model check');
   await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
   assert.equal(await composer.inputValue(), 'Prepare a repair follow-up for my first property.');

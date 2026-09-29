@@ -103,10 +103,11 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
     expect(status.body).toMatchObject({ storageAvailable: true, configured: false, setupAllowed: false, transport: "local-only" });
     expect((await request("POST", "/api/company/create", { name: "Synthetic office", ownerName: "Alice", credential: ownerCredential })).status).toBe(401);
     for (const [path, body] of [
-      ["/api/hermes/model", { providerId: "custom", apiKey: "must-not-write", model: "override" }],
-      ["/api/hermes/oauth/start", { providerId: "openai" }],
+      ["/api/hermes/model", { choice: "sonnet-xhigh" }],
       ["/api/connected-apps/mode", { mode: "consumer" }],
     ] as const) expect((await request("POST", path, body)).status).toBe(401);
+    // Provider sign-in no longer exists for anyone: gone, not administrator-only.
+    expect((await request("POST", "/api/hermes/oauth/start", { providerId: "openai" })).status).toBe(410);
     expect((await request("PATCH", "/api/config", { xai: { key: "must-not-write" } })).status).toBe(401);
     expect((await request("PATCH", "/api/config", { profile: { name: "Local profile" } })).status).toBe(200);
   });

@@ -53,7 +53,7 @@ describe("Bud availability across Ask and Schedule", () => {
 
   it("offers model setup only after the worker and safeguards are ready", () => {
     const state = budAvailability({ ...ready, ready: false, model: { ...ready.model!, attached: false } }, true);
-    expect(state.action).toBe("Connect a model");
+    expect(state.action).toBe("Pair this computer");
     expect(state.target).toBe("attach-model");
   });
 

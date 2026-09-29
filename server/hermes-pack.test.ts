@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_BROWSER_POLICY, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_BROWSER_POLICY, yamlBlock } from "./hermes-pack.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
@@ -403,5 +403,50 @@ describe("worker browser surface", () => {
     expect(workerLimitsReady(home)).toBe(false);
     applyPropertyPack(home);
     expect(workerLimitsReady(home)).toBe(true);
+  });
+});
+
+describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
+  const GATEWAY = "https://gateway.fictional.test/v1";
+
+  it("writes the named managed provider, the choice's model and effort, and keeps the rest of the config", () => {
+    const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+    const written = parse(managedModelConfig(pack, GATEWAY, "sonnet-xhigh"));
+    expect(written.model).toEqual({ default: "claude-sonnet-5.5", provider: MANAGED_MODEL_PROVIDER });
+    expect(written.providers).toEqual({ realbud: { base_url: GATEWAY, key_env: MANAGED_MODEL_KEY_ENV, api_mode: "chat_completions" } });
+    expect(written.agent.reasoning_effort).toBe("xhigh");
+    expect(written.agent.max_turns).toBe(parse(pack).agent.max_turns);
+    expect(written.approvals).toEqual(parse(pack).approvals);
+    // An empty profile still gets a readable block document.
+    expect(parse(managedModelConfig("", GATEWAY, "flash-high"))).toMatchObject({ model: { default: "deepseek-v4.1-flash" }, agent: { reasoning_effort: "high" } });
+  });
+
+  it("carries the choice through a policy rewrite only while it is still one of the three", () => {
+    const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+    const chosen = managedModelConfig(pack, GATEWAY, "sonnet-xhigh");
+    expect(parse(mergePropertyPolicy(chosen, pack)).agent.reasoning_effort).toBe("xhigh");
+    const flashXhigh = chosen.replace("default: claude-sonnet-5.5", "default: deepseek-v4.1-flash");
+    expect(parse(mergePropertyPolicy(flashXhigh, pack)).agent.reasoning_effort).toBeUndefined();
+    expect(parse(mergePropertyPolicy(chosen.replace("reasoning_effort: xhigh", "reasoning_effort: max"), pack)).agent.reasoning_effort).toBeUndefined();
+  });
+
+  it("survives a pack reinstall, and a fresh apply migrates auto to flash-high while dropping shadowing keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(home);
+    applyPropertyPack(home);
+    const profile = propertyProfileDir(home);
+    writeFileSync(join(profile, "config.yaml"), readFileSync(join(profile, "config.yaml"), "utf8").replace(/\s*$/, "\n") +
+      `model:\n  default: auto\n  provider: openai-api\n  base_url: "${GATEWAY}"\n  api_mode: chat_completions\n`);
+    writeFileSync(join(profile, ".env"), "KEEP=fictional\nexport OPENAI_API_KEY=fictional-stale\nREALBUD_MODEL_API_KEY=fictional-shadow\n");
+    expect(managedModelProfile(home)).toMatchObject({ choice: null, envKeyPresent: true });
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "flash-high", envKeyRemoved: true });
+    expect(readFileSync(join(profile, ".env"), "utf8")).toBe("KEEP=fictional\n");
+    applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-xhigh" });
+    applyPropertyPack(home);
+    expect(managedModelProfile(home)).toEqual({
+      provider: MANAGED_MODEL_PROVIDER, model: "claude-sonnet-5.5", baseUrl: GATEWAY, apiMode: "chat_completions",
+      keyEnv: MANAGED_MODEL_KEY_ENV, reasoningEffort: "xhigh", choice: "sonnet-xhigh", envKeyPresent: false,
+    });
+    expect(approvalsAreManual(home)).toBe(true);
+    expect(() => applyManagedModelProfile("file:///fictional", { root: home })).toThrow(/needs recovery/);
   });
 });

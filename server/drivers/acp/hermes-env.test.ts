@@ -58,6 +58,14 @@ describe("Hermes child stream watchdog", () => {
       OPENROUTER_API_KEY: "fictional-key",
       KIMI_API_KEY: "fictional-key",
       MOONSHOT_API_KEY: "fictional-key",
+      // The managed grant's own name, the endpoint override, and keys upstream's
+      // host-derived fallback would read, are all ambient here.
+      REALBUD_MODEL_API_KEY: "fictional-ambient-grant",
+      OPENAI_BASE_URL: "https://ambient.invalid/v1",
+      MODELVIA_API_KEY: "fictional-key",
+      DEEPSEEK_API_KEY: "fictional-key",
+      ANTHROPIC_API_KEY: "fictional-key",
+      XAI_API_KEY: "fictional-key",
       COMPOSIO_KEY: "fictional-key",
       REALBUD_CUA_CONTROL_TOKEN: "fictional-private-host-token",
       REALBUD_CUA_CONTROL_URL: "http://127.0.0.1:1234",

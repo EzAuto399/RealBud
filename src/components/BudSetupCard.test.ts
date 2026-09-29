@@ -2,9 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HermesStatus } from "@/state/store";
-import { BudSetupCard, showsProviderCredentialFields } from "./BudSetupCard";
+import { BudSetupCard, ManagedModelChoices } from "./BudSetupCard";
 import { ManagedBudStatus } from "./ManagedBudStatus";
-import { budAvailability } from "@/lib/bud-setup";
+import { budAvailability, parseBudStatus, parseManagedModelStatus } from "@/lib/bud-setup";
 
 const store = vi.hoisted(() => ({
   state: { hermes: null as HermesStatus | null, connected: true, bots: [], config: null, serviceAdmin: null as unknown, desk: null, workerIssues: [] },
@@ -35,13 +35,13 @@ const managed = (attached: boolean, model: string | null) => hermes(
     detail: attached
       ? "Model access: managed by RealBud service (Modelvia). No provider key is stored on this computer."
       : "Model access: managed by RealBud service (Modelvia). Choose which model Bud should use to finish setup." },
-  { attached, provider: "openai-api", model },
+  { attached, provider: "custom:realbud", model, choice: attached ? "sonnet-high" : null },
 );
 
 const withdrawn = () => hermes(
   { managed: false, withdrawn: true, attached: false,
     detail: "Model access was withdrawn for this computer. Your records are kept. Ask service support to restore access." },
-  { attached: false, provider: "openai-api", model: "gpt-5.6-sol" },
+  { attached: false, provider: "custom:realbud", model: "deepseek-v4.1-flash", choice: "flash-high" },
 );
 
 /** The administrator surface, which is the only one carrying key controls. */
@@ -68,31 +68,42 @@ describe("provisioned installations never ask for a provider key", () => {
     expect(html).not.toMatch(/OpenAI|Anthropic|OpenRouter/);
   });
 
-  it("never offers a credential field on a provisioned installation", () => {
-    for (const usesProfileLogin of [false, true]) {
-      for (const hasOauthOffer of [false, true]) {
-        for (const useApiKey of [false, true]) {
-          for (const oauthFailed of [false, true]) {
-            const input = { usesProfileLogin, hasOauthOffer, useApiKey, oauthFailed };
-            expect(showsProviderCredentialFields({ ...input, managed: true })).toBe(false);
-          }
-        }
-      }
+  it("offers exactly the three managed choices as an accessible radio group", () => {
+    const html = renderToStaticMarkup(createElement(ManagedModelChoices, { value: "sonnet-high", onChange: () => {} }));
+    // One accessible group name: the fieldset's legend, not a second radiogroup label.
+    expect(html).toMatch(/<fieldset[^>]*><legend[^>]*>Bud&#x27;s model<\/legend>/);
+    expect(html).not.toContain('role="radiogroup"');
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
+    for (const label of ["DeepSeek V4.1 Flash · High", "Claude Sonnet 5.5 · High", "Claude Sonnet 5.5 · Extra high"]) {
+      expect(html).toContain(`aria-label="${label}"`);
     }
-    // The manual path is untouched for a development installation.
-    expect(showsProviderCredentialFields({ managed: false, usesProfileLogin: false, hasOauthOffer: false, useApiKey: false, oauthFailed: false })).toBe(true);
-    expect(showsProviderCredentialFields({ managed: false, usesProfileLogin: false, hasOauthOffer: true, useApiKey: false, oauthFailed: false })).toBe(false);
-    expect(showsProviderCredentialFields({ managed: false, usesProfileLogin: false, hasOauthOffer: true, useApiKey: true, oauthFailed: false })).toBe(true);
+    // 44 px decision targets, and only the saved choice is checked.
+    expect(html.match(/pm-decision/g)).toHaveLength(3);
+    expect(html.match(/checked=""/g)).toHaveLength(1);
+    expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain('value="sonnet-high"');
+    expect(html).not.toMatch(/Provider API key|password|Custom model|Base URL|Sign in with|#[0-9a-f]{6}/i);
+    expect(html).not.toMatch(/Hermes|MCP|OpenAI|Modelvia/);
   });
 
-  it("keeps the manual provider path on an installation with no service grant", () => {
+  it("sends an unpaired computer to pair from realbud.app, never to a provider key", () => {
     store.state.hermes = hermes(
       { managed: false, withdrawn: false, attached: false, detail: "" },
       { attached: false, provider: null, model: null },
     );
     const html = administration();
-    expect(html).toContain("Connect one provider key");
+    expect(html).toContain("Pair this computer from realbud.app");
+    expect(html).not.toMatch(/Connect one provider key|Provider API key|Custom provider URL|Connect model/);
     expect(html).not.toContain("managed by RealBud service");
+  });
+
+  it("parses the managed choice from status and model replies, rejecting anything else", () => {
+    const status = managed(true, "claude-sonnet-5.5");
+    expect(parseBudStatus(status).model?.choice).toBe("sonnet-high");
+    expect(() => parseBudStatus({ ...status, model: { ...status.model!, choice: "flash-xhigh" as never } })).toThrow();
+    const reply = { provider: "custom:realbud", model: "claude-sonnet-5.5", choice: "sonnet-xhigh", keyPresent: true, keyHint: "Model access: managed by RealBud service (Modelvia)", managed: true };
+    expect(parseManagedModelStatus(reply).choice).toBe("sonnet-xhigh");
+    expect(() => parseManagedModelStatus({ ...reply, choice: "auto" })).toThrow();
+    expect(() => parseManagedModelStatus({ ...reply, managed: "yes" })).toThrow();
   });
 
   it("names a withdrawn grant as a hold everywhere it is reported", () => {
@@ -113,7 +124,7 @@ describe("provisioned installations never ask for a provider key", () => {
 describe("budAvailability for managed access", () => {
   it("shows the last failed readiness reason on the managed surface and clears it when ready", () => {
     const status = managed(true, "fictional-model");
-    status.lastPing = { kind: "ping", at: 1, ok: false, detail: "Bud's model access has expired; open You and reconnect the model service." };
+    status.lastPing = { kind: "ping", at: 1, ok: false, detail: "This computer's AI access has expired; RealBud support needs to renew it before Bud can answer." };
     const render = () => renderToStaticMarkup(createElement(ManagedBudStatus, {
       id: "you-worker", status, connected: true, onRefresh: async () => {},
     }));
@@ -147,6 +158,6 @@ describe("budAvailability for managed access", () => {
   });
 
   it("reads as a finished model step once the managed grant names a model", () => {
-    expect(budAvailability(managed(true, "gpt-5.6-sol"), true).label).toBe("Check needed");
+    expect(budAvailability(managed(true, "claude-sonnet-5.5"), true).label).toBe("Check needed");
   });
 });

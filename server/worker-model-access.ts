@@ -12,28 +12,24 @@ import { readPrivateJson, removePrivateJson, writePrivateJson } from "./private-
 import { createPrivateVault } from "./private-vault.ts";
 import { currentWorkerProfile } from "./hermes-profile.ts";
 import { writeServiceInstallation, removeServiceInstallation, serviceInstallationPresent } from "./managed-service.ts";
-import { applyManagedModelProfile, type ManagedModelApply } from "./hermes-pack.ts";
+import { applyManagedModelProfile, MANAGED_MODEL_KEY_ENV, type ManagedModelApply } from "./hermes-pack.ts";
+import { isManagedModelChoice, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
 import { DEFAULT_MANAGED_APPS, type InstallationProvisioning } from "../shared/office-link.ts";
 
 /** Vault entry name. Must match `^[a-z0-9-]{1,80}$` for the vault's own check. */
 export const WORKER_MODEL_VAULT_ENTRY = "worker-model-access";
 
 /**
- * Variable names the pinned worker actually reads for an OpenAI-compatible
- * provider. Taken from the installed runtime, not assumed:
- *   hermes_cli/auth.py PROVIDER_REGISTRY row
- *     ("openai-api", "OpenAI API", "https://api.openai.com/v1",
- *      ("OPENAI_API_KEY",), "OPENAI_BASE_URL")
- *   agent/client_lifecycle.py resolves `base_url = env_url or default_base`,
- *   so the env base URL overrides the provider default at turn time.
- * `OPENAI_API_BASE` is not read by the worker; do not add it.
+ * The variable the pinned worker reads the granted key from. The profile's
+ * `providers.realbud.key_env` names it (see `applyManagedModelProfile`), so it
+ * works for any gateway host — including a loopback one, for which upstream
+ * derives no host-gated key name at all. The base URL lives in the profile,
+ * not the environment.
  */
-export const WORKER_MODEL_ENV_NAMES = ["OPENAI_BASE_URL", "OPENAI_API_KEY"] as const;
+export const WORKER_MODEL_ENV_NAMES = [MANAGED_MODEL_KEY_ENV] as const;
 
-/** The worker profile must select provider `openai-api` for these to be used;
- * a profile pinned to another provider ignores them rather than misrouting. */
-export function workerModelEnv(baseUrl: string, key: string): Record<string, string> {
-  return { OPENAI_BASE_URL: baseUrl, OPENAI_API_KEY: key };
+export function workerModelEnv(key: string): Record<string, string> {
+  return { [MANAGED_MODEL_KEY_ENV]: key };
 }
 
 /** Operator-readable receipt for the profile write the grant performed. It
@@ -41,6 +37,8 @@ export function workerModelEnv(baseUrl: string, key: string): Record<string, str
  * `.env` provider key had to be removed. It never holds a credential. */
 export interface ManagedModelReceipt {
   provider: string; apiMode: string; baseUrl: string; model: string | null; envKeyRemoved: boolean; appliedAt: string;
+  /** Absent on receipts written before the three managed choices existed. */
+  choice?: ManagedModelChoiceId;
 }
 
 export type ServiceProvisioningRecord =
@@ -55,7 +53,7 @@ export type ServiceProvisioningRecord =
  * `modelStatus()`, the worker status card and the hands holds. It is published
  * by this module's own operations, so every path that resolves a grant (boot
  * refresh, apply, withdraw, reconcile, clear) keeps it in step. The default is
- * "none", which is exactly today's manually attached behaviour.
+ * "none": not paired, so the worker has no model access.
  */
 export type WorkerModelGrant =
   | { state: "none" }
@@ -89,6 +87,7 @@ function validRecord(value: unknown): ServiceProvisioningRecord | undefined {
     if (["provider", "apiMode", "baseUrl", "appliedAt"].some(key => typeof receipt[key] !== "string" || !receipt[key])) return undefined;
     if (typeof receipt.envKeyRemoved !== "boolean") return undefined;
     if (receipt.model !== null && typeof receipt.model !== "string") return undefined;
+    if (receipt.choice !== undefined && !isManagedModelChoice(receipt.choice)) return undefined;
   }
   return row as ServiceProvisioningRecord;
 }
@@ -101,6 +100,24 @@ export async function readServiceProvisioning(directory = DATA_DIR): Promise<Ser
   const record = validRecord(raw);
   if (!record) throw new Error("This computer's service setup needs recovery. Contact service support before linking again.");
   return record;
+}
+
+/** The receipt fields for one profile apply. Never holds a credential. */
+export function managedModelReceipt(profile: ManagedModelApply): ManagedModelReceipt {
+  return { provider: profile.provider, apiMode: profile.apiMode, baseUrl: profile.baseUrl, model: profile.model,
+    envKeyRemoved: profile.envKeyRemoved, appliedAt: profile.appliedAt, choice: profile.choice };
+}
+
+/**
+ * Keep the operator receipt in step with the profile after a later apply (a
+ * model choice, or reconciling an upgraded profile). Only an active record is
+ * rewritten; a withdrawn or absent one is left as it is. Returns whether it wrote.
+ */
+export async function recordManagedModelReceipt(profile: ManagedModelApply, directory = DATA_DIR): Promise<boolean> {
+  const record = await readServiceProvisioning(directory);
+  if (record?.state !== "active") return false;
+  await writePrivateJson(provisioningPath(directory), { ...record, modelProfile: managedModelReceipt(profile) });
+  return true;
 }
 
 /** Managed connections beyond Gmail are whatever this installation was granted.
@@ -153,8 +170,9 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
       baseUrl: record.baseUrl, spendCapLabel: record.spendCapLabel, apps: [...record.apps] };
   }
 
-  /** Env for one worker launch. Returns `{}` when nothing is provisioned, so a
-   * manually attached model keeps working exactly as it does today. */
+  /** Env for one worker launch. Returns `{}` when nothing is provisioned: the
+   * worker then has no model access at all, and setup asks the office to pair
+   * this computer. */
   async function env(): Promise<Record<string, string>> {
     if (withdrawalPending) return {};
     const record = await readServiceProvisioning(options.directory);
@@ -170,7 +188,7 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
     // A key that no longer belongs to the recorded grant must not be used: the
     // records say which key is spend-capped and revocable for this office.
     if (stored.keyId !== record.keyId) throw new Error("The model access for this computer needs recovery. Contact service support.");
-    return workerModelEnv(record.baseUrl, stored.key);
+    return workerModelEnv(stored.key);
   }
 
   /**
@@ -196,10 +214,11 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
 
     await vault.write(WORKER_MODEL_VAULT_ENTRY, { version: 1, keyId: provisioning.model.keyId, key: provisioning.model.key });
     // The worker profile is pointed at the gateway next, before the grant is
-    // recorded as live. This also drops any `OPENAI_API_KEY` line left in the
-    // profile `.env`: upstream prefers that dotenv over the launch environment,
-    // so a stale line there would silently shadow the granted key. The granted
-    // key itself is never written to the profile.
+    // recorded as live, keeping the office's saved choice (or `flash-high`).
+    // This also drops any managed-key line left in the profile `.env`
+    // (`MANAGED_MODEL_ENV_KEYS`): upstream prefers that dotenv over the launch
+    // environment, so a stale line there would silently shadow the granted
+    // key. The granted key itself is never written to the profile.
     const profile: ManagedModelApply = applyManagedModelProfile(provisioning.model.baseUrl, { root: options.hermesRoot });
     await writeServiceInstallation(options.directory, provisioning.service);
     const record: ServiceProvisioningRecord = {
@@ -208,10 +227,7 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
       provider: provisioning.model.provider, projectId: provisioning.model.projectId, keyId: provisioning.model.keyId, baseUrl: provisioning.model.baseUrl,
       spendCapLabel: provisioning.model.spendCapLabel, apps: [...provisioning.connector.apps],
       provisionedAt: existing?.state === "active" ? existing.provisionedAt : new Date().toISOString(),
-      modelProfile: {
-        provider: profile.provider, apiMode: profile.apiMode, baseUrl: profile.baseUrl,
-        model: profile.model, envKeyRemoved: profile.envKeyRemoved, appliedAt: profile.appliedAt,
-      },
+      modelProfile: managedModelReceipt(profile),
     };
     await writePrivateJson(path, record);
     publishGrant(record);

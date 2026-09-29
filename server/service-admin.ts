@@ -5,13 +5,6 @@ import { SERVICE_ADMIN_HEADER, type ServiceAdminGate, type ServiceAdminLogin, ty
 
 export { SERVICE_ADMIN_HEADER } from "../shared/service-admin.ts";
 
-/** Provider login codes are setup credentials, not staff connection status.
- * Reading them must not keep a five-minute administrator session alive.
- */
-export function isPrivilegedServiceRead(path: string, method: string): boolean {
-  return (method === "GET" || method === "HEAD") && path === "/api/hermes/oauth/status";
-}
-
 const SESSION_MS = 15 * 60_000;
 const IDLE_MS = 5 * 60_000;
 const ATTEMPT_WINDOW_MS = 5 * 60_000;

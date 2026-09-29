@@ -11,7 +11,7 @@ import {
   Check,
   Cpu,
   Download,
-  KeyRound,
+  SlidersHorizontal,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -20,18 +20,19 @@ import {
 
 import { fmtDateTime } from "@/lib/au";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
-import { BUD_SETUP_STEPS, parseBudStatus, budFacingCopy, budSetupJourney, type BudSetupStep } from "@/lib/bud-setup";
+import { BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy, budSetupJourney, type BudSetupStep, type ManagedModelStatus } from "@/lib/bud-setup";
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { workerIssueLine } from "@/lib/worker-issues";
+import { scrollYouTarget } from "@/lib/you-navigation";
 import { budReadinessCheck } from "@/lib/bud-readiness";
 import { api, useStore } from "@/state/store";
-import { WORKER_OAUTH_LOGINS, WORKER_PROVIDERS, workerProvider } from "@shared/worker-providers";
+import { DEFAULT_MANAGED_MODEL_CHOICE, MANAGED_MODEL_CHOICES, managedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { MausAvatar } from "./Avatar";
 import { AgentUpdates } from "./AgentUpdates";
 import { ManagedBudStatus } from "./ManagedBudStatus";
 
-type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "uninstall" | "oauth" | "cancel-install";
+type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "uninstall" | "cancel-install";
 
 type InstallStatus = {
   state: "idle" | "preflight" | "running" | "verifying" | "done" | "failed";
@@ -39,54 +40,54 @@ type InstallStatus = {
   progress?: { detail: string; step: number; total: number };
 };
 
-type ModelStatus = {
-  provider: string | null;
-  model: string | null;
-  keyPresent: boolean;
-  keyHint: string | null;
-  /** The RealBud service holds this office's model access. No provider key is
-   * collected, stored or shown on this computer. */
-  managed?: boolean;
-  managedWithdrawn?: boolean;
-};
-
 /** One office-facing line for managed access. Upstream protocol names belong
  * only in Advanced diagnostics, never here. */
 const MANAGED_MODEL_LINE = "Model access: managed by RealBud service (Modelvia)";
 
-/**
- * Whether the model sheet may render provider-credential controls at all.
- *
- * A provisioned office never can: the provider, endpoint and credential come
- * from the service grant, and this computer must not collect or store a
- * provider key. Exported so the rule is provable without driving the sheet's
- * click-only open state.
- */
-export function showsProviderCredentialFields(input: {
-  managed: boolean; usesProfileLogin: boolean; hasOauthOffer: boolean; useApiKey: boolean; oauthFailed: boolean;
-}): boolean {
-  if (input.managed) return false;
-  return !input.usesProfileLogin && (!input.hasOauthOffer || input.useApiKey || input.oauthFailed);
+/** Office-facing name of the saved choice, never a raw model id. */
+function choiceLabel(choice: ManagedModelChoiceId | null | undefined): string | null {
+  return choice ? managedModelChoice(choice).label : null;
 }
 
-type ModelPickerOption = {
-  id: string;
-  name: string;
-  releaseDate: string | null;
-  recommended: boolean;
-};
-
-type OAuthSession = {
-  sessionId: string;
-  providerId: string;
-  state: "starting" | "waiting" | "approved" | "error" | "cancelled";
-  userCode: string | null;
-  verificationUrl: string | null;
-  error: string | null;
-  startedAt: number;
-};
-
-const CUSTOM_MODEL = "__custom_model__";
+/**
+ * The three managed model choices as one radio group. RealBud is managed-only:
+ * there is no provider picker, key field, sign-in or free-text model.
+ */
+export function ManagedModelChoices({ value, disabled, onChange }: {
+  value: ManagedModelChoiceId; disabled?: boolean; onChange: (choice: ManagedModelChoiceId) => void;
+}) {
+  return (
+    <fieldset className="mt-4" disabled={disabled}>
+      <legend className="text-[12.5px] font-medium text-ink">Bud&apos;s model</legend>
+      <div className="mt-2 grid gap-2">
+        {MANAGED_MODEL_CHOICES.map((choice) => (
+          <label
+            key={choice.id}
+            className={cn(
+              "pm-decision flex cursor-pointer items-start gap-3 rounded border bg-sheet px-3 py-2.5 transition-colors motion-reduce:transition-none",
+              value === choice.id ? "border-agency bg-selected/55" : "border-line hover:bg-raised",
+            )}
+          >
+            <input
+              type="radio"
+              name="bud-model-choice"
+              value={choice.id}
+              checked={value === choice.id}
+              onChange={() => onChange(choice.id)}
+              aria-label={choice.label}
+              aria-describedby={`bud-model-${choice.id}-detail`}
+              className="mt-1 size-4 shrink-0 accent-agency"
+            />
+            <span className="min-w-0">
+              <span className="block text-[13.5px] font-medium text-ink">{choice.label}</span>
+              <span id={`bud-model-${choice.id}-detail`} className="mt-0.5 block text-[12.5px] leading-relaxed text-ink-muted">{choice.detail}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
 
 const ACTIVE_INSTALL_STATES = new Set<InstallStatus["state"]>(["preflight", "running", "verifying"]);
 
@@ -96,7 +97,7 @@ const STEP_META: Record<
 > = {
   install: { title: "Bud on this computer", icon: Download },
   safeguards: { title: "Property safeguards", icon: ShieldCheck },
-  model: { title: "Model connection", icon: KeyRound },
+  model: { title: "Model connection", icon: SlidersHorizontal },
   verify: { title: "Private readiness check", icon: Cpu },
 };
 
@@ -104,14 +105,6 @@ const primaryButton =
   "pm-control inline-flex items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 const secondaryButton =
   "pm-control inline-flex items-center justify-center gap-2 rounded border border-line bg-sheet px-3 text-[14px] text-ink transition-transform hover:bg-raised active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
-const fieldClass =
-  "pm-control mt-1.5 w-full rounded border border-line bg-sheet px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency";
-
-function providerLabel(providerId: string | null | undefined): string {
-  const provider = workerProvider(providerId);
-  if (!provider) return providerId ?? "Model";
-  return provider.id === providerId ? provider.label : `${provider.label} (Bud's saved login)`;
-}
 
 function installProgressCopy(state: InstallStatus["state"]): string {
   if (state === "preflight") return "Preparing this computer";
@@ -179,65 +172,27 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState<{ ok: boolean; detail: string } | null>(null);
   const [install, setInstall] = useState<InstallStatus | null>(null);
-  const [model, setModel] = useState<ModelStatus | null>(null);
+  const [model, setModel] = useState<ManagedModelStatus | null>(null);
   const [modelReadState, setModelReadState] = useState<"loading" | "loaded" | "error">("loading");
   const [lastTest, setLastTest] = useState<{ ok: boolean; detail: string; at: number } | null>(null);
-  const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
-  const [modelOptionsState, setModelOptionsState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [sheet, setSheet] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [providerId, setProviderId] = useState(WORKER_PROVIDERS[0].id);
-  const [apiKey, setApiKey] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [modelChoice, setModelChoice] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [useApiKey, setUseApiKey] = useState(false);
-  const [oauth, setOauth] = useState<OAuthSession | null>(null);
+  const [selectedChoice, setSelectedChoice] = useState<ManagedModelChoiceId>(DEFAULT_MANAGED_MODEL_CHOICE);
   const [checkTick, setCheckTick] = useState(0);
   const [checkingMs, setCheckingMs] = useState(0);
   const mounted = useRef(false);
   const pollGeneration = useRef(0);
-  const modelOptionsGeneration = useRef(0);
-  const oauthPollGeneration = useRef(0);
   const confirmRemoveTimer = useRef<number | null>(null);
   const status = state.hermes;
-  const providerChoices = useMemo(() => {
-    const currentId = model?.provider;
-    const current = workerProvider(currentId);
-    if (!currentId || !current || current.id === currentId) return WORKER_PROVIDERS;
-    return [{ ...current, id: currentId, label: `${current.label} (Bud's current login)` }, ...WORKER_PROVIDERS];
-  }, [model?.provider]);
-  const selectedProvider = workerProvider(providerId);
-  const oauthOffer = WORKER_OAUTH_LOGINS[selectedProvider?.id ?? ""] ?? WORKER_OAUTH_LOGINS[providerId] ?? null;
-  const usesProfileLogin = Boolean(
-    model?.provider === providerId &&
-    model.keyPresent &&
-    selectedProvider &&
-    selectedProvider.id !== providerId,
-  );
-  const oauthActive = Boolean(oauth && (oauth.state === "starting" || oauth.state === "waiting"));
-  // A provisioned office never sees a provider picker, a sign-in offer or a key
-  // field: the provider, endpoint and credential all come from the service
-  // grant. Only the model name is still this office's to choose.
+  // Managed-only: the provider, endpoint and credential all come from the
+  // service grant. An unpaired computer is sent to pair from realbud.app.
   const managedAccess = Boolean(model?.managed ?? status?.modelAccess?.managed);
-  const showApiKeyFields = showsProviderCredentialFields({
-    managed: managedAccess, usesProfileLogin, hasOauthOffer: Boolean(oauthOffer),
-    useApiKey, oauthFailed: oauth?.state === "error",
-  });
-  const profileLoginNeedsRefresh = Boolean(
-    usesProfileLogin
-      && lastTest
-      && !lastTest.ok
-      && /re-authenticate|sign in|token refresh|invalid_grant/i.test(lastTest.detail ?? ""),
-  );
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       pollGeneration.current += 1;
-      modelOptionsGeneration.current += 1;
-      oauthPollGeneration.current += 1;
       if (confirmRemoveTimer.current != null) window.clearTimeout(confirmRemoveTimer.current);
     };
   }, []);
@@ -247,7 +202,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     try {
       const res = await api("/api/hermes/model");
       if (!mounted.current) return;
-      setModel(res.model ?? null);
+      setModel(parseManagedModelStatus(res.model));
       setModelReadState("loaded");
     } catch {
       if (!mounted.current) return;
@@ -300,8 +255,8 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         api("/api/hermes/install/status"),
       ]);
       if (!mounted.current) return;
-      dispatch({ type: "hermesStatus", status: freshStatus });
-      setModel(freshModel.model ?? null);
+      dispatch({ type: "hermesStatus", status: parseBudStatus(freshStatus) });
+      setModel(parseManagedModelStatus(freshModel.model));
       setModelReadState("loaded");
       const job = (installResult.install ?? null) as InstallStatus | null;
       setInstall(job);
@@ -334,60 +289,15 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     setLastTest({ ok: shared.ok, detail: shared.detail, at: shared.at });
   }, [status?.lastPing, status?.lastTest]);
 
-  const loadModelOptions = useCallback(async (nextProvider: string, preferredModel = "") => {
-    const generation = ++modelOptionsGeneration.current;
-    setModelOptionsState("loading");
-    try {
-      const res = await api(`/api/hermes/models?provider=${encodeURIComponent(nextProvider)}`);
-      if (!mounted.current || generation !== modelOptionsGeneration.current) return;
-      const options: ModelPickerOption[] = Array.isArray(res.options)
-        ? res.options.filter((option: unknown): option is ModelPickerOption => {
-            if (!option || typeof option !== "object") return false;
-            const row = option as Partial<ModelPickerOption>;
-            return typeof row.id === "string" && typeof row.name === "string" && typeof row.recommended === "boolean";
-          })
-        : (Array.isArray(res.models) ? res.models : [])
-            .filter((id: unknown): id is string => typeof id === "string")
-            .map((id: string) => ({ id, name: id, releaseDate: null, recommended: false }));
-      setModelOptions(options);
-      setModelOptionsState("loaded");
-      const preferred = preferredModel.trim();
-      if (preferred) {
-        setModelId(preferred);
-        setModelChoice(options.some((option) => option.id === preferred) ? preferred : CUSTOM_MODEL);
-        return;
-      }
-      const first = options[0]?.id ?? "";
-      setModelId(first);
-      setModelChoice(first || CUSTOM_MODEL);
-    } catch {
-      if (!mounted.current || generation !== modelOptionsGeneration.current) return;
-      setModelOptions([]);
-      setModelOptionsState("error");
-      const preferred = preferredModel.trim();
-      setModelId(preferred);
-      setModelChoice(CUSTOM_MODEL);
-    }
-  }, []);
-
   const openModelSheet = useCallback(() => {
     if (!(status?.cli.compatible ?? status?.cli.matchesPin) || !status.pack.installed || !status.pack.approvalsManual || !status.pack.workroomReady) {
-      setError("Finish the earlier setup item before connecting a model.");
+      setError("Finish the earlier setup item before choosing Bud's model.");
       return;
     }
-    const nextProvider = model?.provider && workerProvider(model.provider) ? model.provider : providerId;
-    const savedModel = model?.model ?? "";
-    setProviderId(nextProvider);
-    setModelId(savedModel);
-    setModelChoice(savedModel ? CUSTOM_MODEL : "");
-    setApiKey("");
-    setBaseUrl("");
-    setUseApiKey(false);
-    setOauth(null);
+    setSelectedChoice(model?.choice ?? DEFAULT_MANAGED_MODEL_CHOICE);
     setError("");
     setFeedback(null);
     setSheet(true);
-    void loadModelOptions(nextProvider, savedModel);
     window.requestAnimationFrame(() => {
       const form = document.getElementById("bud-model-sheet");
       const scroller = document.querySelector<HTMLElement>("[data-you-scroll]");
@@ -398,26 +308,20 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
       });
     });
-  }, [loadModelOptions, model, providerId, status]);
+  }, [model?.choice, status]);
 
   const closeModelSheet = useCallback(() => {
-    oauthPollGeneration.current += 1;
-    const sessionId = oauth?.sessionId;
     setSheet(false);
-    setApiKey("");
-    setBaseUrl("");
-    setUseApiKey(false);
-    setOauth(null);
-    if (sessionId && oauthActive) {
-      void api("/api/hermes/oauth/cancel", {
-        method: "POST",
-        body: JSON.stringify({ sessionId }),
-      }).catch(() => {});
-    }
     if (location.hash === "#attach-model") {
       history.replaceState(null, "", `${location.pathname}${location.search}`);
     }
-  }, [oauth?.sessionId, oauthActive]);
+  }, []);
+
+  /** Pairing happens on the website account card, never with a pasted key. */
+  const openPairing = () => {
+    if (location.hash === "#you-website") scrollYouTarget("you-website");
+    else location.hash = "you-website";
+  };
 
   useEffect(() => {
     const fromHash = () => {
@@ -432,7 +336,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     };
   }, [openModelSheet]);
 
-  const modelAttached = Boolean(model?.model && model.keyPresent);
+  const modelAttached = Boolean(model?.managed && model.choice);
   const journey = useMemo(
     () =>
       budSetupJourney({
@@ -481,13 +385,12 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
       if (status?.modelAccess?.withdrawn) return status.modelAccess.detail;
       if (managedAccess) {
         return modelAttached
-          ? `${MANAGED_MODEL_LINE} · ${model?.model}. No provider key is stored on this computer.`
+          ? `${MANAGED_MODEL_LINE} · ${choiceLabel(model?.choice)}. No provider key is stored on this computer.`
           : `${MANAGED_MODEL_LINE}. Choose which model Bud should use.`;
       }
-      if (modelAttached) {
-        return `${providerLabel(model?.provider)} · ${model?.model}. Credential saved privately.`;
-      }
-      return modelReadState === "error" ? "RealBud could not read the saved model connection." : "Connect one provider key. The key stays in Bud's private storage.";
+      return modelReadState === "error"
+        ? "RealBud could not read Bud's model access."
+        : "Pair this computer from realbud.app to give Bud its AI access. No provider key is collected here.";
     }
     if (status?.ready && lastTest) return `Answered ${fmtDateTime(lastTest.at, timezone)}.`;
     if (lastTest && !lastTest.ok) return "The last check missed. Nothing on Desk was treated as live.";
@@ -581,90 +484,17 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     }
   };
 
-  const startProviderOAuth = async () => {
-    if (!oauthOffer) return;
-    setBusy("oauth");
-    setError("");
-    setFeedback(null);
-    setUseApiKey(false);
-    const generation = ++oauthPollGeneration.current;
-    try {
-      const res = await api("/api/hermes/oauth/start", {
-        method: "POST",
-        body: JSON.stringify({ providerId: selectedProvider?.id ?? providerId }),
-      });
-      if (!mounted.current || generation !== oauthPollGeneration.current) return;
-      let session = res.oauth as OAuthSession;
-      setOauth(session);
-      if (session.verificationUrl && window.ogb?.openExternal) {
-        void window.ogb.openExternal(session.verificationUrl);
-      } else if (session.verificationUrl) {
-        window.open(session.verificationUrl, "_blank", "noopener,noreferrer");
-      }
-      while (session.state === "starting" || session.state === "waiting") {
-        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
-        if (!mounted.current || generation !== oauthPollGeneration.current) return;
-        const statusRes = await api(`/api/hermes/oauth/status?sessionId=${encodeURIComponent(session.sessionId)}`);
-        session = statusRes.oauth as OAuthSession;
-        setOauth(session);
-        if (session.verificationUrl && !session.userCode) {
-          /* still waiting for the printed code */
-        } else if (session.verificationUrl && window.ogb?.openExternal && session.state === "waiting") {
-          /* browser already opened on first code sighting only once above */
-        }
-      }
-      if (session.state === "approved") {
-        setProviderId(session.providerId);
-        setUseApiKey(false);
-        setApiKey("");
-        setFeedback({ ok: true, detail: "Signed in. Choose a model, then connect and check." });
-        await loadModelOptions(session.providerId);
-        await loadModel();
-      } else if (session.state === "error") {
-        setError(budFacingCopy(session.error, "Sign-in did not finish. Try again or use an API key."));
-      }
-    } catch (cause) {
-      if (mounted.current && generation === oauthPollGeneration.current) {
-        setError(budFacingCopy(cause, "RealBud could not start provider sign-in."));
-      }
-    } finally {
-      if (mounted.current && generation === oauthPollGeneration.current) setBusy(null);
-    }
-  };
-
-  const cancelProviderOAuth = async () => {
-    const sessionId = oauth?.sessionId;
-    oauthPollGeneration.current += 1;
-    setBusy(null);
-    if (!sessionId) {
-      setOauth(null);
-      return;
-    }
-    try {
-      const res = await api("/api/hermes/oauth/cancel", {
-        method: "POST",
-        body: JSON.stringify({ sessionId }),
-      });
-      if (mounted.current) setOauth(res.oauth ?? null);
-    } catch {
-      if (mounted.current) setOauth(null);
-    }
-  };
-
   const saveModel = async () => {
     setBusy("model");
     setError("");
     setFeedback(null);
     try {
+      // The only thing this computer sends: one of the three choices.
       const res = await api("/api/hermes/model", {
         method: "POST",
-        // A managed office sends no credential and no endpoint: the server
-        // takes both from the grant and refuses a pasted key outright.
-        body: JSON.stringify(managedAccess
-          ? { providerId, apiKey: "", model: modelId }
-          : { providerId, apiKey, model: modelId, baseUrl: baseUrl || undefined }),
+        body: JSON.stringify({ choice: selectedChoice }),
       });
-      setModel(res.model ?? null);
+      setModel(parseManagedModelStatus(res.model));
       setModelReadState("loaded");
       if (res.ping) {
         const at = Date.now();
@@ -675,7 +505,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
       closeModelSheet();
       await refreshHermes();
     } catch (cause) {
-      setError(budFacingCopy(cause, "RealBud could not connect that model."));
+      setError(budFacingCopy(cause, "RealBud could not save Bud's model choice."));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -702,7 +532,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     journey.stage === "ready"
       ? "Ask uses this same private worker. Work that needs approval still lands on Desk."
       : journey.stage === "checking"
-        ? "RealBud is reading the worker, safeguards, and model connection."
+        ? "RealBud is reading the worker, safeguards, and model access."
         : "Finish one item at a time. Desk keeps working on the sample book while you do.";
 
   return (
@@ -916,17 +746,23 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         {!installActive && journey.stage === "model" && !sheet ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[14px] font-medium text-ink">{managedAccess ? "Choose Bud's model" : "Connect Bud's model"}</div>
+              <div className="text-[14px] font-medium text-ink">{managedAccess ? "Choose Bud's model" : "Pair this computer"}</div>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">
                 {managedAccess
                   ? `${MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.`
-                  : "Choose the provider your office already uses. RealBud stores the key only in Bud's private storage."}
+                  : "Bud uses your office's managed AI access. Pair this computer from realbud.app; no provider key is collected here."}
               </p>
             </div>
-            <button type="button" onClick={openModelSheet} disabled={locked} className={primaryButton}>
-              <KeyRound size={14} />
-              {managedAccess ? "Choose model" : "Connect model"}
-            </button>
+            {managedAccess ? (
+              <button type="button" onClick={openModelSheet} disabled={locked} className={primaryButton}>
+                <SlidersHorizontal size={14} />
+                Choose model
+              </button>
+            ) : status?.modelAccess?.withdrawn ? null : (
+              <button type="button" onClick={openPairing} className={primaryButton}>
+                Pair this computer
+              </button>
+            )}
           </div>
         ) : null}
 
@@ -953,8 +789,8 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
             <div>
               <div className="text-[14px] font-medium text-ink">The same Bud is waiting in Ask</div>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">
-                {model?.model
-                  ? `${providerLabel(model.provider)} · ${model.model}`
+                {choiceLabel(model?.choice)
+                  ? `${choiceLabel(model?.choice)} · managed by RealBud service`
                   : "Ask for work or an answer. Anything consequential still becomes a Desk decision."}
               </p>
             </div>
@@ -964,7 +800,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                 Talk to Bud
               </button>
               <button type="button" onClick={openModelSheet} disabled={locked} className={secondaryButton}>
-                <KeyRound size={14} />
+                <SlidersHorizontal size={14} />
                 Change model
               </button>
               <button type="button" onClick={() => void runAction("verify")} disabled={locked} className={secondaryButton}>
@@ -1054,334 +890,42 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
           aria-labelledby="bud-model-title"
           onSubmit={(event) => {
             event.preventDefault();
-            void saveModel();
+            if (managedAccess) void saveModel();
           }}
         >
           <div className="max-w-[52rem]">
             <h3 id="bud-model-title" className="text-[16px] font-semibold text-ink">
-              {usesProfileLogin || model?.keyPresent ? "Change model" : "Connect a model"}
+              {managedAccess ? "Choose Bud's model" : "Pair this computer"}
             </h3>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
-              {managedAccess
-                ? "Your RealBud service holds this office's model access. Choose which model Bud should use."
-                : usesProfileLogin
-                  ? "This keeps Bud's current private login. Only the model choice changes."
-                  : oauthOffer && !useApiKey
-                    ? "Sign in with your provider account, then pick a model Bud can use. Keys stay optional."
-                    : "The provider key is written directly to Bud's private storage. It never enters Ask, Desk, analytics, or logs."}
-            </p>
             {managedAccess ? (
-              <p role="status" className="mt-2 rounded border border-line bg-sheet p-3 text-[12.5px] text-ink">
-                {MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.
-              </p>
-            ) : model?.keyPresent && model.keyHint ? (
-              <p className="mt-2 text-[12.5px] text-ink-muted">
-                {model.keyHint.includes("profile login") ? "Login saved" : "Key saved"} · {model.keyHint}
-              </p>
-            ) : null}
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {managedAccess ? null : (
-              <label className="text-[12.5px] font-medium text-ink">
-                Provider
-                <select
-                  value={providerId}
-                  disabled={oauthActive || busy === "oauth"}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setProviderId(next);
-                    setModelId("");
-                    setModelChoice("");
-                    setApiKey("");
-                    setBaseUrl("");
-                    setUseApiKey(false);
-                    setOauth(null);
-                    void loadModelOptions(next);
-                  }}
-                  className={fieldClass}
-                >
-                  {providerChoices.map((provider) => (
-                    <option key={provider.id} value={provider.id}>{provider.label}</option>
-                  ))}
-                </select>
-              </label>
-              )}
-              {managedAccess ? (
-                <label className="text-[12.5px] font-medium text-ink">
-                  Model ID
-                  <input
-                    type="text"
-                    value={modelId}
-                    onChange={(event) => setModelId(event.target.value)}
-                    placeholder={model?.model ?? "auto"}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    className={fieldClass}
-                  />
-                  <span className="mt-1.5 block font-normal text-ink-muted">
-                    Optional. Your RealBud service picks a model for each task unless you name one here.
-                  </span>
-                </label>
-              ) : (
-              <div>
-                <label className="text-[12.5px] font-medium text-ink" htmlFor="bud-model-choice">
-                  Model
-                </label>
-                <select
-                  id="bud-model-choice"
-                  value={modelChoice}
-                  disabled={modelOptionsState === "loading" || oauthActive}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setModelChoice(next);
-                    setModelId(next === CUSTOM_MODEL ? "" : next);
-                  }}
-                  className={fieldClass}
-                >
-                  <option value="" disabled>
-                    {modelOptionsState === "loading" ? "Loading current models…" : "Choose a model"}
-                  </option>
-                  {modelOptions.some((option) => option.recommended) ? (
-                    <optgroup label="Recommended for Bud">
-                      {modelOptions.filter((option) => option.recommended).map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name === option.id ? option.id : `${option.name} — ${option.id}`}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {modelOptions.some((option) => !option.recommended) ? (
-                    <optgroup label={modelOptions.some((option) => option.recommended) ? "Recently available to Bud" : "Available from Bud"}>
-                      {modelOptions.filter((option) => !option.recommended).map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name === option.id ? option.id : `${option.name} — ${option.id}`}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  <option value={CUSTOM_MODEL}>Custom model ID…</option>
-                </select>
-                <span className="mt-1.5 block text-[11.5px] font-normal text-ink-muted">
-                  {modelOptionsState === "error"
-                    ? "The model list could not load. Enter the provider model ID yourself."
-                    : "Models come from Bud's installed model catalogue."}
-                </span>
-              </div>
-              )}
-            </div>
-            {!managedAccess && modelChoice === CUSTOM_MODEL ? (
-              <label className="mt-4 block text-[12.5px] font-medium text-ink">
-                Custom model ID
-                <input
-                  type="text"
-                  value={modelId}
-                  onChange={(event) => setModelId(event.target.value)}
-                  placeholder="provider-model-id"
-                  autoComplete="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  className={fieldClass}
-                />
-                <span className="mt-1.5 block font-normal text-ink-muted">
-                  Use the exact ID from your provider. RealBud checks it before marking Bud ready.
-                </span>
-              </label>
-            ) : null}
-            {managedAccess ? null : usesProfileLogin && !profileLoginNeedsRefresh ? (
-              <div className="mt-4 border border-agency/20 bg-agency/5 px-3 py-2.5 text-[12.5px] text-ink" role="status">
-                Using the saved {providerLabel(providerId)}. RealBud will not replace it or ask for a provider key.
-              </div>
-            ) : profileLoginNeedsRefresh && oauthOffer ? (
-              <div className="mt-4 space-y-3">
-                <div className="border border-agency/20 bg-agency/5 px-3 py-2.5 text-[12.5px] text-ink" role="status">
-                  Bud&apos;s saved login needs a fresh sign-in. Sign in again, then connect and check.
-                </div>
-                {oauthActive || oauth?.state === "waiting" || oauth?.state === "starting" ? (
-                  <div className="border border-agency/20 bg-agency/5 px-3 py-3 text-[12.5px] text-ink" role="status">
-                    <div className="font-medium">
-                      {oauth?.userCode ? "Enter this code in the browser" : "Starting provider sign-in…"}
-                    </div>
-                    {oauth?.userCode ? (
-                      <div className="mt-2 font-mono text-[18px] tracking-[0.12em] text-ink">{oauth.userCode}</div>
-                    ) : (
-                      <Loader2 size={16} className="mt-2 animate-spin motion-reduce:animate-none" />
-                    )}
-                    {oauth?.verificationUrl ? (
-                      <p className="mt-2 break-all text-ink-muted">{oauth.verificationUrl}</p>
-                    ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {oauth?.verificationUrl ? (
-                        <button
-                          type="button"
-                          className={secondaryButton}
-                          onClick={() => {
-                            if (window.ogb?.openExternal) void window.ogb.openExternal(oauth.verificationUrl!);
-                            else window.open(oauth.verificationUrl!, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          Open browser again
-                        </button>
-                      ) : null}
-                      <button type="button" className={secondaryButton} onClick={() => void cancelProviderOAuth()}>
-                        Cancel sign-in
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={locked || busy === "oauth"}
-                    className={primaryButton}
-                    onClick={() => void startProviderOAuth()}
-                  >
-                    {busy === "oauth" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <KeyRound size={14} />}
-                    {oauthOffer.signInLabel} again
-                  </button>
-                )}
-              </div>
-            ) : oauthOffer && !showApiKeyFields ? (
-              <div className="mt-4 space-y-3">
-                {oauthActive || oauth?.state === "waiting" || oauth?.state === "starting" ? (
-                  <div className="border border-agency/20 bg-agency/5 px-3 py-3 text-[12.5px] text-ink" role="status">
-                    <div className="font-medium">
-                      {oauth?.userCode ? "Enter this code in the browser" : "Starting provider sign-in…"}
-                    </div>
-                    {oauth?.userCode ? (
-                      <div className="mt-2 font-mono text-[18px] tracking-[0.12em] text-ink">{oauth.userCode}</div>
-                    ) : (
-                      <Loader2 size={16} className="mt-2 animate-spin motion-reduce:animate-none" />
-                    )}
-                    {oauth?.verificationUrl ? (
-                      <p className="mt-2 break-all text-ink-muted">{oauth.verificationUrl}</p>
-                    ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {oauth?.verificationUrl ? (
-                        <button
-                          type="button"
-                          className={secondaryButton}
-                          onClick={() => {
-                            if (window.ogb?.openExternal) void window.ogb.openExternal(oauth.verificationUrl!);
-                            else window.open(oauth.verificationUrl!, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          Open browser again
-                        </button>
-                      ) : null}
-                      <button type="button" className={secondaryButton} onClick={() => void cancelProviderOAuth()}>
-                        Cancel sign-in
-                      </button>
-                    </div>
-                  </div>
-                ) : oauth?.state === "approved" ? (
-                  <div className="border border-agency/20 bg-agency/5 px-3 py-2.5 text-[12.5px] text-ink" role="status">
-                    Signed in with {providerLabel(providerId)}. Choose a model, then connect and check.
-                    <button
-                      type="button"
-                      className="mt-2 block text-[12.5px] font-medium text-agency underline-offset-2 hover:underline"
-                      onClick={() => setUseApiKey(true)}
-                    >
-                      Use an API key instead
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={locked || busy === "oauth"}
-                      className={primaryButton}
-                      onClick={() => void startProviderOAuth()}
-                    >
-                      {busy === "oauth" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <KeyRound size={14} />}
-                      {oauthOffer.signInLabel}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-[12.5px] font-medium text-agency underline-offset-2 hover:underline"
-                      onClick={() => setUseApiKey(true)}
-                    >
-                      Use an API key instead
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : (
               <>
-                {oauthOffer ? (
-                  <button
-                    type="button"
-                    className="mt-4 text-[12.5px] font-medium text-agency underline-offset-2 hover:underline"
-                    onClick={() => {
-                      setUseApiKey(false);
-                      setApiKey("");
-                    }}
-                  >
-                    {oauthOffer.signInLabel} instead
-                  </button>
-                ) : null}
-                <label className="mt-4 block text-[12.5px] font-medium text-ink">
-                  Provider API key
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    autoComplete="new-password"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    placeholder={model?.provider === providerId && model.keyPresent ? "Leave blank to keep the current key" : "Paste the provider key"}
-                    className={fieldClass}
-                  />
-                  <span className="mt-1.5 block font-normal text-ink-muted">
-                    {model?.provider === providerId && model.keyPresent
-                      ? "A provider key is already saved. Leave this blank to keep it."
-                      : `Required for ${providerLabel(providerId)}.`}
-                  </span>
-                </label>
-                <details className="mt-4 text-[12.5px] text-ink-muted">
-                  <summary className="cursor-pointer font-medium text-ink">Custom provider URL</summary>
-                  <label className="mt-3 block">
-                    Base URL
-                    <input
-                      type="url"
-                      value={baseUrl}
-                      onChange={(event) => setBaseUrl(event.target.value)}
-                      placeholder="https://api.example.com/v1"
-                      autoComplete="off"
-                      spellCheck={false}
-                      className={fieldClass}
-                    />
-                    <span className="mt-1.5 block">Leave this empty for the provider default.</span>
-                  </label>
-                </details>
+                <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
+                  Your RealBud service holds this office&apos;s AI access. Choose how Bud should reason; you can change this later.
+                </p>
+                <p role="status" className="mt-2 rounded border border-line bg-sheet p-3 text-[12.5px] text-ink">
+                  {MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.
+                </p>
+                <ManagedModelChoices value={selectedChoice} disabled={locked} onChange={setSelectedChoice} />
               </>
+            ) : (
+              <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
+                {status?.modelAccess?.withdrawn
+                  ? status.modelAccess.detail
+                  : "Bud uses your office's managed AI access. Pair this computer from realbud.app, then choose one of three RealBud models here. No provider key is collected on this computer."}
+              </p>
             )}
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              <button
-                type="submit"
-                disabled={
-                  locked ||
-                  oauthActive ||
-                  busy === "oauth" ||
-                  !modelId.trim() ||
-                  (
-                    !managedAccess
-                    && !usesProfileLogin
-                    && showApiKeyFields
-                    && !apiKey.trim()
-                    && !(model?.provider === providerId && model.keyPresent)
-                  )
-                  || (
-                    !managedAccess
-                    && !usesProfileLogin
-                    && !showApiKeyFields
-                    && !(oauth?.state === "approved" || (model?.provider === providerId && model.keyPresent))
-                  )
-                }
-                className={primaryButton}
-              >
-                {busy === "model" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />}
-                Connect and check
-              </button>
-              <button type="button" onClick={closeModelSheet} disabled={busy === "model" || busy === "oauth"} className={secondaryButton}>
+              {managedAccess ? (
+                <button type="submit" disabled={locked} className={primaryButton}>
+                  {busy === "model" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />}
+                  Save and check
+                </button>
+              ) : status?.modelAccess?.withdrawn ? null : (
+                <button type="button" onClick={openPairing} className={primaryButton}>
+                  Pair this computer
+                </button>
+              )}
+              <button type="button" onClick={closeModelSheet} disabled={busy === "model"} className={secondaryButton}>
                 Cancel
               </button>
             </div>
