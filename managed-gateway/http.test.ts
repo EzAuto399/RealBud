@@ -248,3 +248,60 @@ test('operator billing desk answers 503 without an operator secret', async()=>{
   const response=await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/operator/billing/invoices`,{headers:{Authorization:'Bearer synthetic-operator-token-0000000001'}});
   assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'operator_unconfigured'});
 });
+
+test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET reads; the portal terms read shows the plan without basis points and a plan acceptance syncs Modelvia resale', async()=>{
+  const f=fixture();f.setTime(Date.parse('2026-09-15T00:00:00Z'));
+  const operatorSecret='fictional-gateway-operator-secret-000001';
+  const env:NodeJS.ProcessEnv={REALBUD_GATEWAY_OPERATOR_SECRET:operatorSecret,REALBUD_GATEWAY_PORTAL_SECRET:'fictional-gateway-portal-secret-00000001',REALBUD_INTERNAL_COMPANY_ID:'realbud-internal',
+    REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS:'3000',REALBUD_MODELVIA_RESALE_TERMS_REFERENCE:'realbud-office-terms-2026-09-26-ai-resale-30pct',REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES:'company-owner',
+    REALBUD_SELLER_LEGAL_NAME:'Fictional RealBud Seller',REALBUD_SELLER_ABN:'12345678901',REALBUD_SELLER_ADDRESS:'1 Example Seller Street, Brisbane QLD',REALBUD_TAX_TREATMENT_REF:'synthetic-tax-review',
+    REALBUD_SELLER_VERIFICATION_REF:'synthetic-seller-review',REALBUD_CUSTOMER_TERMS_REF:'synthetic-customer-contract',REALBUD_CARE_AGREEMENT_REF:'synthetic-care-agreement'};
+  const never=async()=>{throw new Error('network must stay off');};
+  const composed=composeGateway({env,ledger:f.ledger,fetch:never,allowedOrigins:new Set(),portal:{async authenticate(bearer){if(bearer===OWNER)return f.owner;throw new GatewayError('unauthenticated',401);}}});
+  assert.equal(composed.billingPlanConfig,'configured');
+  assert.equal(composeGateway({env:{...env,REALBUD_CARE_AGREEMENT_REF:''},ledger:f.ledger,fetch:never,allowedOrigins:new Set(),portal:{async authenticate(){throw new GatewayError('unauthenticated',401);}}}).billingPlanConfig,'billing_plan_unconfigured:REALBUD_CARE_AGREEMENT_REF');
+  const synced:string[]=[];
+  const server=createGatewayServer({...composed.server,afterTermsAccepted:async companyId=>{synced.push(companyId);}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));f.close();});
+  const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const token=signOperatorToken('ops@realbud.example',operatorSecret,Date.now());
+  const call=async(method:string,path:string,body?:unknown,bearer:string|null=token)=>{
+    const response=await fetch(base+path,{method,headers:{...(bearer?{Authorization:`Bearer ${bearer}`}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    return {status:response.status,body:await response.json() as Record<string,any>};
+  };
+  const plan={companyId:f.tenant.companyId,startPeriod:'2026-09',includedMonths:2,careCents:'12500',aiBilling:'resale'};
+  for(const bearer of [null,OWNER]) assert.deepEqual(await call('PUT','/v1/operator/offices/billing-plan',plan,bearer),{status:401,body:{error:'operator_unauthenticated'}});
+  assert.deepEqual(await call('GET',`/v1/operator/offices/billing-plan?companyId=${f.tenant.companyId}`),{status:200,body:{plan:null,acceptance:{state:'none',acceptedAt:null},months:[],rollForward:{published:[],blocker:null}}});
+  assert.deepEqual(await call('GET','/v1/operator/offices/billing-plan'),{status:400,body:{error:'invalid_id'}});
+  assert.deepEqual(await call('GET',`/v1/operator/offices/billing-plan?companyId=${f.tenant.companyId}&x=1`),{status:400,body:{error:'invalid_query'}});
+  assert.deepEqual(await call('PUT','/v1/operator/offices/billing-plan',{...plan,version:'plan-v1'}),{status:400,body:{error:'invalid_fields'}});
+  assert.deepEqual(await call('PUT','/v1/operator/offices/billing-plan',{...plan,companyId:'company-owner'}),{status:403,body:{error:'tenant_unavailable'}});
+  const set=await call('PUT','/v1/operator/offices/billing-plan',plan);
+  assert.equal(set.status,200);
+  assert.deepEqual([set.body.plan.version,set.body.plan.markupBasisPoints,set.body.acceptance.state,set.body.rollForward.published,set.body.months.map((m:{period:string;state:string})=>[m.period,m.state])],
+    ['plan-v1',3000,'awaiting_owner',['2026-09','2026-10'],[['2026-09','published'],['2026-10','published']]]);
+  assert.deepEqual((await call('PUT','/v1/operator/offices/billing-plan',plan)).body.plan.version,'plan-v1');
+  assert.deepEqual((await call('GET',`/v1/operator/offices/billing-plan?companyId=${f.tenant.companyId}`)).body.plan,set.body.plan);
+  assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-09')).body.offices[0].blocker,'plan_awaiting_owner');
+  // The owner reads September: the plan in words, no basis points anywhere; accepting it accepts the plan and syncs Modelvia resale.
+  const portal=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-09',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
+  assert.deepEqual(portal.plan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,includedUntil:'2026-10',careCents:'12500',careFrom:'2026-11',aiBilling:'resale',aiBilledFrom:'2026-11',month:1,included:true,accepted:false});
+  assert.deepEqual([portal.terms.version,portal.terms.careCents,portal.acceptance,'aiUsage' in portal.terms],['plan-v1-2026-09','0',null,false]);
+  assert.doesNotMatch(JSON.stringify(portal),/markupBasisPoints|3000/);
+  const accepted=await fetch(base+'/v1/portal/commercial-terms/accept',{method:'POST',headers:{Authorization:`Bearer ${OWNER}`,'Content-Type':'application/json'},body:JSON.stringify({period:'2026-09',version:portal.terms.version,digest:portal.digest})});
+  assert.equal(accepted.status,200);
+  assert.deepEqual(synced,[f.tenant.companyId]);
+  const october=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-10',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
+  assert.deepEqual([october.plan.accepted,october.plan.month,october.acceptance.subject.startsWith('standing:')],[true,2,true]);
+  assert.deepEqual((await call('GET',`/v1/operator/offices/billing-plan?companyId=${f.tenant.companyId}`)).body.months.map((m:{state:string})=>m.state),['accepted','standing']);
+  // Later, the portal read itself publishes the next months with their standing acceptance.
+  f.setTime(Date.parse('2026-11-03T00:00:00Z'));
+  const november=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-11',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
+  assert.deepEqual([november.terms.careCents,november.terms.aiUsage,november.plan.included,november.acceptance.subject.startsWith('standing:')],['12500',{billing:'resale',termsReference:'realbud-office-terms-2026-09-26-ai-resale-30pct'},false,true]);
+  assert.doesNotMatch(JSON.stringify(november),/markupBasisPoints/);
+  assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-10')).body.offices[0].state,'ready');
+  const closed=await call('POST','/v1/operator/billing/close',{companyId:f.tenant.companyId,period:'2026-10'});
+  assert.deepEqual([closed.status,closed.body.ai,closed.body.invoice.totalCents,closed.body.invoice.status],[200,'included','0','nothing_due']);
+  f.db.verify();
+});

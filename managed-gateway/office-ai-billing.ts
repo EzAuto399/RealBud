@@ -30,8 +30,8 @@
  */
 import { GatewayError, requireThat } from './contracts.ts';
 import type { UsageLedger } from './ledger.ts';
-import { consolidatedAiInvoices, ensureAiConsolidationTable, type AiInvoiceInput, type AiLineInput, type BillingService, type Invoice } from './billing.ts';
-import type { CommercialTerms, ResaleAcceptance } from './commercial-terms.ts';
+import { absorbedAiPeriods, consolidatedAiInvoices, ensureAiConsolidationTable, type AiInvoiceInput, type AiLineInput, type BillingService, type Invoice } from './billing.ts';
+import { includedMonth, planMonthIndex, type CommercialTerms, type ResaleAcceptance } from './commercial-terms.ts';
 import type { ModelviaClientBilling, ModelviaCustomerMargin, ModelviaInvoiceLine } from './modelvia-client-billing.ts';
 import { officeChargeDetail, officeMarkup } from './office-ai-terms.ts';
 import { cents, periodAt } from './money.ts';
@@ -46,7 +46,9 @@ export interface OfficeBilling {
   /** The deployment's default markup for new terms, for the margin view only. */
   defaultMarkupBasisPoints?: number;
 }
-export interface MonthClose { invoice: Invoice; ai: 'care_only' | 'consolidated' | 'no_ai_usage' | 'deferred' | 'already_closed' }
+/** `included`: an included month of the office's billing plan, closed as an A$0
+ * Tax Invoice; its Modelvia AI is absorbed and Modelvia is not read. */
+export interface MonthClose { invoice: Invoice; ai: 'care_only' | 'consolidated' | 'no_ai_usage' | 'deferred' | 'already_closed' | 'included' }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const officeCustomer = (ledger: UsageLedger, companyId: string): string | undefined => {
@@ -68,6 +70,12 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     const since = resaleSince(ledger, companyId);
     // A client-funded office's AI is RealBud's cost; terms that bill it are a mistake.
     if (options.clientFundedCompanies.has(companyId)) requireThat(!terms.aiUsage, 'client_funded_office_ai_not_billable', 409);
+    // A billing-plan month without AI resale (an included month, or a plan whose
+    // AI is included): the office's Modelvia AI is RealBud's cost, recorded as
+    // absorbed by the close itself (billing.ts). Modelvia is not read: nothing of
+    // this month can be owed, and AI owed for an earlier resale month is still
+    // read by the next resale close (only absorbed months are ever skipped).
+    if (terms.billingPlan && !terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, includedMonth(terms) ? 'included' : 'care_only');
     // Never resold: nothing at Modelvia can belong on this invoice.
     if (options.clientFundedCompanies.has(companyId) || (!terms.aiUsage && since === undefined)) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only');
     const customerId = officeCustomer(ledger, companyId);
@@ -77,14 +85,19 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     // Modelvia must not also offer the office a way to pay these invoices.
     requireThat(month.customerCheckout === 'off', 'modelvia_checkout_enabled', 409);
     const done = consolidatedAiInvoices(ledger, companyId);
-    const due = month.invoices.filter(entry => !done.has(entry.id)).sort((a, b) => a.period.localeCompare(b.period) || a.id.localeCompare(b.id));
+    // Months the office was told are included are never billed: those recorded
+    // absorbed at their close, and those the accepted plan on these terms names
+    // (so a month closed under earlier terms cannot be billed later either).
+    const absorbed = absorbedAiPeriods(ledger, companyId);
+    if (terms.billingPlan) for (const entry of month.invoices) if (planMonthIndex(terms.billingPlan.startPeriod, entry.period) >= 1 && planMonthIndex(terms.billingPlan.startPeriod, entry.period) <= terms.billingPlan.includedMonths) absorbed.add(entry.period);
+    const due = month.invoices.filter(entry => !done.has(entry.id) && !absorbed.has(entry.period)).sort((a, b) => a.period.localeCompare(b.period) || a.id.localeCompare(b.id));
     // Usage billed at Modelvia before the office accepted resale was never agreed to here.
     requireThat(!due.some(entry => since === undefined || entry.period < since), 'modelvia_invoice_before_acceptance', 409);
     // Months still waiting for Modelvia: this one, and any deferred earlier month
     // whose invoice has not appeared yet.
     const invoiced = (p: string) => month.invoices.some(entry => entry.period === p) || [...done.values()].some(entry => entry.period === p);
     const outstanding: string[] = [];
-    for (const p of deferredPeriods(ledger, companyId).filter(p => p < period && !invoiced(p))) {
+    for (const p of deferredPeriods(ledger, companyId).filter(p => p < period && !invoiced(p) && !absorbed.has(p))) {
       const earlier = await options.modelvia.customerMonth(customerId, p);
       if (earlier.usageExpected && !earlier.invoices.some(entry => entry.period === p)) outstanding.push(p);
     }
@@ -203,6 +216,7 @@ export async function officeMargins(options: OfficeBilling, period: string): Pro
     const paid = invoiceRow ? !!ledger.db.get('SELECT id FROM payments WHERE invoice=?', invoiceRow.id) : false;
     const notes = [
       !customerId ? 'No Modelvia customer is bound to this office.' : !margin ? unavailable : null,
+      absorbedAiPeriods(ledger, tenant.companyId).has(period) ? 'AI for this month is included in the office\'s plan: absorbed by RealBud, not billed.' : null,
       margin && !margin.complete ? 'Modelvia figures are provisional: requests are pending or unpriced.' : null,
       invoice?.aiUsage?.deferredPeriods?.length ? `AI for ${invoice.aiUsage.deferredPeriods.join(', ')} deferred to a later invoice.` : null,
     ].filter((n): n is string => !!n);

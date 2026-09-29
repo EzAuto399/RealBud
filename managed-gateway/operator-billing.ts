@@ -18,6 +18,7 @@ import { ensureManualPaymentTables, invoiceStanding, manualPayments, squarePayme
 import type { CommercialTerms } from './commercial-terms.ts';
 import { closeOfficeMonth, type MonthClose, type OfficeBilling } from './office-ai-billing.ts';
 import { periodAt } from './money.ts';
+import type { BillingPlans, BillingPlanView } from './billing-plans.ts';
 
 export interface OperatorPayment {
   id:string; method:'square'|ManualPaymentMethod; amountCents:string; receivedOn:string; reference:string|null; note:string|null;
@@ -35,6 +36,9 @@ export interface OperatorBillingRoutes {
   reversePayment(operator:OperatorPrincipal,invoiceId:string,paymentId:string,value:unknown):OperatorInvoice;
   closeList(period:string):{period:string;offices:CloseOffice[]};
   close(operator:OperatorPrincipal,value:unknown):Promise<{invoice:OperatorInvoice;ai:MonthClose['ai'];alreadyClosed:boolean}>;
+  /** One office's billing plan (billing-plans.ts): read, and set (a new version when the content changes). */
+  billingPlan(companyId:unknown):BillingPlanView;
+  setBillingPlan(operator:OperatorPrincipal,value:unknown):BillingPlanView;
 }
 
 const MONTH=/^\d{4}-(0[1-9]|1[0-2])$/;
@@ -168,19 +172,32 @@ function resolveTerms(billing:BillingService,companyId:string,period:string):Res
   return {termsVersion:latest.version,officeName:name,blocker:null};
 }
 
-/** Offices with commercial terms, and whether each month can close. Reads the
- * ledger only; whether Modelvia has finalized the month is found at close. */
-export function closeList(billing:BillingService,period:string):{period:string;offices:CloseOffice[]} {
+/** The billing plan's say on one unclosed month, after publishing its terms
+ * lazily: a code that stopped the roll-forward (its month's terms cannot be
+ * published), `plan_awaiting_owner`, `no_billing_plan`, or null. */
+function planBlocker(plans:BillingPlans|undefined,companyId:string,period:string):string|null {
+  if(!plans) return null;
+  return plans.rollForward(companyId,period).blocker??plans.blocker(companyId,period);
+}
+
+/** Offices with commercial terms or a billing plan, and whether each month can
+ * close. Publishes plan months lazily; otherwise reads the ledger only, and
+ * whether Modelvia has finalized the month is found at close. */
+export function closeList(billing:BillingService,period:string,plans?:BillingPlans):{period:string;offices:CloseOffice[]} {
   requireThat(typeof period==='string' && MONTH.test(period),'invalid_billing_period');
   const ledger=billing.ledger, internal=billing.commercialTerms?.internalCompanyId;
+  // `companies()` also creates the plan table on first use, so the query below can name it.
+  const planned=new Set(plans?.companies()??[]);
   const tenants=ledger.db.all<{body:string}>('SELECT t.body FROM tenants t WHERE EXISTS(SELECT 1 FROM commercial_terms c WHERE c.tenant=t.id) ORDER BY t.id')
-    .map(row=>JSON.parse(row.body) as {companyId:string;customerName:string;billingMode?:string})
-    .filter(t=>t.companyId!==internal && t.billingMode!=='internal_cost');
-  const offices=tenants.map((tenant):CloseOffice=>{
+    .map(row=>JSON.parse(row.body) as {companyId:string;customerName:string;billingMode?:string});
+  for(const companyId of planned) if(!tenants.some(t=>t.companyId===companyId)) tenants.push(ledger.tenant(companyId));
+  tenants.sort((a,b)=>a.companyId.localeCompare(b.companyId));
+  const offices=tenants.filter(t=>t.companyId!==internal && t.billingMode!=='internal_cost').map((tenant):CloseOffice=>{
     const row=ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND period=?',tenant.companyId,period);
     if(row) { const invoice=JSON.parse(row.body) as Invoice;
       return {companyId:tenant.companyId,officeName:officeName(invoice.customer),invoiceId:invoice.id,termsVersion:invoice.commercialTerms?.version??null,state:'closed',blocker:null}; }
-    const resolved=resolveTerms(billing,tenant.companyId,period);
+    const blocker=planBlocker(plans,tenant.companyId,period);
+    const resolved=blocker?{...resolveTerms(billing,tenant.companyId,period),termsVersion:null,blocker}:resolveTerms(billing,tenant.companyId,period);
     return {companyId:tenant.companyId,officeName:resolved.officeName??tenant.customerName,invoiceId:null,termsVersion:resolved.termsVersion,state:resolved.blocker?'blocked':'ready',blocker:resolved.blocker};
   });
   return {period,offices};
@@ -190,7 +207,7 @@ export function closeList(billing:BillingService,period:string):{period:string;o
  * the terms version is resolved here, never taken from the body. A month closed
  * already returns its invoice. The invoice email is queued by the close and
  * delivered by the server's drain. */
-export async function closeMonth(options:OfficeBilling&{policyUnavailable?:string},operator:OperatorPrincipal,value:unknown) {
+export async function closeMonth(options:OfficeBilling&{policyUnavailable?:string;plans?:BillingPlans},operator:OperatorPrincipal,value:unknown) {
   object(value); exact(value,['companyId','period',...(value.deferAi!==undefined?['deferAi']:[])]);
   id(value.companyId); requireThat(typeof value.period==='string' && MONTH.test(value.period),'invalid_billing_period');
   requireThat(value.deferAi===undefined || typeof value.deferAi==='boolean','invalid_defer_ai');
@@ -201,6 +218,8 @@ export async function closeMonth(options:OfficeBilling&{policyUnavailable?:strin
     const version=(JSON.parse(existing.body) as Invoice).commercialTerms?.version; requireThat(version,'invoice_close_conflict',409); termsVersion=version;
   } else {
     requireThat(!options.policyUnavailable,options.policyUnavailable??'',503);
+    const plan=planBlocker(options.plans,companyId,period);
+    if(plan) throw new GatewayError(plan,plan.startsWith('billing_plan_unconfigured:') || plan==='commercial_terms_unavailable'?503:409);
     const resolved=resolveTerms(billing,companyId,period);
     if(resolved.blocker) throw new GatewayError(resolved.blocker,resolved.blocker==='commercial_terms_unavailable'?503:409);
     termsVersion=resolved.termsVersion!;
@@ -211,13 +230,15 @@ export async function closeMonth(options:OfficeBilling&{policyUnavailable?:strin
 }
 
 /** The operator billing routes over one billing service. */
-export function operatorBillingRoutes(options:OfficeBilling&{policyUnavailable?:string}):OperatorBillingRoutes {
-  const {billing}=options;
+export function operatorBillingRoutes(options:OfficeBilling&{policyUnavailable?:string;plans?:BillingPlans}):OperatorBillingRoutes {
+  const {billing,plans}=options;
   return {
     invoices:()=>operatorInvoices(billing),
     recordPayment:(operator,invoiceId,value)=>recordManualPayment(billing,operator,invoiceId,value),
     reversePayment:(operator,invoiceId,paymentId,value)=>reverseManualPayment(billing,operator,invoiceId,paymentId,value),
-    closeList:period=>closeList(billing,period),
+    closeList:period=>closeList(billing,period,plans),
     close:(operator,value)=>closeMonth(options,operator,value),
+    billingPlan:companyId=>{ requireThat(plans,'billing_unavailable',503); id(companyId); return plans.view(companyId); },
+    setBillingPlan:(operator,value)=>{ requireThat(plans,'billing_unavailable',503); return plans.set(operator,value); },
   };
 }

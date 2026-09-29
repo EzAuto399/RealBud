@@ -68,14 +68,26 @@ const composition = composeGateway({
     },
   },
 });
-const { modelviaOperator, operatorAccess, careCollection } = composition;
+const { modelviaOperator, operatorAccess, careCollection, billingPlans, billingPlanConfig } = composition;
 const invoiceEmail=composeResendInvoiceEmail(process.env);
 const emailBilling=composition.server.billing;
 if(invoiceEmail) requireThat(emailBilling?.commercialTerms,'invoice_email_commercial_terms_unavailable',503);
 const server = createGatewayServer(composition.server);
 let emailDrain:Promise<void>|undefined;
 let emailTimer:NodeJS.Timeout|undefined;
+let planTimer:NodeJS.Timeout|undefined;
 let stopping=false;
+// Billing plans roll forward daily: each planned office's terms through next
+// month, with their standing acceptances (billing-plans.ts). Ledger only, no
+// network; a refusal is logged by code and shown on the close list.
+const PLAN_ROLL_FORWARD_MS=24*60*60_000;
+const runPlanRollForward=()=>{
+  if(stopping) return;
+  try {
+    const offices=billingPlans.rollForwardAll().filter(office=>office.published.length || office.blocker);
+    if(offices.length) console.log(JSON.stringify({billingPlanRollForward:'result',offices}));
+  } catch { console.error(JSON.stringify({billingPlanRollForward:'failed'})); }
+};
 const runEmailDrain=()=>{
   if(!invoiceEmail || !emailBilling || stopping || emailDrain) return;
   emailDrain=drainInvoiceEmails(emailBilling,invoiceEmail)
@@ -96,9 +108,11 @@ server.listen(port, host, () => {
       operatorAccess,
       careCollection,
       invoiceEmail:invoiceEmail?'resend':'off',
+      billingPlans:billingPlanConfig,
     }),
   );
   if(invoiceEmail) {runEmailDrain();emailTimer=setInterval(runEmailDrain,60_000);}
+  runPlanRollForward();planTimer=setInterval(runPlanRollForward,PLAN_ROLL_FORWARD_MS);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -106,6 +120,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     if(stopping) return;
     stopping=true;
     if(emailTimer) clearInterval(emailTimer);
+    if(planTimer) clearInterval(planTimer);
     server.close(async () => {
       await emailDrain;
       db.close();

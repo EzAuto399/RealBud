@@ -8,6 +8,7 @@ import { invoiceHtml, presentInvoice, type PaymentInstructions } from './invoice
 import type { Invoice } from './billing.ts';
 import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 import type { OperatorBillingRoutes } from './operator-billing.ts';
+import { presentCommercialTerms, type BillingPlans } from './billing-plans.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -37,8 +38,8 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
  * operator billing desk (GET /v1/operator/billing/invoices, POST
  * /v1/operator/billing/invoices/{id}/payments[/{paymentId}/reverse], GET|POST
- * /v1/operator/billing/close; operator-billing.ts), the
- * monthly invoice routes GET
+ * /v1/operator/billing/close, GET|PUT /v1/operator/offices/billing-plan;
+ * operator-billing.ts, billing-plans.ts), the monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
  * /v1/portal/invoices[/{id}[/document|/receipt|/ai-usage]], POST
  * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
@@ -69,6 +70,9 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
   /** The operator billing desk (operator-billing.ts), under the operator bearer.
    * Absent answers 503 `billing_unavailable`. */
   operatorBilling?:OperatorBillingRoutes;
+  /** Billing plans (billing-plans.ts): a portal terms read publishes the office's
+   * plan months lazily before answering. Absent, terms are read as published. */
+  billingPlans?:Pick<BillingPlans,'rollForward'>;
   /** Shown to the office with its invoices and on the invoice document. */
   paymentInstructions?:PaymentInstructions}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
@@ -155,6 +159,22 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         requireThat(routes!.syncMarkup,'operator_unconfigured',503);
         reply(res,200,await routes!.syncMarkup!(operator,value)); return;
       }
+      // RealBud operator: one office's billing plan (billing-plans.ts). PUT sets it
+      // (a new version when the content changes; the owner accepts again); GET
+      // reads it. Both publish the plan's months lazily. Seller and references
+      // come from the deployment, never from this body.
+      if((req.method==='PUT' || req.method==='GET') && url.pathname==='/v1/operator/offices/billing-plan') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operatorBilling; requireThat(routes,'billing_unavailable',503);
+        if(req.method==='GET') {
+          requireThat([...url.searchParams.keys()].every(key=>key==='companyId'),'invalid_query');
+          reply(res,200,routes!.billingPlan(url.searchParams.get('companyId'))); return;
+        }
+        requireThat(!url.search,'invalid_query');
+        reply(res,200,routes!.setBillingPlan(operator,json(await body(req,4096)))); return;
+      }
       // RealBud operator: the owner's per-office margin for one month, JSON or CSV.
       // Read only; the period defaults to the last closed Brisbane month.
       if(req.method==='GET' && url.pathname==='/v1/operator/billing/margins') {
@@ -233,7 +253,10 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       // is the tenant; a body never names one.
       if(req.method==='GET' && url.pathname==='/v1/portal/commercial-terms') {
         const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);
-        reply(res,200,terms.current(actor,url.searchParams.get('period')||'')); return;
+        // The office's plan months are published lazily; a refusal there is the
+        // operator's to see on the close list, and the read still answers.
+        if(options.billingPlans) options.billingPlans.rollForward(actor.companyId);
+        reply(res,200,presentCommercialTerms(terms.current(actor,url.searchParams.get('period')||''))); return;
       }
       if(req.method==='POST' && url.pathname==='/v1/portal/commercial-terms/accept') {
         const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);

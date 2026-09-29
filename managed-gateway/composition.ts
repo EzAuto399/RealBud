@@ -21,6 +21,7 @@ import { BillingService, composeInvoiceTermsDays, type Invoice } from './billing
 import { composePaymentInstructions } from './invoice-html.ts';
 export { composePaymentInstructions };
 import { operatorBillingRoutes } from './operator-billing.ts';
+import { BillingPlans, composeBillingPlanConfig } from './billing-plans.ts';
 import { composeModelviaClientBilling } from './modelvia-client-billing.ts';
 import { customerTermsPolicy } from './modelvia-keys.ts';
 import { officeMargins } from './office-ai-billing.ts';
@@ -36,6 +37,10 @@ export interface GatewayComposition {
   operatorAccess: 'configured' | 'missing';
   /** Care-fee collection through Square: `off` (invoices close and read, no checkout), `sandbox` or `live`. */
   careCollection: CareCollectionMode;
+  /** Billing plans over the same billing service; `server.ts` rolls them forward daily. */
+  billingPlans: BillingPlans;
+  /** `configured`, or the code naming the seller/reference variable a plan still needs. */
+  billingPlanConfig: string;
 }
 
 export type CareCollectionMode = 'off' | 'sandbox' | 'live';
@@ -132,9 +137,16 @@ export function composeGateway(options: {
   }
   const registry = (env.REALBUD_GATEWAY_CONNECTOR_REGISTRY ?? '').trim();
   const modelviaOperator = modelviaOperatorState(env), operatorAccess = operatorAccessState(env);
+  // Billing plans: the seller basis and reference ids from the deployment, the
+  // resale default from the Modelvia terms policy. Plan routes answer 503 naming
+  // the missing variable until every one is set.
+  const planConfig = composeBillingPlanConfig(env);
+  const billingPlans = new BillingPlans({ billing: care.billing, config: planConfig, clientFundedCompanies,
+    ...('unavailable' in policy ? { resaleUnavailable: policy.unavailable } : policy.resale ? { resale: policy.resale } : {}) });
   return {
     provisioning: 'provisioning' in provisioning ? 'composed' : provisioning.unavailable,
     modelviaOperator, operatorAccess, careCollection: care.careCollection,
+    billingPlans, billingPlanConfig: 'unavailable' in planConfig ? planConfig.unavailable : 'configured',
     server: {
       allowedOrigins: options.allowedOrigins,
       portal: options.portal,
@@ -145,8 +157,9 @@ export function composeGateway(options: {
       ...(operator ? { operator } : {}),
       // The billing desk: care billing is always composed; Modelvia is read at
       // close exactly as `commercial-cli.ts close` reads it.
-      operatorBilling: operatorBillingRoutes({ billing: care.billing, ...(clientBilling ? { modelvia: clientBilling } : {}), clientFundedCompanies,
+      operatorBilling: operatorBillingRoutes({ billing: care.billing, ...(clientBilling ? { modelvia: clientBilling } : {}), clientFundedCompanies, plans: billingPlans,
         ...('unavailable' in policy ? { policyUnavailable: policy.unavailable } : {}) }),
+      billingPlans,
       paymentInstructions: composePaymentInstructions(env),
       ...('provisioning' in provisioning ? { provisioning: provisioning.provisioning } : { provisioningUnavailable: provisioning.unavailable }),
       ...(registry ? { connectors: new ManagedConnectors({ ledger,
