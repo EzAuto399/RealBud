@@ -302,13 +302,13 @@ test('the office invoice names the office, lists Modelvia\'s grouped model lines
   assert.equal(ai.reduce((n, l) => n + BigInt(l.amountCents), 0n).toString(), mv.totalCents);
   assert.equal(invoice.totalCents, (12500n + BigInt(mv.totalCents as string)).toString());
   assert.equal(invoice.lines.reduce((n, l) => n + BigInt(l.gstCents), 0n).toString(), invoice.gstCents);
-  assert.equal(invoice.dueAt, invoice.issuedAt);
+  assert.equal(invoice.dueAt, invoice.issuedAt + 7 * 86_400_000);
   assert.deepEqual([invoice.customer.tradingName, invoice.aiUsage!.modelviaCustomerId, invoice.aiUsage!.usedBy, invoice.aiUsage!.chargeDetail], ['Agency A Realty', 'realbud-company-a', 'Agency A Realty', 'all_in']);
   // Office all-in: Modelvia itemized for the client, but this office's invoice keeps no split.
   assert.ok(ai.every(l => l.components === undefined));
   const html = invoiceHtml(invoice);
   for (const expected of ['Bill to Fictional Agency A', 'Trading as Agency A Realty', '1 Example Street, Brisbane QLD', 'RealBud account company-a', `Invoice ${invoice.id}`,
-    'Issued 2026-10-01', 'Due 2026-10-01 (on receipt)', 'Billing month 2026-09', 'Usage by Agency A Realty', 'Modelvia customer ID <b>realbud-company-a</b>',
+    'Issued 2026-10-01', 'Due 2026-10-08 (due in 7 days)', 'Billing month 2026-09', 'Usage by Agency A Realty', 'Modelvia customer ID <b>realbud-company-a</b>',
     'AI usage — DeepSeek V4.1 Flash — 1,234 requests', 'AI usage — Kimi K3 — 1 request', 'Reference: Modelvia invoice CI-00000201', 'Used by Agency A Realty · project rb-install-one',
     `href="/api/account/invoices/${invoice.id}/ai-usage"`])
     assert.ok(html.includes(expected), expected);

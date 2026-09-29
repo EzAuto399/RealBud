@@ -4,9 +4,10 @@ import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
 import type { OperatorRoutes } from './office-ai-access.ts';
 import type { BillingService } from './billing.ts';
-import { invoiceHtml, presentInvoice } from './invoice-html.ts';
+import { invoiceHtml, presentInvoice, type PaymentInstructions } from './invoice-html.ts';
 import type { Invoice } from './billing.ts';
 import { marginCsv, previousPeriod } from './office-ai-billing.ts';
+import type { OperatorBillingRoutes } from './operator-billing.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -34,6 +35,9 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * /v1/portal/installations/{provision,revoke}, the operator-only POST
  * /v1/operator/offices/ai-access, PUT|GET /v1/operator/offices/entitlement, POST /v1/operator/offices/ai-markup[/sync],
  * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
+ * operator billing desk (GET /v1/operator/billing/invoices, POST
+ * /v1/operator/billing/invoices/{id}/payments[/{paymentId}/reverse], GET|POST
+ * /v1/operator/billing/close; operator-billing.ts), the
  * monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
  * /v1/portal/invoices[/{id}[/document|/receipt|/ai-usage]], POST
@@ -61,10 +65,16 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
   afterTermsAccepted?:(companyId:string)=>Promise<unknown>;
   /** The office invoice's per-request AI usage CSV (office-ai-usage-csv.ts).
    * Absent answers 503 `modelvia_client_unconfigured`. */
-  aiUsageCsv?:(invoice:Invoice)=>Promise<string>}) {
+  aiUsageCsv?:(invoice:Invoice)=>Promise<string>;
+  /** The operator billing desk (operator-billing.ts), under the operator bearer.
+   * Absent answers 503 `billing_unavailable`. */
+  operatorBilling?:OperatorBillingRoutes;
+  /** Shown to the office with its invoices and on the invoice document. */
+  paymentInstructions?:PaymentInstructions}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
   const billing=()=>{ requireThat(options.billing,'billing_unavailable',503); return options.billing; };
+  const paymentInstructions:PaymentInstructions=options.paymentInstructions??{payId:null,bank:null};
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -162,6 +172,32 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         }
         reply(res,200,report); return;
       }
+      // RealBud operator: the billing desk. Invoices with their standing, recording
+      // and undoing transfer/PayID payments, and closing an office's month. The
+      // recorder is the authenticated operator, never a body field.
+      const desk=/^\/v1\/operator\/billing\/(?:(invoices)(?:\/([A-Za-z0-9-]{1,160})\/payments(?:\/([^/]{1,200})\/(reverse))?)?|(close))$/.exec(url.pathname);
+      if(desk) {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operatorBilling; requireThat(routes,'billing_unavailable',503);
+        if(desk[5]) {
+          if(req.method==='GET') {
+            requireThat([...url.searchParams.keys()].every(key=>key==='period'),'invalid_query');
+            reply(res,200,routes!.closeList(url.searchParams.get('period')||previousPeriod(Date.now()))); return;
+          }
+          requireThat(req.method==='POST' && !url.search,'not_found',404);
+          reply(res,200,await routes!.close(operator,json(await body(req,4096)))); return;
+        }
+        if(!desk[2]) { requireThat(req.method==='GET' && !url.search,'not_found',404); reply(res,200,routes!.invoices()); return; }
+        requireThat(req.method==='POST' && !url.search,'not_found',404);
+        const value=json(await body(req,4096));
+        if(!desk[4]) { reply(res,200,routes!.recordPayment(operator,desk[2],value)); return; }
+        let paymentId='';
+        try { paymentId=decodeURIComponent(desk[3]); } catch { throw new GatewayError('payment_not_found',404); }
+        requireThat(/^[A-Za-z0-9._:-]{1,200}$/.test(paymentId),'payment_not_found',404);
+        reply(res,200,routes!.reversePayment(operator,desk[2],paymentId,value)); return;
+      }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));
       requireThat(actor && ['billing_owner','billing_reader'].includes(actor.role),'forbidden',403);
@@ -210,7 +246,7 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         reply(res,200,accepted); return;
       }
       if(req.method==='GET' && url.pathname==='/v1/portal/invoices') {
-        const service=billing(); reply(res,200,{collectionMode:service.collectionMode,invoices:service.portalInvoices(actor)}); return;
+        const service=billing(); reply(res,200,{collectionMode:service.collectionMode,invoices:service.portalInvoices(actor),paymentInstructions}); return;
       }
       const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document|ai-usage))?$/.exec(url.pathname);
       if(match) {
@@ -218,7 +254,7 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         if(req.method==='POST' && match[2]==='checkout') { reply(res,200,await billing().checkout(actor,invoice.id)); return; }
         if(req.method==='GET' && match[2]==='receipt') { reply(res,200,billing().receipt(actor,invoice.id)); return; }
         if(req.method==='GET' && match[2]==='document') {
-          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice)); return;
+          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice,{paymentInstructions,card:billing().collectionMode!=='off'})); return;
         }
         if(req.method==='GET' && match[2]==='ai-usage') {
           requireThat(invoice.aiUsage?.modelviaInvoices.length,'ai_usage_not_on_invoice',404);

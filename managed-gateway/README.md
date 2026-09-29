@@ -21,7 +21,11 @@ Off-device service with four jobs:
 | `POST /v1/operator/offices/ai-access` | operator bearer, `realbud_operator` | sets one office's AI access at Modelvia: default A$200 monthly cap, a custom cap, or disabled ([DEPLOY.md](DEPLOY.md#office-ai-access)) |
 | `GET /v1/portal/commercial-terms?period=YYYY-MM` | portal bearer | the month's published care terms for the principal's office, with its acceptance if any |
 | `POST /v1/portal/commercial-terms/accept` | portal bearer, `billing_owner` | accepts exactly `{period, version, digest}` |
-| `GET /v1/portal/invoices` | portal bearer | the office's invoices in `invoices`, each with a `paid` flag, plus top-level `collectionMode` (`off`, `sandbox`, or `live`); mode alone does not make checkout available |
+| `GET /v1/operator/billing/invoices` | operator bearer | every invoice, newest first (at most 500), with due date, paid and outstanding cents, `status` (`unpaid`, `part_paid`, `paid`, `overpaid`, `credit`, `nothing_due`), `overdue`/`daysOverdue` and every payment (Square and recorded) |
+| `POST /v1/operator/billing/invoices/{id}/payments` | operator bearer | records a checked bank transfer, PayID or other payment `{paymentId (uuid), method, amountCents, receivedOn, reference?, note?}`; idempotent on `paymentId`; refused over the outstanding balance, for a future date, on a card-paid invoice, or on a credit/zero invoice |
+| `POST /v1/operator/billing/invoices/{id}/payments/{paymentId}/reverse` | operator bearer | undoes a recorded payment with `{reason}` (appends a reversal, deletes nothing); Square payments are refunded through Square instead |
+| `GET\|POST /v1/operator/billing/close` | operator bearer | GET `?period=YYYY-MM`: offices with terms, `closed`, `ready` or `blocked` with the reason. POST `{companyId, period, deferAi?}`: closes the month as `commercial-cli.ts close` does, resolving the accepted terms version itself; a closed month returns its invoice |
+| `GET /v1/portal/invoices` | portal bearer | the office's invoices in `invoices`, each with a `paid` flag (Square settlement), `dueAt`, `status`, `overdue`, `paidCents` and `outstandingCents`, plus top-level `collectionMode` (`off`, `sandbox`, or `live`; mode alone does not make checkout available) and `paymentInstructions` (`payId`, `bank`, each null unless configured) |
 | `GET /v1/portal/invoices/{id}` · `/document` · `/receipt` | portal bearer | one invoice as JSON, as printable HTML, or its settlement receipt (409 `payment_not_settled` until paid) |
 | `POST /v1/portal/invoices/{id}/checkout` | portal bearer, `billing_owner` | one idempotent Square-hosted checkout for a collectible invoice (503 `payment_provider_unselected` in `local` mode) |
 | `POST /v1/webhooks/square` | Square signature | payment and refund notifications; a trigger only, settlement is re-read from Square |
@@ -39,6 +43,9 @@ Every other path returns 404: `/v1/portal/usage`, `/v1/portal/rates`, `/v1/porta
 - `commercial_terms_missing` (404) / `commercial_terms_not_accepted` (409): publish the month's terms, then the billing owner accepts them.
 - `square_mapping_required` (409): record the office's Square customer mapping with the commercial command.
 - `internal_usage_not_billable` (403): the company is RealBud's own account and is never invoiced.
+- `payment_exceeds_outstanding`, `invoice_already_paid`, `nothing_to_pay`, `payment_conflict`, `reversal_conflict`, `square_payment_not_reversible` (409), `invalid_received_on` (400): a payment record or undo the desk refused; nothing was written.
+- `balance_payable_by_transfer` (409): a transfer is recorded against the invoice, so card checkout is off; the balance is paid by transfer.
+- `terms_not_accepted` / `terms_version_ambiguous` (409): the office has not accepted the month's current terms; publish or have the billing owner accept, then close.
 
 The installation project copies the Modelvia customer's caps at provisioning. Its monthly cap and concurrency are the customer's; its request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$1), never above the monthly cap. After the customer's caps change, `caps-cli.ts apply --company <id>` (`pnpm run caps`) re-applies them to every ready installation. Cap fields stored in the ledger are legacy and drive nothing.
 
@@ -71,6 +78,8 @@ node --experimental-strip-types commercial-cli.ts email-repair-auth <companyId> 
 node --experimental-strip-types commercial-cli.ts credit <companyId> <invoiceId> <creditId> <cents> <reason>  # carried to the next invoice
 ```
 
+The admin desk closes a month through `POST /v1/operator/billing/close` with the same checks and records transfer/PayID payments (owner decision [2026-09-29](../docs/decisions/2026-09-29-operator-billing.md)). Invoices are due `REALBUD_INVOICE_TERMS_DAYS` days after issue (default 7; 0 to 365); an older invoice that recorded no due date, or the issue time, is read as issue plus that many days. Non-payment is flagged as overdue only; nothing pauses an office. How offices pay by transfer is printed on the invoice and returned with the portal invoice list from `REALBUD_PAYID` and `REALBUD_PAYID_NAME` (both needed), and `REALBUD_BANK_ACCOUNT_NAME`, `REALBUD_BANK_BSB` (6 digits) and `REALBUD_BANK_ACCOUNT_NUMBER` (4 to 10 digits, all three needed); a part left unset or malformed is shown as none.
+
 The terms' `rateCards` list is normally empty: Modelvia sets AI prices. One closed RealBud invoice per office contains the accepted care fee and credits plus the exact lines of finalized Modelvia customer invoices when that office accepted AI resale. Modelvia's finalization can hold up close; the gateway's older AI usage tables cannot. Optional `customer.billingEmail` is bound to the accepted terms. Email mode is off by default; a configured close attempts delivery, and the server retries recent queued or uncertain attempts. See [DEPLOY.md](DEPLOY.md#care-fee-collection-square) for recipient review, exit codes, retry limits, old queued invoices and auth repair.
 
 ## Run and test locally
@@ -95,7 +104,8 @@ The root `pnpm test` does not include this service. Every fixture here is synthe
 | `office-ai-access.ts`, `operator-token.ts` | Operator office AI access route and its own operator bearer |
 | `composio-org.ts`, `connectors.ts` | Composio org client; connector broker |
 | `entitlement-cli.ts`, `local-env.ts` | Operator entitlement command; shared `.env.local` and database path |
-| `commercial-terms.ts`, `billing.ts`, `office-ai-billing.ts`, `invoice-html.ts` | Accepted monthly office terms; one office invoice with care and finalized Modelvia AI lines; credits, receipts and printable document |
+| `commercial-terms.ts`, `billing.ts`, `office-ai-billing.ts`, `invoice-html.ts` | Accepted monthly office terms; one office invoice with care and finalized Modelvia AI lines; credits, receipts, due date and payment standing, and printable document |
+| `operator-billing.ts` | Operator billing desk: invoice list with standing, recorded transfer/PayID payments and their reversals (append-only), month close from the desk |
 | `invoice-email.ts`, `commercial-cli.ts` | Digest-bound invoice email outbox, bounded delivery and recovery; operator close, email-list, email-deliver and email-repair-auth commands |
 | `square-payment.ts`, `square-mapping.ts` | Square-hosted checkout, signed webhook verification and refunds; the per-office Square customer mapping |
 | `database.ts`, `ledger.ts` | SQLite ledger: entitlements, terms, invoices, payments, audit chain. Older AI-usage tables stay in the schema, readable and unused |

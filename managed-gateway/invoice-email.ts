@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonical, id, requireThat } from './contracts.ts';
 import { digest, type UsageLedger } from './ledger.ts';
 import { validBillingEmail } from './commercial-terms.ts';
-import { invoiceHtml } from './invoice-html.ts';
+import { composePaymentInstructions, invoiceHtml, type PaymentInstructions } from './invoice-html.ts';
 import type { Invoice, BillingService } from './billing.ts';
 
 export type InvoiceEmailState='queued'|'sending'|'retryable'|'provider_accepted'|'rejected'|'reconciliation_required';
@@ -17,6 +17,8 @@ export interface InvoiceEmailTransport {
   sender:string;
   /** Exact frozen JSON bytes are supplied on every attempt. */
   send(payloadJson:string,idempotencyKey:string):Promise<{id:string}>;
+  /** How the office pays by transfer, printed on the emailed invoice. */
+  paymentInstructions?:PaymentInstructions;
 }
 interface PreparedEmail { payloadJson:string; idempotencyKey:string; transportIdentity:string; firstAttemptAt:number; lastAttemptAt:number; leaseUntil:number; attempts:number }
 interface Outbox { invoiceId:string; companyId:string; invoiceDigest:string; termsDigest:string; recipient:string; state:InvoiceEmailState;
@@ -79,11 +81,11 @@ function assertBinding(billing:BillingService,value:Outbox):Invoice {
   requireThat(accepted && accepted.digest===value.termsDigest && accepted.terms.customer.billingEmail===value.recipient,'invoice_email_binding_mismatch',503);
   return invoice;
 }
-function payload(invoice:Invoice,sender:string,recipient:string):InvoiceEmailPayload {
+function payload(invoice:Invoice,sender:string,recipient:string,paymentInstructions?:PaymentInstructions):InvoiceEmailPayload {
   requireThat(validBillingEmail(sender),'invoice_email_sender_invalid',503);
   // The document itself is the email body. The invoice's optional CSV link is
   // absolute here, since email clients have no RealBud page origin to resolve it.
-  const html=invoiceHtml(invoice).replaceAll('href="/api/account/','href="'+ACCOUNT_ORIGIN+'/api/account/');
+  const html=invoiceHtml(invoice,paymentInstructions?{paymentInstructions}:{}).replaceAll('href="/api/account/','href="'+ACCOUNT_ORIGIN+'/api/account/');
   return {from:sender,to:[recipient],subject:`RealBud ${invoice.kind} ${invoice.id} — ${invoice.period}`,html};
 }
 
@@ -116,7 +118,7 @@ export async function deliverInvoiceEmail(billing:BillingService,companyId:strin
       value.prepared.lastAttemptAt=now;value.prepared.leaseUntil=now+LEASE_MS;value.prepared.attempts++;
     } else {
       const idempotencyKey=value.nextIdempotencyKey??`realbud-invoice-${invoice.id}-${value.invoiceDigest.slice(0,32)}`;
-      value.prepared={payloadJson:JSON.stringify(payload(invoice,transport.sender,value.recipient)),idempotencyKey,transportIdentity:transport.identity,firstAttemptAt:now,lastAttemptAt:now,leaseUntil:now+LEASE_MS,attempts:1};
+      value.prepared={payloadJson:JSON.stringify(payload(invoice,transport.sender,value.recipient,transport.paymentInstructions)),idempotencyKey,transportIdentity:transport.identity,firstAttemptAt:now,lastAttemptAt:now,leaseUntil:now+LEASE_MS,attempts:1};
       delete value.nextIdempotencyKey;
     }
     value.state='sending';delete value.failureCode;delete value.manualOnly;putOutbox(ledger,value);
@@ -210,7 +212,7 @@ export function composeResendInvoiceEmail(env:NodeJS.ProcessEnv,sendFetch:typeof
   const key=env.REALBUD_INVOICE_RESEND_API_KEY;
   const sender=env.REALBUD_INVOICE_FROM;
   requireThat(typeof key==='string' && key.length>=20 && typeof sender==='string' && validBillingEmail(sender),'invoice_email_configuration_incomplete',503);
-  return {identity:hash(key),sender,
+  return {identity:hash(key),sender,paymentInstructions:composePaymentInstructions(env),
     async send(bodyJson,idempotencyKey) {
       let response:Response;
       try {

@@ -12,6 +12,8 @@ import { GatewayError } from './contracts.ts';
 import { fileSecretStore, InstallationProvisioning, modelviaOperatorState } from './provisioning.ts';
 import { modelviaKeyClient } from './modelvia-keys.ts';
 import type { HttpTransport } from './composio-org.ts';
+import { composeGateway } from './composition.ts';
+import { signOperatorToken } from './operator-token.ts';
 
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{while(cleanups.length)await cleanups.pop()!();});
 const OWNER='synthetic-portal-token-owner-000001',READER='synthetic-portal-token-reader-00001',UNKNOWN='synthetic-portal-token-unknown-0001';
@@ -87,8 +89,10 @@ test('care invoice routes report collection mode, stay tenant-scoped and refuse 
   const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request=(method:string,path:string,bearer:string=OWNER)=>fetch(base+path,{method,headers:{Authorization:`Bearer ${bearer}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:'{}'}:{})});
   const list=await request('GET','/v1/portal/invoices');assert.equal(list.status,200);
-  const expectedInvoices=[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false}];
-  assert.deepEqual(await list.json(),{collectionMode:'off',invoices:expectedInvoices});
+  const expectedInvoices=[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false,
+    dueAt:invoice.issuedAt+7*86_400_000,status:'unpaid',overdue:false,paidCents:'0',outstandingCents:'12500'}];
+  const noInstructions={payId:null,bank:null};
+  assert.deepEqual(await list.json(),{collectionMode:'off',invoices:expectedInvoices,paymentInstructions:noInstructions});
   assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),{...invoice,links:{document:`/api/account/invoices/${invoice.id}?kind=document`}});
   assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}/ai-usage`)).json(),{error:'ai_usage_not_on_invoice'});
   const document=await request('GET',`/v1/portal/invoices/${invoice.id}/document`,READER);
@@ -96,7 +100,7 @@ test('care invoice routes report collection mode, stay tenant-scoped and refuse 
   const html=await document.text();assert.match(html,/monthly care/);assert.doesNotMatch(html,/AI usage —/);
   assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}/receipt`)).status,409);
   assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}`,UNKNOWN)).status,404);
-  assert.deepEqual(await (await request('GET','/v1/portal/invoices',UNKNOWN)).json(),{collectionMode:'off',invoices:[]});
+  assert.deepEqual(await (await request('GET','/v1/portal/invoices',UNKNOWN)).json(),{collectionMode:'off',invoices:[],paymentInstructions:noInstructions});
   assert.equal((await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`,READER)).status,403);
   const checkout=await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`);
   assert.equal(checkout.status,503);assert.deepEqual(await checkout.json(),{error:'payment_provider_unselected'});
@@ -111,8 +115,8 @@ test('care invoice routes report collection mode, stay tenant-scoped and refuse 
   cleanups.push(async()=>{liveServer.closeAllConnections();await new Promise<void>(resolve=>liveServer.close(()=>resolve()));});
   const liveUrl=`http://127.0.0.1:${(liveServer.address() as AddressInfo).port}/v1/portal/invoices`;
   assert.equal((await fetch(liveUrl)).status,401);
-  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${OWNER}`}})).json(),{collectionMode:'live',invoices:expectedInvoices});
-  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${UNKNOWN}`}})).json(),{collectionMode:'live',invoices:[]});
+  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${OWNER}`}})).json(),{collectionMode:'live',invoices:expectedInvoices,paymentInstructions:noInstructions});
+  assert.deepEqual(await (await fetch(liveUrl,{headers:{Authorization:`Bearer ${UNKNOWN}`}})).json(),{collectionMode:'live',invoices:[],paymentInstructions:noInstructions});
 });
 
 test('an unentitled company is refused on provision before any Modelvia call; revoke needs no entitlement', async()=>{
@@ -178,4 +182,69 @@ test('modelviaOperatorState reports only a distinct RealBud-scoped credential', 
   assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_SCOPED_SECRET:'',REALBUD_MODELVIA_OPERATOR_SECRET:full.REALBUD_MODELVIA_SCOPED_SECRET}),'missing');
   for(const name of ['REALBUD_MODELVIA_OPERATOR_SECRET','REALBUD_GATEWAY_PORTAL_SECRET','REALBUD_GATEWAY_OPERATOR_SECRET'])
     assert.equal(modelviaOperatorState({...full,[name]:full.REALBUD_MODELVIA_SCOPED_SECRET}),'missing',name);
+});
+
+test('operator billing desk routes: operator bearer only, fixed error codes, record and undo a transfer, close a month; the portal shows payment instructions', async()=>{
+  const f=fixture();f.setTime(Date.parse('2026-10-02T00:00:00Z'));
+  const operatorSecret='fictional-gateway-operator-secret-000001';
+  const env:NodeJS.ProcessEnv={REALBUD_GATEWAY_OPERATOR_SECRET:operatorSecret,REALBUD_GATEWAY_PORTAL_SECRET:'fictional-gateway-portal-secret-00000001',REALBUD_INTERNAL_COMPANY_ID:'realbud-internal',
+    REALBUD_PAYID:'0455123764',REALBUD_PAYID_NAME:'Fictional RealBud Pty Ltd',REALBUD_BANK_ACCOUNT_NAME:'Fictional RealBud Pty Ltd',REALBUD_BANK_BSB:'064-000',REALBUD_BANK_ACCOUNT_NUMBER:'12345678'};
+  const never=async()=>{throw new Error('network must stay off');};
+  const composed=composeGateway({env,ledger:f.ledger,fetch:never,allowedOrigins:new Set(),portal:{async authenticate(bearer){if(bearer===OWNER)return f.owner;throw new GatewayError('unauthenticated',401);}}});
+  const billing=composed.server.billing!;
+  const published=billing.commercialTerms!.publish(careTermsDraft(f,'care-v1','12500'));
+  billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
+  const server=createGatewayServer(composed.server);
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));f.close();});
+  const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const token=signOperatorToken('ops@realbud.example',operatorSecret,Date.now());
+  const call=async(method:string,path:string,body?:unknown,bearer:string|null=token)=>{
+    const response=await fetch(base+path,{method,headers:{...(bearer?{Authorization:`Bearer ${bearer}`}:{}),...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    return {status:response.status,body:await response.json() as Record<string,any>};
+  };
+  // Operator bearer only: none, a portal token, or another secret's token are refused.
+  for(const bearer of [null,OWNER,signOperatorToken('ops@realbud.example','another-secret-that-is-long-enough-000001')]) {
+    const refused=await call('GET','/v1/operator/billing/invoices',undefined,bearer);
+    assert.equal(refused.status,401);assert.deepEqual(refused.body,{error:'operator_unauthenticated'});
+  }
+  assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-09')).body,{period:'2026-09',offices:[{companyId:f.tenant.companyId,officeName:f.tenant.customerName,invoiceId:null,termsVersion:'care-v1',state:'ready',blocker:null}]});
+  assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-9')).body,{error:'invalid_billing_period'});
+  assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-09&x=1')).body,{error:'invalid_query'});
+  const closed=await call('POST','/v1/operator/billing/close',{companyId:f.tenant.companyId,period:'2026-09'});
+  assert.equal(closed.status,200);assert.deepEqual([closed.body.ai,closed.body.alreadyClosed,closed.body.invoice.status,closed.body.invoice.dueAt],['care_only',false,'unpaid',f.now()+7*86_400_000]);
+  const id=closed.body.invoice.id as string;
+  assert.equal((await call('POST','/v1/operator/billing/close',{companyId:f.tenant.companyId,period:'2026-09'})).body.alreadyClosed,true);
+  const payment={paymentId:'00000000-0000-4000-8000-000000000001',method:'payid',amountCents:'4000',receivedOn:'2026-10-02',reference:`${id} Agency A`};
+  const recorded=await call('POST',`/v1/operator/billing/invoices/${id}/payments`,payment);
+  assert.equal(recorded.status,200);
+  assert.deepEqual([recorded.body.status,recorded.body.outstandingCents,recorded.body.payments[0].recordedBy],['part_paid','8500','operator:ops@realbud.example']);
+  assert.equal((await call('POST',`/v1/operator/billing/invoices/${id}/payments`,payment)).status,200);
+  assert.deepEqual(await call('POST',`/v1/operator/billing/invoices/${id}/payments`,{...payment,amountCents:'4001'}),{status:409,body:{error:'payment_conflict'}});
+  assert.deepEqual(await call('POST',`/v1/operator/billing/invoices/${id}/payments`,{...payment,paymentId:'00000000-0000-4000-8000-000000000002',amountCents:'8501'}),{status:409,body:{error:'payment_exceeds_outstanding'}});
+  assert.deepEqual(await call('POST',`/v1/operator/billing/invoices/${id}/payments`,{...payment,paymentId:'00000000-0000-4000-8000-000000000002',receivedOn:'2026-10-03'}),{status:400,body:{error:'invalid_received_on'}});
+  assert.deepEqual(await call('POST','/v1/operator/billing/invoices/RB-999999/payments',payment),{status:404,body:{error:'invoice_not_found'}});
+  // The portal shows the balance and how to pay it.
+  const portal=await (await fetch(base+'/v1/portal/invoices',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
+  assert.deepEqual(portal.paymentInstructions,{payId:{id:'0455123764',name:'Fictional RealBud Pty Ltd'},bank:{accountName:'Fictional RealBud Pty Ltd',bsb:'064-000',accountNumber:'12345678'}});
+  assert.deepEqual([portal.invoices[0].status,portal.invoices[0].paidCents,portal.invoices[0].outstandingCents,portal.invoices[0].overdue,portal.invoices[0].paid],['part_paid','4000','8500',false,false]);
+  const html=await (await fetch(base+`/v1/portal/invoices/${id}/document`,{headers:{Authorization:`Bearer ${OWNER}`}})).text();
+  assert.match(html,/How to pay/);assert.match(html,/PayID<\/b> 0455123764/);assert.doesNotMatch(html,/<b>Card<\/b>/);
+  const undone=await call('POST',`/v1/operator/billing/invoices/${id}/payments/${payment.paymentId}/reverse`,{reason:'Recorded against the wrong invoice'});
+  assert.deepEqual([undone.status,undone.body.status,undone.body.payments[0].reversed.by],[200,'unpaid','operator:ops@realbud.example']);
+  assert.deepEqual(await call('POST',`/v1/operator/billing/invoices/${id}/payments/${payment.paymentId}/reverse`,{reason:'no'}),{status:400,body:{error:'invalid_reason'}});
+  assert.deepEqual(await call('POST',`/v1/operator/billing/invoices/${id}/payments/square-sandbox%3Atxn/reverse`,{reason:'Wrong'}),{status:404,body:{error:'payment_not_found'}});
+  const list=await call('GET','/v1/operator/billing/invoices');
+  assert.equal(list.body.now,f.now());assert.deepEqual(list.body.invoices.map((i:{id:string})=>i.id),[id]);
+  assert.deepEqual(await call('DELETE','/v1/operator/billing/invoices'),{status:404,body:{error:'not_found'}});
+  f.db.verify();
+});
+
+test('operator billing desk answers 503 without an operator secret', async()=>{
+  const f=fixture();
+  const server=createGatewayServer({allowedOrigins:new Set(),portal:{async authenticate(){throw new GatewayError('unauthenticated',401);}}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));f.close();});
+  const response=await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/operator/billing/invoices`,{headers:{Authorization:'Bearer synthetic-operator-token-0000000001'}});
+  assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'operator_unconfigured'});
 });

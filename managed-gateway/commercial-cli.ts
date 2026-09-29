@@ -17,7 +17,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { LedgerDatabase } from './database.ts';
 import { UsageLedger, digest } from './ledger.ts';
-import { BillingService } from './billing.ts';
+import { BillingService, composeInvoiceTermsDays } from './billing.ts';
 import type { CommercialTermsDraft } from './commercial-terms.ts';
 import { GatewayError, requireThat } from './contracts.ts';
 import { recordSquareMapping, type SquareMapping } from './square-mapping.ts';
@@ -40,7 +40,7 @@ requireThat(existsSync(path),'gateway_database_not_found',503);
 const db=new LedgerDatabase(path);
 try {
   const internalCompanyId=process.env.REALBUD_INTERNAL_COMPANY_ID;
-  const billing=new BillingService(new UsageLedger(db,Date.now),undefined,{internalCompanyId});
+  const billing=new BillingService(new UsageLedger(db,Date.now),undefined,{internalCompanyId,invoiceTermsDays:composeInvoiceTermsDays(process.env)});
   const policy=customerTermsPolicy(process.env);
   const defaultMarkup='unavailable' in policy?undefined:policy.resale?.clientMarkupBasisPoints;
   // The operator's identity for the audit trail; never a secret.

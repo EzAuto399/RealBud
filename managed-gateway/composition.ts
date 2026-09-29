@@ -17,7 +17,10 @@ import { composeProvisioning, fileSecretStore, modelviaOperatorState, type Secre
 import { composeOperatorRoutes, composeResaleTermsClient, operatorAccessState } from './office-ai-access.ts';
 import { officeAiTermsRoutes, syncOfficeResalePolicy } from './office-ai-terms.ts';
 import { officeAiUsageCsv } from './office-ai-usage-csv.ts';
-import { BillingService, type Invoice } from './billing.ts';
+import { BillingService, composeInvoiceTermsDays, type Invoice } from './billing.ts';
+import { composePaymentInstructions } from './invoice-html.ts';
+export { composePaymentInstructions };
+import { operatorBillingRoutes } from './operator-billing.ts';
 import { composeModelviaClientBilling } from './modelvia-client-billing.ts';
 import { customerTermsPolicy } from './modelvia-keys.ts';
 import { officeMargins } from './office-ai-billing.ts';
@@ -57,7 +60,9 @@ export function composeCareCollection(options: { env: NodeJS.ProcessEnv; ledger:
   const mode = value('REALBUD_PAYMENT_MODE') || 'local';
   requireThat(mode === 'local' || mode === 'sandbox' || mode === 'live', 'care_collection_unconfigured:REALBUD_PAYMENT_MODE', 503);
   const internalCompanyId = value('REALBUD_INTERNAL_COMPANY_ID') || undefined;
-  if (mode === 'local') return { billing: new BillingService(ledger, undefined, { internalCompanyId }), careCollection: 'off', squareWebhooks: false };
+  // Days from issue to due date (owner decision, 29 September 2026: 7).
+  const invoiceTermsDays = composeInvoiceTermsDays(env);
+  if (mode === 'local') return { billing: new BillingService(ledger, undefined, { internalCompanyId, invoiceTermsDays }), careCollection: 'off', squareWebhooks: false };
   requireThat(value('REALBUD_AUTHORIZE_COLLECTION') === '1', 'care_collection_unconfigured:REALBUD_AUTHORIZE_COLLECTION', 503);
   for (const name of SQUARE_ENV) requireThat(value(name), `care_collection_unconfigured:${name}`, 503);
   if (mode === 'live') {
@@ -71,7 +76,7 @@ export function composeCareCollection(options: { env: NodeJS.ProcessEnv; ledger:
     accessToken: value('SQUARE_ACCESS_TOKEN'), signatureKey: value('SQUARE_WEBHOOK_SIGNATURE_KEY'), notificationUrl: value('SQUARE_NOTIFICATION_URL'),
     merchantId: value('SQUARE_MERCHANT_ID'), locationId: value('SQUARE_LOCATION_ID'), internalCompanyId: internalCompanyId!,
     ...(mode === 'live' ? { expectedSellerBasisDigest: value('REALBUD_SELLER_BASIS_DIGEST') } : {}) });
-  return { billing: new BillingService(ledger, adapter, { authorizeCollection: true, internalCompanyId }), careCollection: mode, squareWebhooks: true };
+  return { billing: new BillingService(ledger, adapter, { authorizeCollection: true, internalCompanyId, invoiceTermsDays }), careCollection: mode, squareWebhooks: true };
 }
 
 /**
@@ -138,6 +143,11 @@ export function composeGateway(options: {
       ...(afterTermsAccepted ? { afterTermsAccepted } : {}),
       ...(clientBilling ? { aiUsageCsv: (invoice: Invoice) => officeAiUsageCsv({ ledger, modelvia: clientBilling }, invoice) } : {}),
       ...(operator ? { operator } : {}),
+      // The billing desk: care billing is always composed; Modelvia is read at
+      // close exactly as `commercial-cli.ts close` reads it.
+      operatorBilling: operatorBillingRoutes({ billing: care.billing, ...(clientBilling ? { modelvia: clientBilling } : {}), clientFundedCompanies,
+        ...('unavailable' in policy ? { policyUnavailable: policy.unavailable } : {}) }),
+      paymentInstructions: composePaymentInstructions(env),
       ...('provisioning' in provisioning ? { provisioning: provisioning.provisioning } : { provisioningUnavailable: provisioning.unavailable }),
       ...(registry ? { connectors: new ManagedConnectors({ ledger,
         devices: () => connectorRegistry(registry),

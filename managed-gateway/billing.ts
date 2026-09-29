@@ -44,8 +44,10 @@ export interface Invoice {
    * `modelviaCustomerId`, `usedBy` (Modelvia's name for whose usage it is) and
    * `chargeDetail` are recorded on invoices closed from October 2026. */
   aiUsage?:{modelviaInvoices:ConsolidatedAiInvoice[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'};
-  /** Payment due date; recorded on invoices closed from October 2026. The office
-   * pays on receipt, so it is the issue time. */
+  /** Payment due date; recorded on invoices closed from October 2026. From 29
+   * September 2026 it is the issue time plus the deployment's invoice terms
+   * (`REALBUD_INVOICE_TERMS_DAYS`, default 7). Earlier invoices recorded the issue
+   * time (on receipt) or nothing; `invoiceStanding` reads those as issue + terms. */
   dueAt?:number;
 }
 export interface HostedCheckout { sessionId:string; url:string; expiresAt:number }
@@ -76,12 +78,17 @@ export class BillingService {
   private readonly payment:HostedPaymentAdapter|undefined;
   readonly commercialTerms:CommercialTermsStore|undefined;
   private readonly internalCompanyId:string|undefined;
+  /** Days from issue to due date (owner decision, 29 September 2026: 7). */
+  readonly invoiceTermsDays:number;
   /** A payment adapter is only ever sandbox or live, so it requires
    * `authorizeCollection: true` from the deployment composition after the Square
    * variables are checked — never from a test import. Without an adapter,
    * invoices still close and read; checkout answers `payment_provider_unselected`. */
-  constructor(ledger:UsageLedger, payment?:HostedPaymentAdapter, options:{authorizeCollection?:boolean;internalCompanyId?:string}={}) {
+  constructor(ledger:UsageLedger, payment?:HostedPaymentAdapter, options:{authorizeCollection?:boolean;internalCompanyId?:string;invoiceTermsDays?:number}={}) {
     requireThat(!payment || options.authorizeCollection===true,'payment_collection_not_authorized',403);
+    const termsDays=options.invoiceTermsDays??DEFAULT_INVOICE_TERMS_DAYS;
+    requireThat(Number.isSafeInteger(termsDays) && termsDays>=0 && termsDays<=365,'invalid_invoice_terms_days',503);
+    this.invoiceTermsDays=termsDays;
     this.ledger=ledger; this.payment=payment; this.internalCompanyId=options.internalCompanyId;
     this.commercialTerms=options.internalCompanyId?new CommercialTermsStore(ledger,options.internalCompanyId):undefined;
   }
@@ -161,7 +168,7 @@ export class BillingService {
       } else if(lines.length) lines[lines.length-1].gstCents=(BigInt(lines.at(-1)!.gstCents)+drift).toString();
       // The sequence key and event kind keep their historical names so an older ledger reads unchanged.
       const next=Number(this.ledger.db.get<{value:string}>("SELECT value FROM settings WHERE key='local_invoice_sequence'")?.value??'0')+1;
-      const invoice:Invoice={id:`RB-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:'commercial',companyId,period,issuedAt:this.ledger.now(),dueAt:this.ledger.now(),supplier:terms.seller,customer:terms.customer,currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef:terms.careAgreementRef,sourceEventIds:credits.map(e=>e.seq),commercialTerms:{version:terms.version,digest:accepted.digest,acceptanceDigest:digest(accepted.acceptance),sellerBasisDigest:this.commercialTerms!.sellerBasisDigest(terms)},
+      const invoice:Invoice={id:`RB-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:'commercial',companyId,period,issuedAt:this.ledger.now(),dueAt:this.ledger.now()+this.invoiceTermsDays*DAY_MS,supplier:terms.seller,customer:terms.customer,currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef:terms.careAgreementRef,sourceEventIds:credits.map(e=>e.seq),commercialTerms:{version:terms.version,digest:accepted.digest,acceptanceDigest:digest(accepted.acceptance),sellerBasisDigest:this.commercialTerms!.sellerBasisDigest(terms)},
         ...(ai && (aiInvoices.length || ai.deferredPeriods?.length)?{aiUsage:{modelviaInvoices:aiInvoices.map(({id,period,totalCents,gstCents})=>({id,period,totalCents,gstCents})),...(ai.deferredPeriods?.length?{deferredPeriods:[...ai.deferredPeriods]}:{}),
           ...(ai.modelviaCustomerId?{modelviaCustomerId:ai.modelviaCustomerId}:{}),...(ai.usedBy?{usedBy:ai.usedBy}:{}),...(ai.chargeDetail?{chargeDetail:ai.chargeDetail}:{})}}:{})};
       this.ledger.db.run("INSERT INTO settings(key,value) VALUES('local_invoice_sequence',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(next));
@@ -201,17 +208,27 @@ export class BillingService {
     const row=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND id=?',actor.companyId,invoiceId); requireThat(row,'invoice_not_found',404); return JSON.parse(row.body);
   }
   invoices(actor:PortalPrincipal):Invoice[] { return this.ledger.db.all<{body:string}>('SELECT body FROM invoices WHERE tenant=? ORDER BY id',actor.companyId).map(r=>JSON.parse(r.body)); }
-  /** Tenant-scoped list for the website. Paid is a settlement flag, not a provider receipt. */
+  /** Tenant-scoped list for the website. `paid` is the Square settlement flag, not a
+   * provider receipt; `status`, `paidCents` and `outstandingCents` also count the
+   * operator's recorded bank transfer and PayID payments (`invoiceStanding`). */
   portalInvoices(actor:PortalPrincipal) {
     const paid=new Set(this.ledger.db.all<{invoice:string}>('SELECT p.invoice FROM payments p JOIN invoices i ON i.id=p.invoice WHERE i.tenant=?',actor.companyId).map(r=>r.invoice));
-    return this.invoices(actor).map(inv=>({id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id),aiUsageCsv:!!inv.aiUsage?.modelviaInvoices.length}));
+    const now=this.ledger.now();
+    return this.invoices(actor).map(inv=>{
+      const standing=invoiceStanding(this.ledger,inv,now,this.invoiceTermsDays);
+      return {id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id),aiUsageCsv:!!inv.aiUsage?.modelviaInvoices.length,
+        dueAt:standing.dueAt,status:standing.status,overdue:standing.overdue,paidCents:standing.paidCents,outstandingCents:standing.outstandingCents};
+    });
   }
   async checkout(actor:PortalPrincipal,invoiceId:string):Promise<HostedCheckout> {
     requireThat(actor.role==='billing_owner','forbidden',403); requireThat(this.payment,'payment_provider_unselected',503);
     const invoice=this.invoice(actor,invoiceId); requireThat(BigInt(invoice.totalCents)>0n,'nothing_to_pay',409);
     this.payment.preflightCheckout?.({companyId:actor.companyId,invoiceId,amountCents:invoice.totalCents});
+    ensureManualPaymentTables(this.ledger);
     const admission=this.ledger.db.transaction(()=>{
       requireThat(!this.ledger.db.get('SELECT id FROM payments WHERE invoice=?',invoiceId),'invoice_already_paid',409);
+      // Square charges the full amount; once a transfer is recorded the balance is paid by transfer.
+      requireThat(!manualPayments(this.ledger,invoiceId).some(p=>!p.reversed),'balance_payable_by_transfer',409);
       const prior=this.ledger.db.get<{state:string;body:string}>('SELECT state,body FROM checkouts WHERE invoice=?',invoiceId);
       if(prior) { const data:StoredCheckout=JSON.parse(prior.body);
         requireThat(prior.state==='ready' && data.session && data.session.expiresAt>this.ledger.now(),'checkout_reconciliation_required',409);
@@ -313,6 +330,61 @@ export class BillingService {
   }
 }
 
+export const DEFAULT_INVOICE_TERMS_DAYS=7;
+export const DAY_MS=86_400_000;
+export type ManualPaymentMethod='bank_transfer'|'payid'|'other';
+/** A bank transfer or PayID payment the operator recorded after checking the bank
+ * (`operator-billing.ts`). Append-only; a mistake is undone by a reversal row. */
+export interface ManualPayment { id:string; invoiceId:string; method:ManualPaymentMethod; amountCents:string; receivedOn:string; reference:string|null; note:string|null; recordedBy:string; recordedAt:number }
+export interface ManualPaymentReversal { paymentId:string; reason:string; by:string; at:number }
+export type InvoiceStatus='unpaid'|'part_paid'|'paid'|'overpaid'|'credit'|'nothing_due';
+export interface InvoiceStanding { dueAt:number; paidCents:string; outstandingCents:string; status:InvoiceStatus; overdue:boolean; daysOverdue:number }
+
+/** Operator-recorded payments and their reversals. Created on first use (like
+ * `office_ai_consolidations`), append-only: nothing is updated or deleted. */
+export function ensureManualPaymentTables(ledger:UsageLedger) {
+  ledger.db.sql.exec(`CREATE TABLE IF NOT EXISTS manual_payments (id TEXT PRIMARY KEY, invoice TEXT NOT NULL REFERENCES invoices(id), body TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS manual_payments_invoice ON manual_payments(invoice);
+    CREATE TABLE IF NOT EXISTS manual_payment_reversals (payment TEXT PRIMARY KEY REFERENCES manual_payments(id), body TEXT NOT NULL);
+    CREATE TRIGGER IF NOT EXISTS immutable_manual_payments_UPDATE BEFORE UPDATE ON manual_payments BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_manual_payments_DELETE BEFORE DELETE ON manual_payments BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_manual_payment_reversals_UPDATE BEFORE UPDATE ON manual_payment_reversals BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_manual_payment_reversals_DELETE BEFORE DELETE ON manual_payment_reversals BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
+}
+/** One invoice's recorded payments, oldest first, each with its reversal if any.
+ * Callers run `ensureManualPaymentTables` first. */
+export function manualPayments(ledger:UsageLedger,invoiceId:string):(ManualPayment&{reversed:ManualPaymentReversal|null})[] {
+  return ledger.db.all<{body:string;reversal:string|null}>('SELECT m.body,r.body AS reversal FROM manual_payments m LEFT JOIN manual_payment_reversals r ON r.payment=m.id WHERE m.invoice=?',invoiceId)
+    .map(row=>({...JSON.parse(row.body) as ManualPayment,reversed:row.reversal?JSON.parse(row.reversal) as ManualPaymentReversal:null}))
+    .sort((a,b)=>a.recordedAt-b.recordedAt || a.id.localeCompare(b.id));
+}
+/** The invoice's Square payment, if one settled. */
+export function squarePayment(ledger:UsageLedger,invoiceId:string):{id:string;payment:VerifiedPayment}|undefined {
+  const row=ledger.db.get<{id:string;body:string}>('SELECT id,body FROM payments WHERE invoice=?',invoiceId);
+  return row?{id:row.id,payment:JSON.parse(row.body) as VerifiedPayment}:undefined;
+}
+/** The invoice's due date: as recorded, or issue + terms for an invoice that
+ * recorded none or recorded the issue time (closed before due dates had terms). */
+export function effectiveDueAt(invoice:Invoice,termsDays:number):number {
+  // A recorded due date stands, including an older due-on-receipt invoice, so the
+  // desk, portal and printed document always agree. Only undated invoices use the terms.
+  return invoice.dueAt ?? invoice.issuedAt+termsDays*DAY_MS;
+}
+/** Paid, outstanding and status. Paid is the Square settlement (refunds are
+ * shown separately and do not change it) plus unreversed recorded payments.
+ * Overdue only for an unpaid or part-paid invoice after its due date. */
+export function invoiceStanding(ledger:UsageLedger,invoice:Invoice,now:number,termsDays:number):InvoiceStanding {
+  ensureManualPaymentTables(ledger);
+  const total=BigInt(invoice.totalCents);
+  const square=squarePayment(ledger,invoice.id);
+  const paid=(square?BigInt(square.payment.amountCents):0n)+manualPayments(ledger,invoice.id).filter(p=>!p.reversed).reduce((sum,p)=>sum+BigInt(p.amountCents),0n);
+  const status:InvoiceStatus=total<0n?'credit':total===0n?'nothing_due':paid>total?'overpaid':paid===total?'paid':paid>0n?'part_paid':'unpaid';
+  const dueAt=effectiveDueAt(invoice,termsDays);
+  const overdue=(status==='unpaid' || status==='part_paid') && now>dueAt;
+  const outstanding=total>paid?total-paid:0n;
+  return {dueAt,paidCents:paid.toString(),outstandingCents:outstanding.toString(),status,overdue,daysOverdue:overdue?Math.floor((now-dueAt)/DAY_MS):0};
+}
+
 /** Which Modelvia customer invoice was consolidated into which RealBud invoice.
  * Created on first use (like `office_modelvia_customer`), append-only. */
 export function ensureAiConsolidationTable(ledger:UsageLedger) {
@@ -325,4 +397,11 @@ export function consolidatedAiInvoices(ledger:UsageLedger,companyId:string):Map<
   ensureAiConsolidationTable(ledger);
   return new Map(ledger.db.all<{modelvia_invoice:string;invoice:string;period:string}>('SELECT modelvia_invoice,invoice,period FROM office_ai_consolidations WHERE tenant=?',companyId)
     .map(row=>[row.modelvia_invoice,{invoice:row.invoice,period:row.period}]));
+}
+
+/** Days from issue to due date (owner decision, 29 September 2026: 7). */
+export function composeInvoiceTermsDays(env: NodeJS.ProcessEnv): number {
+  const termsDays = (env.REALBUD_INVOICE_TERMS_DAYS ?? '').trim();
+  requireThat(!termsDays || (/^(0|[1-9][0-9]{0,2})$/.test(termsDays) && Number(termsDays) <= 365), 'care_collection_unconfigured:REALBUD_INVOICE_TERMS_DAYS', 503);
+  return termsDays ? Number(termsDays) : DEFAULT_INVOICE_TERMS_DAYS;
 }
