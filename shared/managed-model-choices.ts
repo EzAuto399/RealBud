@@ -38,7 +38,8 @@ export type ManagedModelChoice = (typeof MANAGED_MODEL_CHOICES)[number];
 export type ManagedModelChoiceId = ManagedModelChoice["id"];
 export type ManagedReasoningEffort = ManagedModelChoice["effort"];
 
-export const DEFAULT_MANAGED_MODEL_CHOICE: ManagedModelChoiceId = "flash-high";
+// Owner decision 30 Sep 2026: new and migrated offices start on Sonnet · High.
+export const DEFAULT_MANAGED_MODEL_CHOICE: ManagedModelChoiceId = "sonnet-high";
 
 export const MANAGED_MODEL_CHOICE_IDS = MANAGED_MODEL_CHOICES.map(choice => choice.id) as readonly ManagedModelChoiceId[];
 
@@ -50,6 +51,13 @@ export function managedModelChoice(id: ManagedModelChoiceId): ManagedModelChoice
 export function managedModelChoice(id: unknown): ManagedModelChoice | null;
 export function managedModelChoice(id: unknown): ManagedModelChoice | null {
   return MANAGED_MODEL_CHOICES.find(choice => choice.id === id) ?? null;
+}
+
+/** When a saved profile names a model RealBud offers but an effort it does not
+ * pair with (e.g. Flash with `xhigh`), keep the office's model at `high`
+ * rather than moving it to the default, which may be a costlier model. */
+export function managedModelChoiceKeepingModel(model: unknown): ManagedModelChoiceId | null {
+  return MANAGED_MODEL_CHOICES.find(choice => choice.model === model && choice.effort === "high")?.id ?? null;
 }
 
 /** The choice a saved (model, effort) pair represents, or null for anything

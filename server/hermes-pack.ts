@@ -11,7 +11,7 @@ import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, read
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
-import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, managedModelChoiceFor, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
+import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, managedModelChoiceFor, managedModelChoiceKeepingModel, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
 export { hermesHome } from "./hermes-paths.ts";
 
 export const PACK_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "pack", "property");
@@ -561,7 +561,8 @@ export function applyManagedModelProfile(baseUrl: string, opts?: { root?: string
   const configPath = join(dir, "config.yaml");
   const existing = readProfileFile(configPath);
   const raw = existing?.toString("utf8") ?? "";
-  const choiceId = opts?.choice ?? managedModelProfile(opts?.root).choice ?? DEFAULT_MANAGED_MODEL_CHOICE;
+  const saved = managedModelProfile(opts?.root);
+  const choiceId = opts?.choice ?? saved.choice ?? managedModelChoiceKeepingModel(saved.model) ?? DEFAULT_MANAGED_MODEL_CHOICE;
   const choice = managedModelChoice(choiceId);
   // Build and validate first: a damaged config is refused before anything,
   // including the `.env`, changes.
