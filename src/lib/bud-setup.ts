@@ -113,6 +113,9 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
     verified: status.ready,
   });
   if (stage === "install") {
+    if (status.restartRequired) {
+      return unavailable("Restart to finish update", "Bud’s update is installed. Quit and reopen RealBud to start using it. Your draft is kept.");
+    }
     if (status.cli.installed && !(status.cli.compatible ?? status.cli.matchesPin)) {
       return unavailable(
         "Bud update blocked",
@@ -180,6 +183,7 @@ export function parseBudStatus(value: unknown): HermesStatus {
     || (value.cli.probeState !== undefined && !["ok", "missing", "timeout", "error"].includes(String(value.cli.probeState)))
     || ![value.pack.installed, value.pack.approvalsManual, value.pack.workroomReady].every(flag => typeof flag === "boolean")
     || (value.bootstrapPending !== undefined && typeof value.bootstrapPending !== "boolean")
+    || (value.restartRequired !== undefined && typeof value.restartRequired !== "boolean")
     || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)))
     || (value.modelAccess !== undefined && (!record(value.modelAccess) || typeof value.modelAccess.managed !== "boolean" || typeof value.modelAccess.withdrawn !== "boolean" || typeof value.modelAccess.attached !== "boolean" || typeof value.modelAccess.detail !== "string"))
     || !receipt(value.lastPing) || !receipt(value.lastTest)) {

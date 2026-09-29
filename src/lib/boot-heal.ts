@@ -121,6 +121,8 @@ export async function autoRestoreBudPin(input: {
 }): Promise<{ ran: boolean; ok?: boolean; detail?: string }> {
   const status = input.status;
   if (!status?.cli.installed || (status.cli.compatible ?? status.cli.matchesPin)) return { ran: false };
+  // Already installed for the next launch: another download cannot finish it.
+  if (status.restartRequired) return { ran: false };
   if (!(status.installerAvailable ?? Boolean(status.installCommand))) return { ran: false };
   if (autoPinRestoreAttempted) return { ran: false };
   autoPinRestoreAttempted = true;

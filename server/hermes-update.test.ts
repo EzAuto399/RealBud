@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { checkUpstreamRelease, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { checkUpstreamRelease, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
 import { cancelBootstrapInstall, installStatus, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
@@ -76,6 +76,22 @@ it("stages an official runtime without changing the current executable or privat
   resetRuntimeSelectionForTests();
   expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
   expect(runtimeUpdateStatus().restartRequired).toBe(false);
+});
+
+it("reports an installed recommended update as awaiting restart, not as needing another install", async () => {
+  expect(recommendedUpdateAwaitingRestart(home)).toBe(false);
+  start(); await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  expect(recommendedUpdateAwaitingRestart(home)).toBe(true);
+  // After the restart the selected runtime is the running one.
+  resetRuntimeSelectionForTests();
+  expect(recommendedUpdateAwaitingRestart(home)).toBe(false);
+});
+
+it("still repairs when the selected recommended runtime is missing from disk", async () => {
+  start(); await waitForBootstrapStop();
+  rmSync(releaseHome(home, readRuntimeSelection(home).selected!), { recursive: true, force: true });
+  expect(recommendedUpdateAwaitingRestart(home)).toBe(false);
 });
 
 it("makes a verified first install available without a restart or a false rollback option", async () => {

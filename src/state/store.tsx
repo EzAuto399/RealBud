@@ -258,6 +258,8 @@ export interface HermesStatus {
   installCommand: string | null;
   installerAvailable?: boolean;
   bootstrapPending?: boolean;
+  /** The supported update is installed; only a RealBud restart activates it. */
+  restartRequired?: boolean;
   signInCommand: string;
   detail: string;
   ready: boolean;

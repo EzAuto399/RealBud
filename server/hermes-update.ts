@@ -26,6 +26,20 @@ export function runtimeUpdateStatus(home = hermesHome()) {
   };
 }
 
+/**
+ * The recommended runtime is already installed and selected; only this
+ * process still runs the executable it froze at boot. Reinstalling cannot
+ * help — only a restart can — so automatic repair must not start another
+ * download that ends in the same state.
+ */
+export function recommendedUpdateAwaitingRestart(home = hermesHome()): boolean {
+  if (process.env.REALBUD_HERMES_CLI?.trim()) return false;
+  const selection = readRuntimeSelection(home);
+  if (!selection.selected || runtimeCommit(selection.selected) !== HERMES_RECOMMENDED.commit) return false;
+  const selectedCli = runtimeCli(releaseHome(home, selection.selected));
+  return existsSync(selectedCli) && hermesCli() !== selectedCli;
+}
+
 /** Official installer, isolated runtime, no PATH stage or personal CLI writes. */
 export function startRuntimeUpdate(options: {
   home?: string; run?: typeof runWorkerBootstrap; verify?: typeof verifyRuntime; timeoutMs?: number; firstInstall?: boolean; repair?: boolean;

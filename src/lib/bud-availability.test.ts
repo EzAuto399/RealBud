@@ -33,6 +33,14 @@ describe("Bud availability across Ask and Schedule", () => {
     expect(state.detail).toMatch(/supported build|not been checked/i);
   });
 
+  it("asks for a restart, not another restore, once the supported update is installed", () => {
+    const state = budAvailability({ ...ready, cli: { ...ready.cli, compatible: false }, ready: false, restartRequired: true }, true);
+    expect(state).toMatchObject({ ready: false, label: "Restart to finish update", action: null });
+    expect(state.detail).toMatch(/Quit and reopen RealBud/);
+    expect(parseBudStatus({ ...ready, restartRequired: true }).restartRequired).toBe(true);
+    expect(() => parseBudStatus({ ...ready, restartRequired: "yes" })).toThrow();
+  });
+
   it("retains the supported 0.21 path even when it differs from the rollback pin", () => {
     expect(budAvailability(ready, true).ready).toBe(true);
   });

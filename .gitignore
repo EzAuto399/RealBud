@@ -53,3 +53,6 @@ __pycache__/
 # Separate repositories checked out inside this tree (EzAuto399/RealBud-website and its worktree)
 /website/
 /website-usage-release/
+
+# Vercel CLI link for the website project
+.vercel

@@ -141,17 +141,21 @@ describe("setup download retry", () => {
     await expect(result).resolves.toEqual(bytes);
     expect(request).toHaveBeenCalledTimes(3);
   });
-  it("gives up after three attempts and names the status", async () => {
+  it("keeps trying for about two and a half minutes, then names the status", async () => {
     const request = vi.fn(async () => status(429));
     const settled = expect(downloadBootstrap(plan, controller().signal, request)).rejects.toThrow("The download server is busy (429). Try again in a few minutes.");
-    await vi.advanceTimersByTimeAsync(20_000);
-    await settled;
+    await vi.advanceTimersByTimeAsync(64_999);
     expect(request).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(request).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(90_000);
+    await settled;
+    expect(request).toHaveBeenCalledTimes(5);
     const unavailable = vi.fn(async () => status(502));
     const failed = expect(downloadBootstrap(plan, controller().signal, unavailable)).rejects.toThrow("The download server is unavailable (502). Try again in a few minutes.");
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(155_000);
     await failed;
-    expect(unavailable).toHaveBeenCalledTimes(3);
+    expect(unavailable).toHaveBeenCalledTimes(5);
   });
   it("never retries a hash mismatch, another client error or a refused redirect", async () => {
     for (const [response, reason] of [[new Response("changed"), /verified version/], [status(404), /downloaded/], [status(403), /downloaded/]] as const) {

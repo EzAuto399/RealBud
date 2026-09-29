@@ -1,0 +1,16 @@
+# The Vercel project `realbud` builds the website with Root Directory `website`
+# and imports ../shared, so deploys run from this repository root. Upload only
+# those two folders; the desktop app, evidence and build outputs stay local.
+/*
+!/website
+!/shared
+# The one desktop module the website imports (account/company-portal/panel.tsx).
+!/src
+/src/*
+!/src/lib
+/src/lib/*
+!/src/lib/company-portal-code.ts
+/website/node_modules
+/website/.next
+/website/.env*
+/shared/**/*.test.ts

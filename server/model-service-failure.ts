@@ -34,7 +34,8 @@ export function modelServiceFailure(message: string): string | null {
     return "the model service refused a retry that did not match the original request; start the task again";
   }
   // No route the office may use can take the request: an old model id (only
-  // `auto`, `deepseek-v4.1-flash` and `kimi-k3` are served) or an allowlist change.
+  // since the 29 Sep 2026 r4 menu, `auto`, `deepseek-v4.1-flash` and
+  // `claude-sonnet-5.5` are served; `kimi-k3` is retired) or an allowlist change.
   if (/\bmodel_route_unavailable\b|\bmodel_scope_denied\b/i.test(message)) {
     return "no model your office may use can take this request right now; try again shortly, or ask RealBud support to check the office's AI models";
   }
