@@ -210,7 +210,7 @@ try {
   checks.push('Native saved-view creation, persistent reload and real task view navigation');
   await page.goto(origin + '/#/schedule');
   const packCard = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
-  await packCard.getByRole('button', { name: 'Preview Austin office pack', exact: true }).click();
+  await packCard.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await packCard.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
   await packCard.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();
   await packCard.getByText('Plans and instructions installed', { exact: true }).waitFor();

@@ -2,8 +2,8 @@
   "version": 1,
   "bundle": {
     "id": "austin-phase-1-preparation",
-    "revision": 1,
-    "title": "Austin Realty — bills and payment-reference preparation",
+    "revision": 2,
+    "title": "Auston Realty — bills and payment-reference preparation",
     "scope": "Prepared review work from supplied office evidence. Import does not connect accounts, activate recurrence, send messages, make payments or import into REI.",
     "source": "Austin engagement revision 19 and the reviewed bills/payment workflow maps"
   },

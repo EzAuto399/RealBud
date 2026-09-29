@@ -1,5 +1,7 @@
 # RealBud end state
 
+Customer name: the customer is Auston Realty (澳仕登地產); earlier documents and internal ids use the historical spelling 'Austin'.
+
 Machine handoff: [Mac mini handoff](MAC-MINI-HANDOFF-2026-09-29.md) records the 29 September move to the Mac mini: all work committed and merged to `main`, setup steps, what git does not carry, and open items.
 
 Latest continuation: [Bud status and setup ownership](BUD-STATUS-2026-09-27.md) refines the setup dead end with permission-aware actions, explicit prerequisites and automatic read-only refresh. Local verification and remaining packaged/device limits are recorded in that checkpoint.

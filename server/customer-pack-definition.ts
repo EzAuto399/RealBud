@@ -9,10 +9,11 @@ const directory = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'w
 export function austinCustomerPack(): CustomerPack {
   const source = JSON.parse(readFileSync(join(directory, 'workflows.json'), 'utf8')) as { recipes: CustomerPack['recipes'] };
   const skills: CustomerPack['skills'] = [{ id: 'email-inbox-triage', name: 'Email inbox triage', description: 'Review supplied inbox evidence and prepare an internal priority list.', instructions: readFileSync(join(directory, 'support/email-inbox-triage/SKILL.md'), 'utf8'), license: readFileSync(join(directory, 'support/LICENSE.upstream'), 'utf8') },
-    // Austin Realty add-on content, never office-core: REI Cloud navigation grants no browser authority; the portal fence decides.
+    // Auston Realty add-on content, never office-core: REI Cloud navigation grants no browser authority; the portal fence decides.
     { id: 'rei-cloud-navigation', name: 'REI Cloud navigation', description: 'Find pages, stable selectors and risk classes in the signed-in REI Cloud session. Grants no authority; the RealBud portal fence approves every consequential action.', instructions: readFileSync(join(directory, 'support/rei-cloud-navigation/SKILL.md'), 'utf8'), license: readFileSync(join(directory, 'support/rei-cloud-navigation/LICENSE'), 'utf8') }];
+  // Ids keep the historical `austin` spelling; the customer is Auston Realty. Revision 3 corrects display text only.
   return {
-    format: 'realbud-customer-pack', version: 1, id: 'austin-office', revision: 2, title: 'Austin office workflows',
+    format: 'realbud-customer-pack', version: 1, id: 'austin-office', revision: 3, title: 'Auston office workflows',
     workflows: [
       { id: 'bank-references', title: 'Bank references and REI handoff', recipeIds: ['wf-austin-accounts-anz-reference-prep'], checks: ['worker', 'browser-account', 'bank-mapping', 'input-coverage', 'workflow-acceptance'] },
       { id: 'bills-calendar', title: 'Bills and calendar', recipeIds: ['wf-austin-accounts-invoice-review', 'wf-austin-accounts-bill-exceptions'], checks: ['worker', 'mail-account', 'bill-register', 'input-coverage', 'timezone', 'workflow-acceptance'] },

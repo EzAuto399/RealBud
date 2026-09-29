@@ -52,7 +52,7 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
       await onInstalled?.();
       setNotice(
         packId === "austin-phase-1"
-          ? "Missing Austin Phase 1 jobs were added for review. Existing plans and schedules were kept. Confirm sources and a cadence before enabling recurring work."
+          ? "Missing Auston Phase 1 jobs were added for review. Existing plans and schedules were kept. Confirm sources and a cadence before enabling recurring work."
           : "Missing pack jobs were added for review. Existing plans and schedules were kept.",
       );
     } catch (cause) {
@@ -127,7 +127,7 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
       <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
       <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
       <details className="mt-5 border-t border-line pt-3">
-        <summary className="min-h-11 cursor-pointer text-sm font-medium text-ink">Optional Austin Phase 1 examples and older pack snapshots</summary>
+        <summary className="min-h-11 cursor-pointer text-sm font-medium text-ink">Optional Auston Phase 1 examples and older pack snapshots</summary>
         <p className="mt-2 text-sm text-ink-secondary">These customer-specific examples are optional. Importing them does not select an agency, connect an account or enable a schedule. For your own agency, use the guided setup and preview a matching pack above.</p>
 
       {error ? (
@@ -203,10 +203,10 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
             </span>
           ) : allInstalled ? (
             <span className="inline-flex items-center gap-1.5">
-              <CheckCircle2 size={14} aria-hidden /> Refresh Austin Phase 1
+              <CheckCircle2 size={14} aria-hidden /> Refresh Auston Phase 1
             </span>
           ) : (
-            "Import Austin Phase 1 packs"
+            "Import Auston Phase 1 packs"
           )}
         </button>
         <button

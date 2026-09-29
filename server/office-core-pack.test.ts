@@ -10,7 +10,7 @@ describe('portable office core pack', () => {
     expect(pack.id).toBe('office-core'); expect(pack.revision).toBe(1);
     expect(pack.workflows.map(workflow => workflow.id)).toEqual(['bank-references', 'bills-calendar', 'morning-priorities']);
     expect(pack.recipes.map(recipe => recipe.id).sort()).toEqual(AGENCY_RECIPE_ROLES.map(role => workflowRecipeId(pack.id, role)!).sort());
-    expect(JSON.stringify(pack)).not.toMatch(/Austin|Kevin|austin-office|austin-accounts|\/Users\/|[A-Z]:\\/);
+    expect(JSON.stringify(pack)).not.toMatch(/Austin|Auston|Kevin|austin-office|austin-accounts|\/Users\/|[A-Z]:\\/);
     expect(pack.recipes.every(recipe => recipe.schedule === null && recipe.allowedOrigins.length === 0 && recipe.capabilities.every(capability => ['read-files', 'analyse', 'draft'].includes(capability)))).toBe(true);
     expect(pack.recipes.find(recipe => recipe.id === workflowRecipeId(pack.id, 'bank-reference-prep'))!.description).toContain('This preparation adapter supports ANZ only.');
     expect(pack.recipes.find(recipe => recipe.id === workflowRecipeId(pack.id, 'inbox-triage'))!.steps[0]).toContain('realbud-office-core-email-inbox-triage');

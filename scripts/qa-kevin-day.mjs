@@ -361,7 +361,7 @@ try {
   check("multiple properties available", properties.length >= 2, String(properties.length));
 
   // ── 2. Install Phase 1 packs ──
-  chapter("08:10 · Import Austin Phase 1 packs");
+  chapter("08:10 · Import Auston Phase 1 packs");
   const packs = await api("POST", "/api/workflow-packs/austin-phase-1/install", {});
   check("phase 1 packs installed", packs.status === 200 && packs.body?.packs?.every((p) => p.installed), packs.body?.error);
   const recipes = (await api("GET", "/api/recipes")).body?.recipes ?? [];

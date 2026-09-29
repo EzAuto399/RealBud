@@ -2,7 +2,7 @@
 
 `realbud-office-core-v1.json` is a self-contained portable pack for a private agency workspace. It contains three business workflows and four preparation plans: bank references, invoice intake, bill exceptions, and morning mail priorities. It contains instruction-only skill guidance and its license, no accounts, credentials, customer records, machine paths, approved plans or enabled schedules.
 
-The pack has independent `office-core` identity and `wf-office-core-*` plan IDs. It does not modify or replace published Austin pack bytes. Install through reviewed pack preview/import, explicitly select it in Agency workflow setup, then approve each required plan and the current setup. Importing both packs does not choose either one automatically; code-owned role bindings use the selected pack.
+The pack has independent `office-core` identity and `wf-office-core-*` plan IDs. It does not modify or replace published Auston pack bytes. Install through reviewed pack preview/import, explicitly select it in Agency workflow setup, then approve each required plan and the current setup. Importing both packs does not choose either one automatically; code-owned role bindings use the selected pack.
 
 Agency identity, timezone, private account scope and property mappings come from reviewed host settings. No customer or named staff member is preselected. Default routing is an internal review proposal subject to agency plan review. Host validation remains authoritative for original-file preservation, source coverage, exact output identity, duplicate/conflicting records and permitted actions.
 
