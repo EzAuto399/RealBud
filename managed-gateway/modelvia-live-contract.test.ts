@@ -79,7 +79,15 @@ const CHAT_FIELDS: readonly string[] = ['model', 'messages', 'stream', 'max_toke
  * `parallel_tool_calls` is set only by the Codex Responses transport, never by
  * chat completions. That matters on r4: Sonnet refuses `parallel_tool_calls: false`.
  */
-const WORKER_WIRE: readonly string[] = ['messages', 'model', 'stream', 'stream_options', 'tools'];
+const WORKER_WIRE: readonly string[] = ['messages', 'model', 'stream', 'stream_options', 'tools', 'reasoning_effort'];
+/** The desktop's three managed choices (29 September 2026): concrete route ids
+ * plus an effort, never a mode alias, and never `xhigh` with Flash. Captured
+ * from Hermes 0.21.3 on the custom `realbud` provider. */
+const DESKTOP_CHOICES = [
+  { model: 'deepseek-v4.1-flash', reasoning_effort: 'high' },
+  { model: 'claude-sonnet-5.5', reasoning_effort: 'high' },
+  { model: 'claude-sonnet-5.5', reasoning_effort: 'xhigh' },
+] as const;
 const MODES = ['auto', 'flash', 'max'] as const;
 /** The r4 catalogue (managed-gateway/catalogue.openrouter.example.json) priced on
  * rate card `openrouter-2026-09-r4`, nanoAUD per 1M tokens. */
@@ -743,6 +751,16 @@ test('Sonnet\'s parameter rules against what the worker sends: nothing of the wo
     await g.setAccess('realbud-company-a');
     const key = (await g.provision('realbud-company-a')).provisioning.model.key!;
     const tool = { type: 'function', function: { name: 'todo_list', description: 'Fictional.', parameters: { type: 'object', properties: {} } } };
+    // Each desktop choice is served on its own route with nothing dropped.
+    for (const choice of DESKTOP_CHOICES) {
+      const body = { ...choice, messages: FIRST.messages, stream: false, tools: [tool] };
+      assert.deepEqual(Object.keys(body).filter(field => !WORKER_WIRE.includes(field)), []);
+      const answer = await chat(m, key, body, `realbud-turn-${choice.model}-${choice.reasoning_effort}`);
+      assert.equal(answer.status, 200, `${choice.model} ${choice.reasoning_effort}`);
+      const seen = m.requests.get(answer.headers.get('x-request-id')!)!;
+      assert.deepEqual([seen.model, seen.droppedParameters ?? []], [choice.model, []], `${choice.model} ${choice.reasoning_effort}`);
+    }
+    assert.equal(DESKTOP_CHOICES.some(choice => choice.model === 'deepseek-v4.1-flash' && choice.reasoning_effort === 'xhigh'), false);
     const worker = { model: 'max', messages: FIRST.messages, stream: false, tools: [tool] };
     assert.deepEqual(Object.keys(worker).filter(field => !WORKER_WIRE.includes(field)), []);
     const served = await chat(m, key, worker, 'realbud-turn-worker');
