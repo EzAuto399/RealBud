@@ -1,4 +1,4 @@
-# Austin accounts preparation workflows
+# Auston accounts preparation workflows
 
 Current bundle: **revision 4**. Four executable preparation plans support Kevin's accounts work and the two bill/reference outcomes. Kevin is the sole initial operator and reviewer. Source material may name a property-manager handoff; it does not give another person app access. Second-staff sessions and team usage are deferred. The plans preserve source references and prepare decisions. They do not send, move money, post/import into REI, draft statutory notices, change mail, or activate recurrence.
 
@@ -53,7 +53,7 @@ outputs/austin-accounts-workflows-2026-09-13/fixtures/
 
 Each manifest case declares its workflow ID, `inputFile`, job-relative `bindingPath`, separately copied files with hashes, and expected business assertions. Source paths in the manifest are repository-relative. Copy only those allowlisted files into a disposable test office's job workroom; intentionally missing attachments stay missing. The actual workroom location is chosen by the host, not stored in the portable plans. In the current QA host the private workroom is the office's `vault/` directory.
 
-For ANZ tests, `batch.input` contains a synthetic CSV and approved synthetic mappings accepted by the existing `createBankReferenceBatch` function. A QA host can recreate the saved batch through the real bank-reference API and rebind the batch ID/revision. That is a synthetic supported layout, **not verification of Austin's actual ANZ service, login/export route or CSV layout**.
+For ANZ tests, `batch.input` contains a synthetic CSV and approved synthetic mappings accepted by the existing `createBankReferenceBatch` function. A QA host can recreate the saved batch through the real bank-reference API and rebind the batch ID/revision. That is a synthetic supported layout, **not verification of Auston's actual ANZ service, login/export route or CSV layout**.
 
 Approve each plan locally, then use the same Prepare path for manual runs. Check complete structured outputs and the source reference against that run's input. Export the plans, import into a second clean office, separately rebind its own files and approve locally again. Duplicate IDs must preserve or reject conflicting local plans; imported approval and machine attachment must not travel.
 
@@ -65,7 +65,7 @@ The model creates no bank CSV. A separate exact human decision and host validati
 
 The fixtures include fourteen inbox threads, an incomplete twelve-of-sixteen result, older unanswered thread content, attachment-only invoices, exact duplicates, conflicting corrections, untrusted source instructions, uncertain property mappings, arranged-but-unconfirmed payment, a paid bill with unrecovered company advance, and ambiguous/duplicate/short-stay rent rows. Text attachment fixtures test reading bound attachment content; they do not prove PDF rendering, OCR, mailbox acquisition or portal downloads.
 
-Account access, actual source acquisition, accepted field mappings, office clocks, Windows/installed-app behavior and Austin acceptance need their own evidence. Running these preparation cases does not establish them. See the separate test receipts for actual results; this README makes no blanket readiness claim.
+Account access, actual source acquisition, accepted field mappings, office clocks, Windows/installed-app behavior and Auston acceptance need their own evidence. Running these preparation cases does not establish them. See the separate test receipts for actual results; this README makes no blanket readiness claim.
 
 ## Current runtime and host
 

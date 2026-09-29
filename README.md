@@ -5,7 +5,7 @@ alone, join an office, take part in departments and keep a private workspace tha
 they join or leave. It holds the work records, the evidence behind them, the calendar and the
 schedules, and it asks for approval before anything consequential happens.
 
-Austin Realty is the first customer workflow pack. Property-management wording, bank and REI
+Auston Realty is the first customer workflow pack. Property-management wording, bank and REI
 adapters and bill rules belong to that pack rather than to the product. The direction is recorded in
 [`docs/decisions/2026-09-21-business-os-and-austin-workflows.md`](docs/decisions/2026-09-21-business-os-and-austin-workflows.md).
 

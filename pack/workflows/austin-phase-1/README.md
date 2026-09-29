@@ -1,4 +1,4 @@
-# Austin phase-one packs
+# Auston phase-one packs
 
 These are importable preparation jobs built from the expected-bills and bank-reference workflows in engagement revision 19. [workflows.json](workflows.json) uses RealBud's existing version-1 importer. The full procedure travels inside each job's description and steps; no additional skill installer or modified Hermes engine is required.
 
@@ -33,4 +33,4 @@ Outputs include the combined `Austin-Phase1-Workflows.json`, the individual `Exp
 
 The harness compares the exact procedure fields across import/export, not timestamps or local approvals. Each model run must echo an unpredictable reference from the actual input file. Expected bill outcomes and bank decisions have fixed synthetic answers. Bank output is checked byte for byte: only the explicitly reviewed reference can differ, while ambiguous and duplicate rows remain present.
 
-The bank review in this harness is a simulated human reviewer calling the real app API. It does not establish an automatic link from a model proposal to the review UI. Source API tests do not establish packaged-app, Windows, real-site acquisition or Austin acceptance; record those separately.
+The bank review in this harness is a simulated human reviewer calling the real app API. It does not establish an automatic link from a model proposal to the review UI. Source API tests do not establish packaged-app, Windows, real-site acquisition or Auston acceptance; record those separately.

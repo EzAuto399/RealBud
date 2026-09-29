@@ -42,15 +42,15 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
     <div className="flex flex-wrap gap-2">
       <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/office-core/export')))}>Preview real estate office core pack</button>
       <button className={button} disabled={busy} onClick={() => void run(() => download('office-core'))}>Download office core pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Austin office pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Austin pack</button>
+      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
+      <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
       <label className={`${button} inline-flex cursor-pointer items-center has-[:disabled]:opacity-50`}>Preview a pack file<input className="sr-only" type="file" accept="application/json,.json" disabled={busy} onChange={event => {
         const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
         void run(async () => { setPreview(null); if (file.size > 500_000) throw new Error('Choose a pack smaller than 500 KB.'); await inspect(JSON.parse(await file.text())); });
       }} /></label>
       <button className={button} disabled={busy} onClick={() => void run(load)}>Refresh setup checks</button>
     </div>
-    <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Austin remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details above.</p>
+    <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details above.</p>
     {change&&<CustomerPackChangeReview key={change.previewDigest} preview={change} busy={busy} cancel={()=>setChange(null)} apply={()=>void run(async()=>{
       const body={expectedInstalledDigest:change.installedDigest,expectedInstalledRevision:change.installedRevision,expectedDigest:change.digest,expectedPreviewDigest:change.previewDigest,
         ...(change.action==='upgrade'?{pack:change.pack}:{packId:change.pack.id,installationRevision:change.rollbackRevision})};

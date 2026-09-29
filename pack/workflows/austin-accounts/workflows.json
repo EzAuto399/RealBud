@@ -2,8 +2,8 @@
   "version": 1,
   "bundle": {
     "id": "austin-accounts-preparation",
-    "revision": 4,
-    "title": "Austin accounts \u2014 four supervised preparation workflows",
+    "revision": 5,
+    "title": "Auston accounts \u2014 four supervised preparation workflows",
     "scope": "Importable preparation plans only. Source acquisition, acceptance, schedules and external actions are separate. No customer data or machine bindings.",
     "reviewerRole": "Kevin \u2014 accounts role user-confirmed; other staff/PM roles unnamed",
     "source": "Austin original/fresh clip01/02 evidence ledger plus clip03 morning routine evidence; user request13Sep2026",

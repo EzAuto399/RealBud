@@ -18,7 +18,8 @@ describe('Austin office pack definition', () => {
 
   it('carries REI Cloud navigation in the Austin add-on pack only, never in office core', () => {
     const austin = validateCustomerPack(austinCustomerPack()), core = validateCustomerPack(officeCoreCustomerPack());
-    expect(austin.revision).toBe(2);
+    expect(austin.revision).toBe(3);
+    expect(austin.title).toBe('Auston office workflows');
     expect(austin.skills.map(skill => skill.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation']);
     expect(`realbud-${austin.id}-rei-cloud-navigation`.length).toBeLessThanOrEqual(64);
     expect(core.skills.map(skill => skill.id)).not.toContain('rei-cloud-navigation');
@@ -43,7 +44,7 @@ describe('Austin office pack definition', () => {
   it('records first-party provenance whose digest matches the installed text', () => {
     const provenance = JSON.parse(readFileSync(join(support, 'provenance.json'), 'utf8'));
     const digest = (file: string) => createHash('sha256').update(readFileSync(join(support, file))).digest('hex');
-    expect(provenance).toMatchObject({ name: 'rei-cloud-navigation', pack: 'austin-office', packRevision: 2, firstParty: true, sha256: digest('SKILL.md'), siteMapSha256: digest('site-map.json') });
+    expect(provenance).toMatchObject({ name: 'rei-cloud-navigation', pack: 'austin-office', packRevision: 3, firstParty: true, sha256: digest('SKILL.md'), siteMapSha256: digest('site-map.json') });
     const map = JSON.parse(readFileSync(join(support, 'site-map.json'), 'utf8'));
     expect(map).toMatchObject({ portal: 'rei-cloud', pack: 'austin-office', skill: 'rei-cloud-navigation' });
     expect(JSON.stringify(map)).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})/);

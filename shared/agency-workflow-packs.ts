@@ -1,10 +1,11 @@
 /** Host-owned recipe roles. An imported title or model response cannot bind a
  * plan to a business workflow; the agency explicitly selects one known pack. */
+// Ids keep the historical `austin` spelling; the customer is Auston Realty.
 export const AGENCY_WORKFLOW_PACK_IDS = ['office-core', 'austin-office'] as const;
 export type AgencyWorkflowPackId = typeof AGENCY_WORKFLOW_PACK_IDS[number];
 export const AGENCY_WORKFLOW_PACK_NAMES: Record<AgencyWorkflowPackId, string> = {
   'office-core': 'Real estate office core',
-  'austin-office': 'Austin office workflows',
+  'austin-office': 'Auston office workflows',
 };
 export const AGENCY_RECIPE_ROLES = ['inbox-triage', 'invoice-review', 'bill-exceptions', 'bank-reference-prep'] as const;
 export type AgencyRecipeRole = typeof AGENCY_RECIPE_ROLES[number];

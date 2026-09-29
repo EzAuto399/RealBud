@@ -1,11 +1,11 @@
 ---
 name: rei-cloud-navigation
-description: "Find your way around REI Cloud in the person's signed-in session: account-scope check, sign-in pause, stable row selectors, overlays, edit locks, routes for the three Austin workflows and action risk classes."
+description: "Find your way around REI Cloud in the person's signed-in session: account-scope check, sign-in pause, stable row selectors, overlays, edit locks, routes for the three Auston workflows and action risk classes."
 ---
 
 # REI Cloud navigation
 
-Part of the Austin Realty add-on workflow pack (`austin-office`). It is not RealBud core. It is derived from a read-only structural map of REI Cloud v26.0922.0 observed on 24 September 2026 (`site-map.json` beside this file). The map holds structure only: no names, addresses, emails, amounts or account numbers.
+Part of the Auston Realty add-on workflow pack (`austin-office`). It is not RealBud core. It is derived from a read-only structural map of REI Cloud v26.0922.0 observed on 24 September 2026 (`site-map.json` beside this file). The map holds structure only: no names, addresses, emails, amounts or account numbers.
 
 Placeholders stand for account values. Never write the real values into notes, logs, receipts or proposals:
 - `{reicid}`: the database ID REI puts on every app URL.
@@ -54,7 +54,7 @@ This skill grants nothing. It describes where things are; it does not permit any
 
 A heading such as "Editing By `<user>`" (for example on Pending Transactions) means someone else holds the record. Stop and tell the person. Never take over or work around the lock.
 
-## Routes for the three Austin workflows
+## Routes for the three Auston workflows
 
 Every app route is `https://app.reimasterapps.com.au<route>?reicid={reicid}`.
 
