@@ -4,7 +4,7 @@ Supersedes the "no manual payment-reconciliation API" line in `website/docs/AI-P
 
 ## Owner decisions
 
-- RealBud is the operator. Modelvia bills RealBud wholesale for each office's AI usage. The client's bill is the **RealBud invoice** (`RB-…`): care line plus the AI usage lines from Modelvia's finalized month, with RealBud's margin. Clients never see wholesale cost, basis points or margin.
+- RealBud is the operator. Modelvia bills RealBud wholesale for each office's AI usage. The client's bill is the **RealBud invoice** (`RB-…`): care line plus the AI usage lines from Modelvia's finalized month, with RealBud's margin. Clients never see wholesale cost or margin amounts; the agreed markup percentage is part of the terms they accept.
 - Clients pay by **bank transfer**, **PayID** (`0455123764`) or **card via Square** (already built; settles only by verified webhook).
 - Invoices are **due 7 days** after issue, then **overdue**.
 - The operator records transfer/PayID payments on the admin desk and can undo a mistaken record. Non-payment is **flagged only**; the operator decides whether to lower the cap or turn AI off. Nothing is paused automatically.
@@ -65,7 +65,7 @@ Monthly commercial terms are per office per month on the gateway (`commercial-te
 - Included months: care 0 and no `aiUsage`. The month still closes, as an A$0 Tax Invoice with the line "Included service — no charge". Modelvia customer invoices for included months are recorded as **absorbed** (RealBud's cost) so they are never consolidated onto a later invoice, and never block a close (`ai_usage_unconsolidated`).
 - Owner acceptance: the portal's existing commercial-terms read/accept shows the **plan** (included months, monthly fee from which month, AI billed after each month) and accepting it accepts the plan version. Every later month of that version gets a standing acceptance with subject `standing:<plan acceptance digest>`; nothing else creates acceptances.
 - Close list blockers: `no_billing_plan`, `plan_awaiting_owner` (plan version not accepted yet).
-- Clients never see markup basis points or wholesale cost.
+- The owner sees exactly the terms they accept, including the AI markup percentage (the invite terms already state it); the portal returns the stored terms so the website verifies the digest. Clients never see wholesale cost or RealBud's margin amounts.
 
 ### Contract additions (operator bearer)
 

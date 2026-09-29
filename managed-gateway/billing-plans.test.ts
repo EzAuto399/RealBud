@@ -245,20 +245,20 @@ test('the daily roll-forward publishes next month for every planned office with 
   f.db.verify();
 });
 
-test('the portal presentation shows the plan in the owner\'s words and never a markup basis point',()=>{
+test('the portal presentation shows the plan in the owner\'s words and the stored terms exactly (markup included), so the digest checks',()=>{
   const {f,plans,accept,terms}=office();
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
   const september=presentCommercialTerms(terms.current(f.owner,'2026-09'));
   assert.deepEqual(september.plan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,includedUntil:'2026-10',careCents:'12500',careFrom:'2026-11',aiBilling:'resale',aiBilledFrom:'2026-11',month:1,included:true,accepted:false});
-  assert.deepEqual(september.terms.billingPlan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,careCents:'12500',aiBilling:'resale'});
+  assert.deepEqual(september.terms,terms.current(f.owner,'2026-09').terms);
   assert.equal(september.digest,terms.current(f.owner,'2026-09').digest);
   accept('2026-09');
   f.setTime(at('2026-10-20T00:00:00Z'));
   plans.rollForward(f.tenant.companyId);
   const november=presentCommercialTerms(terms.current(f.owner,'2026-11'));
-  assert.deepEqual([november.plan!.month,november.plan!.included,november.plan!.accepted,november.terms.aiUsage,november.terms.careCents],[3,false,true,{billing:'resale',termsReference:RESALE.termsReference},'12500']);
-  assert.doesNotMatch(JSON.stringify(november),/markupBasisPoints|3000/);
-  // Command-published terms present as before, minus the basis points.
-  const legacy=presentCommercialTerms({terms:{...terms.current(f.owner,'2026-09').terms,billingPlan:undefined,aiUsage:{billing:'resale',markupBasisPoints:2500,termsReference:'ref'}},digest:'x'.repeat(64),acceptance:null});
-  assert.deepEqual([legacy.plan,legacy.terms.aiUsage,'billingPlan' in legacy.terms],[null,{billing:'resale',termsReference:'ref'},false]);
+  assert.deepEqual([november.plan!.month,november.plan!.included,november.plan!.accepted,november.terms.aiUsage,november.terms.careCents],[3,false,true,{billing:'resale',markupBasisPoints:3000,termsReference:RESALE.termsReference},'12500']);
+  // Command-published terms present unchanged, markup included.
+  const {billingPlan:_plan,...base}=terms.current(f.owner,'2026-09').terms;
+  const legacy=presentCommercialTerms({terms:{...base,aiUsage:{billing:'resale',markupBasisPoints:2500,termsReference:'ref'}},digest:'x'.repeat(64),acceptance:null});
+  assert.deepEqual([legacy.plan,legacy.terms.aiUsage,'billingPlan' in legacy.terms],[null,{billing:'resale',markupBasisPoints:2500,termsReference:'ref'},false]);
 });

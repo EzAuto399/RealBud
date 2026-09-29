@@ -246,11 +246,11 @@ export class BillingPlans {
  * from which month, AI billed after each month from which month). The digest is
  * the stored terms' digest, which the owner's acceptance names. */
 export function presentCommercialTerms(current:{terms:CommercialTerms;digest:string;acceptance:CommercialAcceptance|null}) {
+  // The owner sees exactly the terms they accept, markup included (the invite
+  // terms already state it), so the website can check the stored digest.
+  // Wholesale cost is never on the terms.
   const {terms}=current, plan=terms.billingPlan;
-  const {aiUsage:ai,billingPlan:_plan,...rest}=terms;
-  const {markupBasisPoints:_markup,...aiUsage}=ai??{};
-  const {markupBasisPoints:_planMarkup,termsReference:_reference,...planTerms}=plan??{};
-  const presented={...rest,...(ai?{aiUsage}:{}),...(plan?{billingPlan:planTerms}:{})};
+  const presented=terms;
   const after=plan?addMonths(plan.startPeriod,plan.includedMonths):null;
   return {terms:presented,digest:current.digest,acceptance:current.acceptance,
     plan:plan?{version:plan.version,startPeriod:plan.startPeriod,includedMonths:plan.includedMonths,includedUntil:plan.includedMonths>0?addMonths(plan.startPeriod,plan.includedMonths-1):null,

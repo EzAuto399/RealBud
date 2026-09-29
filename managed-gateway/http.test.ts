@@ -288,7 +288,7 @@ test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET
   const portal=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-09',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
   assert.deepEqual(portal.plan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,includedUntil:'2026-10',careCents:'12500',careFrom:'2026-11',aiBilling:'resale',aiBilledFrom:'2026-11',month:1,included:true,accepted:false});
   assert.deepEqual([portal.terms.version,portal.terms.careCents,portal.acceptance,'aiUsage' in portal.terms],['plan-v1-2026-09','0',null,false]);
-  assert.doesNotMatch(JSON.stringify(portal),/markupBasisPoints|3000/);
+  assert.equal(portal.terms.billingPlan.markupBasisPoints,3000);
   const accepted=await fetch(base+'/v1/portal/commercial-terms/accept',{method:'POST',headers:{Authorization:`Bearer ${OWNER}`,'Content-Type':'application/json'},body:JSON.stringify({period:'2026-09',version:portal.terms.version,digest:portal.digest})});
   assert.equal(accepted.status,200);
   assert.deepEqual(synced,[f.tenant.companyId]);
@@ -298,8 +298,7 @@ test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET
   // Later, the portal read itself publishes the next months with their standing acceptance.
   f.setTime(Date.parse('2026-11-03T00:00:00Z'));
   const november=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-11',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
-  assert.deepEqual([november.terms.careCents,november.terms.aiUsage,november.plan.included,november.acceptance.subject.startsWith('standing:')],['12500',{billing:'resale',termsReference:'realbud-office-terms-2026-09-26-ai-resale-30pct'},false,true]);
-  assert.doesNotMatch(JSON.stringify(november),/markupBasisPoints/);
+  assert.deepEqual([november.terms.careCents,november.terms.aiUsage,november.plan.included,november.acceptance.subject.startsWith('standing:')],['12500',{billing:'resale',markupBasisPoints:3000,termsReference:'realbud-office-terms-2026-09-26-ai-resale-30pct'},false,true]);
   assert.deepEqual((await call('GET','/v1/operator/billing/close?period=2026-10')).body.offices[0].state,'ready');
   const closed=await call('POST','/v1/operator/billing/close',{companyId:f.tenant.companyId,period:'2026-10'});
   assert.deepEqual([closed.status,closed.body.ai,closed.body.invoice.totalCents,closed.body.invoice.status],[200,'included','0','nothing_due']);
