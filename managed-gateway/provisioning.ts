@@ -219,15 +219,16 @@ const ATTEMPT_EFFECT_DEADLINE_MS = 5 * 60_000;
  * Default per-request cap: A$4 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
  * overrides it.
  *
- * Modelvia holds a request's WHOLE route bound before it runs: the route's full
- * context window as input and cache reads, plus its output limit, priced on the
- * accepted card (`key-gateway.ts` admission). On `openrouter-2026-09-r2` that is
- * about A$3.27 for `kimi-k3` and up to about A$1.4 for `deepseek-v4.1-flash`. A
- * project request cap below a route's hold drops that route (402
- * `project_request_cap_exceeded` when none is left), so the old A$1 default
- * could never serve Kimi and not always Flash. A$4 covers both and equals the
- * request cap on RealBud's billing account at Modelvia. Settlement charges what
- * was generated, not the hold.
+ * Modelvia holds a request's bound before it runs, priced on the accepted card
+ * (`key-gateway.ts` admission). On the r4 menu (`openrouter-2026-09-r4`) the
+ * prompt share is sized from the prompt, reserved at input and cache read, and
+ * the output share is `max_tokens` or the route's ceiling: a short prompt holds
+ * about A$0.63 on `claude-sonnet-5.5` and A$0.11 on `deepseek-v4.1-flash`, and a
+ * prompt near the window about A$4.74 and A$0.39. A request cap below a route's
+ * hold drops that route (`auto` serves another; an explicit choice, or none
+ * left, is 402 `project_request_cap_exceeded`). A$4 serves Sonnet for all but
+ * the largest prompts and equals the request cap on RealBud's billing account
+ * at Modelvia. Settlement charges what was generated, not the hold.
  */
 export const DEFAULT_REQUEST_CAP_NANO_AUD = '4000000000';
 const NANO_AUD = /^[1-9][0-9]{0,20}$/;
