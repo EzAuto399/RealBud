@@ -489,7 +489,7 @@ test('project caps come from the Modelvia customer, never from the ledger tenant
   } finally { h.close(); }
 });
 
-test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an override, and never exceeds the monthly cap', async () => {
+test('the request cap defaults to A$4 (the billing account\'s request cap), takes an override, and never exceeds the monthly cap', async () => {
   const customer = { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
   assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '4000000000');
   assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 });
