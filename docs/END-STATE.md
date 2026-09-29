@@ -1,5 +1,7 @@
 # RealBud end state
 
+Machine handoff: [Mac mini handoff](MAC-MINI-HANDOFF-2026-09-29.md) records the 29 September move to the Mac mini: all work committed and merged to `main`, setup steps, what git does not carry, and open items.
+
 Latest continuation: [Bud status and setup ownership](BUD-STATUS-2026-09-27.md) refines the setup dead end with permission-aware actions, explicit prerequisites and automatic read-only refresh. Local verification and remaining packaged/device limits are recorded in that checkpoint.
 
 Latest QA checkpoint: [QA fixes and 0.1.20 Mac candidate](QA-FIXES-2026-09-25.md) records the REI recipe runner (fictional simulation only), provisioning and billing fixes on a local rig, Electron 43.7.5 and BrowserSkill 0.3.1, and installed 0.1.20 QA on the owner's Mac with disposable data. Windows 0.1.20, live vendors, live REI and customer acceptance remain open.
