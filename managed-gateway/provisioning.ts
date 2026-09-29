@@ -849,16 +849,25 @@ export function applyCustomerCaps(options: { ledger: UsageLedger; modelvia: Mode
 export const PROVISIONING_ENV = [
   'REALBUD_GATEWAY_SECRETS_DIR', 'REALBUD_GATEWAY_CONNECTOR_REGISTRY', 'REALBUD_GATEWAY_PUBLIC_ORIGIN',
   'REALBUD_COMPOSIO_ORG_KEY',
-  'REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT',
+  'REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_SCOPED_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT',
   'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS',
 ] as const;
 
-/** The variables the Modelvia operator client needs, for `/ready`. Presence only;
+/** The variables the Modelvia RealBud-scoped client needs, for `/ready`. Presence only;
  * nothing here reads a value into a response or calls Modelvia. */
-export const MODELVIA_OPERATOR_ENV = ['REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT', 'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS'] as const;
+export const MODELVIA_SCOPED_ENV = ['REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_SCOPED_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT', 'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS'] as const;
+function scopedSecretConfigured(env: NodeJS.ProcessEnv): boolean {
+  const secret = env.REALBUD_MODELVIA_SCOPED_SECRET ?? '';
+  return secret.length >= 32 && secret === secret.trim() && !/[\r\n]/.test(secret)
+    && !['REALBUD_GATEWAY_PORTAL_SECRET', 'REALBUD_GATEWAY_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SECRET']
+      .some(name => !!env[name] && secret === env[name]);
+}
 export function modelviaOperatorState(env: NodeJS.ProcessEnv): 'configured' | 'missing' {
   const value = (name: string) => (env[name] ?? '').trim();
-  return MODELVIA_OPERATOR_ENV.every(name => value(name)) && value('REALBUD_MODELVIA_OPERATOR_SECRET').length >= 32 ? 'configured' : 'missing';
+  // The /ready `modelviaOperator` field is retained for existing consumers,
+  // but it now describes only the scoped credential. The global secret is never
+  // accepted as a fallback.
+  return MODELVIA_SCOPED_ENV.every(name => value(name)) && scopedSecretConfigured(env) ? 'configured' : 'missing';
 }
 
 /** `secrets` is the one store provisioning writes the office project keys into;
@@ -882,9 +891,9 @@ export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTr
   // (an empty /v1/models and every chat refused). Named here at deploy time.
   const allowedModels = value('REALBUD_MODELVIA_MODELS').split(',').map(entry => entry.trim()).filter(Boolean);
   if (!allowedModels.length || allowedModels.some(model => model.toLowerCase() === 'auto')) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' };
-  // Modelvia's verifier refuses a secret under 32 characters; name it now rather
+  // Modelvia's scoped verifier refuses a secret under 32 characters; name it now rather
   // than at the first request.
-  if (value('REALBUD_MODELVIA_OPERATOR_SECRET').length < 32) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET' };
+  if (!scopedSecretConfigured(env)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_SCOPED_SECRET' };
   const requestCapNanoAud = value('REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD') || DEFAULT_REQUEST_CAP_NANO_AUD;
   if (!NANO_AUD.test(requestCapNanoAud)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD' };
   try {
@@ -894,7 +903,7 @@ export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTr
       clientId: value('REALBUD_MODELVIA_CLIENT_ID'),
       allowedModels,
       // A fresh HMAC bearer is minted per request; a static token would 401.
-      operatorSecret: () => env.REALBUD_MODELVIA_OPERATOR_SECRET,
+      scopedSecret: () => env.REALBUD_MODELVIA_SCOPED_SECRET,
       operatorSubject: value('REALBUD_MODELVIA_OPERATOR_SUBJECT'),
       fetch: options.fetch,
     }) };

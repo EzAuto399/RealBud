@@ -56,7 +56,7 @@ function operatorAuthorized(header: string | undefined, now: number): boolean {
   const expected = createHmac('sha256', OPERATOR_SECRET).update(payload).digest(), given = Buffer.from(signature, 'base64url');
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return false;
   const c = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Row;
-  return c.aud === 'managed-ai-operator' && typeof c.iat === 'number' && typeof c.exp === 'number' && c.exp > now && c.exp - c.iat <= 300_000;
+  return c.aud === 'managed-ai-realbud' && typeof c.iat === 'number' && typeof c.exp === 'number' && c.exp > now && c.exp - c.iat <= 300_000;
 }
 
 function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; customers?: Row[]; policies?: Row[]; clientModels?: string[] } = {}) {
@@ -93,6 +93,9 @@ function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; 
     if (kind === 'customer') {
       if (client.billingMode === 'mixed' ? !['client', 'customer'].includes(String(body.payer)) : body.payer !== undefined) return fail(400, 'invalid_payer');
       if ((effectivePayer(body) === 'customer') !== (typeof body.billingCompanyId === 'string')) return fail(400, 'invalid_billing_binding');
+      // The scoped Modelvia credential cannot establish a new customer-paid
+      // billing relationship; that one-time binding needs a global operator.
+      if (!old && typeof body.billingCompanyId === 'string') return fail(403, 'billing_binding_operator_only');
     }
     if (kind === 'project' && (customers.get(body.customerId as string)?.clientId !== client.id)) return fail(403, 'invalid_account_ancestry');
     const saved: Row = { ...body, version: (body.version as number) + 1 };
@@ -247,7 +250,7 @@ function gateway(m: ReturnType<typeof liveModelvia>, env: Record<string, string>
     REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(root, 'secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(root, 'registry', 'devices.json'),
     REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key',
     REALBUD_GATEWAY_OPERATOR_SECRET: 'fictional-gateway-operator-secret-000001', REALBUD_GATEWAY_PORTAL_SECRET: 'fictional-gateway-portal-secret-00000001',
-    REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: OPERATOR_SECRET, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
+    REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: OPERATOR_SECRET, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
     REALBUD_MODELVIA_CLIENT_ID: CLIENT, REALBUD_MODELVIA_MODELS: LIVE_MODELS, REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: 'company-a', ...env,
   };
   const operator = composeOperatorRoutes({ env: full, ledger: f.ledger, fetch: m.fetchLike });
@@ -329,6 +332,29 @@ test('a brand-new office: access → client-funded terms → provision → key �
   } finally { g.close(); }
 });
 
+test('a customer-paid office waits for a global billing binding and safely retries the scoped access', async () => {
+  const m = liveModelvia({ billingMode: 'customer' });
+  const g = gateway(m, { REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: '' });
+  try {
+    await assert.rejects(() => g.setAccess('realbud-company-a'), (error: unknown) =>
+      error instanceof GatewayError && error.code === 'modelvia_billing_binding_operator_required' && error.status === 409);
+    assert.equal(m.customers.has('realbud-company-a'), false);
+    assert.equal(m.posts('/v1/operator/customers').length, 1);
+    assert.equal(m.posts('/v1/operator/commercial-policies').length, 0);
+    assert.equal(g.org.created.length, 0);
+    // This is the reviewed global-operator action, outside the gateway. Its
+    // immutable company binding matches the office already recorded locally.
+    m.customers.set('realbud-company-a', { id: 'realbud-company-a', name: 'Fictional Office A', active: true,
+      monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: LIVE_MODELS.split(','),
+      version: 1, clientId: CLIENT, billingCompanyId: 'company-a' });
+    const access = await g.setAccess('realbud-company-a');
+    assert.equal(access.customer.created, false);
+    assert.equal(m.posts('/v1/operator/customers').length, 1, 'the retry must not recreate or rebind the customer');
+    const result = await g.provision('realbud-company-a');
+    assert.match(result.provisioning.model.key!, /^rbk_[0-9a-f]{16}_/);
+  } finally { g.close(); }
+});
+
 test('no key is issued into customer_terms_required: provisioning refuses before any effect until terms are in force', async () => {
   // An office outside the client-funded list, with no resale configuration: its
   // customer is created, but no terms are written.
@@ -343,7 +369,7 @@ test('no key is issued into customer_terms_required: provisioning refuses before
     m.projects.set('rb-direct', { id: 'rb-direct', name: 'Fictional', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: LIVE_MODELS.split(','),
       version: 1, clientId: CLIENT, customerId: 'realbud-company-a', environments: ['production'], requestCapNanoAud: '4000000000' });
     const direct = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: LIVE_MODELS.split(','),
-      operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: m.fetchLike });
+      scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: m.fetchLike });
     const { key } = await direct.mint({ projectId: 'rb-direct', label: 'fictional' });
     const refused = await chat(m, key, FIRST, 'realbud-turn-0001');
     assert.equal(refused.status, 409);
@@ -386,7 +412,7 @@ test('resale is written only from explicit configuration, and its receipt is a r
   // A malformed terms variable leaves the operator write off rather than guessing.
   const f = fixture(); try {
     const routes = composeOperatorRoutes({ env: { REALBUD_GATEWAY_OPERATOR_SECRET: 'fictional-gateway-operator-secret-000001', REALBUD_GATEWAY_PORTAL_SECRET: 'fictional-gateway-portal-secret-00000001',
-      REALBUD_ENABLE_PROVIDER: '1', REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: OPERATOR_SECRET, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
+      REALBUD_ENABLE_PROVIDER: '1', REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: OPERATOR_SECRET, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
       REALBUD_MODELVIA_CLIENT_ID: CLIENT, REALBUD_MODELVIA_MODELS: LIVE_MODELS, REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '2000' }, ledger: f.ledger, fetch: async () => { throw new Error('no call'); } });
     assert.equal(routes?.officeAiAccess, undefined);
   } finally { f.close(); }
@@ -458,7 +484,7 @@ test('only the live route ids serve: retired ids and an `auto` allowlist entry r
   const a = liveModelvia({ customers: [{ id: 'realbud-company-a', name: 'Fictional', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: ['auto'], version: 1, clientId: CLIENT }],
     policies: [{ id: 'fictional-terms', clientId: CLIENT, customerId: 'realbud-company-a', state: 'active', effectiveAt: Date.now() - 60_000, payer: 'client', customerBilling: 'client_funded' }] });
   const old = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: ['auto'],
-    operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: a.fetchLike });
+    scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: a.fetchLike });
   await old.createProject({ projectId: 'rb-auto', name: 'Fictional', customerId: 'realbud-company-a', monthlyCapNanoAud: '200000000000', requestCapNanoAud: '4000000000', maxConcurrent: 2 });
   const { key } = await old.mint({ projectId: 'rb-auto', label: 'fictional' });
   const none = await chat(a, key, FIRST, 'realbud-turn-auto');
@@ -470,7 +496,7 @@ test('terms writes survive races and refusals: a lost reply or a concurrent writ
   const m = liveModelvia(), g = gateway(m); try {
     await g.setAccess('realbud-company-a');
     const direct = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: LIVE_MODELS.split(','),
-      operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: m.fetchLike });
+      scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: m.fetchLike });
     // A repeat finds the policy in force and writes nothing.
     const posted = m.posts('/v1/operator/commercial-policies').length;
     assert.equal((await direct.ensureCustomerTerms('realbud-company-a', { customerBilling: 'client_funded', acceptanceReference: 'fictional-ref' })).created, false);
@@ -488,7 +514,7 @@ test('terms writes survive races and refusals: a lost reply or a concurrent writ
     const refusing: HttpTransport = async (url, init) => new URL(url).pathname === '/v1/operator/commercial-policies' && init.method === 'POST'
       ? (posts++, Response.json({ error: code }, { status: 409 })) : skew.fetchLike(url, init);
     const client = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: LIVE_MODELS.split(','),
-      operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: refusing });
+      scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: refusing });
     await assert.rejects(() => client.ensureCustomerTerms('realbud-company-a', { customerBilling: 'client_funded', acceptanceReference: 'fictional-ref' }), named);
     assert.equal(posts, 1, code);
   }
@@ -505,14 +531,14 @@ test('terms writes survive races and refusals: a lost reply or a concurrent writ
     return race.fetchLike(url, init);
   };
   const racer = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: LIVE_MODELS.split(','),
-    operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: racing });
+    scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: racing });
   assert.deepEqual(await racer.ensureCustomerTerms('realbud-company-a', { customerBilling: 'client_funded', acceptanceReference: 'fictional-ref' }),
     { state: 'active', created: false, policyId: 'fictional-other-writer', customerBilling: 'client_funded' });
 
   // A customer that pays Modelvia itself needs no policy, and none is written.
   const own = liveModelvia({ billingMode: 'customer', customers: [{ id: 'realbud-company-a', name: 'Fictional', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: LIVE_MODELS.split(','), version: 1, clientId: CLIENT, billingCompanyId: 'rbco_fictional_office' }] });
   const payer = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: LIVE_MODELS.split(','),
-    operatorSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: own.fetchLike });
+    scopedSecret: () => OPERATOR_SECRET, operatorSubject: 'realbud-provisioning', fetch: own.fetchLike });
   assert.deepEqual(await payer.ensureCustomerTerms('realbud-company-a', { customerBilling: 'client_funded', acceptanceReference: 'fictional-ref' }), { state: 'not_required', created: false });
   assert.equal(await payer.customerTermsReadiness('realbud-company-a'), 'ready');
   assert.deepEqual(own.posts('/v1/operator/commercial-policies'), []);

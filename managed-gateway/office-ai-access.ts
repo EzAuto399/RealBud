@@ -41,7 +41,7 @@ import type { MarginReport } from './office-ai-billing.ts';
 import type { OfficeAiTermsRoutes } from './office-ai-terms.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
 import { operatorEntitlementRoutes, type OperatorEntitlementRoutes } from './operator-entitlement.ts';
-import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
+import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_SCOPED_ENV, serialized, type CapsApplied } from './provisioning.ts';
 
 export interface OfficeAiAccessResult {
   customer: { active: boolean; monthlyCapNanoAud: string; created: boolean };
@@ -149,7 +149,7 @@ export function composeOperatorRoutes(options: { env: NodeJS.ProcessEnv; ledger:
   // Service entitlement is a local ledger write, so it needs no Modelvia configuration.
   const base: OperatorRoutes = { authenticate: verify, entitlements: operatorEntitlementRoutes({ ledger: options.ledger }) };
   const value = (name: string) => (env[name] ?? '').trim();
-  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_OPERATOR_ENV.some(name => !value(name))) return base;
+  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_SCOPED_ENV.some(name => !value(name))) return base;
   const composed = composeModelvia({ env, fetch: options.fetch });
   if ('unavailable' in composed) return base;
   // A malformed terms variable leaves the write off rather than guessing terms.
@@ -163,7 +163,7 @@ export function composeOperatorRoutes(options: { env: NodeJS.ProcessEnv; ledger:
  * variable is present. `modelvia` is a test seam. */
 export function composeResaleTermsClient(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport; modelvia?: ModelviaOperatorClient }): Pick<ModelviaTermsClient, 'syncResaleTerms'> | undefined {
   const value = (name: string) => (options.env[name] ?? '').trim();
-  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_OPERATOR_ENV.some(name => !value(name))) return undefined;
+  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_SCOPED_ENV.some(name => !value(name))) return undefined;
   const client = options.modelvia ?? (() => { const composed = composeModelvia({ env: options.env, fetch: options.fetch }); return 'unavailable' in composed ? undefined : composed.modelvia; })();
   return client && hasCustomerTerms(client) && client.syncResaleTerms ? client : undefined;
 }

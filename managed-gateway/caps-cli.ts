@@ -8,7 +8,7 @@
  *   node --experimental-strip-types caps-cli.ts apply --company <companyId>
  *
  * Needs the Modelvia operator variables (`REALBUD_MODELVIA_BASE_URL`,
- * `REALBUD_MODELVIA_OPERATOR_SECRET`, `REALBUD_MODELVIA_OPERATOR_SUBJECT`,
+ * `REALBUD_MODELVIA_SCOPED_SECRET`, `REALBUD_MODELVIA_OPERATOR_SUBJECT`,
  * `REALBUD_MODELVIA_CLIENT_ID`) and the ledger database the server uses. It
  * prints installation ids and states only: never a secret, a Modelvia customer
  * id or an upstream body. Exit 0 only when every installation was applied.
@@ -22,7 +22,7 @@ import { UsageLedger } from './ledger.ts';
 import { ledgerPath, loadLocalEnv } from './local-env.ts';
 import type { HttpTransport } from './composio-org.ts';
 import type { ModelviaClient } from './modelvia-keys.ts';
-import { applyCustomerCaps, composeModelvia, MODELVIA_OPERATOR_ENV } from './provisioning.ts';
+import { applyCustomerCaps, composeModelvia, MODELVIA_SCOPED_ENV } from './provisioning.ts';
 
 const USAGE = 'Usage: caps-cli.ts apply --company <companyId>';
 function fail(code: string): never { throw new GatewayError(code); }
@@ -38,7 +38,7 @@ export async function runCapsCli(argv: readonly string[], options: { env?: NodeJ
   try {
     if (argv.length !== 3 || argv[0] !== 'apply' || argv[1] !== '--company') fail('invalid_arguments');
     const companyId = argv[2]!;
-    for (const name of MODELVIA_OPERATOR_ENV) if (!(env[name] ?? '').trim()) fail(`modelvia_unconfigured:${name}`);
+    for (const name of MODELVIA_SCOPED_ENV) if (!(env[name] ?? '').trim()) fail(`modelvia_unconfigured:${name}`);
     const composed = composeModelvia({ env, fetch: options.fetch ?? fetch });
     if ('unavailable' in composed) fail(composed.unavailable);
     if (!existsSync(path)) fail('ledger_database_missing');

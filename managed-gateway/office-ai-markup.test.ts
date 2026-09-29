@@ -104,7 +104,7 @@ function fakeModelvia(options: { chargeDetail?: 'all_in' | 'itemized' } = {}) {
     return json({ error: 'not_found' }, 404);
   };
   const operator = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: CLIENT, allowedModels: ['deepseek-v4.1-flash'],
-    operatorSecret: () => 'fictional-modelvia-operator-secret-32ch', operatorSubject: 'realbud-provisioning', fetch: fetchLike,
+    scopedSecret: () => 'fictional-modelvia-operator-secret-32ch', operatorSubject: 'realbud-provisioning', fetch: fetchLike,
     // RealBud's own clock is deliberately far from Modelvia's: it must never stamp a policy.
     now: () => Date.parse('2031-01-01T00:00:00Z') });
   const client = modelviaClientBilling({ serviceOrigin: 'https://api.modelvia.dev', clientId: CLIENT, clientKey: () => CLIENT_KEY, fetch: fetchLike });

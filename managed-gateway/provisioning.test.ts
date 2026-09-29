@@ -503,7 +503,7 @@ test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an o
     const env: NodeJS.ProcessEnv = {
       REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
       REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key',
-      REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
+      REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
     };
     const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
@@ -682,7 +682,7 @@ test('the env resolver fails closed, names only the missing variable, and never 
       REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
       REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid',
       REALBUD_COMPOSIO_ORG_KEY: secret,
-      REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
+      REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
       REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model',
     };
@@ -697,8 +697,14 @@ test('the env resolver fails closed, names only the missing variable, and never 
         assert.deepEqual(result, { unavailable: `provisioning_unconfigured:${name}` }, `${name} = ${JSON.stringify(blank)}`);
       }
     }
+    // The old global secret cannot bring provisioning online, even when present.
+    assert.deepEqual(resolve({ ...full, REALBUD_MODELVIA_SCOPED_SECRET: undefined,
+      REALBUD_MODELVIA_OPERATOR_SECRET: full.REALBUD_MODELVIA_SCOPED_SECRET }),
+      { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_SCOPED_SECRET' });
+    assert.deepEqual(resolve({ ...full, REALBUD_MODELVIA_OPERATOR_SECRET: full.REALBUD_MODELVIA_SCOPED_SECRET }),
+      { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_SCOPED_SECRET' });
     // A malformed value is reported by code, and the value itself never appears.
-    for (const broken of [{ REALBUD_GATEWAY_PUBLIC_ORIGIN: `http://${secret}.invalid` }, { REALBUD_MODELVIA_BASE_URL: `https://${secret}.invalid/v1` }, { REALBUD_MODELVIA_CLIENT_ID: `${secret} bad id` }, { REALBUD_MODELVIA_MODELS: ' , ' }, { REALBUD_MODELVIA_OPERATOR_SECRET: 'short' },
+    for (const broken of [{ REALBUD_GATEWAY_PUBLIC_ORIGIN: `http://${secret}.invalid` }, { REALBUD_MODELVIA_BASE_URL: `https://${secret}.invalid/v1` }, { REALBUD_MODELVIA_CLIENT_ID: `${secret} bad id` }, { REALBUD_MODELVIA_MODELS: ' , ' }, { REALBUD_MODELVIA_SCOPED_SECRET: 'short' },
       { REALBUD_GATEWAY_SECRETS_DIR: `relative/${secret}` }, { REALBUD_MODELVIA_ENVIRONMENT: secret }, { REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: secret }]) {
       const result = resolve({ ...full, ...broken }) as { unavailable: string };
       assert.match(result.unavailable, /^provisioning_unconfigured:/);

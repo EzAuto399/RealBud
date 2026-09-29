@@ -14,7 +14,7 @@ Off-device service with four jobs:
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | none | liveness |
-| `GET /ready` | none | 200 only when provisioning is composed; always reports `modelviaOperator` and `operatorAccess` (`configured\|missing`). Makes no network call |
+| `GET /ready` | none | 200 only when provisioning is composed; always reports `modelviaOperator` and `operatorAccess` (`configured\|missing`). The first is a legacy field name for local RealBud-scoped credential presence. Makes no network call |
 | `POST /v1/portal/installations/provision` | portal bearer, `billing_owner` | needs an active entitlement and a ready Modelvia customer |
 | `POST /v1/portal/installations/revoke` | portal bearer, `billing_owner` | no entitlement needed, so a lapsed office can still be shut off |
 | `/v1/connectors/*` | connector credential | needs an active entitlement |
@@ -32,6 +32,8 @@ Every other path returns 404: `/v1/portal/usage`, `/v1/portal/rates`, `/v1/porta
 - `service_unavailable` (402): the entitlement is inactive, expired, or not yet live.
 - `modelvia_customer_not_ready` (409): the office's Modelvia customer is missing, inactive, under another client, or has a zero monthly cap. Set it with the office AI access route.
 - `modelvia_customer_foreign` (409): the Modelvia customer id belongs to another platform client. Nothing was written.
+- `modelvia_billing_binding_operator_required` (409): a new customer-paid office needs a one-time billing-company binding by a Modelvia global operator. Verify the exact office binding, then retry this RealBud operation; see [DEPLOY.md](DEPLOY.md#global-secret-cutover).
+- `modelvia_billing_account_bound` (409): the existing Modelvia customer belongs to a different billing company. Review its immutable binding before any retry.
 - `operator_unauthenticated` (401) / `operator_unconfigured` (503): no valid operator bearer, or the operator secret or Modelvia operator variables are not set.
 - `commercial_terms_unavailable` (503): `REALBUD_INTERNAL_COMPANY_ID` is not set, so no office can be told apart from RealBud's own account.
 - `commercial_terms_missing` (404) / `commercial_terms_not_accepted` (409): publish the month's terms, then the billing owner accepts them.

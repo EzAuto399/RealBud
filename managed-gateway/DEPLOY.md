@@ -1,13 +1,22 @@
 # RealBud managed gateway: deployment
 
-The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website runs on Vercel. Deployment is a separate authority: `deploy.sh` needs a human `fly auth login` and exported secrets, and never runs from a coding session. `deploy.sh --check` runs only the validation and changes nothing at Fly.
+The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website runs on Vercel. Deployment is a separate authority: `deploy.sh` needs a human `fly auth login` and exported secrets, and never runs from a coding session. `deploy.sh --check` runs only the validation and changes nothing at Fly. The Modelvia credential for this gateway is a RealBud-scoped HMAC secret, bound to the `realbud` client by Modelvia's `MODELVIA_REALBUD_CLIENT_ID`.
 
 **Modelvia is the only source of AI rates, caps, usage and AI invoices** ([decision, 24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). The gateway keeps installation provisioning and revocation, connectors, service entitlement, `/health` and `/ready`, and collects **one monthly RealBud invoice per office** through Square against the office's accepted monthly commercial terms: the care fee plus, for a customer office that accepted AI resale (owner decision, [26 September 2026](../docs/decisions/2026-09-26-modelvia-commercial-terms.md)), one "AI usage" line per finalized Modelvia customer invoice at its exact total and GST ([Care fee collection](#care-fee-collection-square)). It has no AI rate, usage, limit or model route of its own, and it needs no OpenAI, DeepSeek or Kimi credential.
+
+## Global-secret cutover
+
+1. Configure and deploy Modelvia with `MODELVIA_REALBUD_SCOPED_SECRET` and `MODELVIA_REALBUD_CLIENT_ID=realbud`. Verify its scoped token is rejected for another audience or client before changing this gateway.
+2. Export the same protected value as `REALBUD_MODELVIA_SCOPED_SECRET` for this gateway, run `deploy.sh --check`, and deploy. Keep `REALBUD_MODELVIA_CLIENT_KEY` for invoice and margin reads. Never copy Modelvia's global operator secret into the scoped variable.
+3. Check `/ready`, then exercise an existing RealBud office's AI access and installation key provisioning/revocation. Verify client and project ancestry at Modelvia; `/ready` only checks local configuration.
+4. Remove `REALBUD_MODELVIA_OPERATOR_SECRET` from Fly's stored secrets and the old protected deployment entry. Recheck `/ready` and a scoped operation after the restart. Revoke the global Modelvia operator credential only after its other authorized users have replacement credentials.
+
+For the first **customer-paid** office, Modelvia refuses a new customer with `billingCompanyId` under this scoped credential. RealBud returns 409 `modelvia_billing_binding_operator_required` and leaves the attempted customer creation unapplied. A Modelvia global operator must verify that a Modelvia billing account exists with the reviewed RealBud office company id, then create that customer once under client `realbud` with `billingCompanyId` set to that exact id. Verify the immutable binding and billing account before retrying the same RealBud office AI access request. The gateway never falls back to a global credential. A customer already bound to another office is refused with 409 `modelvia_billing_account_bound`; do not retry against another office id.
 
 ## Order of operations
 
 1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It validates every variable before touching Fly, names each missing one without echoing a value, stages the secrets over stdin and deploys once. It generates no secret: every value is a stable one recovered from protected storage, so a redeploy rotates nothing.
-2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). `/ready` makes no network call. The startup log line also reports `careCollection` (`off|sandbox|live`).
+2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). The legacy `modelviaOperator` field reports only the scoped credential's local presence. `/ready` makes no network call and cannot prove Modelvia accepted it. The startup log line also reports `careCollection` (`off|sandbox|live`).
 3. **Create each office's service entitlement** with the operator route (same operator token as [Office AI access](#office-ai-access); no SSH):
 
    ```
@@ -51,7 +60,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | `REALBUD_COMPOSIO_ORG_KEY` | yes | Composio `x-org-api-key`; a vendor credential, never held by customers |
 | Gmail auth config | automatic | Provisioning resolves or creates a Gmail OAuth2 config with `gmail.readonly` inside each office's Composio project. Its project-scoped ID stays on the gateway; do not supply one deploy-wide ID. |
 | `REALBUD_MODELVIA_BASE_URL` | fly.toml | Modelvia origin, `https://api.modelvia.dev` |
-| `REALBUD_MODELVIA_OPERATOR_SECRET` | yes | Modelvia operator HMAC secret, >=32 chars. A fresh two-minute bearer is minted per request; a static token would 401 |
+| `REALBUD_MODELVIA_SCOPED_SECRET` | yes | Modelvia RealBud-scoped HMAC secret, >=32 chars, distinct from the old global Modelvia operator secret and the gateway's portal/operator secrets. A fresh two-minute `managed-ai-realbud` bearer is minted per request; a static token would 401. Modelvia binds it to `MODELVIA_REALBUD_CLIENT_ID` server-side |
 | `REALBUD_MODELVIA_OPERATOR_SUBJECT` | yes | operator subject in Modelvia's audit trail |
 | `REALBUD_MODELVIA_CLIENT_ID` | yes | RealBud's platform client id at Modelvia; only customers under it are provisioned into |
 | `REALBUD_MODELVIA_MODELS` | yes | comma-separated Modelvia route ids for each customer's and project's `allowedModels`. No default: Modelvia matches these against its real route ids, so `auto` (a value a request may send) is refused as an entry. Unset or `auto` answers `provisioning_unconfigured:REALBUD_MODELVIA_MODELS` on `/ready`. Live Modelvia serves `deepseek-v4.1-flash,kimi-k3` (26 Sep 2026); set exactly that, and the desktop still requests `auto` so Jev routes between them |
@@ -156,7 +165,7 @@ Checked against Modelvia `main` 49327ba, the build api.modelvia.dev served on 25
 | `REALBUD_MODELVIA_RESALE_TERMS_REFERENCE` | `realbud-office-terms-2026-09-26-ai-resale-30pct` (RealBud's resale terms; each office's policy adds its own acceptance digest) |
 | `REALBUD_MODELVIA_CLIENT_KEY` | secret; the `mgt_` client integration key issued for client `realbud` |
 | `REALBUD_MODELVIA_OPERATOR_SUBJECT` | the operator subject Modelvia issued for this gateway |
-| `REALBUD_MODELVIA_OPERATOR_SECRET` | secret; never written here |
+| `REALBUD_MODELVIA_SCOPED_SECRET` | secret; never written here |
 
 Modelvia objects this integration expects (created by Modelvia's operator, not by RealBud): the internal-cost billing account `rbco_1946641d97e347d5a0c297128b3aad22` (A$10/month, A$4/request), rate card `openrouter-2026-09-r2` accepted for it, client `realbud` (`billingMode: client`), customer `realbud-owner`, and its active client-funded policy `realbud-owner-internal-2026-09-25`. Saving the owner office's AI access keeps that policy and writes none. The billing account's A$10 monthly cap binds before the A$200 office default does. `rbco_…` is Modelvia's billing account id, not a RealBud companyId.
 
@@ -226,6 +235,8 @@ Do not infer consent from a Square token or from local adapter tests. Before a r
 ## Proof so far
 
 On 26 September 2026, gateway main `5a108832` was deployed to Fly as v7 image tag `deployment-01M3EPY2GM8BP70K7C7ZPEZ4AP` on machine `83d170ea735528`; `/ready` returned 200. A fresh attached-volume snapshot, `vs_kZgqeDKLmq7Qs7nmQOz3j`, was created with digest `9d0d6f63c094b040825c5424743c5f4d69aacf33b377be28c2e215a3cefea12f`. A read-only live SQLite check found `user_version=3`, `quick_check=ok`, and zero invoice-email outbox rows. Invoice email mode was `off`. Website main `9a962d4` was live on Vercel deployment `dpl_HAnjrNJ8senAvXFZMk95zG4JqjjK`; `realbud.app/` returned 200 and unauthenticated `/account/ai-billing` redirected to sign-in with 307. These are deployment and health receipts, not proof of a sent invoice email or customer acceptance. No verified sender, sending key, accepted recipient, provider acceptance, inbox receipt, or Square payment has been recorded for this release.
+
+Later on 26 September, gateway main `db4f0c9c` (signed desktop entitlements and invoice collection copy) was deployed to Fly as v9 image tag `deployment-01M3ERB8GVWBNVET42AT53DT9Z`; `/ready` returned 200. Read-only live SQLite reported `user_version=3`, `quick_check=ok`, and zero invoice-email outbox rows. Payment mode remained `local`, invoice email mode `off`, and `internalCompanyConfigured` was `false`. Website main `78e509a` was live on Vercel deployment `dpl_8K54p2bSFYMcX6tpgYNnXoeMHhvF`; `realbud.app/` returned 200, unauthenticated `/account/ai-billing` redirected with 307, and the unauthenticated invoice API returned 401. Signed-in billing UI, provider acceptance, delivered invoice email, and customer acceptance remain unverified.
 
 Earlier on 26 September 2026, after integrating the Composio hotfix from main (`8f7f7ee6`), the full managed-gateway local suite (`node --experimental-strip-types --test ./*.test.ts`) passed 284/284 tests and the gateway TypeScript check passed. The invoice-email retry and recovery coverage had passed in the earlier, pre-integration 280/280 local suite on the same date. These are local source-level checks.
 

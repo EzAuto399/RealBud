@@ -39,8 +39,9 @@
  *       version, clientId, payer?, billingCompanyId? }  → the saved record.
  *     An upsert of the FULL record (`accounts.ts` `put`): `version` 0 creates, a
  *     stale one is 409 `account_version_conflict`; clientId, payer and
- *     billingCompanyId are immutable. The operator credential is global, so this
- *     client only ever reads or writes customers under its own `clientId`.
+ *     billingCompanyId are immutable. Modelvia independently binds this scoped
+ *     credential to its configured RealBud client id. This client also checks
+ *     the ancestry of records it consumes.
  *
  * Commercial terms, checked against Modelvia `main` 49327ba (`commercial.ts`,
  * `platform-admin.ts:396`, `ledger.ts:272`):
@@ -63,10 +64,10 @@
  * gateway's ledger cap can actually be applied at Modelvia rather than merely
  * described.
  *
- * AUTH IS SHORT-LIVED, NOT A STATIC TOKEN. Modelvia's `operator-token.ts` verifies
- * an HMAC bearer whose window must be under five minutes, so a fixed string 401s
- * minutes after it is issued. This service holds the operator *secret*
- * (`REALBUD_MODELVIA_OPERATOR_SECRET`) and subject
+ * AUTH IS SHORT-LIVED, NOT A STATIC TOKEN. Modelvia verifies a RealBud-scoped
+ * HMAC bearer whose window must be under five minutes, so a fixed string 401s
+ * minutes after it is issued. This service holds only the scoped *secret*
+ * (`REALBUD_MODELVIA_SCOPED_SECRET`) and subject
  * (`REALBUD_MODELVIA_OPERATOR_SUBJECT`) and mints a fresh two-minute bearer per
  * request. The secret is a vendor credential: read from the environment of this
  * protected service, never stored beside customer data, never written into a
@@ -90,10 +91,10 @@ const REQUEST_TIMEOUT_MS = 30_000;
 /** Modelvia's `verifyOperatorToken` caps the window at 300_000 ms. Two minutes
  * leaves room for one slow request without handing out a long-lived credential. */
 const OPERATOR_TOKEN_TTL_MS = 120_000;
-const OPERATOR_AUDIENCE = 'managed-ai-operator';
+const REALBUD_AUDIENCE = 'managed-ai-realbud';
 
 /**
- * Mint the short-lived operator bearer Modelvia expects. Format copied from
+ * Mint the short-lived RealBud-scoped bearer Modelvia expects. Format copied from
  * `managed-gateway/operator-token.ts` + `platform-cli.ts` on `codex/neon-release`:
  * base64url claims `{aud, subject, iat, exp}` and an HMAC-SHA256 of that exact
  * payload string, joined with a dot. A static token is NOT accepted — the verifier
@@ -101,10 +102,10 @@ const OPERATOR_AUDIENCE = 'managed-ai-operator';
  * Exported for tests; the secret and the token are never logged.
  */
 export function operatorToken(secret: string, subject: string, now: number, ttlMs = OPERATOR_TOKEN_TTL_MS): string {
-  requireThat(secret.length >= 32, 'modelvia_operator_unconfigured', 503);
-  requireThat(subject.length > 0 && subject.length <= 320, 'modelvia_operator_unconfigured', 503);
-  requireThat(Number.isSafeInteger(now) && ttlMs > 0 && ttlMs <= 300_000, 'modelvia_operator_unconfigured', 503);
-  const payload = Buffer.from(JSON.stringify({ aud: OPERATOR_AUDIENCE, subject, iat: now, exp: now + ttlMs })).toString('base64url');
+  requireThat(secret.length >= 32 && secret === secret.trim() && !/[\r\n]/.test(secret), 'modelvia_scoped_unconfigured', 503);
+  requireThat(subject.length > 0 && subject.length <= 320, 'modelvia_scoped_unconfigured', 503);
+  requireThat(Number.isSafeInteger(now) && ttlMs > 0 && ttlMs <= 300_000, 'modelvia_scoped_unconfigured', 503);
+  const payload = Buffer.from(JSON.stringify({ aud: REALBUD_AUDIENCE, subject, iat: now, exp: now + ttlMs })).toString('base64url');
   return `${payload}.${createHmac('sha256', secret).update(payload).digest('base64url')}`;
 }
 
@@ -384,8 +385,8 @@ export function modelviaKeyClient(options: {
   clientId: string;
   /** Models the installation's project may use. */
   allowedModels: readonly string[];
-  /** Modelvia's operator HMAC secret (>=32 chars). Read per request, never stored. */
-  operatorSecret: () => string | undefined;
+  /** Modelvia's RealBud-scoped HMAC secret (>=32 chars). Read per request, never stored. */
+  scopedSecret: () => string | undefined;
   /** Operator subject recorded in Modelvia's audit trail. */
   operatorSubject: string;
   fetch: HttpTransport;
@@ -403,9 +404,9 @@ export function modelviaKeyClient(options: {
   // A fresh bearer per request. Modelvia rejects anything older than five
   // minutes, so nothing here may cache one.
   const token = () => {
-    const secret = options.operatorSecret();
-    requireThat(typeof secret === 'string' && secret.trim().length >= 32, 'modelvia_operator_unconfigured', 503);
-    return operatorToken((secret as string).trim(), options.operatorSubject, clock());
+    const secret = options.scopedSecret();
+    requireThat(typeof secret === 'string' && secret.length >= 32, 'modelvia_scoped_unconfigured', 503);
+    return operatorToken(secret, options.operatorSubject, clock());
   };
   /** `conflicts` names the Modelvia error codes this call treats as a conflict
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
@@ -421,7 +422,7 @@ export function modelviaKeyClient(options: {
           body: JSON.stringify(body) });
     } catch { throw new GatewayError('modelvia_unreachable', 502); }
     if (response.redirected) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_redirected', 502); }
-    if ((response.status === 409 || response.status === 404) && conflicts.length) {
+    if ((response.status === 409 || response.status === 404 || response.status === 403) && conflicts.length) {
       let code: unknown;
       try { code = ((await response.json()) as Record<string, unknown>).error; } catch { throw new GatewayError('modelvia_rejected', 502); }
       if (typeof code === 'string' && conflicts.includes(code)) return { conflict: code };
@@ -446,9 +447,8 @@ export function modelviaKeyClient(options: {
     requireThat(project.clientId === options.clientId, 'modelvia_project_scope_mismatch', 502);
     return project;
   };
-  /** Modelvia has no customer read by id either. A customer under another
-   * platform client is refused outright: the operator credential is global, so
-   * this check is the only thing keeping this service inside RealBud's client. */
+  /** Modelvia has no customer read by id either. Refuse a customer outside the
+   * RealBud client even though Modelvia also enforces scoped ancestry. */
   const readCustomer = async (customerId: string): Promise<ModelviaCustomerRecord | null> => {
     requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
     const body = await read('/v1/operator/customers');
@@ -478,8 +478,9 @@ export function modelviaKeyClient(options: {
     try { next = storedCustomer(input); } catch { throw new GatewayError('invalid_modelvia_customer_record'); }
     // Never write, or create, a customer under another platform client.
     requireThat(next.clientId === options.clientId, 'modelvia_customer_foreign', 409);
-    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict', 'billing_account_not_found', 'billing_account_already_bound']);
+    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict', 'billing_account_not_found', 'billing_account_already_bound', 'billing_binding_operator_only']);
     // The office's Modelvia billing account is an operator step at Modelvia.
+    if (answer.conflict === 'billing_binding_operator_only') throw new GatewayError('modelvia_billing_binding_operator_required', 409);
     if (answer.conflict === 'billing_account_not_found') throw new GatewayError('modelvia_billing_account_missing', 409);
     if (answer.conflict === 'billing_account_already_bound') throw new GatewayError('modelvia_billing_account_bound', 409);
     if (answer.conflict) throw new GatewayError('modelvia_customer_version_conflict', 409);
@@ -648,6 +649,10 @@ export function modelviaKeyClient(options: {
       // an existing customer keeps its name, concurrency, models and bindings.
       for (let attempt = 0; attempt < 2; attempt++) {
         const current = await readCustomer(customerId);
+        // A global Modelvia operator may have created the customer during the
+        // handoff. The scoped client can retry only for this same office.
+        requireThat(input.billingCompanyId === undefined || !current?.billingCompanyId || current.billingCompanyId === input.billingCompanyId,
+          'modelvia_billing_account_bound', 409);
         const monthlyCapNanoAud = access.mode === 'custom' ? access.monthlyCapNanoAud
           : access.mode === 'default' || !current ? DEFAULT_OFFICE_AI_CAP_NANO_AUD : current.monthlyCapNanoAud;
         if (current && current.active === active && current.monthlyCapNanoAud === monthlyCapNanoAud) return { active, monthlyCapNanoAud, created: false };
