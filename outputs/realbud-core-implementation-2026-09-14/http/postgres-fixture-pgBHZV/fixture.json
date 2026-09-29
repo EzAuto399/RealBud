@@ -1,0 +1,6 @@
+{
+  "version": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "database": "realbud_company_test_fixture",
+  "transport": "private Unix socket; TCP disabled",
+  "stopped": true
+}

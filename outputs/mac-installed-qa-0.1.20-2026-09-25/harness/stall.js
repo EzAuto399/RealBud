@@ -1,0 +1,14 @@
+let stalled = 0;
+await page.route('**/api/onboarding**', route => { stalled++; /* never answer */ });
+const t0 = Date.now();
+await page.reload();
+const tryAgain = page.getByRole('button', { name: /Try again/i });
+await tryAgain.waitFor({ timeout: 40000 });
+const secs = ((Date.now() - t0) / 1000).toFixed(1);
+await shot('70-first-run-stalled');
+const msg = (await page.locator('body').innerText()).slice(0, 400);
+await page.unroute('**/api/onboarding**');
+await tryAgain.click();
+await page.getByRole('textbox', { name: 'Your name' }).waitFor({ timeout: 15000 });
+await shot('71-first-run-try-again');
+return JSON.stringify({ stalledRequests: stalled, tryAgainAfterSec: secs, recoveredToWelcome: true }) + '\n' + msg;

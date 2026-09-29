@@ -1,0 +1,11 @@
+await page.reload(); await page.waitForTimeout(3000);
+const q = ((await page.locator('main').innerText()).match(/Needs you · \d+|Done · \d+/g)||[]).join(',');
+await page.locator('main').getByText('More', {exact:true}).first().click(); await page.waitForTimeout(300);
+await page.getByText('Book · import & addresses', {exact:true}).click(); await page.waitForTimeout(1500);
+const m = await page.locator('main').innerText();
+const card = page.locator('main *').filter({ hasText: /^8 Pine Ave, Braddon ACT/ }).filter({ has: page.getByRole('button', { name: /options/ }) }).last();
+if (!(await page.getByLabel('Grace days').isVisible().catch(()=>false))) await card.getByRole('button', { name: /options/ }).click();
+await page.waitForTimeout(400);
+const grace = await page.getByLabel('Grace days').inputValue();
+await page.getByRole('button', { name: /Hide options/ }).first().click().catch(()=>{});
+return JSON.stringify({ q, count: (m.match(/\d+ properties/)||[''])[0], fullDisk: (m.match(/99 Full Disk Pde/g)||[]).length, flora: /2\/5 Flora St, Ainslie ACT\nRiley/.test(m), pineGrace: grace, oakEdit: m.includes('ENOSPC-EDIT') });

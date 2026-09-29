@@ -1,0 +1,71 @@
+PASS [A1] desktop linked and provisioned {"state":"linked","provisioned":true}
+PASS [A1] rbk_ model key delivered to the worker env {"prefix":"rbk_","baseUrl":"https://modelvia.fictional.test/v1"}
+PASS [A1] Modelvia project rb-<installationId> exists {"projectId":"rb-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"}
+PASS [A1] project sits under the office customer (cust-alpha) and RealBud client {"customerId":"cust-alpha","clientId":"rb-client-qa"}
+PASS [A1] project caps copied from customer (A$50/month, 2 at once, request = min(A$1, monthly)) {"monthly":"50000000000","request":"1000000000","maxConcurrent":2}
+PASS [A1] project allowedModels {"allowedModels":["deepseek-chat"],"environments":["development"],"name":"RealBud installation 06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"}
+PASS [A1] exactly one live key, labelled <companyId>:<installationId> {"keys":[{"id":"724ca4f8ed8eb452","label":"office-alpha:06b3fd41-fc3a-45e5-a6da-32f8de2fdfac","revoked":false,"expiresAt":null}]}
+PASS [A1] delivered key belongs to that key record
+PASS [A1] website row records identifiers only {"model_key_id":"724ca4f8ed8eb452","composio_project_id":"pr_qa1d39c2d","connector_device_id":"06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"}
+PASS [A1] worker key can serve with model "auto" (gateway default model policy) {"status":200}
+PASS [A1] worker key can serve with explicit catalogue model {"status":200}
+PASS [A1] Composio project realbud-office-alpha created once {"created":["realbud-office-alpha"]}
+PASS [A1] ak_ stored on the gateway secret store (0600)
+PASS [A1] registry device: office project key reference, hash only {"projectKeyEnv":"REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA","userId":"installation-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac","memberId":"06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"}
+PASS [A1] rbc_ per-computer connector credential delivered to the desktop
+PASS [A1] no plaintext rbk_/rbc_/ak_ in desktop files (vault is encrypted) {"deskHits":[],"dataHits":[]}
+PASS [A1] website database holds no rbk_/rbc_/ak_
+PASS [A1] desktop never received ak_ in any reply or config
+PASS [A1] gateway ledger holds no rbk_/rbc_/ak_ material
+PASS [A2] linked and provisioned
+PASS [A2] second project rb-<id2> under the same customer {"projectId":"rb-b7ed6733-883a-41dd-bee3-771fb2614c25"}
+PASS [A2] different model key
+PASS [A2] Composio: no second project; same pr_ recorded
+PASS [A2] both devices use the same office ak_ reference; different credential hashes {"projectKeyEnv":"REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA","userIds":["installation-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac","installation-b7ed6733-883a-41dd-bee3-771fb2614c25"]}
+PASS [A2] second key serves
+PASS [A3] linked and provisioned
+PASS [A3] project under realbud-office-bravo with Bravo caps (A$20, 1 at once) {"customerId":"realbud-office-bravo"}
+PASS [A3] no Bravo project under Alpha customer
+PASS [A3] own Composio project realbud-office-bravo with a different ak_
+PASS [A3] device references Bravo key only
+PASS [A3] gateway refuses Alpha principal naming Bravo customer: 403 modelvia_customer_not_bound, nothing created {"status":403,"error":"modelvia_customer_not_bound","gatewayRecord":false,"modelviaProject":false}
+PASS [A3] gateway refuses a body company that differs from the signed principal {"status":403,"error":"company_scope_mismatch"}
+PASS [A4] first redeem reply lost (desktop sees an error)
+PASS [A4] website recorded provisioning for the first reply {"firstKeyId":"d2ebf470095492f1"}
+PASS [A4] FIX: retry redeem redelivers; computer provisioned {"provisioned":true}
+PASS [A4] FIX: lost key revoked, exactly one live key (rotated, same label) [{"id":"d2ebf470095492f1","revoked":true},{"id":"9a4ea95428d59179","revoked":false}]
+PASS [A4] FIX: new key serves
+PASS [A4] FIX: later check-ins do not rotate again
+PASS [A4] FIX: connector device now holds the new rbc_ hash; the lost rbc_ no longer matches
+PASS [A5] gateway down at link: linked, skipped provisioning_gateway_not_ready, claim not spent {"skipped":"provisioning_gateway_not_ready"}
+PASS [A5] website recorded provisioning on the lost check-in
+PASS [A5] FIX: next check-in asks (needsProvisioning) and receives redelivered keys {"provisioned":true,"hasKey":true,"replies":[{"route":"redeem","provisioning":{"skipped":"provisioning_gateway_not_ready"}},{"route":"report","provisioning":{"keyId":"fe6705fb8ab5e290","hasKey":true,"hasCredential":true},"needsProvisioning":true},{"route":"report","provisioning":{"keyId":"d338e70dc1
+PASS [A6] gateway reached ready and minted a live key {"deskProvisioned":true,"attemptedAt":true,"provisionedAt":true,"gatewayState":"ready","liveKeys":1,"lostReplyStatus":200}
+PASS [A6] next check-in reconciles: desktop provisioned, website recorded ids {"deskProvisioned":true,"attemptedAt":true,"provisionedAt":true,"gatewayState":"ready","liveKeys":1,"lostReplyStatus":200,"keys":[{"id":"2f94d7351939d36b","revoked":true},{"id":"d1a9e9b2702cef34","revoked":false}]}
+PASS [A6] one mint (one project, one original key), lost key revoked, one live key [{"id":"2f94d7351939d36b","revoked":true},{"id":"d1a9e9b2702cef34","revoked":false}]
+PASS [A6] reconciled key serves
+PASS [A7] 12 s gateway: within the 35 s provision bound, link completes provisioned in one pass {"linkMs":12340,"gatewayStatus":200,"deskProvisioned":true,"attemptedAt":true,"provisionedAt":true,"gatewayState":"ready"}
+PASS [A7b] website gives up near its 35 s bound; link completes without a grant {"linkMs":35188,"afterLink":{"provisioned":false,"skipped":"provisioning_attempt_requires_review","attempted":true},"gatewayStatus":200,"afterCheckIn":{"provisioned":true,"recorded":true},"keys":[{"id":"e01819099a3d213b","revoked":true},{"id":"67b0757014c26e73","revoked":false}]}
+PASS [A7b] next check-in reconciles: provisioned, one live key, first key revoked, key serves {"linkMs":35188,"afterLink":{"provisioned":false,"skipped":"provisioning_attempt_requires_review","attempted":true},"gatewayStatus":200,"afterCheckIn":{"provisioned":true,"recorded":true},"keys":[{"id":"e01819099a3d213b","revoked":true},{"id":"67b0757014c26e73","revoked":false}]}
+PASS [A8] two concurrent check-ins: one mint, one key {"outcomes":["provisioning_attempt_requires_review","keys"],"keys":1}
+PASS [A8] two concurrent gateway provisions: one 200 with keys, the other refused 409, one key [{"status":200,"hasKey":true},{"status":409,"error":"installation_provisioning_in_progress","hasKey":false}]
+PASS [A8] a plain repeat after ready returns identifiers only, no rotation
+PASS [A9] key serves before revoke
+PASS [A9] Modelvia key revoked; inference refused {"status":401,"code":"key_revoked"}
+PASS [A9] connector device deactivated
+PASS [A9] website row revoked and cleanup cleared
+PASS [A9] project retained for billing history; Composio office project kept (other computers use it)
+PASS [A9] Alpha second computer unaffected
+PASS [A10] new installation id, new project, new key; old revoked {"newProject":"rb-e48b73f8-3ac3-4cbf-a4ca-da4c36edc89f"}
+PASS [A10] still one Composio project for the office
+PASS [A11] skipped modelvia_customer_not_ready; claim released {"skipped":"modelvia_customer_not_ready"}
+PASS [A11] operator office AI access creates the customer (tiny custom cap A$0.000005) bound billingCompanyId=office-charlie {"status":200,"body":{"customer":{"active":true,"monthlyCapNanoAud":"5000","created":true},"projects":[]},"billingCompanyId":"office-charlie","payer":null}
+PASS [A11] next check-in provisions {}
+PASS [A11] project caps follow tiny customer cap (request cap clamped to monthly) {"project":{"monthly":"5000","request":"5000","maxConcurrent":2},"customer":{"billingCompanyId":"office-charlie","payer":null,"allowedModels":["deepseek-chat"]}}
+PASS [A11] cap exceeded: request refused before any upstream call (402) {"status":402,"code":"project_request_cap_exceeded"}
+PASS [A11] operator raises to default A$200: pushed to the installation project {"projects":[{"installationId":"c773f69b-89e0-4f98-9141-dd003b3bf464","state":"applied"}],"monthly":"200000000000"}
+PASS [A11] serves after cap raise {"status":200}
+PASS [A11] disabled office: serving refused (spend stops) {"status":403,"code":"account_inactive"}
+PASS [A12] skipped no_platform_customer; no gateway call; claim not spent {"skipped":"no_platform_customer"}
+PASS [A12] after binding restored, next check-in reaches the gateway (Delta has no Modelvia customer yet -> modelvia_customer_not_ready) {"skipped":"modelvia_customer_not_ready"}
+SUMMARY {"A1":"pass","A2":"pass","A3":"pass","A4":"pass","A5":"pass","A6":"pass","A7":"pass","A7b":"pass","A8":"pass","A9":"pass","A10":"pass","A11":"pass","A12":"pass"}

@@ -1,0 +1,119 @@
+Company core acceptance: /Users/yoda/projects/RealBud/outputs/realbud-company-qa-2026-09-24T15-56-11-217Z-F69ifq
+Running 36 exact files with v25.9.0 and postgres (PostgreSQL) 16.15 (Homebrew); skips are failures.
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m server/hermes-hands.test.ts [2m([22m[2m60 tests[22m[2m)[22m[33m 17824[2mms[22m[39m
+     [33m[2m✓[22m[39m returns rows and a success detail when the worker answers JSON [33m 365[2mms[22m[39m
+     [33m[2m✓[22m[39m preloads the shipped morning-arrears skill with -s; the readiness ping loads none [33m 744[2mms[22m[39m
+     [33m[2m✓[22m[39m misses cleanly when the worker answers chatter [33m 361[2mms[22m[39m
+     [33m[2m✓[22m[39m explains when the worker correctly observed no ledger facts [33m 355[2mms[22m[39m
+     [33m[2m✓[22m[39m surfaces the provider's own error words (billing, auth) in the detail [33m 333[2mms[22m[39m
+     [33m[2m✓[22m[39m finds the real error on stdout even when stderr is only warnings [33m 357[2mms[22m[39m
+     [33m[2m✓[22m[39m is ok when the worker answers OK [33m 363[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts a clear confirmation with harmless formatting: "ok" [33m 360[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts a clear confirmation with harmless formatting: "OK." [33m 352[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts a clear confirmation with harmless formatting: "OK!" [33m 387[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts a clear confirmation with harmless formatting: "oK." [33m 348[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts a clear confirmation with harmless formatting: "\n\u001b[32mOK.\u001b[0m\nsession_id: fictional-session\n" [33m 358[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "NOT OK" [33m 364[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "OK but the connection failed" [33m 340[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "OK\nHere is an explanation." [33m 386[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "Here is an explanation.\nOK" [33m 370[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "" [33m 366[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: " \n" [33m 346[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a negative, ambiguous, explanatory or empty answer: "OK?" [33m 386[2mms[22m[39m
+     [33m[2m✓[22m[39m does not accept a confirmation from a worker that failed [33m 386[2mms[22m[39m
+     [33m[2m✓[22m[39m explains a revoked key even when the supported CLI exits successfully [33m 346[2mms[22m[39m
+     [33m[2m✓[22m[39m accepts the supported worker's exact startup notice before its confirmation [33m 354[2mms[22m[39m
+     [33m[2m✓[22m[39m gives distinct explicit checks different identities without changing a worker retry's prompt [33m 714[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses an overlapping readiness check before launching a second worker and releases the gate [33m 378[2mms[22m[39m
+     [33m[2m✓[22m[39m does not treat an arbitrary warning or a notice alone as an answer: "⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only" [33m 360[2mms[22m[39m
+     [33m[2m✓[22m[39m does not treat an arbitrary warning or a notice alone as an answer: "Warning: authentication failed\nOK" [33m 352[2mms[22m[39m
+     [33m[2m✓[22m[39m does not treat an arbitrary warning or a notice alone as an answer: "The security scanner says NOT OK\nOK" [33m 354[2mms[22m[39m
+       [33m[2m✓[22m[39m runs the base profile when no seat is given, so single-seat installs are unchanged [33m 361[2mms[22m[39m
+       [33m[2m✓[22m[39m runs the seat's own profile once a seat is given [33m 410[2mms[22m[39m
+       [33m[2m✓[22m[39m never resolves two seats to one profile [33m 798[2mms[22m[39m
+       [33m[2m✓[22m[39m resolves the same seat to the same profile every time [33m 819[2mms[22m[39m
+       [33m[2m✓[22m[39m carries the seat through the ledger read too, not just the ping [33m 781[2mms[22m[39m
+       [33m[2m✓[22m[39m normalises a hostile seat string instead of letting it name a profile [33m 396[2mms[22m[39m
+       [33m[2m✓[22m[39m carries an office-host member uuid through to the spawned profile [33m 400[2mms[22m[39m
+       [33m[2m✓[22m[39m a blank seat is no seat, so a desk that never resolved one keeps the base [33m 401[2mms[22m[39m
+     [33m[2m✓[22m[39m fails with the provider's words when the model cannot answer [33m 349[2mms[22m[39m
+     [33m[2m✓[22m[39m invokes the worker with the exact pinned profile and headless flags [33m 361[2mms[22m[39m
+     [33m[2m✓[22m[39m runs the ledger spawn with cwd equal to the book [33m 359[2mms[22m[39m
+     [33m[2m✓[22m[39m gives the ping child only its managed key after stripping ambient credentials [33m 486[2mms[22m[39m
+     [33m[2m✓[22m[39m gives the ledger child only its managed key after stripping ambient credentials [33m 468[2mms[22m[39m
+     [33m[2m✓[22m[39m does not retain the managed key for a ping child after disconnect [33m 472[2mms[22m[39m
+     [33m[2m✓[22m[39m does not retain the managed key for a ledger child after disconnect [33m 465[2mms[22m[39m
+ [32m✓[39m server/drivers/acp/acp.test.ts [2m([22m[2m70 tests[22m[2m)[22m[33m 8677[2mms[22m[39m
+     [33m[2m✓[22m[39m cancels the turn when Hermes starts one of its own browser tools [33m 423[2mms[22m[39m
+ [32m✓[39m server/recipe-draft.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 3553[2mms[22m[39m
+     [33m[2m✓[22m[39m launches each selected member profile without reading the base or another member profile [33m 590[2mms[22m[39m
+     [33m[2m✓[22m[39m launches the checked profile instead of an ambient personal Hermes home [33m 464[2mms[22m[39m
+     [33m[2m✓[22m[39m kills the owned preparation process when cancelled [33m 379[2mms[22m[39m
+     [33m[2m✓[22m[39m returns a shadow card when the worker names a job [33m 345[2mms[22m[39m
+     [33m[2m✓[22m[39m returns 503-shaped miss when the worker answers junk [33m 354[2mms[22m[39m
+     [33m[2m✓[22m[39m explains an invalid field without exposing the worker's content [33m 348[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps a named cadence on the card [33m 343[2mms[22m[39m
+     [33m[2m✓[22m[39m drops a junk cadence instead of failing the draft [33m 357[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps only allowlisted prepare capabilities [33m 365[2mms[22m[39m
+ [32m✓[39m server/import-inspect.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1553[2mms[22m[39m
+     [33m[2m✓[22m[39m returns a mapping when the worker names real headers [33m 370[2mms[22m[39m
+     [33m[2m✓[22m[39m drops a header the worker invented [33m 402[2mms[22m[39m
+     [33m[2m✓[22m[39m returns null with an honest detail when the worker answers junk [33m 358[2mms[22m[39m
+       [33m[2m✓[22m[39m reads the upload with the seat's own profile, not the shared base [33m 419[2mms[22m[39m
+ [32m✓[39m server/connected-apps-broker.test.ts [2m([22m[2m70 tests[22m[2m)[22m[33m 930[2mms[22m[39m
+ [32m✓[39m server/hermes-bridge.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 605[2mms[22m[39m
+     [33m[2m✓[22m[39m runs a fake installer, verifies the version, and lands done [33m 304[2mms[22m[39m
+ [32m✓[39m server/company/host-transport.test.ts [2m([22m[2m26 tests[22m[2m)[22m[33m 308[2mms[22m[39m
+ [32m✓[39m server/service-admin.test.ts [2m([22m[2m48 tests[22m[2m)[22m[32m 278[2mms[22m[39m
+ [32m✓[39m server/company/host-certificate.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 207[2mms[22m[39m
+ [32m✓[39m server/company/member-credentials.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 215[2mms[22m[39m
+ [32m✓[39m src/lib/tts/index.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 127[2mms[22m[39m
+ [32m✓[39m server/company/initial-credential.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 112[2mms[22m[39m
+ [32m✓[39m server/company/host-runtime.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+ [32m✓[39m server/procs.test.ts [2m([22m[2m5 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 69[2mms[22m[39m
+ [32m✓[39m server/service-entitlement.test.ts [2m([22m[2m38 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m server/service-child-env.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 57[2mms[22m[39m
+ [32m✓[39m src/lib/local-session.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m src/lib/company-api.test.ts [2m([22m[2m30 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m src/lib/company-work-api.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m server/session-auth.test.ts [2m([22m[2m78 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m src/lib/service-admin-session.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m server/service-admin-provision.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 5066[2mms[22m[39m
+     [33m[2m✓[22m[39m generates independent passwords in private operator files for two installations [33m 523[2mms[22m[39m
+     [33m[2m✓[22m[39m requires explicit rotation before generating a replacement password [33m 455[2mms[22m[39m
+     [33m[2m✓[22m[39m never overwrites existing credentials without explicit rotation [33m 573[2mms[22m[39m
+     [33m[2m✓[22m[39m leaves the old verifier unchanged when rotation input is invalid [32m 300[2mms[22m[39m
+     [33m[2m✓[22m[39m does not implicitly migrate legacy credentials or accept malformed legacy data [33m 517[2mms[22m[39m
+ [32m✓[39m src/lib/company-work-response.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m server/managed-service.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m server/drivers/acp/hermes-env.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m server/care-unlock.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m server/company-departments.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2867[2mms[22m[39m
+     [33m[2m✓[22m[39m reopens the host and every client, preserving company records, private records and offboarding [33m 581[2mms[22m[39m
+ [32m✓[39m server/company-host.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 3228[2mms[22m[39m
+     [33m[2m✓[22m[39m redeems one-use invitations without inheriting service administration [33m 802[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves member sessions across service restart while revoking admin sessions [33m 444[2mms[22m[39m
+ [32m✓[39m server/company-installation.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 2748[2mms[22m[39m
+     [33m[2m✓[22m[39m requires admin, creates a new owned database, then gives the owner independent sign-in [33m 732[2mms[22m[39m
+     [33m[2m✓[22m[39m renews the host identity, leaves cleanly, and joins another office without changing private work [33m 1207[2mms[22m[39m
+ [32m✓[39m server/company-work.integration.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 1894[2mms[22m[39m
+ [32m✓[39m server/company/initial-enrollment.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 654[2mms[22m[39m
+ [32m✓[39m server/company/member-auth.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1307[2mms[22m[39m
+     [33m[2m✓[22m[39m commits failed attempts across kernels and casing, then permits sign-in after the block expires [33m 435[2mms[22m[39m
+     [33m[2m✓[22m[39m requires the current password for changes and retires other sessions and the old recovery key [33m 324[2mms[22m[39m
+ [32m✓[39m server/company/postgres.integration.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 534[2mms[22m[39m
+ [32m✓[39m server/company/work-items.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 254[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m36 passed[39m[22m[90m (36)[39m
+[2m      Tests [22m [1m[32m676 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (677)[39m
+[2m   Start at [22m 01:56:12
+[2m   Duration [22m 59.84s[2m (transform 950ms, setup 203ms, import 2.24s, tests 53.36s, environment 2ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/realbud-company-qa-2026-09-24T15-56-11-217Z-F69ifq/vitest.json
+FAILED: Acceptance failed: failing, skipped, pending, missing or unexpected tests; inspect the preserved Vitest report.
+FAILED; result: /Users/yoda/projects/RealBud/outputs/realbud-company-qa-2026-09-24T15-56-11-217Z-F69ifq/result.json

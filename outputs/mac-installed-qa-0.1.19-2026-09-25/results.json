@@ -1,0 +1,7 @@
+{
+  "tier": "installed packaged app (/Applications/RealBud.app 0.1.19) on owner's Mac, disposable data via REALBUD_DATA_DIR + --user-data-dir + --use-mock-keychain; not customer acceptance",
+  "ownerService": "pid 7376 on :8799 untouched throughout",
+  "pass": ["first-run welcome -> Desk", "sample morning", "add/edit/remove property", "Allow/Edit/Deny", "loops pause/resume/run-now", "Ask without model", "window close keeps service", "second launch focuses first", "reopen + relaunch persistence", "SIGKILL service mid-add: watchdog restart ~20s, draft kept, retry no duplicate", "private backup export -> restore into fresh workspace", "offline (Electron proxy blackhole) start", "390px emulated layout no page overflow", "low disk while running: clear message"],
+  "fail": ["SIGTERM/Browser.close quit hangs; watchdog stopped", "ENOSPC add leaves in-memory property not on disk", "EACCES/ENOSPC at startup shows generic waiting page", "Desk More menu stays open", "duplicated sentence in add-property error"],
+  "notRun": ["qa-business-desktop.mjs: postgres socket path too long under allowed scratchpad TMPDIR"]
+}

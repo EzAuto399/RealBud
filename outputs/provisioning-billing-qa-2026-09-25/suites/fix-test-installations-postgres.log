@@ -1,0 +1,2 @@
+PASS: pairing, replay, expiry, race, owner and office isolation, disabled accounts, one-shot provisioning claim and its setup-refusal release, owner and desktop revoke cleanup, token-bound clear/idempotence, provisioning record, RLS and function grants (disposable PostgreSQL).
+exit 0

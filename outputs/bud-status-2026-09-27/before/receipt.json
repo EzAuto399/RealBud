@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-26T19:08:19.120Z",
+  "layer": "source",
+  "baseline": true,
+  "passed": false,
+  "checks": [],
+  "screenshots": [
+    "ask-safeguards-1280.png",
+    "bud-safeguards-1280.png"
+  ],
+  "rendererPageErrors": [],
+  "observations": {
+    "baselineText": "Opening setup\n\nYour work stays in your workspace.\n\nBack to your workspace\n\nOpening setup\u2026"
+  },
+  "network": {
+    "statusReads": 1,
+    "hermesMutations": [],
+    "externalRequests": []
+  },
+  "cleanup": {
+    "isolatedServiceStopped": true,
+    "temporaryDataRemoved": true
+  },
+  "limits": [
+    "Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.",
+    "The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.",
+    "All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.",
+    "Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed.",
+    "Incomplete baseline: modal screenshot caught lazy-loading shell and is not setup-content evidence. Replaced by before-head run."
+  ]
+}

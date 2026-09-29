@@ -1,0 +1,175 @@
+{
+  "at": "2026-09-25T10:05:30.054Z",
+  "variant": "main-clientbilled",
+  "root": "/Users/yoda/projects/RealBud",
+  "models": "deepseek-chat",
+  "billingMode": "client",
+  "proofLayer": "Local source: real desktop office-link + website route handlers (real SQL, disposable PostgreSQL) + real RealBud gateway process + real local Modelvia origin/main process; fictional Composio org and fictional upstream model provider. No hosted vendor.",
+  "scenarios": {
+    "A11": {
+      "id": "A11",
+      "title": "Office with no Modelvia customer: modelvia_customer_not_ready, then operator creates access; cap exceeded; cap raise; disable",
+      "checks": [
+        {
+          "name": "skipped modelvia_customer_not_ready; claim released",
+          "passed": true,
+          "detail": {
+            "skipped": "modelvia_customer_not_ready"
+          }
+        },
+        {
+          "name": "operator office AI access creates the customer (tiny custom cap A$0.000005)",
+          "passed": true,
+          "detail": {
+            "status": 200,
+            "body": {
+              "customer": {
+                "active": true,
+                "monthlyCapNanoAud": "5000",
+                "created": true
+              },
+              "projects": []
+            }
+          }
+        },
+        {
+          "name": "next check-in provisions",
+          "passed": true,
+          "detail": {}
+        },
+        {
+          "name": "project caps follow tiny customer cap (request cap clamped to monthly)",
+          "passed": true,
+          "detail": {
+            "project": {
+              "monthly": "5000",
+              "request": "5000",
+              "maxConcurrent": 2
+            },
+            "customer": {
+              "billingCompanyId": null,
+              "payer": null,
+              "allowedModels": [
+                "deepseek-chat"
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap exceeded: request refused before any upstream call (402)",
+          "passed": true,
+          "detail": {
+            "status": 402,
+            "code": "project_request_cap_exceeded"
+          }
+        },
+        {
+          "name": "operator raises to default A$200: pushed to the installation project",
+          "passed": true,
+          "detail": {
+            "projects": [
+              {
+                "installationId": "63fa78e1-4ba6-407b-bb20-812d988bacfb",
+                "state": "applied"
+              }
+            ],
+            "monthly": "200000000000"
+          }
+        },
+        {
+          "name": "serves after cap raise",
+          "passed": false,
+          "detail": {
+            "status": 409,
+            "code": "customer_terms_required"
+          }
+        },
+        {
+          "name": "disabled office: serving refused (spend stops)",
+          "passed": true,
+          "detail": {
+            "status": 403,
+            "code": "account_inactive"
+          }
+        }
+      ],
+      "elapsedMs": 896,
+      "result": "fail"
+    },
+    "D0": {
+      "id": "D0",
+      "title": "Diagnostics: raw Modelvia answers behind two failures",
+      "checks": [
+        {
+          "name": "customer create exactly as setCustomerAccess sends it (no billingCompanyId)",
+          "passed": true,
+          "detail": {
+            "status": 200,
+            "body": {
+              "id": "realbud-office-diag",
+              "name": "Fictional diag",
+              "active": true,
+              "monthlyCapNanoAud": "5000",
+              "maxConcurrent": 2,
+              "allowedModels": [
+                "deepseek-chat"
+              ],
+              "version": 1,
+              "clientId": "rb-client-qa"
+            }
+          }
+        },
+        {
+          "name": "same with billingCompanyId",
+          "passed": false,
+          "detail": {
+            "status": 400,
+            "body": {
+              "error": "invalid_billing_binding"
+            }
+          }
+        },
+        {
+          "name": "/v1/models for an installation key",
+          "passed": true,
+          "detail": {
+            "models": "{\"error\":{\"message\":\"unauthenticated\",\"type\":\"authentication_error\",\"code\":\"unauthenticated\",\"param\":null}}"
+          }
+        }
+      ],
+      "elapsedMs": 24,
+      "result": "fail"
+    }
+  },
+  "composio": {
+    "projectsCreated": [
+      {
+        "name": "realbud-office-charlie",
+        "shouldCreateKey": true
+      }
+    ],
+    "deleted": 0,
+    "akFiles": [
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_CHARLIE"
+    ],
+    "registry": [
+      {
+        "id": "63fa78e1",
+        "companyId": "office-charlie",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_CHARLIE",
+        "active": true,
+        "userId": "installation-63fa78e1"
+      }
+    ]
+  },
+  "akLeak": {
+    "websiteReplies": 2,
+    "websiteDb": false,
+    "deskConfigs": false
+  },
+  "rpcErrors": [],
+  "summary": {
+    "A11": "fail",
+    "D0": "fail"
+  }
+}

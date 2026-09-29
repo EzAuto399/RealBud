@@ -1,0 +1,100 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/company-execution-transport.integration.test.ts (4 tests | 4 skipped) 1395ms
+ ❯ server/company-host.test.ts (8 tests | 8 skipped) 1117ms
+ ❯ server/company/backup.integration.test.ts (9 tests | 9 skipped) 1064ms
+ ❯ server/company/department-execution.integration.test.ts (18 tests | 18 skipped) 1055ms
+ ❯ server/company/department-lifecycle.integration.test.ts (13 tests | 13 skipped) 1031ms
+ ❯ server/company/department-recovery.integration.test.ts (7 tests | 7 skipped) 1068ms
+ ❯ server/company/departments-transport.integration.test.ts (3 tests | 3 skipped) 1086ms
+ ❯ server/company/departments.integration.test.ts (7 tests | 7 skipped) 1174ms
+ ❯ server/company/membership.integration.test.ts (6 tests | 6 skipped) 1172ms
+ ❯ server/company/multi-agency-transport.integration.test.ts (3 tests | 3 skipped) 1084ms
+ ❯ server/company/portal-bindings.integration.test.ts (18 tests | 18 skipped) 1059ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 11 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/company-execution-transport.integration.test.ts > encrypted department delegation client through real office TLS and PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-execution-tls-UXGbLl/postgres-fixture-gcBKLp/data -l /Users/yoda/.rbpg/rb-execution-tls-UXGbLl/postgres-fixture-gcBKLp/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-7rTk5g -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+
+ FAIL  server/company-host.test.ts > company + service administration through the real HTTP server
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/projects/RealBud/outputs/realbud-core-implementation-2026-09-14/http/postgres-fixture-iRiEdN/data -l /Users/yoda/projects/RealBud/outputs/realbud-core-implementation-2026-09-14/http/postgres-fixture-iRiEdN/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-eo9rNH -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+
+ FAIL  server/company/backup.integration.test.ts > office backup data integrity on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-restore-integrity-XK1HOk/source/postgres-fixture-PiWHjs/data -l /Users/yoda/.rbpg/rb-restore-integrity-XK1HOk/source/postgres-fixture-PiWHjs/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-rhqVx2 -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+
+ FAIL  server/company/department-execution.integration.test.ts > scoped department execution on actual PostgreSQL
+Error: Command failed: /opt/homebrew/bin/pg_ctl -D /Users/yoda/.rbpg/rb-department-execution-bEDg4V/postgres-fixture-eaNAut/data -l /Users/yoda/.rbpg/rb-department-execution-bEDg4V/postgres-fixture-eaNAut/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-kfxHNM -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+
+ FAIL  server/company/department-lifecycle.integration.test.ts > department case lifecycle on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-department-lifecycle-OGxeSw/postgres-fixture-xaEAND/data -l /Users/yoda/.rbpg/rb-department-lifecycle-OGxeSw/postgres-fixture-xaEAND/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-kZ2K5c -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+
+ FAIL  server/company/department-recovery.integration.test.ts > department recovery on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-department-recovery-rRKrJs/postgres-fixture-bwzUxb/data -l /Users/yoda/.rbpg/rb-department-recovery-rRKrJs/postgres-fixture-bwzUxb/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-ZqR9sH -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+
+ FAIL  server/company/departments-transport.integration.test.ts > department API over pinned office TLS
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-departments-tls-9FGXyX/postgres-fixture-KipflV/data -l /Users/yoda/.rbpg/rb-departments-tls-9FGXyX/postgres-fixture-KipflV/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-tLiJqI -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+
+ FAIL  server/company/departments.integration.test.ts > explicit departments on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-departments-Vg2Pkg/postgres-fixture-v2Xz3r/data -l /Users/yoda/.rbpg/rb-departments-Vg2Pkg/postgres-fixture-v2Xz3r/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-y3lHCh -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+
+ FAIL  server/company/membership.integration.test.ts > membership lifecycle on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-membership-ElUQJ4/postgres-fixture-JSNybd/data -l /Users/yoda/.rbpg/rb-membership-ElUQJ4/postgres-fixture-JSNybd/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-ECpxGx -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+
+ FAIL  server/company/multi-agency-transport.integration.test.ts > independent agency authority over real PostgreSQL and pinned TLS
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-agencies-WQUL2L/Alpha/postgres-fixture-TCvxyS/data -l /Users/yoda/.rbpg/rb-agencies-WQUL2L/Alpha/postgres-fixture-TCvxyS/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-rRnh0W -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+
+ FAIL  server/company/portal-bindings.integration.test.ts > attended company portal identity on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-company-portal-mXS9HT/postgres-fixture-kn9NNd/data -l /Users/yoda/.rbpg/rb-company-portal-mXS9HT/postgres-fixture-kn9NNd/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-QIB1N2 -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+
+
+ Test Files  11 failed | 4 passed (15)
+      Tests  31 passed | 96 skipped (127)
+   Start at  20:20:28
+   Duration  37.73s (transform 822ms, setup 209ms, import 2.16s, tests 33.54s, environment 1ms)
+

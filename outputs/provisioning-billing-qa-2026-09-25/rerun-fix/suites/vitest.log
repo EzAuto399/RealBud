@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud/.claude/worktrees/agent-a1cd71bab01bdf6f7
+
+
+ Test Files  7 passed (7)
+      Tests  167 passed (167)
+   Start at  20:24:06
+   Duration  14.56s (transform 718ms, setup 65ms, import 1.09s, tests 12.79s, environment 0ms)
+

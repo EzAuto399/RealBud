@@ -1,0 +1,972 @@
+{
+  "at": "2026-09-25T10:22:52.188Z",
+  "variant": "fix-full",
+  "root": "/Users/yoda/projects/RealBud/.claude/worktrees/agent-a1cd71bab01bdf6f7",
+  "models": "deepseek-chat",
+  "billingMode": "customer",
+  "proofLayer": "Local source: real desktop office-link + website route handlers (real SQL, disposable PostgreSQL) + real RealBud gateway process + real local Modelvia origin/main process; fictional Composio org and fictional upstream model provider. No hosted vendor.",
+  "scenarios": {
+    "A1": {
+      "id": "A1",
+      "title": "Office Alpha, first computer: key auto-issued, project under the office customer, caps, label, vault-only key; Composio office project + ak_ on gateway only",
+      "checks": [
+        {
+          "name": "desktop linked and provisioned",
+          "passed": true,
+          "detail": {
+            "state": "linked",
+            "provisioned": true
+          }
+        },
+        {
+          "name": "rbk_ model key delivered to the worker env",
+          "passed": true,
+          "detail": {
+            "prefix": "rbk_",
+            "baseUrl": "https://modelvia.fictional.test/v1"
+          }
+        },
+        {
+          "name": "Modelvia project rb-<installationId> exists",
+          "passed": true,
+          "detail": {
+            "projectId": "rb-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"
+          }
+        },
+        {
+          "name": "project sits under the office customer (cust-alpha) and RealBud client",
+          "passed": true,
+          "detail": {
+            "customerId": "cust-alpha",
+            "clientId": "rb-client-qa"
+          }
+        },
+        {
+          "name": "project caps copied from customer (A$50/month, 2 at once, request = min(A$1, monthly))",
+          "passed": true,
+          "detail": {
+            "monthly": "50000000000",
+            "request": "1000000000",
+            "maxConcurrent": 2
+          }
+        },
+        {
+          "name": "project allowedModels",
+          "passed": true,
+          "detail": {
+            "allowedModels": [
+              "deepseek-chat"
+            ],
+            "environments": [
+              "development"
+            ],
+            "name": "RealBud installation 06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"
+          }
+        },
+        {
+          "name": "exactly one live key, labelled <companyId>:<installationId>",
+          "passed": true,
+          "detail": {
+            "keys": [
+              {
+                "id": "724ca4f8ed8eb452",
+                "label": "office-alpha:06b3fd41-fc3a-45e5-a6da-32f8de2fdfac",
+                "revoked": false,
+                "expiresAt": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "delivered key belongs to that key record",
+          "passed": true
+        },
+        {
+          "name": "website row records identifiers only",
+          "passed": true,
+          "detail": {
+            "model_key_id": "724ca4f8ed8eb452",
+            "composio_project_id": "pr_qa1d39c2d",
+            "connector_device_id": "06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"
+          }
+        },
+        {
+          "name": "worker key can serve with model \"auto\" (gateway default model policy)",
+          "passed": true,
+          "detail": {
+            "status": 200
+          }
+        },
+        {
+          "name": "worker key can serve with explicit catalogue model",
+          "passed": true,
+          "detail": {
+            "status": 200
+          }
+        },
+        {
+          "name": "Composio project realbud-office-alpha created once",
+          "passed": true,
+          "detail": {
+            "created": [
+              "realbud-office-alpha"
+            ]
+          }
+        },
+        {
+          "name": "ak_ stored on the gateway secret store (0600)",
+          "passed": true
+        },
+        {
+          "name": "registry device: office project key reference, hash only",
+          "passed": true,
+          "detail": {
+            "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+            "userId": "installation-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac",
+            "memberId": "06b3fd41-fc3a-45e5-a6da-32f8de2fdfac"
+          }
+        },
+        {
+          "name": "rbc_ per-computer connector credential delivered to the desktop",
+          "passed": true
+        },
+        {
+          "name": "no plaintext rbk_/rbc_/ak_ in desktop files (vault is encrypted)",
+          "passed": true,
+          "detail": {
+            "deskHits": [],
+            "dataHits": []
+          }
+        },
+        {
+          "name": "website database holds no rbk_/rbc_/ak_",
+          "passed": true
+        },
+        {
+          "name": "desktop never received ak_ in any reply or config",
+          "passed": true
+        },
+        {
+          "name": "gateway ledger holds no rbk_/rbc_/ak_ material",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 345,
+      "result": "pass"
+    },
+    "A2": {
+      "id": "A2",
+      "title": "Office Alpha, second computer: separate project/key, same Composio office project and ak_, distinct rbc_",
+      "checks": [
+        {
+          "name": "linked and provisioned",
+          "passed": true
+        },
+        {
+          "name": "second project rb-<id2> under the same customer",
+          "passed": true,
+          "detail": {
+            "projectId": "rb-b7ed6733-883a-41dd-bee3-771fb2614c25"
+          }
+        },
+        {
+          "name": "different model key",
+          "passed": true
+        },
+        {
+          "name": "Composio: no second project; same pr_ recorded",
+          "passed": true
+        },
+        {
+          "name": "both devices use the same office ak_ reference; different credential hashes",
+          "passed": true,
+          "detail": {
+            "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+            "userIds": [
+              "installation-06b3fd41-fc3a-45e5-a6da-32f8de2fdfac",
+              "installation-b7ed6733-883a-41dd-bee3-771fb2614c25"
+            ]
+          }
+        },
+        {
+          "name": "second key serves",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 383,
+      "result": "pass"
+    },
+    "A3": {
+      "id": "A3",
+      "title": "Office Bravo: different customer (derived realbud-<companyId>), own Composio project + ak_, no cross-over",
+      "checks": [
+        {
+          "name": "linked and provisioned",
+          "passed": true
+        },
+        {
+          "name": "project under realbud-office-bravo with Bravo caps (A$20, 1 at once)",
+          "passed": true,
+          "detail": {
+            "customerId": "realbud-office-bravo"
+          }
+        },
+        {
+          "name": "no Bravo project under Alpha customer",
+          "passed": true
+        },
+        {
+          "name": "own Composio project realbud-office-bravo with a different ak_",
+          "passed": true
+        },
+        {
+          "name": "device references Bravo key only",
+          "passed": true
+        },
+        {
+          "name": "gateway refuses Alpha principal naming Bravo customer: 403 modelvia_customer_not_bound, nothing created",
+          "passed": true,
+          "detail": {
+            "status": 403,
+            "error": "modelvia_customer_not_bound",
+            "gatewayRecord": false,
+            "modelviaProject": false
+          }
+        },
+        {
+          "name": "gateway refuses a body company that differs from the signed principal",
+          "passed": true,
+          "detail": {
+            "status": 403,
+            "error": "company_scope_mismatch"
+          }
+        }
+      ],
+      "elapsedMs": 247,
+      "result": "pass"
+    },
+    "A4": {
+      "id": "A4",
+      "title": "Lost redeem reply to the desktop after the website recorded provisioning",
+      "checks": [
+        {
+          "name": "first redeem reply lost (desktop sees an error)",
+          "passed": true
+        },
+        {
+          "name": "website recorded provisioning for the first reply",
+          "passed": true,
+          "detail": {
+            "firstKeyId": "d2ebf470095492f1"
+          }
+        },
+        {
+          "name": "FIX: retry redeem redelivers; computer provisioned",
+          "passed": true,
+          "detail": {
+            "provisioned": true
+          }
+        },
+        {
+          "name": "FIX: lost key revoked, exactly one live key (rotated, same label)",
+          "passed": true,
+          "detail": [
+            {
+              "id": "d2ebf470095492f1",
+              "revoked": true
+            },
+            {
+              "id": "9a4ea95428d59179",
+              "revoked": false
+            }
+          ]
+        },
+        {
+          "name": "FIX: new key serves",
+          "passed": true
+        },
+        {
+          "name": "FIX: later check-ins do not rotate again",
+          "passed": true
+        },
+        {
+          "name": "FIX: connector device now holds the new rbc_ hash; the lost rbc_ no longer matches",
+          "passed": true
+        }
+      ],
+      "observed": {
+        "provisioned": true,
+        "hasKey": true,
+        "keys": [
+          {
+            "id": "d2ebf470095492f1",
+            "revoked": true
+          },
+          {
+            "id": "9a4ea95428d59179",
+            "revoked": false
+          }
+        ],
+        "replies": [
+          {
+            "route": "redeem",
+            "method": "POST",
+            "status": 200,
+            "provisioning": {
+              "keyId": "d2ebf470095492f1",
+              "hasKey": true,
+              "hasCredential": true
+            }
+          },
+          {
+            "route": "redeem",
+            "method": "POST",
+            "status": 200,
+            "provisioning": {
+              "keyId": "9a4ea95428d59179",
+              "hasKey": true,
+              "hasCredential": true
+            }
+          },
+          {
+            "route": "report",
+            "method": "POST",
+            "status": 200
+          },
+          {
+            "route": "report",
+            "method": "POST",
+            "status": 200
+          }
+        ]
+      },
+      "elapsedMs": 467,
+      "result": "pass"
+    },
+    "A5": {
+      "id": "A5",
+      "title": "Lost report reply to the desktop (grant carried by a check-in after a gateway outage)",
+      "checks": [
+        {
+          "name": "gateway down at link: linked, skipped provisioning_gateway_not_ready, claim not spent",
+          "passed": true,
+          "detail": {
+            "skipped": "provisioning_gateway_not_ready"
+          }
+        },
+        {
+          "name": "website recorded provisioning on the lost check-in",
+          "passed": true
+        },
+        {
+          "name": "FIX: next check-in asks (needsProvisioning) and receives redelivered keys",
+          "passed": true,
+          "detail": {
+            "provisioned": true,
+            "hasKey": true,
+            "replies": [
+              {
+                "route": "redeem",
+                "provisioning": {
+                  "skipped": "provisioning_gateway_not_ready"
+                }
+              },
+              {
+                "route": "report",
+                "provisioning": {
+                  "keyId": "fe6705fb8ab5e290",
+                  "hasKey": true,
+                  "hasCredential": true
+                },
+                "needsProvisioning": true
+              },
+              {
+                "route": "report",
+                "provisioning": {
+                  "keyId": "d338e70dc17876f3",
+                  "hasKey": true,
+                  "hasCredential": true
+                },
+                "needsProvisioning": true
+              },
+              {
+                "route": "report"
+              }
+            ]
+          }
+        }
+      ],
+      "observed": {
+        "provisioned": true,
+        "hasKey": true,
+        "replies": [
+          {
+            "route": "redeem",
+            "provisioning": {
+              "skipped": "provisioning_gateway_not_ready"
+            }
+          },
+          {
+            "route": "report",
+            "provisioning": {
+              "keyId": "fe6705fb8ab5e290",
+              "hasKey": true,
+              "hasCredential": true
+            },
+            "needsProvisioning": true
+          },
+          {
+            "route": "report",
+            "provisioning": {
+              "keyId": "d338e70dc17876f3",
+              "hasKey": true,
+              "hasCredential": true
+            },
+            "needsProvisioning": true
+          },
+          {
+            "route": "report"
+          }
+        ]
+      },
+      "elapsedMs": 391,
+      "result": "pass"
+    },
+    "A6": {
+      "id": "A6",
+      "title": "Website<-gateway reply lost (gateway minted, website never saw it)",
+      "checks": [
+        {
+          "name": "gateway reached ready and minted a live key",
+          "passed": true,
+          "detail": {
+            "deskProvisioned": true,
+            "attemptedAt": true,
+            "provisionedAt": true,
+            "gatewayState": "ready",
+            "liveKeys": 1,
+            "lostReplyStatus": 200,
+            "keys": [
+              {
+                "id": "2f94d7351939d36b",
+                "revoked": true
+              },
+              {
+                "id": "d1a9e9b2702cef34",
+                "revoked": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "next check-in reconciles: desktop provisioned, website recorded ids",
+          "passed": true,
+          "detail": {
+            "deskProvisioned": true,
+            "attemptedAt": true,
+            "provisionedAt": true,
+            "gatewayState": "ready",
+            "liveKeys": 1,
+            "lostReplyStatus": 200,
+            "keys": [
+              {
+                "id": "2f94d7351939d36b",
+                "revoked": true
+              },
+              {
+                "id": "d1a9e9b2702cef34",
+                "revoked": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "one mint (one project, one original key), lost key revoked, one live key",
+          "passed": true,
+          "detail": [
+            {
+              "id": "2f94d7351939d36b",
+              "revoked": true
+            },
+            {
+              "id": "d1a9e9b2702cef34",
+              "revoked": false
+            }
+          ]
+        },
+        {
+          "name": "reconciled key serves",
+          "passed": true
+        }
+      ],
+      "observed": {
+        "deskProvisioned": true,
+        "attemptedAt": true,
+        "provisionedAt": true,
+        "gatewayState": "ready",
+        "liveKeys": 1,
+        "lostReplyStatus": 200,
+        "keys": [
+          {
+            "id": "2f94d7351939d36b",
+            "revoked": true
+          },
+          {
+            "id": "d1a9e9b2702cef34",
+            "revoked": false
+          }
+        ]
+      },
+      "elapsedMs": 350,
+      "result": "pass"
+    },
+    "A7": {
+      "id": "A7",
+      "title": "Slow gateway (>10 s) on the provision call",
+      "checks": [
+        {
+          "name": "12 s gateway: within the 35 s provision bound, link completes provisioned in one pass",
+          "passed": true,
+          "detail": {
+            "linkMs": 12340,
+            "gatewayStatus": 200,
+            "deskProvisioned": true,
+            "attemptedAt": true,
+            "provisionedAt": true,
+            "gatewayState": "ready"
+          }
+        }
+      ],
+      "observed": {
+        "linkMs": 12340,
+        "gatewayStatus": 200,
+        "deskProvisioned": true,
+        "attemptedAt": true,
+        "provisionedAt": true,
+        "gatewayState": "ready"
+      },
+      "elapsedMs": 12508,
+      "result": "pass"
+    },
+    "A7b": {
+      "id": "A7b",
+      "title": "Very slow gateway (40 s) on the provision call",
+      "checks": [
+        {
+          "name": "website gives up near its 35 s bound; link completes without a grant",
+          "passed": true,
+          "detail": {
+            "linkMs": 35188,
+            "afterLink": {
+              "provisioned": false,
+              "skipped": "provisioning_attempt_requires_review",
+              "attempted": true
+            },
+            "gatewayStatus": 200,
+            "afterCheckIn": {
+              "provisioned": true,
+              "recorded": true
+            },
+            "keys": [
+              {
+                "id": "e01819099a3d213b",
+                "revoked": true
+              },
+              {
+                "id": "67b0757014c26e73",
+                "revoked": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "next check-in reconciles: provisioned, one live key, first key revoked, key serves",
+          "passed": true,
+          "detail": {
+            "linkMs": 35188,
+            "afterLink": {
+              "provisioned": false,
+              "skipped": "provisioning_attempt_requires_review",
+              "attempted": true
+            },
+            "gatewayStatus": 200,
+            "afterCheckIn": {
+              "provisioned": true,
+              "recorded": true
+            },
+            "keys": [
+              {
+                "id": "e01819099a3d213b",
+                "revoked": true
+              },
+              {
+                "id": "67b0757014c26e73",
+                "revoked": false
+              }
+            ]
+          }
+        }
+      ],
+      "observed": {
+        "linkMs": 35188,
+        "afterLink": {
+          "provisioned": false,
+          "skipped": "provisioning_attempt_requires_review",
+          "attempted": true
+        },
+        "gatewayStatus": 200,
+        "afterCheckIn": {
+          "provisioned": true,
+          "recorded": true
+        },
+        "keys": [
+          {
+            "id": "e01819099a3d213b",
+            "revoked": true
+          },
+          {
+            "id": "67b0757014c26e73",
+            "revoked": false
+          }
+        ]
+      },
+      "elapsedMs": 35421,
+      "result": "pass"
+    },
+    "A8": {
+      "id": "A8",
+      "title": "Concurrent retries",
+      "checks": [
+        {
+          "name": "two concurrent check-ins: one mint, one key",
+          "passed": true,
+          "detail": {
+            "outcomes": [
+              "provisioning_attempt_requires_review",
+              "keys"
+            ],
+            "keys": 1
+          }
+        },
+        {
+          "name": "two concurrent gateway provisions: one 200 with keys, the other refused 409, one key",
+          "passed": true,
+          "detail": [
+            {
+              "status": 200,
+              "hasKey": true
+            },
+            {
+              "status": 409,
+              "error": "installation_provisioning_in_progress",
+              "hasKey": false
+            }
+          ]
+        },
+        {
+          "name": "a plain repeat after ready returns identifiers only, no rotation",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 222,
+      "result": "pass"
+    },
+    "A9": {
+      "id": "A9",
+      "title": "Revoke (desktop disconnect) stops the key and the connector device",
+      "checks": [
+        {
+          "name": "key serves before revoke",
+          "passed": true
+        },
+        {
+          "name": "Modelvia key revoked; inference refused",
+          "passed": true,
+          "detail": {
+            "status": 401,
+            "code": "key_revoked"
+          }
+        },
+        {
+          "name": "connector device deactivated",
+          "passed": true
+        },
+        {
+          "name": "website row revoked and cleanup cleared",
+          "passed": true
+        },
+        {
+          "name": "project retained for billing history; Composio office project kept (other computers use it)",
+          "passed": true
+        },
+        {
+          "name": "Alpha second computer unaffected",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 139,
+      "result": "pass"
+    },
+    "A10": {
+      "id": "A10",
+      "title": "Reinstall on the same machine (same desktop data dir, new code)",
+      "checks": [
+        {
+          "name": "new installation id, new project, new key; old revoked",
+          "passed": true,
+          "detail": {
+            "newProject": "rb-e48b73f8-3ac3-4cbf-a4ca-da4c36edc89f"
+          }
+        },
+        {
+          "name": "still one Composio project for the office",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 186,
+      "result": "pass"
+    },
+    "A11": {
+      "id": "A11",
+      "title": "Office with no Modelvia customer: modelvia_customer_not_ready, then operator creates access; cap exceeded; cap raise; disable",
+      "checks": [
+        {
+          "name": "skipped modelvia_customer_not_ready; claim released",
+          "passed": true,
+          "detail": {
+            "skipped": "modelvia_customer_not_ready"
+          }
+        },
+        {
+          "name": "operator office AI access creates the customer (tiny custom cap A$0.000005) bound billingCompanyId=office-charlie",
+          "passed": true,
+          "detail": {
+            "status": 200,
+            "body": {
+              "customer": {
+                "active": true,
+                "monthlyCapNanoAud": "5000",
+                "created": true
+              },
+              "projects": []
+            },
+            "billingCompanyId": "office-charlie",
+            "payer": null
+          }
+        },
+        {
+          "name": "next check-in provisions",
+          "passed": true,
+          "detail": {}
+        },
+        {
+          "name": "project caps follow tiny customer cap (request cap clamped to monthly)",
+          "passed": true,
+          "detail": {
+            "project": {
+              "monthly": "5000",
+              "request": "5000",
+              "maxConcurrent": 2
+            },
+            "customer": {
+              "billingCompanyId": "office-charlie",
+              "payer": null,
+              "allowedModels": [
+                "deepseek-chat"
+              ]
+            }
+          }
+        },
+        {
+          "name": "cap exceeded: request refused before any upstream call (402)",
+          "passed": true,
+          "detail": {
+            "status": 402,
+            "code": "project_request_cap_exceeded"
+          }
+        },
+        {
+          "name": "operator raises to default A$200: pushed to the installation project",
+          "passed": true,
+          "detail": {
+            "projects": [
+              {
+                "installationId": "c773f69b-89e0-4f98-9141-dd003b3bf464",
+                "state": "applied"
+              }
+            ],
+            "monthly": "200000000000"
+          }
+        },
+        {
+          "name": "serves after cap raise",
+          "passed": true,
+          "detail": {
+            "status": 200
+          }
+        },
+        {
+          "name": "disabled office: serving refused (spend stops)",
+          "passed": true,
+          "detail": {
+            "status": 403,
+            "code": "account_inactive"
+          }
+        }
+      ],
+      "elapsedMs": 350,
+      "result": "pass"
+    },
+    "A12": {
+      "id": "A12",
+      "title": "No platform customer binding (no_platform_customer), then binding restored",
+      "checks": [
+        {
+          "name": "skipped no_platform_customer; no gateway call; claim not spent",
+          "passed": true,
+          "detail": {
+            "skipped": "no_platform_customer"
+          }
+        },
+        {
+          "name": "after binding restored, next check-in reaches the gateway (Delta has no Modelvia customer yet -> modelvia_customer_not_ready)",
+          "passed": true,
+          "detail": {
+            "skipped": "modelvia_customer_not_ready"
+          }
+        }
+      ],
+      "elapsedMs": 183,
+      "result": "pass"
+    }
+  },
+  "composio": {
+    "projectsCreated": [
+      {
+        "name": "realbud-office-alpha",
+        "shouldCreateKey": true
+      },
+      {
+        "name": "realbud-office-bravo",
+        "shouldCreateKey": true
+      },
+      {
+        "name": "realbud-office-charlie",
+        "shouldCreateKey": true
+      }
+    ],
+    "deleted": 0,
+    "akFiles": [
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_BRAVO",
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_CHARLIE"
+    ],
+    "registry": [
+      {
+        "id": "06b3fd41",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": false,
+        "userId": "installation-06b3fd41"
+      },
+      {
+        "id": "b7ed6733",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-b7ed6733"
+      },
+      {
+        "id": "b4933110",
+        "companyId": "office-bravo",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_BRAVO",
+        "active": true,
+        "userId": "installation-b4933110"
+      },
+      {
+        "id": "0b64a631",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-0b64a631"
+      },
+      {
+        "id": "0046a3b9",
+        "companyId": "office-bravo",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_BRAVO",
+        "active": true,
+        "userId": "installation-0046a3b9"
+      },
+      {
+        "id": "63d04f83",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-63d04f83"
+      },
+      {
+        "id": "ec4f5b20",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-ec4f5b20"
+      },
+      {
+        "id": "a835fb56",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-a835fb56"
+      },
+      {
+        "id": "c74e7ede",
+        "companyId": "office-bravo",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_BRAVO",
+        "active": true,
+        "userId": "installation-c74e7ede"
+      },
+      {
+        "id": "77777777",
+        "companyId": "office-bravo",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_BRAVO",
+        "active": true,
+        "userId": "installation-77777777"
+      },
+      {
+        "id": "e48b73f8",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-e48b73f8"
+      },
+      {
+        "id": "c773f69b",
+        "companyId": "office-charlie",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_CHARLIE",
+        "active": true,
+        "userId": "installation-c773f69b"
+      }
+    ]
+  },
+  "akLeak": {
+    "websiteReplies": 25,
+    "websiteDb": false,
+    "deskConfigs": false
+  },
+  "rpcErrors": [],
+  "summary": {
+    "A1": "pass",
+    "A2": "pass",
+    "A3": "pass",
+    "A4": "pass",
+    "A5": "pass",
+    "A6": "pass",
+    "A7": "pass",
+    "A7b": "pass",
+    "A8": "pass",
+    "A9": "pass",
+    "A10": "pass",
+    "A11": "pass",
+    "A12": "pass"
+  }
+}

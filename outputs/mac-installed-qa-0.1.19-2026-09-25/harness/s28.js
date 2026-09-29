@@ -1,0 +1,17 @@
+const pid = (await (await fetch('http://127.0.0.1:18799/api/health')).json()).pid;
+await page.getByRole('button', { name: 'Add property', exact: true }).click(); await page.waitForTimeout(500);
+await page.getByLabel('Address', {exact:true}).fill('88 Crash Test Rd, Faketown ACT');
+await page.getByLabel('Tenant', {exact:true}).fill('Robin Sample');
+await page.getByLabel('Phone', {exact:true}).fill('0400 000 088');
+await page.getByLabel('Weekly rent (AUD)').fill('450');
+const t0 = Date.now();
+const click = page.getByRole('button', { name: 'Add to book' }).click();
+await new Promise(r => setTimeout(r, 15));
+process.kill(pid, 'SIGKILL');
+const killedAt = Date.now() - t0;
+await click.catch(()=>{});
+await page.waitForTimeout(2500);
+await shot('28-after-kill');
+const body = (await page.locator('body').innerText());
+const i = body.indexOf('Add to book');
+return JSON.stringify({ killedPid: pid, killedAtMs: killedAt }) + '\n' + body.slice(0, 300) + '\n...\n' + [...body.matchAll(/.{0,120}(could not|couldn|error|lost|reconnect|offline|try again|unavailable).{0,120}/gi)].map(x=>x[0]).slice(0,6).join('\n');
