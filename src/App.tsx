@@ -1,3 +1,5 @@
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
+import { useBudStatusSnapshot } from "@/lib/bud-status-monitor";
 import { openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
@@ -61,17 +63,35 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
   const { state, dispatch } = useStore();
+  const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
+  const budStatusRead = useBudStatusSnapshot();
   const workspaceTabs = useWorkspaceTabs();
   const savedView = workspaceTabs.data?.state?.tabs.find(tab => tab.id === state.workspaceTabId && tab.visible);
   const [setup, setSetup] = useState<WorkspaceSetupTarget | null>(initialSetup);
+  // Capture before inert and the lazy loading dialog move focus away. The
+  // concrete sheet cannot recover an opener from an unmounted fallback.
+  const setupOpener = useRef<{ element: HTMLElement; view: string } | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
       const target: unknown = (event as CustomEvent).detail;
-      if (isWorkspaceSetupTarget(target)) setSetup(target);
+      if (isWorkspaceSetupTarget(target)) {
+        if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('[role="dialog"]')) {
+          setupOpener.current = { element: document.activeElement, view: state.activeView };
+        }
+        setSetup(target);
+      }
     };
     window.addEventListener(WORKSPACE_SETUP_EVENT, open);
     return () => window.removeEventListener(WORKSPACE_SETUP_EVENT, open);
-  }, []);
+  }, [state.activeView]);
+  useEffect(() => {
+    if (setup || !setupOpener.current) return;
+    const previous = setupOpener.current;
+    setupOpener.current = null;
+    if (previous.view === state.activeView && previous.element.isConnected && !previous.element.closest("[inert]") && previous.element.getClientRects().length) {
+      previous.element.focus();
+    }
+  }, [setup, state.activeView]);
   const previousView = useRef(state.activeView);
   /** Set while a navigation came from the address bar, so the mirror effect below
    *  does not immediately write the same value back into history. */
@@ -161,6 +181,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   // Heal pending readiness as soon as the local service and Bud status are known.
   useEffect(() => {
     if (!state.connected || !state.hermes) return;
+    let current = true;
     void (async () => {
       const { autoAttemptBookRecovery, autoRunBudReadiness } = await import("@/lib/boot-heal");
       if (state.desk?.recovery?.active) {
@@ -169,6 +190,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           onSnapshot: (snapshot) => dispatch({ type: "deskSnapshot", snapshot: snapshot as never }),
         });
       }
+      if (!current || !canAdminister || budStatusRead.error) return;
       await autoRunBudReadiness({
         status: state.hermes,
         connected: state.connected,
@@ -176,7 +198,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         onStatus: (status) => dispatch({ type: "hermesStatus", status }),
       });
     })();
-  }, [dispatch, state.connected, state.desk?.recovery?.active, state.hermes]);
+    return () => { current = false; };
+  }, [canAdminister, budStatusRead.error, dispatch, state.connected, state.desk?.recovery?.active, state.hermes]);
 
   return (
     <div className="workspace-surface flex h-full flex-col">

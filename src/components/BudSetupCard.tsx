@@ -20,7 +20,7 @@ import {
 
 import { fmtDateTime } from "@/lib/au";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
-import { BUD_SETUP_STEPS, budFacingCopy, budSetupJourney, type BudSetupStep } from "@/lib/bud-setup";
+import { BUD_SETUP_STEPS, parseBudStatus, budFacingCopy, budSetupJourney, type BudSetupStep } from "@/lib/bud-setup";
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { workerIssueLine } from "@/lib/worker-issues";
@@ -151,20 +151,21 @@ function BudCapabilities({ onShowAsk, onSchedule }: { onShowAsk?: () => void; on
   );
 }
 
-type BudSetupCardProps = { id?: string; onShowAsk?: () => void; onSchedule?: () => void; administration?: boolean; onServiceAdministration?: () => void };
+type BudSetupCardProps = { active?: boolean; id?: string; onShowAsk?: () => void; onSchedule?: () => void; administration?: boolean; onServiceAdministration?: () => void };
 
 export function BudSetupCard(props: BudSetupCardProps) {
   const { state, dispatch } = useStore();
   const administration = state.serviceAdmin ?? state.config?.serviceAdmin;
-  // Staff can check readiness without mounting administrator-only setup effects.
+  const refreshStatus = useCallback(async (isCurrent: () => boolean) => {
+    const status = parseBudStatus(await api("/api/hermes", undefined, { timeoutMs: 15_000 }));
+    if (isCurrent()) dispatch({ type: "hermesStatus", status });
+  }, [dispatch]);
+  // Staff can read status without mounting administrator-only setup effects.
   const allowed = useServiceAdminAccess(administration);
   if (!props.administration || !allowed) return (
     <ManagedBudStatus id={props.id ?? "you-worker"} status={state.hermes} connected={state.connected}
-      onServiceAdministration={props.onServiceAdministration}
-      onRefresh={async () => {
-        const status = await api("/api/hermes", undefined, { timeoutMs: 15_000 });
-        dispatch({ type: "hermesStatus", status });
-      }} />
+      onServiceAdministration={props.onServiceAdministration} onShowAsk={props.onShowAsk}
+      active={props.active} recovering={Boolean(state.desk?.recovery?.active)} onRefresh={refreshStatus} />
   );
   return <BudSetupDetails {...props} />;
 }

@@ -87,7 +87,7 @@ export function budSetupJourney(input: BudSetupInput): BudSetupJourney {
 
 /** One dependency-ordered description for Ask and Schedule. A workroom alone
  * never proves an installed worker, model connection or permission to run. */
-export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false) {
+function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, recovering = false) {
   const unavailable = (label: string, detail: string, action: string | null = null, target = "you-worker") =>
     ({ ready: false, label, detail, action, target, canVerify: false });
   if (!connected) return unavailable("Reconnecting", "The local service is reconnecting. Keep drafting; new work can start when the connection returns.");
@@ -122,7 +122,12 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
     }
     return unavailable("Setup needed", "Finish Bud's installation before starting work. You can prepare your request now.", status.cli.installed ? "Check Bud setup" : "Set up Bud");
   }
-  if (stage === "safeguards") return unavailable("Setup needed", "Finish Bud's private workroom and property safeguards before starting work.", "Finish Bud setup");
+  if (stage === "safeguards") {
+    const missing = !status.pack.installed ? "Property safeguards are not installed."
+      : !status.pack.approvalsManual ? "Manual approval safeguards are not active."
+      : "Bud's private workroom is not ready.";
+    return unavailable("Setup needed", `${missing} Your draft stays here while setup is completed.`, "Finish Bud setup");
+  }
   if (stage === "model") {
     return status.modelAccess?.managed
       ? unavailable("Model choice needed", status.modelAccess.detail, "Choose a model", "attach-model")
@@ -131,4 +136,54 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
   if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
   if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");
   return { ready: true, label: "Bud ready", detail: "Bud can prepare work using the book, files and permitted tools.", action: null, target: "you-worker", canVerify: false };
+}
+
+
+/** Presentation respects who can act; canVerify remains an authoritative fact,
+ * never a permission grant. Callers performing checks must also gate access. */
+export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false, context?: { canAdminister: boolean; statusError?: boolean }) {
+  const availability = budAvailabilityFacts(status, connected, recovering);
+  if (context?.statusError && connected && !recovering) return { ...availability, ready: false, label: "Status unavailable", detail: "Could not refresh Bud’s status. Your draft is kept; status will retry automatically.", action: "View Bud status", target: "you-worker", canVerify: false };
+  if (!context || context.canAdminister || availability.ready || !connected || recovering || !status || status.modelAccess?.withdrawn) return availability;
+  return {
+    ...availability,
+    label: availability.label === "Setup needed" ? "Service setup needed" : availability.label,
+    action: "View Bud status",
+    target: "you-worker",
+  };
+}
+
+export function budReadinessFailure(status: HermesStatus | null): string | null {
+  if (!status || status.ready) return null;
+  const lastCheck = status.lastPing ?? (status.lastTest?.kind === "ping" ? status.lastTest : null);
+  return lastCheck && !lastCheck.ok
+    ? budFacingCopy(lastCheck.detail, "The private readiness check did not finish. A service administrator needs to check the connection.")
+    : null;
+}
+
+
+/** Reject partial or malformed status responses before automatic refresh can
+ * replace the last authoritative snapshot. Never echo response contents. */
+export function parseBudStatus(value: unknown): HermesStatus {
+  const record = (input: unknown): input is Record<string, unknown> => !!input && typeof input === "object" && !Array.isArray(input);
+  const nullableString = (input: unknown) => input === null || typeof input === "string";
+  const receipt = (input: unknown) => input == null || (record(input) && typeof input.ok === "boolean" && typeof input.detail === "string"
+    && typeof input.at === "number" && Number.isFinite(input.at) && ["ping", "recheck"].includes(String(input.kind)));
+  if (!record(value) || !record(value.cli) || !record(value.pack) || !record(value.pin)
+    || ![value.pin.product, value.pin.tag, value.pin.commit, value.pin.profile, value.homeDir, value.profileDir, value.signInCommand].every(item => typeof item === "string")
+    || !nullableString(value.installCommand) || !nullableString(value.cli.versionText)
+    || (value.installerAvailable !== undefined && typeof value.installerAvailable !== "boolean")
+    || (value.handsLabel !== undefined && typeof value.handsLabel !== "string")
+    || typeof value.ready !== "boolean" || typeof value.detail !== "string"
+    || typeof value.cli.installed !== "boolean" || typeof value.cli.matchesPin !== "boolean"
+    || (value.cli.compatible !== undefined && typeof value.cli.compatible !== "boolean")
+    || (value.cli.probeState !== undefined && !["ok", "missing", "timeout", "error"].includes(String(value.cli.probeState)))
+    || ![value.pack.installed, value.pack.approvalsManual, value.pack.workroomReady].every(flag => typeof flag === "boolean")
+    || (value.bootstrapPending !== undefined && typeof value.bootstrapPending !== "boolean")
+    || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)))
+    || (value.modelAccess !== undefined && (!record(value.modelAccess) || typeof value.modelAccess.managed !== "boolean" || typeof value.modelAccess.withdrawn !== "boolean" || typeof value.modelAccess.attached !== "boolean" || typeof value.modelAccess.detail !== "string"))
+    || !receipt(value.lastPing) || !receipt(value.lastTest)) {
+    throw new Error("Bud's status could not be confirmed. Try checking again.");
+  }
+  return value as unknown as HermesStatus;
 }

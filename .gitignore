@@ -49,3 +49,7 @@ outputs/**/*.dmg
 outputs/**/*.zip
 __pycache__/
 *.pyc
+
+# Separate repositories checked out inside this tree (EzAuto399/RealBud-website and its worktree)
+/website/
+/website-usage-release/

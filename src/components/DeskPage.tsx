@@ -1,3 +1,4 @@
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { usePhoneConnections } from "@/lib/phone-connections";
 import { budAvailability } from "@/lib/bud-setup";
 import { useWorkspaceScroll, useWorkspaceViewState } from "@/lib/workspace-view-state";
@@ -51,6 +52,7 @@ function deskFacingError(cause: unknown): string {
 
 export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const { state, dispatch, refreshHermes } = useStore();
+  const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const { preferences } = useWorkspacePreferences();
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
   // Paint instantly from the SSE-pushed snapshot when we have one; the
@@ -681,7 +683,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 <button type="button" aria-pressed={railTab === "evidence"} onClick={() => setRailTab("evidence")}>Evidence</button>
                 <button type="button" className="desk-rail-close desk-icon-button" aria-label="Close case support" onClick={() => setRailOpen(false)}><X size={16} /></button>
               </div>
-              {railTab === "bud" ? <DeskBud availability={budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active))} item={selected} connected={state.connected} ready={Boolean(state.hermes?.ready)} working={Boolean(bud?.busy)} onAsk={askAboutCase} onOpenChat={() => dispatch({ type: "showAsk" })} onSetup={() => { openWorkspaceSetup("bud"); }} /> : <DeskEvidence
+              {railTab === "bud" ? <DeskBud availability={budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister })} item={selected} connected={state.connected} ready={Boolean(state.hermes?.ready)} working={Boolean(bud?.busy)} onAsk={askAboutCase} onOpenChat={() => dispatch({ type: "showAsk" })} onSetup={() => { openWorkspaceSetup("bud"); }} /> : <DeskEvidence
                 snap={snap}
                 item={selected}
                 onPresent={(presentation) => void run("/api/desk/handoff/present", "POST", { presentation }, "present", "Browser view changed")}
