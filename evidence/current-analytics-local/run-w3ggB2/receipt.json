@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "checks": [
+    "Scoped records API 200 for current analytics shape",
+    "Unavailable instrumentation shown as not reported",
+    "Desktop/mobile no overflow or page errors"
+  ],
+  "scope": "Local built app, disposable identity and fictional transport; no live sign-in or payment proof."
+}

@@ -1,0 +1,118 @@
+{
+  "at": "2026-09-26T19:12:11.346Z",
+  "layer": "source",
+  "baseline": false,
+  "passed": false,
+  "checks": [
+    "Staff safeguards hold identifies the missing workroom, shows four dependency-ordered facts and provides no false Finish setup action."
+  ],
+  "screenshots": [
+    "ask-safeguards-1280.png",
+    "bud-safeguards-1280.png"
+  ],
+  "rendererPageErrors": [],
+  "observations": {},
+  "source": {
+    "revision": "5d162956e13158e7899d4bb344637102b0f799e2",
+    "baselineTransforms": [],
+    "fixtureFields": {
+      "safeguards": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": false
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": false,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": null
+      },
+      "ready": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": true
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": true,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": {
+          "at": 1790449917454,
+          "ok": true,
+          "kind": "ping",
+          "detail": "Fictional private readiness check passed."
+        }
+      }
+    }
+  },
+  "network": {
+    "statusReads": 4,
+    "hermesMutations": [],
+    "externalRequests": []
+  },
+  "cleanup": {
+    "isolatedServiceStopped": true,
+    "temporaryDataRemoved": true
+  },
+  "limits": [
+    "Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.",
+    "The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.",
+    "All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.",
+    "Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed."
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nfalse !== true\n\n    at file:///Users/yoda/projects/RealBud/scripts/qa-bud-status.mjs:104:12"
+}

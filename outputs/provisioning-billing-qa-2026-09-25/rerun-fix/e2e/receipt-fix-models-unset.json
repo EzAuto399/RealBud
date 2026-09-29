@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-25T10:22:37.428Z",
+  "variant": "fix-models-unset",
+  "root": "/Users/yoda/projects/RealBud/.claude/worktrees/agent-a1cd71bab01bdf6f7",
+  "models": "(gateway default: auto)",
+  "billingMode": "customer",
+  "proofLayer": "Local source: real desktop office-link + website route handlers (real SQL, disposable PostgreSQL) + real RealBud gateway process + real local Modelvia origin/main process; fictional Composio org and fictional upstream model provider. No hosted vendor.",
+  "scenarios": {
+    "A1b": {
+      "id": "A1b",
+      "title": "REALBUD_MODELVIA_MODELS=(unset): gateway refuses to compose provisioning",
+      "checks": [
+        {
+          "name": "/ready 503 provisioning_unconfigured:REALBUD_MODELVIA_MODELS",
+          "passed": true,
+          "detail": {
+            "status": 503,
+            "body": {
+              "ready": false,
+              "error": "provisioning_unconfigured:REALBUD_MODELVIA_MODELS",
+              "modelviaOperator": "missing",
+              "operatorAccess": "configured"
+            }
+          }
+        },
+        {
+          "name": "provision route answers 503 without composing (nothing minted)",
+          "passed": true,
+          "detail": {
+            "status": 401
+          }
+        },
+        {
+          "name": "no Modelvia project created",
+          "passed": true
+        }
+      ],
+      "result": "pass"
+    }
+  },
+  "ready": {
+    "status": 503,
+    "body": {
+      "ready": false,
+      "error": "provisioning_unconfigured:REALBUD_MODELVIA_MODELS",
+      "modelviaOperator": "missing",
+      "operatorAccess": "configured"
+    }
+  },
+  "summary": {
+    "A1b": "pass"
+  }
+}

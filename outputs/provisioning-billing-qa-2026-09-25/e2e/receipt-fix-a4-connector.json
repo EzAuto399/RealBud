@@ -1,0 +1,138 @@
+{
+  "at": "2026-09-25T10:06:34.286Z",
+  "variant": "fix-a4-connector",
+  "root": "/Users/yoda/projects/RealBud/.claude/worktrees/agent-a1cd71bab01bdf6f7",
+  "models": "deepseek-chat",
+  "billingMode": "customer",
+  "proofLayer": "Local source: real desktop office-link + website route handlers (real SQL, disposable PostgreSQL) + real RealBud gateway process + real local Modelvia origin/main process; fictional Composio org and fictional upstream model provider. No hosted vendor.",
+  "scenarios": {
+    "A4": {
+      "id": "A4",
+      "title": "Lost redeem reply to the desktop after the website recorded provisioning",
+      "checks": [
+        {
+          "name": "first redeem reply lost (desktop sees an error)",
+          "passed": true
+        },
+        {
+          "name": "website recorded provisioning for the first reply",
+          "passed": true,
+          "detail": {
+            "firstKeyId": "46f06cf5d4fb77b3"
+          }
+        },
+        {
+          "name": "FIX: retry redeem redelivers; computer provisioned",
+          "passed": true,
+          "detail": {
+            "provisioned": true
+          }
+        },
+        {
+          "name": "FIX: lost key revoked, exactly one live key (rotated, same label)",
+          "passed": true,
+          "detail": [
+            {
+              "id": "46f06cf5d4fb77b3",
+              "revoked": true
+            },
+            {
+              "id": "f44f15b9482e4c9e",
+              "revoked": false
+            }
+          ]
+        },
+        {
+          "name": "FIX: new key serves",
+          "passed": true
+        },
+        {
+          "name": "FIX: later check-ins do not rotate again",
+          "passed": true
+        },
+        {
+          "name": "FIX: connector device now holds the new rbc_ hash; the lost rbc_ no longer matches",
+          "passed": true
+        }
+      ],
+      "observed": {
+        "provisioned": true,
+        "hasKey": true,
+        "keys": [
+          {
+            "id": "46f06cf5d4fb77b3",
+            "revoked": true
+          },
+          {
+            "id": "f44f15b9482e4c9e",
+            "revoked": false
+          }
+        ],
+        "replies": [
+          {
+            "route": "redeem",
+            "method": "POST",
+            "status": 200,
+            "provisioning": {
+              "keyId": "46f06cf5d4fb77b3",
+              "hasKey": true,
+              "hasCredential": true
+            }
+          },
+          {
+            "route": "redeem",
+            "method": "POST",
+            "status": 200,
+            "provisioning": {
+              "keyId": "f44f15b9482e4c9e",
+              "hasKey": true,
+              "hasCredential": true
+            }
+          },
+          {
+            "route": "report",
+            "method": "POST",
+            "status": 200
+          },
+          {
+            "route": "report",
+            "method": "POST",
+            "status": 200
+          }
+        ]
+      },
+      "elapsedMs": 799,
+      "result": "pass"
+    }
+  },
+  "composio": {
+    "projectsCreated": [
+      {
+        "name": "realbud-office-alpha",
+        "shouldCreateKey": true
+      }
+    ],
+    "deleted": 0,
+    "akFiles": [
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA"
+    ],
+    "registry": [
+      {
+        "id": "d06aedc3",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-d06aedc3"
+      }
+    ]
+  },
+  "akLeak": {
+    "websiteReplies": 4,
+    "websiteDb": false,
+    "deskConfigs": false
+  },
+  "rpcErrors": [],
+  "summary": {
+    "A4": "pass"
+  }
+}

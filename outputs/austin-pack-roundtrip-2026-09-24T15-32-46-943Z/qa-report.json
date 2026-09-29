@@ -1,0 +1,208 @@
+{
+  "startedAt": "2026-09-24T15:32:46.953Z",
+  "live": false,
+  "node": "v25.9.0",
+  "scope": "Two isolated local offices; supplied synthetic files; real HTTP routes. Live mode uses the real Hermes model. Bank review decisions are simulated human review.",
+  "fixtureRoot": "/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/realbud-austin-roundtrip-cN7ZVX",
+  "checks": [
+    {
+      "label": "Deliverable includes only procedure fields and no machine bindings",
+      "ok": true
+    },
+    {
+      "label": "office-a: issued local session",
+      "ok": true
+    },
+    {
+      "label": "Unauthenticated import rejected",
+      "ok": true
+    },
+    {
+      "label": "First office starts empty",
+      "ok": true
+    },
+    {
+      "label": "Actual deliverable imports successfully",
+      "ok": true
+    },
+    {
+      "label": "Imported procedures survive without field loss",
+      "ok": true
+    },
+    {
+      "label": "Import grants no approval or recurrence",
+      "ok": true
+    },
+    {
+      "label": "Repeated import succeeds",
+      "ok": true
+    },
+    {
+      "label": "Repeated import preserves exact saved bytes",
+      "ok": true
+    },
+    {
+      "label": "Malformed later job rejects whole import",
+      "ok": true
+    },
+    {
+      "label": "Conflicting procedure rejected",
+      "ok": true
+    },
+    {
+      "label": "Failed imports preserve existing office",
+      "ok": true
+    },
+    {
+      "label": "wf-austin-expected-bills: unapproved run blocked",
+      "ok": true
+    },
+    {
+      "label": "office-a: approve wf-austin-expected-bills locally",
+      "ok": true
+    },
+    {
+      "label": "wf-austin-payment-prep: unapproved run blocked",
+      "ok": true
+    },
+    {
+      "label": "office-a: approve wf-austin-payment-prep locally",
+      "ok": true
+    },
+    {
+      "label": "office-a: actual bank processor creates source batch",
+      "ok": true
+    },
+    {
+      "label": "A: checked export is blocked before review",
+      "ok": true
+    },
+    {
+      "label": "A: simulated human review saved",
+      "ok": true
+    },
+    {
+      "label": "A: stale duplicate review rejected",
+      "ok": true
+    },
+    {
+      "label": "A: original byte identity preserved",
+      "ok": true
+    },
+    {
+      "label": "A: only the reviewed reference bytes change",
+      "ok": true
+    },
+    {
+      "label": "Export contains both tested procedures",
+      "ok": true
+    },
+    {
+      "label": "office-b: issued local session",
+      "ok": true
+    },
+    {
+      "label": "Second office has no copied jobs or bank state",
+      "ok": true
+    },
+    {
+      "label": "Export file imports into clean second office",
+      "ok": true
+    },
+    {
+      "label": "Source approval does not travel",
+      "ok": true
+    },
+    {
+      "label": "Source office files do not travel in export",
+      "ok": true
+    },
+    {
+      "label": "office-b: approve wf-austin-expected-bills locally",
+      "ok": true
+    },
+    {
+      "label": "office-b: approve wf-austin-payment-prep locally",
+      "ok": true
+    },
+    {
+      "label": "office-b: actual bank processor creates source batch",
+      "ok": true
+    },
+    {
+      "label": "B: checked export is blocked before review",
+      "ok": true
+    },
+    {
+      "label": "B: simulated human review saved",
+      "ok": true
+    },
+    {
+      "label": "B: stale duplicate review rejected",
+      "ok": true
+    },
+    {
+      "label": "B: original byte identity preserved",
+      "ok": true
+    },
+    {
+      "label": "B: only the reviewed reference bytes change",
+      "ok": true
+    },
+    {
+      "label": "Re-export preserves the original procedures",
+      "ok": true
+    },
+    {
+      "label": "Re-import preserves the second office's own approval",
+      "ok": true
+    },
+    {
+      "label": "office-b-restarted: issued local session",
+      "ok": true
+    },
+    {
+      "label": "Restart preserves imported jobs and local approvals",
+      "ok": true
+    },
+    {
+      "label": "Restart preserves completed run receipts",
+      "ok": true
+    },
+    {
+      "label": "Restart preserves verified bank artifact",
+      "ok": true
+    },
+    {
+      "label": "All jobs remain without recurring schedules",
+      "ok": true
+    },
+    {
+      "label": "Original fixture is byte-for-byte unchanged",
+      "ok": true
+    }
+  ],
+  "runs": [],
+  "artifacts": [
+    {
+      "file": "A.checked-bank.csv",
+      "sha256": "7c20665afe2dee43d1e05b7e6c528d3f04f5890241ccecb68f084c2bb0d849b9",
+      "originalSha256": "d8702bda7c52ca7f61475e76b36b25344c0fe4b56992ba5357268164bf12d69e",
+      "review": "Simulated human decision via real bank review/export API"
+    },
+    {
+      "file": "B.checked-bank.csv",
+      "sha256": "7c20665afe2dee43d1e05b7e6c528d3f04f5890241ccecb68f084c2bb0d849b9",
+      "originalSha256": "d8702bda7c52ca7f61475e76b36b25344c0fe4b56992ba5357268164bf12d69e",
+      "review": "Simulated human decision via real bank review/export API"
+    }
+  ],
+  "limitations": [
+    "No customer mailbox acquisition, bank login, payment or REI import tested.",
+    "Bank proposals and bank review/export are separate existing app paths; this harness supplies the batch and simulates the reviewer bridge.",
+    "This is current source API/executor QA, not Windows or packaged-app acceptance.",
+    "No recurring schedule is activated; all test runs are manual."
+  ],
+  "completed": true,
+  "finishedAt": "2026-09-24T15:32:57.466Z"
+}

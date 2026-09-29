@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HermesStatus } from "@/state/store";
-import { budAvailability } from "./bud-setup";
+import { budAvailability, parseBudStatus } from "./bud-setup";
 import { canUseTaskStarter } from "./pm-task-starters";
 import { toolLabel } from "./tool-label";
 
@@ -94,5 +94,48 @@ describe("Hermes work explained to the PM", () => {
     expect(toolLabel("session_search")).toBe("finding previous work");
     expect(toolLabel("delegate_task")).toBe("checking part of the work in parallel");
     expect(toolLabel("todo_write")).toBe("updating the work plan");
+  });
+});
+
+describe("permission-aware setup presentation", () => {
+  it("offers staff a status view without promising administrator setup", () => {
+    const status = { ...ready, pack: { ...ready.pack, workroomReady: false }, ready: false };
+    const staff = budAvailability(status, true, false, { canAdminister: false });
+    expect(staff).toMatchObject({ label: "Service setup needed", action: "View Bud status", ready: false });
+    expect(staff.detail).toContain("private workroom is not ready");
+    expect(budAvailability(status, true, false, { canAdminister: true }).action).toBe("Finish Bud setup");
+  });
+  it("preserves factual verification prerequisites without granting a staff action", () => {
+    expect(budAvailability({ ...ready, ready: false }, true, false, { canAdminister: false }))
+      .toMatchObject({ canVerify: true, action: "View Bud status" });
+  });
+  it("names each missing safeguard without claiming later steps prove it", () => {
+    for (const [field, detail] of [["installed", "not installed"], ["approvalsManual", "not active"], ["workroomReady", "not ready"]] as const) {
+      expect(budAvailability({ ...ready, pack: { ...ready.pack, [field]: false } }, true, false, { canAdminister: false }).detail).toContain(detail);
+    }
+  });
+  it("does not replace recovery or offline actions with service setup", () => {
+    expect(budAvailability(ready, true, true, { canAdminister: false }).target).toBe("you-recovery");
+    expect(budAvailability(ready, false, false, { canAdminister: false }).action).toBeNull();
+  });
+  it("holds a previously ready worker when status cannot be refreshed", () => {
+    expect(budAvailability(ready, true, false, { canAdminister: true, statusError: true }))
+      .toMatchObject({ ready: false, label: "Status unavailable", canVerify: false });
+  });
+});
+
+
+describe("automatic Bud status validation", () => {
+  it("accepts current server facts without upgrading readiness", () => {
+    expect(parseBudStatus(ready)).toBe(ready);
+    expect(parseBudStatus({ ...ready, ready: false }).ready).toBe(false);
+  });
+  it("rejects malformed and partial responses", () => {
+    for (const input of [null, {}, [], { ...ready, pin: undefined }, { ...ready, cli: { ...ready.cli, versionText: undefined } }, { ...ready, homeDir: undefined }, { ...ready, ready: "true" }, { ...ready, cli: null },
+      { ...ready, pack: { ...ready.pack, approvalsManual: undefined } },
+      { ...ready, model: { attached: true } }, { ...ready, modelAccess: { withdrawn: true } },
+      { ...ready, lastPing: { ok: "true" } }]) {
+      expect(() => parseBudStatus(input)).toThrow("status could not be confirmed");
+    }
   });
 });

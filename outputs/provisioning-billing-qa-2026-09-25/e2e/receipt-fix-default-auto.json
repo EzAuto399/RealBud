@@ -1,0 +1,190 @@
+{
+  "at": "2026-09-25T10:06:40.409Z",
+  "variant": "fix-default-auto",
+  "root": "/Users/yoda/projects/RealBud/.claude/worktrees/agent-a1cd71bab01bdf6f7",
+  "models": "(gateway default: auto)",
+  "billingMode": "customer",
+  "proofLayer": "Local source: real desktop office-link + website route handlers (real SQL, disposable PostgreSQL) + real RealBud gateway process + real local Modelvia origin/main process; fictional Composio org and fictional upstream model provider. No hosted vendor.",
+  "scenarios": {
+    "A1": {
+      "id": "A1",
+      "title": "Office Alpha, first computer: key auto-issued, project under the office customer, caps, label, vault-only key; Composio office project + ak_ on gateway only",
+      "checks": [
+        {
+          "name": "desktop linked and provisioned",
+          "passed": true,
+          "detail": {
+            "state": "linked",
+            "provisioned": true
+          }
+        },
+        {
+          "name": "rbk_ model key delivered to the worker env",
+          "passed": true,
+          "detail": {
+            "prefix": "rbk_",
+            "baseUrl": "https://modelvia.fictional.test/v1"
+          }
+        },
+        {
+          "name": "Modelvia project rb-<installationId> exists",
+          "passed": true,
+          "detail": {
+            "projectId": "rb-b802910a-84a1-49e5-b7ea-9301e66f56c5"
+          }
+        },
+        {
+          "name": "project sits under the office customer (cust-alpha) and RealBud client",
+          "passed": true,
+          "detail": {
+            "customerId": "cust-alpha",
+            "clientId": "rb-client-qa"
+          }
+        },
+        {
+          "name": "project caps copied from customer (A$50/month, 2 at once, request = min(A$1, monthly))",
+          "passed": true,
+          "detail": {
+            "monthly": "50000000000",
+            "request": "1000000000",
+            "maxConcurrent": 2
+          }
+        },
+        {
+          "name": "project allowedModels",
+          "passed": true,
+          "detail": {
+            "allowedModels": [
+              "auto"
+            ],
+            "environments": [
+              "development"
+            ],
+            "name": "RealBud installation b802910a-84a1-49e5-b7ea-9301e66f56c5"
+          }
+        },
+        {
+          "name": "exactly one live key, labelled <companyId>:<installationId>",
+          "passed": true,
+          "detail": {
+            "keys": [
+              {
+                "id": "4e17b7c2ebbf2171",
+                "label": "office-alpha:b802910a-84a1-49e5-b7ea-9301e66f56c5",
+                "revoked": false,
+                "expiresAt": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "delivered key belongs to that key record",
+          "passed": true
+        },
+        {
+          "name": "website row records identifiers only",
+          "passed": true,
+          "detail": {
+            "model_key_id": "4e17b7c2ebbf2171",
+            "composio_project_id": "pr_qa16e4df9",
+            "connector_device_id": "b802910a-84a1-49e5-b7ea-9301e66f56c5"
+          }
+        },
+        {
+          "name": "worker key can serve with model \"auto\" (gateway default model policy)",
+          "passed": false,
+          "detail": {
+            "status": 503,
+            "code": "model_route_unavailable"
+          }
+        },
+        {
+          "name": "worker key can serve with explicit catalogue model",
+          "passed": false,
+          "detail": {
+            "status": 503,
+            "code": "model_route_unavailable"
+          }
+        },
+        {
+          "name": "Composio project realbud-office-alpha created once",
+          "passed": true,
+          "detail": {
+            "created": [
+              "realbud-office-alpha"
+            ]
+          }
+        },
+        {
+          "name": "ak_ stored on the gateway secret store (0600)",
+          "passed": true
+        },
+        {
+          "name": "registry device: office project key reference, hash only",
+          "passed": true,
+          "detail": {
+            "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+            "userId": "installation-b802910a-84a1-49e5-b7ea-9301e66f56c5",
+            "memberId": "b802910a-84a1-49e5-b7ea-9301e66f56c5"
+          }
+        },
+        {
+          "name": "rbc_ per-computer connector credential delivered to the desktop",
+          "passed": true
+        },
+        {
+          "name": "no plaintext rbk_/rbc_/ak_ in desktop files (vault is encrypted)",
+          "passed": true,
+          "detail": {
+            "deskHits": [],
+            "dataHits": []
+          }
+        },
+        {
+          "name": "website database holds no rbk_/rbc_/ak_",
+          "passed": true
+        },
+        {
+          "name": "desktop never received ak_ in any reply or config",
+          "passed": true
+        },
+        {
+          "name": "gateway ledger holds no rbk_/rbc_/ak_ material",
+          "passed": true
+        }
+      ],
+      "elapsedMs": 557,
+      "result": "fail"
+    }
+  },
+  "composio": {
+    "projectsCreated": [
+      {
+        "name": "realbud-office-alpha",
+        "shouldCreateKey": true
+      }
+    ],
+    "deleted": 0,
+    "akFiles": [
+      "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA"
+    ],
+    "registry": [
+      {
+        "id": "b802910a",
+        "companyId": "office-alpha",
+        "projectKeyEnv": "REALBUD_COMPOSIO_PROJECT_OFFICE_ALPHA",
+        "active": true,
+        "userId": "installation-b802910a"
+      }
+    ]
+  },
+  "akLeak": {
+    "websiteReplies": 1,
+    "websiteDb": false,
+    "deskConfigs": false
+  },
+  "rpcErrors": [],
+  "summary": {
+    "A1": "fail"
+  }
+}

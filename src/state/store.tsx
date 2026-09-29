@@ -1,4 +1,5 @@
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
+import { budStatusObserverRevision, hasBudStatusObservers } from "@/lib/bud-status-monitor";
 import { ensureSession } from "@/lib/local-session";
 import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
@@ -1312,8 +1313,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api("/api/config")
         .then((config) => alive && rawDispatch({ type: "configStatus", config }))
         .catch(() => {});
+      const budObserverRevision = budStatusObserverRevision();
       api("/api/hermes")
-        .then((status) => alive && rawDispatch({ type: "hermesStatus", status }))
+        .then((status) => alive && budObserverRevision === budStatusObserverRevision() && !hasBudStatusObservers() && rawDispatch({ type: "hermesStatus", status }))
         .catch(() => {});
       api("/api/worker-issues")
         .then((body) => alive && rawDispatch({ type: "workerIssues", issues: readWorkerIssues(body) }))
@@ -1601,7 +1603,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (now - lastFocusProbe.current < 3000) return;
       lastFocusProbe.current = now;
       void refreshInstances();
-      void refreshHermes();
+      // Active Ask/status views serialize and validate this read themselves.
+      // A second focus request could overwrite their newer snapshot late.
+      if (!hasBudStatusObservers()) void refreshHermes();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

@@ -1,0 +1,12 @@
+await page.locator('main').getByText('More', {exact:true}).first().click(); await page.waitForTimeout(300);
+await page.getByText('Book · import & addresses', {exact:true}).click(); await page.waitForTimeout(1200);
+await page.getByRole('button', { name: 'Add property', exact: true }).click(); await page.waitForTimeout(500);
+await page.getByLabel('Address', {exact:true}).fill('99 Full Disk Pde, Nowhere ACT');
+await page.getByLabel('Tenant', {exact:true}).fill('Dana Placeholder');
+await page.getByLabel('Phone', {exact:true}).fill('0400 000 099');
+await page.getByLabel('Weekly rent (AUD)').fill('400');
+await page.getByRole('button', { name: 'Add to book' }).click(); await page.waitForTimeout(3000);
+await shot('53-low-disk-write');
+const alerts = (await page.locator('[role=alert]').allInnerTexts()).filter(Boolean);
+const body = await page.locator('body').innerText();
+return JSON.stringify({ alerts, status: body.split('\n').slice(0,3).join('/'), count: (body.match(/\d+ properties/)||[''])[0], added: /99 Full Disk Pde, Nowhere ACT\nDana/.test(body) }, null, 1);

@@ -1,3 +1,4 @@
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { ApprovalScope } from "../ApprovalScope";
 import { WorkContextCard } from "../WorkContextCard";
 import { ActionNotice } from "../ActionNotice";
@@ -63,7 +64,8 @@ export function JobWorkspace({
   const [notice, setNotice] = useState("");
   const [pendingRequests, setPendingRequests] = useState<{ shadow: string | null; prepare: string | null }>({ shadow: null, prepare: null });
   const busy = state.jobDraftBusy;
-  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active));
+  const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister });
   const blocked = !state.connected || Boolean(state.desk?.recovery?.active) || loading || Boolean(loadError);
   const dirty = Boolean(plan && fields && (!draft.saved || jobPlanChanged(plan, fields)));
   const unfinished = hasUnfinishedJobDraft(draft);

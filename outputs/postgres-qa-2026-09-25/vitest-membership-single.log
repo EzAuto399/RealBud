@@ -1,0 +1,20 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/company/membership.integration.test.ts (6 tests | 6 skipped) 1289ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/company/membership.integration.test.ts > membership lifecycle on real PostgreSQL
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /Users/yoda/.rbpg/rb-membership-kuNW3a/postgres-fixture-Fvjy7V/data -l /Users/yoda/.rbpg/rb-membership-kuNW3a/postgres-fixture-Fvjy7V/postgres.log -o -h '' -k /Users/yoda/.rbpg/rb-company-pg-Ri4bmn -p 55447 -w start
+pg_ctl: could not start server
+Examine the log output.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 skipped (6)
+   Start at  20:21:19
+   Duration  1.82s (transform 312ms, setup 31ms, import 371ms, tests 1.29s, environment 0ms)
+

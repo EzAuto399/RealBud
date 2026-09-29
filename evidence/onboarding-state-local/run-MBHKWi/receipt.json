@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "checks": [
+    "Site-wide setup gap renders once, can be checked again, and has no generic retry or payment action.",
+    "Signed-in API reads return the specific setup code, not a fabricated zero.",
+    "Desktop and 390px mobile render without horizontal overflow or browser errors."
+  ],
+  "scope": "Local built app, disposable identity; no Modelvia or payment connection."
+}

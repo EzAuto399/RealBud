@@ -1,0 +1,36 @@
+REALBUD
+
+A calm working desk for the morning, with Bud nearby when you need another pair of hands.
+
+Local-first by default. Nothing is sent, paid, or issued without the office.
+Set up your desk
+1 of 2
+Make the desk yours
+
+See the morning clearly, ask Bud for help, and keep every real-world decision with your office.
+
+Your name
+Office email optional
+Stored with your private RealBud settings.
+Continue
+Explore the sample desk
+Restore a private backup
+
+Choose an encrypted backup and review it before restoring.
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.click: Timeout 15000ms exceeded.
+Call log:
+  - waiting for getByRole('button', { name: /^You\b/ }).first()
+
+    at openOffice (/Users/yoda/projects/RealBud/scripts/qa-business-desktop.mjs:43:62)
+    at /Users/yoda/projects/RealBud/scripts/qa-business-desktop.mjs:118:9 {
+  log: [
+    "  - waiting for getByRole('button', { name: /^You\\b/ }).first()"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v24.19.0

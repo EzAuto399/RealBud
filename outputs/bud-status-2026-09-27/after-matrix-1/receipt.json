@@ -1,0 +1,184 @@
+{
+  "at": "2026-09-26T19:13:36.335Z",
+  "layer": "source",
+  "baseline": false,
+  "passed": false,
+  "checks": [
+    "Staff safeguards hold identifies the missing workroom, shows four dependency-ordered facts and provides no false Finish setup action.",
+    "Keyboard Enter opens status; twelve Tab presses stay inside; Escape preserves the Ask draft (focus restoration is recorded separately).",
+    "Safeguards status rendered at 360, 390, 768, 1280 and 1536 CSS px: heading visible, no document/modal overflow or offscreen content.",
+    "Manual refresh disables duplicate presses while pending; failed read clears stale readiness claims; retry restores observed status."
+  ],
+  "findings": [
+    "Escape after first lazy status open did not restore focus to its opener."
+  ],
+  "screenshots": [
+    "ask-safeguards-1280.png",
+    "bud-safeguards-1280.png",
+    "bud-safeguards-360.png",
+    "bud-safeguards-390.png",
+    "bud-safeguards-768.png",
+    "bud-safeguards-1280.png",
+    "bud-safeguards-1536.png",
+    "bud-refresh-pending.png",
+    "bud-refresh-error.png"
+  ],
+  "rendererPageErrors": [],
+  "observations": {
+    "focusAfterEscape": {
+      "tag": "BODY",
+      "name": null,
+      "text": "\n    RealBudApp connectedWorkspaceDeskTasks & propertiesAskWork with BudScheduleJobs & routinesYouOf"
+    },
+    "widths": [
+      {
+        "width": 360,
+        "documentWidth": 360,
+        "viewport": 360,
+        "dialogWidth": 334,
+        "dialogScrollWidth": 334,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 390,
+        "documentWidth": 390,
+        "viewport": 390,
+        "dialogWidth": 364,
+        "dialogScrollWidth": 364,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 768,
+        "documentWidth": 768,
+        "viewport": 768,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 1280,
+        "documentWidth": 1280,
+        "viewport": 1280,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 1536,
+        "documentWidth": 1536,
+        "viewport": 1536,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      }
+    ]
+  },
+  "source": {
+    "revision": "5d162956e13158e7899d4bb344637102b0f799e2",
+    "baselineTransforms": [],
+    "fixtureFields": {
+      "safeguards": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": false
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": false,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": null
+      },
+      "ready": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": true
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": true,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": {
+          "at": 1790449970368,
+          "ok": true,
+          "kind": "ping",
+          "detail": "Fictional private readiness check passed."
+        }
+      }
+    }
+  },
+  "network": {
+    "statusReads": 10,
+    "hermesMutations": [],
+    "externalRequests": []
+  },
+  "cleanup": {
+    "isolatedServiceStopped": true,
+    "temporaryDataRemoved": true
+  },
+  "limits": [
+    "Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.",
+    "The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.",
+    "All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.",
+    "Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed."
+  ],
+  "failure": "locator.waitFor: Timeout 18000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Bud status', exact: true }).getByText('Bud ready', { exact: true }) to be visible\u001b[22m\n\n    at /Users/yoda/projects/RealBud/scripts/qa-bud-status.mjs:133:57"
+}

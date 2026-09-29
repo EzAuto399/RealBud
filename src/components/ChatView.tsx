@@ -1,3 +1,5 @@
+import { useBudStatusSnapshot } from "@/lib/bud-status-monitor";
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useConversationFollow, useWorkspaceScroll } from "@/lib/workspace-view-state";
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { AskPhoneContinueCard } from "./AskPhoneContinueCard";
@@ -1076,7 +1078,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const askBrief = productAsk && state.desk ? morningBrief(state.desk) : null;
   const askMiss = Boolean(askBrief?.headline.startsWith("Recheck missed"));
   const askNeedsYou = askBrief?.needsYou ?? 0;
-  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active));
+  const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
+  const budStatusRead = useBudStatusSnapshot();
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, statusError: Boolean(budStatusRead.error) });
   const askWorkerReady = availability.ready;
   const askWorkroomReady = Boolean(state.hermes?.cli.installed && (state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && state.hermes.pack.installed && state.hermes.pack.approvalsManual && state.hermes.pack.workroomReady);
   const askWaitingForYou = productAsk && pendingApprovals(messages).length > 0;
@@ -1666,7 +1670,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         <div className="mx-auto flex w-full max-w-[900px] shrink-0 justify-end gap-3 px-5 py-0.5">
           <button type="button" className="min-h-8 text-[12px] text-ink-secondary hover:text-ink" onClick={goRoutines}>Schedule work</button>
           <button type="button" className="pm-control min-h-8 text-[12px] text-ink-secondary" aria-haspopup="dialog" aria-expanded={phoneContinueOpen} onClick={() => setPhoneContinueOpen(true)}>Continue on phone</button>
-          {!askWorkerReady ? <button type="button" className="min-h-8 text-[12px] text-agency" onClick={goYouSetup}>Set up Bud</button> : null}
+          {!askWorkerReady ? <button type="button" className="min-h-8 text-[12px] text-agency" onClick={goYouSetup}>Bud status</button> : null}
         </div>
       ) : null}
 

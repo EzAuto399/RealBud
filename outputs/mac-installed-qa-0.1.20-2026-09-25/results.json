@@ -1,0 +1,9 @@
+{"tier":"installed packaged app /Applications/RealBud.app 0.1.20 (f7781a64) on owner's Mac, disposable sandboxes; not customer acceptance",
+ "fixed":{"1-quit":"pass: SIGTERM exit 0.3s, Browser.close <1.5s, cancelled quit (unsaved options) keeps window+watchdog, killed service restarted after 106s",
+  "2-enospc":"pass: add/options/remove/Allow/Deny/Edit rejected with message, not in memory (reload) nor after service restart; retry after freeing space adds exactly once",
+  "3-cause-pages":"pass: no-access, disk-full, ports-taken each show own page",
+  "4-more-menu":"pass: closes on Escape/outside/choose at 1280 and 390",
+  "5-duplicate-sentence":"pass"},
+ "new":{"first-run-stall":"pass: Try again at 20.4s, recovers","second-launch-blank":"pass: reloaded","watchdog-slow-service":"pass: 80s SIGSTOP, same pid, no restart; cold launch adopts it, no duplicate"},
+ "businessDesktop":"pass: ok=true, 9 checks",
+ "observations":["service restart after crash now 51-106s (was ~20s) due to 45s confirm window","restore lands on #you-private-backup not Desk (unchanged)","Ask hint 'Enter to start' while model missing inserts newline (unchanged)"]}

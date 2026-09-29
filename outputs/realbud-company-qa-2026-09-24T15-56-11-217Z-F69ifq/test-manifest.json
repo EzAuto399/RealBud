@@ -1,0 +1,146 @@
+[
+  {
+    "path": "server/company/postgres.integration.test.ts",
+    "sha256": "351093f2c3772b6901bc9842ff4b93e43bf1ba04da95c7b57f26efa6cbea1b46"
+  },
+  {
+    "path": "server/company/member-auth.integration.test.ts",
+    "sha256": "870ea887d68b66c5383d1d0e40370f37ec1782068471ce23672afee12f58843b"
+  },
+  {
+    "path": "server/company/initial-credential.test.ts",
+    "sha256": "8ff53468c0112e428de2b461da8d3977c58d08f972178e53e2e8c28d29c732f0"
+  },
+  {
+    "path": "server/company/initial-enrollment.integration.test.ts",
+    "sha256": "85e9add2e7a69a295366199c0ff7163b7989e8434e947b4fcf2a6dd281af1e7e"
+  },
+  {
+    "path": "server/company/member-credentials.test.ts",
+    "sha256": "c0e10c00f231534e43a628ab7ac47c86825f5a09d47c2b04b4aafe616b1dd620"
+  },
+  {
+    "path": "server/company/workflow-template.test.ts",
+    "sha256": "5c94a26cf52b83081c854c69c24617506c4b200d64da261ad8fc9660f86086b0"
+  },
+  {
+    "path": "server/company/workflow-template.integration.test.ts",
+    "sha256": "83791f1b70515596544c6970c8e2cc1e1ea3312d5b1781e11d5e710fd960f644"
+  },
+  {
+    "path": "server/company/work-items.integration.test.ts",
+    "sha256": "b167969e7f77efef650aad909c346cfe858fb352900221a061f97e7057700049"
+  },
+  {
+    "path": "server/company-work.integration.test.ts",
+    "sha256": "4d94fc7e09ded6404e6d2370ae31bd2698777794172d1778f872f5c308b4c098"
+  },
+  {
+    "path": "src/lib/company-work-response.test.ts",
+    "sha256": "daeca0a59f48ec27e13c2483de653e6ff924d5cfe13890e81a03abbc3f2a0272"
+  },
+  {
+    "path": "src/lib/company-work-api.test.ts",
+    "sha256": "bd3f8ff2e879d5d45b95359b103374d905d2b4c1f2f820ccc2b446161a60d10c"
+  },
+  {
+    "path": "server/company/host-runtime.test.ts",
+    "sha256": "0fc7186e4c01ee92ac4cb4a7484b9e642c78cc21afd596cd50fca9d83220f8b1"
+  },
+  {
+    "path": "server/company/host-transport.test.ts",
+    "sha256": "6ac6950cb8ada2712100705bf0e9820b3d11d45d4328741341503e330c4bd400"
+  },
+  {
+    "path": "server/company/host-certificate.test.ts",
+    "sha256": "2a85db2cc4dbc1942055de5d8f643fd9d0d8172f9d7082272c348b66238e2e2a"
+  },
+  {
+    "path": "server/company-installation.integration.test.ts",
+    "sha256": "f7f3618216a2affce3da86139d8fb0493d47084ba5f0191bc6d0ae84248c1cbf"
+  },
+  {
+    "path": "server/company-departments.integration.test.ts",
+    "sha256": "6576baa50f0ae888d287bd3d96ba40a80b66be2168a06bf70a14b8e2e88738f6"
+  },
+  {
+    "path": "server/company-host.test.ts",
+    "sha256": "a40e399b3a59f65fb591c12c756479ccb1ac2635de0451850e02ca14b71de428"
+  },
+  {
+    "path": "server/service-admin.test.ts",
+    "sha256": "385ee47f271b815a685d4b45b4a44c3043c3f58642f408008f8cd7b73ed2d639"
+  },
+  {
+    "path": "server/service-admin-provision.test.ts",
+    "sha256": "76503b115c1de6f328250a4169dc4a9497e5bf131c44857086fa935a70b40586"
+  },
+  {
+    "path": "server/service-entitlement.test.ts",
+    "sha256": "63620398f4c190542b1e05fde8451e7f588ec2d8afd947db4451bf6a49357eb2"
+  },
+  {
+    "path": "server/service-child-env.test.ts",
+    "sha256": "5ca9278b1a5114d17c32fa9d178e2899428167f6090029e8015c801713c678a3"
+  },
+  {
+    "path": "server/care-unlock.test.ts",
+    "sha256": "b7afacd9a804336871dc8dde8492a3f0d8fde2b7f97fd4075729ab69838586bd"
+  },
+  {
+    "path": "server/managed-service.test.ts",
+    "sha256": "05a951d2ec1d183c7efc065d0a2773e08bb31dd5d7337e86704f2134ef91d0b4"
+  },
+  {
+    "path": "server/connected-apps-broker.test.ts",
+    "sha256": "b553a4eb3e3060c771b8ba4c8a6148af9c3159c6e01db6da48cec9b03e42d690"
+  },
+  {
+    "path": "server/session-auth.test.ts",
+    "sha256": "11adcde0a375c0783184e2c6abb7f66fc4b8a9c47b648c7d44b5041320c3859c"
+  },
+  {
+    "path": "server/drivers/acp/hermes-env.test.ts",
+    "sha256": "ed78aa0eb3c90762853510bde59462e392b6bdb4b81442ac292ae2a74940a08d"
+  },
+  {
+    "path": "server/drivers/acp/acp.test.ts",
+    "sha256": "1daef2bfab29fcca93f730b043735ae118d35692f44cf94725cb4f863cc93e67"
+  },
+  {
+    "path": "server/procs.test.ts",
+    "sha256": "3e885acc2ebcab04e9d8c4938eb916dbcca67a47bfea72911d0b27159f307973"
+  },
+  {
+    "path": "server/hermes-bridge.test.ts",
+    "sha256": "486b22da54922e14586728337c57f1326adb422c852390020f23ddc1fa2f8528"
+  },
+  {
+    "path": "server/hermes-hands.test.ts",
+    "sha256": "af0b9b2fa9c2f8fbda30b159b1268aee26d8ed2a6f1505abae0852a513577136"
+  },
+  {
+    "path": "server/import-inspect.test.ts",
+    "sha256": "1eef845b5cf1abe8d63515c9ff0f9bdadebb0abf10a0eea649f679c6f030ba3f"
+  },
+  {
+    "path": "server/recipe-draft.test.ts",
+    "sha256": "37cf395f6e182b7bbaf05833bbaf4d958578a3022b97cca6667e185a405b2ca1"
+  },
+  {
+    "path": "src/lib/company-api.test.ts",
+    "sha256": "4e7377d66765d42de40387d21c36cd224d30d433e1a70bf6bb4862c2fa1b9b66"
+  },
+  {
+    "path": "src/lib/local-session.test.ts",
+    "sha256": "8461bbba6c95be6a957d7a88cd7b8b0fde3ba4543c69ccb45aea3a2b0c99c5d8"
+  },
+  {
+    "path": "src/lib/service-admin-session.test.ts",
+    "sha256": "5d39555872bf1195bfe6d344a5070b5232865db445dacfda4f5a253fd0736993"
+  },
+  {
+    "path": "src/lib/tts/index.test.ts",
+    "sha256": "430b8dfbf3216703a15bfe09335d74c681b84e2cda3e591061c506ee007c4c3b"
+  }
+]

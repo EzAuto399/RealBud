@@ -1,0 +1,2 @@
+PASS: 108 assertions. Link request create/view/approve/status/decline, desktop cancel (pending to declined, wrong token refused, linked/declined/expired unchanged, approve refused after cancel, approve/cancel race), replay, expiry, id and token collisions, owner-only approval, office isolation, report owes provisioning once, cleanup, global pending bound, concurrent approval, grants (disposable PostgreSQL).
+exit 0

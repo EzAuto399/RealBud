@@ -1,0 +1,772 @@
+{
+  "at": "2026-09-25T10:04:23.430Z",
+  "date": "2026-09-25",
+  "proofTier": "local source + loopback HTTP + fictional in-process provider. NOT hosted Modelvia, NOT real Square/Stripe payments, NOT real invoices, NOT customer acceptance.",
+  "source": {
+    "realbudHead": "5d162956 (working tree, shared checkout)",
+    "modelvia": "origin/main e1637c11ba9f34b4a185ef5e42b81fa3cff93f1e via git archive into scratch"
+  },
+  "postgres": "not run (skipped, not passed)",
+  "suites": {
+    "realbud-managed-gateway (billing,ledger,commercial-terms,square-payment,caps-cli,office-ai-access)": {
+      "tests": 54,
+      "pass": 54,
+      "fail": 0,
+      "skip": 0,
+      "log": "suite-realbud-managed-gateway.log"
+    },
+    "website billing (platform-billing*, invoice-payment, payment-attempt, square-checkout, spend-cap, platform-usage*, office-ai-access, commercial-terms-view)": {
+      "tests": 78,
+      "pass": 77,
+      "fail": 0,
+      "skip": 1,
+      "skipReason": "operator-token cross-check needs gateway source beside website checkout (skipped is not passed)",
+      "log": "suite-website-billing.log"
+    },
+    "modelvia origin/main e1637c1 (billing, billing-attribution, financial-invariants, customer-invoices, customer-payments)": {
+      "tests": 78,
+      "pass": 78,
+      "fail": 0,
+      "skip": 0,
+      "log": "suite-modelvia-billing.log"
+    }
+  },
+  "scenarioChecks": {
+    "module": {
+      "passed": 22,
+      "failed": 0
+    },
+    "http": {
+      "passed": 10,
+      "failed": 2
+    }
+  },
+  "defects": [
+    {
+      "rank": 1,
+      "severity": "medium (defense-in-depth; website currently derives customerId server-side)",
+      "id": "H-cross-office-provision",
+      "where": "managed-gateway/provisioning.ts:378 (readyCustomer/findCustomer never compares the customer billing binding with the portal companyId)",
+      "repro": "POST /v1/portal/installations/provision with portal token for office-a and customerId realbud-office-b -> 200; project rb-inst-a-cross created under realbud-office-b, so office A spend bills office B"
+    },
+    {
+      "rank": 2,
+      "severity": "medium (config-dependent: customer-billed platform client)",
+      "id": "H-new-office-access",
+      "where": "managed-gateway/modelvia-keys.ts:459-460 (setCustomerAccess creates customer without payer/billingCompanyId)",
+      "repro": "POST /v1/operator/offices/ai-access {companyId:office-c, customerId:realbud-office-c, access:{mode:default}} with client billingMode customer -> 502 modelvia_rejected; Modelvia answers 400 invalid_billing_binding"
+    }
+  ],
+  "observations": [
+    "Concurrent double checkout (RealBud care + Modelvia invoice): 1st gets session, 2nd concurrent gets 409 checkout_reconciliation_required; sequential repeat returns same session; 1 provider createCheckout. Safe, but the 2nd click sees an error instead of the same session.",
+    "Idempotent replay over HTTP answers 409 request_already_processed carrying the original receipt (by design); no second charge or provider call.",
+    "Per-installation attribution is on the ledger request (projectId); Modelvia invoice lines group by customer (usedBy), not by installation.",
+    "spendCapLabel rounds a 4_999_999 nano cap to A$0 (only reachable below the A$1 input floor)."
+  ],
+  "results": [
+    {
+      "id": "R-money-cents",
+      "scenario": "nanoAUD -> cents rounding (RealBud money.ts cents)",
+      "expected": "half-up: 4_999_999->0, 5_000_000->1, 14_999_999->1, 15_000_000->2, -5_000_000->-1",
+      "actual": "0,1,1,2,-1,0",
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-money-cents"
+    },
+    {
+      "id": "MV-money-cents",
+      "scenario": "nanoAUD -> cents rounding (Modelvia money.ts cents)",
+      "expected": "identical to RealBud",
+      "actual": "0,0,0,1,1,2,-1,12346",
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-money-cents"
+    },
+    {
+      "id": "R-gst",
+      "scenario": "GST inclusive 1/11 of gross cents (gstCents)",
+      "expected": "1100->100, 12500->1136, 11->1, 5->0, 6->1, -1100->-100; MV identical",
+      "actual": "100,1136,1,0,1,-100,0",
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-gst"
+    },
+    {
+      "id": "R-price",
+      "scenario": "units x rate (price) rounds each unit category up to 1 nano",
+      "expected": "1234*1 + ceil(567*7000001/1000)=3970235; MV identical",
+      "actual": "3970235",
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-price"
+    },
+    {
+      "id": "R-care-invoice",
+      "scenario": "RealBud care invoice: AUD, GST-inclusive, 10% (1/11)",
+      "expected": "A: 12500c GST 1136c; B: 9999c GST 909c; currency AUD, gstInclusive",
+      "actual": {
+        "A": [
+          "RB-000001",
+          "12500",
+          "1136"
+        ],
+        "B": [
+          "RB-000002",
+          "9999",
+          "909"
+        ]
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-care-invoice"
+    },
+    {
+      "id": "R-care-isolation",
+      "scenario": "RealBud care invoices are per office",
+      "expected": "office B cannot read A invoice (404); list shows own only",
+      "actual": {
+        "refused": "invoice_not_found",
+        "status": 404
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-care-isolation"
+    },
+    {
+      "id": "R-checkout-double",
+      "scenario": "RealBud checkout double submit",
+      "expected": "one provider createCheckout, same session twice",
+      "actual": {
+        "concurrent": [
+          "order-f6b53442-b072-4fa1-8353-cec182bbdc1b",
+          "checkout_reconciliation_required"
+        ],
+        "sequentialRepeatSame": true,
+        "createCalls": 1
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-checkout-double"
+    },
+    {
+      "id": "R-webhook-double",
+      "scenario": "RealBud payment webhook replay",
+      "expected": "one payment row; replay duplicate; checkout after paid refused",
+      "actual": {
+        "first": {
+          "duplicate": false
+        },
+        "replay": {
+          "duplicate": true
+        },
+        "newEventSameTxn": {
+          "duplicate": true
+        },
+        "secondTxnSameInvoice": {
+          "error": "duplicate_payment_conflict"
+        },
+        "paymentRows": 1,
+        "checkoutAfterPaid": "invoice_already_paid"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-webhook-double"
+    },
+    {
+      "id": "R-projectCaps",
+      "scenario": "projectCaps: request cap = min(service request cap, customer monthly)",
+      "expected": "monthly A$0.50 -> request 500000000; monthly A$200 -> request A$1 default",
+      "actual": {
+        "a": {
+          "monthlyCapNanoAud": "500000000",
+          "requestCapNanoAud": "500000000",
+          "maxConcurrent": 2
+        },
+        "b": {
+          "monthlyCapNanoAud": "200000000000",
+          "requestCapNanoAud": "1000000000",
+          "maxConcurrent": 2
+        },
+        "labelA": "A$0.50/month, A$0.50/request, 2 at once",
+        "labelBoundary": "A$0/month, A$0/request, 1 at once",
+        "labelBoundary2": "A$0.01/month, A$0.01/request, 1 at once"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#R-projectCaps"
+    },
+    {
+      "id": "W-display-vs-invoice",
+      "scenario": "Website formatAudFromNano vs invoice cents() for same nano",
+      "expected": "display equals invoice rounding at 5_000_000 / 15_000_000 / 25_000_000 / 4_999_999 nano",
+      "actual": [
+        {
+          "nano": 4999999,
+          "display": "$0.00",
+          "invoiceCents": "0"
+        },
+        {
+          "nano": 5000000,
+          "display": "$0.01",
+          "invoiceCents": "1"
+        },
+        {
+          "nano": 15000000,
+          "display": "$0.02",
+          "invoiceCents": "2"
+        },
+        {
+          "nano": 25000000,
+          "display": "$0.03",
+          "invoiceCents": "3"
+        },
+        {
+          "nano": 35000000,
+          "display": "$0.04",
+          "invoiceCents": "4"
+        },
+        {
+          "nano": 1005000000,
+          "display": "$1.01",
+          "invoiceCents": "101"
+        }
+      ],
+      "pass": true,
+      "evidence": "billing/module-checks.json#W-display-vs-invoice"
+    },
+    {
+      "id": "W-cap-input",
+      "scenario": "Website custom cap input A$1..A$10,000 -> nanoAUD",
+      "expected": "1 -> 1e9; 10000 -> 1e13; 0.99, 10000.01, 1.005 refused",
+      "actual": {
+        "1": "1000000000",
+        "10000": "10000000000000",
+        "1.00": "1000000000",
+        "0.99": null,
+        "10000.01": null,
+        "1.005": null,
+        "12.5": "12500000000"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#W-cap-input"
+    },
+    {
+      "id": "W-attempt-double",
+      "scenario": "Website Pay double click (payment-attempt receipt)",
+      "expected": "second record for same invoice throws payment_attempt_held",
+      "actual": "held for A; B independent",
+      "pass": true,
+      "evidence": "billing/module-checks.json#W-attempt-double"
+    },
+    {
+      "id": "MV-usage-amount",
+      "scenario": "Usage charge = units x rate (settled ledger record)",
+      "expected": "input 1234 x 1 nano + ceil(567 x 7000001/1000) = 3970235 nano",
+      "actual": {
+        "requestId": "014263c8-ecae-4547-8242-9f5d46d1ad97",
+        "charged": "3970235",
+        "project": "rb-office-a-inst1",
+        "state": "settled"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-usage-amount"
+    },
+    {
+      "id": "MV-idem-usage",
+      "scenario": "Same idempotency key twice -> one charge",
+      "expected": "second admit returns duplicate:true with same record; request rows unchanged; no second usage_settled",
+      "actual": {
+        "duplicate": true,
+        "requestRows": 1,
+        "usageSettledEvents": 1,
+        "reSettle": "ok:{\"accountScope\":{\"clientId\":\"rb-platform\",\"clientVersion\":1,\"companyId\":\"office-",
+        "differentBodySameKey": "idempotency_conflict"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-idem-usage"
+    },
+    {
+      "id": "MV-attribution",
+      "scenario": "Per-office / per-installation attribution in ledger",
+      "expected": "A requests only in office-a ledger with A projects; B only in B",
+      "actual": {
+        "officeA": [
+          [
+            "rb-office-a-inst1",
+            "3970235"
+          ],
+          [
+            "rb-office-a-inst2",
+            "7001001"
+          ]
+        ],
+        "officeB": [
+          [
+            "rb-office-b-inst1",
+            "2000"
+          ],
+          [
+            "rb-office-b-inst2",
+            "3000"
+          ]
+        ],
+        "crossKeyAdmit": "invalid_key"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-attribution"
+    },
+    {
+      "id": "MV-cap-request",
+      "scenario": "Per-request cap enforced at admission",
+      "expected": "reservation > project requestCap -> 402 project_request_cap_exceeded, nothing reserved",
+      "actual": {
+        "refused": "project_request_cap_exceeded",
+        "status": 402,
+        "atCapAdmitted": true
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-cap-request"
+    },
+    {
+      "id": "MV-cap-monthly-hold",
+      "scenario": "Monthly cap counts reservation holds; customer cap spans both installations",
+      "expected": "hold on inst1 blocks inst2 beyond customer cap (402 customer_monthly_cap_exceeded); release frees it",
+      "actual": {
+        "blocked": "customer_monthly_cap_exceeded",
+        "status": 402,
+        "afterReleaseAdmitted": "reserved",
+        "officeBUnaffected": "settled"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-cap-monthly-hold"
+    },
+    {
+      "id": "MV-disabled-customer",
+      "scenario": "Disabled customer / revoked key stop admission",
+      "expected": "inactive customer -> refused; revoked key -> 401 key_revoked; office B still admits",
+      "actual": {
+        "disabledCustomer": {
+          "refused": "account_inactive",
+          "status": 403
+        },
+        "revokedKey": {
+          "refused": "key_revoked",
+          "status": 401
+        },
+        "siblingStillServes": "settled"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-disabled-customer"
+    },
+    {
+      "id": "MV-invoice-rounding",
+      "scenario": "Invoice nano->cents at close (boundaries)",
+      "expected": "r1 4_999_999 -> 0c; r2 5_000_000 -> 1c GST 0; r3 2x4_999_999 -> 1c via rounding adjustment line; all AUD gstInclusive",
+      "actual": {
+        "r1": {
+          "total": "0",
+          "gst": "0",
+          "kind": "Tax Invoice",
+          "currency": "AUD",
+          "gstInclusive": true,
+          "lines": [
+            [
+              "AI usage — Fictional model",
+              "4999999",
+              "0",
+              "0"
+            ]
+          ]
+        },
+        "r2": {
+          "total": "1",
+          "gst": "0",
+          "kind": "Tax Invoice",
+          "currency": "AUD",
+          "gstInclusive": true,
+          "lines": [
+            [
+              "AI usage — Fictional model",
+              "5000000",
+              "1",
+              "0"
+            ]
+          ]
+        },
+        "r3": {
+          "total": "1",
+          "gst": "0",
+          "kind": "Tax Invoice",
+          "currency": "AUD",
+          "gstInclusive": true,
+          "lines": [
+            [
+              "AI usage — Fictional model",
+              "4999999",
+              "0",
+              "0"
+            ],
+            [
+              "AI usage — Fictional model",
+              "4999999",
+              "0",
+              "0"
+            ],
+            [
+              "Monthly rounding adjustment",
+              "0",
+              "1",
+              "0"
+            ]
+          ]
+        }
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-invoice-rounding"
+    },
+    {
+      "id": "MV-invoice-gst",
+      "scenario": "Invoice GST = round-half-up(total/11) and lines sum to total",
+      "expected": "r4 2 x 1.1e9 nano = 220c -> GST 20c; A/B lines and line GST sum to totals",
+      "actual": {
+        "r4": {
+          "total": "220",
+          "gst": "20",
+          "lines": [
+            [
+              "1100000000",
+              "110",
+              "10"
+            ],
+            [
+              "1100000000",
+              "110",
+              "10"
+            ]
+          ]
+        },
+        "A": {
+          "total": "1",
+          "gst": "0",
+          "lines": 5
+        },
+        "B": {
+          "total": "0",
+          "gst": "0",
+          "lines": 4
+        }
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-invoice-gst"
+    },
+    {
+      "id": "MV-invoice-isolation",
+      "scenario": "Office A invoice holds only A usage; per-installation visible",
+      "expected": "A lines reference only A request ids; B only B; totals = cents(sum of settled charges)",
+      "actual": {
+        "A": {
+          "lines": 5,
+          "total": "1",
+          "usedBy": [
+            "cust-office-a"
+          ]
+        },
+        "B": {
+          "lines": 4,
+          "total": "0"
+        },
+        "crossRead": "invoice_not_found",
+        "reCloseSameInvoice": "AI-LOCAL-000005"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-invoice-isolation"
+    },
+    {
+      "id": "MV-payment-idem",
+      "scenario": "Modelvia invoice checkout + webhook double submit",
+      "expected": "same session twice; replayed webhook duplicate; one payment row",
+      "actual": {
+        "concurrent": [
+          "local-b0e6abf6-63b9-451d-b567-9c19e4eea369",
+          "checkout_reconciliation_required"
+        ],
+        "w1": {
+          "duplicate": false
+        },
+        "w2": {
+          "duplicate": true
+        },
+        "w3": {
+          "duplicate": true
+        },
+        "paymentRows": 1,
+        "checkoutAfterPaid": "invoice_already_paid"
+      },
+      "pass": true,
+      "evidence": "billing/module-checks.json#MV-payment-idem"
+    },
+    {
+      "id": "H-provision",
+      "scenario": "RealBud provisions rb-<installationId> projects under each office customer",
+      "expected": "4 installations -> 4 projects; A under realbud-office-a, B under realbud-office-b; caps copied (monthly=customer, request=min(A$1,monthly))",
+      "actual": {
+        "inst-a1": {
+          "projectId": "rb-inst-a1",
+          "customerId": "realbud-office-a",
+          "monthly": "100000000000",
+          "request": "1000000000",
+          "maxConcurrent": 4,
+          "label": "A$100/month, A$1/request, 4 at once"
+        },
+        "inst-a2": {
+          "projectId": "rb-inst-a2",
+          "customerId": "realbud-office-a",
+          "monthly": "100000000000",
+          "request": "1000000000",
+          "maxConcurrent": 4,
+          "label": "A$100/month, A$1/request, 4 at once"
+        },
+        "inst-b1": {
+          "projectId": "rb-inst-b1",
+          "customerId": "realbud-office-b",
+          "monthly": "100000000000",
+          "request": "1000000000",
+          "maxConcurrent": 4,
+          "label": "A$100/month, A$1/request, 4 at once"
+        },
+        "inst-b2": {
+          "projectId": "rb-inst-b2",
+          "customerId": "realbud-office-b",
+          "monthly": "100000000000",
+          "request": "1000000000",
+          "maxConcurrent": 4,
+          "label": "A$100/month, A$1/request, 4 at once"
+        }
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-provision"
+    },
+    {
+      "id": "H-usage-amount",
+      "scenario": "Chat usage priced units x rate over HTTP, recorded on the installation project",
+      "expected": "units input 1234 (cache miss) / output 50 -> ceil(1234*1500000/1000)+ceil(50*7000001/1000)=1851000+350001=2201001 nano",
+      "actual": {
+        "requestId": "55a50a11-c25a-44a7-b0d4-a097bee74861",
+        "projectId": "rb-inst-a1",
+        "units": {
+          "cache_read_tokens": 0,
+          "input_tokens": 1234,
+          "output_tokens": 50
+        },
+        "chargedNanoAud": "2201001",
+        "priceBasis": "direct"
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-usage-amount"
+    },
+    {
+      "id": "H-idempotency",
+      "scenario": "Same Idempotency-Key twice (and concurrent) -> one charge, one provider call",
+      "expected": "replay answers the original receipt (same request id; 409 request_already_processed by design), no extra provider call; different body same key -> 409 idempotency_conflict",
+      "actual": {
+        "replay": {
+          "status": 409,
+          "code": "request_already_processed",
+          "receiptRequestSame": true,
+          "receiptState": "settled"
+        },
+        "concurrentPair": [
+          200,
+          409,
+          [
+            null,
+            {
+              "message": "request_already_processed",
+              "type": "invalid_request_error",
+              "code": "request_already_processed",
+              "param": null
+            }
+          ]
+        ],
+        "differentBody": [
+          409,
+          "idempotency_conflict"
+        ],
+        "providerCallsAdded": 1
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-idempotency"
+    },
+    {
+      "id": "H-attribution",
+      "scenario": "Per-office and per-installation attribution (Modelvia analytics + website projection)",
+      "expected": "A usage only in realbud-office-a; B only in B; B key cannot read A request; website usage per office matches",
+      "actual": {
+        "requestsByProject": {
+          "rb-inst-b1": 1,
+          "rb-inst-a2": 1,
+          "rb-inst-a1": 2
+        },
+        "crossKeyRead": 404,
+        "websiteBillingStatus": [
+          200,
+          200
+        ],
+        "websiteUsage": {
+          "a": {
+            "requests": 3,
+            "net": "6603003"
+          },
+          "b": {
+            "requests": 1,
+            "net": "2201001"
+          }
+        }
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-attribution"
+    },
+    {
+      "id": "H-request-cap",
+      "scenario": "Per-request cap enforced over HTTP (402, no provider call)",
+      "expected": "project requestCap below reservation -> 402; provider calls +0; ledger rows +0",
+      "actual": {
+        "status": 402,
+        "error": "project_request_cap_exceeded",
+        "providerCallsAdded": 0,
+        "expectedReservationNano": "197056001"
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-request-cap"
+    },
+    {
+      "id": "H-monthly-hold",
+      "scenario": "Monthly cap counts an in-flight reservation (hold)",
+      "expected": "with project cap = spent + 1.5 x reservation: 2nd concurrent request -> 402 while 1st in flight; after settle a new one is admitted",
+      "actual": {
+        "first": 200,
+        "secondWhileHeld": [
+          402,
+          "project_monthly_cap_exceeded"
+        ],
+        "afterSettle": 200,
+        "committedBefore": "2201001"
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-monthly-hold"
+    },
+    {
+      "id": "H-cap-change",
+      "scenario": "Mid-month cap change via RealBud office AI access -> applyCustomerCaps",
+      "expected": "custom A$5 for office-a: customer + both A projects -> 5e9 monthly, request min(A$1, A$5); B projects unchanged",
+      "actual": {
+        "applied": [
+          {
+            "installationId": "inst-a1",
+            "state": "applied"
+          },
+          {
+            "installationId": "inst-a2",
+            "state": "applied"
+          }
+        ],
+        "customer": {
+          "active": true,
+          "monthlyCapNanoAud": "5000000000",
+          "created": false
+        },
+        "a1": "5000000000",
+        "a2": "5000000000",
+        "b1Unchanged": "100000000000",
+        "lowered": [
+          200,
+          "1000000000",
+          "1000000000"
+        ],
+        "restored": 200
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-cap-change"
+    },
+    {
+      "id": "H-revoke",
+      "scenario": "RealBud installation revoke stops spend",
+      "expected": "revoked inst-a1 key -> 401 at Modelvia; provider +0; ledger rows +0; sibling inst-a2 still serves",
+      "actual": {
+        "revoke": true,
+        "afterRevoke": [
+          401,
+          "key_revoked"
+        ],
+        "ledgerRowsAdded": 0,
+        "sibling": 200,
+        "reprovisionRevoked": [
+          409,
+          "installation_revoked"
+        ]
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-revoke"
+    },
+    {
+      "id": "H-cross-office-provision",
+      "scenario": "Office A portal token provisioning into office B customer",
+      "expected": "refused (customer not bound to company) — else A installation spend bills to B",
+      "actual": "FAIL: ACCEPTED: {\"status\":200,\"projectCustomer\":\"realbud-office-b\",\"billingAccount\":\"office-b (customer realbud-office-b)\"}",
+      "pass": false,
+      "evidence": "billing/http-checks.json#H-cross-office-provision"
+    },
+    {
+      "id": "H-disable",
+      "scenario": "Office AI access Off (disabled customer) stops spend for all its installations",
+      "expected": "office-b disabled -> B keys refused (403) with no provider call; office A unaffected",
+      "actual": {
+        "customer": {
+          "active": false,
+          "monthlyCapNanoAud": "100000000000",
+          "created": false
+        },
+        "b1": [
+          403,
+          "account_inactive"
+        ],
+        "b2": [
+          403,
+          "account_inactive"
+        ],
+        "officeA": 200
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-disable"
+    },
+    {
+      "id": "H-new-office-access",
+      "scenario": "Office AI access creates the Modelvia customer for a new office (Default)",
+      "expected": "created customer usable for a new office under the platform client",
+      "actual": "FAIL: status 502 {\"error\":\"modelvia_rejected\"}; direct Modelvia write without billingCompanyId -> 400 {\"error\":\"invalid_billing_binding\"} |  | 502 !== 200 | ",
+      "pass": false,
+      "evidence": "billing/http-checks.json#H-new-office-access"
+    },
+    {
+      "id": "H-invoice-close",
+      "scenario": "Monthly invoices from the HTTP-recorded usage (Modelvia BillingService on the same sqlite ledger, clock next month)",
+      "expected": "office-a invoice = cents(sum A charges), GST=(total+5)/11, only A requests; office-b same; AUD gst-inclusive",
+      "actual": {
+        "office-a": {
+          "invoice": "AI-LOCAL-000001",
+          "settledRequests": 8,
+          "projects": [
+            "rb-inst-a1",
+            "rb-inst-a2"
+          ],
+          "totalCents": "2",
+          "gstCents": "0",
+          "usageLines": 8
+        },
+        "office-b": {
+          "invoice": "AI-LOCAL-000002",
+          "settledRequests": 1,
+          "projects": [
+            "rb-inst-b1"
+          ],
+          "totalCents": "0",
+          "gstCents": "0",
+          "usageLines": 1
+        }
+      },
+      "pass": true,
+      "evidence": "billing/http-checks.json#H-invoice-close"
+    }
+  ]
+}
