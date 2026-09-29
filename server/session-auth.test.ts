@@ -41,7 +41,6 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/hermes/install"],
     ["POST", "/api/hermes/repair"],
     ["POST", "/api/hermes/model"],
-    ["POST", "/api/hermes/oauth/start"],
     ["GET", "/api/browser"],
     ["POST", "/api/browser/connect"],
     ["POST", "/api/browser/select"],

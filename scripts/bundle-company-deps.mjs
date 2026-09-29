@@ -70,7 +70,7 @@ if (missingRuntimeInputs.length) {
 }
 
 
-const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMap, isSeq, YAMLMap' };
+const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMap, isSeq, YAMLMap, Document' };
 // These helpers are resolved dynamically rather than by JS imports. Verify the
 // exact shipped bytes as part of every server build; no checkout fallback.
 const helpers = {};

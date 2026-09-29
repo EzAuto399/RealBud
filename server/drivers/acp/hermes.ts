@@ -12,11 +12,15 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
 import { stripServiceSecrets } from "../../service-child-env.ts";
 import { hermesHome } from "../../hermes-paths.ts";
-import { applyWorkerModelAccessEnv, selectedWindowsRuntimeHome, windowsHermesRuntimeEnv, workerModelAccessSnapshot } from "../../hermes-runtime-env.ts";
+import { applyManagedModelLaunchEnv, selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
 
 // Keep ACP's explicit per-session tools separate from configured discovery.
 // The startup skip flag alone does not cover discovery restarted by an agent.
 export const HERMES_CONFIGURED_MCP_FILTER = `realbud_explicit_${randomUUID().replaceAll("-", "")}`;
+
+/** Model-provider credentials and endpoints, including the managed grant's
+ * own name. Tool keys (search, browser) are left to their own rules. */
+export const AMBIENT_MODEL_ENV = /^(?:REALBUD_MODEL_API_KEY|OPENAI_(?:API_KEY|BASE_URL|API_BASE)|(?:OPENROUTER|KIMI|MOONSHOT|MODELVIA|DEEPSEEK|ANTHROPIC|XAI|GROQ|MISTRAL|GEMINI|GOOGLE|OLLAMA|NOUS|HERMES)_API_KEY|ANTHROPIC_(?:AUTH_TOKEN|BASE_URL))$/i;
 
 const HERMES_BROWSER_ENV = /^(?:AGENT_BROWSER_\w*|BROWSER_CDP_URL|CAMOFOX_URL|PLAYWRIGHT_BROWSERS_PATH)$/i;
 
@@ -33,12 +37,11 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
     }
   }
   stripServiceSecrets(env);
-  // The property profile owns its model. Ambient provider keys can silently
-  // reroute a turn, so they never reach the worker process.
-  delete env.OPENAI_API_KEY;
-  delete env.OPENROUTER_API_KEY;
-  delete env.KIMI_API_KEY;
-  delete env.MOONSHOT_API_KEY;
+  // The property profile owns its model and only RealBud's grant may carry
+  // its key. Ambient provider keys can silently reroute a turn or stand in for
+  // the grant (upstream's host-derived fallback reads `<VENDOR>_API_KEY`), so
+  // none reaches the worker process; the grant is placed afterwards.
+  for (const key of Object.keys(env)) if (AMBIENT_MODEL_ENV.test(key)) delete env[key];
   delete env.COMPOSIO_KEY;
   delete env.REALBUD_CUA_CONTROL_TOKEN;
   delete env.REALBUD_CUA_CONTROL_URL;
@@ -88,7 +91,7 @@ const support: AcpSupport = {
   // process warm; after a real restart, replay RealBud's durable transcript
   // instead of spending up to two minutes loading an impossible cursor.
   resumeAcrossProcesses: false,
-  loginNote: "Bud is not ready. Open You → Bud to install the agent or connect your model.",
+  loginNote: "Bud is not ready. Open You → Bud to finish setup, or pair this computer from realbud.app.",
 
   install: {
     command: {
@@ -117,10 +120,11 @@ const support: AcpSupport = {
   // A leftover provider key can reroute Hermes; globally configured MCP
   // servers would bypass RealBud's explicit connection boundary.
   // Strip first, then place only the grant RealBud resolved for this
-  // installation (empty when no vendor provisioning exists).
+  // installation, and only while the profile still names the granted
+  // endpoint. A custom (development) CLI never refuses here; it simply gets no key.
   transformEnv: (env) => {
     hardenHermesChildEnv(env);
-    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+    applyManagedModelLaunchEnv(env, env.HERMES_HOME);
   },
 
   pickAuthMethod: () => null,
@@ -132,6 +136,18 @@ const support: AcpSupport = {
 };
 
 const base = createAcpDriver(support);
+/** The RealBud-selected worker: a launch with no usable managed access is
+ * refused with office copy before any process starts, so an unpaired or
+ * tampered profile can never reach a model — including through an old
+ * profile's own `.env` key. */
+const managed = createAcpDriver({
+  ...support,
+  transformEnv: (env) => {
+    hardenHermesChildEnv(env);
+    const refusal = applyManagedModelLaunchEnv(env, env.HERMES_HOME);
+    if (refusal) throw new Error(refusal);
+  },
+});
 
 export const HermesAgentDriver = {
   ...base,
@@ -139,7 +155,7 @@ export const HermesAgentDriver = {
     if (input.config.cli && input.config.cli !== "hermes" && input.config.cli !== hermesCli()) return base.create(input);
     // A first install can finish after the registry was created. Existing
     // workers keep their process selection throughout a staged update.
-    return base.create({ ...input, config: { ...input.config, get cli() { return hermesCli(); } } });
+    return managed.create({ ...input, config: { ...input.config, get cli() { return hermesCli(); } } });
   },
   decodeConfig: (raw: unknown) => {
     const decoded = base.decodeConfig(raw);

@@ -1,18 +1,20 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIME, relayIdempotencyKey, relayRefusalDetail, type DepartmentWorkerOptions } from './department-worker.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
 import { resetRuntimeSelectionForTests } from './hermes-runtime-selection.ts';
+import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_UNPAIRED, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
+import { setWorkerModelGrant } from './worker-model-access.ts';
 
 const dirs: string[] = [], servers: Server[] = [];
 const askDepartmentWorker = (prompt: string, opts: DepartmentWorkerOptions = {}) => realAskDepartmentWorker(prompt, {
   beforeLaunch: async () => {}, beforeRequest: async () => {}, ...opts,
 });
 afterEach(async () => {
-  vi.unstubAllEnvs(); resetRuntimeSelectionForTests();
+  vi.unstubAllEnvs(); resetRuntimeSelectionForTests(); setWorkerModelAccessSnapshot({}); setWorkerModelGrant({ state: 'none' });
   for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); }
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -79,11 +81,13 @@ describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/pyth
     writeFileSync(join(profile, 'memories/MEMORY.md'), 'PROFILE_MEMORY_CANARY'); writeFileSync(join(profile, 'memories/USER.md'), 'PROFILE_USER_CANARY');
     mkdirSync(join(profile, 'skills/private'), { recursive: true }); writeFileSync(join(profile, 'skills/private/SKILL.md'), 'PRIVATE_SKILL_CANARY');
     writeFileSync(join(profile, 'prefill.json'), JSON.stringify([{ role: 'user', content: 'PREFILL_CANARY' }]));
-    writeFileSync(join(profile, '.env'), 'OPENAI_API_KEY=fictional-selected-profile-key\nHERMES_EPHEMERAL_SYSTEM_PROMPT=PROFILE_ENV_CANARY\n');
-    writeFileSync(join(profile, 'config.yaml'), `model:\n  default: fictional-case-model\n  provider: custom\n  base_url: http://127.0.0.1:${address.port}/v1\napprovals:\n  mode: manual\nagent:\n  system_prompt: PRIVATE_CONFIG_CANARY\nprefill_messages_file: ${JSON.stringify(join(profile, 'prefill.json'))}\nskills:\n  auto_load: [private]\n`);
+    writeFileSync(join(profile, '.env'), 'HERMES_EPHEMERAL_SYSTEM_PROMPT=PROFILE_ENV_CANARY\n');
+    writeFileSync(join(profile, 'config.yaml'), `model:\n  default: deepseek-v4.1-flash\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: http://127.0.0.1:${address.port}/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\napprovals:\n  mode: manual\nagent:\n  system_prompt: PRIVATE_CONFIG_CANARY\n  reasoning_effort: high\nprefill_messages_file: ${JSON.stringify(join(profile, 'prefill.json'))}\nskills:\n  auto_load: [private]\n`);
+    setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: 'fictional-selected-profile-key' });
+    setWorkerModelGrant({ state: 'active', baseUrl: `http://127.0.0.1:${address.port}/v1/`, keyId: 'fictional-key-id', spendCapLabel: 'Fictional cap' });
     // If the base profile is accidentally launched, there is no usable route.
     if (currentWorkerProfile().profile !== 'property') { mkdirSync(join(root, 'profiles/property'), { recursive: true }); writeFileSync(join(root, 'profiles/property/config.yaml'), 'model:\n  provider: invalid-base-profile\n'); }
-    vi.stubEnv('HERMES_EPHEMERAL_SYSTEM_PROMPT', 'AMBIENT_PROMPT_CANARY'); vi.stubEnv('HERMES_PREFILL_MESSAGES_FILE', join(profile, 'prefill.json')); vi.stubEnv('OPENAI_API_KEY', 'wrong-ambient-key');
+    vi.stubEnv('HERMES_EPHEMERAL_SYSTEM_PROMPT', 'AMBIENT_PROMPT_CANARY'); vi.stubEnv('HERMES_PREFILL_MESSAGES_FILE', join(profile, 'prefill.json')); vi.stubEnv('OPENAI_API_KEY', 'wrong-ambient-key'); vi.stubEnv('REALBUD_MODEL_API_KEY', 'wrong-ambient-key');
     return { root, captures, profile };
   }
 
@@ -93,7 +97,8 @@ describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/pyth
     const result = await askDepartmentWorker('REVIEWED_INSTRUCTIONS: summarize SELECTED_CASE_42 only.', { root, beforeLaunch, beforeRequest, maxTurns: 2 });
     expect(result).toEqual({ ok: true, stdout: 'Prepared fictional case.' });
     expect(beforeLaunch).toHaveBeenCalledOnce(); expect(beforeRequest).toHaveBeenCalledOnce(); expect(captures).toHaveLength(1);
-    expect(captures[0]).toMatchObject({ path: '/v1/chat/completions', authorization: 'Bearer fictional-selected-profile-key', body: { model: 'fictional-case-model' } });
+    expect(captures[0]).toMatchObject({ path: '/v1/chat/completions', authorization: 'Bearer fictional-selected-profile-key', body: { model: 'deepseek-v4.1-flash', reasoning_effort: 'high' } });
+    for (const field of ['tool_choice', 'parallel_tool_calls', 'temperature']) expect(captures[0].body).not.toHaveProperty(field);
     const body = JSON.stringify(captures[0].body); expect(body).toContain('SELECTED_CASE_42'); expect(body).not.toContain('CANARY');
     expect(captures[0].body.tools.map((tool: any) => tool.function.name)).toEqual(['todo_list']);
   }), 120_000);
@@ -123,6 +128,28 @@ describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/pyth
     const { root, captures, profile } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
     writeFileSync(join(profile, 'config.yaml'), 'model:\n  default: ignored-model\n  provider: copilot\napprovals:\n  mode: manual\n');
     expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false }); expect(captures).toHaveLength(0);
+  }, 120_000);
+
+  it('holds Flash with extra-high reasoning, a tampered endpoint, a missing grant or an unmanaged provider before any inference', async () => {
+    const { root, captures, profile } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    const config = join(profile, 'config.yaml'), managed = readFileSync(config, 'utf8');
+    writeFileSync(config, managed.replace('reasoning_effort: high', 'reasoning_effort: xhigh'));
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
+    writeFileSync(config, managed.replace('provider: custom:realbud', 'provider: custom'));
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
+    // The worker can write its own profile: a changed endpoint is refused before the relay starts.
+    writeFileSync(config, managed.replace(/base_url: http:\/\/127\.0\.0\.1:\d+\/v1/, 'base_url: https://attacker.invalid/v1'));
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_MISMATCH });
+    writeFileSync(config, managed);
+    // A dotenv key would outrank the launch-env grant: it holds the launch too.
+    const dotenv = join(profile, '.env'), kept = readFileSync(dotenv, 'utf8');
+    writeFileSync(dotenv, `${kept}REALBUD_MODEL_API_KEY=wrong-dotenv-key\n`);
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_MISMATCH });
+    writeFileSync(dotenv, kept); setWorkerModelAccessSnapshot({});
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
+    setWorkerModelGrant({ state: 'none' });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_UNPAIRED });
+    expect(captures).toHaveLength(0);
   }, 120_000);
 
   it('requires explicit caller authority checks on an otherwise admitted runtime', async () => {

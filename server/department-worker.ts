@@ -18,6 +18,8 @@ import { spawnCli, killCliTree } from './procs.ts';
 import { augmentedPath } from './env-path.ts';
 import { modelServiceFailure } from './model-service-failure.ts';
 import { modelviaRefusal } from '../shared/modelvia-receipt.ts';
+import { applyManagedModelLaunchEnv, managedModelLaunchRefusal, normalizedGatewayUrl } from './hermes-runtime-env.ts';
+import { workerModelGrant } from './worker-model-access.ts';
 
 export const DEPARTMENT_WORKER_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
 // Runtime changes require a new isolation capture, rather than admitting a
@@ -85,6 +87,11 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     const profile = currentWorkerProfile().profile, profileDirectory = propertyProfileDir(home);
     if (!selection || runtimeCommit(selection) !== DEPARTMENT_WORKER_RUNTIME || !packInstalled(home) || !approvalsAreManual(home)) return { ok: false, detail: unavailable };
     if (typeof opts.beforeLaunch !== 'function' || typeof opts.beforeRequest !== 'function') return { ok: false, detail: unavailable };
+    // No usable managed access, or a profile that no longer names the granted
+    // endpoint: refuse with office copy before any process or relay starts.
+    const accessRefusal = managedModelLaunchRefusal(home); if (accessRefusal) return { ok: false, detail: accessRefusal };
+    const grant = workerModelGrant(); if (grant.state !== 'active') return { ok: false, detail: unavailable };
+    const grantedBaseUrl = normalizedGatewayUrl(grant.baseUrl);
     const runtimeHome = releaseHome(home, selection), cli = selectedHermesCli(home);
     if (resolve(cli) !== resolve(runtimeCli(runtimeHome))) return { ok: false, detail: unavailable };
     const runtimeDirectory = join(runtimeHome, 'hermes-agent');
@@ -114,11 +121,15 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
           if (typeof value.base_url !== 'string' || typeof value.model !== 'string' || !value.model || value.model.length > 200 || typeof value.api_key !== 'string' || !value.api_key || value.api_key.length > 16384 || value.api_mode !== 'chat_completions') throw new Error();
           const url = new URL(value.base_url);
           if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))) throw new Error();
-          route = { base_url: value.base_url.replace(/\/$/, ''), api_key: value.api_key, model: value.model };
+          // The key may only go to the endpoint the vendor granted, whatever the profile says.
+          if (normalizedGatewayUrl(value.base_url) !== grantedBaseUrl) throw new Error();
+          route = { base_url: normalizedGatewayUrl(value.base_url), api_key: value.api_key, model: value.model };
           response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end('{}'); return;
         }
         if (!route || request.url !== '/chat/completions') throw new Error();
         const inference = JSON.parse(body.toString('utf8'));
+        // Modelvia's Sonnet route refuses these; the managed runtime never sends them.
+        if (inference.tool_choice !== undefined || inference.parallel_tool_calls !== undefined) throw new Error();
         if (inference.model !== route.model || inference.tools !== undefined && (!Array.isArray(inference.tools) || inference.tools.some((tool: { function?: { name?: string } }) => tool.function?.name !== 'todo_list'))) throw new Error();
         await opts.beforeRequest?.();
         if (opts.signal?.aborted || forwarding.signal.aborted || managedServiceFailure('reasoning')) throw new Error();
@@ -146,6 +157,10 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     const lastFailure = managedServiceFailure('reasoning'); if (lastFailure) return { ok: false, detail: lastFailure };
     const env: NodeJS.ProcessEnv = { PATH: augmentedPath(), HERMES_HOME: profileDirectory, HERMES_SAFE_MODE: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHON_DOTENV_DISABLED: '1' };
     for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'LANG', 'LC_ALL']) if (process.env[key]) env[key] = process.env[key];
+    // The resolver reads only the granted key, under the name the profile's
+    // managed provider names. It crosses to the relay over the authenticated
+    // loopback pipe; the isolated agent itself only ever holds the relay token.
+    const launchRefusal = applyManagedModelLaunchEnv(env, home); if (launchRefusal) return { ok: false, detail: launchRefusal };
     // Provider OAuth/CLI discovery must not reach the OS user's home either.
     Object.assign(env, { HOME: scratch, USERPROFILE: scratch, TMPDIR: scratch, TMP: scratch, TEMP: scratch });
     return await new Promise<Result>(accept => {

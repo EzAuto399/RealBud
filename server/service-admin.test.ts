@@ -180,9 +180,7 @@ describe("administrator sessions", () => {
 
 describe("service mutation route contract", () => {
   it.each([
-    ["POST", "/api/hermes/model", { providerId: "openai", apiKey: "replacement", baseUrl: "https://example.test" }],
-    ["POST", "/api/hermes/oauth/start", { providerId: "openai-codex" }],
-    ["POST", "/api/hermes/oauth/cancel", {}],
+    ["POST", "/api/hermes/model", { choice: "sonnet-xhigh" }],
     ["POST", "/api/hermes/update/restore", {}],
     ["POST", "/api/hermes/uninstall", {}],
     ["POST", "/api/hermes/repair", {}],

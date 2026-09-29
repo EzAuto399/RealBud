@@ -25,11 +25,15 @@ export function createDepartmentWorkerFixture({ root, runtimeDirectory, baseUrl,
   privateModes(profileDirectory);
   const configPath = join(profileDirectory, 'config.yaml');
   const config = parse(readFileSync(configPath, 'utf8'));
-  config.model = { default: 'fictional-case-model', provider: 'custom', base_url: baseUrl };
+  // The managed-only profile shape (server/hermes-pack.ts managedModelConfig).
+  // The key is NOT written here: the worker reads it only from the launch env
+  // (REALBUD_MODEL_API_KEY), so the host must hold a grant for this key.
+  config.model = { default: 'deepseek-v4.1-flash', provider: 'custom:realbud' };
+  config.providers = { realbud: { base_url: baseUrl, key_env: 'REALBUD_MODEL_API_KEY', api_mode: 'chat_completions' } };
+  config.agent = { ...(config.agent ?? {}), reasoning_effort: 'high' };
   config.approvals = { mode: 'manual' };
   writeFileSync(configPath, stringify(config), { mode: 0o600 });
-  writeFileSync(join(profileDirectory, '.env'), `OPENAI_API_KEY=${departmentWorkerFixtureKey}\n`, { mode: 0o600 });
-  return { root, runtimeDirectory: runtime, profileDirectory, profile, model: 'fictional-case-model' };
+  return { root, runtimeDirectory: runtime, profileDirectory, profile, model: 'deepseek-v4.1-flash' };
 }
 
 /** A minimal real OpenAI streaming response, including tool-call turns. */

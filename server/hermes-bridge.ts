@@ -1,36 +1,26 @@
-// Zero-terminal worker bridge: RealBud takes the PM's input and delivers it
-// to the pinned Hermes worker programmatically. The user never sees a
-// terminal and never runs the hermes CLI.
-//
-// Model attach recipe (proven against the pinned worker's own source):
-//   - API keys live in the profile's `.env` as PROVIDER_API_KEY=…
-//     (hermes resolves key-provider secrets from that dotenv first).
-//   - The default model lives in the profile `config.yaml` model block:
-//       model:
-//         default: <model-id>
-//         provider: <provider-id>
-//         base_url: ''
+// Zero-terminal worker bridge: RealBud installs the pinned Hermes worker and
+// writes its private profile programmatically. The user never sees a terminal
+// and never runs the hermes CLI. Model access is managed-only: the paired
+// grant supplies provider, endpoint and key; the office picks one of three
+// models (`shared/managed-model-choices.ts`).
 // Install runs the pinned installer as a spawned child with streamed
 // output — same command the terminal used to run, no terminal.
 import { serviceSafeChildEnv } from "./service-child-env.ts";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { WORKER_PROVIDERS, workerProvider, type WorkerProvider } from "../shared/worker-providers.ts";
-import { readProfileFile, verifyProfileDirectory, writeProfileFile } from "./hermes-profile-storage.ts";
+import { normalizeManagedModelChoiceRequest, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
+import { verifyProfileDirectory } from "./hermes-profile-storage.ts";
 import { augmentedPath, resetPathCache } from "./env-path.ts";
 import { HERMES_PIN, hermesCli, hermesMatchesPin } from "./hermes-pin.ts";
-import { applyManagedModelProfile, hermesHome, propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
-import { workerModelGrant } from "./worker-model-access.ts";
+import { applyManagedModelProfile, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir } from "./hermes-pack.ts";
+import { recordManagedModelReceipt, workerModelGrant } from "./worker-model-access.ts";
+import { normalizedGatewayUrl } from "./hermes-runtime-env.ts";
 import { clearHermesVersionCache, probeHermesVersion } from "./hermes-status.ts";
 import { BootstrapError, finishWorkerBootstrap, runWorkerBootstrap } from "./worker-bootstrap.ts";
-import { authHasProvider } from "./hermes-oauth.ts";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
 import { parseHermesVersion } from "./hermes-pin.ts";
-
-export type ProviderOption = WorkerProvider;
-export const PROVIDER_OPTIONS = WORKER_PROVIDERS;
 
 // ── install job (singleton: one worker install at a time) ────────────────
 
@@ -194,74 +184,26 @@ export function startInstall(command: string, opts?: { timeoutMs?: number; onSuc
   return installStatus();
 }
 
-// ── model attach ─────────────────────────────────────────────────────────
-
-export function providerOption(providerId: string): ProviderOption | null {
-  return workerProvider(providerId);
-}
-
-function upsertEnvLine(envPath: string, key: string, value: string): void {
-  const before = readProfileFile(envPath);
-  let body = before?.toString("utf8") ?? "";
-  const lines = body.length ? body.replace(/\s+$/, "").split("\n") : [];
-  const pattern = new RegExp(`^${key}=`);
-  const idx = lines.findIndex((line) => pattern.test(line));
-  const next = `${key}=${value}`;
-  if (idx >= 0) lines[idx] = next;
-  else lines.push(next);
-  body = lines.join("\n") + "\n";
-  writeProfileFile(envPath, body, true, before);
-}
-
-function validatedModelId(value: unknown): string {
-  const model = String(value ?? "").trim();
-  if (!model) throw Object.assign(new Error("model id is required"), { status: 400 });
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model)) {
-    throw Object.assign(new Error("model id contains unsupported characters"), { status: 400 });
-  }
-  return model;
-}
-
-function validatedApiKey(value: unknown): string {
-  const key = String(value ?? "").trim();
-  if (key.length > 4_096 || /[\r\n\0]/.test(key)) {
-    throw Object.assign(new Error("api key format is not supported"), { status: 400 });
-  }
-  return key;
-}
-
-function validatedBaseUrl(value: unknown): string {
-  const baseUrl = String(value ?? "").trim();
-  if (!baseUrl) return "";
-  if (baseUrl.length > 2_048) throw Object.assign(new Error("base URL is too long"), { status: 400 });
-  let parsed: URL;
-  try {
-    parsed = new URL(baseUrl);
-  } catch {
-    throw Object.assign(new Error("base URL must be a complete http or https URL"), { status: 400 });
-  }
-  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
-    throw Object.assign(new Error("base URL must be an http or https URL without embedded credentials"), { status: 400 });
-  }
-  return baseUrl;
-}
-
-export interface AttachModelInput {
-  providerId: string;
-  apiKey: string;
-  model: string;
-  baseUrl?: string;
-}
+// ── managed model choice ─────────────────────────────────────────────────
+//
+// RealBud is managed-only (owner decision 29 Sep 2026). The provider, endpoint
+// and credential all come from this computer's paired grant; the office picks
+// one of three models and nothing else. There is no provider key, sign-in or
+// free-text model path.
 
 export interface ModelStatus {
   provider: string | null;
   model: string | null;
+  /** The saved managed choice, or null while the profile holds none. */
+  choice: ManagedModelChoiceId | null;
+  /** True only while a managed grant is active: the key reaches the worker
+   * from the grant, never from this computer's storage. */
   keyPresent: boolean;
-  /** masked credential hint, e.g. "sk-a…9f2" — never the key itself */
+  /** Office-facing line — never the key itself. */
   keyHint: string | null;
   /** This installation's model access comes from the RealBud service grant, so
    * no provider key is collected or stored on this computer. */
-  managed?: boolean;
+  managed: boolean;
   /** The grant was withdrawn. Records are kept; the worker cannot reason. */
   managedWithdrawn?: boolean;
 }
@@ -270,280 +212,58 @@ export interface ModelStatus {
  * only in Advanced diagnostics, never in this line. */
 export const MANAGED_MODEL_LABEL = "RealBud service (Modelvia)";
 
-export interface WorkerModelOption {
-  id: string;
-  name: string;
-  releaseDate: string | null;
-  recommended: boolean;
-}
-
-/** Model ids for a provider, from the worker's own cache (same data the
- * interactive picker shows). Empty when the cache has nothing — the UI keeps
- * free-text entry as the fallback. */
-const CACHE_ALIASES: Record<string, string> = { "openai-api": "openai" };
-
-type CachedWorkerModel = {
-  id?: unknown;
-  name?: unknown;
-  release_date?: unknown;
-  last_updated?: unknown;
-  tool_call?: unknown;
-  modalities?: { output?: unknown };
-};
-
-function providerCacheKeys(providerId: string): string[] {
-  const canonical = providerOption(providerId)?.id ?? providerId;
-  return [providerId, canonical, CACHE_ALIASES[canonical]].filter(
-    (id, index, all): id is string => Boolean(id) && all.indexOf(id) === index,
-  );
-}
-
-/** Hermes live `/v1/models` cache written by the worker after login/refresh. */
-function liveProviderModelIds(providerId: string, root?: string): string[] {
-  const keys = providerCacheKeys(providerId);
-  const paths = [
-    join(propertyProfileDir(root), "provider_models_cache.json"),
-    join(hermesHome(root), "provider_models_cache.json"),
-  ];
-  for (const path of paths) {
-    try {
-      const cache = JSON.parse(readFileSync(path, "utf8")) as Record<
-        string,
-        { models?: unknown } | undefined
-      >;
-      for (const key of keys) {
-        const models = cache[key]?.models;
-        if (!Array.isArray(models) || models.length === 0) continue;
-        return models
-          .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
-          .map((id) => id.trim());
-      }
-    } catch {
-      /* try the next cache path */
-    }
-  }
-  return [];
-}
-
-function cachedModels(providerId: string, root?: string): Record<string, CachedWorkerModel> {
-  const keys = providerCacheKeys(providerId);
-  const paths = [join(hermesHome(root), "models_dev_cache.json"), join(propertyProfileDir(root), "models_dev_cache.json")];
-  for (const path of paths) {
-    try {
-      const cache = JSON.parse(readFileSync(path, "utf8")) as Record<string, { models?: Record<string, CachedWorkerModel> } | undefined>;
-      for (const key of keys) {
-        const entry = cache[key]?.models;
-        if (entry && typeof entry === "object") return entry;
-      }
-    } catch {
-      /* try the next cache path */
-    }
-  }
-  return {};
-}
-
-function isTextWorkerModel(id: string, model?: CachedWorkerModel): boolean {
-  if (model) {
-    const output = model.modalities?.output;
-    if (Array.isArray(output) && !output.includes("text")) return false;
-    if (model.tool_call === false) return false;
-  }
-  return !/(?:^|[-/:])(audio|embed|embedding|guard|image|imagine|moderation|music|ocr|speech|tts|video|veo|whisper)(?:$|[-/:.])/i.test(id);
-}
-
-const MODEL_LABELS: Record<string, string> = {
-  "deepseek-flash": "DeepSeek V4.1 Flash",
-  "deepseek-v4-flash": "DeepSeek V4.1 Flash",
-  "deepseek-v4-flash-vision-exp": "DeepSeek V4.1 Flash",
-  "deepseek/deepseek-flash": "DeepSeek V4.1 Flash",
-};
-
-function modelName(id: string, model?: CachedWorkerModel): string {
-  const named = typeof model?.name === "string" ? model.name.trim() : "";
-  return named || MODEL_LABELS[id] || id;
-}
-
-function modelDate(model?: CachedWorkerModel): string | null {
-  const value = typeof model?.release_date === "string"
-    ? model.release_date
-    : typeof model?.last_updated === "string"
-      ? model.last_updated
-      : "";
-  return /^\d{4}-\d{2}(?:-\d{2})?$/.test(value) ? value : null;
-}
-
-/** Prefer Hermes' live provider model list. Always keep curated recommended
- * ids visible even when that cache is stale (new releases land here first). */
-export function listModelOptions(providerId: string, root?: string): WorkerModelOption[] {
-  const provider = providerOption(providerId);
-  if (!provider) return [];
-  const meta = cachedModels(providerId, root);
-  const live = liveProviderModelIds(providerId, root).filter((id) => isTextWorkerModel(id, meta[id]));
-  if (live.length > 0) {
-    const seen = new Set<string>();
-    const out: WorkerModelOption[] = [];
-    for (const id of provider.recommendedModels) {
-      if (seen.has(id) || !isTextWorkerModel(id, meta[id])) continue;
-      seen.add(id);
-      out.push({
-        id,
-        name: modelName(id, meta[id]),
-        releaseDate: modelDate(meta[id]),
-        recommended: true,
-      });
-    }
-    for (const id of live) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      out.push({
-        id,
-        name: modelName(id, meta[id]),
-        releaseDate: modelDate(meta[id]),
-        recommended: false,
-      });
-    }
-    return out;
-  }
-
-  const out: WorkerModelOption[] = [];
-  const seen = new Set<string>();
-  for (const id of provider.recommendedModels) {
-    const model = meta[id];
-    out.push({ id, name: modelName(id, model), releaseDate: modelDate(model), recommended: true });
-    seen.add(id);
-  }
-  const recent = Object.entries(meta)
-    .filter(([id, model]) => !seen.has(id) && isTextWorkerModel(id, model))
-    .sort(([leftId, left], [rightId, right]) => {
-      const byDate = String(modelDate(right) ?? "").localeCompare(String(modelDate(left) ?? ""));
-      return byDate || leftId.localeCompare(rightId, undefined, { numeric: true });
-    })
-    .slice(0, 12);
-  for (const [id, model] of recent) {
-    out.push({ id, name: modelName(id, model), releaseDate: modelDate(model), recommended: false });
-  }
-  return out;
-}
-
-export function listModels(providerId: string, root?: string): string[] {
-  const live = liveProviderModelIds(providerId, root).filter((id) => isTextWorkerModel(id));
-  if (live.length > 0) {
-    return [...live].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }
-  return Object.keys(cachedModels(providerId, root))
-    .filter((id) => !/imagine|video|image/i.test(id))
-    .sort((a, b) => a.localeCompare(b));
-}
-
 export function modelStatus(root?: string): ModelStatus {
-  const configPath = join(propertyProfileDir(root), "config.yaml");
-  const mask = (value: string): string =>
-    value.length <= 8 ? `${value.slice(0, 2)}…` : `${value.slice(0, 4)}…${value.slice(-4)}`;
-  let provider: string | null = null;
-  let model: string | null = null;
-  try {
-    const block = yamlBlock(readFileSync(configPath, "utf8"), "model");
-    provider = block ? /^[ \t]+provider:\s*(\S+)/m.exec(block)?.[1] ?? null : null;
-    model = block ? /^[ \t]+default:\s*(\S+)/m.exec(block)?.[1] ?? null : null;
-  } catch { /* no config yet */ }
-  let keyPresent = false;
-  let keyHint: string | null = null;
-  // A provisioned installation has no provider key on this computer: the grant
-  // reaches the worker only in its launch environment. Reporting "no key" here
-  // would send the office to a key form it must never fill in.
+  const profile = managedModelProfile(root);
+  const base = { provider: profile.provider, model: profile.model, choice: profile.choice };
   const grant = workerModelGrant();
   if (grant.state === "active") {
-    return { provider, model, keyPresent: true, keyHint: `Model access: managed by ${MANAGED_MODEL_LABEL}`, managed: true };
+    return { ...base, keyPresent: true, keyHint: `Model access: managed by ${MANAGED_MODEL_LABEL}`, managed: true };
   }
-  if (grant.state === "withdrawn") {
-    return { provider, model, keyPresent: false, keyHint: null, managed: false, managedWithdrawn: true };
-  }
-  // Only direct key-provider ids read the profile .env. Aliased ids such as
-  // xai-oauth must keep using Hermes' opaque auth store.
-  const providerConfig = provider ? PROVIDER_OPTIONS.find((option) => option.id === provider) ?? null : null;
-  if (providerConfig) {
-    try {
-      const envPath = join(propertyProfileDir(root), ".env");
-      if (existsSync(envPath)) {
-        const envBody = readFileSync(envPath, "utf8");
-        const match = new RegExp(`^${providerConfig.envVar}=(.+)$`, "m").exec(envBody);
-        if (match?.[1]?.trim()) {
-          keyPresent = true;
-          keyHint = `${providerConfig.envVar} ${mask(match[1].trim())}`;
-        }
-      }
-    } catch { /* unreadable credentials stay disconnected */ }
-  } else if (provider && authHasProvider(provider, root)) {
-    keyPresent = true;
-    keyHint = `${provider} profile login`;
-  }
-  return { provider, model, keyPresent, keyHint };
+  if (grant.state === "withdrawn") return { ...base, keyPresent: false, keyHint: null, managed: false, managedWithdrawn: true };
+  // Not paired: whatever an old profile names, nothing can route a turn.
+  return { ...base, keyPresent: false, keyHint: null, managed: false };
 }
 
-export function attachModel(input: AttachModelInput, opts?: { root?: string }): ModelStatus {
-  // A provisioned installation cannot choose a provider or paste a key: the
-  // provider, endpoint and credential all come from the grant. Only the model
-  // name is still the office's to set, because the grant does not carry one.
+/** `POST /api/hermes/model`: exactly `{ choice }`, one of the three managed
+ * choices, on a paired installation. A provider, key, base URL or model name is
+ * refused with 400 rather than ignored. */
+export async function setManagedModelChoice(body: unknown, opts?: { root?: string; dataDir?: string }): Promise<ModelStatus> {
+  let choice: ManagedModelChoiceId;
+  try { choice = normalizeManagedModelChoiceRequest(body); }
+  catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 400 }); }
   const grant = workerModelGrant();
-  if (grant.state === "active") {
-    if (String(input.apiKey ?? "").trim()) {
-      throw Object.assign(new Error("this office's model access is managed by the RealBud service — a provider key is not used"), { status: 400 });
-    }
-    const chosen = validatedModelId(input.model);
-    const profileDir = propertyProfileDir(opts?.root);
-    if (!existsSync(join(profileDir, "SOUL.md"))) {
-      throw Object.assign(new Error("the worker pack is not installed — apply the pack first"), { status: 409 });
-    }
-    verifyProfileDirectory(profileDir);
-    applyManagedModelProfile(grant.baseUrl, { root: opts?.root, model: chosen });
-    return modelStatus(opts?.root);
-  }
   if (grant.state === "withdrawn") {
-    throw Object.assign(new Error("model access for this computer was withdrawn — ask service support to restore it"), { status: 409 });
+    throw Object.assign(new Error("Model access for this computer was withdrawn. Ask RealBud support to restore it."), { status: 409 });
   }
-  const option = providerOption(input.providerId);
-  if (!option) throw Object.assign(new Error("unknown provider"), { status: 400 });
-  const model = validatedModelId(input.model);
-  const key = validatedApiKey(input.apiKey);
-  const baseUrl = validatedBaseUrl(input.baseUrl);
+  if (grant.state !== "active") {
+    throw Object.assign(new Error("This computer is not paired yet. Pair it from realbud.app, then choose Bud's model."), { status: 409 });
+  }
   const profileDir = propertyProfileDir(opts?.root);
   if (!existsSync(join(profileDir, "SOUL.md"))) {
-    throw Object.assign(new Error("the worker pack is not installed — apply the pack first"), { status: 409 });
+    throw Object.assign(new Error("Bud's workroom is not set up yet. Finish the earlier setup step first."), { status: 409 });
   }
   verifyProfileDirectory(profileDir);
-  readProfileFile(join(profileDir, "SOUL.md"));
-  const configPath = join(profileDir, "config.yaml");
-  // Admit both destinations before changing either. A rejected config cannot
-  // leave behind a newly submitted credential as a partial attach.
-  const existingConfig = readProfileFile(configPath);
+  const applied = applyManagedModelProfile(grant.baseUrl, { root: opts?.root, choice });
+  // The operator receipt follows the profile, never a stale earlier apply.
+  await recordManagedModelReceipt(applied, opts?.dataDir);
+  return modelStatus(opts?.root);
+}
 
-  // an empty key means "keep the current credential" — but only if the new
-  // provider actually has one; switching providers always needs a fresh key
-  const envPath = join(profileDir, ".env");
-  const hasExistingKey =
-    new RegExp(`^${option.envVar}=.+`, "m").test(readProfileFile(envPath)?.toString("utf8") ?? "");
-  const currentStatus = modelStatus(opts?.root);
-  const profileLogin = input.providerId !== option.id;
-  const oauthReady = profileLogin && authHasProvider(input.providerId, opts?.root);
-  const keepsProfileLogin =
-    profileLogin
-    && ((currentStatus.provider === input.providerId && currentStatus.keyPresent) || oauthReady);
-  if (profileLogin && key) {
-    throw Object.assign(new Error("the current Hermes login does not accept a pasted API key"), { status: 400 });
-  }
-  if (profileLogin && !keepsProfileLogin) {
-    throw Object.assign(new Error("the current Hermes login is no longer available"), { status: 400 });
-  }
-  if (!key && !hasExistingKey && !keepsProfileLogin) {
-    throw Object.assign(new Error(`an api key is required for ${option.label}`), { status: 400 });
-  }
-  if (key) upsertEnvLine(envPath, option.envVar, key);
-
-  const provider = keepsProfileLogin ? input.providerId : option.id;
-  const block =
-    `model:\n  default: ${model}\n  provider: ${provider}\n  base_url: ${baseUrl ? JSON.stringify(baseUrl) : "''"}\n`;
-  writeProfileFile(configPath, withYamlBlock(existingConfig?.toString("utf8") ?? "", "model", block), true, existingConfig);
-
-  const status = modelStatus(opts?.root);
-  return { ...status, keyPresent: true };
+/**
+ * Bring an installed profile onto the active grant when it does not select it
+ * yet: an upgrade from the pre-29-Sep `openai-api` profile, the old `auto`
+ * router model, a retired model id, or a stale `.env` key. The office's saved
+ * choice is kept; anything else becomes `flash-high`. Returns whether it wrote.
+ * No grant, a withdrawn grant or no installed pack changes nothing: an
+ * unpaired computer is refused at launch instead (`managedModelLaunchRefusal`),
+ * and its own files are left alone. The operator receipt is rewritten too.
+ */
+export async function reconcileManagedModelProfile(root?: string, opts?: { dataDir?: string }): Promise<boolean> {
+  const grant = workerModelGrant();
+  if (grant.state !== "active" || !packInstalled(root)) return false;
+  const profile = managedModelProfile(root);
+  if (profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl !== null && normalizedGatewayUrl(profile.baseUrl) === normalizedGatewayUrl(grant.baseUrl) &&
+    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice && !profile.envKeyPresent) return false;
+  await recordManagedModelReceipt(applyManagedModelProfile(grant.baseUrl, { root }), opts?.dataDir);
+  return true;
 }

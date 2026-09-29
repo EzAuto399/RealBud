@@ -71,7 +71,7 @@ try {
     if (url.pathname === '/api/hermes' && req.method() === 'GET') { counts.statusReads++; if (delayRefresh) await wait(delayRefresh); if (failRefresh) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional status read failed.' }) }); return json(fixture); }
     if (url.pathname === '/api/desk/recovery/auto') return json({ ok: false, error: 'Fictional recovery remains held.' });
     if (url.pathname.startsWith('/api/hermes') && req.method() !== 'GET') { counts.hermesMutations.push({ path: url.pathname, managed }); return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional QA blocks worker mutations.' }) }); }
-    if (url.pathname === '/api/hermes/model') return json({ model: { provider: 'openai-api', model: 'fictional-model', keyPresent: true, managed: true } });
+    if (url.pathname === '/api/hermes/model') return json({ model: { provider: 'custom:realbud', model: 'deepseek-v4.1-flash', choice: 'flash-high', keyPresent: true, keyHint: null, managed: true } });
     if (url.pathname === '/api/hermes/install/status') return json({ install: { state: 'idle', lines: [], startedAt: null, finishedAt: null, error: null } });
     return route.continue();
   });

@@ -8,7 +8,7 @@ import {
   WORKER_MODEL_ENV_NAMES, createWorkerModelAccess, managedConnectorApps, readServiceProvisioning, setWorkerModelGrant,
   workerModelEnv, workerModelGrant,
 } from './worker-model-access.ts';
-import { MANAGED_MODEL_API_MODE, MANAGED_MODEL_DEFAULT, MANAGED_MODEL_PROVIDER, managedModelProfile } from './hermes-pack.ts';
+import { MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile } from './hermes-pack.ts';
 import { HERMES_PIN } from './hermes-pin.ts';
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 import { applyWorkerModelAccessEnv } from './hermes-runtime-env.ts';
@@ -89,7 +89,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     const envelope = readFileSync(join(root, 'company-installation', 'private', 'worker-model-access.json'), 'utf8');
     expect(envelope).not.toContain(MODEL_KEY);
 
-    expect(await access.env()).toEqual({ OPENAI_BASE_URL: 'https://api.modelvia.dev/v1', OPENAI_API_KEY: MODEL_KEY });
+    expect(await access.env()).toEqual({ REALBUD_MODEL_API_KEY: MODEL_KEY });
     expect(await managedConnectorApps(root)).toEqual(['gmail', 'outlook']);
   });
 
@@ -101,18 +101,21 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     await access.apply(provisioning, 'installation-a');
 
     const config = readFileSync(join(profileDir, 'config.yaml'), 'utf8');
-    // The keys the pinned runtime reads to select provider, endpoint and wire.
+    // The keys the pinned runtime reads to select provider, endpoint, key and wire.
     expect(config).toContain(`  provider: ${MANAGED_MODEL_PROVIDER}\n`);
-    expect(config).toContain('  base_url: "https://api.modelvia.dev/v1"\n');
-    expect(config).toContain(`  api_mode: ${MANAGED_MODEL_API_MODE}\n`);
-    // The office's own model choice survives; the grant carries no model id.
-    expect(config).toContain('  default: gpt-5.6-sol\n');
+    expect(config).toContain('    base_url: https://api.modelvia.dev/v1\n');
+    expect(config).toContain(`    key_env: ${MANAGED_MODEL_KEY_ENV}\n`);
+    expect(config).toContain(`    api_mode: ${MANAGED_MODEL_API_MODE}\n`);
+    // A model outside the three managed choices moves to the default choice.
+    expect(config).toContain('  default: deepseek-v4.1-flash\n');
+    expect(config).toContain('  reasoning_effort: high\n');
     // Unrelated profile policy is untouched.
     expect(config).toContain('approvals:\n  mode: manual\n');
     expect(config).not.toContain(MODEL_KEY);
     expect(managedModelProfile(hermesRoot)).toEqual({
-      provider: MANAGED_MODEL_PROVIDER, model: 'gpt-5.6-sol',
-      baseUrl: 'https://api.modelvia.dev/v1', apiMode: MANAGED_MODEL_API_MODE, envKeyPresent: false,
+      provider: MANAGED_MODEL_PROVIDER, model: 'deepseek-v4.1-flash',
+      baseUrl: 'https://api.modelvia.dev/v1', apiMode: MANAGED_MODEL_API_MODE, keyEnv: MANAGED_MODEL_KEY_ENV,
+      reasoningEffort: 'high', choice: 'flash-high', envKeyPresent: false,
     });
     expect(workerModelGrant()).toEqual({ state: 'active', baseUrl: 'https://api.modelvia.dev/v1', keyId: 'rbkkey-01', spendCapLabel: 'AU$40 per month' });
   });
@@ -120,7 +123,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
   it('strips a stale .env provider key that would shadow the grant, and records it', async () => {
     const { root, profileDir, access, provisioning } = fixture({
       'SOUL.md': '# RealBud\n',
-      '.env': 'OTHER_SETTING=keep-me\nOPENAI_API_KEY=sk-stale-office-key\nXAI_API_KEY=keep-this-too\n',
+      '.env': 'OTHER_SETTING=keep-me\nOPENAI_API_KEY=sk-stale-office-key\nREALBUD_MODEL_API_KEY=fictional-shadow-key\nXAI_API_KEY=keep-this-too\n',
     });
     await access.apply(provisioning, 'installation-a');
 
@@ -128,6 +131,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     // line here would outrank the granted key on every turn.
     const env = readFileSync(join(profileDir, '.env'), 'utf8');
     expect(env).not.toContain('OPENAI_API_KEY');
+    expect(env).not.toContain(MANAGED_MODEL_KEY_ENV);
     expect(env).toContain('OTHER_SETTING=keep-me');
     expect(env).toContain('XAI_API_KEY=keep-this-too');
     expect(env).not.toContain(MODEL_KEY);
@@ -135,7 +139,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     const record = JSON.parse(readFileSync(join(root, 'service-provisioning.json'), 'utf8'));
     expect(record.modelProfile).toMatchObject({
       provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE,
-      baseUrl: 'https://api.modelvia.dev/v1', model: 'auto', envKeyRemoved: true,
+      baseUrl: 'https://api.modelvia.dev/v1', model: 'deepseek-v4.1-flash', choice: 'flash-high', envKeyRemoved: true,
     });
     expect(JSON.stringify(record)).not.toContain(MODEL_KEY);
     // A re-apply has nothing left to remove and says so.
@@ -143,18 +147,28 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     expect(JSON.parse(readFileSync(join(root, 'service-provisioning.json'), 'utf8')).modelProfile.envKeyRemoved).toBe(false);
   });
 
-  it('leaves a fresh computer ready on the gateway router, without replacing an office choice', async () => {
-    // No prior model on this computer: the grant writes the gateway's own
-    // router entry, so setup finishes without a second step.
+  it('leaves a fresh computer on flash-high, migrates auto, and keeps a saved managed choice', async () => {
+    // No prior model on this computer: the default choice, so setup finishes
+    // without a second step.
     const fresh = fixture();
     await fresh.access.apply(fresh.provisioning, 'installation-a');
-    expect(managedModelProfile(fresh.hermesRoot)).toMatchObject({ model: MANAGED_MODEL_DEFAULT, provider: MANAGED_MODEL_PROVIDER });
-    expect(readFileSync(join(fresh.profileDir, 'config.yaml'), 'utf8')).toContain('  default: auto\n');
+    expect(managedModelProfile(fresh.hermesRoot)).toMatchObject({ model: 'deepseek-v4.1-flash', choice: 'flash-high', provider: MANAGED_MODEL_PROVIDER });
 
-    // An office that already named a model keeps it; `auto` never overwrites.
-    const chosen = fixture({ 'SOUL.md': '# RealBud\n', 'config.yaml': 'model:\n  default: office-picked-model\n  provider: anthropic\n' });
+    // The earlier gateway router entry `auto` is not a choice: it migrates.
+    const legacy = fixture({ 'SOUL.md': '# RealBud\n', 'config.yaml': "model:\n  default: auto\n  provider: openai-api\n  base_url: \"https://api.modelvia.dev/v1\"\n  api_mode: chat_completions\n" });
+    await legacy.access.apply(legacy.provisioning, 'installation-a');
+    expect(managedModelProfile(legacy.hermesRoot)).toMatchObject({ choice: 'flash-high', provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE });
+    expect(readFileSync(join(legacy.profileDir, 'config.yaml'), 'utf8')).not.toContain('openai-api');
+
+    // An office that already holds a managed choice keeps it on re-enrolment.
+    const chosen = fixture({ 'SOUL.md': '# RealBud\n', 'config.yaml': 'model:\n  default: claude-sonnet-5.5\n  provider: custom:realbud\nagent:\n  reasoning_effort: xhigh\n' });
     await chosen.access.apply(chosen.provisioning, 'installation-a');
-    expect(managedModelProfile(chosen.hermesRoot).model).toBe('office-picked-model');
+    expect(managedModelProfile(chosen.hermesRoot)).toMatchObject({ model: 'claude-sonnet-5.5', reasoningEffort: 'xhigh', choice: 'sonnet-xhigh' });
+
+    // Flash never keeps extra-high reasoning: that pair is not a choice.
+    const invalid = fixture({ 'SOUL.md': '# RealBud\n', 'config.yaml': 'model:\n  default: deepseek-v4.1-flash\nagent:\n  reasoning_effort: xhigh\n' });
+    await invalid.access.apply(invalid.provisioning, 'installation-a');
+    expect(managedModelProfile(invalid.hermesRoot)).toMatchObject({ reasoningEffort: 'high', choice: 'flash-high' });
   });
 
   it('publishes a withdrawn grant as a hold the synchronous readers can see', async () => {
@@ -271,7 +285,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     await access.apply(provisioning, 'installation-a');
     const rotatedKey = `rbk_${'z'.repeat(40)}`;
     await access.apply(parseInstallationProvisioning(grant({ model: { provider: 'modelvia', baseUrl: 'https://api.modelvia.dev/v1', projectId: 'proj-fictional-01', key: rotatedKey, keyId: 'rbkkey-02', spendCapLabel: 'AU$40 per month' } })) as InstallationProvisioning, 'installation-a');
-    expect(await access.env()).toEqual({ OPENAI_BASE_URL: 'https://api.modelvia.dev/v1', OPENAI_API_KEY: rotatedKey });
+    expect(await access.env()).toEqual({ REALBUD_MODEL_API_KEY: rotatedKey });
     // A record naming a key the vault no longer holds must not fall back to
     // whatever key happens to be stored: only the recorded grant is spend-capped.
     const stale = createWorkerModelAccess({ directory: root, key: KEY, saveConfig: () => {} });
@@ -292,16 +306,17 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
 
 describe('worker launch environment', WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it('injects exactly the variables the pinned worker reads, and nothing when unprovisioned', () => {
-    expect(WORKER_MODEL_ENV_NAMES).toEqual(['OPENAI_BASE_URL', 'OPENAI_API_KEY']);
+    expect(WORKER_MODEL_ENV_NAMES).toEqual([MANAGED_MODEL_KEY_ENV]);
     const env: NodeJS.ProcessEnv = { HERMES_HOME: '/synthetic/home' };
     applyWorkerModelAccessEnv(env, {});
     expect(env).toEqual({ HERMES_HOME: '/synthetic/home' });
-    applyWorkerModelAccessEnv(env, workerModelEnv('https://api.modelvia.dev/v1', MODEL_KEY));
-    expect(env).toEqual({ HERMES_HOME: '/synthetic/home', OPENAI_BASE_URL: 'https://api.modelvia.dev/v1', OPENAI_API_KEY: MODEL_KEY });
-    // Only the two admitted names are ever copied across.
-    applyWorkerModelAccessEnv(env, { OPENAI_API_KEY: '', COMPOSIO_KEY: 'ak_should_not_travel' } as Record<string, string>);
+    applyWorkerModelAccessEnv(env, workerModelEnv(MODEL_KEY));
+    expect(env).toEqual({ HERMES_HOME: '/synthetic/home', REALBUD_MODEL_API_KEY: MODEL_KEY });
+    // Only the admitted name is ever copied across.
+    applyWorkerModelAccessEnv(env, { REALBUD_MODEL_API_KEY: '', OPENAI_API_KEY: MODEL_KEY, COMPOSIO_KEY: 'ak_should_not_travel' } as Record<string, string>);
     expect(env.COMPOSIO_KEY).toBeUndefined();
-    expect(env.OPENAI_API_KEY).toBe(MODEL_KEY);
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.REALBUD_MODEL_API_KEY).toBe(MODEL_KEY);
   });
 
   it('survives the adapter hardening and reaches a real child process', async () => {
@@ -313,9 +328,11 @@ describe('worker launch environment', WINDOWS_PROFILE_TEST_OPTIONS, () => {
     await access.apply(provisioning, 'installation-a');
     // The adapter deletes ambient provider keys on purpose, so the grant must
     // be injected after that strip — this is the order a launch has to use.
-    const env = serviceSafeChildEnv({ OPENAI_API_KEY: 'sk-ambient-must-not-survive', COMPOSIO_KEY: `ak_${'d'.repeat(32)}` });
+    const env = serviceSafeChildEnv({ OPENAI_API_KEY: 'sk-ambient-must-not-survive', OPENAI_BASE_URL: 'https://ambient.invalid/v1',
+      REALBUD_MODEL_API_KEY: 'ambient-grant-must-not-survive', MODELVIA_API_KEY: 'ambient-modelvia', DEEPSEEK_API_KEY: 'ambient-deepseek',
+      COMPOSIO_KEY: `ak_${'d'.repeat(32)}` });
     hardenHermesChildEnv(env);
-    expect(env.OPENAI_API_KEY).toBeUndefined();
+    for (const name of ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'REALBUD_MODEL_API_KEY', 'MODELVIA_API_KEY', 'DEEPSEEK_API_KEY']) expect(env[name]).toBeUndefined();
     applyWorkerModelAccessEnv(env, await access.env());
 
     // The child reads BOTH: the launch env, and the profile files the env
@@ -324,17 +341,18 @@ describe('worker launch environment', WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const child = spawnSync(process.execPath, [
       '-e',
       'const fs=require("node:fs");const p=process.argv[1];' +
-      'process.stdout.write(JSON.stringify({b:process.env.OPENAI_BASE_URL??null,k:process.env.OPENAI_API_KEY??null,' +
+      'process.stdout.write(JSON.stringify({b:process.env.OPENAI_BASE_URL??null,k:process.env.REALBUD_MODEL_API_KEY??null,o:process.env.OPENAI_API_KEY??null,' +
       'c:process.env.COMPOSIO_KEY??null,config:fs.readFileSync(p+"/config.yaml","utf8"),' +
       'dotenv:fs.existsSync(p+"/.env")?fs.readFileSync(p+"/.env","utf8"):""}))',
       profileDir,
     ], { env: env as NodeJS.ProcessEnv, encoding: 'utf8' });
     expect(child.status).toBe(0);
-    const seen = JSON.parse(child.stdout) as { b: string; k: string; c: null; config: string; dotenv: string };
-    expect({ b: seen.b, k: seen.k, c: seen.c }).toEqual({ b: 'https://api.modelvia.dev/v1', k: MODEL_KEY, c: null });
+    const seen = JSON.parse(child.stdout) as { b: null; k: string; o: null; c: null; config: string; dotenv: string };
+    expect({ b: seen.b, k: seen.k, o: seen.o, c: seen.c }).toEqual({ b: null, k: MODEL_KEY, o: null, c: null });
     expect(seen.config).toContain(`  provider: ${MANAGED_MODEL_PROVIDER}\n`);
-    expect(seen.config).toContain('  base_url: "https://api.modelvia.dev/v1"\n');
-    expect(seen.config).toContain(`  api_mode: ${MANAGED_MODEL_API_MODE}\n`);
+    expect(seen.config).toContain('    base_url: https://api.modelvia.dev/v1\n');
+    expect(seen.config).toContain(`    key_env: ${MANAGED_MODEL_KEY_ENV}\n`);
+    expect(seen.config).toContain(`    api_mode: ${MANAGED_MODEL_API_MODE}\n`);
     expect(seen.config).not.toContain('provider: anthropic');
     // Nothing in the profile can shadow or leak the granted key.
     expect(seen.dotenv).not.toContain('OPENAI_API_KEY');

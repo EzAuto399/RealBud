@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { Recipe } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
+import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
@@ -141,6 +142,12 @@ export async function askWorker(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve({ ok: false, detail: serviceFailure });
     hardenHermesChildEnv(env);
+    // Strip first, then place only the grant RealBud resolved for this
+    // installation, and only while the checked profile names the granted
+    // endpoint. The selected worker is refused without usable access; a
+    // caller-supplied (development) CLI just gets no key.
+    const refusal = applyManagedModelLaunchEnv(env, root);
+    if (refusal && !opts?.cli) return resolve({ ok: false, detail: refusal });
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? WORKER_TIMEOUT_MS,
       signal: opts?.signal,

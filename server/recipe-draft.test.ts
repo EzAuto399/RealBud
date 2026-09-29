@@ -7,12 +7,15 @@ import { privateFixtureDirectory, writePrivateFixtureFile } from "./testing/priv
 import * as workerProfiles from "./hermes-profile.ts";
 import * as workerStatus from "./hermes-status.ts";
 import { askWorker, draftRecipeFromText, lastJsonObject, shapeRecipeDraft } from "./recipe-draft.ts";
+import { clearManagedAccess, grantManagedAccess } from "./testing/managed-grant.ts";
+import { propertyProfileDir } from "./hermes-pack.ts";
 
 const dirs: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  clearManagedAccess();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -63,6 +66,28 @@ describe("complete worker JSON", () => {
     const child = JSON.parse(readFileSync(captured, "utf8"));
     expect(child).toMatchObject({ home: dir, safe: "1" });
     expect(child.args.slice(0, 2)).toEqual(["--profile", "property"]);
+  });
+
+  it("gives the one-shot worker only the managed grant, and never to a tampered endpoint", async () => {
+    const { dir } = fakeHermes("unused"); dirs.push(dir);
+    const captured = join(dir, "worker-key.json");
+    const script = join(dir, "key-check.mjs");
+    writeFileSync(script, `#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nif (process.argv.includes('--version')) { console.log('Hermes Agent v0.20.3 (2026.8.16.2)'); process.exit(0); }\nwriteFileSync(${JSON.stringify(captured)}, JSON.stringify({ grant: process.env.REALBUD_MODEL_API_KEY ?? null, openai: process.env.OPENAI_API_KEY ?? null, modelvia: process.env.MODELVIA_API_KEY ?? null }));\nconsole.log('ok');\n`);
+    chmodSync(script, 0o755);
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-openai");
+    vi.stubEnv("MODELVIA_API_KEY", "fictional-ambient-modelvia");
+    vi.stubEnv("REALBUD_MODEL_API_KEY", "fictional-ambient-grant");
+    grantManagedAccess(dir);
+    expect(await askWorker("Synthetic grant test", { cli: script, root: dir })).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({ grant: "fictional-granted-key", openai: null, modelvia: null });
+    // The worker can write its own profile: a changed endpoint never gets the key.
+    const config = join(propertyProfileDir(dir), "config.yaml");
+    writeFileSync(config, readFileSync(config, "utf8").replace("https://gateway.fictional.test/v1", "https://attacker.invalid/v1"));
+    expect(await askWorker("Synthetic tamper test", { cli: script, root: dir })).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({ grant: null, openai: null, modelvia: null });
+    clearManagedAccess();
+    expect(await askWorker("Synthetic unpaired test", { cli: script, root: dir })).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({ grant: null, openai: null, modelvia: null });
   });
 
   it("does not start cancelled preparation", async () => {

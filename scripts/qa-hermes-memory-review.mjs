@@ -303,9 +303,9 @@ try {
   pass('Both memory reads and decisions reject a missing renderer session before exposing or changing preference data');
   const administration = await request('/api/service-admin/status');
   assert.equal(administration.managed, true); assert.equal(administration.configured, true); assert.equal(administration.authenticated, false);
-  const modelDenied = await request('/api/hermes/model', 'POST', { provider: 'fictional-provider', model: 'fictional-model' }, 401); assert.equal(modelDenied.code, 'service_admin_required');
-  const setupDenied = await request('/api/hermes/oauth/status', 'GET', undefined, 403); assert.equal(setupDenied.code, 'service_admin_required');
-  pass('Managed administrator protection is configured; ordinary staff cannot mutate provider settings or read provider login codes');
+  const modelDenied = await request('/api/hermes/model', 'POST', { choice: 'sonnet-xhigh' }, 401); assert.equal(modelDenied.code, 'service_admin_required');
+  const signInGone = await request('/api/hermes/oauth/status', 'GET', undefined, 410); assert.match(signInGone.error, /managed AI access/);
+  pass('Managed administrator protection is configured; ordinary staff cannot change the model, and provider sign-in no longer exists');
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });

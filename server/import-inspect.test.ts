@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { chmodSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { applyPropertyPack } from "./hermes-pack.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
@@ -7,6 +8,8 @@ import { withWorkerProfile } from "./hermes-profile.ts";
 import { inspectLedgerColumns } from "./import-inspect.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
 import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
+import { clearManagedAccess, grantManagedAccess } from "./testing/managed-grant.ts";
+import { propertyProfileDir } from "./hermes-pack.ts";
 
 const CSV = `Property,Days in arrears,Rent received,Levies
 12 Oak St,5,false,false
@@ -15,6 +18,8 @@ const CSV = `Property,Days in arrears,Rent received,Levies
 const dirs: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
+  clearManagedAccess();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -32,6 +37,27 @@ describe("inspectLedgerColumns", () => {
       levyPaid: "Levies",
     });
     expect(result.detail).toMatch(/read the columns/);
+  });
+
+  it("gives the worker only the managed grant, and never to a tampered endpoint", async () => {
+    const { dir } = fakeHermes("unused");
+    dirs.push(dir);
+    const captured = join(dir, "worker-key.json");
+    const script = join(dir, "key-check.mjs");
+    const answer = `{"mapping":{"identity":"Property"},"confidence":"high"}`;
+    writeFileSync(script, `#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nif (process.argv.includes('--version')) { console.log('Hermes Agent v0.20.3 (2026.8.16.2)'); process.exit(0); }\nwriteFileSync(${JSON.stringify(captured)}, JSON.stringify({ grant: process.env.REALBUD_MODEL_API_KEY ?? null, openai: process.env.OPENAI_API_KEY ?? null }));\nconsole.log(${JSON.stringify(answer)});\n`);
+    chmodSync(script, 0o755);
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-openai");
+    vi.stubEnv("REALBUD_MODEL_API_KEY", "fictional-ambient-grant");
+    grantManagedAccess(dir);
+    const result = await inspectLedgerColumns(CSV, { cli: script, root: dir });
+    expect(result.mapping).toMatchObject({ identity: "Property" });
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({ grant: "fictional-granted-key", openai: null });
+    // A tampered profile endpoint never receives the key.
+    const config = join(propertyProfileDir(dir), "config.yaml");
+    writeFileSync(config, readFileSync(config, "utf8").replace("https://gateway.fictional.test/v1", "https://attacker.invalid/v1"));
+    await inspectLedgerColumns(CSV, { cli: script, root: dir });
+    expect(JSON.parse(readFileSync(captured, "utf8"))).toEqual({ grant: null, openai: null });
   });
 
   it("drops a header the worker invented", async () => {

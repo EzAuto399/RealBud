@@ -129,7 +129,7 @@ describe("ask book", () => {
   it("names model capacity instead of a generic finish failure", () => {
     expect(
       productAskFailure("API call failed after 3 retries: The model is currently at capacity due to high demand"),
-    ).toMatch(/busy or has reached its provider limit/i);
+    ).toMatch(/AI service is busy right now/i);
   });
 
   it("detects a provider retry dump inside a settled turn, and passes real answers through", () => {

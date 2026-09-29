@@ -160,7 +160,7 @@ describe("zero-touch provisioning through the website link", () => {
     expect(await desk.access.env()).toEqual({});
     // Same code, same id and token: the website redelivers instead of linking empty.
     await desk.app.link({ code, label: "Fictional desk" });
-    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ OPENAI_BASE_URL: "https://api.modelvia.dev/v1", OPENAI_API_KEY: site.state.keys[1] });
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ REALBUD_MODEL_API_KEY: site.state.keys[1] });
     expect(desk.configs.at(-1).composio.managed.credential).toBe(site.state.credentials[1]);
     expect(site.state.revoked).toEqual([site.state.keys[0]]);
     expect((await desk.app.status())).toMatchObject({ state: "linked", provisioned: true });
@@ -192,7 +192,7 @@ describe("zero-touch provisioning through the website link", () => {
     expect(await quietDesk.access.env()).toEqual({});
     await quietDesk.app.report();
     expect(site.state.reports.at(-1).needsProvisioning).toBe(true);
-    expect(await quietDesk.app.modelAccessEnv(quietDesk.access.env)).toMatchObject({ OPENAI_API_KEY: site.state.keys[1] });
+    expect(await quietDesk.app.modelAccessEnv(quietDesk.access.env)).toMatchObject({ REALBUD_MODEL_API_KEY: site.state.keys[1] });
     expect(site.state.revoked).toEqual([site.state.keys[0]]);
     await quietDesk.app.report();
     expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
@@ -286,7 +286,7 @@ describe("zero-touch provisioning through the website link", () => {
     };
     const first = make();
     await first.app.link({ code, label: "Fictional desk" });
-    expect(Object.keys(await first.app.modelAccessEnv(first.access.env))).toContain("OPENAI_API_KEY");
+    expect(Object.keys(await first.app.modelAccessEnv(first.access.env))).toContain("REALBUD_MODEL_API_KEY");
     configBlocked = true;
     await expect(first.app.report()).rejects.toMatchObject({ code: "config_recovery_required" });
     expect(await first.access.env()).toEqual({});
@@ -308,18 +308,18 @@ describe("zero-touch provisioning through the website link", () => {
   it("does not publish a vault read that finishes after disconnect and relinking", async () => {
     const { app } = fixture(vi.fn(async (url, init) => String(url).endsWith("redeem")
       ? linked(JSON.parse(String(init?.body))) : Response.json({})));
-    const resolver = vi.fn(async () => ({ OPENAI_API_KEY: "fictional-model-access" }));
+    const resolver = vi.fn(async () => ({ REALBUD_MODEL_API_KEY: "fictional-model-access" }));
     expect(await app.modelAccessEnv(resolver)).toEqual({});
     expect(resolver).not.toHaveBeenCalled();
     await app.link({ code, label: "Fictional desk" });
     let release!: () => void, entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const started = new Promise<void>(resolve => { entered = resolve; });
-    const pending = app.modelAccessEnv(async () => { entered(); await gate; return { OPENAI_API_KEY: "fictional-old-access" }; });
+    const pending = app.modelAccessEnv(async () => { entered(); await gate; return { REALBUD_MODEL_API_KEY: "fictional-old-access" }; });
     await started;
     await app.disconnect(); await app.link({ code, label: "Fictional new desk" });
     release(); expect(await pending).toEqual({});
-    expect(await app.modelAccessEnv(resolver)).toEqual({ OPENAI_API_KEY: "fictional-model-access" });
+    expect(await app.modelAccessEnv(resolver)).toEqual({ REALBUD_MODEL_API_KEY: "fictional-model-access" });
   });
 
   it.skipIf(process.platform === "win32")("withdraws immediately even when the revoked-link write fails, and retries after repair", async () => {
