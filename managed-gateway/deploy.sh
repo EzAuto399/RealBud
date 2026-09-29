@@ -110,6 +110,29 @@ esac
 [[ "${REALBUD_MODELVIA_CLIENT_KEY:-}" =~ ^mgt_[a-f0-9]{16}_[A-Za-z0-9_-]{43}$ ]] ||
   fail "REALBUD_MODELVIA_CLIENT_KEY must be RealBud's Modelvia client integration key (mgt_…); value not echoed"
 
+# --- Billing plans: seller basis and reference ids (owner decision, 29 Sept) -
+# The gateway publishes each planned office's monthly terms itself, so the
+# seller identity, GST treatment and the reviewed reference ids come from the
+# deployment, never from a browser. All seven or none; the plan routes answer
+# 503 billing_plan_unconfigured:<NAME> until every one is set. Non-secret.
+plan_names=(REALBUD_SELLER_LEGAL_NAME REALBUD_SELLER_ABN REALBUD_SELLER_ADDRESS REALBUD_TAX_TREATMENT_REF
+  REALBUD_SELLER_VERIFICATION_REF REALBUD_CUSTOMER_TERMS_REF REALBUD_CARE_AGREEMENT_REF)
+plan_set=0
+for name in "${plan_names[@]}"; do [[ -z "${!name:-}" ]] || plan_set=$((plan_set + 1)); done
+if (( plan_set > 0 )); then
+  for name in "${plan_names[@]}"; do
+    [[ -n "${!name:-}" ]] && one_line "${!name}" || fail "Billing plans need all of ${plan_names[*]} (missing or multi-line: $name)"
+  done
+  [[ "$REALBUD_SELLER_ABN" =~ ^[0-9]{11}$ ]] || fail "REALBUD_SELLER_ABN must be 11 digits"
+  for name in REALBUD_SELLER_VERIFICATION_REF REALBUD_CUSTOMER_TERMS_REF REALBUD_CARE_AGREEMENT_REF; do
+    [[ "${!name}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$ ]] || fail "$name must be an id of at most 160 characters (letters, digits, _ . : / -)"
+  done
+  if [[ "$payment_mode" == "live" ]]; then
+    node --experimental-strip-types --input-type=module -e 'import { composeBillingPlanConfig } from "./billing-plans.ts"; const c = composeBillingPlanConfig(process.env); if ("unavailable" in c) { console.error(c.unavailable); process.exit(1); }' ||
+      fail "the billing plan seller basis must be the reviewed one (REALBUD_SELLER_BASIS_DIGEST) and every value well formed"
+  fi
+fi
+
 # --- Monthly invoice email (separate from Supabase Auth SMTP) --------------
 # Default off. A reviewed protected Sending key and verified sender are needed
 # before close may call Resend; never read or print either value here.
@@ -165,7 +188,8 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   # exported (DEPLOY.md, "Live Modelvia integration values").
   for name in REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE \
     REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS REALBUD_MODELVIA_RESALE_TERMS_REFERENCE REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD \
-    REALBUD_INVOICE_TERMS_DAYS REALBUD_PAYID REALBUD_PAYID_NAME REALBUD_BANK_ACCOUNT_NAME REALBUD_BANK_BSB REALBUD_BANK_ACCOUNT_NUMBER; do
+    REALBUD_INVOICE_TERMS_DAYS REALBUD_PAYID REALBUD_PAYID_NAME REALBUD_BANK_ACCOUNT_NAME REALBUD_BANK_BSB REALBUD_BANK_ACCOUNT_NUMBER \
+    "${plan_names[@]}"; do
     [[ -z "${!name:-}" ]] || printf '%s=%s\n' "$name" "${!name}"
   done
   # Commercial terms and month close need the internal id in every payment mode;

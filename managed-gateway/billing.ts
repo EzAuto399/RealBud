@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, id, integer, nano, requireThat, type PortalPrincipal } from './contracts.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { cents, gstCents, periodAt } from './money.ts';
-import { CommercialTermsStore } from './commercial-terms.ts';
+import { CommercialTermsStore, includedMonth } from './commercial-terms.ts';
 import { queueInvoiceEmail } from './invoice-email.ts';
 
 export interface InvoiceLine { description:string; amountNanoAud:string; amountCents:string; gstCents:string; creditId?:string; sourceInvoice?:string;
@@ -122,6 +122,7 @@ export class BillingService {
     }
     requireThat(!ai?.modelviaCustomerId || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/.test(ai.modelviaCustomerId),'invalid_ai_invoice',409);
     if(ai) ensureAiConsolidationTable(this.ledger);
+    ensureAiAbsorptionTable(this.ledger);
     return this.ledger.db.transaction(()=>{
       const tenant=this.ledger.tenant(companyId);
       requireThat(tenant.billingMode!=='internal_cost','internal_usage_not_billable',403);
@@ -141,6 +142,10 @@ export class BillingService {
       };
       const care=BigInt(terms.careCents);
       if(care>0n) add({description:'RealBud software and routine maintenance — monthly care',amountNanoAud:(care*10_000_000n).toString()});
+      // An included month of a billing plan: the office is told so on an A$0 Tax
+      // Invoice, and its Modelvia AI for the month is absorbed (below).
+      const included=includedMonth(terms);
+      if(included) lines.push({description:INCLUDED_SERVICE_LINE,amountNanoAud:'0',amountCents:'0',gstCents:'0'});
       // Exact cents and GST from the Modelvia invoice, line by line; never re-rounded here.
       for(const entry of aiInvoices) {
         if(!entry.lines) { lines.push({description:`AI usage ${entry.period} (Modelvia invoice ${entry.id})`,amountNanoAud:(BigInt(entry.totalCents)*10_000_000n).toString(),amountCents:entry.totalCents,gstCents:entry.gstCents,modelviaInvoice:entry.id}); continue; }
@@ -178,6 +183,13 @@ export class BillingService {
       // The primary key is the Modelvia invoice id, so it can never be billed twice.
       for(const {id:entryId,period:entryPeriod,totalCents,gstCents} of aiInvoices) this.ledger.db.run('INSERT INTO office_ai_consolidations(modelvia_invoice,tenant,period,invoice,body) VALUES(?,?,?,?,?)',entryId,companyId,period,invoice.id,canonical({id:entryId,period:entryPeriod,totalCents,gstCents}));
       if(invoice.aiUsage) this.ledger.db.append(companyId,'ai_usage_consolidated',null,this.ledger.now(),{invoiceId:invoice.id,period,modelviaInvoices:invoice.aiUsage.modelviaInvoices,...(invoice.aiUsage.deferredPeriods?{deferredPeriods:invoice.aiUsage.deferredPeriods}:{})});
+      // A plan month without AI resale: the office's Modelvia AI for the month is
+      // RealBud's cost, recorded so no later close can bill it.
+      if(terms.billingPlan && !terms.aiUsage) {
+        const absorbed={companyId,period,invoiceId:invoice.id,billingPlanVersion:terms.billingPlan.version,included};
+        this.ledger.db.run('INSERT INTO office_ai_absorptions(tenant,period,invoice,body) VALUES(?,?,?,?)',companyId,period,invoice.id,canonical(absorbed));
+        this.ledger.db.append(companyId,'ai_usage_absorbed',null,this.ledger.now(),absorbed);
+      }
       this.commercialTerms!.bindInvoice(invoice);
       queueInvoiceEmail(this.ledger,invoice,terms.customer.billingEmail,accepted.digest);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
@@ -391,6 +403,22 @@ export function ensureAiConsolidationTable(ledger:UsageLedger) {
   ledger.db.sql.exec(`CREATE TABLE IF NOT EXISTS office_ai_consolidations (modelvia_invoice TEXT PRIMARY KEY, tenant TEXT NOT NULL, period TEXT NOT NULL, invoice TEXT NOT NULL REFERENCES invoices(id), body TEXT NOT NULL);
     CREATE TRIGGER IF NOT EXISTS immutable_office_ai_consolidations_UPDATE BEFORE UPDATE ON office_ai_consolidations BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_office_ai_consolidations_DELETE BEFORE DELETE ON office_ai_consolidations BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
+}
+/** The one line of an included plan month's A$0 Tax Invoice. */
+export const INCLUDED_SERVICE_LINE='Included service — no charge';
+/** Months whose Modelvia AI RealBud absorbed under the office's billing plan
+ * (owner decision, 29 September 2026): recorded at the month's close, keyed by
+ * office and month, append-only. `closeOfficeMonth` never consolidates a
+ * Modelvia invoice for an absorbed month and never waits for one. */
+export function ensureAiAbsorptionTable(ledger:UsageLedger) {
+  ledger.db.sql.exec(`CREATE TABLE IF NOT EXISTS office_ai_absorptions (tenant TEXT NOT NULL, period TEXT NOT NULL, invoice TEXT NOT NULL REFERENCES invoices(id), body TEXT NOT NULL, PRIMARY KEY(tenant,period));
+    CREATE TRIGGER IF NOT EXISTS immutable_office_ai_absorptions_UPDATE BEFORE UPDATE ON office_ai_absorptions BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_office_ai_absorptions_DELETE BEFORE DELETE ON office_ai_absorptions BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
+}
+/** The months recorded as absorbed for one office. */
+export function absorbedAiPeriods(ledger:UsageLedger,companyId:string):Set<string> {
+  ensureAiAbsorptionTable(ledger);
+  return new Set(ledger.db.all<{period:string}>('SELECT period FROM office_ai_absorptions WHERE tenant=?',companyId).map(row=>row.period));
 }
 /** The Modelvia invoices already consolidated for one office, by id. */
 export function consolidatedAiInvoices(ledger:UsageLedger,companyId:string):Map<string,{invoice:string;period:string}> {

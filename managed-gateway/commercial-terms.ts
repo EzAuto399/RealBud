@@ -29,8 +29,37 @@ export interface CommercialTerms {
    * earlier terms row, and client-funded offices): the invoice is care only. An
    * absent field leaves the terms digest unchanged (`canonical`). */
   aiUsage?:AiUsageTerms;
+  /** Present only on terms the gateway published from the office's billing plan
+   * (owner decision, 29 September 2026, `billing-plans.ts`): the plan version
+   * these terms are one month of, so the billing owner's ONE acceptance of any
+   * month of the version is the acceptance of the plan, and every other month
+   * of the version is covered by a standing acceptance. Digest-bound: a plan
+   * change is a new version and a new acceptance. Absent on every terms row the
+   * operator command published, whose digests are unchanged (`canonical`). */
+  billingPlan?:BillingPlanTerms;
   publishedAt:number;
 }
+/** The plan as the accepted terms state it. `careCents` and the AI billing are
+ * what applies AFTER the included months; the month's own `careCents` and
+ * `aiUsage` on the terms say what this month costs. `markupBasisPoints` and
+ * `termsReference` are present for a resale plan only, so the anchor acceptance
+ * (which may fall in an included month whose terms carry no `aiUsage`) still
+ * covers the markup the office is priced at; the portal presentation omits the
+ * basis points (`presentCommercialTerms`). */
+export interface BillingPlanTerms { version:string; startPeriod:string; includedMonths:number; careCents:string; aiBilling:'resale'|'included'; markupBasisPoints?:number; termsReference?:string }
+/** Subject prefix of a standing acceptance: `standing:<digest of the plan's anchor acceptance>`. */
+export const STANDING_SUBJECT_PREFIX='standing:';
+export const isStandingAcceptance=(acceptance:Pick<CommercialAcceptance,'subject'>)=>acceptance.subject.startsWith(STANDING_SUBJECT_PREFIX);
+/** 1-based month of the plan for `period`; 0 or less before the plan starts. */
+export function planMonthIndex(startPeriod:string,period:string):number {
+  const [sy,sm]=startPeriod.split('-').map(Number),[py,pm]=period.split('-').map(Number);
+  return (py-sy)*12+(pm-sm)+1;
+}
+/** An included month of a plan: nothing is charged and the office's AI for the
+ * month is RealBud's cost (absorbed), so the month closes as an A$0 Tax Invoice
+ * with the line "Included service — no charge" (`billing.ts`). */
+export const includedMonth=(terms:Pick<CommercialTerms,'billingPlan'|'careCents'|'aiUsage'>)=>!!terms.billingPlan && terms.careCents==='0' && !terms.aiUsage;
+export const MAX_INCLUDED_MONTHS=24;
 /** `markupBasisPoints` is THIS office's accepted markup (0..10000, i.e. 0-100%).
  * The deployment's REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS is only the
  * default for new terms (`office-ai-terms.ts`); an operator's proposed markup for
@@ -79,9 +108,13 @@ export class CommercialTermsStore {
     return {...latest,acceptance:acceptance?JSON.parse(acceptance.body) as CommercialAcceptance:null};
   }
   /** Trusted operator publication. No HTTP route: the authenticated customer
-   * must separately accept the exact published digest. */
-  publish(draft:CommercialTermsDraft) {
-    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards',...(draft.aiUsage===undefined?[]:['aiUsage'])]);
+   * must separately accept the exact published digest. With `standing`, the
+   * draft is one month of a billing plan version whose anchor acceptance
+   * (`standing.anchor`, a real billing-owner acceptance row of another month of
+   * that version) already covers it: the standing acceptance is recorded in the
+   * same transaction, and nothing else ever creates an acceptance. */
+  publish(draft:CommercialTermsDraft,standing?:{anchor:CommercialAcceptance}) {
+    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards',...(draft.aiUsage===undefined?[]:['aiUsage']),...(draft.billingPlan===undefined?[]:['billingPlan'])]);
     object(draft.customer);exact(draft.customer as Record<string,unknown>,['name','address',...(draft.customer.abn===undefined?[]:['abn']),...(draft.customer.tradingName===undefined?[]:['tradingName']),...(draft.customer.billingEmail===undefined?[]:['billingEmail'])]);
     object(draft.seller);exact(draft.seller as unknown as Record<string,unknown>,['legalName','product','abn','address','gstRegistered']);
     object(draft.tax);exact(draft.tax as unknown as Record<string,unknown>,['currency','gstInclusive','gstBasisPoints','treatmentRef']);
@@ -111,14 +144,58 @@ export class CommercialTermsStore {
       const proposed=proposedOfficeMarkup(this.ledger,draft.companyId);
       requireThat(proposed===undefined || proposed.markupBasisPoints===draft.aiUsage.markupBasisPoints,'ai_markup_differs_from_proposal',409);
     }
+    if(draft.billingPlan!==undefined) {
+      validBillingPlanTerms(draft.billingPlan);
+      // The month's own charge must be what the plan says for this month.
+      const month=planMonthIndex(draft.billingPlan.startPeriod,draft.period);
+      requireThat(month>=1,'billing_plan_terms_invalid',409);
+      const included=month<=draft.billingPlan.includedMonths;
+      requireThat(draft.careCents===(included?'0':draft.billingPlan.careCents),'billing_plan_terms_invalid',409);
+      const resale=!included && draft.billingPlan.aiBilling==='resale';
+      requireThat(resale===(draft.aiUsage!==undefined) && (!resale || (draft.aiUsage!.markupBasisPoints===draft.billingPlan.markupBasisPoints && draft.aiUsage!.termsReference===draft.billingPlan.termsReference)),'billing_plan_terms_invalid',409);
+    }
+    requireThat(!standing || draft.billingPlan,'billing_plan_terms_invalid',409);
     const terms:CommercialTerms={...draft,publishedAt:this.ledger.now()};const termsDigest=digest(terms);
-    this.ledger.db.transaction(()=>{
+    const acceptance=this.ledger.db.transaction(()=>{
       requireThat(!this.ledger.db.get('SELECT id FROM invoices WHERE tenant=? AND period=?',draft.companyId,draft.period),'commercial_period_already_closed',409);
       requireThat(!this.ledger.db.get('SELECT seq FROM commercial_terms WHERE tenant=? AND period=? AND version=?',draft.companyId,draft.period,draft.version),'commercial_terms_version_exists',409);
       this.ledger.db.run('INSERT INTO commercial_terms(tenant,period,version,digest,body) VALUES(?,?,?,?,?)',draft.companyId,draft.period,draft.version,termsDigest,canonical(terms));
-      this.ledger.db.append(draft.companyId,'commercial_terms_published',null,this.ledger.now(),{period:draft.period,version:draft.version,digest:termsDigest,sellerBasisDigest:this.sellerBasisDigest(terms)});
+      this.ledger.db.append(draft.companyId,'commercial_terms_published',null,this.ledger.now(),{period:draft.period,version:draft.version,digest:termsDigest,sellerBasisDigest:this.sellerBasisDigest(terms),...(terms.billingPlan?{billingPlanVersion:terms.billingPlan.version}:{})});
+      if(!standing) return null;
+      this.assertAnchor(draft.companyId,terms.billingPlan!.version,standing.anchor);
+      return this.standing(terms,termsDigest,standing.anchor);
     });
-    return {terms,digest:termsDigest};
+    return {terms,digest:termsDigest,...(acceptance?{acceptance}:{})};
+  }
+  /** `anchor` must be the plan version's real billing-owner acceptance: a stored
+   * row, not standing, of terms carrying this plan version. */
+  private assertAnchor(companyId:string,planVersion:string,anchor:CommercialAcceptance) {
+    const row=this.ledger.db.get<{body:string}>('SELECT body FROM commercial_acceptances WHERE tenant=? AND period=? AND version=?',companyId,anchor.period,anchor.version);
+    requireThat(row && row.body===canonical(anchor) && anchor.companyId===companyId && !isStandingAcceptance(anchor),'billing_plan_anchor_invalid',409);
+    const terms=this.ledger.db.get<{body:string;digest:string}>('SELECT body,digest FROM commercial_terms WHERE tenant=? AND period=? AND version=?',companyId,anchor.period,anchor.version);
+    requireThat(terms && terms.digest===anchor.digest && (JSON.parse(terms.body) as CommercialTerms).billingPlan?.version===planVersion,'billing_plan_anchor_invalid',409);
+  }
+  /** Record the standing acceptance of one month's terms under the plan's anchor
+   * acceptance. Inside the caller's transaction; the row passes `accepted()`
+   * exactly as an owner's own acceptance does. */
+  private standing(terms:CommercialTerms,termsDigest:string,anchor:CommercialAcceptance):CommercialAcceptance {
+    const acceptance:CommercialAcceptance={companyId:terms.companyId,period:terms.period,version:terms.version,digest:termsDigest,subject:`${STANDING_SUBJECT_PREFIX}${digest(anchor)}`,acceptedAt:this.ledger.now()};
+    requireThat(acceptance.acceptedAt>=terms.publishedAt,'commercial_acceptance_mismatch',409);
+    this.ledger.db.run('INSERT INTO commercial_acceptances(tenant,period,version,digest,body) VALUES(?,?,?,?,?)',terms.companyId,terms.period,terms.version,termsDigest,canonical(acceptance));
+    this.ledger.db.append(terms.companyId,'billing_plan_standing_acceptance',null,this.ledger.now(),{...acceptance,billingPlanVersion:terms.billingPlan!.version,anchor:{period:anchor.period,version:anchor.version,digest:digest(anchor)}});
+    return acceptance;
+  }
+  /** The plan version's anchor: the one real billing-owner acceptance of a month
+   * whose latest terms carry that plan version. Undefined while awaiting the owner. */
+  planAcceptance(companyId:string,planVersion:string):CommercialAcceptance|undefined {
+    id(companyId);id(planVersion);
+    for(const row of this.ledger.db.all<{body:string}>('SELECT a.body FROM commercial_acceptances a JOIN commercial_terms t ON t.tenant=a.tenant AND t.period=a.period AND t.version=a.version AND t.digest=a.digest WHERE a.tenant=? ORDER BY t.seq',companyId)) {
+      const acceptance=JSON.parse(row.body) as CommercialAcceptance;
+      if(isStandingAcceptance(acceptance)) continue;
+      const terms=this.ledger.db.get<{body:string}>('SELECT body FROM commercial_terms WHERE tenant=? AND period=? AND version=?',companyId,acceptance.period,acceptance.version);
+      if(terms && (JSON.parse(terms.body) as CommercialTerms).billingPlan?.version===planVersion) return acceptance;
+    }
+    return undefined;
   }
   accept(actor:PortalPrincipal,period:string,version:string,expectedDigest:string):CommercialAcceptance {
     requireThat(actor.role==='billing_owner','forbidden',403);this.outside(actor.companyId);id(version);
@@ -131,10 +208,24 @@ export class CommercialTermsStore {
       this.ledger.db.run('INSERT INTO commercial_acceptances(tenant,period,version,digest,body) VALUES(?,?,?,?,?)',actor.companyId,period,version,expectedDigest,canonical(acceptance));
       this.ledger.db.append(actor.companyId,'commercial_terms_accepted',null,this.ledger.now(),acceptance);
       // The office's own AI resale acceptance, recorded once with the reference
-      // its Modelvia resale policy carries (office-ai-access.ts).
-      const ai=current.terms.aiUsage;
+      // its Modelvia resale policy carries (office-ai-access.ts). Accepting a
+      // resale PLAN accepts resale from its first month even when that month's
+      // AI is included: Modelvia prices the office under the resale policy from
+      // go-live and the included months' Modelvia invoices are absorbed
+      // (office-ai-billing.ts); Modelvia refuses every request of a customer
+      // with no policy, and a client-funded policy cannot become resale later.
+      const plan=current.terms.billingPlan;
+      const ai=current.terms.aiUsage??(plan?.aiBilling==='resale'?{markupBasisPoints:plan.markupBasisPoints!,termsReference:plan.termsReference!}:undefined);
       if(ai) this.ledger.db.append(actor.companyId,'ai_resale_terms_accepted',null,this.ledger.now(),
         {period,version,markupBasisPoints:ai.markupBasisPoints,termsReference:ai.termsReference,acceptanceReference:resaleAcceptanceReference(ai.termsReference,acceptance)} satisfies ResaleAcceptance);
+      // This acceptance is the plan version's anchor: every other month already
+      // published from the same version is covered by it now.
+      if(plan) for(const row of this.ledger.db.all<{period:string}>('SELECT DISTINCT period FROM commercial_terms WHERE tenant=? AND period<>? ORDER BY period',actor.companyId,period)) {
+        const latest=this.latest(actor.companyId,row.period)!;
+        if(latest.terms.billingPlan?.version!==plan.version) continue;
+        if(this.ledger.db.get('SELECT digest FROM commercial_acceptances WHERE tenant=? AND period=? AND version=?',actor.companyId,row.period,latest.terms.version)) continue;
+        this.standing(latest.terms,latest.digest,acceptance);
+      }
       return acceptance;
     });
   }
@@ -184,6 +275,19 @@ export class CommercialTermsStore {
 /** One office's recorded acceptance of AI resale (the `ai_resale_terms_accepted`
  * ledger event). `acceptanceReference` is what its Modelvia resale policy carries. */
 export interface ResaleAcceptance { period:string; version:string; markupBasisPoints:number; termsReference:string; acceptanceReference:string }
+export function validBillingPlanTerms(value:unknown):asserts value is BillingPlanTerms {
+  object(value);
+  const resale=value.aiBilling==='resale';
+  exact(value,['version','startPeriod','includedMonths','careCents','aiBilling',...(resale?['markupBasisPoints','termsReference']:[])]);
+  id(value.version);
+  requireThat(typeof value.startPeriod==='string' && month(value.startPeriod),'billing_plan_terms_invalid',409);
+  requireThat(Number.isSafeInteger(value.includedMonths) && (value.includedMonths as number)>=0 && (value.includedMonths as number)<=MAX_INCLUDED_MONTHS,'billing_plan_terms_invalid',409);
+  requireThat(typeof value.careCents==='string' && /^(0|[1-9]\d{0,12})$/.test(value.careCents) && (resale || value.aiBilling==='included'),'billing_plan_terms_invalid',409);
+  if(resale) {
+    requireThat(Number.isSafeInteger(value.markupBasisPoints) && (value.markupBasisPoints as number)>=0 && (value.markupBasisPoints as number)<=MAX_OFFICE_MARKUP_BASIS_POINTS,'billing_plan_terms_invalid',409);
+    id(value.termsReference);
+  }
+}
 function validAiUsage(value:unknown):asserts value is AiUsageTerms {
   object(value);exact(value,['billing','markupBasisPoints','termsReference']);
   requireThat(value.billing==='resale' && Number.isSafeInteger(value.markupBasisPoints) && (value.markupBasisPoints as number)>=0 && (value.markupBasisPoints as number)<=MAX_OFFICE_MARKUP_BASIS_POINTS,'ai_usage_terms_invalid',409);
