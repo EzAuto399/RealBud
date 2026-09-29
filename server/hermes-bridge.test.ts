@@ -81,19 +81,19 @@ describe("managed model choice", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(modelStatus(dir)).toMatchObject({ keyPresent: false, managedWithdrawn: true });
   });
 
-  it("reconciles an upgraded openai-api/auto profile onto flash-high and keeps a valid saved choice", async () => {
+  it("reconciles an upgraded openai-api/auto profile onto the default (Sonnet · High) and keeps a valid saved choice", async () => {
     const { dir, profile } = tempHome();
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
     writeFileSync(join(profile, "config.yaml"), `model:\n  default: auto\n  provider: openai-api\n  base_url: "${GATEWAY}"\n  api_mode: chat_completions\n`);
     expect(await reconcileManagedModelProfile(dir)).toBe(false); // no grant: nothing written
     active();
     expect(await reconcileManagedModelProfile(dir)).toBe(true);
-    expect(managedModelProfile(dir)).toMatchObject({ provider: MANAGED_MODEL_PROVIDER, model: "deepseek-v4.1-flash", choice: "flash-high", baseUrl: GATEWAY });
+    expect(managedModelProfile(dir)).toMatchObject({ provider: MANAGED_MODEL_PROVIDER, model: "claude-sonnet-5.5", choice: "sonnet-high", baseUrl: GATEWAY });
     expect(await reconcileManagedModelProfile(dir)).toBe(false);
-    await setManagedModelChoice({ choice: "sonnet-high" }, { root: dir });
+    await setManagedModelChoice({ choice: "flash-high" }, { root: dir });
     writeFileSync(join(profile, ".env"), `${MANAGED_MODEL_KEY_ENV}=fictional-shadow\n`);
     expect(await reconcileManagedModelProfile(dir)).toBe(true);
-    expect(managedModelProfile(dir)).toMatchObject({ choice: "sonnet-high", envKeyPresent: false });
+    expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", envKeyPresent: false });
   });
 });
 
