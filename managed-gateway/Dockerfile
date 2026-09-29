@@ -14,9 +14,9 @@ COPY managed-gateway/*.ts ./
 # The bounded Gmail adapter, its strict wire contracts and the restricted PDF
 # reader it spawns, shared with the desktop. image-closure.test.ts walks the
 # imports from every entrypoint and fails when this list falls behind.
-COPY server/composio-gmail.ts server/source-attachments.ts server/pdf-text.ts server/redact.ts /app/server/
+COPY server/composio-gmail.ts server/source-attachments.ts server/pdf-text.ts server/redact.ts server/service-entitlement.ts /app/server/
 COPY server/helpers/pdf-text-worker.mjs /app/server/helpers/pdf-text-worker.mjs
-COPY shared/mail-ingestion.ts shared/source-attachments.ts /app/shared/
+COPY shared/mail-ingestion.ts shared/source-attachments.ts shared/service-entitlement.ts /app/shared/
 ENV NODE_ENV=production
 ENV PORT=8787
 EXPOSE 8787

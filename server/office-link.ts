@@ -429,7 +429,14 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       await options.provisioning?.reconcile();
       if (!saved?.companyId) return;
       const report = await options.report();
-      const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` }, body: JSON.stringify(report) }, PROVISIONING_TIMEOUT_MS);
+      // Say so when this link holds no grant. If the website already recorded
+      // one, its secret-bearing reply was lost on the way here; the website then
+      // has this installation's own credentials replaced and sends them back.
+      // Never asked while a grant is in force: that would rotate a working key.
+      const needsProvisioning = options.provisioning !== undefined && saved.provisioned !== true &&
+        !((await options.provisioning.active?.().catch(() => false)) ?? false);
+      const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` },
+        body: JSON.stringify(needsProvisioning ? { ...report, needsProvisioning: true } : report) }, PROVISIONING_TIMEOUT_MS);
       // 401/403 is the website saying this installation's access is gone. Stop
       // using the vendor grant immediately; every saved work record is kept.
       if (response.status === 401 || response.status === 403) {
@@ -440,7 +447,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       if (!response.ok) throw new Error("The website did not accept the latest status. Your local work can continue.");
       // The portal retries provisioning here on every check-in until it has
       // minted once, so a computer skipped at redeem (setup unfinished on the
-      // account) picks its grant up as soon as support finishes setup. A grant
+      // account) picks its grant up as soon as support finishes setup; after
+      // that it redelivers only when asked above. A grant
       // already in force is left alone: re-applying would replace a live
       // revocable key with whatever this reply happened to carry.
       let provisioned = saved.provisioned === true;

@@ -1,26 +1,52 @@
 /**
- * Care-fee invoices. One closed invoice per office and month, holding the care
- * line from the office's accepted commercial terms (`commercial-terms.ts`) and
- * any care credits carried forward, collected through Square
- * (`square-payment.ts`). Nothing here reads AI usage, rate cards or request
- * history: AI rates, caps, usage and invoices are Modelvia's (owner decision,
- * 24 September 2026), so Modelvia-billed AI can neither block nor appear on a
- * care invoice.
+ * The office's monthly RealBud invoice. One closed invoice per office and month,
+ * holding the care line from the office's accepted commercial terms
+ * (`commercial-terms.ts`), any care credits carried forward and, for an office
+ * that accepted AI resale (owner decision, 26 September 2026), one "AI usage"
+ * line per finalized Modelvia customer invoice consolidated into it, collected
+ * as ONE amount through Square (`square-payment.ts`). AI amounts are Modelvia's
+ * exact invoice totals and GST (`office-ai-billing.ts` fetches them); nothing
+ * here reads the gateway's legacy AI usage, rate cards or request history.
  */
 import { randomUUID } from 'node:crypto';
 import { canonical, id, integer, nano, requireThat, type PortalPrincipal } from './contracts.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { cents, gstCents, periodAt } from './money.ts';
 import { CommercialTermsStore } from './commercial-terms.ts';
+import { queueInvoiceEmail } from './invoice-email.ts';
 
-export interface InvoiceLine { description:string; amountNanoAud:string; amountCents:string; gstCents:string; creditId?:string; sourceInvoice?:string }
+export interface InvoiceLine { description:string; amountNanoAud:string; amountCents:string; gstCents:string; creditId?:string; sourceInvoice?:string;
+  /** An AI usage line: the Modelvia customer invoice it comes from. Each is one
+   * of that invoice's own lines (per model, with its request count), at that
+   * line's exact cents and GST. */
+  modelviaInvoice?:string;
+  model?:string; requestCount?:number;
+  /** Who used it, as Modelvia names them (user or project label). */
+  usedBy?:string;
+  /** Only for an office whose charge detail is itemized: Modelvia's split of the
+   * all-in amount. Never wholesale, platform fee or RealBud's markup. */
+  components?:{modelUsageCents:string;routingCents:string;serviceFeeCents:string} }
+/** One finalized Modelvia customer invoice consolidated into a RealBud invoice. */
+export interface ConsolidatedAiInvoice { id:string; period:string; totalCents:string; gstCents:string }
+/** What the close passes for one Modelvia invoice: its totals and, when read
+ * from Modelvia, its own lines (absent: one summary line, the pre-grouping form). */
+export interface AiInvoiceInput extends ConsolidatedAiInvoice { lines?:AiLineInput[] }
+export type AiLineInput = Pick<InvoiceLine,'description'|'amountCents'|'gstCents'|'model'|'requestCount'|'usedBy'|'components'>;
 export interface Invoice {
   id:string; kind:'Tax Invoice'|'Adjustment Note'; mode:'local'|'commercial'; companyId:string; period:string; issuedAt:number;
-  supplier:{legalName:string;product:'RealBud';abn:string;gstRegistered:true;address?:string}; customer:{name:string;address:string;abn?:string}; currency:'AUD'; gstInclusive:true;
+  supplier:{legalName:string;product:'RealBud';abn:string;gstRegistered:true;address?:string}; customer:{name:string;address:string;abn?:string;tradingName?:string;billingEmail?:string}; currency:'AUD'; gstInclusive:true;
   lines:InvoiceLine[]; totalCents:string; gstCents:string; careAgreementRef:string|null;
   sourceEventIds:number[];
   /** Absent only on a historical local invoice row; every invoice closed here carries it. */
   commercialTerms?:{version:string;digest:string;acceptanceDigest:string;sellerBasisDigest:string};
+  /** Present only when AI resale was billed or deferred on this invoice. Absent
+   * on care-only invoices, so their shape and digest are unchanged.
+   * `modelviaCustomerId`, `usedBy` (Modelvia's name for whose usage it is) and
+   * `chargeDetail` are recorded on invoices closed from October 2026. */
+  aiUsage?:{modelviaInvoices:ConsolidatedAiInvoice[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'};
+  /** Payment due date; recorded on invoices closed from October 2026. The office
+   * pays on receipt, so it is the issue time. */
+  dueAt?:number;
 }
 export interface HostedCheckout { sessionId:string; url:string; expiresAt:number }
 export interface CheckoutRequest { companyId:string; invoiceId:string; attemptId:string; amountCents:string; currency:'AUD'; idempotencyKey:string }
@@ -59,6 +85,8 @@ export class BillingService {
     this.ledger=ledger; this.payment=payment; this.internalCompanyId=options.internalCompanyId;
     this.commercialTerms=options.internalCompanyId?new CommercialTermsStore(ledger,options.internalCompanyId):undefined;
   }
+  /** Current collection capability, derived from the authorized payment adapter. */
+  get collectionMode(): 'off'|'sandbox'|'live' { return this.payment?.mode??'off'; }
   /** Care credits not yet applied to an invoice or reserved for a refund. */
   private unappliedCareCredits(companyId:string,period:string):EventRow[] {
     return this.ledger.db.all<EventRow>(`SELECT e.seq,e.kind,e.request,e.body FROM events e LEFT JOIN invoice_events i ON i.event=e.seq
@@ -66,23 +94,38 @@ export class BillingService {
       AND NOT EXISTS(SELECT 1 FROM refund_intents f WHERE f.credit_event=e.seq) ORDER BY e.seq`,companyId)
       .filter(e=>(JSON.parse(e.body) as CareCredit).period<=period);
   }
-  /** Explicit operator close (`commercial-cli.ts close`). Never schedules, emails
-   * or sends an invoice. The care amount and agreement reference come from the
+  /** Explicit operator close (`commercial-cli.ts close`). It durably queues an
+   * accepted recipient in the same transaction, but never performs network I/O.
+   * The care amount and agreement reference come from the
    * terms the office's billing owner accepted for this exact month; nothing is
    * inferred, prorated or read from usage. */
-  finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string):Invoice {
+  finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string,ai?:{invoices:AiInvoiceInput[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'},report?:{existing?:boolean}):Invoice {
     requireThat(this.commercialTerms,'commercial_terms_unavailable',503);
     [companyId,termsVersion].forEach(id);
     requireThat(!this.internalCompanyId || companyId!==this.internalCompanyId,'internal_usage_not_billable',403);
     requireThat(/^\d{4}-(0[1-9]|1[0-2])$/.test(period) && period<periodAt(this.ledger.now()),'month_not_closed',409);
+    const aiInvoices=ai?.invoices??[];
+    for(const entry of aiInvoices) requireThat(/^[A-Za-z0-9][A-Za-z0-9-]{0,159}$/.test(entry.id) && /^\d{4}-(0[1-9]|1[0-2])$/.test(entry.period) && entry.period<=period
+      && /^-?(0|[1-9][0-9]{0,14})$/.test(entry.totalCents) && /^-?(0|[1-9][0-9]{0,14})$/.test(entry.gstCents),'invalid_ai_invoice',409);
+    requireThat(new Set(aiInvoices.map(entry=>entry.id)).size===aiInvoices.length,'invalid_ai_invoice',409);
+    // Modelvia's own lines must BE its invoice: never adjusted, never re-rounded here.
+    for(const entry of aiInvoices) if(entry.lines) {
+      requireThat(entry.lines.every(l=>/^-?(0|[1-9][0-9]{0,14})$/.test(l.amountCents) && /^-?(0|[1-9][0-9]{0,14})$/.test(l.gstCents) && typeof l.description==='string' && l.description.length>0 && l.description.length<=300),'invalid_ai_invoice',409);
+      requireThat(entry.lines.reduce((n,l)=>n+BigInt(l.amountCents),0n).toString()===entry.totalCents && entry.lines.reduce((n,l)=>n+BigInt(l.gstCents),0n).toString()===entry.gstCents,'modelvia_invoice_lines_mismatch',409);
+    }
+    requireThat(!ai?.modelviaCustomerId || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/.test(ai.modelviaCustomerId),'invalid_ai_invoice',409);
+    if(ai) ensureAiConsolidationTable(this.ledger);
     return this.ledger.db.transaction(()=>{
       const tenant=this.ledger.tenant(companyId);
       requireThat(tenant.billingMode!=='internal_cost','internal_usage_not_billable',403);
       const accepted=this.commercialTerms!.accepted(companyId,period,termsVersion);
       const terms=accepted.terms;
       const existing=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND period=?',companyId,period);
-      if(existing) { const invoice:Invoice=JSON.parse(existing.body); requireThat(invoice.commercialTerms?.version===termsVersion,'invoice_close_conflict',409); return invoice; }
+      if(existing) { const invoice:Invoice=JSON.parse(existing.body); requireThat(invoice.commercialTerms?.version===termsVersion,'invoice_close_conflict',409); if(report) report.existing=true; return invoice; }
       requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live',409);
+      // AI resale only under terms that carry it, and each Modelvia invoice at most once, ever.
+      requireThat(!ai || terms.aiUsage,'ai_usage_not_accepted',409);
+      for(const entry of aiInvoices) requireThat(!this.ledger.db.get('SELECT modelvia_invoice FROM office_ai_consolidations WHERE modelvia_invoice=?',entry.id),'modelvia_invoice_already_consolidated',409);
       // Closing must move forwards: late credits are carried to the next invoice.
       requireThat(!this.ledger.db.get('SELECT id FROM invoices WHERE tenant=? AND period>?',companyId,period),'invoice_period_out_of_order',409);
       const credits=this.unappliedCareCredits(companyId,period); const lines:InvoiceLine[]=[];
@@ -91,19 +134,45 @@ export class BillingService {
       };
       const care=BigInt(terms.careCents);
       if(care>0n) add({description:'RealBud software and routine maintenance — monthly care',amountNanoAud:(care*10_000_000n).toString()});
+      // Exact cents and GST from the Modelvia invoice, line by line; never re-rounded here.
+      for(const entry of aiInvoices) {
+        if(!entry.lines) { lines.push({description:`AI usage ${entry.period} (Modelvia invoice ${entry.id})`,amountNanoAud:(BigInt(entry.totalCents)*10_000_000n).toString(),amountCents:entry.totalCents,gstCents:entry.gstCents,modelviaInvoice:entry.id}); continue; }
+        for(const l of entry.lines) lines.push({description:l.description,amountNanoAud:(BigInt(l.amountCents)*10_000_000n).toString(),amountCents:l.amountCents,gstCents:l.gstCents,modelviaInvoice:entry.id,
+          ...(l.model!==undefined?{model:l.model}:{}),...(l.requestCount!==undefined?{requestCount:l.requestCount}:{}),...(l.usedBy!==undefined?{usedBy:l.usedBy}:{}),
+          ...(ai?.chargeDetail==='itemized' && l.components?{components:{...l.components}}:{})});
+      }
       for(const e of credits) { const data=JSON.parse(e.body) as CareCredit; add({description:'Care credit',amountNanoAud:(-nano(data.amountNanoAud)).toString(),creditId:data.creditId,sourceInvoice:data.invoiceId}); }
       const totalNano=lines.reduce((s,l)=>s+BigInt(l.amountNanoAud),0n); const total=cents(totalNano);
       const roundedLines=lines.reduce((s,l)=>s+BigInt(l.amountCents),0n);
       if(roundedLines!==total) lines.push({description:'Monthly rounding adjustment',amountNanoAud:'0',amountCents:(total-roundedLines).toString(),gstCents:'0'});
-      const gst=gstCents(total), lineGst=lines.reduce((s,l)=>s+BigInt(l.gstCents),0n);
-      if(lines.length) lines[lines.length-1].gstCents=(BigInt(lines.at(-1)!.gstCents)+gst-lineGst).toString();
+      // The invoice GST is Square's inclusive GST on the one collected total.
+      const gst=gstCents(total), lineGst=lines.reduce((s,l)=>s+BigInt(l.gstCents),0n), drift=gst-lineGst;
+      if(aiInvoices.length) {
+        // An AI line always keeps the GST printed on its Modelvia invoice. The
+        // difference from rounding the one total is at most a cent (care and one
+        // Modelvia invoice each round by up to half a cent); anything larger means
+        // the documents disagree and is refused rather than hidden on a line.
+        requireThat(drift>=-1n && drift<=1n,'gst_reconciliation_required',409);
+        if(drift!==0n) {
+          let target=lines.findLastIndex(l=>!l.modelviaInvoice);
+          if(target<0) { lines.push({description:'GST rounding adjustment',amountNanoAud:'0',amountCents:'0',gstCents:'0'}); target=lines.length-1; }
+          lines[target].gstCents=(BigInt(lines[target].gstCents)+drift).toString();
+        }
+      } else if(lines.length) lines[lines.length-1].gstCents=(BigInt(lines.at(-1)!.gstCents)+drift).toString();
       // The sequence key and event kind keep their historical names so an older ledger reads unchanged.
       const next=Number(this.ledger.db.get<{value:string}>("SELECT value FROM settings WHERE key='local_invoice_sequence'")?.value??'0')+1;
-      const invoice:Invoice={id:`RB-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:'commercial',companyId,period,issuedAt:this.ledger.now(),supplier:terms.seller,customer:terms.customer,currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef:terms.careAgreementRef,sourceEventIds:credits.map(e=>e.seq),commercialTerms:{version:terms.version,digest:accepted.digest,acceptanceDigest:digest(accepted.acceptance),sellerBasisDigest:this.commercialTerms!.sellerBasisDigest(terms)}};
+      const invoice:Invoice={id:`RB-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:'commercial',companyId,period,issuedAt:this.ledger.now(),dueAt:this.ledger.now(),supplier:terms.seller,customer:terms.customer,currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef:terms.careAgreementRef,sourceEventIds:credits.map(e=>e.seq),commercialTerms:{version:terms.version,digest:accepted.digest,acceptanceDigest:digest(accepted.acceptance),sellerBasisDigest:this.commercialTerms!.sellerBasisDigest(terms)},
+        ...(ai && (aiInvoices.length || ai.deferredPeriods?.length)?{aiUsage:{modelviaInvoices:aiInvoices.map(({id,period,totalCents,gstCents})=>({id,period,totalCents,gstCents})),...(ai.deferredPeriods?.length?{deferredPeriods:[...ai.deferredPeriods]}:{}),
+          ...(ai.modelviaCustomerId?{modelviaCustomerId:ai.modelviaCustomerId}:{}),...(ai.usedBy?{usedBy:ai.usedBy}:{}),...(ai.chargeDetail?{chargeDetail:ai.chargeDetail}:{})}}:{})};
       this.ledger.db.run("INSERT INTO settings(key,value) VALUES('local_invoice_sequence',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(next));
       this.ledger.db.run('INSERT INTO invoices(id,tenant,period,body) VALUES(?,?,?,?)',invoice.id,companyId,period,canonical(invoice));
       for(const e of credits) this.ledger.db.run('INSERT INTO invoice_events(event,invoice) VALUES(?,?)',e.seq,invoice.id);
+      // Reconciliation: which Modelvia invoice went onto which RealBud invoice.
+      // The primary key is the Modelvia invoice id, so it can never be billed twice.
+      for(const {id:entryId,period:entryPeriod,totalCents,gstCents} of aiInvoices) this.ledger.db.run('INSERT INTO office_ai_consolidations(modelvia_invoice,tenant,period,invoice,body) VALUES(?,?,?,?,?)',entryId,companyId,period,invoice.id,canonical({id:entryId,period:entryPeriod,totalCents,gstCents}));
+      if(invoice.aiUsage) this.ledger.db.append(companyId,'ai_usage_consolidated',null,this.ledger.now(),{invoiceId:invoice.id,period,modelviaInvoices:invoice.aiUsage.modelviaInvoices,...(invoice.aiUsage.deferredPeriods?{deferredPeriods:invoice.aiUsage.deferredPeriods}:{})});
       this.commercialTerms!.bindInvoice(invoice);
+      queueInvoiceEmail(this.ledger,invoice,terms.customer.billingEmail,accepted.digest);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
       return invoice;
     });
@@ -135,7 +204,7 @@ export class BillingService {
   /** Tenant-scoped list for the website. Paid is a settlement flag, not a provider receipt. */
   portalInvoices(actor:PortalPrincipal) {
     const paid=new Set(this.ledger.db.all<{invoice:string}>('SELECT p.invoice FROM payments p JOIN invoices i ON i.id=p.invoice WHERE i.tenant=?',actor.companyId).map(r=>r.invoice));
-    return this.invoices(actor).map(inv=>({id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id)}));
+    return this.invoices(actor).map(inv=>({id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id),aiUsageCsv:!!inv.aiUsage?.modelviaInvoices.length}));
   }
   async checkout(actor:PortalPrincipal,invoiceId:string):Promise<HostedCheckout> {
     requireThat(actor.role==='billing_owner','forbidden',403); requireThat(this.payment,'payment_provider_unselected',503);
@@ -242,4 +311,18 @@ export class BillingService {
       this.ledger.db.run('INSERT INTO payment_events(id,digest) VALUES(?,?)',key,hash); return {duplicate:!!settled};
     });
   }
+}
+
+/** Which Modelvia customer invoice was consolidated into which RealBud invoice.
+ * Created on first use (like `office_modelvia_customer`), append-only. */
+export function ensureAiConsolidationTable(ledger:UsageLedger) {
+  ledger.db.sql.exec(`CREATE TABLE IF NOT EXISTS office_ai_consolidations (modelvia_invoice TEXT PRIMARY KEY, tenant TEXT NOT NULL, period TEXT NOT NULL, invoice TEXT NOT NULL REFERENCES invoices(id), body TEXT NOT NULL);
+    CREATE TRIGGER IF NOT EXISTS immutable_office_ai_consolidations_UPDATE BEFORE UPDATE ON office_ai_consolidations BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_office_ai_consolidations_DELETE BEFORE DELETE ON office_ai_consolidations BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
+}
+/** The Modelvia invoices already consolidated for one office, by id. */
+export function consolidatedAiInvoices(ledger:UsageLedger,companyId:string):Map<string,{invoice:string;period:string}> {
+  ensureAiConsolidationTable(ledger);
+  return new Map(ledger.db.all<{modelvia_invoice:string;invoice:string;period:string}>('SELECT modelvia_invoice,invoice,period FROM office_ai_consolidations WHERE tenant=?',companyId)
+    .map(row=>[row.modelvia_invoice,{invoice:row.invoice,period:row.period}]));
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
+import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import type { ModelviaCaps, ModelviaClient, ModelviaCustomer, ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
@@ -21,9 +21,9 @@ const synthetic = (keyId: string) => `rbk_${keyId}_${(keyId === KEY_IDS[0] ? 'A'
 /** The office's Modelvia customer as the fake holds it. Deliberately different
  * from the fixture tenant's stored ledger caps, which must drive nothing. */
 const CUSTOMER_CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
-/** The request cap is the default A$1, below the customer's monthly cap. */
-const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 };
-const SPEND_LABEL = 'A$70/month, A$1/request, 3 at once';
+/** The request cap is the default A$4, below the customer's monthly cap. */
+const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 };
+const SPEND_LABEL = 'A$70/month, A$4/request, 3 at once';
 
 function harness() {
   const f = fixture();
@@ -87,7 +87,7 @@ function harness() {
   const secrets = fileSecretStore(secretsDir);
   const make = (overrides: Partial<ConstructorParameters<typeof InstallationProvisioning>[0]> = {}) => new InstallationProvisioning({
     ledger: f.ledger, registry, endpoint: 'https://managed.example.invalid', secrets,
-    org: orgClient, modelvia: modelviaClient, authConfigs: { gmail: 'ac-fictional-readonly' }, ...overrides,
+    org: orgClient, modelvia: modelviaClient, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' }, ...overrides,
   });
   const request = { companyId: f.tenant.companyId, installationId: 'install-one', customerId: CUSTOMER, profile: 'property' };
   return { f, root, registry, secretsDir, secrets, org, modelvia, orgClient, modelviaClient, make, request,
@@ -193,7 +193,6 @@ test('an unknown or unconfigured app is refused before any external call', async
     for (const apps of [['slack'], ['gmail', 'slack'], ['gmail', 'gmail'], [], 'gmail']) {
       await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, apps }));
     }
-    await assert.rejects(() => h.make({ authConfigs: {} }).provision(h.f.owner, { ...h.request, apps: ['gmail'] }), /connector_app_not_admitted/);
     assert.equal(h.org.orgKeyReads, 0); assert.equal(h.modelvia.minted.length, 0);
   } finally { h.close(); }
 });
@@ -348,6 +347,115 @@ test('of two concurrent resumes exactly one proceeds', async () => {
   } finally { h.close(); }
 });
 
+test('a lost reply after ready is redelivered: the one key is rotated and the connector credential replaced, nothing new created', async () => {
+  const h = harness(); try {
+    // The secret-bearing reply is delivered here and then lost on the way to the desktop.
+    const lost = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    const lostHash = h.devices()[0]!.tokenHash;
+    // A plain repeat still delivers nothing and rotates nothing.
+    assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.key, undefined);
+    assert.deepEqual(h.modelvia.rotated, []);
+
+    const again = (await h.make().provision(h.f.owner, { ...h.request, redeliver: true })).provisioning;
+    assert.deepEqual(h.modelvia.rotated, [lost.model.keyId]);
+    assert.deepEqual(live(h), ['fedcba9876543210']);
+    assert.equal(again.model.key, synthetic('fedcba9876543210'));
+    assert.equal(again.model.keyId, 'fedcba9876543210');
+    assert.match(again.connector.credential!, /^rbc_[a-f0-9]{64}$/);
+    assert.notEqual(again.connector.credential, lost.connector.credential);
+    // Same device, new hash: the undelivered credential no longer authenticates.
+    assert.equal(h.devices().length, 1);
+    assert.notEqual(h.devices()[0]!.tokenHash, lostHash);
+    assert.equal(h.modelvia.minted.length, 1); assert.equal(h.modelvia.projects.length, 1);
+    assert.deepEqual(h.org.created, [`realbud-${h.f.tenant.companyId}`]);
+    assert.deepEqual({ ...again, connector: { ...again.connector, credential: undefined }, model: { ...again.model, key: undefined } },
+      { ...lost, connector: { ...lost.connector, credential: undefined }, model: { ...lost.model, keyId: 'fedcba9876543210', key: undefined } });
+    // The stored record follows the rotation, so a later revoke reaches the live key.
+    const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(repeat.model.keyId, 'fedcba9876543210'); assert.equal(repeat.model.key, undefined);
+    const events = h.f.ledger.db.all<{ kind: string; body: string }>('SELECT kind,body FROM events');
+    const redelivered = events.filter(row => row.kind === 'installation_credentials_redelivered');
+    assert.equal(redelivered.length, 1);
+    assert.deepEqual(JSON.parse(redelivered[0]!.body), { installationId: 'install-one', modelKeyId: 'fedcba9876543210', modelKeyRotatedFrom: '0123456789abcdef' });
+    const everything = events.map(row => row.body).join('\n') + h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!.body;
+    for (const secret of [PROJECT_KEY, ORG_KEY, again.model.key!, again.connector.credential!, lost.model.key!]) assert.ok(!everything.includes(secret));
+    assert.ok(!JSON.stringify(again).includes('ak_'));
+    await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+    assert.deepEqual(h.modelvia.revoked, ['fedcba9876543210']);
+  } finally { h.close(); }
+});
+
+test('of two concurrent redeliveries exactly one rotates; another office, a revoked installation and a bad flag get nothing', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const ask = () => h.make().provision(h.f.owner, { ...h.request, redeliver: true });
+    const outcomes = await Promise.allSettled([ask(), ask()]);
+    assert.deepEqual(outcomes.map(outcome => outcome.status).sort(), ['fulfilled', 'rejected']);
+    assert.match(String((outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult).reason), /installation_provisioning_in_progress/);
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(live(h).length, 1);
+
+    await assert.rejects(() => h.make().provision({ ...h.f.owner, companyId: 'company-other' }, { ...h.request, redeliver: true }), /company_scope_mismatch/);
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: false }), /invalid_fields/);
+    await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+    await assert.rejects(ask, /installation_revoked/);
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+  } finally { h.close(); }
+});
+
+test('a redelivery whose rotate reply is lost is taken over later and rotates the replacement', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_in_progress/);
+    later(h);
+    const again = (await h.make().provision(h.f.owner, { ...h.request, redeliver: true })).provisioning;
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef', 'fedcba9876543210']);
+    assert.deepEqual(live(h), ['00000000000000a3']);
+    assert.equal(again.model.keyId, '00000000000000a3');
+  } finally { h.close(); }
+});
+
+test('a redelivery overtaken by a revoke revokes its fresh key and delivers nothing', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const racing = h.make({ modelvia: { ...h.modelviaClient, async rotate(keyId) {
+      const rotated = await h.modelviaClient.rotate(keyId);
+      await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+      return rotated;
+    } } });
+    await assert.rejects(() => racing.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
+    // The revoke reached the recorded (already rotated-away) key; the fresh one is revoked here.
+    assert.deepEqual(h.modelvia.revoked, ['0123456789abcdef', 'fedcba9876543210']);
+    assert.equal(h.devices()[0]!.active, false);
+  } finally { h.close(); }
+});
+
+test('an office can only provision into a Modelvia customer bound to it', async () => {
+  // Customer-paid: Modelvia's billing account names the office.
+  const other = harness(); try {
+    other.modelvia.customer = { active: true, ...CUSTOMER_CAPS, billingCompanyId: 'company-other' };
+    await assert.rejects(() => other.make().provision(other.f.owner, other.request), (error: unknown) =>
+      error instanceof GatewayError && error.code === 'modelvia_customer_not_bound' && error.status === 403);
+    assert.equal(other.modelvia.projects.length, 0); assert.equal(existsSync(other.registry), false);
+    other.modelvia.customer = { active: true, ...CUSTOMER_CAPS, billingCompanyId: other.f.tenant.companyId };
+    assert.ok((await other.make().provision(other.f.owner, other.request)).provisioning.model.key);
+  } finally { other.close(); }
+  // Client-paid: the operator binding decides, both ways.
+  const bound = harness(); try {
+    bindOfficeCustomer(bound.f.ledger, 'company-other', CUSTOMER);
+    await assert.rejects(() => bound.make().provision(bound.f.owner, bound.request), /modelvia_customer_not_bound/);
+    bindOfficeCustomer(bound.f.ledger, 'company-other', 'cus-other-office');
+    bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, 'cus-fictional-elsewhere');
+    await assert.rejects(() => bound.make().provision(bound.f.owner, bound.request), /modelvia_customer_not_bound/);
+    assert.throws(() => bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, 'cus-other-office'), /modelvia_customer_bound_elsewhere/);
+    bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, CUSTOMER);
+    assert.ok((await bound.make().provision(bound.f.owner, bound.request)).provisioning.model.key);
+    assert.equal(bound.modelvia.projects.length, 1);
+  } finally { bound.close(); }
+});
+
 test('a Modelvia customer that is missing, inactive, another client\'s or zero-capped is refused before any effect', async () => {
   for (const customer of [null, { active: false, ...CUSTOMER_CAPS }, { active: true, monthlyCapNanoAud: '0', maxConcurrent: 3 }, { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 0 }]) {
     const h = harness(); try {
@@ -381,10 +489,10 @@ test('project caps come from the Modelvia customer, never from the ledger tenant
   } finally { h.close(); }
 });
 
-test('the request cap defaults to A$1, takes an override, and never exceeds the monthly cap', async () => {
+test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an override, and never exceeds the monthly cap', async () => {
   const customer = { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
-  assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '1000000000');
-  assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 });
+  assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '4000000000');
+  assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 });
   assert.equal(projectCaps(customer, '5000000000').requestCapNanoAud, '5000000000');
   // Clamped to the monthly cap, which Modelvia requires.
   assert.equal(projectCaps({ ...customer, monthlyCapNanoAud: '500000000' }).requestCapNanoAud, '500000000');
@@ -394,16 +502,16 @@ test('the request cap defaults to A$1, takes an override, and never exceeds the 
     assert.throws(() => h.make({ requestCapNanoAud: '0' }), /modelvia_request_cap_invalid/);
     const env: NodeJS.ProcessEnv = {
       REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
-      REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+      REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key',
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
-      REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
+      REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
     };
     const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
     for (const bad of ['0', '-1', '1.5', '1e9', 'one', '0100']) {
       assert.deepEqual(composeProvisioning({ env: { ...env, REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: bad }, ledger: h.f.ledger, fetch: never }),
         { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD' }, bad);
     }
-    const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient }) as { provisioning: InstallationProvisioning };
+    const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } }) as { provisioning: InstallationProvisioning };
     const provisioned = (await composed.provisioning.provision(h.f.owner, h.request)).provisioning;
     assert.equal((h.modelvia.projects[0] as ModelviaCaps).requestCapNanoAud, '2000000000');
     assert.equal(provisioned.model.spendCapLabel, 'A$70/month, A$2/request, 3 at once');
@@ -422,7 +530,7 @@ async function capsHarness() {
   h.modelvia.customer = { active: true, monthlyCapNanoAud: '90000000000', maxConcurrent: 5 };
   return h;
 }
-const RAISED = { monthlyCapNanoAud: '90000000000', requestCapNanoAud: '1000000000', maxConcurrent: 5 };
+const RAISED = { monthlyCapNanoAud: '90000000000', requestCapNanoAud: '4000000000', maxConcurrent: 5 };
 
 test('applyCustomerCaps re-applies the customer caps to every ready project and skips pending and revoked ones', async () => {
   const h = await capsHarness(); try {
@@ -433,7 +541,7 @@ test('applyCustomerCaps re-applies the customer caps to every ready project and 
     assert.equal(h.modelvia.customerReads, 1);
     // A repeat provision reports the caps now in force, still without secrets.
     const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
-    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$1/request, 5 at once');
+    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$4/request, 5 at once');
     assert.equal(repeat.model.key, undefined);
     // Audit lines carry installation ids and states, never the customer id.
     const audit = h.f.ledger.db.all<{ kind: string; body: string }>("SELECT kind, body FROM events WHERE kind LIKE 'installation_caps_%'");
@@ -573,10 +681,10 @@ test('the env resolver fails closed, names only the missing variable, and never 
       REALBUD_ENABLE_PROVIDER: '1',
       REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
       REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid',
-      REALBUD_COMPOSIO_ORG_KEY: secret, REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+      REALBUD_COMPOSIO_ORG_KEY: secret,
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
-      REALBUD_MODELVIA_CLIENT_ID: 'realbud',
+      REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model',
     };
     const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
     const resolve = (env: NodeJS.ProcessEnv) => composeProvisioning({ env, ledger: h.f.ledger, fetch: never });
@@ -596,6 +704,9 @@ test('the env resolver fails closed, names only the missing variable, and never 
       assert.match(result.unavailable, /^provisioning_unconfigured:/);
       assert.ok(!result.unavailable.includes(secret), `reason leaked a value: ${result.unavailable}`);
     }
+    // No model default: `auto` is a request value, never an allowlist entry.
+    for (const models of [undefined, 'auto', 'fictional-model, auto', 'AUTO'])
+      assert.deepEqual(resolve({ ...full, REALBUD_MODELVIA_MODELS: models }), { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' });
     const composed = resolve(full);
     assert.ok('provisioning' in composed);
     // Composition alone makes no provider call; the transport above would throw.
@@ -683,8 +794,74 @@ test('the spend cap label is short human text the desktop contract accepts for e
   const h = harness(); try {
     h.modelvia.customer = { active: true, monthlyCapNanoAud: '10000000000000', maxConcurrent: 100 };
     const label = (await h.make().provision(h.f.owner, h.request)).provisioning.model.spendCapLabel;
-    assert.equal(label, 'A$10,000/month, A$1/request, 100 at once');
+    assert.equal(label, 'A$10,000/month, A$4/request, 100 at once');
     assert.ok(label.length <= SPEND_CAP_LABEL_MAX);
     assert.ok(!label.includes('nanoAUD'));
+  } finally { h.close(); }
+});
+
+test('three office installations reuse a verified config, another office uses its own project key and config', async () => {
+  const h = harness(); try {
+    const { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE } = await import('./composio-auth-config.ts');
+    const configs = new Map<string, unknown[]>(); let creates = 0;
+    const authConfigs = composioAuthConfigClient({ fetch: async (_url, init) => {
+      const key = new Headers(init.headers).get('x-api-key')!;
+      if (init.method === 'POST') {
+        const id = `ac_office${++creates}`;
+        configs.set(key, [{ id, name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: GMAIL_READONLY_SCOPE } }]);
+        return Response.json({ auth_config: { id } }, { status: 201 });
+      }
+      return Response.json({ items: configs.get(key) ?? [] });
+    } });
+    const org = { ...h.orgClient, async createProject(name: string) { const p = await h.orgClient.createProject(name); return { ...p, apiKey: `${PROJECT_KEY}_${p.id}` }; } };
+    for (const installationId of ['install-one', 'install-two', 'install-three']) await h.make({ authConfigs, org }).provision(h.f.owner, { ...h.request, installationId });
+    assert.equal(creates, 1); assert.equal(h.org.created.length, 1);
+    assert.deepEqual(h.devices().map(d => d.authConfigId), ['ac_office1', 'ac_office1', 'ac_office1']);
+    const other = { ...h.f.owner, companyId: 'company-b' };
+    h.f.ledger.provisionTenant({ ...h.f.tenant, companyId: 'company-b', licenseId: 'license-b' });
+    await h.make({ authConfigs, org }).provision(other, { ...h.request, companyId: 'company-b', installationId: 'install-four' });
+    assert.equal(creates, 2); assert.equal(h.devices()[3]!.authConfigId, 'ac_office2');
+  } finally { h.close(); }
+});
+
+test('uncertain auth config intent survives restart and blocks another installation from creating again', async () => {
+  const h = harness(); try {
+    let creates = 0;
+    const authConfigs = { async resolveGmail(o: { allowCreate: boolean; beforeCreate(): void }) { if (o.allowCreate) { o.beforeCreate(); creates++; } throw new GatewayError('connector_auth_config_create_unconfirmed', 409); } };
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, h.request), /create_unconfirmed/);
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-two' }), /create_unconfirmed/);
+    h.f.setTime(h.f.now() + PENDING_RESUME_AFTER_MS);
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, h.request), /create_unconfirmed/);
+    assert.equal(creates, 1); assert.equal(existsSync(h.registry), false); assert.equal(h.modelvia.minted.length, 0);
+  } finally { h.close(); }
+});
+
+test('config verification rejects broadened scopes before device admission and preserves ready bindings', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const original = h.devices()[0]!;
+    const { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME } = await import('./composio-auth-config.ts');
+    let reads = 0;
+    const authConfigs = composioAuthConfigClient({ fetch: async () => { reads++; return Response.json({ items: [{ id: 'ac_unsafe', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://mail.google.com/' } }] }); } });
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-two' }), /scopes_not_admitted/);
+    assert.deepEqual(h.devices(), [original]); assert.equal(h.modelvia.minted.length, 1);
+    await h.make({ authConfigs }).provision(h.f.owner, h.request);
+    await h.make({ authConfigs }).provision(h.f.owner, { ...h.request, redeliver: true });
+    assert.equal(reads, 1); assert.equal(h.devices()[0]!.authConfigId, original.authConfigId);
+    assert.equal(h.devices()[0]!.projectKeyEnv, original.projectKeyEnv);
+  } finally { h.close(); }
+});
+
+test('auth config create intent for a deleted project does not block a replacement office project', async () => {
+  const h = harness(); try {
+    const created: string[] = [];
+    const authConfigs = { async resolveGmail(o: { projectKey: string; allowCreate: boolean; beforeCreate(): void }) {
+      assert.equal(o.allowCreate, true); o.beforeCreate(); created.push(o.projectKey); return `ac_office${created.length}`;
+    } };
+    await h.make({ authConfigs }).provision(h.f.owner, h.request);
+    await h.make({ authConfigs }).revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId, deleteProject: true });
+    await h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-new' });
+    assert.equal(created.length, 2); assert.equal(h.org.created.length, 2);
+    assert.equal(h.devices().find(d => d.id === 'install-new')!.authConfigId, 'ac_office2');
   } finally { h.close(); }
 });

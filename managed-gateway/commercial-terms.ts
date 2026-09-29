@@ -10,7 +10,9 @@ import type { Invoice } from './billing.ts';
 export interface SellerBasis { legalName:string; product:'RealBud'; abn:string; address:string; gstRegistered:true }
 export interface CommercialTerms {
   companyId:string; period:string; version:string;
-  customer:{name:string;address:string;abn?:string};
+  /** `tradingName` is optional and shown on invoices beside the registered
+   * name; name, address and ABN must match the office's entitlement record. */
+  customer:{name:string;address:string;abn?:string;tradingName?:string;/** Exact office-approved recipient for this month's invoice. Absent on legacy terms. */billingEmail?:string};
   seller:SellerBasis;
   tax:{currency:'AUD';gstInclusive:true;gstBasisPoints:1000;treatmentRef:string};
   sellerVerificationRef:string; customerTermsRef:string;
@@ -19,14 +21,38 @@ export interface CommercialTerms {
    * are Modelvia's: entries are references only and never gate acceptance,
    * close or collection. */
   rateCards:{version:string;digest:string}[];
+  /** Present only for an office that buys its AI through RealBud (owner decision,
+   * 26 September 2026): the billing owner's acceptance of these terms is the
+   * office's acceptance of AI usage at Modelvia's price plus this markup, billed
+   * as one "AI usage" line on this month's RealBud invoice from the office's
+   * finalized Modelvia customer invoice (`office-ai-billing.ts`). Absent (every
+   * earlier terms row, and client-funded offices): the invoice is care only. An
+   * absent field leaves the terms digest unchanged (`canonical`). */
+  aiUsage?:AiUsageTerms;
   publishedAt:number;
 }
+/** `markupBasisPoints` is THIS office's accepted markup (0..10000, i.e. 0-100%).
+ * The deployment's REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS is only the
+ * default for new terms (`office-ai-terms.ts`); an operator's proposed markup for
+ * the office takes its place, and neither applies until the office accepts. */
+export interface AiUsageTerms { billing:'resale'; markupBasisPoints:number; termsReference:string }
+/** Largest accepted per-office markup: 100%. */
+export const MAX_OFFICE_MARKUP_BASIS_POINTS=10_000;
 export type CommercialTermsDraft=Omit<CommercialTerms,'publishedAt'>;
 export interface CommercialAcceptance { companyId:string;period:string;version:string;digest:string;subject:string;acceptedAt:number }
 export interface CollectionInvoiceBinding {invoiceId:string;companyId:string;period:string;invoiceDigest:string;termsVersion:string;termsDigest:string;acceptanceDigest:string;sellerBasisDigest:string;amountCents:string}
 const hex=(value:string)=>/^[a-f0-9]{64}$/.test(value);
 const month=(value:string)=>/^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 const meaningful=(value:string,max=500)=>typeof value==='string' && value.trim().length>0 && value.length<=max;
+/** An exact single mailbox: reject whitespace, controls, display names and
+ * Unicode lookalikes instead of silently normalising the accepted address. */
+export function validBillingEmail(value:unknown):value is string {
+  if(typeof value!=='string' || value.length>254 || !/^[\x21-\x7e]+$/.test(value)) return false;
+  const parts=value.split('@');
+  if(parts.length!==2 || parts[0].length<1 || parts[0].length>64 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(parts[0]) || parts[0].startsWith('.') || parts[0].endsWith('.') || parts[0].includes('..')) return false;
+  const labels=parts[1].split('.');
+  return labels.length>=2 && labels.every(label=>label.length>0 && label.length<=63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)) && /^[A-Za-z]{2,63}$/.test(labels.at(-1)!);
+}
 
 export class CommercialTermsStore {
   readonly ledger:UsageLedger;
@@ -55,14 +81,16 @@ export class CommercialTermsStore {
   /** Trusted operator publication. No HTTP route: the authenticated customer
    * must separately accept the exact published digest. */
   publish(draft:CommercialTermsDraft) {
-    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards']);
-    object(draft.customer);exact(draft.customer as Record<string,unknown>,draft.customer.abn===undefined?['name','address']:['name','address','abn']);
+    object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards',...(draft.aiUsage===undefined?[]:['aiUsage'])]);
+    object(draft.customer);exact(draft.customer as Record<string,unknown>,['name','address',...(draft.customer.abn===undefined?[]:['abn']),...(draft.customer.tradingName===undefined?[]:['tradingName']),...(draft.customer.billingEmail===undefined?[]:['billingEmail'])]);
     object(draft.seller);exact(draft.seller as unknown as Record<string,unknown>,['legalName','product','abn','address','gstRegistered']);
     object(draft.tax);exact(draft.tax as unknown as Record<string,unknown>,['currency','gstInclusive','gstBasisPoints','treatmentRef']);
     this.outside(draft.companyId);id(draft.version);
     requireThat(month(draft.period),'invalid_billing_period');
     const tenant=this.serving(draft.companyId);
     requireThat(draft.customer.name===tenant.customerName && draft.customer.address===tenant.customerAddress && draft.customer.abn===tenant.customerAbn,'commercial_customer_mismatch',409);
+    requireThat(draft.customer.tradingName===undefined || (meaningful(draft.customer.tradingName,200) && !/[\u0000-\u001f\u007f]/.test(draft.customer.tradingName)),'commercial_customer_invalid',409);
+    requireThat(draft.customer.billingEmail===undefined || validBillingEmail(draft.customer.billingEmail),'commercial_billing_email_invalid',409);
     requireThat(meaningful(draft.seller.legalName,200) && meaningful(draft.seller.address) && draft.seller.product==='RealBud' && /^\d{11}$/.test(draft.seller.abn) && draft.seller.gstRegistered===true,'seller_basis_invalid',409);
     requireThat(draft.tax.currency==='AUD' && draft.tax.gstInclusive===true && draft.tax.gstBasisPoints===1000 && meaningful(draft.tax.treatmentRef,160),'tax_basis_invalid',409);
     [draft.sellerVerificationRef,draft.customerTermsRef].forEach(value=>{id(value);});
@@ -75,6 +103,13 @@ export class CommercialTermsStore {
     for(const entry of draft.rateCards) {
       object(entry);exact(entry as Record<string,unknown>,['version','digest']);
       id(entry.version);requireThat(!versions.has(entry.version) && hex(entry.digest),'commercial_rate_card_invalid',409);versions.add(entry.version);
+    }
+    if(draft.aiUsage!==undefined) {
+      validAiUsage(draft.aiUsage);
+      // An operator's pending proposal for this office is what its next terms
+      // must offer; a reviewed file stating another markup is refused, never merged.
+      const proposed=proposedOfficeMarkup(this.ledger,draft.companyId);
+      requireThat(proposed===undefined || proposed.markupBasisPoints===draft.aiUsage.markupBasisPoints,'ai_markup_differs_from_proposal',409);
     }
     const terms:CommercialTerms={...draft,publishedAt:this.ledger.now()};const termsDigest=digest(terms);
     this.ledger.db.transaction(()=>{
@@ -95,6 +130,11 @@ export class CommercialTermsStore {
       const acceptance:CommercialAcceptance={companyId:actor.companyId,period,version,digest:expectedDigest,subject:actor.subject,acceptedAt:this.ledger.now()};
       this.ledger.db.run('INSERT INTO commercial_acceptances(tenant,period,version,digest,body) VALUES(?,?,?,?,?)',actor.companyId,period,version,expectedDigest,canonical(acceptance));
       this.ledger.db.append(actor.companyId,'commercial_terms_accepted',null,this.ledger.now(),acceptance);
+      // The office's own AI resale acceptance, recorded once with the reference
+      // its Modelvia resale policy carries (office-ai-access.ts).
+      const ai=current.terms.aiUsage;
+      if(ai) this.ledger.db.append(actor.companyId,'ai_resale_terms_accepted',null,this.ledger.now(),
+        {period,version,markupBasisPoints:ai.markupBasisPoints,termsReference:ai.termsReference,acceptanceReference:resaleAcceptanceReference(ai.termsReference,acceptance)} satisfies ResaleAcceptance);
       return acceptance;
     });
   }
@@ -139,4 +179,39 @@ export class CommercialTermsStore {
     requireThat(binding.invoiceDigest===digest(invoice) && binding.companyId===invoice.companyId && binding.period===invoice.period && binding.invoiceId===invoice.id && binding.termsDigest===accepted.digest && binding.termsVersion===reference.version && binding.acceptanceDigest===reference.acceptanceDigest && binding.sellerBasisDigest===reference.sellerBasisDigest && binding.amountCents===invoice.totalCents,'commercial_invoice_binding_mismatch',409);
     return binding;
   }
+}
+
+/** One office's recorded acceptance of AI resale (the `ai_resale_terms_accepted`
+ * ledger event). `acceptanceReference` is what its Modelvia resale policy carries. */
+export interface ResaleAcceptance { period:string; version:string; markupBasisPoints:number; termsReference:string; acceptanceReference:string }
+function validAiUsage(value:unknown):asserts value is AiUsageTerms {
+  object(value);exact(value,['billing','markupBasisPoints','termsReference']);
+  requireThat(value.billing==='resale' && Number.isSafeInteger(value.markupBasisPoints) && (value.markupBasisPoints as number)>=0 && (value.markupBasisPoints as number)<=MAX_OFFICE_MARKUP_BASIS_POINTS,'ai_usage_terms_invalid',409);
+  id(value.termsReference);
+}
+/** The per-office acceptance reference: RealBud's resale terms reference plus
+ * the digest of this office's acceptance, which names exactly one acceptance
+ * row (and one `commercialTerms.acceptanceDigest` on its invoices). At most 193
+ * printable characters, inside Modelvia's 200. */
+export function resaleAcceptanceReference(termsReference:string,acceptance:CommercialAcceptance):string {
+  id(termsReference);
+  return `${termsReference}@${digest(acceptance).slice(0,32)}`;
+}
+/** The office's most recent acceptance of AI resale, whatever its markup: the
+ * markup its Modelvia resale policy must carry. Undefined when never accepted. */
+export function latestResaleAcceptance(ledger:UsageLedger,companyId:string):ResaleAcceptance|undefined {
+  const row=ledger.db.get<{body:string}>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' ORDER BY seq DESC LIMIT 1",companyId);
+  return row?JSON.parse(row.body) as ResaleAcceptance:undefined;
+}
+/** An operator's proposed markup for one office (`ai_markup_proposed` event),
+ * while it is still PENDING: not yet accepted by the office. Undefined when there
+ * is none or the office has since accepted terms at that markup. */
+export interface MarkupProposal { markupBasisPoints:number; subject:string; proposedAt:number; reason:string }
+export function proposedOfficeMarkup(ledger:UsageLedger,companyId:string):MarkupProposal|undefined {
+  const row=ledger.db.get<{seq:number;body:string}>("SELECT seq,body FROM events WHERE tenant=? AND kind='ai_markup_proposed' ORDER BY seq DESC LIMIT 1",companyId);
+  if(!row) return undefined;
+  const proposal=JSON.parse(row.body) as MarkupProposal;
+  const acceptedSince=ledger.db.all<{body:string}>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' AND seq>? ORDER BY seq",companyId,row.seq)
+    .some(r=>(JSON.parse(r.body) as ResaleAcceptance).markupBasisPoints===proposal.markupBasisPoints);
+  return acceptedSince?undefined:proposal;
 }

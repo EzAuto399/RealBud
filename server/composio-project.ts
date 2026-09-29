@@ -18,6 +18,9 @@ const PROJECT_API_KEY = /^ak_[a-zA-Z0-9_-]{6,512}$/;
 const PROJECT_ID = /^pr_[a-zA-Z0-9_-]{1,128}$/;
 const PROJECT_NAME_MAX = 200;
 const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_PROJECT_PAGES = 100;
+const MAX_PROJECT_ITEMS = 10_000;
+const MAX_CURSOR_LENGTH = 1024;
 const ORG_KEY_ENV = "REALBUD_COMPOSIO_ORG_KEY";
 
 class ComposioError extends Error {
@@ -155,6 +158,40 @@ function readProject(value: unknown, context: string, requireKey: boolean): Comp
   return { id, name, apiKey: raw };
 }
 
+type ProjectListPage = {
+  items: unknown[];
+  nextCursor?: string;
+  kind: "array" | "items" | "data";
+  totalPages?: number;
+  currentPage?: number;
+  totalItems?: number;
+};
+
+const unreadableList = () => new ComposioError("Composio returned a project list RealBud could not read.");
+const partialList = () => new ComposioError("Composio returned only part of the project list. Resolve it in the Composio dashboard before relying on this list.");
+
+function readProjectListPage(body: unknown): ProjectListPage {
+  if (Array.isArray(body)) return { items: body, kind: "array" };
+  if (!record(body)) throw unreadableList();
+  const hasData = Object.hasOwn(body, "data");
+  const hasItems = Object.hasOwn(body, "items");
+  if (hasData === hasItems) throw unreadableList();
+  const items = hasData ? body.data : body.items;
+  if (!Array.isArray(items)) throw unreadableList();
+  const rawCursor = body.next_cursor;
+  if (rawCursor != null && (typeof rawCursor !== "string" || !rawCursor.length || rawCursor.length > MAX_CURSOR_LENGTH || /[\x00-\x1f\x7f]/.test(rawCursor))) throw partialList();
+  const nextCursor = rawCursor == null ? undefined : rawCursor as string;
+  if (!hasData) {
+    if (Object.hasOwn(body, "total_pages") || Object.hasOwn(body, "current_page") || Object.hasOwn(body, "total_items")) throw unreadableList();
+    return { items, nextCursor, kind: "items" };
+  }
+  const { total_pages: totalPages, current_page: currentPage, total_items: totalItems } = body;
+  if (!Number.isSafeInteger(totalPages) || !Number.isSafeInteger(currentPage) || !Number.isSafeInteger(totalItems)
+    || totalPages < 1 || totalPages > MAX_PROJECT_PAGES || currentPage < 1 || currentPage > totalPages
+    || totalItems < 0 || totalItems > MAX_PROJECT_ITEMS) throw partialList();
+  return { items, nextCursor, kind: "data", totalPages, currentPage, totalItems };
+}
+
 export async function createProject(orgKey: string, name: string): Promise<ComposioProject> {
   const key = checkedOrgKey(orgKey);
   const projectName = checkedProjectName(name);
@@ -185,15 +222,40 @@ export async function getProject(orgKey: string, nanoId: string): Promise<Compos
 
 export async function listProjects(orgKey: string): Promise<ComposioProject[]> {
   const key = checkedOrgKey(orgKey);
-  const body = await platformCall(key, "GET", "/org/owner/project/list");
-  const items = Array.isArray(body) ? body : record(body) && Array.isArray(body.items) ? body.items : null;
-  if (!items) throw new ComposioError("Composio returned a project list RealBud could not read.");
-  // A truncated list would hide a project that still holds live credentials;
-  // pages are not followed here, so an operator resolves it in the dashboard.
-  if (record(body) && body.next_cursor) {
-    throw new ComposioError("Composio returned only part of the project list. Resolve it in the Composio dashboard before relying on this list.");
+  const projects: ComposioProject[] = [];
+  const seenIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let kind: ProjectListPage["kind"] | undefined;
+  let totalPages: number | undefined;
+  let totalItems: number | undefined;
+  for (let pageNumber = 1; pageNumber <= MAX_PROJECT_PAGES; pageNumber++) {
+    const path = `/org/owner/project/list${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`;
+    const page = readProjectListPage(await platformCall(key, "GET", path));
+    if (kind !== undefined && page.kind !== kind) throw partialList();
+    kind = page.kind;
+    if (page.kind === "data") {
+      totalPages ??= page.totalPages;
+      totalItems ??= page.totalItems;
+      if (page.currentPage !== pageNumber || page.totalPages !== totalPages || page.totalItems !== totalItems) throw partialList();
+    }
+    if (projects.length + page.items.length > MAX_PROJECT_ITEMS) throw partialList();
+    for (const item of page.items) {
+      const project = readProject(item, "Composio returned an unreadable entry in the project list.", false);
+      if (seenIds.has(project.id)) throw partialList();
+      seenIds.add(project.id);
+      projects.push(project);
+    }
+    if (page.kind === "data" && (projects.length > totalItems! || Boolean(page.nextCursor) !== (pageNumber < totalPages!))) throw partialList();
+    if (!page.nextCursor) {
+      if (page.kind === "data" && projects.length !== totalItems) throw partialList();
+      return projects;
+    }
+    if (!page.items.length || pageNumber >= MAX_PROJECT_PAGES || seenCursors.has(page.nextCursor)) throw partialList();
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
   }
-  return items.map((item: unknown) => readProject(item, "Composio returned an unreadable entry in the project list.", false));
+  throw partialList();
 }
 
 /**

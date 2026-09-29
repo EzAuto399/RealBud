@@ -318,8 +318,21 @@ export async function windowsFilePrivacy(
   kind: 'file' | 'directory',
   restrict = false,
 ): Promise<void> {
-  const invocation = privacyInvocation([{ path, kind, action: restrict ? 'restrict' : 'verify' }]);
-  if (!invocation) return;
+  await windowsFilePrivacyBatch([{ path, kind, action: restrict ? 'restrict' : 'verify' }]);
+}
+
+/** The most operations one process accepts; a longer list is split by the caller. */
+export const WINDOWS_FILE_PRIVACY_MAX_BATCH = MAX_OPERATIONS;
+
+/**
+ * The asynchronous form of `windowsFilePrivacyBatchSync`: one PowerShell process
+ * for an ordered list, stopping at the first refusal, without blocking the
+ * service's event loop while a cold powershell.exe starts.
+ */
+export async function windowsFilePrivacyBatch(operations: WindowsFilePrivacyOperation[]): Promise<WindowsFilePrivacyResult[]> {
+  const invocation = privacyInvocation(operations);
+  const planned = (Array.isArray(operations) ? operations : []).map(({ path, kind, action }) => ({ path, kind, action }));
+  if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
   try {
     await execFileAsync(
       invocation.executable,
@@ -333,8 +346,10 @@ export async function windowsFilePrivacy(
       },
     );
   } catch (error) {
-    throw nativeFailure(error);
+    const failure = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+    throw nativeFailure(error, attemptedIndex(failure.stdout, planned.length), planned.length);
   }
+  return planned.map(operation => ({ ...operation, applied: true }));
 }
 
 /**

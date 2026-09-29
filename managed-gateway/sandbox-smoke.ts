@@ -66,7 +66,7 @@ async function provisioningLeg(): Promise<void> {
   const secrets = fileSecretStore(join(root, 'secrets'));
   try {
     const provisioning = new InstallationProvisioning({ ledger: f.ledger, registry, endpoint: 'https://managed.example.invalid',
-      secrets, org, modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+      secrets, org, modelvia, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } });
     const request = { companyId: f.tenant.companyId, installationId: 'install-smoke', customerId: 'cus-fictional-smoke', profile: 'property' };
 
     const first = (await provisioning.provision(f.owner, request)).provisioning as ProvisioningDescriptor;

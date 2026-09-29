@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createServiceWatchdog, decideServiceRestart, EMPTY_WATCHDOG_HISTORY, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
-import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
+import { headlessHostShouldExit, focusedWindowAction, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
 
 const optedOut = { startOfficeServiceAtLogin: false, keepAwakeForSchedules: false, scheduleEnabled: false, stopRequested: false };
 const installedWindows = { platform: "win32", serviceMode: false, packaged: true, smoke: false, quitting: false };
@@ -74,7 +74,7 @@ describe("closing the last window", () => {
 
 describe("a windowless RealBud and the watchdog", () => {
   it("restarts a crashed service and keeps supervising instead of exiting", () => {
-    const decision = decideServiceRestart(down(), { attempts: [], downSince: 0 }, WATCHDOG_DEFAULTS.backoffMs[0]);
+    const decision = decideServiceRestart(down(), { attempts: [], downSince: 0, downChecks: WATCHDOG_DEFAULTS.confirmChecks }, WATCHDOG_DEFAULTS.confirmMs);
     expect(decision).toMatchObject({ action: "restart", reason: "service-down" });
     expect(headlessHostShouldExit(decision)).toBe(false);
   });
@@ -119,8 +119,9 @@ describe("a windowless RealBud and the watchdog", () => {
     let observation = down();
     const startOrAdopt = vi.fn(async () => { observation = down({ answeringPort: 8799 }); return true; });
     const watchdog = createServiceWatchdog({ observe: async () => observation, startOrAdopt, now: () => now });
-    expect((await watchdog.tick())?.action).toBe("wait");
-    now = WATCHDOG_DEFAULTS.backoffMs[0];
+    // The outage is believed only after consecutive failed checks over the confirmation window.
+    for (; now < WATCHDOG_DEFAULTS.confirmMs; now += WATCHDOG_DEFAULTS.tickMs) expect((await watchdog.tick())?.action).toBe("wait");
+    now = WATCHDOG_DEFAULTS.confirmMs;
     expect((await watchdog.tick())?.action).toBe("restart");
     now += WATCHDOG_DEFAULTS.tickMs;
     expect(await watchdog.tick()).toMatchObject({ action: "none", reason: "healthy" });
@@ -147,5 +148,21 @@ describe("a second launch", () => {
 
   it("hands the sign-in host over to a window process, as before", () => {
     expect(secondInstanceAction({ serviceMode: true, incomingServiceMode: false, hasWindow: false })).toBe("hand-over");
+  });
+});
+
+describe("the window a second launch focuses", () => {
+  const officeOrigin = "http://127.0.0.1:8799";
+  it("reloads the office window when it is blank or not answering", () => {
+    expect(focusedWindowAction({ url: `${officeOrigin}/#desk`, officeOrigin, probe: { answered: true, textLength: 0 } })).toBe("reload");
+    expect(focusedWindowAction({ url: `${officeOrigin}/`, officeOrigin, probe: { answered: false, textLength: 0 } })).toBe("reload");
+  });
+  it("keeps a window that shows the office", () => {
+    expect(focusedWindowAction({ url: `${officeOrigin}/`, officeOrigin, probe: { answered: true, textLength: 120 } })).toBe("keep");
+  });
+  it("never reloads a fallback page, another port or another origin", () => {
+    for (const url of ["data:text/html,The office service did not start", "http://127.0.0.1:18799/", "https://example.invalid/", "not a url"]) {
+      expect(focusedWindowAction({ url, officeOrigin, probe: { answered: false, textLength: 0 } })).toBe("keep");
+    }
   });
 });

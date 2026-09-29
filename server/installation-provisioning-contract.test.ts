@@ -45,7 +45,11 @@ function gateway(customer: ModelviaCustomer) {
     async updateProjectCaps() { return { updated: true, version: 2 }; },
   };
   const provisioning = new InstallationProvisioning({ ledger: f.ledger, registry: join(root, 'registry', 'devices.json'), endpoint: 'https://managed.example.invalid',
-    secrets: fileSecretStore(join(root, 'secrets')), org, modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+    secrets: fileSecretStore(join(root, 'secrets')), org, modelvia, authConfigs: { async resolveGmail({ projectKey, allowCreate, beforeCreate }) {
+      expect(projectKey).toBe('ak_fictional_office_project_key_');
+      expect(allowCreate).toBe(true); beforeCreate();
+      return 'ac-fictional-readonly';
+    } } });
   const provision = async (installationId: string) => (await provisioning.provision(f.owner, { companyId: f.tenant.companyId, installationId, customerId: 'cus-fictional-office', profile: HERMES_PIN.profile })).provisioning;
   return { f, provision, close: () => f.close() };
 }
@@ -66,8 +70,8 @@ const wire = (descriptor: ProvisioningDescriptor): unknown => JSON.parse(JSON.st
 describe('gateway descriptor → desktop grant', WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it.each([
     ['A$1 a month, one turn at a time', { active: true, monthlyCapNanoAud: '1000000000', maxConcurrent: 1 }, 'A$1/month, A$1/request, 1 at once'],
-    ['the A$200 default, two at once', { active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2 }, 'A$200/month, A$1/request, 2 at once'],
-    ['the A$10,000 ceiling, one hundred at once', { active: true, monthlyCapNanoAud: '10000000000000', maxConcurrent: 100 }, 'A$10,000/month, A$1/request, 100 at once'],
+    ['the A$200 default, two at once', { active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2 }, 'A$200/month, A$4/request, 2 at once'],
+    ['the A$10,000 ceiling, one hundred at once', { active: true, monthlyCapNanoAud: '10000000000000', maxConcurrent: 100 }, 'A$10,000/month, A$4/request, 100 at once'],
   ])('applies the descriptor the gateway builds for %s', async (_name, customer, label) => {
     const g = gateway(customer); const d = desktop();
     try {

@@ -23,6 +23,7 @@
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
+import { composioAuthConfigClient, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -30,7 +31,7 @@ import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal 
 import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient } from './modelvia-keys.ts';
+import { hasCustomerTerms, modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -197,6 +198,11 @@ interface StoredRecord {
    * hash, never the credential; it is what lets a resumed attempt prove the
    * registry device is its own and was never delivered. */
   deviceTokenHash?: string;
+  /** Durable office-wide guard against retrying an uncertain config creation. */
+  authConfigCreateProjectId?: string;
+  /** Ready only, while a credential redelivery is running: which attempt owns
+   * it and since when. Cleared when that redelivery is recorded. */
+  redelivery?: { attempt: string; at: number };
   /** Legacy, written by the removed cap sync before 24 September 2026. Old ready
    * records still carry it and still parse; nothing reads or writes it now. */
   modelviaCaps?: unknown;
@@ -209,9 +215,21 @@ export const PENDING_RESUME_AFTER_MS = 10 * 60_000;
 /** An attempt that has not reached its model-key step by then stops before it,
  * leaving the key to a later resume rather than to two concurrent writers. */
 const ATTEMPT_EFFECT_DEADLINE_MS = 5 * 60_000;
-/** Default per-request cap: A$1 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
- * overrides it. */
-export const DEFAULT_REQUEST_CAP_NANO_AUD = '1000000000';
+/**
+ * Default per-request cap: A$4 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
+ * overrides it.
+ *
+ * Modelvia holds a request's WHOLE route bound before it runs: the route's full
+ * context window as input and cache reads, plus its output limit, priced on the
+ * accepted card (`key-gateway.ts` admission). On `openrouter-2026-09-r2` that is
+ * about A$3.27 for `kimi-k3` and up to about A$1.4 for `deepseek-v4.1-flash`. A
+ * project request cap below a route's hold drops that route (402
+ * `project_request_cap_exceeded` when none is left), so the old A$1 default
+ * could never serve Kimi and not always Flash. A$4 covers both and equals the
+ * request cap on RealBud's billing account at Modelvia. Settlement charges what
+ * was generated, not the hold.
+ */
+export const DEFAULT_REQUEST_CAP_NANO_AUD = '4000000000';
 const NANO_AUD = /^[1-9][0-9]{0,20}$/;
 /**
  * The installation project's caps, copied from the office's Modelvia customer.
@@ -260,10 +278,13 @@ export interface ProvisioningOptions {
   secrets: SecretStore;
   org: ComposioOrgClient;
   modelvia: ModelviaClient;
-  /** app → the reviewed read-only OAuth configuration id admitted for it. */
-  authConfigs: Readonly<Record<string, string>>;
-  /** Per-request cap in nanoAUD, a positive integer string. Default A$1. */
+  /** Project-key resolver that verifies the managed read-only Gmail config. */
+  authConfigs: ComposioAuthConfigClient;
+  /** Per-request cap in nanoAUD, a positive integer string. Default A$4. */
   requestCapNanoAud?: string;
+  /** The customer's commercial terms at Modelvia, read before anything is
+   * created. Always composed in production (`composeProvisioning`). */
+  terms?: Pick<ModelviaTermsClient, 'customerTermsReadiness'>;
 }
 
 export class InstallationProvisioning {
@@ -328,14 +349,17 @@ export class InstallationProvisioning {
   /**
    * Idempotent per installationId. The call that reaches `ready` returns the
    * secret material; every later call returns the same descriptor with none and
-   * touches nothing at Modelvia. An interrupted call leaves a `pending` record.
+   * touches nothing at Modelvia, unless it asks for `redeliver: true` (see
+   * `redeliver`). An interrupted call leaves a `pending` record.
    * A retry while that attempt may still be running is refused; a later retry
    * resumes it (see `resume`) and repeats each step against what the earlier
    * attempt left behind, so a lost reply yields a fresh secret, not a second one.
    */
   async provision(actor: PortalPrincipal, value: unknown): Promise<{ provisioning: ProvisioningDescriptor }> {
-    const body = this.scope(actor, value, ['companyId', 'installationId', 'customerId', 'profile', 'apps']);
+    const body = this.scope(actor, value, ['companyId', 'installationId', 'customerId', 'profile', 'apps', 'redeliver']);
     const companyId = actor.companyId, installationId = body.installationId as string;
+    requireThat(body.redeliver === undefined || body.redeliver === true, 'invalid_fields');
+    const redeliver = body.redeliver === true;
     requireThat(typeof body.profile === 'string' && /^[a-z0-9-]{1,64}$/.test(body.profile), 'invalid_connector_profile');
     const profile = body.profile as string;
     // The company's Modelvia customer account. Required, with no default: guessing
@@ -348,18 +372,25 @@ export class InstallationProvisioning {
     requireThat(MODELVIA_CUSTOMER.test(`rb-${installationId}`), 'installation_id_not_modelvia_safe');
     const apps = body.apps === undefined ? [...ADMITTED_APPS] : body.apps;
     requireThat(Array.isArray(apps) && apps.length > 0 && apps.length <= 8 && new Set(apps).size === apps.length, 'invalid_connector_apps');
-    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && (ADMITTED_APPS as readonly string[]).includes(app) && this.options.authConfigs[app], 'connector_app_not_admitted', 403);
+    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && (ADMITTED_APPS as readonly string[]).includes(app), 'connector_app_not_admitted', 403);
     // One device carries one reviewed OAuth configuration, so a device is
     // provisioned for exactly the app that configuration covers. A second app
     // needs its own device and its own reviewed configuration.
     requireThat((apps as string[]).length === 1, 'connector_app_not_admitted', 403);
-    const app = (apps as string[])[0]!;
 
     // Service entitlement, from the operator's entitlement record
     // (entitlement-cli.ts). A company without one is `tenant_unavailable`.
     const tenant = this.options.ledger.tenant(companyId);
     const entitled = this.options.ledger.now();
     requireThat(tenant.active && tenant.serviceExpiresAt > entitled && entitled >= tenant.goLiveAt, 'service_unavailable', 402);
+    // The customer's commercial terms at Modelvia: a read, never an effect. A
+    // customer RealBud's client pays for serves nothing without an active policy
+    // (409 `customer_terms_required` on every request), so no key is issued into
+    // that state; to the office it is the same step as an unready customer. A
+    // delivered installation is not re-checked: a repeat asks Modelvia nothing.
+    if (this.options.terms && this.saved(companyId, installationId)?.state !== 'ready') {
+      requireThat(await this.options.terms.customerTermsReadiness(customerId) !== 'terms_required', 'modelvia_customer_not_ready', 409);
+    }
 
     const recorded = (): StoredRecord | undefined => {
       const existing = this.saved(companyId, installationId);
@@ -369,17 +400,21 @@ export class InstallationProvisioning {
       requireThat(existing.profile === profile && canonical(existing.apps) === canonical(apps) && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
       return existing;
     };
-    // Delivered once already: never rotate or mint again for a repeat, and never
-    // ask Modelvia anything.
+    // Delivered once already: a plain repeat never rotates or mints again and
+    // never asks Modelvia anything. Only an explicit redelivery replaces keys.
     const delivered = recorded();
-    if (delivered?.state === 'ready') return { provisioning: delivered.descriptor! };
+    if (delivered?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, delivered) : { provisioning: delivered.descriptor! };
     // The office's Modelvia customer must be able to serve before anything is
     // created or journalled: a read, never an effect. Its caps become the project's.
-    const caps = projectCaps(readyCustomer(await this.options.modelvia.findCustomer(customerId)), this.options.requestCapNanoAud);
+    const customer = await this.options.modelvia.findCustomer(customerId);
+    // The body names the customer; only a customer bound to this office may be
+    // provisioned into, or this office's spend would bill another one.
+    requireThat(!customer || customerBoundTo(this.options.ledger, companyId, customerId, customer), 'modelvia_customer_not_bound', 403);
+    const caps = projectCaps(readyCustomer(customer), this.options.requestCapNanoAud);
 
     // Read again: another call may have started or finished while Modelvia answered.
     const existing = recorded();
-    if (existing?.state === 'ready') return { provisioning: existing.descriptor! };
+    if (existing?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, existing) : { provisioning: existing.descriptor! };
     const now = this.options.ledger.now();
     let pending: StoredRecord;
     if (existing) {
@@ -439,6 +474,18 @@ export class InstallationProvisioning {
       return created.id;
     });
 
+    const authConfigId = await serialized(`composio-auth-config:${companyId}`, async () => {
+      const rows = this.options.ledger.db.all<{ body: string }>('SELECT body FROM installation_provisioning WHERE tenant=?', companyId);
+      const attempted = rows.some(row => (JSON.parse(row.body) as StoredRecord).authConfigCreateProjectId === projectId);
+      const projectKey = this.options.secrets.read(projectKeyEnv);
+      requireThat(projectKey, 'connector_project_key_unavailable', 409);
+      return this.options.authConfigs.resolveGmail({ projectKey: projectKey!, allowCreate: !attempted, beforeCreate: () => {
+        requireThat(this.options.ledger.now() - attemptAt < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
+        pending = { ...pending, authConfigCreateProjectId: projectId };
+        this.options.ledger.db.transaction(() => this.journal(companyId, installationId, attempt, pending));
+      } });
+    });
+
     // (b) The revocable `rbc_` connector credential, admitted by hash only. A
     // resumed attempt replaces the device its predecessor admitted: that
     // credential was never delivered, because the record never reached `ready`.
@@ -449,7 +496,7 @@ export class InstallationProvisioning {
       // installation across members needs a separate device per member.
       memberId: installationId, installationId, profile,
       tokenHash: credential.tokenHash, active: true, expiresAt: tenant.serviceExpiresAt,
-      projectKeyEnv, authConfigId: this.options.authConfigs[app]!, userId: `installation-${installationId}`,
+      projectKeyEnv, authConfigId, userId: `installation-${installationId}`,
       apps: apps as string[],
     };
     const admitted = pending.deviceTokenHash;
@@ -506,7 +553,7 @@ export class InstallationProvisioning {
       connector: { endpoint: this.endpoint, profile, apps: apps as string[], projectId },
       model: { provider: 'modelvia', baseUrl: minted.baseUrl, keyId: minted.keyId, projectId: modelProject.projectId, spendCapLabel },
     };
-    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
+    const ready: StoredRecord = { state: 'ready', authConfigCreateProjectId: pending.authConfigCreateProjectId, profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
     this.options.ledger.db.transaction(() => {
       this.journal(companyId, installationId, attempt, ready);
       // Audit line carries identifiers only: no project key, no connector
@@ -519,6 +566,88 @@ export class InstallationProvisioning {
       ...descriptor,
       connector: { endpoint: descriptor.connector.endpoint, credential: credential.token, profile, apps: apps as string[], projectId },
       model: { ...descriptor.model, key: minted.key },
+    } };
+  }
+
+  /**
+   * Fresh credentials for a `ready` installation whose one secret-bearing reply
+   * never reached the desktop. The portal asks only for the installation whose
+   * own token it has just verified, so the caller is that installation.
+   *
+   * Nothing new is created: the installation's one connector device gets a new
+   * credential hash (the previous credential stops working) and its one labelled
+   * Modelvia key is rotated (the previous key is revoked). The claim is journalled
+   * on the ready record before any effect, so a concurrent redelivery is refused
+   * rather than rotating twice; one whose outcome was lost is taken over only
+   * after `PENDING_RESUME_AFTER_MS`, and again rotates the one live labelled key.
+   */
+  private async redeliver(companyId: string, installationId: string, ready: StoredRecord): Promise<{ provisioning: ProvisioningDescriptor }> {
+    requireThat(ready.descriptor && ready.deviceId && ready.modelProjectId && ready.keyId, 'installation_provisioning_outcome_unknown', 409);
+    const now = this.options.ledger.now();
+    const attempt = randomBytes(12).toString('hex');
+    const credential = newConnectorCredential();
+    const label = `${companyId}:${installationId}`, modelProjectId = ready.modelProjectId!, deviceId = ready.deviceId!;
+    const owned = (record: StoredRecord | undefined) => record?.state === 'ready' && record.redelivery?.attempt === attempt;
+    // Claim, journal and replace the connector credential in one synchronous
+    // step: of two concurrent redeliveries exactly one gets past here.
+    this.options.ledger.db.transaction(() => {
+      const current = this.saved(companyId, installationId);
+      requireThat(current && canonical(current) === canonical(ready), 'installation_provisioning_in_progress', 409);
+      requireThat(!current!.redelivery || now - current!.redelivery.at >= PENDING_RESUME_AFTER_MS, 'installation_provisioning_in_progress', 409);
+      this.store(companyId, installationId, { ...current!, redelivery: { attempt, at: now } });
+      this.options.ledger.db.append(companyId, 'installation_redelivery_requested', null, now, { installationId, ...(current!.redelivery ? { resumedSince: current!.redelivery.at } : {}) });
+      updateRegistry(this.options.registry, devices => {
+        const device = devices.find(entry => entry.id === deviceId);
+        requireThat(device && device.active && device.companyId === companyId && device.installationId === installationId, 'connector_device_unavailable', 409);
+        return { devices: devices.map(entry => entry.id === deviceId ? { ...entry, tokenHash: credential.tokenHash } : entry) };
+      });
+    });
+    const modelvia = this.options.modelvia;
+    let replace: string;
+    try {
+      const at = this.options.ledger.now();
+      const live = (await modelvia.listKeys(modelProjectId, modelvia.environment)).filter(key => key.revokedAt === undefined && (key.expiresAt === undefined || key.expiresAt > at));
+      // Exactly one live key carrying this installation's label is the one to
+      // replace. None, several, or someone else's: an operator decides.
+      requireThat(live.length === 1 && live[0]!.label === label, 'modelvia_keys_ambiguous', 409);
+      requireThat(this.options.ledger.now() - now < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
+      requireThat(owned(this.saved(companyId, installationId)), 'installation_provisioning_superseded', 409);
+      replace = live[0]!.keyId;
+    } catch (error) {
+      // No key effect was attempted, so a later redelivery may start at once.
+      try {
+        this.options.ledger.db.transaction(() => {
+          const current = this.saved(companyId, installationId);
+          if (!owned(current)) return;
+          const { redelivery: _released, ...rest } = current!;
+          this.store(companyId, installationId, rest);
+        });
+      } catch { /* the marker expires after PENDING_RESUME_AFTER_MS */ }
+      throw error;
+    }
+    const rotated = await modelvia.rotate(replace);
+    requireThat(rotated.projectId === modelProjectId, 'modelvia_key_scope_mismatch', 502);
+    let descriptor: ProvisioningDescriptor | undefined;
+    this.options.ledger.db.transaction(() => {
+      const current = this.saved(companyId, installationId);
+      if (!owned(current)) return;
+      const { redelivery: _done, ...rest } = current!;
+      descriptor = { ...rest.descriptor!, model: { ...rest.descriptor!.model, baseUrl: rotated.baseUrl, keyId: rotated.keyId } };
+      this.store(companyId, installationId, { ...rest, keyId: rotated.keyId, descriptor });
+      // Identifiers only: no credential, no model key, no Modelvia customer id.
+      this.options.ledger.db.append(companyId, 'installation_credentials_redelivered', null, this.options.ledger.now(),
+        { installationId, modelKeyId: rotated.keyId, modelKeyRotatedFrom: rotated.replaced });
+    });
+    if (!descriptor) {
+      // Revoked (or taken over) while rotating: the fresh key must not outlive it.
+      try { await modelvia.revoke(rotated.keyId); } catch { /* the revocation record names the installation for an operator */ }
+      throw new GatewayError('installation_provisioning_superseded', 409);
+    }
+    const delivered: ProvisioningDescriptor = descriptor;
+    return { provisioning: {
+      ...delivered,
+      connector: { ...delivered.connector, credential: credential.token },
+      model: { ...delivered.model, key: rotated.key },
     } };
   }
 
@@ -596,6 +725,44 @@ export class InstallationProvisioning {
 /** Never let an unexpected failure inside provisioning become a 502 with detail. */
 export function provisioningError(error: unknown): GatewayError {
   return error instanceof GatewayError ? error : new GatewayError('installation_provisioning_failed', 502);
+}
+
+/**
+ * Which office a Modelvia customer bills. A customer that pays Modelvia itself
+ * carries its billing account, which is the office's company id, and must name
+ * this office. A customer RealBud's client pays for carries none; then the
+ * operator binding recorded through the office AI access route
+ * (`bindOfficeCustomer`) must not give the customer to another office, nor this
+ * office to another customer. An office never set through that route, with a
+ * client-paid customer, has no binding to contradict (see DEPLOY.md).
+ */
+export function customerBoundTo(ledger: UsageLedger, companyId: string, customerId: string, customer: ModelviaCustomer): boolean {
+  if (customer.billingCompanyId !== undefined) return customer.billingCompanyId === companyId;
+  ensureCustomerBindingTable(ledger);
+  const office = ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId);
+  const holder = ledger.db.get<{ tenant: string }>('SELECT tenant FROM office_modelvia_customer WHERE customer=?', customerId);
+  return (!office || office.customer === customerId) && (!holder || holder.tenant === companyId);
+}
+/** Operator-only: record that `customerId` is `companyId`'s Modelvia customer.
+ * A customer already bound to another office is refused; an office may be
+ * moved to a new customer by its operator, unless it has accepted AI resale
+ * (409 `office_customer_rebind_blocked`). */
+export function bindOfficeCustomer(ledger: UsageLedger, companyId: string, customerId: string): void {
+  id(companyId); requireThat(MODELVIA_CUSTOMER.test(customerId), 'invalid_modelvia_customer');
+  ensureCustomerBindingTable(ledger);
+  ledger.db.transaction(() => {
+    const other = ledger.db.get<{ tenant: string }>('SELECT tenant FROM office_modelvia_customer WHERE customer=? AND tenant<>?', customerId, companyId);
+    requireThat(!other, 'modelvia_customer_bound_elsewhere', 409);
+    // An office that accepted AI resale is billed from its bound customer's
+    // Modelvia invoices; moving it would strand that customer's unbilled AI.
+    const current = ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId);
+    requireThat(!current || current.customer === customerId
+      || !ledger.db.get("SELECT seq FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' LIMIT 1", companyId), 'office_customer_rebind_blocked', 409);
+    ledger.db.run('INSERT INTO office_modelvia_customer(tenant,customer) VALUES(?,?) ON CONFLICT(tenant) DO UPDATE SET customer=excluded.customer', companyId, customerId);
+  });
+}
+function ensureCustomerBindingTable(ledger: UsageLedger) {
+  ledger.db.run('CREATE TABLE IF NOT EXISTS office_modelvia_customer (tenant TEXT PRIMARY KEY, customer TEXT NOT NULL UNIQUE)');
 }
 
 function ensureProvisioningTable(ledger: UsageLedger) {
@@ -681,14 +848,14 @@ export function applyCustomerCaps(options: { ledger: UsageLedger; modelvia: Mode
  * named in the 503 reason; a *value* never is. */
 export const PROVISIONING_ENV = [
   'REALBUD_GATEWAY_SECRETS_DIR', 'REALBUD_GATEWAY_CONNECTOR_REGISTRY', 'REALBUD_GATEWAY_PUBLIC_ORIGIN',
-  'REALBUD_COMPOSIO_ORG_KEY', 'REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL',
+  'REALBUD_COMPOSIO_ORG_KEY',
   'REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT',
-  'REALBUD_MODELVIA_CLIENT_ID',
+  'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS',
 ] as const;
 
 /** The variables the Modelvia operator client needs, for `/ready`. Presence only;
  * nothing here reads a value into a response or calls Modelvia. */
-export const MODELVIA_OPERATOR_ENV = ['REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT', 'REALBUD_MODELVIA_CLIENT_ID'] as const;
+export const MODELVIA_OPERATOR_ENV = ['REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT', 'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS'] as const;
 export function modelviaOperatorState(env: NodeJS.ProcessEnv): 'configured' | 'missing' {
   const value = (name: string) => (env[name] ?? '').trim();
   return MODELVIA_OPERATOR_ENV.every(name => value(name)) && value('REALBUD_MODELVIA_OPERATOR_SECRET').length >= 32 ? 'configured' : 'missing';
@@ -709,10 +876,12 @@ export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTr
   const value = (name: string) => (env[name] ?? '').trim();
   const environment = value('REALBUD_MODELVIA_ENVIRONMENT') || 'production';
   if (environment !== 'production' && environment !== 'development') return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_ENVIRONMENT' };
-  // Modelvia requires a non-empty allowedModels on a project. `auto` is its
-  // catalogue-routed default; a deployment may pin exact model ids instead.
-  const allowedModels = (value('REALBUD_MODELVIA_MODELS') || 'auto').split(',').map(entry => entry.trim()).filter(Boolean);
-  if (!allowedModels.length) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' };
+  // Modelvia matches a project's allowedModels against its real route ids, so
+  // the list must name them. There is no default: `auto` is a value a request
+  // may send, never an allowlist entry, and as one it admits no route at all
+  // (an empty /v1/models and every chat refused). Named here at deploy time.
+  const allowedModels = value('REALBUD_MODELVIA_MODELS').split(',').map(entry => entry.trim()).filter(Boolean);
+  if (!allowedModels.length || allowedModels.some(model => model.toLowerCase() === 'auto')) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' };
   // Modelvia's verifier refuses a secret under 32 characters; name it now rather
   // than at the first request.
   if (value('REALBUD_MODELVIA_OPERATOR_SECRET').length < 32) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET' };
@@ -743,7 +912,7 @@ export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTr
  * rest of `server.ts` uses for providers), and a misconfigured deployment yields
  * a 503 reason naming the one variable to fix rather than a half-built client.
  */
-export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport; org?: ComposioOrgClient; modelvia?: ModelviaClient }): ProvisioningComposition {
+export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport; org?: ComposioOrgClient; modelvia?: ModelviaClient; authConfigs?: ComposioAuthConfigClient }): ProvisioningComposition {
   const env = options.env;
   const value = (name: string) => (env[name] ?? '').trim();
   if (value('REALBUD_ENABLE_PROVIDER') !== '1') return { unavailable: 'provisioning_disabled' };
@@ -764,8 +933,10 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
         ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}),
       }),
       modelvia: options.modelvia ?? model.modelvia,
-      authConfigs: { gmail: value('REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL') },
+      authConfigs: options.authConfigs ?? composioAuthConfigClient({ fetch: options.fetch, ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}) }),
       requestCapNanoAud: model.requestCapNanoAud,
+      // The composed client always reads terms; an injected one only if it can.
+      ...(hasCustomerTerms(options.modelvia ?? model.modelvia) ? { terms: (options.modelvia ?? model.modelvia) as unknown as ModelviaTermsClient } : {}),
     }) };
   } catch (error) {
     // A malformed value (not a missing one) — report the code, never the value.

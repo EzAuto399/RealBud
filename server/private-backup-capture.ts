@@ -11,7 +11,7 @@ import { decryptBytes, isEncryptedEnvelope } from './desk-crypto.ts';
 import { PrivateBackupCatalog, type CatalogFile } from './private-backup-catalog.ts';
 import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, privateBackupHistoryStorage, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
-import { windowsFilePrivacy } from './windows-file-privacy.ts';
+import { WINDOWS_FILE_PRIVACY_MAX_BATCH, windowsFilePrivacyBatch, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
 
 export interface PrivateCaptureLimits {
   maxDirectoryEntries?: number;
@@ -95,6 +95,14 @@ class CaptureFilesystem {
   protected recordCount = 0;
   protected sourceBytes = 0;
   protected directoryEntries = 0;
+  // Windows ACL admissions for every path this pass reads. A cold powershell.exe
+  // costs seconds, so they run as a few ordered batches when the pass finishes
+  // (`admitPrivacy`), not one process per path inside the snapshot pause. The
+  // pass reads only into memory and its provisional catalog; it returns no
+  // receipt, digest or path list until every admission passed, so a refusal
+  // still fails the whole pass closed.
+  private privacy: WindowsFilePrivacyOperation[] = [];
+  private privacyQueued = new Set<string>();
   constructor(options: FilesystemOptions, writing: boolean) {
     this.options = options; this.root = resolve(options.directory); this.writing = writing;
     this.limit = { maxDirectoryEntries: options.limits?.maxDirectoryEntries ?? MAX_DIRECTORY_ENTRIES,
@@ -123,6 +131,18 @@ class CaptureFilesystem {
       await this.options.onProgress!({ phase, verifying: !this.writing, fileCount: this.fileCount, recordCount: this.recordCount, sourceBytes: this.sourceBytes });
     });
   }
+  protected verifyPrivacy(path: string, kind: 'file' | 'directory'): void {
+    const key = `${kind}\0${path}`;
+    if (this.privacyQueued.has(key)) return;
+    this.privacyQueued.add(key); this.privacy.push({ path, kind, action: 'verify' });
+  }
+  /** Verify-only admissions are independent, so batching keeps their meaning. */
+  protected async admitPrivacy(): Promise<void> {
+    while (this.privacy.length) {
+      const batch = this.privacy.splice(0, WINDOWS_FILE_PRIVACY_MAX_BATCH);
+      await this.checked(() => windowsFilePrivacyBatch(batch));
+    }
+  }
   protected include(value: unknown): void { this.fingerprint.update(JSON.stringify(value)); this.fingerprint.update('\n'); }
   protected consume(bytes: number): void {
     this.sourceBytes += bytes;
@@ -147,7 +167,7 @@ class CaptureFilesystem {
     const before = await this.stat(path);
     if (!before) return [];
     if (!before.isDirectory() || before.isSymbolicLink()) fail('Private source storage contains a linked or invalid folder.');
-    await this.checked(() => windowsFilePrivacy(path, 'directory'));
+    this.verifyPrivacy(path, 'directory');
     this.check();
     const handle = await opendir(path);
     const names: string[] = [];
@@ -170,7 +190,7 @@ class CaptureFilesystem {
     const before = await this.stat(path);
     if (!before) return undefined;
     checkFile(before, max);
-    await this.checked(() => windowsFilePrivacy(path, 'file'));
+    this.verifyPrivacy(path, 'file');
     // O_NOFOLLOW protects the final component on systems supporting it. Handle
     // and ancestor checks on both sides also detect rename/link races.
     this.check();
@@ -250,12 +270,12 @@ class CaptureFilesystem {
     await this.noDatabaseSidecars();
     const paths = await this.paths(), database = await this.stat(join(this.root, DATABASE));
     if (database) { checkFile(database); paths.push(DATABASE); }
-    this.check(); return paths.sort();
+    await this.admitPrivacy(); this.check(); return paths.sort();
   }
   async targetGuard(): Promise<string> {
     await this.noDatabaseSidecars();
     this.include(['private-target-guard', 1]);
-    await this.guards(); this.check(); return this.fingerprint.digest('hex');
+    await this.guards(); await this.admitPrivacy(); this.check(); return this.fingerprint.digest('hex');
   }
 }
 
@@ -289,7 +309,7 @@ class CaptureReader extends CaptureFilesystem {
     const before = await this.stat(path);
     if (!before) { this.include(['database', 'absent']); return false; }
     checkFile(before);
-    await this.checked(() => windowsFilePrivacy(path, 'file'));
+    this.verifyPrivacy(path, 'file');
     this.check();
     const headerHandle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
@@ -363,7 +383,7 @@ class CaptureReader extends CaptureFilesystem {
         this.fileCount++; await this.progress('files');
       }
       const databasePresent = await this.records();
-      await this.guards(); this.check();
+      await this.guards(); await this.admitPrivacy(); this.check();
       return { databasePresent, sourceDigest: this.fingerprint.digest('hex'), fileCount: this.fileCount,
         recordCount: this.recordCount, sourceBytes: this.sourceBytes, directoryEntries: this.directoryEntries };
     } finally { this.key.fill(0); }

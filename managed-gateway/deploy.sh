@@ -34,10 +34,10 @@ operator_secret="${REALBUD_GATEWAY_OPERATOR_SECRET:-}"
 missing=()
 for name in \
   REALBUD_COMPOSIO_ORG_KEY \
-  REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL \
   REALBUD_MODELVIA_OPERATOR_SECRET \
   REALBUD_MODELVIA_OPERATOR_SUBJECT \
   REALBUD_MODELVIA_CLIENT_ID \
+  REALBUD_MODELVIA_MODELS \
   REALBUD_GATEWAY_PUBLIC_ORIGIN
 do
   [[ -n "${!name:-}" ]] || missing+=("$name")
@@ -47,6 +47,9 @@ if (( ${#missing[@]} )); then
 fi
 # Modelvia's verifier refuses a shorter operator secret outright.
 (( ${#REALBUD_MODELVIA_OPERATOR_SECRET} >= 32 )) || fail "REALBUD_MODELVIA_OPERATOR_SECRET must be at least 32 characters"
+# Modelvia matches allowedModels against real route ids; `auto` is a request
+# value, never an allowlist entry, and would admit no model at all.
+[[ ",${REALBUD_MODELVIA_MODELS// /}," != *",auto,"* && ",${REALBUD_MODELVIA_MODELS// /}," != *",AUTO,"* ]] || fail "REALBUD_MODELVIA_MODELS must name Modelvia route ids, not auto"
 
 # --- Care-fee collection through Square -----------------------------------
 # REALBUD_PAYMENT_MODE is local (default: invoices close and read, no checkout),
@@ -76,8 +79,51 @@ case "$payment_mode" in
   *) fail "REALBUD_PAYMENT_MODE must be local, sandbox or live" ;;
 esac
 
+# --- Modelvia commercial terms (owner decision, 26 September 2026) ---------
+# Customer offices buy AI at Modelvia's rate + their own accepted markup; 30%
+# (3000 basis points) is the DEFAULT for new office terms. Billed on
+# their one monthly RealBud invoice; the owner's own and internal offices stay
+# client-funded (free). These defaults ARE the production values; exporting a
+# different markup or reference is an explicit override. Non-secret.
+: "${REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS:=3000}"
+: "${REALBUD_MODELVIA_RESALE_TERMS_REFERENCE:=realbud-office-terms-2026-09-26-ai-resale-30pct}"
+[[ "$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS" =~ ^(0|[1-9][0-9]{0,4})$ ]] && (( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS <= 10000 )) ||
+  fail "REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS must be a whole number of basis points from 0 to 10000 (production: 3000)"
+[[ "$REALBUD_MODELVIA_RESALE_TERMS_REFERENCE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$ ]] ||
+  fail "REALBUD_MODELVIA_RESALE_TERMS_REFERENCE must be an id of at most 160 characters (letters, digits, _ . : / -)"
+(( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS == 3000 )) ||
+  echo "Note: REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS=$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS overrides the owner decision (3000)" >&2
+# With resale on, an office missing from this list is billed once it accepts
+# AI resale terms, so the free offices must be named explicitly.
+[[ -n "${REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES:-}" ]] ||
+  fail "REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES must list the owner's and internal offices' companyIds (their AI stays free)"
+# RealBud's Modelvia client integration key: month close reads each resale
+# office's finalized Modelvia customer invoice with it, and the margin view its
+# analytics. A secret; read-only use.
+[[ "${REALBUD_MODELVIA_CLIENT_KEY:-}" =~ ^mgt_[a-f0-9]{16}_[A-Za-z0-9_-]{43}$ ]] ||
+  fail "REALBUD_MODELVIA_CLIENT_KEY must be RealBud's Modelvia client integration key (mgt_…); value not echoed"
+
+# --- Monthly invoice email (separate from Supabase Auth SMTP) --------------
+# Default off. A reviewed protected Sending key and verified sender are needed
+# before close may call Resend; never read or print either value here.
+invoice_email_mode="${REALBUD_INVOICE_EMAIL_MODE:-off}"
+invoice_email_key="${REALBUD_INVOICE_RESEND_API_KEY:-}"
+case "$invoice_email_mode" in
+  off) ;;
+  resend)
+    [[ -n "${REALBUD_INTERNAL_COMPANY_ID:-}" ]] ||
+      fail "REALBUD_INTERNAL_COMPANY_ID is required when REALBUD_INVOICE_EMAIL_MODE=resend"
+    [[ ${#invoice_email_key} -ge 20 ]] && one_line "$invoice_email_key" ||
+      fail "REALBUD_INVOICE_RESEND_API_KEY must be a protected key of at least 20 characters without line breaks"
+    [[ -n "${REALBUD_INVOICE_FROM:-}" ]] && one_line "$REALBUD_INVOICE_FROM" &&
+      node --experimental-strip-types --input-type=module -e 'import { validBillingEmail } from "./commercial-terms.ts"; process.exit(validBillingEmail(process.env.REALBUD_INVOICE_FROM) ? 0 : 1)' >/dev/null 2>&1 ||
+      fail "REALBUD_INVOICE_FROM must be one exact sender mailbox accepted by the gateway"
+    ;;
+  *) fail "REALBUD_INVOICE_EMAIL_MODE must be off or resend" ;;
+esac
+
 if [[ "${1:-}" == "--check" ]]; then
-  echo "Deployment preflight passed for REALBUD_PAYMENT_MODE=$payment_mode (no Fly changes made)"
+  echo "Deployment preflight passed for REALBUD_PAYMENT_MODE=$payment_mode, REALBUD_INVOICE_EMAIL_MODE=$invoice_email_mode (no Fly changes made)"
   exit 0
 fi
 
@@ -97,12 +143,23 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_ALLOWED_ORIGINS=%s\n' "https://realbud.app,https://www.realbud.app"
   printf 'REALBUD_ENABLE_PROVIDER=1\n'
   printf 'REALBUD_COMPOSIO_ORG_KEY=%s\n' "$REALBUD_COMPOSIO_ORG_KEY"
-  printf 'REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL=%s\n' "$REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL"
   printf 'REALBUD_MODELVIA_OPERATOR_SECRET=%s\n' "$REALBUD_MODELVIA_OPERATOR_SECRET"
   printf 'REALBUD_MODELVIA_OPERATOR_SUBJECT=%s\n' "$REALBUD_MODELVIA_OPERATOR_SUBJECT"
   printf 'REALBUD_MODELVIA_CLIENT_ID=%s\n' "$REALBUD_MODELVIA_CLIENT_ID"
-  [[ -z "${REALBUD_MODELVIA_MODELS:-}" ]] || printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
+  printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
+  printf 'REALBUD_MODELVIA_CLIENT_KEY=%s\n' "$REALBUD_MODELVIA_CLIENT_KEY"
   printf 'REALBUD_PAYMENT_MODE=%s\n' "$payment_mode"
+  printf 'REALBUD_INVOICE_EMAIL_MODE=%s\n' "$invoice_email_mode"
+  if [[ "$invoice_email_mode" == "resend" ]]; then
+    printf 'REALBUD_INVOICE_RESEND_API_KEY=%s\n' "$REALBUD_INVOICE_RESEND_API_KEY"
+    printf 'REALBUD_INVOICE_FROM=%s\n' "$REALBUD_INVOICE_FROM"
+  fi
+  # Modelvia commercial terms and the per-request cap: non-secret, set only when
+  # exported (DEPLOY.md, "Live Modelvia integration values").
+  for name in REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE \
+    REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS REALBUD_MODELVIA_RESALE_TERMS_REFERENCE REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD; do
+    [[ -z "${!name:-}" ]] || printf '%s=%s\n' "$name" "${!name}"
+  done
   if [[ "$payment_mode" != "local" ]]; then
     printf 'REALBUD_AUTHORIZE_COLLECTION=1\n'
     for name in "${square_names[@]}"; do printf '%s=%s\n' "$name" "${!name}"; done

@@ -31,6 +31,7 @@ export interface AgencySetupState {
  * never provide any of these verification fields. GET must not call providers. */
 export interface AgencySetupObservations {
   gmail?: {
+    sourceKind?: "personal" | "office_shared";
     accounts: { id: string; label: string; status: 'active' | 'unavailable' }[];
     accountId: string | null;
     state: 'verified' | 'unverified' | 'revoked' | 'error';
@@ -62,6 +63,7 @@ export interface AgencyWorkflowSetupStatus {
   acceptance: 'not-verified' | 'accepted';
 }
 export interface AgencySetupView {
+  gmailSourceKind?: "personal" | "office_shared";
   state: AgencySetupState;
   accounts: NonNullable<AgencySetupObservations['gmail']>['accounts'];
   properties: NonNullable<AgencySetupObservations['properties']>['items'];

@@ -40,15 +40,30 @@ describe("service restart decision", () => {
     expect(decideServiceRestart(up(), EMPTY_WATCHDOG_HISTORY, 0)).toMatchObject({ action: "none", reason: "healthy" });
   });
 
-  it("restarts a dead service whose port no longer answers, after the first backoff", () => {
-    const [first, early, due] = run([[down(), 0], [down(), 4_999], [down(), 5_000]]);
-    expect(first).toMatchObject({ action: "wait", reason: "backoff", retryAt: 5_000 });
+  it("restarts a dead service only after consecutive failed checks spanning the confirmation window", () => {
+    const [first, second, third, early, due] = run([[down(), 0], [down(), 10_000], [down(), 20_000], [down(), 44_999], [down(), 45_000]]);
+    expect(first).toMatchObject({ action: "wait", reason: "confirming", retryAt: 45_000 });
+    expect(second.history.downChecks).toBe(2);
+    // Three failed checks are not enough on their own: they must also span 45 s.
+    expect(third).toMatchObject({ action: "wait", reason: "confirming" });
     expect(early.action).toBe("wait");
     expect(due).toMatchObject({ action: "restart", reason: "service-down" });
-    expect(due.history.attempts).toEqual([5_000]);
+    expect(due.history.attempts).toEqual([45_000]);
   });
 
-  it("backs off 5 s, 30 s, 2 min, then 2 min between later attempts", () => {
+  it("does not believe an outage that the service answers in the middle of (a slow Recheck)", () => {
+    const decisions = run([[down(), 0], [down(), 10_000], [up(), 20_000], [down(), 30_000], [down(), 40_000], [down(), 60_000], [up(), 70_000], [down(), 80_000]]);
+    expect(decisions.some(decision => decision.action === "restart")).toBe(false);
+    expect(decisions[3].history).toMatchObject({ downSince: 30_000, downChecks: 1 });
+    expect(decisions.at(-1).history).toMatchObject({ downSince: 80_000, downChecks: 1 });
+  });
+
+  it("needs the time span as well as the count, even with fast checks", () => {
+    const decisions = run(Array.from({ length: 10 }, (_, i) => [down(), i * 1_000]));
+    expect(decisions.every(decision => decision.action === "wait" && decision.reason === "confirming")).toBe(true);
+  });
+
+  it("confirms for 45 s, then backs off 30 s, 2 min, then 2 min between later attempts", () => {
     let history = EMPTY_WATCHDOG_HISTORY;
     let now = 0;
     const gaps = [];
@@ -64,20 +79,21 @@ describe("service restart decision", () => {
       }
       gaps.push(now - start);
     }
-    expect(gaps).toEqual([5_000, 30_000, 120_000, 120_000, 120_000]);
+    expect(gaps).toEqual([45_000, 30_000, 120_000, 120_000, 120_000]);
   });
 
   it("measures the next backoff from a new outage, not from an old attempt", () => {
-    // Restarted at 5 s, healthy for 40 minutes, then down again.
-    const [, , healthy, again, due] = run([[down(), 0], [down(), 5_000], [up(), 60_000], [down(), 2_400_000], [down(), 2_430_000]]);
-    expect(healthy.history.downSince).toBeNull();
-    expect(again).toMatchObject({ action: "wait", retryAt: 2_430_000 });
+    // Restarted at 45 s, healthy for 40 minutes, then down again.
+    const [, , restarted, healthy, again, , due] = run([[down(), 0], [down(), 20_000], [down(), 45_000], [up(), 60_000], [down(), 2_400_000], [down(), 2_420_000], [down(), 2_445_000]]);
+    expect(restarted.action).toBe("restart");
+    expect(healthy.history).toMatchObject({ downSince: null, downChecks: 0 });
+    expect(again).toMatchObject({ action: "wait", reason: "confirming", retryAt: 2_445_000 });
     expect(due.action).toBe("restart");
   });
 
   it("pauses after 5 attempts in an hour and resumes once they age out", () => {
     const attempts = [0, 10_000, 20_000, 30_000, 40_000];
-    const capped = decideServiceRestart(down(), { attempts, downSince: 0 }, 1_000_000);
+    const capped = decideServiceRestart(down(), { attempts, downSince: 0, downChecks: 3 }, 1_000_000);
     expect(capped).toMatchObject({ action: "none", reason: "exhausted" });
     const later = decideServiceRestart(down(), capped.history, WATCHDOG_DEFAULTS.windowMs + 40_001);
     expect(later.action).toBe("restart");
@@ -127,10 +143,13 @@ describe("service watchdog", () => {
   }
 
   it("restarts through startOrAdopt and reports it for today", async () => {
-    const h = harness([down(), down()]);
-    expect((await h.watchdog.tick())?.action).toBe("wait");
+    const h = harness(Array.from({ length: 6 }, () => down()));
+    for (let i = 0; i < 5; i++) {
+      expect((await h.watchdog.tick())?.action).toBe("wait");
+      h.advance(10_000);
+    }
     expect(h.watchdog.status()).toMatchObject({ pending: true, today: 0, exhausted: false });
-    h.advance(10_000);
+    expect(h.startOrAdopt).not.toHaveBeenCalled();
     expect((await h.watchdog.tick())?.action).toBe("restart");
     expect(h.startOrAdopt).toHaveBeenCalledTimes(1);
     expect(h.watchdog.status()).toMatchObject({ today: 1, lastResult: "started", lastReason: "service-down", pending: false });
@@ -140,10 +159,9 @@ describe("service watchdog", () => {
   });
 
   it("counts a failed restart against the budget but not as a restart today", async () => {
-    const h = harness([down(), down()], { startOrAdopt: vi.fn(async () => false) });
-    await h.watchdog.tick();
-    h.advance(10_000);
-    await h.watchdog.tick();
+    const h = harness(Array.from({ length: 6 }, () => down()), { startOrAdopt: vi.fn(async () => false) });
+    for (let i = 0; i < 6; i++) { await h.watchdog.tick(); h.advance(10_000); }
+    expect(h.startOrAdopt).toHaveBeenCalledTimes(1);
     expect(h.watchdog.status()).toMatchObject({ today: 0, lastResult: "failed" });
   });
 

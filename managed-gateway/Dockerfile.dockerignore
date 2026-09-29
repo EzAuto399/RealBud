@@ -16,9 +16,11 @@ managed-gateway/sandbox-smoke.ts
 !server/source-attachments.ts
 !server/pdf-text.ts
 !server/redact.ts
+!server/service-entitlement.ts
 !server/helpers/pdf-text-worker.mjs
 !shared/mail-ingestion.ts
 !shared/source-attachments.ts
+!shared/service-entitlement.ts
 # Belt and braces on top of the allowlist: nothing below may ever be copied.
 managed-gateway/.env
 managed-gateway/.env.*

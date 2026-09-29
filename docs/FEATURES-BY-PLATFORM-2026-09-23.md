@@ -1,7 +1,7 @@
 # Features by platform — 23 September 2026
 
 What this does not establish: no feature here has run on a customer machine, and neither platform
-ships a signed build. "Installed hosted runner" means an unsigned NSIS install on GitHub's
+ships a notarized or Authenticode-signed build. "Installed hosted runner" means an unsigned NSIS install on GitHub's
 `windows-latest`, not an office computer. Passing platform checks is not the same as a feature
 being available: the rows below name the code that holds a feature back.
 
@@ -31,8 +31,8 @@ customer. Update this table whenever a row changes tier; it is the acceptance li
 | Service | Start at sign-in, keep awake | component tests; login item opens the window | component tests; `--service` headless | `electron/service-persistence.mjs` | Real reboot + sign-in |
 | Company | Hosting an office (owned PostgreSQL) | local tests | installed hosted runner | — | Real device |
 | Speech | Dictation helper | packaged build | packaged build | Linux unsupported (`electron/speech.mjs:48`) | Driven microphone session |
-| Release | Signing and updates | **unsigned, not notarized** | **no Authenticode certificate** | `electron-builder.yml` | Certificates (owner gate, GATES §B) |
+| Release | Signing and updates | **Developer ID signed, not notarized** (`outputs/modelvia-qa-2026-09-23/`) | **no Authenticode certificate** | `electron-builder.yml` | Certificates (owner gate, GATES §B) |
 
-Biggest gaps by user impact: unsigned builds on both platforms; memory review refused on
+Biggest gaps by user impact: no notarized macOS build and no signed Windows installer; memory review refused on
 Windows; attended computer control held to macOS by policy; browser task authority not yet driven
 on the real helper; attachment contents never collected.

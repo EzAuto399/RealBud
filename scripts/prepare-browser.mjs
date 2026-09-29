@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { windowsTar } from "./package-files.mjs";
 const run = promisify(execFile);
-const version = "0.3.0";
+const version = "0.3.1";
 const artifacts = {
-  "darwin-arm64": ["aarch64-apple-darwin.tar.gz", "f85b2d463d1928f79850ec95c7f812c1dfb844bb1d5d6bbf961e813f28d00df2"],
-  "darwin-x64": ["x86_64-apple-darwin.tar.gz", "887ac94f43f3896e25843ca055d4fb163f60dccdd3eed1db27fbe0d6c518e483"],
-  "win32-x64": ["x86_64-pc-windows-msvc.zip", "cd31665559d0faae2cfb79ab1c3cb6854bce10b4fde510be015456e8370f629e"],
-  "linux-x64": ["x86_64-unknown-linux-musl.tar.gz", "0eb2b40aff955898d21c1adfc70a3d6c84da9730b39b6fd4d5c12457274d0260"],
-  "linux-arm64": ["aarch64-unknown-linux-musl.tar.gz", "60c61f740ae820a085425e65e914ea0d68c21ce87f7038a29a372fd8d63896db"],
+  "darwin-arm64": ["aarch64-apple-darwin.tar.gz", "78f1651215b1ce95e40fb886985d1476e2cd2fb089beb146e6ecc6fa4a4aab89"],
+  "darwin-x64": ["x86_64-apple-darwin.tar.gz", "da52bdaad43261c4ed1687d370de1044c071c83cc841bfbf3a365bbfeea6f5d2"],
+  "win32-x64": ["x86_64-pc-windows-msvc.zip", "964b7c9ce4757940091320e4fa3b9198d8b9e2abf6d8e63221af1825108dc4a6"],
+  "linux-x64": ["x86_64-unknown-linux-musl.tar.gz", "a3011c97cc39ff859c595691f86f28f5d24d61c363d598cc06ff0bbb8315c8db"],
+  "linux-arm64": ["aarch64-unknown-linux-musl.tar.gz", "67ffdeb8c90cea1e037c81df1e28bacc9582e6a91fe61b9eb3eb03d951fe6fa5"],
 };
 const artifact = artifacts[`${process.platform}-${process.arch}`];
 if (!artifact) throw new Error("No reviewed browser helper for this platform.");

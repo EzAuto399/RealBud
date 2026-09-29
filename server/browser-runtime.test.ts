@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addBrowserTaskUpload, browserDownloadTarget, browserTaskWorkroom, BrowserRuntime, browserStepFailure, grantedUploadPath, saveBrowserDownload, sniffContentType, type BrowserJson } from "./browser-runtime.ts";
+import { addBrowserTaskUpload, BROWSER_VERSION, browserDownloadTarget, browserExtensionCompatible, browserTaskWorkroom, BrowserRuntime, browserStepFailure, grantedUploadPath, saveBrowserDownload, sniffContentType, type BrowserJson } from "./browser-runtime.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
@@ -18,10 +18,10 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(p => removeFixture
 export async function browserFixture() {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-test-")); roots.push(root);
   const sessions = new Set<string>(); let counter = 0;
-  const browser = { instance_id: "chrome-work", browser_name: "Chrome", label: "Work", extension_version: "0.3.0", extension_protocol_version: "1.3" };
+  const browser = { instance_id: "chrome-work", browser_name: "Chrome", label: "Work", extension_version: BROWSER_VERSION, extension_protocol_version: "1.3" };
   let browsers: BrowserJson[] = [browser]; let borrowPolicy = "always"; let stopFails = false; let startUnknown = false;
   const command = vi.fn(async (args: string[]): Promise<BrowserJson> => {
-    if (args[0] === "status") return { daemon_version: "0.3.0", protocol_version: "1.3", browsers, sessions: [...sessions].map(session_id => ({ session_id, browser_instance_id: "chrome-work", interaction: { borrow_confirmation: borrowPolicy, request_help: "enabled" } })) };
+    if (args[0] === "status") return { daemon_version: BROWSER_VERSION, protocol_version: "1.3", browsers, sessions: [...sessions].map(session_id => ({ session_id, browser_instance_id: "chrome-work", interaction: { borrow_confirmation: borrowPolicy, request_help: "enabled" } })) };
     if (args[0] === "session" && args[1] === "start") {
       const session_id = `session-${++counter}`; sessions.add(session_id);
       if (startUnknown) throw new Error("Lost reply");
@@ -47,6 +47,26 @@ describe("private browser connection", () => {
   it("explains an unavailable confirmation without exposing upstream data or disabling consent", () => {
     expect(browserStepFailure({ data: { reason: "confirmation_ui_unavailable" }, hint: "private diagnostic" }).message).toMatch(/Select the job's website tab/);
     expect(browserStepFailure({ message: "private page contents", hint: "disable confirmation" }).message).not.toMatch(/private page contents|disable confirmation/);
+  });
+  it("admits a store-updated extension of the same minor and protocol, never another protocol", () => {
+    expect(browserExtensionCompatible("0.3.1", "1.3", "0.3.0")).toBe(true);
+    expect(browserExtensionCompatible("0.3.0", "1.3", "0.3.1")).toBe(true);
+    expect(browserExtensionCompatible("0.3.1", "1.4", "0.3.0")).toBe(false);
+    expect(browserExtensionCompatible("0.3.1", "1.2", "0.3.1")).toBe(false);
+    expect(browserExtensionCompatible("0.3.1", undefined, "0.3.1")).toBe(false);
+    expect(browserExtensionCompatible("0.4.0", "1.3", "0.3.1")).toBe(false);
+    expect(browserExtensionCompatible("1.3.1", "1.3", "0.3.1")).toBe(false);
+    for (const odd of ["0.3", "0.3.1-beta", "v0.3.1", "0.03.1", 31, null]) expect(browserExtensionCompatible(odd, "1.3", "0.3.1")).toBe(false);
+  });
+  it("keeps a selected browser ready after an extension patch update and pauses on a protocol change", async () => {
+    const f = await browserFixture();
+    f.browsers([{ ...f.browser, extension_version: "0.3.9" }]);
+    expect((await f.runtime.status()).state).toBe("ready");
+    f.browsers([{ ...f.browser, extension_version: BROWSER_VERSION, extension_protocol_version: "1.4" }]);
+    const changed = await f.runtime.status();
+    expect(changed.state).toBe("needs_update"); expect(changed.browsers[0]?.compatible).toBe(false);
+    await expect(f.runtime.acquire("job-1")).rejects.toThrow();
+    expect(f.command.mock.calls.filter(([args]) => args[0] === "session")).toHaveLength(0);
   });
   it("requires a selected profile and never switches when it disconnects", async () => {
     const f = await browserFixture(); expect((await f.runtime.status()).state).toBe("ready");

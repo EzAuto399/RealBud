@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const GATEWAY = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(GATEWAY, '..');
-const ENTRYPOINTS = ['server.ts', 'entitlement-cli.ts', 'caps-cli.ts', 'commercial-cli.ts'];
+const ENTRYPOINTS = ['server.ts', 'entitlement-cli.ts', 'caps-cli.ts', 'commercial-cli.ts', 'service-entitlement-issuer.ts'];
 const CODE = /\.(?:m?[jt]s|cjs)$/;
 const BUILTINS = new Set(builtinModules);
 

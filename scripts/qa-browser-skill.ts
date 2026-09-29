@@ -1,14 +1,14 @@
 // Real BrowserSkill CLI + extension against fictional pages in a disposable profile.
 // No personal browser profile, real account, model call or external write is used.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { addBrowserTaskUpload, BrowserRuntime, browserExecutable, browserTaskWorkroom } from "../server/browser-runtime.ts";
+import { addBrowserTaskUpload, BROWSER_PROTOCOL, BROWSER_VERSION, browserExtensionCompatible, BrowserRuntime, browserExecutable, browserTaskWorkroom } from "../server/browser-runtime.ts";
 import { startBrowserBroker } from "../server/browser-broker.ts";
 import { BrowserApprovalStore, legacyBrowserGrant } from "../server/browser-authority.ts";
 import { ConnectedAppOperationStore } from "../server/connected-app-operations.ts";
@@ -17,6 +17,10 @@ import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 const modulePath = process.env.PLAYWRIGHT_MODULE;
 const extension = process.env.BROWSER_SKILL_EXTENSION;
 if (!modulePath || !extension) throw new Error("Set PLAYWRIGHT_MODULE and BROWSER_SKILL_EXTENSION to the verified test runtimes.");
+// Receipts name the extension actually loaded, not the version RealBud expects.
+// Its manifest has no protocol; the live handshake protocol is checked by runtime.status().
+const extensionVersion = String(JSON.parse(await readFile(join(extension, "manifest.json"), "utf8")).version);
+assert(browserExtensionCompatible(extensionVersion, BROWSER_PROTOCOL), `BrowserSkill extension ${extensionVersion} is not compatible with bundled bsk ${BROWSER_VERSION}.`);
 const { chromium } = await import(modulePath);
 const temp = await mkdtemp(join(tmpdir(), "rb-real-browser-"));
 // A later run can keep earlier receipts: REALBUD_QA_OUTPUT names a new dated folder.
@@ -83,7 +87,7 @@ try {
   assert.equal((await runtime.status()).active, false);
   assert.equal((await runtime.command(["status"])).sessions instanceof Array, true);
   const sessions = (await runtime.command(["status"])).sessions as unknown[]; assert.equal(sessions.length, 0);
-  await writeFile(join(output, "real-browser-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: "0.3.0", extension: "0.3.0", scope: "Disposable browser; fictional locally served bank page", connected: true, explicitBorrow: true, read: true, paymentControlBlocked: true, readback: true, verifiedLogin: true, humanSelectedReturnedTab: true, changedAccountWithheld: true, sessionsReleased: true }, null, 2));
+  await writeFile(join(output, "real-browser-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: BROWSER_VERSION, extension: extensionVersion, scope: "Disposable browser; fictional locally served bank page", connected: true, explicitBorrow: true, read: true, paymentControlBlocked: true, readback: true, verifiedLogin: true, humanSelectedReturnedTab: true, changedAccountWithheld: true, sessionsReleased: true }, null, 2));
   console.log("Real BrowserSkill + extension: fictional bank read, transfer block, statement click/read-back and release passed.");
 
   // ── Keys, dropdown, download capture and a granted upload (fictional pages, explicit task grant) ──
@@ -138,8 +142,8 @@ ${bill ? "" : `<a href="/fictional-report.csv" download>Download report</a>`}</h
   assert.equal(payEnter.isError, true); assert.equal(await page.evaluate(() => document.body.dataset.submits), undefined);
   const payAsk = asks.find(ask => ask.tool === "browser_press" && ask.summary.startsWith("Pay "));
   broker.close(); await broker.released(); assert.equal((await runtime.status()).active, false);
-  await writeFile(join(output, "keys-files-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: "0.3.0", extension: "0.3.0",
-    layer: "Bundled bsk 0.3.0 and BrowserSkill extension 0.3.0 in a disposable headless Chromium profile; fictional locally intercepted pages; explicit fictional task grant",
+  await writeFile(join(output, "keys-files-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: BROWSER_VERSION, extension: extensionVersion,
+    layer: `Bundled bsk ${BROWSER_VERSION} and BrowserSkill extension ${extensionVersion} in a disposable headless Chromium profile; fictional locally intercepted pages; explicit fictional task grant`,
     enterSubmittedOrdinaryForm: true, selectChangedValue: true, grantedUploadAttached: true, ungrantedUploadRefused: true,
     download: { name: receipt.name, size: receipt.size, sha256MatchesServedBytes: true, contentType: receipt.contentType },
     paymentEnter: { dispatched: false, outcome: payAsk ? "one-time approval asked and declined" : payEnter.content[0].text }, sessionsReleased: true,

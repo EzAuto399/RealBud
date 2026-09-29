@@ -69,6 +69,33 @@ export interface BrowserTaskRecord {
   grant: BrowserTaskGrant | null;
   /** The broker's decisions for this task (notes and hashes only). */
   evidence: JobRunEvidence[];
+  /** A person-started portal recipe task (server/portal-recipe-task.ts): RealBud's
+   * runner does the steps instead of a model turn. Absent on other tasks. */
+  recipe?: BrowserTaskRecipe;
+}
+
+/** The pack recipes a task runs and the account the person selected. Data only: the grant is the authority. */
+export interface BrowserTaskRecipe {
+  portal: string;
+  runs: Array<{ recipe: string; inputs: Record<string, string> }>;
+  account: { urlValue: string; marker: string };
+}
+const RECIPE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const shortText = (value: unknown, max: number) => text(value, max) && !/[\u0000-\u001f\u007f]/.test(value as string);
+export function validBrowserTaskRecipe(value: unknown): value is BrowserTaskRecipe {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const account = row.account as Record<string, unknown> | null;
+  if (Object.keys(row).some(key => !["portal", "runs", "account"].includes(key)) || typeof row.portal !== "string" || !RECIPE_NAME.test(row.portal) ||
+    !account || typeof account !== "object" || Object.keys(account).some(key => key !== "urlValue" && key !== "marker") ||
+    !shortText(account.urlValue, 200) || !shortText(account.marker, 200) || !Array.isArray(row.runs) || row.runs.length < 1 || row.runs.length > 12) return false;
+  return row.runs.every(run => {
+    if (!run || typeof run !== "object" || Array.isArray(run)) return false;
+    const { recipe, inputs, ...rest } = run as Record<string, unknown>;
+    if (Object.keys(rest).length || typeof recipe !== "string" || !RECIPE_NAME.test(recipe) || !inputs || typeof inputs !== "object" || Array.isArray(inputs)) return false;
+    const entries = Object.entries(inputs as Record<string, unknown>);
+    return entries.length <= 12 && entries.every(([key, item]) => /^[a-z][a-z0-9_]{0,39}$/.test(key) && typeof item === "string" && item.length <= 200 && !/[\u0000-\u001f\u007f]/.test(item));
+  });
 }
 
 /** What the Ask card shows. The grant itself stays on the server. */
@@ -164,6 +191,8 @@ function validRecord(value: unknown): value is BrowserTaskRecord {
     !(row.startedAt === null || time(row.startedAt)) || !(row.endedAt === null || time(row.endedAt)) ||
     !(row.endNote === null || text(row.endNote, 500)) || !Array.isArray(row.evidence) || row.evidence.length > MAX_EVIDENCE) return false;
   if ((row.status === "active" || row.status === "paused") && row.grant === null) return false;
+  // Records saved before recipe tasks existed have no `recipe`.
+  if (row.recipe !== undefined && !validBrowserTaskRecipe(row.recipe)) return false;
   if (row.grant !== null) {
     try { if (parseBrowserTaskGrant(row.grant).id !== row.id) return false; } catch { return false; }
   }
@@ -205,6 +234,7 @@ export interface BrowserTaskProposal {
   siteSource: "request" | "saved-job" | "none";
   savedJob: { id: string; title: string } | null;
   actions: BrowserActionClass[];
+  recipe?: BrowserTaskRecipe;
 }
 
 export class BrowserTaskStore {
@@ -252,6 +282,7 @@ export class BrowserTaskStore {
     return this.exclusive(async () => {
       const request = plain(input.request, 2000);
       if (!request) throw fail(400, "Say what Bud should do on the site.");
+      if (input.recipe !== undefined && !validBrowserTaskRecipe(input.recipe)) throw fail(400, "This portal task's recipes or account are not valid. Choose them again.");
       const record: BrowserTaskRecord = {
         version: 1, purpose: "browser-task", id: randomUUID(), threadId: input.threadId, messageId: input.messageId, request,
         sites: [...new Set(input.sites.filter(browserTaskSite))].slice(0, 20), siteSource: input.siteSource,
@@ -259,6 +290,7 @@ export class BrowserTaskStore {
         actions: BROWSER_ACTION_CLASSES.filter(action => input.actions.includes(action)),
         minutes: ASK_TASK_MINUTES, budget: ASK_TASK_BUDGET, status: "proposed", createdAt: now,
         startedAt: null, endedAt: null, endNote: null, grant: null, evidence: [],
+        ...(input.recipe ? { recipe: structuredClone(input.recipe) } : {}),
       };
       if (record.siteSource !== "none" && !record.sites.length) record.siteSource = "none";
       const rows = [...await this.load(), record];
@@ -310,7 +342,8 @@ export class BrowserTaskStore {
         route: "ask",
         request: { text: row.request, sha256: sha256(row.request) },
         sites,
-        browser: { id: input.browserId, accountMarker: null },
+        // A recipe task is bound to the account the person selected: the broker refuses any control once its marker is gone.
+        browser: { id: input.browserId, accountMarker: row.recipe?.account.marker ?? null },
         actions: row.actions,
         consequential: BROWSER_CONSEQUENTIAL_POLICY,
         uploads: [],

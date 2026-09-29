@@ -69,6 +69,8 @@ export class LedgerDatabase {
       CREATE INDEX IF NOT EXISTS commercial_terms_period ON commercial_terms(tenant,period,seq);
       CREATE TABLE IF NOT EXISTS commercial_acceptances (tenant TEXT NOT NULL, period TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(tenant,period,version));
       CREATE TABLE IF NOT EXISTS collection_invoice_bindings (invoice TEXT PRIMARY KEY REFERENCES invoices(id), tenant TEXT NOT NULL, period TEXT NOT NULL, invoice_digest TEXT NOT NULL, terms_digest TEXT NOT NULL, amount_cents TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS invoice_email_outbox (invoice TEXT PRIMARY KEY REFERENCES invoices(id), tenant TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS invoice_email_outbox_state ON invoice_email_outbox(state,tenant);
     `);
     for (const table of ['billing_sources','report_key_mappings','report_policies','report_imports','report_rows','square_mappings','statements','statement_events','statement_acceptances','square_events','square_payments','square_refunds','attempts','events','cards','acceptances','evidence','provider_requests','invoices','invoice_events','payment_events','payments','refunds','refund_intents','commercial_terms','commercial_acceptances','collection_invoice_bindings']) {
       for (const action of ['UPDATE','DELETE']) this.sql.exec(`CREATE TRIGGER IF NOT EXISTS immutable_${table}_${action} BEFORE ${action} ON ${table} BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);

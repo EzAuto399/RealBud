@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { serviceInstanceId } from "../shared/service-identity.mjs";
-import { SERVICE_PORTS, findRunningService, isOurService, probeService, serviceIdentity } from "../electron/service-instance.mjs";
+import { SERVICE_PORTS, findBusyService, findRunningService, isOurService, probeService, serviceIdentity } from "../electron/service-instance.mjs";
 
 const DATA = "/Users/pm/.realbud";
 const identity = serviceIdentity(DATA);
@@ -123,5 +123,37 @@ describe("finding a running service", () => {
       throw new Error("unreachable");
     });
     await expect(probeService(8799, { fetchImpl, timeoutMs: 10 })).resolves.toBeNull();
+  });
+});
+
+describe("adopting a busy service before spawning", () => {
+  // Our service answers only after the quick probe would have given up.
+  const slowOurs = (delayMs) => vi.fn(async (_url, init) => {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, delayMs);
+      init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); }, { once: true });
+    });
+    return { ok: true, json: async () => ({ app: "realbud", static: true, instanceId: identity.instanceId }) };
+  });
+
+  it("adopts our service on a bound port that misses the quick probe but answers a patient one", async () => {
+    const fetchImpl = slowOurs(60);
+    await expect(findRunningService(identity, { fetchImpl, timeoutMs: 20 })).resolves.toBeNull();
+    const isPortFree = vi.fn(async (port) => port !== 8799);
+    await expect(findBusyService(identity, { isPortFree, fetchImpl, timeoutMs: 500 })).resolves.toMatchObject({ port: 8799 });
+  });
+
+  it("never probes a free port and never adopts a stranger holding a bound one", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ app: "realbud", static: true, instanceId: serviceInstanceId("/tmp/other-office") }) }));
+    await expect(findBusyService(identity, { isPortFree: async (port) => port !== 18799, fetchImpl })).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toContain(":18799/");
+    fetchImpl.mockClear();
+    await expect(findBusyService(identity, { isPortFree: async () => true, fetchImpl })).resolves.toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a bound port that stays silent", async () => {
+    await expect(findBusyService(identity, { isPortFree: async (port) => port !== 8799, fetchImpl: slowOurs(5_000), timeoutMs: 20 })).resolves.toBeNull();
   });
 });

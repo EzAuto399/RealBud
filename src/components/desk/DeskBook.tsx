@@ -882,8 +882,8 @@ function AddPropertyModal({
     saving.current = true; setBusy(true); setError("");
     try {
       const saved = await onAdd({ address: address.trim(), tenantName: tenantName.trim(), tenantPhone: tenantPhone.trim(), weeklyRentCents: Math.round(Number(rent) * 100), ...(propertyCode.trim() ? { propertyCode: propertyCode.trim() } : {}) });
-      if (!saved) setError("Could not add the property. Your details are kept here. Check the connection and try again.");
-    } catch { setError("Could not add the property. Your details are kept here; try again."); }
+      if (!saved) setError("Could not add the property. Check the connection and try again.");
+    } catch { setError("Could not add the property."); }
     finally { saving.current = false; setBusy(false); }
   };
   const inputClass = "mt-1 w-full rounded border border-line bg-inset px-3 py-2 text-[13.5px] text-ink outline-none";

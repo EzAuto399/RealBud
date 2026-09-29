@@ -11,6 +11,7 @@ import {
   type LedgerFacts,
   type Property,
 } from "./desk.ts";
+import { DeskStore } from "./desk-store.ts";
 import { readHandsLast } from "./hands-last.ts";
 import type { HermesLedgerAttempt } from "./hermes-hands.ts";
 import { removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
@@ -815,5 +816,57 @@ describe("sample replay", () => {
     expect(desk.snapshot().mode).toBe("live");
     expect(() => desk.resetFixtures()).toThrow(/office book has been kept/);
     expect(readFileSync(join(dir, "desk.json"), "utf8")).toBe(before);
+  });
+});
+
+describe("a failed save keeps the running book equal to desk.json", () => {
+  const newRow = { address: "9 Wattle Ct, O'Connor ACT", tenantName: "Morgan Lee", tenantPhone: "0411 222 333", weeklyRentCents: 61_000 };
+  function withFullDisk<T>(fn: () => T): T {
+    const write = DeskStore.atomicWrite;
+    DeskStore.atomicWrite = () => { throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }); };
+    try { return fn(); } finally { DeskStore.atomicWrite = write; }
+  }
+  const book = (snap: ReturnType<Desk["snapshot"]>) => structuredClone({
+    revision: snap.revision, properties: snap.properties, ledger: snap.ledger, drafts: snap.drafts, results: snap.results, workItems: snap.workItems,
+  });
+
+  for (const checked of [false, true]) {
+    it(`does not keep an added property that was not saved (${checked ? "checked" : "unchecked"} book)`, () => {
+      const { desk, dir } = tempDesk();
+      if (checked) desk.command({ type: "check-demo" });
+      const before = book(desk.snapshot());
+      withFullDisk(() => expect(() => desk.addProperty(newRow)).toThrow());
+      expect(book(desk.snapshot())).toEqual(before);
+      expect(new Desk({ file: join(dir, "desk.json") }).snapshot().properties).toEqual(before.properties);
+      // The retry is a fresh add, not "that address is already on the book".
+      const added = desk.addProperty(newRow);
+      expect(added.properties.filter((p) => p.address === newRow.address)).toHaveLength(1);
+      expect(new Desk({ file: join(dir, "desk.json") }).snapshot().properties.some((p) => p.address === newRow.address)).toBe(true);
+    });
+  }
+
+  it("keeps the saved options, the property and its live note when an edit or removal is not saved", () => {
+    const { desk, dir } = tempDesk();
+    desk.command({ type: "check-demo" });
+    desk.writeNotes("prop-oak", "Gate code is with the owner.");
+    const before = book(desk.snapshot());
+    withFullDisk(() => {
+      expect(() => desk.patchProperty("prop-oak", { graceDays: 1 })).toThrow();
+      expect(() => desk.removeProperty("prop-oak")).toThrow();
+    });
+    expect(book(desk.snapshot())).toEqual(before);
+    expect(desk.notesFor("prop-oak").body).toBe("Gate code is with the owner.");
+    expect(readFileSync(join(dir, "vault", "properties", "prop-oak.md"), "utf8")).not.toMatch(/archived:\s*true/);
+    expect(desk.removeProperty("prop-oak").properties.some((p) => p.id === "prop-oak")).toBe(false);
+    expect(readFileSync(join(dir, "vault", "properties", "prop-oak.md"), "utf8")).toMatch(/archived:\s*true/);
+  });
+
+  it("keeps a pending card pending when its decision is not saved", () => {
+    const { desk } = tempDesk();
+    const pending = desk.command({ type: "check-demo" }).drafts.find((d) => d.status === "pending")!;
+    const before = book(desk.snapshot());
+    withFullDisk(() => expect(() => desk.allowDraft(pending.id, before.revision)).toThrow());
+    expect(book(desk.snapshot())).toEqual(before);
+    expect(desk.snapshot().drafts.find((d) => d.id === pending.id)?.status).toBe("pending");
   });
 });

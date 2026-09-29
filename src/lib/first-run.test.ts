@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFirstRunApi, firstRunDone, officeContactNamed } from "./first-run";
+import { createFirstRunApi, firstRunDone, officeContactNamed, readSavedSetup, SAVED_SETUP_SLOW, SAVED_SETUP_TIMEOUT_MS } from "./first-run";
 import type { OnboardingState } from '@shared/onboarding';
 const state: OnboardingState = { version: 1, scope: 'a'.repeat(64), revision: 0, stage: 'profile' };
 
@@ -26,6 +26,26 @@ describe("saved first run", () => {
   it('does not turn a lost response into completion', async () => {
     await expect(createFirstRunApi(vi.fn().mockRejectedValue(new Error('response lost'))).save(state, 'office-rules')).rejects.toThrow('response lost');
     expect(firstRunDone(state)).toBe(false);
+  });
+});
+
+describe("the first screen's bounded read", () => {
+  it("offers a retry instead of waiting forever on a busy service", async () => {
+    vi.useFakeTimers();
+    try {
+      const request = vi.fn(() => new Promise(() => {}));
+      const read = readSavedSetup(request);
+      const settled = expect(read).rejects.toThrow(SAVED_SETUP_SLOW);
+      await vi.advanceTimersByTimeAsync(SAVED_SETUP_TIMEOUT_MS);
+      await settled;
+      // The transport gets the same budget, so the hung request is abandoned too.
+      expect(request).toHaveBeenCalledWith('/api/onboarding', undefined, { timeoutMs: SAVED_SETUP_TIMEOUT_MS });
+      expect(SAVED_SETUP_SLOW).toMatch(/Try again/);
+    } finally { vi.useRealTimers(); }
+  });
+  it("returns the saved state when the service answers in time and never infers completion from a timeout", async () => {
+    await expect(readSavedSetup(vi.fn().mockResolvedValue({ ...state, stage: 'complete', revision: 3 }), 50)).resolves.toMatchObject({ stage: 'complete' });
+    await expect(readSavedSetup(vi.fn(() => new Promise(() => {})), 5)).rejects.toThrow('did not answer in time');
   });
 });
 

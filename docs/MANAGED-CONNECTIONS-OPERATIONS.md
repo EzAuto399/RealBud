@@ -65,7 +65,7 @@ refused (403 `company_scope_mismatch`). Request body is
 the company's Modelvia customer account id — required, with no default, because
 guessing one would issue a model key against somebody else's account. `apps`
 defaults to `["gmail"]`
-and an app with no admitted adapter and reviewed OAuth configuration is refused
+and an app with no admitted adapter is refused
 (403 `connector_app_not_admitted`) before anything external happens.
 
 Provision is idempotent per `installationId`. The first response carries
@@ -76,16 +76,19 @@ portal to record as `composio_project_id`; it is an identifier, never the projec
 key. The full contract, the environment variables and the failure codes are in
 [managed-gateway/DEPLOY.md](../managed-gateway/DEPLOY.md).
 
-One call does three things, each journalled before it is attempted: resolve or
-create the company's Composio project (its `ak_` key goes to the gateway's secret
-store under the same `projectKeyEnv` name the registry already uses, never into a
-response); admit an `rbc_` device by hash; and create one Modelvia project per
+One call journals its intent before external effects, then resolves or creates
+the company's Composio project (its `ak_` key goes to the gateway's secret store
+under the same `projectKeyEnv` name the registry already uses, never into a
+response), resolves and verifies that project's Gmail read-only OAuth config,
+admits an `rbc_` device by hash, and creates one Modelvia project per
 installation (`rb-<installationId>`) under that customer, carrying the ledger
 tenant's monthly cap, request cap and concurrency, then mint one key in it. Caps
 live on Modelvia projects rather than keys, so the ledger cap is genuinely applied
 there and not merely described. An interrupted first call is held (409
 `installation_provisioning_outcome_unknown`) for operator reconciliation rather
-than retried into a second project, device or key.
+than retried into a second project, auth config, device or key. Each installation
+gets its own revocable connector credential and Modelvia key. The office project
+key and auth config ID stay on the gateway; no Composio API key is sent to a desktop.
 
 Revoke deactivates the device first, then marks the model key for revocation. The
 installation's Modelvia project is left in place on purpose — it holds the usage
@@ -101,6 +104,34 @@ sign-in link, mail scan and the MCP session. A registry entry written before the
 allowlist existed keeps its original Gmail-only grant. An app with no adapter in
 this service is refused whatever a registry entry claims, and the MCP method list
 stays the existing read-only set.
+
+## Office mailbox choice (26 September 2026)
+
+Each office starts in `personal` mode. Its billing owner can change the mode on
+the website's Computers page. In `personal` mode, each desktop connects its own
+Gmail through the existing bounded OAuth flow. In `shared` mode, the owner starts
+one private office Gmail connection, verifies the connected Google address,
+types that address to confirm it, then grants each installation separately. A
+forwarded connection link may complete with a different Google account, so no
+desktop receives shared access before the owner confirms the observed address.
+
+The gateway owns the policy. `GET /v1/portal/mailbox` returns the current mode,
+revision, connection state and installation grants to the billing owner. The
+owner-only POST routes are `/v1/portal/mailbox/policy`, `/authorize`, `/verify`,
+`/confirm` and `/grants`; every mutation carries `expectedRevision`. The portal
+principal selects the office; a request body cannot select another company.
+Changing the mode or reselecting shared mode clears grants and requires another
+address review. A device grant is tied to its exact credential and profile;
+rotating or revoking the installation does not transfer the grant.
+
+Desktop status reports `sourceKind` and `policyRevision`. Shared mode without a
+grant returns a disconnected status, with no account or provider read. Gmail
+reads carry the revision from the reviewed source; after any policy change the
+gateway rejects missing or stale revisions. Existing sessions lose authority
+when the policy changes. The office project key, auth config ID, OAuth link and
+candidate email are never returned to a desktop. The owner sees only the
+candidate email needed for the explicit review. Unknown or expired OAuth link
+outcomes stay held for operator reconciliation; do not make a new link blindly.
 
 `server.ts` composes these routes from the environment alone, and only when
 `REALBUD_ENABLE_PROVIDER=1` — the same gate the model providers use. While the
@@ -122,7 +153,7 @@ vendor-only custody claim.
 
 1. Unlock that installation's service administrator session. Enter only the service origin and scoped installation credential in Managed connections.
 2. Check and save. RealBud verifies projected account/tool metadata, rechecks administrator authority and serializes setup changes before saving. It invalidates old agent connection sessions and removes local Composio keys. No message is read by setup.
-3. Staff connect Gmail under Apps. A verified account is pinned for subsequent reads. Missing configuration or revoked/expired access is shown as a setup issue.
+3. In personal mode, staff connect Gmail under Apps. In shared mode, the owner confirms the office mailbox on the website and grants this installation; the desktop then checks access and reviews that source in its workflow setup. A verified account is pinned for subsequent reads. Missing configuration or revoked/expired access is shown as a setup issue.
 4. Import the Austin pack, check its requirements and supply reviewed customer samples. Importing never starts a schedule or proves source coverage.
 
 Revoke access by atomically updating the trusted registry entry to `active: false`, or suspend/expire the company through the ledger's existing audited service lifecycle. Do not delete customer records. Rotate by disabling the old grant and provisioning a distinct replacement; old MCP sessions cannot retain authority after a registry change.

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import type { ConnectedAppsStatus } from '../shared/office-sources.ts';
 import type { AppConfig } from './config.ts';
 import { currentWorkerProfile } from './hermes-profile.ts';
 import { parseMailScanResult, type MailScanRequest } from '../shared/mail-ingestion.ts';
@@ -9,12 +11,13 @@ export { managedConnectorApps };
 export interface ManagedConnectorConfig { endpoint: string; credential: string; profile: string }
 import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { validateSourceAttachmentBytes } from './source-attachments.ts';
-type Status = { checkedAt: string; managed: true; serviceExpiresAt: number;
+type Status = { sourceKind?: 'personal' | 'office_shared'; policyRevision?: number; checkedAt: string; managed: true; serviceExpiresAt: number;
   services: Record<string, {connected: boolean; status: string; accounts: {id: string;label?:string;status:string}[];accountSelectionRequired:boolean}>;
   tools: {available:boolean;names:string[]} };
 
 export const managedConnectorConfigured = (cfg: AppConfig): boolean => cfg.composio?.managed !== undefined;
-export function managedConnectorSettings(cfg: AppConfig): {key:string;url:string;headers:Record<string,string>} {
+export function managedConnectorSettings(cfg: AppConfig, expectedPolicyRevision?: number): {key:string;url:string;headers:Record<string,string>} {
+  if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error('The reviewed mail policy needs checking.');
   const managed = cfg.composio?.managed;
   const fail = (): never => { throw Object.assign(new Error('Managed connections need service setup for this private workspace.'), {status:403}); };
   if (!managed || Object.keys(managed).sort().join(',') !== 'credential,endpoint,profile' ||
@@ -23,17 +26,18 @@ export function managedConnectorSettings(cfg: AppConfig): {key:string;url:string
   let url: URL; try { url = new URL(managed.endpoint); } catch { return fail(); }
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
     (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1','[::1]'].includes(url.hostname)))) return fail();
-  return {key:managed.credential,url:`${url.origin}/v1/connectors/mcp`,headers:{authorization:`Bearer ${managed.credential}`,'x-realbud-profile':managed.profile}};
+  return {key:managed.credential,url:`${url.origin}/v1/connectors/mcp`,headers:{authorization:`Bearer ${managed.credential}`,'x-realbud-profile':managed.profile,...(expectedPolicyRevision === undefined ? {} : {'x-realbud-policy-revision':String(expectedPolicyRevision)})}};
 }
-async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal?: AbortSignal): Promise<unknown> {
+async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal?: AbortSignal, expectedPolicyRevision?: number): Promise<unknown> {
+  if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error('The reviewed mail policy needs checking.');
   const settings=managedConnectorSettings(cfg), signal=AbortSignal.any([AbortSignal.timeout(path === '/v1/connectors/mail-scan' ? 250_000 : 35_000), ...(inputSignal ? [inputSignal] : [])]);
   const response=await fetch(new URL(path,settings.url), {method:body===undefined?'GET':'POST',redirect:'error',signal,
-    headers:{...settings.headers,accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    headers:{...settings.headers,...(expectedPolicyRevision === undefined ? {} : {'x-realbud-policy-revision': String(expectedPolicyRevision)}),accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
   if (!response.ok || response.redirected) {
     await response.body?.cancel().catch(()=>{});
     const message=response.status===402?'Your managed service is paused or expired. Contact service support.':
       response.status===403?'Managed connection access was revoked or changed. Contact service support.':
-      response.status===409&&path==='/v1/connectors/mail-scan'?'The Gmail connection changed. Review the connected account and approve the mail source again before scanning.':
+      response.status===409&&['/v1/connectors/mail-scan','/v1/connectors/mail-attachment'].includes(path)?'The Gmail connection changed. Review the connected account and approve the mail source again before scanning.':
       response.status===400&&path==='/v1/connectors/mail-scan'?'This mail scan needs a reviewed Gmail account and a compatible managed service. Update RealBud and ask service support to check the connection.':
       response.status===409?'This connection needs recovery. Check its current result with service support before trying again.':'Managed connections could not be checked. Try again when the service is available.';
     throw Object.assign(new Error(message), {status:response.status>=400&&response.status<500?response.status:502});
@@ -44,14 +48,14 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
   finally { await reader.cancel().catch(()=>{});reader.releaseLock(); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('The managed connection response was incomplete.'); }
 }
-export async function scanManagedMail(cfg: AppConfig, accountId: string, scope: MailScanRequest, signal: AbortSignal) {
+export async function scanManagedMail(cfg: AppConfig, accountId: string, scope: MailScanRequest, signal: AbortSignal, expectedPolicyRevision?: number) {
   if (typeof accountId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(accountId)) throw Object.assign(new Error('Review and select the Gmail account before scanning mail.'), { status: 400 });
   // This is a precondition on the gateway-owned source, never an account override.
-  return parseMailScanResult(await request(cfg, '/v1/connectors/mail-scan', { expectedAccountId: accountId, scope }, signal), scope, accountId);
+  return parseMailScanResult(await request(cfg, '/v1/connectors/mail-scan', { expectedAccountId: accountId, scope }, signal, expectedPolicyRevision), scope, accountId);
 }
-export async function readManagedMailAttachment(cfg: AppConfig, source: SourceAttachmentRequest, signal: AbortSignal) {
+export async function readManagedMailAttachment(cfg: AppConfig, source: SourceAttachmentRequest, signal: AbortSignal, expectedPolicyRevision?: number) {
   const selected = parseSourceAttachmentRequest(source);
-  return validateSourceAttachmentBytes(await request(cfg,'/v1/connectors/mail-attachment',selected,signal),selected);
+  return validateSourceAttachmentBytes(await request(cfg,'/v1/connectors/mail-attachment',selected,signal,expectedPolicyRevision),selected);
 }
 export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   const value = await request(cfg, '/v1/connectors/status');
@@ -65,6 +69,8 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
     typeof value.checkedAt !== 'string' || value.checkedAt.length > 40 || !Number.isFinite(Date.parse(value.checkedAt)) ||
     !record(value.services) || !Object.keys(value.services).length || Object.keys(value.services).some(key => !granted.includes(key)) ||
     !record(value.tools)) return invalid();
+  if ((value.sourceKind !== undefined || value.policyRevision !== undefined) &&
+    (!['personal', 'office_shared'].includes(String(value.sourceKind)) || !Number.isSafeInteger(value.policyRevision) || Number(value.policyRevision) < 0)) return invalid();
   const tools = value.tools;
   if (typeof tools.available !== 'boolean' || !Array.isArray(tools.names) || tools.names.length > 8 * granted.length ||
     new Set(tools.names).size !== tools.names.length || tools.names.some(name => !toolNameAllowed(name, granted))) return invalid();
@@ -87,6 +93,7 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   if (tools.available !== anyConnected || (anyConnected ? tools.names.length === 0 : tools.names.length !== 0)) return invalid();
   return {
     checkedAt: new Date(value.checkedAt).toISOString(), managed: true, serviceExpiresAt: Number(value.serviceExpiresAt),
+    ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
     services, tools: { available: tools.available, names: [...tools.names] as string[] },
   };
 }
@@ -105,4 +112,11 @@ export async function authorizeManagedConnection(cfg: AppConfig, app: string): P
   const url=new URL(value.url);
   if(url.protocol!=='https:' || url.username || url.password || url.port || !(url.hostname==='composio.dev'||url.hostname.endsWith('.composio.dev')))throw new Error('The managed sign-in link needs review.');
   return {url:value.url};
+}
+
+/** A provider account can stay the same while its office grant changes. */
+export function managedMailBindingRevision(workspace: string, profile: string, connection: AppConfig['composio'], access: Pick<ConnectedAppsStatus, 'services' | 'sourceKind' | 'policyRevision'>): string {
+  return createHash('sha256').update(JSON.stringify({ workspace, profile, connection,
+    source: { accountId: access.services.gmail?.accounts[0]?.id ?? null, sourceKind: access.sourceKind ?? null, policyRevision: access.policyRevision ?? null },
+  })).digest('hex');
 }

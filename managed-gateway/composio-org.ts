@@ -21,6 +21,9 @@ const PROJECT_API_KEY = /^ak_[a-zA-Z0-9_-]{6,512}$/;
 const PROJECT_ID = /^pr_[a-zA-Z0-9_-]{1,128}$/;
 const PROJECT_NAME_MAX = 200;
 const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_PROJECT_PAGES = 100;
+const MAX_PROJECT_ITEMS = 10_000;
+const MAX_CURSOR_LENGTH = 1024;
 
 export interface ComposioProject { id: string; name: string }
 export interface ComposioCreatedProject extends ComposioProject { apiKey: string }
@@ -45,6 +48,41 @@ function readProject(value: unknown, requireKey: boolean): ComposioProject & { a
   // The key value is never echoed, not even when it is rejected.
   requireThat(typeof raw === 'string' && PROJECT_API_KEY.test(raw), 'composio_project_key_unusable', 502);
   return { id, name, apiKey: raw as string };
+}
+
+type ProjectListPage = {
+  items: unknown[];
+  nextCursor?: string;
+  kind: 'array' | 'items' | 'data';
+  totalPages?: number;
+  currentPage?: number;
+  totalItems?: number;
+};
+
+function readProjectListPage(body: unknown): ProjectListPage {
+  if (Array.isArray(body)) return { items: body, kind: 'array' };
+  requireThat(record(body), 'composio_unreadable', 502);
+  const hasData = Object.hasOwn(body, 'data');
+  const hasItems = Object.hasOwn(body, 'items');
+  requireThat(hasData !== hasItems, 'composio_unreadable', 502);
+  const items = hasData ? body.data : body.items;
+  requireThat(Array.isArray(items), 'composio_unreadable', 502);
+  const rawCursor = body.next_cursor;
+  requireThat(rawCursor == null || (typeof rawCursor === 'string' && rawCursor.length > 0 && rawCursor.length <= MAX_CURSOR_LENGTH && !/[\x00-\x1f\x7f]/.test(rawCursor)), 'composio_project_list_partial', 502);
+  const nextCursor = rawCursor == null ? undefined : rawCursor as string;
+  if (!hasData) {
+    // The older `items` shape has no trustworthy count metadata. Its cursor is
+    // still followed; accepting only its first page could hide a live project.
+    requireThat(!Object.hasOwn(body, 'total_pages') && !Object.hasOwn(body, 'current_page') && !Object.hasOwn(body, 'total_items'), 'composio_unreadable', 502);
+    return { items, nextCursor, kind: 'items' };
+  }
+  const { total_pages: totalPages, current_page: currentPage, total_items: totalItems } = body;
+  requireThat(Number.isSafeInteger(totalPages) && Number.isSafeInteger(currentPage) && Number.isSafeInteger(totalItems)
+    && (totalPages as number) >= 1 && (totalPages as number) <= MAX_PROJECT_PAGES
+    && (currentPage as number) >= 1 && (currentPage as number) <= (totalPages as number)
+    && (totalItems as number) >= 0 && (totalItems as number) <= MAX_PROJECT_ITEMS,
+  'composio_project_list_partial', 502);
+  return { items, nextCursor, kind: 'data', totalPages: totalPages as number, currentPage: currentPage as number, totalItems: totalItems as number };
 }
 
 /** Base URL is a test/self-hosted seam, not a user setting. A set but unusable
@@ -89,12 +127,44 @@ export function composioOrgClient(options: { orgKey: () => string | undefined; f
   };
   return {
     async listProjects() {
-      const body = await call('GET', '/org/owner/project/list');
-      const items = Array.isArray(body) ? body : record(body) && Array.isArray(body.items) ? body.items : null;
-      requireThat(items, 'composio_unreadable', 502);
-      // A truncated list would hide a project that still holds live credentials.
-      requireThat(!(record(body) && body.next_cursor), 'composio_project_list_partial', 502);
-      return (items as unknown[]).map(item => { const { apiKey: _ignored, ...project } = readProject(item, false); return project; });
+      const projects: ComposioProject[] = [];
+      const seenIds = new Set<string>();
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+      let kind: ProjectListPage['kind'] | undefined;
+      let totalPages: number | undefined;
+      let totalItems: number | undefined;
+      for (let pageNumber = 1; pageNumber <= MAX_PROJECT_PAGES; pageNumber++) {
+        // Only a server-returned opaque cursor is sent back. URLSearchParams
+        // encodes it without interpreting or guessing the provider's format.
+        const path = `/org/owner/project/list${cursor ? `?${new URLSearchParams({ cursor })}` : ''}`;
+        const page = readProjectListPage(await call('GET', path));
+        requireThat(kind === undefined || page.kind === kind, 'composio_project_list_partial', 502);
+        kind = page.kind;
+        if (page.kind === 'data') {
+          totalPages ??= page.totalPages;
+          totalItems ??= page.totalItems;
+          requireThat(page.currentPage === pageNumber && page.totalPages === totalPages && page.totalItems === totalItems, 'composio_project_list_partial', 502);
+        }
+        requireThat(projects.length + page.items.length <= MAX_PROJECT_ITEMS, 'composio_project_list_partial', 502);
+        for (const item of page.items) {
+          const { apiKey: _ignored, ...project } = readProject(item, false);
+          requireThat(!seenIds.has(project.id), 'composio_project_list_partial', 502);
+          seenIds.add(project.id);
+          projects.push(project);
+        }
+        if (page.kind === 'data') {
+          requireThat(projects.length <= totalItems! && Boolean(page.nextCursor) === (pageNumber < totalPages!), 'composio_project_list_partial', 502);
+        }
+        if (!page.nextCursor) {
+          requireThat(page.kind !== 'data' || projects.length === totalItems, 'composio_project_list_partial', 502);
+          return projects;
+        }
+        requireThat(page.items.length > 0 && pageNumber < MAX_PROJECT_PAGES && !seenCursors.has(page.nextCursor), 'composio_project_list_partial', 502);
+        seenCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+      }
+      throw new GatewayError('composio_project_list_partial', 502);
     },
     async createProject(name) {
       const projectName = typeof name === 'string' ? name.trim() : '';

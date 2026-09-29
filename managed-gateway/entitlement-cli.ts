@@ -1,6 +1,9 @@
 /**
  * Trusted operator command: read, create or update one company's RealBud service
- * entitlement in the ledger database the server uses. Never an HTTP route.
+ * entitlement in the ledger database the server uses. The operator route
+ * `PUT /v1/operator/offices/entitlement` (operator-entitlement.ts) applies the
+ * same rules through `entitlementFromFlags` and `entitlementView` below; this
+ * command is the fallback when that route is not reachable.
  *
  *   cd managed-gateway
  *   node --experimental-strip-types entitlement-cli.ts get --company <companyId>
@@ -38,13 +41,38 @@ function time(value: string): number {
   if (!Number.isSafeInteger(parsed) || parsed < 0) fail('invalid_time');
   return parsed;
 }
-function view(tenant: Tenant, now: number) {
+/** An entitlement as the command prints it; `now` decides `serviceAvailable`. */
+export function entitlementView(tenant: Tenant, now: number) {
   return {
     companyId: tenant.companyId, licenseId: tenant.licenseId, active: tenant.active,
     serviceAvailable: tenant.active && tenant.serviceExpiresAt > now && now >= tenant.goLiveAt,
     goLiveAt: new Date(tenant.goLiveAt).toISOString(), serviceExpiresAt: new Date(tenant.serviceExpiresAt).toISOString(),
     customerName: tenant.customerName, customerAddress: tenant.customerAddress, ...(tenant.customerAbn ? { customerAbn: tenant.customerAbn } : {}),
     goLiveEvidence: tenant.goLiveEvidence,
+  };
+}
+
+/** Flag values by field name (see `FLAGS`), as `set` reads them. */
+export type EntitlementFlags = Partial<Record<'company' | 'license' | 'name' | 'address' | 'abn' | 'goLive' | 'goLiveEvidence' | 'expires' | 'active', string>>;
+
+/** `set`'s rules: the entitlement to store for these flags over `current`. A new
+ * company needs every field but the ABN and `active` (default true); on an
+ * existing one each given field replaces the stored value. The ledger validates
+ * the result (`putEntitlement`). */
+export function entitlementFromFlags(flags: EntitlementFlags, current: Tenant | undefined): ServiceEntitlement {
+  if (!current && !(flags.license && flags.name && flags.address && flags.goLive && flags.goLiveEvidence && flags.expires)) fail('entitlement_fields_required');
+  if (flags.active !== undefined && flags.active !== 'true' && flags.active !== 'false') fail('invalid_service_state');
+  const abn = flags.abn === undefined ? current?.customerAbn : flags.abn === 'none' ? undefined : flags.abn;
+  return {
+    companyId: flags.company!,
+    licenseId: flags.license ?? current!.licenseId,
+    active: flags.active === undefined ? (current?.active ?? true) : flags.active === 'true',
+    serviceExpiresAt: flags.expires === undefined ? current!.serviceExpiresAt : time(flags.expires),
+    customerName: flags.name ?? current!.customerName,
+    customerAddress: flags.address ?? current!.customerAddress,
+    ...(abn === undefined ? {} : { customerAbn: abn }),
+    goLiveAt: flags.goLive === undefined ? current!.goLiveAt : time(flags.goLive),
+    goLiveEvidence: flags.goLiveEvidence ?? current!.goLiveEvidence,
   };
 }
 
@@ -72,26 +100,12 @@ export function runEntitlementCli(argv: readonly string[], options: { env?: Node
     if (command === 'get') {
       if (Object.keys(flags).length !== 1) fail('invalid_arguments');
       if (!current) fail('entitlement_not_found');
-      out(JSON.stringify({ result: 'found', database: path, entitlement: view(current!, now()) }));
+      out(JSON.stringify({ result: 'found', database: path, entitlement: entitlementView(current!, now()) }));
       return 0;
     }
     if (!flags.evidence) fail('invalid_arguments');
-    if (!current && !(flags.license && flags.name && flags.address && flags.goLive && flags.goLiveEvidence && flags.expires)) fail('entitlement_fields_required');
-    if (flags.active !== undefined && flags.active !== 'true' && flags.active !== 'false') fail('invalid_service_state');
-    const abn = flags.abn === undefined ? current?.customerAbn : flags.abn === 'none' ? undefined : flags.abn;
-    const entitlement: ServiceEntitlement = {
-      companyId: flags.company!,
-      licenseId: flags.license ?? current!.licenseId,
-      active: flags.active === undefined ? (current?.active ?? true) : flags.active === 'true',
-      serviceExpiresAt: flags.expires === undefined ? current!.serviceExpiresAt : time(flags.expires),
-      customerName: flags.name ?? current!.customerName,
-      customerAddress: flags.address ?? current!.customerAddress,
-      ...(abn === undefined ? {} : { customerAbn: abn }),
-      goLiveAt: flags.goLive === undefined ? current!.goLiveAt : time(flags.goLive),
-      goLiveEvidence: flags.goLiveEvidence ?? current!.goLiveEvidence,
-    };
-    const saved = ledger.putEntitlement(entitlement, flags.evidence!);
-    out(JSON.stringify({ result: saved.created ? 'created' : 'updated', database: path, entitlement: view(saved.tenant, now()) }));
+    const saved = ledger.putEntitlement(entitlementFromFlags(flags, current), flags.evidence!);
+    out(JSON.stringify({ result: saved.created ? 'created' : 'updated', database: path, entitlement: entitlementView(saved.tenant, now()) }));
     return 0;
   } catch (error) {
     // A code only: never a stack, a value from the environment or the database body.

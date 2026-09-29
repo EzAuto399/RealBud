@@ -85,6 +85,10 @@ export class DeskStore {
   private keyInfo: DeskKey;
   private batchDepth = 0;
   private batchNeedsBump = false;
+  /** What desk.json holds right now. Callers change `data` in place and then
+   * persist; if that write fails, memory goes back to this copy so the running
+   * book never claims a row (or a decision) that a restart would lose. */
+  private committed: { data: DeskFileV2; v3: DeskFileV3 } | null = null;
   /** Tests replace this to simulate a full disk without filling the machine. */
   static atomicWrite: typeof writeFileAtomic = writeFileAtomic;
 
@@ -110,6 +114,7 @@ export class DeskStore {
     this.v3 = loaded.v3;
     this.recovery = loaded.recovery;
     this.protectOwnedFile();
+    this.markCommitted();
   }
 
   /** Re-read desk.json after an unlock restored files on disk. */
@@ -123,6 +128,7 @@ export class DeskStore {
     this.recovery = loaded.recovery;
     this.protectOwnedFile();
     this.keyInfo = loaded.key;
+    this.markCommitted();
   }
 
   private read(book: { properties: Property[]; ledger: LedgerFacts[] }): LoadedDesk {
@@ -210,7 +216,12 @@ export class DeskStore {
       this.batchNeedsBump = true;
       return;
     }
-    this.flushV3();
+    try {
+      this.flushV3();
+    } catch (error) {
+      this.restoreCommitted();
+      throw error;
+    }
   }
 
   /** One encrypt/fsync/backup at the end. Nested calls share the same write. */
@@ -264,14 +275,11 @@ export class DeskStore {
   }
 
   private commitWithBump(): void {
-    const previousRevision = this.data.revision;
-    const previousV3 = this.v3;
     this.data.revision += 1;
     try {
       this.flushV3();
     } catch (error) {
-      this.data.revision = previousRevision;
-      this.v3 = previousV3;
+      this.restoreCommitted();
       throw error;
     }
     this.rotateBackup();
@@ -281,6 +289,19 @@ export class DeskStore {
     this.v3 = ensureDemoBreadth(syncWorkingV2IntoV3(this.v3, this.data, Date.now()), Date.now());
     validateDeskV3(this.v3);
     this.writeV3(this.v3);
+    this.markCommitted();
+  }
+
+  private markCommitted(): void {
+    this.committed = { data: structuredClone(this.data), v3: structuredClone(this.v3) };
+  }
+
+  /** A failed write (disk full, permission) leaves desk.json as it was, so every
+   * in-memory change since the last good write goes too. */
+  private restoreCommitted(): void {
+    if (!this.committed) return;
+    this.data = structuredClone(this.committed.data);
+    this.v3 = structuredClone(this.committed.v3);
   }
 
   /** Older atomic writes inherited the process umask. Tighten only this

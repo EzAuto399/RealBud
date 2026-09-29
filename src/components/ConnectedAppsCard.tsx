@@ -125,7 +125,8 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
   };
 
   const connectedSlugs = Object.keys(snapshot?.services ?? {}).filter((slug) => snapshot?.services[slug]?.connected);
-  const connectable = EMAIL_APPS.filter((app) => (!readOnly || app.slug === "gmail") && !snapshot?.services[app.slug]?.connected);
+  const sharedMail = snapshot?.sourceKind === "office_shared";
+  const connectable = EMAIL_APPS.filter((app) => !(app.slug === "gmail" && (sharedMail || (state.config?.composio.managed === true && (!snapshot?.services.gmail || !!snapshot.error)))) && (!readOnly || app.slug === "gmail") && !snapshot?.services[app.slug]?.connected);
 
   return (
     <Card title="Connected apps" subtitle="Connect your work accounts, check access, then prepare work in Ask.">
@@ -182,6 +183,8 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
             )}
           </section>
 
+          {snapshot?.sourceKind === "personal" && <p className="text-sm text-ink-secondary">Personal Gmail for this desktop.</p>}
+          {sharedMail && <p className="text-sm text-ink-secondary">{snapshot?.services.gmail?.connected ? 'Office shared Gmail is connected for this desktop. No additional sign-in is needed.' : 'The office shared Gmail is not available. Ask the office owner to connect it, then check access again.'}</p>}
           {connectable.length ? (
             <section aria-labelledby={`${id}-connect`}>
               <h3 id={`${id}-connect`} className="text-[13px] font-medium text-ink">Connect</h3>

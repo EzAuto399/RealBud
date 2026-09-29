@@ -4,7 +4,9 @@ import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
 import type { OperatorRoutes } from './office-ai-access.ts';
 import type { BillingService } from './billing.ts';
-import { invoiceHtml } from './invoice-html.ts';
+import { invoiceHtml, presentInvoice } from './invoice-html.ts';
+import type { Invoice } from './billing.ts';
+import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -30,12 +32,15 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
  * /v1/portal/installations/{provision,revoke}, the operator-only POST
- * /v1/operator/offices/ai-access, the care-fee routes GET
+ * /v1/operator/offices/ai-access, PUT|GET /v1/operator/offices/entitlement, POST /v1/operator/offices/ai-markup[/sync],
+ * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
+ * monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
- * /v1/portal/invoices[/{id}[/document|/receipt]], POST
+ * /v1/portal/invoices[/{id}[/document|/receipt|/ai-usage]], POST
  * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
- * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a care
- * invoice never carries AI usage. */
+ * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a resale
+ * office's monthly invoice carries its finalized Modelvia invoices as AI usage
+ * lines at their exact totals (office-ai-billing.ts). */
 export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
   provisioningUnavailable?:string;
@@ -50,7 +55,13 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
   /** Care-fee invoices and their Square collection. Absent, every care route answers 503. */
   billing?:BillingService;
   /** True only when a Square adapter is composed; the webhook route is 503 otherwise. */
-  squareWebhooks?:boolean}) {
+  squareWebhooks?:boolean;
+  /** After a billing owner accepts terms: bring Modelvia's resale policy to the
+   * office's accepted markup (office-ai-terms.ts). Never fails the acceptance. */
+  afterTermsAccepted?:(companyId:string)=>Promise<unknown>;
+  /** The office invoice's per-request AI usage CSV (office-ai-usage-csv.ts).
+   * Absent answers 503 `modelvia_client_unconfigured`. */
+  aiUsageCsv?:(invoice:Invoice)=>Promise<string>}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
   const billing=()=>{ requireThat(options.billing,'billing_unavailable',503); return options.billing; };
@@ -87,7 +98,9 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         const profile=req.headers['x-realbud-profile'], session=req.headers['mcp-session-id'];
         requireThat(typeof profile==='string' && /^[a-z0-9-]{1,64}$/.test(profile), 'invalid_connector_profile', 403);
         requireThat(session===undefined || (typeof session==='string' && /^[a-f0-9]{64}$/.test(session)), 'invalid_connector_session', 400);
-        const result=await options.connectors.handle({token:bearer(req),profile,session,method:req.method??'',path:url.pathname,
+        const revision=req.headers['x-realbud-policy-revision'];
+        requireThat(revision===undefined||(typeof revision==='string'&&/^(0|[1-9][0-9]{0,15})$/.test(revision)&&Number.isSafeInteger(Number(revision))),'invalid_mailbox_revision');
+        const result=await options.connectors.handle({token:bearer(req),profile,session,policyRevision:revision===undefined?undefined:Number(revision),method:req.method??'',path:url.pathname,
           body:req.method==='POST'?json(await body(req,32_000)):undefined,signal:abort.signal});
         if(result.session) res.setHeader('mcp-session-id',result.session);
         if(result.body===undefined) { res.writeHead(result.status);res.end(); } else reply(res,result.status,result.body);
@@ -105,9 +118,63 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         catch(error) { throw error instanceof GatewayError?error:new GatewayError('office_ai_access_failed',502); }
         return;
       }
+      // RealBud operator: one office's service entitlement (operator-entitlement.ts),
+      // the write `entitlement-cli.ts set` makes. Its own bearer, as above.
+      if((req.method==='PUT' || req.method==='GET') && url.pathname==='/v1/operator/offices/entitlement') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operator!.entitlements; requireThat(routes,'operator_unconfigured',503);
+        if(req.method==='GET') {
+          requireThat([...url.searchParams.keys()].every(key=>key==='companyId'),'invalid_query');
+          reply(res,200,routes!.get(operator,url.searchParams.get('companyId'))); return;
+        }
+        reply(res,200,await routes!.set(operator,json(await body(req,4096)))); return;
+      }
+      // RealBud operator: one office's AI resale markup (a proposal the office must
+      // accept), its invoice charge detail, and re-syncing Modelvia to the accepted markup.
+      const officeTerms=/^\/v1\/operator\/offices\/(ai-markup|ai-markup\/sync|ai-charge-detail)$/.exec(url.pathname);
+      if(req.method==='POST' && officeTerms) {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operator!.officeAiTerms; requireThat(routes,'billing_unavailable',503);
+        const value=json(await body(req,4096));
+        if(officeTerms[1]==='ai-markup') { reply(res,200,await routes!.proposeMarkup(operator,value)); return; }
+        if(officeTerms[1]==='ai-charge-detail') { reply(res,200,await routes!.setChargeDetail(operator,value)); return; }
+        requireThat(routes!.syncMarkup,'operator_unconfigured',503);
+        reply(res,200,await routes!.syncMarkup!(operator,value)); return;
+      }
+      // RealBud operator: the owner's per-office margin for one month, JSON or CSV.
+      // Read only; the period defaults to the last closed Brisbane month.
+      if(req.method==='GET' && url.pathname==='/v1/operator/billing/margins') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        try { await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        requireThat(options.operator!.margins,'billing_unavailable',503);
+        const period=url.searchParams.get('period')||previousPeriod(Date.now()), format=url.searchParams.get('format')||'json';
+        requireThat(/^\d{4}-(0[1-9]|1[0-2])$/.test(period),'invalid_billing_period');
+        requireThat(format==='json' || format==='csv','invalid_format');
+        requireThat([...url.searchParams.keys()].every(key=>key==='period' || key==='format'),'invalid_query');
+        const report=await options.operator!.margins!(period);
+        if(format==='csv') {
+          res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="realbud-margins-${period}.csv"`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+          res.end(marginCsv(report)); return;
+        }
+        reply(res,200,report); return;
+      }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));
       requireThat(actor && ['billing_owner','billing_reader'].includes(actor.role),'forbidden',403);
+      const mailbox=/^\/v1\/portal\/mailbox(?:\/(policy|authorize|verify|confirm|grants))?$/.exec(url.pathname);
+      if(mailbox) {
+        requireThat(options.connectors,'connectors_unavailable',503);
+        requireThat(!url.search && (mailbox[1]?req.method==='POST':req.method==='GET'),'not_found',404);
+        const ownerToken=bearer(req);
+        reply(res,200,await options.connectors.officeMailbox.handle(actor,mailbox[1]??'status',mailbox[1]?json(await body(req,4096)):undefined,async()=>{
+          const current=await options.portal.authenticate(ownerToken);
+          requireThat(current.role==='billing_owner'&&current.companyId===actor.companyId&&current.subject===actor.subject,'forbidden',403);
+        }));return;
+      }
       // Vendor-side installation provisioning and revocation. The authenticated
       // principal is the authority, so a body's companyId is only a confirmation,
       // never an assertion. Service entitlement is checked where it matters:
@@ -136,10 +203,16 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);
         const value=json(await body(req,4096)); object(value); exact(value,['period','version','digest']);
         requireThat(typeof value.period==='string' && typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance');
-        reply(res,200,terms.accept(actor,value.period,value.version,value.digest)); return;
+        const accepted=terms.accept(actor,value.period,value.version,value.digest);
+        // An accepted markup change reaches Modelvia now; failures are journalled
+        // and retried by the operator (`sync-markup`), never shown as a refusal.
+        if(options.afterTermsAccepted) { try { await options.afterTermsAccepted(actor.companyId); } catch { /* journalled by the sync */ } }
+        reply(res,200,accepted); return;
       }
-      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') { reply(res,200,{invoices:billing().portalInvoices(actor)}); return; }
-      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document))?$/.exec(url.pathname);
+      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') {
+        const service=billing(); reply(res,200,{collectionMode:service.collectionMode,invoices:service.portalInvoices(actor)}); return;
+      }
+      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document|ai-usage))?$/.exec(url.pathname);
       if(match) {
         const invoice=billing().invoice(actor,match[1]);
         if(req.method==='POST' && match[2]==='checkout') { reply(res,200,await billing().checkout(actor,invoice.id)); return; }
@@ -147,7 +220,14 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         if(req.method==='GET' && match[2]==='document') {
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice)); return;
         }
-        if(req.method==='GET' && !match[2]) { reply(res,200,invoice); return; }
+        if(req.method==='GET' && match[2]==='ai-usage') {
+          requireThat(invoice.aiUsage?.modelviaInvoices.length,'ai_usage_not_on_invoice',404);
+          requireThat(options.aiUsageCsv,'modelvia_client_unconfigured',503);
+          const csv=await options.aiUsageCsv!(invoice);
+          res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="realbud-ai-usage-${invoice.id}.csv"`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+          res.end(csv); return;
+        }
+        if(req.method==='GET' && !match[2]) { reply(res,200,presentInvoice(invoice)); return; }
       }
       throw new GatewayError('not_found',404);
     } catch(error) {

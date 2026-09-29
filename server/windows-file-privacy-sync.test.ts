@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { inspect } from 'node:util';
-import { windowsFilePrivacy, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
+import { windowsFilePrivacy, windowsFilePrivacyBatch, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
 
 const calls = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFileSync: calls.sync, execFile: calls.async }));
@@ -92,4 +92,18 @@ it('runs a script with no cmdlets, so no PowerShell module has to auto-load', ()
   const code = script.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
   expect(code).toContain('GetAccessControl');
   expect(code.match(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)).toBeNull();
+});
+
+it('applies an asynchronous batch in one process and names the refusing operation', async () => {
+  const operations = [0, 1, 2].map(index => ({ path: `C:\\private\\fictional-${index}`, kind: 'file' as const, action: 'verify' as const }));
+  await expect(windowsFilePrivacyBatch(operations)).resolves.toEqual(operations.map(operation => ({ ...operation, applied: true })));
+  expect(calls.async).toHaveBeenCalledTimes(1);
+  expect(calls.async.mock.calls[0]![2].env).toMatchObject({ REALBUD_WINDOWS_FILE_PRIVACY_COUNT: '3', REALBUD_WINDOWS_FILE_PRIVACY_PATH_2: 'C:\\private\\fictional-2' });
+  const secret = 'C:\\fictional\\private\\path';
+  calls.async.mockImplementation((...args: unknown[]) => (args.at(-1) as Function)(
+    Object.assign(new Error(secret), { code: 3, stdout: '0\r\n1\r\n', stderr: secret }), '0\r\n1\r\n', secret));
+  let failure: unknown;
+  try { await windowsFilePrivacyBatch(operations); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ category: 'grant-not-allowed', nativeExitCode: 3, operationIndex: 1, message: expect.stringContaining('exit=3; operation=1/3') });
+  expect(inspect(failure)).not.toContain(secret);
 });

@@ -42,6 +42,21 @@
  *     billingCompanyId are immutable. The operator credential is global, so this
  *     client only ever reads or writes customers under its own `clientId`.
  *
+ * Commercial terms, checked against Modelvia `main` 49327ba (`commercial.ts`,
+ * `platform-admin.ts:396`, `ledger.ts:272`):
+ *
+ *   GET  {MODELVIA}/v1/operator/commercial-policies    → { policies: CommercialPolicy[] }
+ *   POST {MODELVIA}/v1/operator/commercial-policies
+ *     { id, clientId, customerId, state, effectiveAt, payer, invoiceIssuer,
+ *       collection, management, platformFeeBasisPoints, clientMarkupBasisPoints,
+ *       acceptanceReference, customerBilling? }  → the saved policy.
+ *     Append-only: an id is one version (409 `policy_version_exists`), and a new
+ *     active policy must start after the one in force (`policy_effective_order`).
+ *     Without an active policy in force, every request of a customer its client
+ *     pays for is refused with 409 `customer_terms_required`.
+ *   GET  {MODELVIA}/v1/operator/clients                → { accounts: ClientAccount[] }
+ *     read for `billingMode`, which decides who pays for a customer.
+ *
  * Caps live on the PROJECT, not the key (`requestCapNanoAud`,
  * `monthlyCapNanoAud`, `maxConcurrent`). That is why one project is created per
  * installation, under the office's customer account: it is the only place this
@@ -59,7 +74,7 @@
  *
  * No default transport, and nothing here is deployed.
  */
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { GatewayError, requireThat } from './contracts.ts';
 import type { HttpTransport } from './composio-org.ts';
 
@@ -105,8 +120,9 @@ export interface ModelviaProjectInput {
 export interface ModelviaMintedKey { key: string; keyId: string; baseUrl: string }
 export interface ModelviaCaps { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }
 /** The office's customer account at Modelvia, read back only for what provisioning
- * needs: whether it may serve, and the caps an installation project copies. */
-export interface ModelviaCustomer { active: boolean; monthlyCapNanoAud: string; maxConcurrent: number }
+ * needs: whether it may serve, the caps an installation project copies, and the
+ * billing account it is bound to when the customer pays Modelvia itself. */
+export interface ModelviaCustomer { active: boolean; monthlyCapNanoAud: string; maxConcurrent: number; billingCompanyId?: string }
 /** A project as Modelvia stores it, read back for adoption and cap updates. */
 export interface ModelviaProjectRecord extends ModelviaCaps {
   projectId: string; clientId: string; customerId: string; environments: string[]; active: boolean; version: number;
@@ -153,10 +169,141 @@ export function parseOfficeAiAccess(value: unknown): OfficeAiAccess {
   const v = value as Record<string, unknown>, keys = Object.keys(v).sort().join(',');
   if (v.mode === 'default' && keys === 'mode') return { mode: 'default' };
   if (v.mode === 'disabled' && keys === 'mode') return { mode: 'disabled' };
+  // Whole cents only: Modelvia's billing-account monthly caps are refused unless
+  // they are a multiple of 10,000,000 nanoAUD (`cap_requires_whole_cents`), and an
+  // office cap is never written in a unit its billing account could not hold.
   requireThat(v.mode === 'custom' && keys === 'mode,monthlyCapNanoAud' && typeof v.monthlyCapNanoAud === 'string'
-    && NANO.test(v.monthlyCapNanoAud) && BigInt(v.monthlyCapNanoAud) >= 1n && BigInt(v.monthlyCapNanoAud) <= BigInt(MAX_OFFICE_AI_CAP_NANO_AUD), 'invalid_ai_access');
+    && NANO.test(v.monthlyCapNanoAud) && BigInt(v.monthlyCapNanoAud) >= NANO_AUD_PER_CENT && BigInt(v.monthlyCapNanoAud) % NANO_AUD_PER_CENT === 0n
+    && BigInt(v.monthlyCapNanoAud) <= BigInt(MAX_OFFICE_AI_CAP_NANO_AUD), 'invalid_ai_access');
   return { mode: 'custom', monthlyCapNanoAud: v.monthlyCapNanoAud as string };
 }
+/** One cent in nanoAUD. */
+export const NANO_AUD_PER_CENT = 10_000_000n;
+
+// ---------------------------------------------------------------------------
+// Commercial terms (Modelvia commercial policies)
+// ---------------------------------------------------------------------------
+
+/**
+ * How RealBud's client pays for one office's AI at Modelvia, written as that
+ * customer's commercial policy. Modelvia refuses every request of a customer its
+ * client pays for (`customer_terms_required`, 409, `ledger.ts`) until an ACTIVE
+ * policy for that client and customer is in force.
+ *
+ *   client_funded  RealBud absorbs the usage (its own and internal offices). No
+ *                  markup; receipts show `priceBasis: "withheld"`.
+ *   resale         RealBud resells the usage on its own customer invoice at an
+ *                  agreed markup. Never a default: the markup and the office's
+ *                  acceptance reference come from explicit configuration.
+ */
+export type CustomerTerms =
+  | { customerBilling: 'client_funded'; acceptanceReference: string }
+  | { customerBilling: 'resale'; clientMarkupBasisPoints: number; acceptanceReference: string };
+/** Which terms, if any, this deployment writes for an office. */
+export interface CustomerTermsPolicy {
+  /** RealBud companyIds whose AI RealBud absorbs (the owner's and internal offices). */
+  clientFundedCompanies: ReadonlySet<string>;
+  clientFundedReference: string;
+  /** Present only when resale is explicitly configured: the markup (production
+   * 3000, owner decision 26 September 2026) and the reference of RealBud's
+   * resale terms that each office's billing owner accepts. The reference is not
+   * itself an acceptance: each office's policy carries its own (below). */
+  resale?: { clientMarkupBasisPoints: number; termsReference: string };
+}
+/** The owner's decision that RealBud's own AI use is a client-funded internal
+ * cost (docs/decisions/2026-09-24-modelvia-sole-billing.md). */
+export const DEFAULT_CLIENT_FUNDED_REFERENCE = 'realbud-owner-decision-2026-09-24-internal-ai';
+/** The documented production resale values (docs/decisions/2026-09-26-modelvia-commercial-terms.md). */
+export const PRODUCTION_RESALE_MARKUP_BASIS_POINTS = 3000;
+export const PRODUCTION_RESALE_TERMS_REFERENCE = 'realbud-office-terms-2026-09-26-ai-resale-30pct';
+const REFERENCE = /^[\x21-\x7e][\x20-\x7e]{0,198}[\x21-\x7e]$/;
+/** What to write for one office. */
+export type OfficeTermsDecision =
+  | { terms: CustomerTerms }
+  /** This deployment has not said how the office is billed. */
+  | { state: 'unconfigured' }
+  /** Resale is configured, but the office's billing owner has not accepted
+   * RealBud's terms with that markup and reference yet. Nothing is written. */
+  | { state: 'acceptance_required' };
+/** The terms for one office: client-funded when listed; otherwise resale at the
+ * markup the office itself last ACCEPTED, under that acceptance's own reference
+ * (`latestResaleAcceptance`, from commercial-terms.ts). The deployment's resale
+ * markup is only the default for new terms: it never prices an office. Without an
+ * acceptance: `acceptance_required` when resale is configured, else `unconfigured`. */
+export function termsForCompany(policy: CustomerTermsPolicy, companyId: string,
+  accepted: () => { markupBasisPoints: number; acceptanceReference: string } | undefined = () => undefined): OfficeTermsDecision {
+  if (policy.clientFundedCompanies.has(companyId)) return { terms: { customerBilling: 'client_funded', acceptanceReference: policy.clientFundedReference } };
+  const acceptance = accepted();
+  if (acceptance) return { terms: { customerBilling: 'resale', clientMarkupBasisPoints: acceptance.markupBasisPoints, acceptanceReference: acceptance.acceptanceReference } };
+  return { state: policy.resale ? 'acceptance_required' : 'unconfigured' };
+}
+/**
+ * The terms policy from the environment. Every value is non-secret.
+ *   REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES   comma-separated companyIds
+ *   REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE   optional acceptance reference
+ *   REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS  0..10000, the DEFAULT markup for new
+ *     office terms (production 3000); each office is priced at its own accepted markup
+ *   REALBUD_MODELVIA_RESALE_TERMS_REFERENCE      required with the markup; an id
+ *     (it is joined to each office's acceptance digest, inside Modelvia's 200 chars)
+ * A malformed value is reported by name, never by value.
+ */
+export function customerTermsPolicy(env: NodeJS.ProcessEnv): CustomerTermsPolicy | { unavailable: string } {
+  const value = (name: string) => (env[name] ?? '').trim();
+  const companies = value('REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES').split(',').map(entry => entry.trim()).filter(Boolean);
+  if (companies.some(entry => !ACCOUNT_ID.test(entry))) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES' };
+  const clientFundedReference = value('REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE') || DEFAULT_CLIENT_FUNDED_REFERENCE;
+  if (!REFERENCE.test(clientFundedReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE' };
+  const markup = value('REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS'), resaleReference = value('REALBUD_MODELVIA_RESALE_TERMS_REFERENCE');
+  if (!markup && !resaleReference) return { clientFundedCompanies: new Set(companies), clientFundedReference };
+  if (!/^(0|[1-9][0-9]{0,4})$/.test(markup) || Number(markup) > 10_000) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS' };
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/.test(resaleReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_TERMS_REFERENCE' };
+  return { clientFundedCompanies: new Set(companies), clientFundedReference, resale: { clientMarkupBasisPoints: Number(markup), termsReference: resaleReference } };
+}
+/** What `ensureCustomerTerms` found or wrote. `policyId` is Modelvia's policy id,
+ * which this client never builds from a customer id. */
+export interface CustomerTermsResult {
+  /** `active`: a policy is in force. `pending`: an active policy starts later.
+   * `not_required`: the customer pays Modelvia itself. */
+  state: 'active' | 'pending' | 'not_required';
+  created: boolean; policyId?: string; customerBilling?: 'client_funded' | 'resale';
+}
+/** Readiness for provisioning: may this customer's requests be admitted on terms? */
+export type CustomerTermsReadiness = 'ready' | 'terms_required' | 'customer_missing';
+/** The commercial-policy half of the operator client. Kept out of
+ * `ModelviaOperatorClient` so existing fakes need not grow it; callers check for
+ * it with `hasCustomerTerms`. */
+export interface ModelviaTermsClient {
+  /** Leaves an existing policy in force, whatever it says: changing how an
+   * office is billed is a migration at Modelvia, never a side effect here.
+   * Otherwise writes one ACTIVE policy for `terms`. */
+  ensureCustomerTerms(customerId: string, terms: CustomerTerms): Promise<CustomerTermsResult>;
+  /** Read only. */
+  customerTermsReadiness(customerId: string): Promise<CustomerTermsReadiness>;
+  /** Make the office's ACCEPTED resale markup the one Modelvia prices at. When
+   * the resale policy in force already carries it (or none is needed) nothing is
+   * written. Otherwise ONE new active policy is appended, effective at
+   * Modelvia's own "now" (the Date header of its policy-list response, never
+   * this service's clock); the old policy is never changed, so usage admitted
+   * under it keeps its price. Refuses to turn a client-funded office into resale. */
+  syncResaleTerms?(customerId: string, terms: { clientMarkupBasisPoints: number; acceptanceReference: string }): Promise<ResaleSyncResult>;
+}
+export interface ResaleSyncResult {
+  state: 'active' | 'pending' | 'not_required';
+  created: boolean; policyId?: string; clientMarkupBasisPoints?: number;
+  /** Modelvia time the new policy took effect (created only). */
+  effectiveAt?: number;
+  /** The policy this one supersedes, left unchanged (created only). */
+  supersedes?: string;
+}
+export function hasCustomerTerms(client: object): client is ModelviaTermsClient {
+  return typeof (client as Partial<ModelviaTermsClient>).ensureCustomerTerms === 'function'
+    && typeof (client as Partial<ModelviaTermsClient>).customerTermsReadiness === 'function';
+}
+/** How far before this service's clock a new policy is stamped. Modelvia admits
+ * an activating `effectiveAt` down to five minutes before ITS clock and prices
+ * nothing under a policy until `effectiveAt <= now`, so stamping a minute early
+ * tolerates this clock running up to a minute ahead, or four minutes behind. */
+export const TERMS_EFFECTIVE_LEAD_MS = 60_000;
 /** A customer exactly as Modelvia's `accounts.put` admits it (id, name, active,
  * monthlyCapNanoAud, maxConcurrent, allowedModels, version, clientId, payer,
  * billingCompanyId). `payer` and `billingCompanyId` are immutable there, so an
@@ -178,11 +325,11 @@ export interface ModelviaCustomerAdmin {
   putCustomer(record: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord>;
   /** Sets one office's AI access, creating its customer under this client when
    * Modelvia holds none. Re-reads once after a version conflict. */
-  setCustomerAccess(customerId: string, input: { name: string; access: OfficeAiAccess }): Promise<{ active: boolean; monthlyCapNanoAud: string; created: boolean }>;
+  setCustomerAccess(customerId: string, input: { name: string; access: OfficeAiAccess; billingCompanyId?: string }): Promise<{ active: boolean; monthlyCapNanoAud: string; created: boolean }>;
 }
 export type ModelviaOperatorClient = ModelviaClient & ModelviaCustomerAdmin;
 
-function origin(raw: string): string {
+export function modelviaOrigin(raw: string): string {
   let url: URL; try { url = new URL(raw); } catch { throw new GatewayError('modelvia_base_invalid', 503); }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
   requireThat(!url.username && !url.password && !url.hash && !url.search && url.pathname === '/' && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)), 'modelvia_base_invalid', 503);
@@ -244,8 +391,8 @@ export function modelviaKeyClient(options: {
   fetch: HttpTransport;
   /** Injected clock: the minted token's window must match Modelvia's. */
   now?: () => number;
-}): ModelviaOperatorClient {
-  const base = origin(options.serviceOrigin);
+}): ModelviaOperatorClient & ModelviaTermsClient {
+  const base = modelviaOrigin(options.serviceOrigin);
   requireThat(ACCOUNT_ID.test(options.clientId), 'modelvia_client_id_invalid', 503);
   requireThat(options.operatorSubject.length > 0 && options.operatorSubject.length <= 320, 'modelvia_operator_subject_invalid', 503);
   requireThat(ACCOUNT_ID.test(options.environment), 'modelvia_environment_invalid', 503);
@@ -263,7 +410,7 @@ export function modelviaKeyClient(options: {
   /** `conflicts` names the Modelvia error codes this call treats as a conflict
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
    * and only for control flow — an upstream body is never surfaced. */
-  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown }> => {
+  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown; serverNow?: number }> => {
     const bearerToken = token();
     let response: Response;
     try {
@@ -274,7 +421,7 @@ export function modelviaKeyClient(options: {
           body: JSON.stringify(body) });
     } catch { throw new GatewayError('modelvia_unreachable', 502); }
     if (response.redirected) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_redirected', 502); }
-    if (response.status === 409 && conflicts.length) {
+    if ((response.status === 409 || response.status === 404) && conflicts.length) {
       let code: unknown;
       try { code = ((await response.json()) as Record<string, unknown>).error; } catch { throw new GatewayError('modelvia_rejected', 502); }
       if (typeof code === 'string' && conflicts.includes(code)) return { conflict: code };
@@ -282,7 +429,8 @@ export function modelviaKeyClient(options: {
     }
     // Modelvia's error bodies may quote the presented credential; only a code is reported.
     if (response.status !== 200 && response.status !== 201) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_rejected', 502); }
-    try { return { body: await response.json() }; } catch { throw new GatewayError('modelvia_unreadable', 502); }
+    const date = Date.parse(response.headers.get('date') ?? '');
+    try { return { body: await response.json(), ...(Number.isFinite(date) ? { serverNow: date } : {}) }; } catch { throw new GatewayError('modelvia_unreadable', 502); }
   };
   const call = async (path: string, body: unknown): Promise<unknown> => (await callRaw(path, body)).body;
   const read = async (path: string): Promise<unknown> => (await callRaw(path, undefined, [], 'GET')).body;
@@ -311,12 +459,29 @@ export function modelviaKeyClient(options: {
     requireThat((found[0] as Record<string, unknown>).clientId === options.clientId, 'modelvia_customer_foreign', 409);
     return storedCustomer(found[0]);
   };
+  /** Who pays for a customer created under this client, from Modelvia's own
+   * client record (`accounts.ts` put): `client` needs no binding; `customer`
+   * needs the office's billing account; `mixed` needs `payer` too, and RealBud
+   * offices pay for their own AI. */
+  const newCustomerBinding = async (billingCompanyId: string | undefined): Promise<Pick<ModelviaCustomerRecord, 'payer' | 'billingCompanyId'>> => {
+    const body = await read('/v1/operator/clients');
+    requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+    const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === options.clientId) as Record<string, unknown>[];
+    requireThat(found.length === 1 && ['client', 'customer', 'mixed'].includes(String(found[0]!.billingMode)), 'modelvia_unreadable', 502);
+    const mode = found[0]!.billingMode;
+    if (mode === 'client') return {};
+    requireThat(typeof billingCompanyId === 'string' && ACCOUNT_ID.test(billingCompanyId), 'modelvia_billing_binding_required', 409);
+    return mode === 'mixed' ? { payer: 'customer', billingCompanyId } : { billingCompanyId };
+  };
   const putCustomer = async (input: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord> => {
     let next: ModelviaCustomerRecord;
     try { next = storedCustomer(input); } catch { throw new GatewayError('invalid_modelvia_customer_record'); }
     // Never write, or create, a customer under another platform client.
     requireThat(next.clientId === options.clientId, 'modelvia_customer_foreign', 409);
-    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict']);
+    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict', 'billing_account_not_found', 'billing_account_already_bound']);
+    // The office's Modelvia billing account is an operator step at Modelvia.
+    if (answer.conflict === 'billing_account_not_found') throw new GatewayError('modelvia_billing_account_missing', 409);
+    if (answer.conflict === 'billing_account_already_bound') throw new GatewayError('modelvia_billing_account_bound', 409);
     if (answer.conflict) throw new GatewayError('modelvia_customer_version_conflict', 409);
     const saved = storedCustomer(answer.body);
     requireThat(saved.id === next.id && saved.clientId === next.clientId && saved.active === next.active
@@ -335,6 +500,35 @@ export function modelviaKeyClient(options: {
     requireThat((minted as string).startsWith(`rbk_${keyId}_`), 'modelvia_key_unusable', 502);
     requireThat(typeof project === 'string' && (projectId === undefined || project === projectId), 'modelvia_key_scope_mismatch', 502);
     return { key: minted as string, keyId, projectId: project as string };
+  };
+  /** Who pays Modelvia for this customer (`accounts.ts`): the client's billing
+   * mode, or the customer's own `payer` under a `mixed` client. */
+  const effectivePayer = async (customer: ModelviaCustomerRecord): Promise<'client' | 'customer'> => {
+    const body = await read('/v1/operator/clients');
+    requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+    const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === options.clientId) as Record<string, unknown>[];
+    requireThat(found.length === 1 && ['client', 'customer', 'mixed'].includes(String(found[0]!.billingMode)), 'modelvia_unreadable', 502);
+    const payer = found[0]!.billingMode === 'mixed' ? customer.payer : found[0]!.billingMode;
+    requireThat(payer === 'client' || payer === 'customer', 'modelvia_unreadable', 502);
+    return payer as 'client' | 'customer';
+  };
+  /** This client's ACTIVE policies for one customer. The list is global to the
+   * operator credential, so everything else is dropped unread. Drafts never price. */
+  const readPolicies = async (customerId: string): Promise<HeldPolicy[]> => (await readPoliciesAt(customerId)).policies;
+  /** The same list with Modelvia's clock at the moment it answered (its `Date`
+   * header, whole seconds), or undefined when the header is missing. */
+  const readPoliciesAt = async (customerId: string): Promise<{ policies: HeldPolicy[]; serverNow?: number }> => {
+    const answer = await callRaw('/v1/operator/commercial-policies', undefined, [], 'GET'), body = answer.body;
+    requireThat(record(body) && Array.isArray(body.policies), 'modelvia_unreadable', 502);
+    return { ...(answer.serverNow !== undefined ? { serverNow: answer.serverNow } : {}), policies: (body.policies as unknown[]).filter(entry => record(entry) && entry.clientId === options.clientId && entry.customerId === customerId && entry.state === 'active')
+      .map(entry => {
+        const p = entry as Record<string, unknown>;
+        requireThat(typeof p.id === 'string' && ACCOUNT_ID.test(p.id) && typeof p.effectiveAt === 'number' && Number.isSafeInteger(p.effectiveAt)
+          && (p.customerBilling === undefined || p.customerBilling === 'resale' || p.customerBilling === 'client_funded'), 'modelvia_unreadable', 502);
+        // Absent means resale: the only meaning a policy recorded before the field had.
+        return { id: p.id as string, effectiveAt: p.effectiveAt as number, customerBilling: (p.customerBilling ?? 'resale') as HeldPolicy['customerBilling'],
+          ...(Number.isSafeInteger(p.clientMarkupBasisPoints) ? { clientMarkupBasisPoints: p.clientMarkupBasisPoints as number } : {}) };
+      }) };
   };
   return {
     environment: options.environment,
@@ -380,7 +574,9 @@ export function modelviaKeyClient(options: {
         && typeof c.maxConcurrent === 'number' && Number.isSafeInteger(c.maxConcurrent) && c.maxConcurrent >= 0 && c.maxConcurrent <= 100, 'modelvia_unreadable', 502);
       // A customer under another platform client is not this service's to provision into.
       if (c.clientId !== options.clientId) return null;
-      return { active: c.active as boolean, monthlyCapNanoAud: c.monthlyCapNanoAud as string, maxConcurrent: c.maxConcurrent as number };
+      requireThat(c.billingCompanyId === undefined || (typeof c.billingCompanyId === 'string' && ACCOUNT_ID.test(c.billingCompanyId)), 'modelvia_unreadable', 502);
+      return { active: c.active as boolean, monthlyCapNanoAud: c.monthlyCapNanoAud as string, maxConcurrent: c.maxConcurrent as number,
+        ...(typeof c.billingCompanyId === 'string' ? { billingCompanyId: c.billingCompanyId } : {}) };
     },
     async findProject(projectId) {
       requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
@@ -457,7 +653,7 @@ export function modelviaKeyClient(options: {
         if (current && current.active === active && current.monthlyCapNanoAud === monthlyCapNanoAud) return { active, monthlyCapNanoAud, created: false };
         const next: ModelviaCustomerRecord = current ? { ...current, active, monthlyCapNanoAud }
           : { id: customerId, name, active, monthlyCapNanoAud, maxConcurrent: NEW_CUSTOMER_MAX_CONCURRENT,
-            allowedModels: [...options.allowedModels], version: 0, clientId: options.clientId };
+            allowedModels: [...options.allowedModels], version: 0, clientId: options.clientId, ...await newCustomerBinding(input.billingCompanyId) };
         try {
           const saved = await putCustomer(next);
           return { active: saved.active, monthlyCapNanoAud: saved.monthlyCapNanoAud, created: !current };
@@ -468,5 +664,117 @@ export function modelviaKeyClient(options: {
       }
       throw new GatewayError('modelvia_customer_version_conflict', 409);
     },
+    async ensureCustomerTerms(customerId, terms) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const wanted = validTerms(terms);
+      const customer = await readCustomer(customerId);
+      // Terms follow the customer; AI access creates it first.
+      requireThat(customer, 'modelvia_customer_not_ready', 409);
+      if (await effectivePayer(customer!) === 'customer') return { state: 'not_required', created: false };
+      // Re-read once when another writer (or a reply lost on the wire) moved the
+      // policy list between the read and the write.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const at = clock();
+        const held = inForce(await readPolicies(customerId), at);
+        if (held) return { state: held.effectiveAt <= at ? 'active' : 'pending', created: false, policyId: held.id, customerBilling: held.customerBilling };
+        const effectiveAt = at - TERMS_EFFECTIVE_LEAD_MS;
+        // Modelvia's `CommercialPolicies.put` takes exactly these keys. The id is
+        // globally unique there and deliberately carries no customer id.
+        const body = {
+          id: `realbud-${wanted.customerBilling}-${effectiveAt}-${randomBytes(4).toString('hex')}`,
+          clientId: options.clientId, customerId, state: 'active', effectiveAt,
+          payer: 'client', invoiceIssuer: 'client', collection: 'invoice', management: 'self_service',
+          // RealBud's billing company is internal-cost (fee must be 0), and the
+          // approved rate card already carries Modelvia's platform fee.
+          platformFeeBasisPoints: 0,
+          clientMarkupBasisPoints: wanted.customerBilling === 'resale' ? wanted.clientMarkupBasisPoints : 0,
+          acceptanceReference: wanted.acceptanceReference, customerBilling: wanted.customerBilling,
+        };
+        const answer = await callRaw('/v1/operator/commercial-policies', body, TERMS_CONFLICTS);
+        if (answer.conflict === 'policy_version_exists' || answer.conflict === 'policy_effective_order') continue;
+        if (answer.conflict === 'payer_migration_required') throw new GatewayError('modelvia_terms_payer_mismatch', 409);
+        if (answer.conflict === 'commercial_acceptance_required') throw new GatewayError('modelvia_terms_clock_skew', 409);
+        if (answer.conflict) throw new GatewayError('modelvia_terms_refused', 409);
+        const saved = answer.body;
+        requireThat(record(saved) && saved.id === body.id && saved.customerId === customerId && saved.clientId === options.clientId
+          && saved.state === 'active' && saved.effectiveAt === effectiveAt, 'modelvia_terms_scope_mismatch', 502);
+        return { state: effectiveAt <= clock() ? 'active' : 'pending', created: true, policyId: body.id, customerBilling: wanted.customerBilling };
+      }
+      throw new GatewayError('modelvia_terms_conflict', 409);
+    },
+    async customerTermsReadiness(customerId) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const body = await read('/v1/operator/customers');
+      requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+      const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === customerId);
+      requireThat(found.length <= 1, 'modelvia_unreadable', 502);
+      // Missing or another client's: provisioning's customer check answers that.
+      if (!found.length || (found[0] as Record<string, unknown>).clientId !== options.clientId) return 'customer_missing';
+      if (await effectivePayer(storedCustomer(found[0])) === 'customer') return 'ready';
+      const policy = inForce(await readPolicies(customerId), clock());
+      return policy && policy.effectiveAt <= clock() ? 'ready' : 'terms_required';
+    },
+    async syncResaleTerms(customerId, terms) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const wanted = validTerms({ customerBilling: 'resale', ...terms }) as Extract<CustomerTerms, { customerBilling: 'resale' }>;
+      const customer = await readCustomer(customerId);
+      requireThat(customer, 'modelvia_customer_not_ready', 409);
+      if (await effectivePayer(customer!) === 'customer') return { state: 'not_required', created: false };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { policies, serverNow } = await readPoliciesAt(customerId);
+        // Modelvia's own clock, never ours: a policy stamped from a local clock
+        // that runs ahead would leave a window with no price in force.
+        requireThat(serverNow !== undefined && Number.isSafeInteger(serverNow) && serverNow > 0, 'modelvia_clock_unavailable', 502);
+        const now = serverNow!;
+        const latest = [...policies].sort((a, b) => b.effectiveAt - a.effectiveAt)[0];
+        // A later policy already waiting to start would be superseded out of order.
+        requireThat(!latest || latest.effectiveAt <= now, 'modelvia_terms_pending', 409);
+        if (latest && latest.customerBilling === 'client_funded') throw new GatewayError('modelvia_terms_billing_mismatch', 409);
+        // Idempotent: the markup in force is already the accepted one.
+        if (latest && latest.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints)
+          return { state: 'active', created: false, policyId: latest.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints };
+        // Strictly after the policy it supersedes (Modelvia refuses an equal
+        // `effectiveAt`), and never in Modelvia's future. The Date header has
+        // whole seconds, so its value is at or just before Modelvia's clock.
+        const effectiveAt = latest && latest.effectiveAt >= now ? latest.effectiveAt + 1 : now;
+        requireThat(effectiveAt - now < 1000, 'modelvia_terms_pending', 409);
+        const body = {
+          id: `realbud-resale-${effectiveAt}-${randomBytes(4).toString('hex')}`,
+          clientId: options.clientId, customerId, state: 'active', effectiveAt,
+          payer: 'client', invoiceIssuer: 'client', collection: 'invoice', management: 'self_service',
+          platformFeeBasisPoints: 0, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints,
+          acceptanceReference: wanted.acceptanceReference, customerBilling: 'resale',
+        };
+        const answer = await callRaw('/v1/operator/commercial-policies', body, TERMS_CONFLICTS);
+        if (answer.conflict === 'policy_version_exists' || answer.conflict === 'policy_effective_order') continue;
+        if (answer.conflict === 'payer_migration_required') throw new GatewayError('modelvia_terms_payer_mismatch', 409);
+        if (answer.conflict === 'commercial_acceptance_required') throw new GatewayError('modelvia_terms_clock_skew', 409);
+        if (answer.conflict) throw new GatewayError('modelvia_terms_refused', 409);
+        const saved = answer.body;
+        requireThat(record(saved) && saved.id === body.id && saved.customerId === customerId && saved.clientId === options.clientId
+          && saved.state === 'active' && saved.effectiveAt === effectiveAt && saved.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints, 'modelvia_terms_scope_mismatch', 502);
+        return { state: 'active', created: true, policyId: body.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints, effectiveAt, ...(latest ? { supersedes: latest.id } : {}) };
+      }
+      throw new GatewayError('modelvia_terms_conflict', 409);
+    },
   };
+}
+
+/** The Modelvia refusals `ensureCustomerTerms` reads as a code (all 409). */
+const TERMS_CONFLICTS = ['policy_version_exists', 'policy_effective_order', 'payer_migration_required', 'commercial_acceptance_required',
+  'invalid_internal_commercial_policy', 'invalid_client_funded_policy', 'merchant_onboarding_required', 'hosted_collection_not_connected'] as const;
+type HeldPolicy = { id: string; effectiveAt: number; customerBilling: 'client_funded' | 'resale'; clientMarkupBasisPoints?: number };
+function validTerms(terms: CustomerTerms): CustomerTerms {
+  requireThat(record(terms) && REFERENCE.test(String(terms.acceptanceReference)), 'invalid_customer_terms');
+  if (terms.customerBilling === 'client_funded') return { customerBilling: 'client_funded', acceptanceReference: terms.acceptanceReference };
+  requireThat(terms.customerBilling === 'resale' && Number.isSafeInteger(terms.clientMarkupBasisPoints)
+    && terms.clientMarkupBasisPoints >= 0 && terms.clientMarkupBasisPoints <= 100_000, 'invalid_customer_terms');
+  return { customerBilling: 'resale', clientMarkupBasisPoints: (terms as { clientMarkupBasisPoints: number }).clientMarkupBasisPoints, acceptanceReference: terms.acceptanceReference };
+}
+/** The policy Modelvia prices under now (latest active `effectiveAt <= at`), else
+ * the earliest active one that starts later: while that one is pending a new
+ * policy could only be refused (`policy_effective_order`). */
+function inForce(policies: HeldPolicy[], at: number): HeldPolicy | undefined {
+  const current = policies.filter(p => p.effectiveAt <= at).sort((a, b) => b.effectiveAt - a.effectiveAt)[0];
+  return current ?? policies.filter(p => p.effectiveAt > at).sort((a, b) => a.effectiveAt - b.effectiveAt)[0];
 }

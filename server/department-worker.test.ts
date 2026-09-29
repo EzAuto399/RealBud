@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readdirSync, rmSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIME, type DepartmentWorkerOptions } from './department-worker.ts';
+import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIME, relayIdempotencyKey, relayRefusalDetail, type DepartmentWorkerOptions } from './department-worker.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
 import { resetRuntimeSelectionForTests } from './hermes-runtime-selection.ts';
 
@@ -15,6 +15,28 @@ afterEach(async () => {
   vi.unstubAllEnvs(); resetRuntimeSelectionForTests();
   for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); }
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('relayed inference and the model service', () => {
+  const body = Buffer.from(JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'FICTIONAL case' }] }));
+  it('sends one Idempotency-Key per logical request: stable for a retry within a run, new for another run or body', () => {
+    const key = relayIdempotencyKey('run-one', body);
+    // Modelvia admits keys matching its id() shape.
+    expect(key).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/);
+    expect(relayIdempotencyKey('run-one', Buffer.from(body))).toBe(key);
+    expect(relayIdempotencyKey('run-two', body)).not.toBe(key);
+    expect(relayIdempotencyKey('run-one', Buffer.concat([body, Buffer.from(' ')]))).not.toBe(key);
+    expect(key).not.toContain('run-one');
+  });
+  it('turns a known model-service refusal into one sentence and ignores everything else', () => {
+    const refusal = (code: string, receipt?: unknown) => Buffer.from(JSON.stringify({ error: { message: code, type: 'invalid_request_error', code, param: null }, ...(receipt ? { receipt } : {}) }));
+    expect(relayRefusalDetail(409, refusal('request_already_processed', { requestId: 'req_0123456789abcdef', state: 'settled', model: 'deepseek-v4.1-flash', priceBasis: 'withheld' })))
+      .toMatch(/^The model service already handled this exact request.*\.$/);
+    expect(relayRefusalDetail(409, refusal('customer_terms_required'))).toMatch(/^Your office's AI pricing terms/);
+    expect(relayRefusalDetail(402, refusal('project_request_cap_exceeded'))).toMatch(/more reserved capacity/);
+    for (const [status, bytes] of [[200, refusal('customer_terms_required')], [500, refusal('internal_error')], [409, Buffer.from('not json')], [409, Buffer.alloc(70 * 1024, 32)]] as const)
+      expect(relayRefusalDetail(status, bytes)).toBeNull();
+  });
 });
 
 it('refuses a cancelled run before any authority or process work', async () => {

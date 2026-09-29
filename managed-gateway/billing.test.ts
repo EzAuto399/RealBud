@@ -44,7 +44,9 @@ test('a care invoice carries only the accepted care line: AI usage, AI credits a
   assert.equal(invoice.careAgreementRef,'synthetic-care-agreement');assert.equal(invoice.commercialTerms?.digest,published.digest);
   const html=invoiceHtml(invoice);
   for(const forbidden of ['AI usage —','AI usage credit','Rate version','fixture-text','fixture-r1','Usage reference','LOCAL TEST DOCUMENT']) assert.doesNotMatch(html,new RegExp(forbidden),forbidden);
-  assert.match(html,/Modelvia/);assert.match(html,/12 345 678 901/);
+  assert.match(html,/No AI usage is charged on this invoice\./);
+  assert.doesNotMatch(html,/billed separately by Modelvia|never appears on this invoice/);
+  assert.match(html,/12 345 678 901/);
   // Usage events stay unbilled here for ever: they are Modelvia's, not this invoice's.
   assert.equal(f.db.all('SELECT * FROM invoice_events').length,0);
   assert.equal(billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1').id,invoice.id);

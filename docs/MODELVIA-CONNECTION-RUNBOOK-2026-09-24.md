@@ -41,7 +41,7 @@ This runbook has not yet been executed end to end against hosted services. Its s
 7. **Turn on AI** in `/admin/offices` → AI access → Default (A$200/month), Custom or Off → Save.
    - This creates the office's Modelvia customer `realbud-<companyId>` under RealBud's client, or updates it. No environment edit or redeploy is needed.
    - Check: the office's row on `/admin/connection` reads pass.
-8. **Confirm the office's pricing with Modelvia.** Modelvia must record a commercial policy before any client-paid request (`customer_terms_required`). Your own office runs as internal cost.
+8. **Check the office's pricing terms.** Modelvia refuses every client-paid request without an active commercial policy (`customer_terms_required`). Since 26 September the AI access save in step 7 writes it: a client-funded policy for a company listed in the gateway's `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` (your own office), a resale policy only when resale is configured, and never a replacement for a policy already in force. The save's `terms.state` must read `active`; `unconfigured` means the gateway has no billing decision for this office. See `managed-gateway/DEPLOY.md`, "Office AI access".
 9. **Pair the computer.** Go to Computers → Pair a new computer, then enter the code in the desktop app.
    - The gateway checks the entitlement and the Modelvia customer before creating anything.
    - If either is not ready, the computer stays linked without AI.

@@ -12,6 +12,8 @@ const ORG_KEY = "org_fixture_key_0123456789";
 // this exact value never appears in a thrown message.
 const SECRET = "ak_fixture_secret_must_never_be_echoed_0123456789";
 const PROJECT = { id: "pr_office_fixture", name: "Fictional Office" };
+const livePage = (data: unknown[], currentPage: number, totalPages: number, totalItems: number, nextCursor: string | null = null) =>
+  ({ data, current_page: currentPage, total_pages: totalPages, total_items: totalItems, next_cursor: nextCursor });
 
 interface ReceivedRequest {
   method: string;
@@ -207,14 +209,61 @@ describe("project reads", () => {
     expect(received[0].method).toBe("GET");
     expect(received[0].path).toBe(`/api/v3.1/org/owner/project/${PROJECT.id}`);
 
-    onRequest = (_request, response) => reply(response, 200, { items: [{ id: PROJECT.id, name: PROJECT.name }, { id: "pr_other_fixture", name: "Other Office", api_key: SECRET }] });
+    onRequest = (_request, response) => reply(response, 200, livePage([{ id: PROJECT.id, name: PROJECT.name }, { id: "pr_other_fixture", name: "Other Office", api_key: SECRET }], 1, 1, 2));
     await expect(listProjects(ORG_KEY)).resolves.toEqual([{ id: PROJECT.id, name: PROJECT.name }, { id: "pr_other_fixture", name: "Other Office", apiKey: SECRET }]);
     expect(received[1].path).toBe("/api/v3.1/org/owner/project/list");
   });
 
-  it("fails closed on a partial project list", async () => {
-    onRequest = (_request, response) => reply(response, 200, { items: [{ id: PROJECT.id, name: PROJECT.name }], next_cursor: "page_2" });
+  it("follows a returned opaque cursor and verifies the full v3.1 list", async () => {
+    const cursor = "cGFnZT0yL2xpbWl0PTUw==";
+    onRequest = (request, response) => reply(response, 200, request.search
+      ? livePage([{ id: "pr_other_fixture", name: "Other Office" }], 2, 2, 2)
+      : livePage([PROJECT], 1, 2, 2, cursor));
+    await expect(listProjects(ORG_KEY)).resolves.toEqual([PROJECT, { id: "pr_other_fixture", name: "Other Office" }]);
+    expect(received).toHaveLength(2);
+    expect(received.map(request => request.method)).toEqual(["GET", "GET"]);
+    expect(received[1].path).toBe("/api/v3.1/org/owner/project/list");
+    expect(new URLSearchParams(received[1].search).get("cursor")).toBe(cursor);
+    expect(received[1].headers["x-org-api-key"]).toBe(ORG_KEY);
+  });
+
+  it("preserves older unpaginated arrays and follows items cursors", async () => {
+    onRequest = (_request, response) => reply(response, 200, [PROJECT]);
+    await expect(listProjects(ORG_KEY)).resolves.toEqual([PROJECT]);
+    onRequest = (request, response) => reply(response, 200, request.search
+      ? { items: [{ id: "pr_other_fixture", name: "Other Office" }], next_cursor: null }
+      : { items: [PROJECT], next_cursor: "page2" });
+    await expect(listProjects(ORG_KEY)).resolves.toEqual([PROJECT, { id: "pr_other_fixture", name: "Other Office" }]);
+  });
+
+  it("fails closed when a v3.1 project list ends before its recorded total", async () => {
+    onRequest = (_request, response) => reply(response, 200, livePage([PROJECT], 1, 2, 2));
     await expect(listProjects(ORG_KEY)).rejects.toThrow(/only part of the project list/);
+    expect(received).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing data", { items: null, total_pages: 1, current_page: 1, total_items: 0 }],
+    ["missing counts", { data: [PROJECT], next_cursor: null }],
+    ["wrong count", livePage([PROJECT], 1, 1, 2)],
+    ["malformed cursor", livePage([PROJECT], 1, 2, 2, "bad\nvalue")],
+  ])("fails closed on a malformed list page (%s)", async (_case, body) => {
+    onRequest = (_request, response) => reply(response, 200, body);
+    await expect(listProjects(ORG_KEY)).rejects.toThrow(/could not read|only part of the project list/);
+  });
+
+  it("fails closed on duplicate projects and looping cursors", async () => {
+    const pages = [livePage([PROJECT], 1, 3, 3, "page2"), livePage([{ id: "pr_other_fixture", name: "Other Office" }], 2, 3, 3, "page2")];
+    onRequest = (_request, response) => reply(response, 200, pages[Math.min(received.length - 1, pages.length - 1)]);
+    await expect(listProjects(ORG_KEY)).rejects.toThrow(/only part of the project list/);
+    expect(received).toHaveLength(2);
+
+    received = [];
+    onRequest = (_request, response) => reply(response, 200, received.length === 1
+      ? livePage([PROJECT], 1, 2, 2, "page2")
+      : livePage([PROJECT], 2, 2, 2));
+    await expect(listProjects(ORG_KEY)).rejects.toThrow(/only part of the project list/);
+    expect(received).toHaveLength(2);
   });
 });
 

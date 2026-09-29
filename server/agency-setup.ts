@@ -96,6 +96,7 @@ export function createAgencySetupService(options: AgencySetupOptions) {
   }
   function project(state: AgencySetupState, observed: AgencySetupObservations): AgencySetupView {
     const settings = state.settings, time = now(), gmail = observed.gmail;
+    const sharedMail = gmail?.sourceKind === 'office_shared';
     const properties = observed.properties?.state === 'available' ? observed.properties.items : [];
     const mapped = settings.propertyReferences.length > 0 && observed.properties?.state === 'available' && settings.propertyReferences.every(rule => properties.some(property => property.id === rule.propertyId));
     // Split the freshness window off the rest so an expired check can say so.
@@ -117,7 +118,7 @@ export function createAgencySetupService(options: AgencySetupOptions) {
       const checks: AgencySetupCheck[] = [
         { id: 'agency', label: 'Agency and timezone', state: settings.agencyName && settings.timeZone ? 'passed' : 'needed', detail: settings.agencyName && settings.timeZone ? `${settings.agencyName} · ${settings.timeZone}` : 'Name this agency and choose the timezone its work follows.', nextAction: 'Save agency details below.', requiredForReview: true },
         { id: 'pack', label: 'Selected workflow pack', state: settings.workflowPackId ? 'passed' : 'needed', detail: settings.workflowPackId ? `${AGENCY_WORKFLOW_PACK_NAMES[settings.workflowPackId]} is explicitly selected. Its installation and plan approval are checked separately below.` : 'Select one pack for this agency. No default or first-installed plan is used.', nextAction: 'Choose a workflow pack in Agency details, import it if needed, then review its plans.', requiredForReview: true },
-        ...(mailRequired ? [{ id: 'gmail', label: 'Selected private Gmail source', state: mailVerified ? 'passed' as const : gmail ? 'needed' as const : 'unknown' as const, detail: (mailVerified ? 'The host verified read access to this exact private account within the last five minutes. This is not proof of a complete workflow.' : mailExpiredMinutes !== null ? `This account was verified ${mailExpiredMinutes} minutes ago; verification expires after five minutes. Check the selected account again before approving.` : 'Choose an account and verify its current private read access. Saved credentials or a connected label alone are insufficient.') + mailHistory, nextAction: mailExpiredMinutes !== null ? 'Check selected Gmail access again.' : 'Connect Gmail, choose its account here, save, then check the selected account.', requiredForReview: true }] : []),
+        ...(mailRequired ? [{ id: 'gmail', label: sharedMail ? 'Selected office shared Gmail source' : 'Selected Gmail source', state: mailVerified ? 'passed' as const : gmail ? 'needed' as const : 'unknown' as const, detail: (mailVerified ? 'The host verified read access to this exact selected account within the last five minutes. This is not proof of a complete workflow.' : mailExpiredMinutes !== null ? `This account was verified ${mailExpiredMinutes} minutes ago; verification expires after five minutes. Check the selected account again before approving.` : 'Choose an account and verify its current read access. Saved credentials or a connected label alone are insufficient.') + mailHistory, nextAction: mailExpiredMinutes !== null ? 'Check selected Gmail access again.' : sharedMail ? 'Ask the office owner to connect the shared Gmail, then select and check it here.' : 'Connect Gmail, choose its account here, save, then check the selected account.', requiredForReview: true }] : []),
         ...(workflow === 'bank-references' ? [{ id: 'mapping', label: 'Property reference directory', state: mapped ? 'passed' as const : observed.properties ? 'needed' as const : 'unknown' as const, detail: `${mapped ? `${settings.propertyReferences.length} unique references match properties available to this workspace.` : 'Add a reviewed reference for each property in the selected bank scope. Unknown properties cannot be mapped.'} ${BANK_ADAPTER_LIMIT}`, nextAction: 'Add properties to Desk, then save their agreed reference numbers below.', requiredForReview: true }] : []),
         ...(workflow === 'bills-calendar' ? [{ id: 'bills', label: 'Expected bill records', state: observed.billRegister?.state === 'available' ? 'passed' as const : 'unknown' as const, detail: observed.billRegister?.state === 'available' ? `${observed.billRegister.count} saved bill records are readable. New evidence still needs property and date review.` : 'The expected-bills store has not been verified or needs recovery.', nextAction: 'Open Expected bills and resolve any recovery message.', requiredForReview: true }] : []),
         { id: 'execution', label: 'Workflow and plan readiness', state: execution?.state === 'available' && execution.bindingRevision ? 'passed' : execution ? 'needed' : 'unknown', detail: execution?.detail || 'The host has not verified an executable workflow and its required plan approval.', nextAction: 'Review the workflow plan and complete its worker or source setup.', requiredForReview: true },
@@ -130,7 +131,7 @@ export function createAgencySetupService(options: AgencySetupOptions) {
       const acceptance = accepted?.id && accepted.settingsRevision === state.revision && accepted.evidenceDigest === evidenceDigest && accepted.acceptedAt >= (state.updatedAt ?? 0) && accepted.acceptedAt <= time ? 'accepted' as const : 'not-verified' as const;
       return { id: workflow, title: AGENCY_WORKFLOW_NAMES[workflow], selected, checks, evidenceDigest, canReview, reviewed, readyForRun: canReview && reviewed, acceptance };
     });
-    return { state, accounts: gmail?.accounts ?? [], properties, workflows, canCheckGmail: Boolean(options.checkGmail) };
+    return { ...(gmail?.sourceKind ? { gmailSourceKind: gmail.sourceKind } : {}), state, accounts: gmail?.accounts ?? [], properties, workflows, canCheckGmail: Boolean(options.checkGmail) };
   }
   async function get() { const state = await read(); return project(state, await observations(state.settings)); }
   function expected(state: AgencySetupState, value: unknown) {
@@ -141,7 +142,7 @@ export function createAgencySetupService(options: AgencySetupOptions) {
     return exclusive(async () => {
       const state = await read(); expected(state, input.expectedRevision);
       const settings = validateAgencySettings(input.settings), observed = await observations(settings);
-      if (settings.gmailAccountId !== state.settings.gmailAccountId && settings.gmailAccountId && !observed.gmail?.accounts.some(account => account.id === settings.gmailAccountId && account.status === 'active')) return fail('Choose an available private Gmail account from Connections. No account was selected.', 409);
+      if (settings.gmailAccountId !== state.settings.gmailAccountId && settings.gmailAccountId && !observed.gmail?.accounts.some(account => account.id === settings.gmailAccountId && account.status === 'active')) return fail('Choose an available Gmail account from Connections. No account was selected.', 409);
       const previousMappings = new Map(state.settings.propertyReferences.map(rule => [rule.propertyId, JSON.stringify(rule)]));
       if (settings.propertyReferences.some(rule => previousMappings.get(rule.propertyId) !== JSON.stringify(rule) && (observed.properties?.state !== 'available' || !observed.properties.items.some(property => property.id === rule.propertyId)))) return fail('A mapped property is unavailable in this workspace. Refresh the property list before saving.', 409);
       if (JSON.stringify(settings) === JSON.stringify(state.settings)) return project(state, observed);
@@ -195,7 +196,7 @@ export function createAgencySetupService(options: AgencySetupOptions) {
       if (route === '/api/agency-setup/check-gmail' && method === 'POST') {
         const input = object(body, ['expectedRevision']);
         const state = await read(); expected(state, input.expectedRevision);
-        if (!state.settings.gmailAccountId || !options.checkGmail) return fail('Choose an account and use Connections to verify its private read access.', 409);
+        if (!state.settings.gmailAccountId || !options.checkGmail) return fail('Choose an account and use Connections to verify its read access.', 409);
         await options.checkGmail(state.settings.gmailAccountId, state.revision);
         expected(await read(), state.revision);
         const view = await get();

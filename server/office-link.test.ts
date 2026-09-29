@@ -111,6 +111,94 @@ describe("zero-touch provisioning through the website link", () => {
     expect(readFileSync(join(root, "office-link/link.json"), "utf8")).not.toContain(provisioning.model.key);
   });
 
+  /** A website and gateway pair modelled on the SQL rules: a replayed redeem or
+   * a report is answered only for the id + token that first redeemed; once
+   * provisioned, credentials are redelivered by rotating the one key and
+   * replacing the connector credential, never by minting another. */
+  const website = () => {
+    const state = { owner: undefined as undefined | { id: string; token: string }, provisioned: false, keys: [] as string[], revoked: [] as string[],
+      credentials: [] as string[], loseNextReply: false, reports: [] as any[] };
+    const issue = () => {
+      const n = state.keys.length + 1;
+      if (state.keys.length) state.revoked.push(state.keys.at(-1)!);
+      state.keys.push(`rbk_${String(n).repeat(40)}`); state.credentials.push(`rbc_${String(n).repeat(64)}`);
+      return { ...provisioning, connector: { ...provisioning.connector, credential: state.credentials.at(-1)! },
+        model: { ...provisioning.model, key: state.keys.at(-1)!, keyId: `rbkkey-0${n}` } };
+    };
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const route = String(url).split("/api/installations/")[1];
+      if (route === "redeem") {
+        const body = JSON.parse(init.body);
+        if (state.owner && (state.owner.id !== body.id || state.owner.token !== body.token)) return Response.json({ error: "used" }, { status: 409 });
+        state.owner = { id: body.id, token: body.token };
+        const grant = issue(); state.provisioned = true;
+        if (state.loseNextReply) { state.loseNextReply = false; throw new Error("reply lost"); }
+        return linked(body, { provisioning: grant });
+      }
+      const token = String(init.headers?.Authorization ?? "").replace(/^Bearer /, "");
+      if (!state.owner || token !== state.owner.token) return Response.json({ error: "inactive" }, { status: 401 });
+      const body = JSON.parse(init.body); state.reports.push(body);
+      return Response.json(state.provisioned && body.needsProvisioning === true ? { ok: true, provisioning: issue() } : { ok: true });
+    });
+    return { state, fetch: fetcher as unknown as typeof fetch };
+  };
+  const managedDesk = (fetcher: typeof fetch) => {
+    const root = privateFixtureRoot(join(tmpdir(), "realbud-link-redeliver-")); roots.push(root);
+    const hermesRoot = join(root, "hermes"), profile = join(hermesRoot, "profiles", "property");
+    privateFixtureDirectory(profile); writePrivateFixtureFile(join(profile, "SOUL.md"), "# Fictional profile\n");
+    const configs: any[] = [];
+    const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 9), hermesRoot, saveConfig: patch => { configs.push(patch); } });
+    const app = createOfficeLink({ directory: root, appVersion: "fictional", fetch: fetcher, provisioning: { ...access, active: async () => (await access.state()).provisioned },
+      report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: true }) });
+    return { app, access, configs };
+  };
+
+  it("recovers from a redeem reply lost after provisioning: the retry gets replaced keys and the lost ones stop working", async () => {
+    const site = website(); site.state.loseNextReply = true;
+    const desk = managedDesk(site.fetch);
+    await expect(desk.app.link({ code, label: "Fictional desk" })).rejects.toThrow(/could not be reached/);
+    expect(await desk.access.env()).toEqual({});
+    // Same code, same id and token: the website redelivers instead of linking empty.
+    await desk.app.link({ code, label: "Fictional desk" });
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ OPENAI_BASE_URL: "https://api.modelvia.dev/v1", OPENAI_API_KEY: site.state.keys[1] });
+    expect(desk.configs.at(-1).composio.managed.credential).toBe(site.state.credentials[1]);
+    expect(site.state.revoked).toEqual([site.state.keys[0]]);
+    expect((await desk.app.status())).toMatchObject({ state: "linked", provisioned: true });
+    // A grant in force is never asked for again, so a check-in rotates nothing.
+    await desk.app.report();
+    expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
+    expect(site.state.keys).toHaveLength(2);
+
+    // Another computer holding the same code but its own id and token gets nothing.
+    const other = managedDesk(site.fetch);
+    await expect(other.app.link({ code, label: "Other desk" })).rejects.toThrow(/expired or already used/);
+    expect(await other.access.env()).toEqual({});
+    expect(site.state.keys).toHaveLength(2);
+  });
+
+  it("asks for redelivery on a check-in while it holds no grant, and stops asking once one is in force", async () => {
+    const site = website();
+    // Linked, but the reply this computer kept said nothing about provisioning
+    // (for example a replay answered while the first attempt was still running).
+    const original = site.fetch;
+    const quiet = vi.fn(async (url: any, init: any) => {
+      const reply = await (original as any)(url, init);
+      if (!String(url).endsWith("redeem")) return reply;
+      const { provisioning: _dropped, ...rest } = await reply.json();
+      return Response.json(rest);
+    }) as unknown as typeof fetch;
+    const quietDesk = managedDesk(quiet);
+    await quietDesk.app.link({ code, label: "Fictional desk" });
+    expect(await quietDesk.access.env()).toEqual({});
+    await quietDesk.app.report();
+    expect(site.state.reports.at(-1).needsProvisioning).toBe(true);
+    expect(await quietDesk.app.modelAccessEnv(quietDesk.access.env)).toMatchObject({ OPENAI_API_KEY: site.state.keys[1] });
+    expect(site.state.revoked).toEqual([site.state.keys[0]]);
+    await quietDesk.app.report();
+    expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
+    expect(site.state.keys).toHaveLength(2);
+  });
+
   it("refuses a grant for another office, an unsupported build, and a vendor organization key", async () => {
     const reply = (extra: any) => {
       const p = sink();

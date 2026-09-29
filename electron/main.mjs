@@ -1,12 +1,13 @@
 import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
-import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
+import { findBusyService, findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
+import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
-import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
+import { focusedWindowAction, headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
 import { resolveDeskKey } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
@@ -67,6 +68,7 @@ if (!smokeMode && !app.requestSingleInstanceLock()) {
     if (action === "focus" && win) {
       if (win.isMinimized()) win.restore();
       win.focus();
+      void recoverBlankWindow(win);
     } else if (action === "hand-over") {
       // No window to focus: this process is the headless service host the login
       // item started, and someone has just opened RealBud. Holding the lock must
@@ -81,6 +83,21 @@ if (!smokeMode && !app.requestSingleInstanceLock()) {
       openWindowFromBackground();
     }
   });
+}
+
+/** A second launch found the window; make sure it is showing something. */
+async function recoverBlankWindow(win) {
+  if (win.isDestroyed() || win.webContents.isLoading()) return;
+  const probe = await Promise.race([
+    win.webContents.executeJavaScript("(document.body ? document.body.innerText.trim().length : 0)", false)
+      .then((length) => ({ answered: true, textLength: Number(length) || 0 }), () => ({ answered: false, textLength: 0 })),
+    new Promise((resolve) => setTimeout(() => resolve({ answered: false, textLength: 0 }), 3_000)),
+  ]);
+  if (win.isDestroyed()) return;
+  const action = focusedWindowAction({ url: win.webContents.getURL(), officeOrigin: `http://127.0.0.1:${SERVER_PORT}`, probe });
+  if (action !== "reload") return;
+  slog(`a second launch found the window ${probe.answered ? "blank" : "not answering"}; reloading it`);
+  try { win.webContents.reload(); } catch (error) { slog(`window reload failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
@@ -102,6 +119,9 @@ let serviceHandle = null;
 // A port an abandoned child of ours may still hold. Remembered across start
 // attempts so a later retry cannot scan past it while it is still dying.
 let abandonedServicePort = null;
+// Why the last start attempt failed, when the cause is known and no automatic
+// retry will fix it (full disk, unwritable data folder, every port taken).
+let serviceStartProblem = null;
 // The person asked to stop the office service in this session. Set before the
 // stop request goes out, so the watchdog cannot race it; cleared only by their
 // Start. It records intent, not outcome: an unconfirmed stop is still a stop the
@@ -405,9 +425,15 @@ function createWindow() {
       };
       waitTimer = setTimeout(look, SERVICE_WAIT_INTERVAL_MS);
     };
+    // A start that failed for a known reason gets a page naming it and the one
+    // thing to do, not a wait the log has already ruled out. The watchdog can
+    // still recover this window if a service of ours answers after all.
+    const problemPage = serverReady || !serviceStartProblem
+      ? null
+      : startProblemPage(serviceStartProblem, { dataDirectory: realbudDataDir(), ports: serviceIdentity(realbudDataDir()).ports });
     const recoverWindow = createServiceWindowRecovery({
       window: win,
-      fallbackUrls: [ERROR_PAGE, WAIT_ENDED_PAGE],
+      fallbackUrls: [ERROR_PAGE, WAIT_ENDED_PAGE, ...(problemPage ? [problemPage] : [])],
       blocked: () => serviceStopRequested || appQuitting(),
       beforeLoad: (port) => {
         stopWait();
@@ -448,6 +474,9 @@ function createWindow() {
     });
     if (serverReady) {
       win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
+    } else if (problemPage) {
+      slog(`the office service cannot start (${serviceStartProblem}); showing what to do`);
+      win.loadURL(problemPage);
     } else {
       win.loadURL(ERROR_PAGE);
       waitForOfficeService();
@@ -1122,6 +1151,7 @@ function startOrAdoptOfficeService() {
   return serviceStart;
 }
 async function startOrAdoptOfficeServiceOnce() {
+  serviceStartProblem = null;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
 
@@ -1131,6 +1161,17 @@ async function startOrAdoptOfficeServiceOnce() {
     serverEverStarted = true;
     serviceAdopted = true;
     slog(`adopted the running office service on port ${running.port}`);
+    return true;
+  }
+  // A busy service (a long Recheck, a backup pause) can miss the quick probe
+  // while it holds its port. Ask each bound port again, patiently, before any
+  // child is abandoned or spawned.
+  const busy = await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
+  if (busy) {
+    SERVER_PORT = busy.port;
+    serverEverStarted = true;
+    serviceAdopted = true;
+    slog(`adopted the busy office service on port ${busy.port}; it answered a patient health check`);
     return true;
   }
 
@@ -1215,7 +1256,11 @@ async function startOrAdoptOfficeServiceOnce() {
     abandonedServicePort = null;
   }
   const port = await availableServicePort(serverEverStarted ? [SERVER_PORT] : identity.ports);
-  if (port === null) { slog("no office service port is available"); return false; }
+  if (port === null) {
+    slog("no office service port is available");
+    serviceStartProblem = "ports-taken";
+    return false;
+  }
   SERVER_PORT = port;
   const deskKey = deskKeyForChild();
   const entry = path.join(process.resourcesPath, "server", "bootstrap.js");
@@ -1242,6 +1287,7 @@ async function startOrAdoptOfficeServiceOnce() {
     });
   } catch (error) {
     slog(`detached service start failed: ${error instanceof Error ? error.message : String(error)}`);
+    serviceStartProblem = classifyStartError(error);
     return false;
   }
   serviceHandle = handle;
@@ -1264,6 +1310,7 @@ async function startOrAdoptOfficeServiceOnce() {
     clearServiceHandle(dataDirectory);
     serviceHandle = null;
     slog(`the detached office service on port ${port} exited during startup`);
+    serviceStartProblem = classifyServiceOutput(readServiceOutputTail(LOG_DIR));
   } else {
     slog(`the detached office service did not answer on port ${port} yet; keeping pid=${handle.pid} for retry`);
   }
@@ -1424,7 +1471,11 @@ app.whenReady().then(async () => {
   });
   if (app.isPackaged) {
     try { serverReady = await startOrAdoptOfficeService(); }
-    catch (error) { serverReady = false; slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) {
+      serverReady = false;
+      serviceStartProblem = classifyStartError(error);
+      slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!smokeMode) startServiceWatchdog();
   }
   // After the service decision, because applying the settings reads the office's
