@@ -27,8 +27,20 @@ export function AskReadiness({ onSetup }: { onSetup: () => void }) {
   const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister });
   const failure = error || budReadinessFailure(state.hermes);
   const pinDrift = Boolean(
-    state.hermes?.cli.installed && !(state.hermes.cli.compatible ?? state.hermes.cli.matchesPin),
+    state.hermes?.cli.installed && !(state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && !state.hermes.restartRequired,
   );
+  // An install error describes the worker it failed on. Once the worker's
+  // install facts change (installed elsewhere, restarted), that error is stale.
+  const workerKey = [
+    state.hermes?.cli.installed, state.hermes?.cli.compatible ?? state.hermes?.cli.matchesPin,
+    state.hermes?.restartRequired, state.hermes?.bootstrapPending,
+  ].join("|");
+  const lastWorkerKey = useRef(workerKey);
+  useEffect(() => {
+    if (lastWorkerKey.current === workerKey) return;
+    lastWorkerKey.current = workerKey;
+    setError("");
+  }, [workerKey]);
 
   const applyResult = (ok: boolean, detail: unknown) => {
     if (!mounted.current) return;

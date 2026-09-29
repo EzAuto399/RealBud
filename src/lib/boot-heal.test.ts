@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  autoRestoreBudPin,
   autoRunBudReadiness,
   needsAutoReadiness,
   resetBootHealForTests,
@@ -10,6 +11,9 @@ import type { HermesStatus } from "@/state/store";
 const readiness = vi.hoisted(() => ({
   run: vi.fn(),
 }));
+
+const store = vi.hoisted(() => ({ api: vi.fn() }));
+vi.mock("@/state/store", () => ({ api: (...args: unknown[]) => store.api(...args) }));
 
 vi.mock("./bud-readiness", () => ({
   budReadinessCheck: {
@@ -22,6 +26,7 @@ vi.mock("./bud-readiness", () => ({
 afterEach(() => {
   resetBootHealForTests();
   readiness.run.mockReset();
+  store.api.mockReset();
   const g = globalThis as { window?: { ogb?: unknown }; ogb?: unknown };
   if (g.window) delete (g.window as { ogb?: unknown }).ogb;
 });
@@ -71,6 +76,17 @@ describe("boot heal", () => {
     expect(onStatus).toHaveBeenCalledWith(next);
     expect(await autoRunBudReadiness({ status, connected: true, onStatus })).toEqual({ ran: false });
     expect(readiness.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reinstall a supported update that only needs a restart", async () => {
+    const drifted = { ...hermes({ ready: false, modelAttached: false }), installerAvailable: true };
+    drifted.cli = { ...drifted.cli, matchesPin: false, compatible: false };
+    expect(await autoRestoreBudPin({ status: { ...drifted, restartRequired: true } })).toEqual({ ran: false });
+    expect(store.api).not.toHaveBeenCalled();
+
+    store.api.mockResolvedValue({ install: { state: "running" } });
+    expect(await autoRestoreBudPin({ status: drifted })).toMatchObject({ ran: true, ok: true });
+    expect(store.api).toHaveBeenCalledWith("/api/hermes/install", expect.objectContaining({ method: "POST" }), expect.anything());
   });
 
   it("warms the microphone only when undecided", async () => {

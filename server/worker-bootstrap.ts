@@ -108,8 +108,10 @@ export function bootstrapStageLabel(stage: string): string {
 // Retry only when the server said "later" or the connection dropped. A hash
 // mismatch, size breach, redirect or any other 4xx is final: the pinned bytes
 // cannot change on a second request.
-const DOWNLOAD_ATTEMPTS = 3;
-const DOWNLOAD_BACKOFF_MS = [5_000, 15_000];
+// Rate limits on a shared office connection often last longer than 20 s; keep
+// trying for about two and a half minutes before asking the person.
+const DOWNLOAD_ATTEMPTS = 5;
+const DOWNLOAD_BACKOFF_MS = [5_000, 15_000, 45_000, 90_000];
 const MAX_RETRY_AFTER_MS = 60_000;
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 const CONNECTION_RESET = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);

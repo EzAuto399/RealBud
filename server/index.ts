@@ -182,7 +182,7 @@ import { attachModel, installInFlight, installStatus, listModelOptions, listMode
 import { cancelOAuth, oauthStatus, startOAuth } from "./hermes-oauth.ts";
 import { workerLoginMethods, WORKER_OAUTH_LOGINS } from "../shared/worker-providers.ts";
 import { repairExistingProfile, uninstallWorker } from "./hermes-lifecycle.ts";
-import { checkUpstreamRelease, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { checkUpstreamRelease, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
 import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
@@ -4273,6 +4273,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const current = modelStatus();
       return json(res, 200, {
         ...status,
+        restartRequired: recommendedUpdateAwaitingRestart(),
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         model: {
@@ -4428,6 +4429,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (installInFlight()) return json(res, 202, { install: installStatus() });
       const current = await hermesStatus();
       if (current.cli.installed && !(current.cli.compatible ?? current.cli.matchesPin)) {
+        // The supported runtime is already installed for the next launch.
+        // Another download would end in the same state, so say what finishes it.
+        if (recommendedUpdateAwaitingRestart()) {
+          return json(res, 200, { install: { state: "done", lines: ["Bud’s update is installed. Restart RealBud to use it."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, restartRequired: true });
+        }
         // A personal or newer Hermes installation is never downgraded by
         // Repair. Prepare an independent supported runtime for the next launch.
         return json(res, 202, { install: startRuntimeUpdate({ repair: true }) });
