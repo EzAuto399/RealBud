@@ -1,9 +1,12 @@
+import { useEffect } from "react";
 import type { HermesStatus } from "@/state/store";
 import { budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEPS } from "@/lib/bud-setup";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
 import { Card } from "./SettingsPrimitives";
+import { ConnectOffice } from "./ConnectOffice";
+import { WEBSITE_LINK_CHANGED } from "./you/browser-link";
 
 type ManagedBudStatusProps = {
   id: string;
@@ -30,6 +33,13 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const needsAccountLink = known && !recovering && !ready && !status?.modelAccess?.managed && !status?.modelAccess?.withdrawn
     && budAvailability(status, connected).target === "attach-model";
   const lastFailure = budReadinessFailure(status);
+  // Connecting inline delivers model access: check Bud again once the link settles.
+  useEffect(() => {
+    if (!needsAccountLink) return;
+    const linked = () => { void refresh(); };
+    window.addEventListener(WEBSITE_LINK_CHANGED, linked);
+    return () => window.removeEventListener(WEBSITE_LINK_CHANGED, linked);
+  }, [needsAccountLink, refresh]);
   const journey = budSetupJourney({
     statusLoaded: known,
     workerInstalled: Boolean(status?.cli.installed && !status.bootstrapPending),
@@ -76,11 +86,13 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
         })}
       </dl>
       {!ready && known && lastFailure && <p className="mt-3 text-sm text-danger" role="status">Last readiness check: {lastFailure}</p>}
-      {needsAccountLink ? <p className="mt-3 text-sm leading-relaxed text-ink-secondary">Open Website account to link this computer or check its model access. The private readiness check still needs to pass before Bud can work.</p>
+      {needsAccountLink ? <div className="mt-3 space-y-3">
+          <p className="text-sm leading-relaxed text-ink-secondary">Connect this computer to your office so Bud gets its AI access. The private readiness check still needs to pass before Bud can work.</p>
+          <div className="max-w-[32rem]"><ConnectOffice /></div>
+        </div>
         : needsAdministrator ? <p className="mt-3 text-sm leading-relaxed text-ink-secondary">Your service administrator needs to complete the remaining check. Status updates automatically. You can keep drafting and save plans in Schedule.</p> : null}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
-        {needsAccountLink && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-website")}>Open website account</button>}
         {onShowAsk && <button type="button" className={ready ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>Return to Ask</button>}
         <button type="button" className={secondaryButton} disabled={pending || !connected} aria-busy={pending} onClick={() => { void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>
       </div>

@@ -135,7 +135,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   if (stage === "model") {
     return status.modelAccess?.managed
       ? unavailable("Model choice needed", status.modelAccess.detail, "Choose a model", "attach-model")
-      : unavailable("Pairing needed", "Pair this computer from realbud.app to give Bud its AI access. Your request stays here while you finish setup.", "Pair this computer", "attach-model");
+      : unavailable("Not connected yet", "Connect this computer to your office on realbud.app to give Bud its AI access. Your request stays here while you finish setup.", "Connect to your office", "attach-model");
   }
   if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
   if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");

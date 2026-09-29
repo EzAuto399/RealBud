@@ -24,7 +24,7 @@ export function applyWorkerModelAccessEnv(env: NodeJS.ProcessEnv, access: Record
 }
 
 /** Office copy for a worker launch that has no usable managed model access. */
-export const MANAGED_ACCESS_UNPAIRED = "Bud has no AI access on this computer yet. Pair this computer from realbud.app, then try again.";
+export const MANAGED_ACCESS_UNPAIRED = "Bud has no AI access on this computer yet. Connect this computer to your office on realbud.app, then try again.";
 export const MANAGED_ACCESS_WITHDRAWN = "This computer's AI access was withdrawn. Your records are kept. Ask RealBud support to restore access.";
 export const MANAGED_ACCESS_MISMATCH = "Bud's private setup does not match this computer's AI access. Open Bud setup and choose Repair Bud, then try again.";
 export const MANAGED_ACCESS_REFUSALS = [MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, MANAGED_ACCESS_MISMATCH] as const;

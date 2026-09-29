@@ -1,0 +1,74 @@
+{
+  "at": "2026-09-29T23:45:06.773Z",
+  "layer": "source",
+  "passed": true,
+  "exercised": [
+    "src/components/desk/GoLiveCard.tsx",
+    "src/lib/setup-sequence.ts",
+    "src/lib/go-live.ts",
+    "src/lib/first-run.ts",
+    "src/components/Onboarding.tsx",
+    "src/components/you/OfficeCard.tsx",
+    "src/components/RoutinesPage.tsx",
+    "src/components/schedule/WorkflowPacksCard.tsx",
+    "src/components/schedule/AgencyWorkflowSetup.tsx"
+  ],
+  "serverPid": 48145,
+  "commands": [
+    "node server/bootstrap.ts  (spawned; REALBUD_DATA_DIR=<temp>, REALBUD_MANAGED_SERVICE=0, REALBUD_TEST_LAB=1, OMB_STATIC_DIR=/Users/yo-da/projects/RealBud-connect/dist)",
+    "vite dev server (createServer from the repo vite.config.ts) serving src/ and proxying /api to the booted server",
+    "node scripts/qa-onboarding-setup.mjs"
+  ],
+  "checks": [
+    "Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact",
+    "Fresh workspace Desk shows \"Workspace setup\" as \"Step 1 of 3: Your agency\", exactly one current step, steps 2 and 3 unresolved, Bud as a status line rather than a step, and nothing marked Done",
+    "Naming the agency on You through PATCH /api/desk/agency (Fictional Harbour Agency) is accepted as the agency name — step 1 stops asking for it — but step 1 stays current until the timezone and pack are saved too",
+    "Open Agency workflow setup opens the Schedule door with #schedule-packs present in the document",
+    "Schedule → Agency workflow setup numbers its tabs 1, 2, 3 and 3, matching the three-step Desk setup path",
+    "Open Agency workflow setup scrolls #schedule-packs into the viewport",
+    "Saving the agency name, timezone (Australia/Brisbane) and workflow pack (office-core) in one PUT /api/agency-setup collapses step 1 into Done and advances the single current step to \"Step 2 of 3: Connect your accounts\", whose single action requires linking the RealBud account and which stays not done while unlinked",
+    "Step 2 opens the Website account controls in You → Office without starting a link or marking the computer linked",
+    "You → Apps opens the #you-connected-apps Connections section, expanded and visible, without connecting an account",
+    "The Desk workspace setup card renders at 390x844 with no horizontal page scroll",
+    "You → This office shows the zone the fresh v3 book recorded (Australia/Brisbane), matching the server process, with no \"not recorded yet\" fallback",
+    "A fresh browser without the legacy flag enters the completed workspace directly, preserves the saved profile and leaves the saved office contact (Fictional Saved Person) untouched",
+    "No renderer pageerror during onboarding, Desk, Schedule, You or fresh-browser re-entry"
+  ],
+  "productDefects": [],
+  "rendererPageErrors": [],
+  "observations": {
+    "serverOrigin": "http://127.0.0.1:60794",
+    "rendererOrigin": "http://127.0.0.1:60795",
+    "hostTimezone": "Australia/Brisbane",
+    "freshSetupCard": "Workspace setup 3 steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished. Hide Step 1 of 3: Your agency One form holds the agency name, the timezone its work follows and the workflow pack it uses. Still to save on this one form: an agency name, a timezone, a workflow pack. Nothing is chosen for you. Open Agency workflow setup Later · 2. Connect your accounts Later · 3. Approve and schedule Bud: needs setup on You · setup can be reviewed before Bud is installed.",
+    "namedOnYouSetupCard": "Workspace setup 3 steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished. Hide Step 1 of 3: Your agency One form holds the agency name, the timezone its work follows and the workflow pack it uses. Still to save on this one form: a timezone, a workflow pack. Nothing is chosen for you. Open Agency workflow setup Later · 2. Connect your accounts Later · 3. Approve and schedule Bud: needs setup on You · setup can be reviewed before Bud is installed.",
+    "hashAfterOpenSetup": "",
+    "agencySetupStepLabels": "1. Agency details 2. Connect your accounts 3. Property references 3. Review workflows",
+    "schedulePacksBox": {
+      "top": 156,
+      "bottom": 1688,
+      "height": 1532,
+      "viewport": 1050,
+      "hash": "",
+      "focused": "schedule-packs"
+    },
+    "savedAgencySetupCard": "Workspace setup 3 steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished. Hide Done: 1. Your agency Step 2 of 3: Connect your accounts Link this computer with your RealBud account, then connect the accounts your work reads and check each one. Link this computer with your RealBud account first; your account then sets up Bud’s model access and account connections. Then connect the accounts your work reads. Link with your RealBud account Later · 3. Approve and schedule Bud: needs setup on You · setup can be reviewed before Bud is installed.",
+    "hashAfterOpenAccountLink": "#you-office",
+    "hashAfterOpenConnections": "#you-connected-apps",
+    "narrowWidths": {
+      "scrollWidth": 390,
+      "innerWidth": 390
+    },
+    "bookTimezone": "Australia/Brisbane",
+    "officeZoneLine": "Book timezone: Australia/Brisbane",
+    "officeAfterFreshBrowser": "Fictional Saved Person"
+  },
+  "limits": [
+    "Fictional data only: a throwaway workspace, a fictional onboarding profile and a fictional saved office contact. No customer book, no customer acceptance.",
+    "Source-level run: real server from server/bootstrap.ts plus the real renderer through a Vite dev server. Not a packaged desktop app, not an installed app, not Windows.",
+    "No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent, so the card reads \"Bud: needs setup on You\" and no step past 2 can finish.",
+    "Headless Chrome at 1400x1050 and 390x844 only. Screenshots are fictional examples, never customer evidence.",
+    "Proves onboarding/setup wiring and copy in the rendered app; it proves nothing about live workflow readiness or a real run.",
+    "Fresh-browser persistence is exercised here. Restored-book replay and changed-port service restarts are separate scenarios in qa-onboarding-restart.mjs."
+  ]
+}

@@ -24,13 +24,14 @@ import { BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { workerIssueLine } from "@/lib/worker-issues";
-import { scrollYouTarget } from "@/lib/you-navigation";
 import { budReadinessCheck } from "@/lib/bud-readiness";
 import { api, useStore } from "@/state/store";
 import { DEFAULT_MANAGED_MODEL_CHOICE, MANAGED_MODEL_CHOICES, managedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { MausAvatar } from "./Avatar";
 import { AgentUpdates } from "./AgentUpdates";
 import { ManagedBudStatus } from "./ManagedBudStatus";
+import { ConnectOffice } from "./ConnectOffice";
+import { WEBSITE_LINK_CHANGED } from "./you/browser-link";
 
 type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "uninstall" | "cancel-install";
 
@@ -317,11 +318,13 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     }
   }, []);
 
-  /** Pairing happens on the website account card, never with a pasted key. */
-  const openPairing = () => {
-    if (location.hash === "#you-website") scrollYouTarget("you-website");
-    else location.hash = "you-website";
-  };
+  // Connecting this computer to the office (inline below) delivers the managed
+  // model access: re-read Bud's status and model when the link settles.
+  useEffect(() => {
+    const linked = () => { void loadModel(); void refreshHermes(); };
+    window.addEventListener(WEBSITE_LINK_CHANGED, linked);
+    return () => window.removeEventListener(WEBSITE_LINK_CHANGED, linked);
+  }, [loadModel, refreshHermes]);
 
   useEffect(() => {
     const fromHash = () => {
@@ -390,7 +393,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
       }
       return modelReadState === "error"
         ? "RealBud could not read Bud's model access."
-        : "Pair this computer from realbud.app to give Bud its AI access. No provider key is collected here.";
+        : "Bud's AI access comes from your office on realbud.app. No provider key is collected here.";
     }
     if (status?.ready && lastTest) return `Answered ${fmtDateTime(lastTest.at, timezone)}.`;
     if (lastTest && !lastTest.ok) return "The last check missed. Nothing on Desk was treated as live.";
@@ -746,11 +749,11 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         {!installActive && journey.stage === "model" && !sheet ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[14px] font-medium text-ink">{managedAccess ? "Choose Bud's model" : "Pair this computer"}</div>
+              <div className="text-[14px] font-medium text-ink">{managedAccess ? "Choose Bud's model" : "Bud's AI access"}</div>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">
                 {managedAccess
                   ? `${MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.`
-                  : "Bud uses your office's managed AI access. Pair this computer from realbud.app; no provider key is collected here."}
+                  : "Bud uses your office's managed AI access, which arrives once this computer is connected to your office on realbud.app. No provider key is collected here."}
               </p>
             </div>
             {managedAccess ? (
@@ -758,11 +761,8 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                 <SlidersHorizontal size={14} />
                 Choose model
               </button>
-            ) : status?.modelAccess?.withdrawn ? null : (
-              <button type="button" onClick={openPairing} className={primaryButton}>
-                Pair this computer
-              </button>
-            )}
+            ) : null}
+            {!managedAccess && !status?.modelAccess?.withdrawn ? <div className="w-full max-w-[32rem]"><ConnectOffice /></div> : null}
           </div>
         ) : null}
 
@@ -895,7 +895,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         >
           <div className="max-w-[52rem]">
             <h3 id="bud-model-title" className="text-[16px] font-semibold text-ink">
-              {managedAccess ? "Choose Bud's model" : "Pair this computer"}
+              {managedAccess ? "Choose Bud's model" : "Bud's AI access"}
             </h3>
             {managedAccess ? (
               <>
@@ -911,20 +911,17 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
                 {status?.modelAccess?.withdrawn
                   ? status.modelAccess.detail
-                  : "Bud uses your office's managed AI access. Pair this computer from realbud.app, then choose one of three RealBud models here. No provider key is collected on this computer."}
+                  : "Bud uses your office's managed AI access. Connect this computer to your office on realbud.app, then choose one of three RealBud models here. No provider key is collected on this computer."}
               </p>
             )}
+            {!managedAccess && !status?.modelAccess?.withdrawn ? <div className="mt-4 max-w-[32rem]"><ConnectOffice /></div> : null}
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {managedAccess ? (
                 <button type="submit" disabled={locked} className={primaryButton}>
                   {busy === "model" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />}
                   Save and check
                 </button>
-              ) : status?.modelAccess?.withdrawn ? null : (
-                <button type="button" onClick={openPairing} className={primaryButton}>
-                  Pair this computer
-                </button>
-              )}
+              ) : null}
               <button type="button" onClick={closeModelSheet} disabled={busy === "model"} className={secondaryButton}>
                 Cancel
               </button>

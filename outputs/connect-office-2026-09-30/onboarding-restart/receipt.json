@@ -1,0 +1,58 @@
+{
+  "at": "2026-09-29T23:46:18.828Z",
+  "layer": "source-rendered-local",
+  "passed": true,
+  "node": "v24.14.1",
+  "checks": [
+    "No-file restore entry and reload can return to welcome without profile, book or backup mutation",
+    "Failed uploaded copy can be removed and return to welcome; cancellation receipt and fresh book survive reload",
+    "Fresh workspace ignores unscoped browser completion; profile submission only reaches rules",
+    "Interrupted setup resumes rules after service restart at different service and renderer ports",
+    "Completed welcome survives a second changed-port restart with the saved contact intact",
+    "Replayed welcome preserves a restored book contact instead of overwriting it",
+    "Sample exploration retains its profile and can finish after a changed-port restart",
+    "Protected book remains unchanged; recovery is saved separately and resumes after restart",
+    "Zero renderer page errors throughout welcome, restore-return and restart scenarios"
+  ],
+  "pageErrors": [],
+  "origins": [
+    {
+      "service": "http://127.0.0.1:61842",
+      "renderer": "http://127.0.0.1:61843"
+    },
+    {
+      "service": "http://127.0.0.1:62695",
+      "renderer": "http://127.0.0.1:62696"
+    },
+    {
+      "service": "http://127.0.0.1:62786",
+      "renderer": "http://127.0.0.1:62787"
+    },
+    {
+      "service": "http://127.0.0.1:62864",
+      "renderer": "http://127.0.0.1:62865"
+    },
+    {
+      "service": "http://127.0.0.1:62970",
+      "renderer": "http://127.0.0.1:62971"
+    },
+    {
+      "service": "http://127.0.0.1:63039",
+      "renderer": "http://127.0.0.1:63040"
+    },
+    {
+      "service": "http://127.0.0.1:63130",
+      "renderer": "http://127.0.0.1:63131"
+    },
+    {
+      "service": "http://127.0.0.1:63218",
+      "renderer": "http://127.0.0.1:63219"
+    }
+  ],
+  "failure": null,
+  "limits": [
+    "Disposable fictional state only; no real account, worker, model, hosted, bank or payment calls.",
+    "Source Vite renderer and local Node service; not a packaged or installed-device acceptance run.",
+    "Member isolation and asynchronous scope changes are covered by server/onboarding.test.ts, not separate physical devices."
+  ]
+}

@@ -3,11 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingState } from '@shared/onboarding';
 import { Onboarding } from './Onboarding';
+import type { ConnectOfficeViewProps } from './ConnectOffice';
+import type { OfficeLinkStatus } from '../../server/office-link';
 
 const fixture = vi.hoisted(() => ({
   cells: [] as { value: unknown }[], cursor: 0,
   api: vi.fn(), dispatch: vi.fn(), onDone: vi.fn(), track: vi.fn(), emailGate: vi.fn(),
   config: { profile: { name: '', email: '' } },
+  connect: null as unknown as { office: string | null; view: ConnectOfficeViewProps },
 }));
 // Exercise the real rendered handlers while keeping state across explicit
 // rerenders. No DOM, server, effect-driven API request or browser storage.
@@ -32,6 +35,17 @@ vi.mock('react', async importOriginal => {
 vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: fixture.config }, dispatch: fixture.dispatch }) }));
 vi.mock('@/lib/analytics', () => ({ identifyEmail: vi.fn(), setEmailGateDone: fixture.emailGate, track: fixture.track }));
 vi.mock('./Avatar', () => ({ MausAvatar: () => null }));
+// The connect step's link state is injected; its protocol is tested in ConnectOffice.test.ts.
+vi.mock('./ConnectOffice', async importOriginal => ({
+  ...(await importOriginal<typeof import('./ConnectOffice')>()),
+  useConnectOffice: () => fixture.connect,
+}));
+const OFFICE = 'Fictional Harbour Agency';
+const request = { approvalUrl: `https://realbud.app/link/${'A'.repeat(43)}`, displayCode: 'ABCD-EFGH', expiresAt: '2026-09-30T10:00:00.000Z' };
+function connection(status: OfficeLinkStatus | null, phase: ConnectOfficeViewProps['phase'] = { kind: 'idle' }) {
+  const office = status?.state === 'linked' ? status.agencyLabel ?? null : null;
+  return { office, view: { status, phase, error: '', code: '', codeBusy: false, onStart: vi.fn(), onOpenAgain: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onCode: vi.fn(), onLinkCode: vi.fn(), onRefresh: vi.fn() } };
+}
 
 const initial: OnboardingState = { version: 1, scope: 'a'.repeat(64), revision: 3, stage: 'profile' };
 type NodeProps = { children?: ReactNode; disabled?: boolean; type?: string; role?: string; onClick?: () => void };
@@ -64,6 +78,7 @@ function deferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks(); fixture.api.mockReset(); fixture.cells = []; fixture.cursor = 0;
   fixture.config = { profile: { name: '', email: '' } };
+  fixture.connect = connection({ state: 'linked', agencyLabel: OFFICE, provisioned: true });
   let hash = '#welcome';
   vi.stubGlobal('location', { get hash() { return hash; }, set hash(value: string) { hash = '#' + value.replace(/^#/, ''); } });
 });
@@ -197,7 +212,7 @@ describe('welcome backup restore', () => {
     button(tree, 'Restore a private backup').props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1); expect(fixture.api.mock.calls[0][0]).toBe('/api/config');
     response.resolve({ profile: { name: 'Sample PM', email: '' } });
-    await vi.waitFor(() => expect(text(render())).toContain('You stay in charge'));
+    await vi.waitFor(() => expect(text(render())).toContain('Step 2 of 3'));
     expect(fixture.api).toHaveBeenCalledTimes(2); expect(fixture.onDone).not.toHaveBeenCalled();
     expect(location.hash).toBe('#welcome');
   });
@@ -219,5 +234,55 @@ describe('welcome backup restore', () => {
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
     expect(location.hash).toBe('#you-recovery');
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk/agency', '/api/onboarding']);
+  });
+});
+
+describe('connect this computer to your office', () => {
+  const saved = { ...initial, stage: 'office-rules' as const };
+  const html = () => renderToStaticMarkup(render(saved));
+
+  it('leads with one Connect action and a visible step, keeping the code path and rules secondary', () => {
+    fixture.config.profile.name = 'Fictional Draft';
+    fixture.connect = connection({ state: 'unlinked' });
+    const markup = html();
+    expect(markup).toContain('Step 2 of 3');
+    expect(markup).toMatch(/<h1[^>]*>Connect this computer to your office<\/h1>/);
+    expect(markup.match(/class="pm-decision/g)).toHaveLength(1);
+    expect(markup).toMatch(/<button type="button" class="pm-decision[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Connect to your office<\/button>/);
+    expect(markup).toContain('Your browser opens realbud.app. Sign in with the email RealBud invited');
+    expect(markup).toMatch(/<details class="[^"]*"><summary class="pm-control[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Use a link code instead<\/summary>/);
+    expect(markup).toContain('aria-label="You stay in charge"');
+    expect(markup).not.toContain('Continue to Bud setup');
+    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
+    expect(button(render(saved), 'Restore a private backup').props.disabled).toBe(false);
+    expect(markup).not.toMatch(/Hermes|MCP|broker|grant|installation/i);
+  });
+
+  it('shows the code to match while the browser approval waits', () => {
+    fixture.connect = connection({ state: 'pending', browser: request }, { kind: 'waiting', request });
+    const markup = html();
+    expect(markup).toContain('Your browser opened realbud.app. Sign in with the email RealBud invited, check the page shows code ABCD-EFGH, then approve.');
+    expect(markup).toContain('>ABCD-EFGH</span>');
+    expect(markup).toContain('Open the page again</button>');
+    expect(markup).toContain('>Cancel</button>');
+    expect(markup).not.toContain('Connect to your office</button>');
+    expect(markup).not.toContain('Use a link code instead');
+  });
+
+  it('skips connecting when this computer is already linked and continues to Bud setup', async () => {
+    fixture.config.profile.name = 'Fictional Draft'; vi.stubGlobal('history', { replaceState: vi.fn() });
+    const markup = html();
+    expect(markup).toMatch(/<h1[^>]*>This computer is connected<\/h1>/);
+    expect(markup).toContain(`Connected to ${OFFICE}`);
+    expect(markup).not.toContain('Connect to your office</button>');
+    fixture.api.mockResolvedValueOnce({ book: { office: { pmUser: 'Fictional Draft' } } })
+      .mockResolvedValueOnce({ ...saved, revision: 4, stage: 'complete' });
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledWith('bud'));
+    expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showAsk' });
+  });
+
+  it('counts the first step as one of three', () => {
+    expect(renderToStaticMarkup(render())).toContain('Step 1 of 3');
   });
 });
