@@ -270,6 +270,19 @@ export interface HermesStatus {
   /** How this office's model access is held. A provisioned installation never
    * collects a provider key; a withdrawn grant is a hold, not a missing model. */
   modelAccess?: { managed: boolean; withdrawn: boolean; attached: boolean; detail: string };
+  /** Automatic setup after an approved office link (server-authorized). */
+  autoSetup?: BudAutoSetup;
+}
+
+export interface BudAutoSetup {
+  state: "idle" | "installing" | "verifying" | "ready" | "waiting_retry" | "held";
+  /** Fixed server code; `detail` is the product copy for it. */
+  code?: "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
+    | "held_exhausted" | "held_failed" | "held_recovery" | "held_restart" | "held_unavailable";
+  step: number;
+  total: number;
+  nextRetryAt?: number;
+  detail: string;
 }
 
 interface AppState {

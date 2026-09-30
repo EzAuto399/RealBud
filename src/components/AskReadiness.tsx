@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowRight, CircleAlert, Loader2, ShieldCheck } from "lucide-react";
 import { autoRestoreBudPin, autoRunBudReadiness } from "@/lib/boot-heal";
-import { budAvailability, budFacingCopy, budReadinessFailure, parseBudStatus } from "@/lib/bud-setup";
+import { budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, parseBudStatus } from "@/lib/bud-setup";
 import { budReadinessCheck } from "@/lib/bud-readiness";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
@@ -25,7 +25,9 @@ export function AskReadiness({ onSetup }: { onSetup: () => void }) {
     return () => { mounted.current = false; };
   }, []);
   const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister });
-  const failure = error || budReadinessFailure(state.hermes);
+  // Automatic setup after an approved office link: progress, no action needed.
+  const automatic = Boolean(budAutoSetupView(state.hermes)?.working) && !statusRead.error;
+  const failure = error || (automatic ? null : budReadinessFailure(state.hermes));
   const pinDrift = Boolean(
     state.hermes?.cli.installed && !(state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && !state.hermes.restartRequired,
   );
@@ -121,7 +123,7 @@ export function AskReadiness({ onSetup }: { onSetup: () => void }) {
   return (
     <div className="ask-readiness" data-checking={activeCheck || undefined} data-error={Boolean(failure || statusRead.error) || undefined}>
       <div className="ask-readiness-icon" aria-hidden>
-        {activeCheck ? <Loader2 size={18} className="animate-spin motion-reduce:animate-none" /> : failure || statusRead.error ? <CircleAlert size={18} /> : <ShieldCheck size={18} />}
+        {activeCheck || automatic ? <Loader2 size={18} className="animate-spin motion-reduce:animate-none" /> : failure || statusRead.error ? <CircleAlert size={18} /> : <ShieldCheck size={18} />}
       </div>
       <div className="min-w-0 flex-1" role="status">
         <p className="font-semibold text-ink">

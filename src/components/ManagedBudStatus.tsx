@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import type { HermesStatus } from "@/state/store";
-import { budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEPS } from "@/lib/bud-setup";
+import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEPS } from "@/lib/bud-setup";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
-import { useStore } from "@/state/store";
+import { api, useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
 import { Card } from "./SettingsPrimitives";
 import { ConnectOffice } from "./ConnectOffice";
@@ -32,7 +32,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const ready = known && availability.ready;
   const needsAccountLink = known && !recovering && !ready && !status?.modelAccess?.managed && !status?.modelAccess?.withdrawn
     && budAvailability(status, connected).target === "attach-model";
-  const lastFailure = budReadinessFailure(status);
+  const lastFailure = budAutoSetupView(status)?.working ? null : budReadinessFailure(status);
   // Connecting inline delivers model access: check Bud again once the link settles.
   useEffect(() => {
     if (!needsAccountLink) return;
@@ -51,7 +51,10 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
     modelAttached: Boolean(status?.model?.attached && !status.modelAccess?.withdrawn),
     verified: Boolean(status?.ready && !status.modelAccess?.withdrawn && !recovering),
   });
-  const needsAdministrator = known && !ready && !recovering && !status?.modelAccess?.withdrawn && !needsAccountLink;
+  // Automatic setup after an approved office link needs no administrator.
+  const automatic = connected && !error && !recovering ? budAutoSetupView(status) : null;
+  const autoStep = automatic?.working ? status?.autoSetup?.step ?? 0 : 0;
+  const needsAdministrator = known && !ready && !recovering && !status?.modelAccess?.withdrawn && !needsAccountLink && !automatic?.working && !budAutoSetupRetryable(status);
 
   function openYou(target: string) {
     onServiceAdministration?.();
@@ -72,7 +75,9 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       <dl className="mt-4 divide-y divide-line" aria-label="Bud setup checks">
         {BUD_SETUP_STEPS.map(step => {
           const progress = journey.stepState[step];
-          const label = !known ? "Not checked"
+          const index = BUD_SETUP_STEPS.indexOf(step) + 1;
+          const label = autoStep ? (index < autoStep ? "Ready" : index === autoStep ? "In progress" : "Waiting")
+            : !known ? "Not checked"
             : step === "model" && status?.modelAccess?.withdrawn ? "Access withdrawn"
             : step === "model" && status?.model?.attached && progress !== "complete" ? "Configured"
             : step === "model" && status?.model && !status.model.attached ? "Not connected"
@@ -94,6 +99,8 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
         {onShowAsk && <button type="button" className={ready ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>Return to Ask</button>}
+        {budAutoSetupRetryable(status) && connected && <button type="button" className={secondaryButton} disabled={pending}
+          onClick={() => { void api("/api/hermes/auto-setup/retry", { method: "POST", body: "{}" }).catch(() => {}).finally(() => { void refresh(); }); }}>Try setup again</button>}
         <button type="button" className={secondaryButton} disabled={pending || !connected} aria-busy={pending} onClick={() => { void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>
       </div>
       {needsAdministrator && <button type="button" className="pm-control mt-2 text-sm text-ink-secondary underline underline-offset-4" onClick={() => openYou("you-service-admin")}>Service administration</button>}

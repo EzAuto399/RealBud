@@ -274,6 +274,56 @@ export class DeskStore {
     }
   }
 
+  /** Replace the sample book with an empty office book: no fictional
+   * properties, facts, cases or demo source. Office settings the person chose
+   * are kept; the sample agency defaults are not. One complete replacement or
+   * nothing, exactly like `replaySample`. Only ever called on a demo book. */
+  startLiveBook(now: number, keepRecipe: (id: string) => boolean): void {
+    if (this.batchDepth !== 0) throw new Error("Starting the office book cannot run inside another book operation");
+    const previousData = this.data;
+    const previousV3 = this.v3;
+    this.replaceWithLiveBook(now, keepRecipe, { properties: [], ledger: [] });
+    try {
+      this.commitWithBump();
+    } catch (error) {
+      this.data = previousData;
+      this.v3 = previousV3;
+      throw error;
+    }
+  }
+
+  /** The same scrub without its own commit, keeping the person's own rows:
+   * the caller's save (or enclosing batch) commits it, and a failed save
+   * restores the last committed sample. Sample cards, facts, sources, the
+   * fictional recipe and its bindings never cross into the office book. */
+  replaceWithLiveBook(now: number, keepRecipe: (id: string) => boolean, keep: { properties: Property[]; ledger: LedgerFacts[] }): void {
+    if (this.recovery.active) throw Object.assign(new Error("desk is read-only in recovery mode"), { status: 409 });
+    if (this.data.mode !== "demo") throw Object.assign(new Error("This office book is already in use. It has been kept."), { status: 409 });
+    const previousData = this.data;
+    const previousV3 = this.v3;
+    const fresh = emptyV2({ properties: [], ledger: [] });
+    fresh.mode = "live";
+    fresh.hands = "held";
+    fresh.handsDetail = null;
+    fresh.sources = [];
+    fresh.revision = previousData.revision;
+    fresh.timezone = previousData.timezone;
+    fresh.retentionDays = previousData.retentionDays;
+    fresh.recipes = structuredClone(previousData.recipes.filter(recipe => keepRecipe(recipe.id)));
+    this.data = fresh;
+    this.v3 = migrateV2ToV3(fresh, now);
+    // Kept rows join the working copy like any hand-added property; the next
+    // save records them without borrowing sample evidence or sources.
+    fresh.properties = structuredClone(keep.properties);
+    fresh.ledger = structuredClone(keep.ledger);
+    const sampleAgency = ["RealBud Demo Book", "Demo agency"].includes(previousV3.agency.name);
+    this.v3.agency = sampleAgency ? { ...structuredClone(previousV3.agency), name: "", jurisdictions: [] } : structuredClone(previousV3.agency);
+    this.v3.office = structuredClone(previousV3.office);
+    // Staged add-property proposals are the person's pending intake, not sample data.
+    this.v3.bookProposals = structuredClone(previousV3.bookProposals);
+    if (this.batchDepth > 0) this.batchNeedsBump = true;
+  }
+
   private commitWithBump(): void {
     this.data.revision += 1;
     try {

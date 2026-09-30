@@ -21,6 +21,20 @@ async function fixture() {
   return { directory, workspaceId, handler, call, read, path: join(directory, 'workspace-views', 'tabs.json') };
 }
 describe('private workspace saved views', () => {
+  it('starts a newly linked office on the simple desk, never replacing a saved layout', async () => {
+    const fresh = await fixture();
+    expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(true);
+    const visible = (await fresh.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort();
+    expect(visible).toEqual(['brief', 'queue']);
+    // Applying twice is a no-op, and the standard layout stays restorable.
+    expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(false);
+    expect((await fresh.read()).state!.history.length).toBeGreaterThan(0);
+
+    const chosen = await fixture();
+    expect((await chosen.call('PUT', { version: 1, expectedRevision: 0, tabs: [tab] }))?.status).toBe(200);
+    expect(await chosen.handler.simpleDeskIfNeverCustomized()).toBe(false);
+    expect((await chosen.read()).state!.desk.sections).toEqual(defaultDeskSections());
+  });
   it('persists a mail filter as a private shortcut without executable settings or source access', async () => {
     const a = await fixture();
     const mail = { ...tab, label: 'Mail waiting', view: { kind: 'mail', filter: 'waiting' } };

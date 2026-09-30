@@ -120,6 +120,18 @@ class RetryableDownload extends BootstrapError {
   readonly delayMs?: number;
   constructor(message: string, delayMs?: number) { super(message); this.delayMs = delayMs; }
 }
+const RETRYABLE_STAGE_FAILURE = "Setup couldn’t finish this step. Check your connection, available space and any system installation prompt, then try again.";
+/** How automatic setup may follow up a failed install on its own:
+ * "retry" for a busy or unreachable download server or a dropped connection,
+ * "once" for an installer stage that stopped (usually its own download, but it
+ * may be a real fault, so one more attempt at most), and "final" for anything
+ * else (hash mismatch, size breach, damaged setup record, failed verification). */
+export function bootstrapFailureKind(error: unknown): "retry" | "once" | "final" {
+  if (error instanceof RetryableDownload) return "retry";
+  if (error instanceof BootstrapError && error.message === CONNECTION_FAILED) return "retry";
+  if (error instanceof BootstrapError && error.message === RETRYABLE_STAGE_FAILURE) return "once";
+  return "final";
+}
 function connectionReset(error: unknown): boolean {
   for (let cause = error, depth = 0; cause instanceof Object && depth < 4; cause = (cause as { cause?: unknown }).cause, depth++)
     if (CONNECTION_RESET.has(String((cause as { code?: unknown }).code))) return true;
@@ -236,7 +248,7 @@ const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: st
     cleanup();
     if (recordFailed) reject(new BootstrapError("Bud could not save setup progress. Check available space and folder permissions before retrying."));
     else if (signal.aborted) reject(new BootstrapError("Setup stopped. You can try again when you’re ready."));
-    else if (code !== 0) reject(new BootstrapError("Setup couldn’t finish this step. Check your connection, available space and any system installation prompt, then try again."));
+    else if (code !== 0) reject(new BootstrapError(RETRYABLE_STAGE_FAILURE));
     else resolve();
   });
   if (signal.aborted || recordFailed) abort();

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, parseDeskSections, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 
@@ -61,6 +61,18 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
     return { state, recovery: null } satisfies WorkspaceTabsResponse;
   }
   return {
+    /** A newly linked office starts on the simple desk (brief + Needs you).
+     * Only when this computer has never saved a layout: a person's own
+     * choice is never replaced. Returns whether it applied. */
+    async simpleDeskIfNeverCustomized(): Promise<boolean> {
+      return serial(async () => {
+        const current = await read();
+        if (!current.state || current.state.revision !== 0 || current.state.history.length) return false;
+        const revision = 1;
+        await save({ ...current.state, revision, ...withDesk(current.state, revision, simpleDeskSections()) });
+        return true;
+      });
+    },
     async handle(route: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
       if (route !== '/api/workspace-tabs' && route !== '/api/workspace-tabs/reset' && route !== '/api/workspace-tabs/revert') return null;
       if (!(route === '/api/workspace-tabs' && ['GET', 'PUT'].includes(method)) && !(route !== '/api/workspace-tabs' && method === 'POST')) return { status: 405, body: { error: 'This saved view action is unavailable.' } };
