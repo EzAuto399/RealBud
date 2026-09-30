@@ -27,4 +27,33 @@ describe("parseConnectedStatusIntent", () => {
     expect(text).toMatch(/Add/);
     expect(text).not.toMatch(/You\s*→/i);
   });
+
+  it.each([
+    "are you connected to composio?", "Are you connected?", "are you connected to Gmail", "what apps are connected",
+    "connected apps?", "is my gmail connected?", "is Gmail connected", "what are you connected to?", "which apps do you have connected",
+    "show my connections", "is my outlook account connected",
+  ])("catches connection status question: %s", (text) => {
+    expect(parseConnectedStatusIntent(text)).toBe(true);
+  });
+
+  it.each([
+    "connect to REI and check payments", "are you connected to REI and can you check payments?", "is the water connected at 14 Sample Street?",
+    "is the tenant connected with the plumber", "check the connected apps then draft a reply", "connect Gmail",
+    "are you connected to gmail, and what did the owner say",
+  ])("keeps real work an ordinary turn: %s", (text) => {
+    expect(parseConnectedStatusIntent(text)).toBe(false);
+  });
+
+  it("names a not-connected app and the in-Ask action that connects it", async () => {
+    const { formatConnectedAppsReply } = await import("./connected-status-intent.ts");
+    const text = formatConnectedAppsReply({
+      configured: true,
+      services: { gmail: { connected: false, status: "NOT_CONNECTED", accounts: [] } },
+      tools: { available: false, names: [] },
+    });
+    expect(text).toContain("**Gmail** — not connected yet");
+    expect(text).toContain("Ask **Connect Gmail** here");
+    expect(text).toContain("you finish it there");
+    expect(text).not.toMatch(/composio|You\s*→/i);
+  });
 });

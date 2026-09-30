@@ -7,6 +7,7 @@
 // can never read as finished. No step claims a run happened or will succeed.
 import { agencyIsNamed } from "./office-setup";
 import { AGENCY_WORKFLOWS, AGENCY_WORKFLOW_NAMES, type AgencyWorkflowId } from "../../shared/agency-setup";
+import { officeAppLabel, officeSourceState, type ConnectedAppsStatus } from "../../shared/office-sources";
 
 export const SETUP_STEP_COUNT = 3;
 
@@ -99,6 +100,21 @@ export interface SetupSequenceInput {
   schedule?: ScheduleRead;
   /** This computer's RealBud account link. `undefined` until the read answers. */
   websiteLink?: WebsiteLinkRead;
+  /**
+   * Office apps the linked service offers that have no account yet, from
+   * `officeAppsToConnect`. Connecting one is the person's own sign-in.
+   */
+  appsToConnect?: readonly string[];
+}
+
+/**
+ * Apps the office's managed connection service offers on this computer with no
+ * account connected yet. Only a fresh, error-free read counts, and an office
+ * shared mailbox is the owner's to connect, never this person's.
+ */
+export function officeAppsToConnect(access: ConnectedAppsStatus | null | undefined, managed: boolean): string[] {
+  if (!managed || !access?.configured || access.error || access.sourceKind === "office_shared") return [];
+  return Object.keys(access.services).filter((slug) => officeSourceState(access, slug) === "connect" && !access.services[slug]?.accounts.length);
 }
 
 /** One named loop as the host reports it on the RealBud clock. */
@@ -253,9 +269,20 @@ function websiteLinkFact(link: WebsiteLinkRead): Fact | null {
  * this rolls up. The status is whatever the host's own check says; this step
  * invents no fact about an account or about what has been collected from it.
  */
-function accountsFact(setup: AgencySetupFacts, link: WebsiteLinkRead): Fact {
+function accountsFact(setup: AgencySetupFacts, link: WebsiteLinkRead, appsToConnect: readonly string[]): Fact {
   const linkFirst = websiteLinkFact(link);
   if (linkFirst) return linkFirst;
+  // The linked service offers these apps; none is connected yet. Name the first
+  // one on the action itself so the next thing to press is unmistakable.
+  if (appsToConnect.length) {
+    const labels = appsToConnect.map(officeAppLabel);
+    return {
+      fact: "todo",
+      status: `${list(labels)} ${labels.length === 1 ? "is" : "are"} not connected yet. In Connections, press Connect ${labels[0]}; sign-in opens in your browser and you finish it there.`,
+      actionLabel: `Connect ${labels[0]}`,
+      target: "you-connected-apps",
+    };
+  }
   const selected = setup.workflows.filter((workflow) => workflow.selected);
   // Before any work is ticked the account is still the agency's own, so the
   // check is read across every workflow that reports one.
@@ -355,7 +382,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
 
   const facts: Record<SetupStepId, Fact> = {
     agency: unreadable ? held() : agencyFact(input.officeAgencyName ?? "", setup),
-    accounts: unreadable ? held() : accountsFact(setup, input.websiteLink),
+    accounts: unreadable ? held() : accountsFact(setup, input.websiteLink, input.appsToConnect ?? []),
     approve: unreadable ? held() : approveFact(setup, input.schedule),
   };
 

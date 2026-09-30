@@ -5,6 +5,7 @@ import {
   SETUP_STEP_COUNT,
   budStatusLine,
   currentSetupStep,
+  officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
   setupSequence,
@@ -15,6 +16,7 @@ import {
   type WebsiteLinkRead,
 } from "@/lib/setup-sequence";
 import type { Office } from "@/lib/office-setup";
+import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { api, useStore } from "@/state/store";
 
 const STATE_LABEL: Record<SetupStep["state"], string> = {
@@ -81,11 +83,15 @@ export function GoLiveCard({
           })),
         }
       : { read: routines === "error" ? "error" : "loading" };
+  // The app-wide office-source watch already keeps this snapshot fresh; an app
+  // the linked service offers with no account yet becomes the named next step.
+  const { snapshot: officeSnapshot } = useOfficeSources();
   const steps = setupSequence({
     officeAgencyName: agencyName,
     agencySetup: supplied ? agencySetup : read,
     schedule,
     websiteLink: linkSupplied ? websiteLink : linkRead,
+    appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
   });
   const current = currentSetupStep(steps);
   const exportRow = propertyExportRow({ mode, workflow });

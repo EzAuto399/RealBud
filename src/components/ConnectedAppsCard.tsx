@@ -193,7 +193,8 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
                   <button
                     key={app.slug}
                     type="button"
-                    className={control}
+                    // With nothing connected yet this is the next step, so it reads as the primary action.
+                    className={connectedSlugs.length ? control : `${control} !border-agency/30 !bg-agency !text-white hover:!bg-agency-hover`}
                     disabled={!budId || budBusy || !state.connected || Boolean(loading) || settingsPending || Boolean(connecting)}
                     onClick={() => askConnect(app.label)}
                   >

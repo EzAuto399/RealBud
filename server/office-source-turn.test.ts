@@ -24,4 +24,18 @@ describe("contextual mail and source exclusion", () => {
     expect(allowedOfficeAppCall({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "OUTLOOK_LIST_MESSAGES" }, { tool_slug: "GMAIL_SEND_EMAIL" }] } }, ["outlook"])).toBe(false);
     expect(allowedOfficeAppCall({ name: "COMPOSIO_MANAGE_CONNECTIONS", arguments: { toolkits: [{ name: "gmail", action: "list" }] } }, [])).toBe(false);
   });
+  it("names offered-but-unconnected apps and the in-Ask connect action", () => {
+    const offered: ConnectedAppsStatus = { ...access(), tools: { available: false, names: [] }, services: {
+      gmail: { connected: false, status: "NOT_CONNECTED", accountSelectionRequired: false, accounts: [] },
+    } };
+    expect(officeAppsForTurn(offered)).toEqual([]);
+    const context = officeSourceTurnContext([], offered);
+    expect(context).toContain("Gmail is offered for this office but not connected yet");
+    expect(context).toContain("**Connect Gmail** here in Ask");
+    expect(context).toContain("Never start sign-in for them");
+    expect(context).not.toMatch(/composio|You\s*→/i);
+    // A failed or unconfigured read says nothing about which apps are missing.
+    expect(officeSourceTurnContext([], { ...offered, error: "unreachable" })).not.toContain("Connect Gmail");
+    expect(officeSourceTurnContext([], null)).toContain("offer Add here in Ask");
+  });
 });

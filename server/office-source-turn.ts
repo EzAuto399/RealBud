@@ -1,12 +1,27 @@
-import { readyOfficeApps, type ConnectedAppsStatus } from "../shared/office-sources.ts";
+import { officeAppLabel, officeSourceState, readyOfficeApps, type ConnectedAppsStatus } from "../shared/office-sources.ts";
 
 /** Source documents and scheduled/internal prompts cannot opt themselves into mail. */
 export function officeAppsForTurn(access: ConnectedAppsStatus | null, internal = false): string[] {
   return internal ? [] : readyOfficeApps(access);
 }
 
-export function officeSourceTurnContext(apps: string[]): string {
-  if (!apps.length) return "No office apps are available for this turn. Do not claim live messages or account access. If needed, offer Add here in Ask. Do not use another route to reach an unavailable source.";
+/**
+ * Apps the office's connection service offers that have no account yet. Only a
+ * fresh, error-free read counts; anything else says nothing about them.
+ */
+export function officeAppsNotConnected(access: ConnectedAppsStatus | null | undefined): string[] {
+  if (!access?.configured || access.error) return [];
+  return Object.keys(access.services).filter(slug => officeSourceState(access, slug) === "connect" && !access.services[slug]?.accounts.length);
+}
+
+export function officeSourceTurnContext(apps: string[], access?: ConnectedAppsStatus | null): string {
+  if (!apps.length) {
+    const missing = officeAppsNotConnected(access).map(officeAppLabel);
+    const base = "No office apps are available for this turn. Do not claim live messages or account access. Do not use another route to reach an unavailable source.";
+    if (!missing.length) return `${base} If needed, offer Add here in Ask.`;
+    const asks = missing.map(label => `**Connect ${label}**`).join(" or ");
+    return `${base} ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} offered for this office but not connected yet. If the request needs ${missing.length === 1 ? "it" : "one of them"}, say so in one sentence and tell the PM to ask ${asks} here in Ask; sign-in opens in their browser and they finish it themselves. Never start sign-in for them, and do not name any other settings page, menu or provider.`;
+  }
   return [
     `Office sources available for this turn: ${apps.join(", ")}. This is the current product state; older conversation claims do not override it.`,
     "When a property job needs recent correspondence (for example chasing a reply, preparing an owner update, or checking who owes the next response), use the available mail source without requiring the PM to say 'check email'. If several mail accounts could fit, ask which one before reading. For a request that can be answered from the supplied material, use that material first.",
