@@ -6,6 +6,47 @@ Mac writes the first file. An operator supplies the latter two with a signed
 bundle. This handoff does not change the gateway tenant, provision an
 installation, grant AI spend, or create a signing key.
 
+## Automatic delivery (from 30 September 2026)
+
+A linked desktop now fetches its own grant. After a link that carries a
+service grant, and after each accepted website report, the app asks the managed
+gateway it was provisioned against (`POST /v1/installations/service-entitlement`,
+authenticated with that computer's own connector credential) whenever its local
+grant is missing, expired or within 30 days of expiry, and installs the reply
+with the same verifier as the manual path (`installReceivedServiceBundle` in
+`server/service-entitlement-install.ts`). A grant already in force that lasts at
+least as long is never replaced. A newly installed grant re-runs automatic
+setup's readiness check. A refusal or outage is a held state with fixed copy and
+a delayed retry (`server/service-entitlement-renewal.ts`).
+
+The gateway signs only when both variables are set on the deployment:
+`REALBUD_SERVICE_ISSUER_KEY_FILE` (absolute path of the private Ed25519 PKCS#8
+PEM, owner-only `0600`) and `REALBUD_SERVICE_ISSUER_KEY_ID`. Unset, provisioning
+works and no grant is issued; `/ready` reports `serviceIssuer: missing` (or
+`invalid` for an unusable pair) without failing readiness. The gateway stores
+the last grant per installation and returns it again until renewal is due, the
+office's licence or service expiry changes, or the signer changes. It refuses a
+suspended or expired office, a revoked installation and a foreign credential.
+The provisioning reply the website forwards is unchanged, so desktops that
+parse it with exact keys keep linking.
+
+The desktop's trust anchor is compiled in: `shared/service-issuer-trust.ts`
+pins the production signer `realbud-20260926-a` by its SPKI SHA-256
+(`403ef087…1595c`). A received grant signed by any other key is refused and no
+unpinned key is ever added to `service-trust-keys.json`; the digest in the reply
+must also match. Rotating the signer is a desktop release first. The gateway
+re-signs only when a new grant would last longer or the terms changed, limits
+asks to 30 an hour per installation, and the desktop waits 12 hours after an
+answer before asking again.
+
+## Manual fallback
+
+`scripts/ops/issue-desktop-entitlement.sh [data dir]` issues and installs one
+desktop's grant by hand (owner-run: `fly ssh` to the gateway, sign with the
+deployed key, copy back only the public bundle, install pinned to the issuer
+receipt's digest). Use it when automatic delivery is unavailable. The sections
+below describe the same steps individually.
+
 ## Issue on the gateway operator shell
 
 The Docker image includes `service-entitlement-issuer.ts` and its shared

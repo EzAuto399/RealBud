@@ -7,6 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import { readPrivateJson, removePrivateJson, writePrivateJson } from './private-json.ts';
 import { readServiceEntitlement } from './service-entitlement.ts';
 import { withServiceEntitlementInstallLock } from './service-entitlement-install-lock.ts';
+import { PINNED_SERVICE_ISSUERS, type PinnedServiceIssuer } from '../shared/service-issuer-trust.ts';
 
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -24,16 +25,39 @@ export async function installDesktopServiceEntitlement(input: {
   if (!isAbsolute(input.dataDirectory) || !isAbsolute(input.bundlePath)) fail();
   if (input.retirePreviousKeys !== undefined && typeof input.retirePreviousKeys !== 'boolean') fail();
   if (!/^[a-f0-9]{64}$/.test(input.expectedPublicKeySha256)) fail();
-  return withServiceEntitlementInstallLock(input.dataDirectory, () => installLocked(input));
+  return withServiceEntitlementInstallLock(input.dataDirectory, async () => {
+    const { kept: _operatorInstallsAlways, ...result } = await installLocked({ ...input, bundle: await readPrivateJson(input.bundlePath, 64_000) });
+    return result;
+  });
+}
+
+/**
+ * The same verified install for a bundle the running app received from the
+ * managed gateway (`server/service-entitlement-renewal.ts`). The trust anchor
+ * is this build's pinned signer list (`shared/service-issuer-trust.ts`), never
+ * the reply: a bundle signed by any other key is refused before anything is
+ * written, so no unpinned key is ever added to the trust file. The digest the
+ * reply states must also match. Signature, lifetime and the local company/host
+ * binding are checked exactly as for the operator handoff. A grant already in
+ * force that lasts at least as long is kept (`kept: true`).
+ *
+ * `pinned` exists for tests only; production callers never pass it.
+ */
+export async function installReceivedServiceBundle(input: {
+  dataDirectory: string; bundle: unknown; expectedPublicKeySha256: string; now?: number;
+}, pinned: readonly PinnedServiceIssuer[] = PINNED_SERVICE_ISSUERS): Promise<{ companyId: string; hostInstallationId: string; expiresAt: number; kept: boolean }> {
+  if (!isAbsolute(input.dataDirectory) || !/^[a-f0-9]{64}$/.test(input.expectedPublicKeySha256)) fail();
+  return withServiceEntitlementInstallLock(input.dataDirectory, () => installLocked({ ...input, keepLonger: true, pinned }));
 }
 
 async function installLocked(input: {
-  dataDirectory: string; bundlePath: string; expectedPublicKeySha256: string; retirePreviousKeys?: boolean; now?: number;
-}): Promise<{ companyId: string; hostInstallationId: string; expiresAt: number }> {
+  dataDirectory: string; bundle: unknown; expectedPublicKeySha256: string; retirePreviousKeys?: boolean; now?: number; keepLonger?: boolean;
+  pinned?: readonly PinnedServiceIssuer[];
+}): Promise<{ companyId: string; hostInstallationId: string; expiresAt: number; kept: boolean }> {
   const binding = await readPrivateJson(join(input.dataDirectory, 'service-installation.json'), 2048);
   if (!object(binding) || !exact(binding, ['schema', 'companyId', 'hostInstallationId']) || binding.schema !== 1 ||
     typeof binding.companyId !== 'string' || typeof binding.hostInstallationId !== 'string') fail();
-  const bundle = await readPrivateJson(input.bundlePath, 64_000);
+  const bundle = input.bundle;
   if (!object(bundle) || !exact(bundle, ['schema', 'entitlement', 'trust']) || bundle.schema !== 1 ||
     !object(bundle.entitlement) || !object(bundle.trust) || !exact(bundle.trust, ['schema', 'keys']) ||
     bundle.trust.schema !== 1 || !Array.isArray(bundle.trust.keys) || bundle.trust.keys.length !== 1) fail();
@@ -47,6 +71,7 @@ async function installLocked(input: {
     actualFingerprint = createHash('sha256').update(key.export({ type: 'spki', format: 'der' })).digest('hex');
   } catch { fail(); }
   if (actualFingerprint !== input.expectedPublicKeySha256) fail();
+  if (input.pinned && !input.pinned.some(pin => pin.keyId === entry.keyId && pin.publicKeySha256 === actualFingerprint)) fail();
 
   const trustPath = join(input.dataDirectory, 'service-trust-keys.json');
   const grantPath = join(input.dataDirectory, 'service-entitlement.json');
@@ -76,6 +101,13 @@ async function installLocked(input: {
       now: input.now ?? Date.now() };
     const checked = readServiceEntitlement(options);
     if (checked.state !== 'active' || !checked.expiresAt) fail();
+    if (input.keepLonger) {
+      // Never downgrade: a verified grant in force that lasts as long stays.
+      const current = readServiceEntitlement({ ...options, path: grantPath, trustedKeysPath: trustPath });
+      if (current.state === 'active' && current.expiresAt !== null && current.expiresAt >= checked.expiresAt) {
+        return { companyId: binding.companyId, hostInstallationId: binding.hostInstallationId, expiresAt: current.expiresAt, kept: true };
+      }
+    }
     // The app may unlink while the administrator validates the transferred
     // bundle. Never publish a grant against a stale local installation.
     const currentBinding = await readPrivateJson(join(input.dataDirectory, 'service-installation.json'), 2048);
@@ -94,7 +126,7 @@ async function installLocked(input: {
       await writePrivateJson(trustPath, bundle.trust);
       if (readServiceEntitlement({ ...options, path: grantPath, trustedKeysPath: trustPath }).state !== 'active') fail();
     }
-    return { companyId: binding.companyId, hostInstallationId: binding.hostInstallationId, expiresAt: checked.expiresAt };
+    return { companyId: binding.companyId, hostInstallationId: binding.hostInstallationId, expiresAt: checked.expiresAt, kept: false };
   } finally {
     await removePrivateJson(scratchGrant).catch(() => {});
     await removePrivateJson(scratchTrust).catch(() => {});

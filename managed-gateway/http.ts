@@ -33,7 +33,8 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * explicit deployment gates. No cookie auth or permissive CORS is installed.
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
- * /v1/portal/installations/{provision,revoke}, the operator-only POST
+ * /v1/portal/installations/{provision,revoke}, the desktop's POST
+ * /v1/installations/service-entitlement (its own connector credential), the operator-only POST
  * /v1/operator/offices/ai-access, PUT|GET /v1/operator/offices/entitlement, POST /v1/operator/offices/ai-markup[/sync],
  * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
  * operator billing desk (GET /v1/operator/billing/invoices, POST
@@ -93,8 +94,8 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       // variable to set — never its value. Unauthenticated on purpose: it reveals
       // configuration state, never configuration.
       if(req.method==='GET' && url.pathname==='/ready') {
-        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator,operatorAccess}); return; }
-        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator,operatorAccess}); return;
+        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator,operatorAccess,serviceIssuer:options.provisioning.serviceIssuerState}); return; }
+        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator,operatorAccess,serviceIssuer:'missing'}); return;
       }
       // Square's signed notification. The event type only chooses the verifier;
       // neither path trusts the body until the adapter has checked the URL-bound
@@ -217,6 +218,15 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         try { paymentId=decodeURIComponent(desk[3]); } catch { throw new GatewayError('payment_not_found',404); }
         requireThat(/^[A-Za-z0-9._:-]{1,200}$/.test(paymentId),'payment_not_found',404);
         reply(res,200,routes!.reversePayment(operator,desk[2],paymentId,value)); return;
+      }
+      // A linked desktop's own signed service grant. Its connector credential is
+      // the authority; the installation and company come from that device.
+      if(req.method==='POST' && url.pathname==='/v1/installations/service-entitlement') {
+        requireThat(options.provisioning,options.provisioningUnavailable||'provisioning_unavailable',503);
+        requireThat(!url.search,'invalid_query');
+        const token=bearer(req);
+        try { reply(res,200,options.provisioning!.serviceEntitlement(token,json(await body(req,256)))); } catch(error) { throw provisioningError(error); }
+        return;
       }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));

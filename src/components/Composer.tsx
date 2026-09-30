@@ -50,6 +50,7 @@ export function Composer({
   onBackToDesk,
   askReady = true,
   askBlockedDetail,
+  askRecheckPending = false,
   askSetupLabel = "Set up Bud",
   onAskSetup,
   readiness,
@@ -68,6 +69,8 @@ export function Composer({
   askReady?: boolean;
   /** The one specific reason Bud is blocked, shown once beside the setup action. */
   askBlockedDetail?: string;
+  /** Automatic setup is re-checking Bud: a blocked send says so and keeps the draft. */
+  askRecheckPending?: boolean;
   /** Product Ask setup button. Defaults to "Set up Bud". */
   askSetupLabel?: string;
   onAskSetup?: () => void;
@@ -181,6 +184,9 @@ export function Composer({
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const askBlocked = productAsk && !askReady && !(attachments.length === 0 && isAskProductControl(text));
   const interactionBlocked = Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
+  // A send tried while Bud is not ready explains itself; the draft stays put.
+  const [blockedNotice, setBlockedNotice] = useState(false);
+  useEffect(() => { if (!askBlocked) setBlockedNotice(false); }, [askBlocked]);
   const lastWorkContext = useRef<string | null>(null);
   useEffect(() => {
     const context = productAsk ? state.askWorkContext : null;
@@ -696,6 +702,13 @@ export function Composer({
         />
         {attachmentCopies > 0 && <p role="status" className="mb-2 text-[13px] text-ink-secondary">Copying selected files to this desktop… Your original files stay unchanged.</p>}
         {productAsk ? <ComposerOfficeSourceChips /> : null}
+        {askBlocked && blockedNotice ? (
+          <p role="status" aria-live="polite" className="mb-2 text-[13px] leading-5 text-hold">
+            {askRecheckPending
+              ? "Bud is re-checking… your message will be ready to send in a moment."
+              : `${askBlockedDetail ?? "Bud isn’t ready yet."} Your message is kept here.`}
+          </p>
+        ) : null}
         {askBlocked && !readiness ? (
           <div
             role="status"
@@ -789,7 +802,11 @@ export function Composer({
           onKeyDown={(e) => {
             // IME owns Enter, arrows, Tab and Escape while choosing characters.
             // Some browsers report the final composition key as keyCode 229.
-            if (askBlocked || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (askBlocked) {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (hasContent) setBlockedNotice(true); }
+              return;
+            }
             if (pickerOpen) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -958,8 +975,8 @@ export function Composer({
         )}
         {(hasContent || productAsk) && (group || !busy) && (
           <button
-            onClick={send}
-            disabled={interactionBlocked || !hasContent}
+            onClick={() => { if (askBlocked) setBlockedNotice(true); else send(); }}
+            disabled={(interactionBlocked && !askBlocked) || !hasContent}
             aria-label={busy ? "Queue work for Bud" : productAsk ? "Start this work" : "Send message"}
             title={busy ? "Queue — starts when Bud finishes" : productAsk ? "Start work" : "Send"}
             className={cn(

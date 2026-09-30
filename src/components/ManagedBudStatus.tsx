@@ -54,7 +54,10 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   // Automatic setup after an approved office link needs no administrator.
   const automatic = connected && !error && !recovering ? budAutoSetupView(status) : null;
   const autoStep = automatic?.working ? status?.autoSetup?.step ?? 0 : 0;
-  const needsAdministrator = known && !ready && !recovering && !status?.modelAccess?.withdrawn && !needsAccountLink && !automatic?.working && !budAutoSetupRetryable(status);
+  // Automatic setup's own hold already says what to do; the administrator text
+  // is only for a computer without an active office link and grant.
+  const needsAdministrator = known && !ready && !recovering && !status?.modelAccess?.withdrawn && !needsAccountLink && !automatic?.working
+    && !budAutoSetupRetryable(status) && status?.autoSetup?.state !== "held" && !status?.modelAccess?.managed;
 
   function openYou(target: string) {
     onServiceAdministration?.();

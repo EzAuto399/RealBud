@@ -86,10 +86,49 @@ export function hermesReadinessFingerprint(version: string, root?: string): stri
   hash.update(`\0${process.platform}\0${process.arch}\0${location}\0`);
   for (const file of ["config.yaml", ".env", "auth.json", "SOUL.md"]) {
     hash.update(`\0${file}\0`);
-    try { hash.update(readFileSync(join(propertyProfileDir(root), file))); }
-    catch { hash.update("missing"); }
+    let bytes: Buffer;
+    try { bytes = readFileSync(join(propertyProfileDir(root), file)); }
+    catch { hash.update("missing"); continue; }
+    hash.update(file === "auth.json" ? authPolicy(bytes) : bytes);
   }
   return hash.digest("hex");
+}
+
+/**
+ * The part of the worker's `auth.json` that is configuration rather than the
+ * worker's own bookkeeping. The worker rewrites this file during ordinary turns
+ * (`updated_at`, pool counters and refreshed tokens), and a passing readiness
+ * check must survive that. The configured `providers`, any source suppressions
+ * and which credentials the pool holds still count, canonically ordered. A file that does not parse as an object is
+ * hashed whole, so damage still reads as a changed setup.
+ */
+function authPolicy(bytes: Buffer): Buffer | string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(bytes.toString("utf8")); } catch { return bytes; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return bytes;
+  const store = parsed as Record<string, unknown>;
+  return `policy:${canonicalJson({ providers: store.providers ?? null, suppressed_sources: store.suppressed_sources ?? null, pool: poolShape(store.credential_pool) })}`;
+}
+/** Which credentials the worker's pool holds, by provider and by each entry's
+ * source and label: an adopted ambient login changes this and so stales the
+ * proof. Counters, timestamps, ids and every token stay out. */
+function poolShape(pool: unknown): unknown {
+  if (!pool || typeof pool !== "object" || Array.isArray(pool)) return pool === undefined ? null : "unreadable";
+  const shape: Record<string, string[]> = {};
+  for (const [provider, entries] of Object.entries(pool as Record<string, unknown>)) {
+    shape[provider] = (Array.isArray(entries) ? entries : []).map(entry => {
+      const row = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+      return JSON.stringify([typeof row.source === "string" ? row.source : "", typeof row.label === "string" ? row.label : ""]);
+    }).sort();
+  }
+  return shape;
+}
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export function applyHandsReadiness(status: HermesStatus, lastPing: HandsLast | null): HermesStatus {

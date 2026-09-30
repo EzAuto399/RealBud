@@ -556,7 +556,7 @@ test('10. the model key never reaches a log line, an audit line, a stored record
     const delivered = (await created.json() as { provisioning: ProvisioningDescriptor }).provisioning;
     const repeat = await (await post('/v1/portal/installations/provision', h.request('install-one'))).text();
     const ready = await (await fetch(`${base}/ready`)).text();
-    assert.deepEqual(JSON.parse(ready), { ready: true, provisioning: 'composed', modelviaOperator: 'configured', operatorAccess: 'missing' });
+    assert.deepEqual(JSON.parse(ready), { ready: true, provisioning: 'composed', modelviaOperator: 'configured', operatorAccess: 'missing', serviceIssuer: 'missing' });
     assert.equal((await post('/v1/portal/installations/revoke', { companyId: h.f.tenant.companyId, installationId: 'install-one' })).status, 200);
     const modelKeys = h.v.mv.keys.map(key => key.key);
     assert.ok(modelKeys.includes(delivered.model.key!)); assert.equal(modelKeys.length, 2);

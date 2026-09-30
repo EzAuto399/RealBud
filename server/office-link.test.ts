@@ -111,6 +111,41 @@ describe("zero-touch provisioning through the website link", () => {
     expect(readFileSync(join(root, "office-link/link.json"), "utf8")).not.toContain(provisioning.model.key);
   });
 
+  it("asks for the signed service grant after a granted link and after each accepted report, outside the link lock", async () => {
+    const p = sink();
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    const calls: Array<{ force?: boolean }> = [];
+    let app: ReturnType<typeof createOfficeLink>;
+    const serviceGrant = vi.fn(async (options: { force?: boolean }) => {
+      calls.push(options);
+      // The hook runs after the link lock is released: a report may start.
+      if (calls.length === 1) await app.report();
+    });
+    app = createOfficeLink({ directory: root, appVersion: "0.1.19", provisioning: { ...p, serviceGrant },
+      report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }),
+      fetch: vi.fn(async (url: any, init: any) => String(url).endsWith("/redeem") ? linked(JSON.parse(init.body), { provisioning }) : Response.json({ ok: true })) as any });
+    await app.link({ code, label: "Reception Mac" });
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(2));
+    expect(calls[0]).toEqual({ force: true });
+    expect(calls[1]).toEqual({ force: false });
+    // A failing hook never turns into a link or report failure.
+    serviceGrant.mockImplementation(async () => { throw new Error("fictional outage"); });
+    await expect(app.report()).resolves.toBeUndefined();
+    expect((await app.status()).state).toBe("linked");
+  });
+
+  it("does not ask for a service grant for a link that carries none", async () => {
+    const serviceGrant = vi.fn(async () => {});
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    const p = sink();
+    const app = createOfficeLink({ directory: root, appVersion: "0.1.19", provisioning: { ...p, serviceGrant },
+      report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }),
+      fetch: vi.fn(async (_u: any, init: any) => linked(JSON.parse(init.body), { provisioning: { skipped: "no_platform_customer" } })) as any });
+    await app.link({ code, label: "Reception Mac" });
+    await app.report();
+    expect(serviceGrant).not.toHaveBeenCalled();
+  });
+
   it("announces a new link only after it is saved, and never when the save fails", async () => {
     const p = sink();
     const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);

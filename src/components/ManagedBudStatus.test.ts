@@ -33,6 +33,29 @@ describe("managed Bud status", () => {
     expect(html).not.toContain("Service administration");
     expect(html).not.toContain("Last readiness check");
   });
+  it("never shows the administrator dead end on a linked office, whether a check is running or not", () => {
+    const managed = { managed: true, withdrawn: false, attached: true, detail: "managed" };
+    const running = render({ ...ready, ready: false, cli: { ...ready.cli, compatible: false }, modelAccess: managed,
+      autoSetup: { state: "verifying", code: "checking", step: 0, total: 4, detail: "Checking Bud on this computer" } });
+    expect(running).toContain("Setting up Bud");
+    expect(running).not.toContain("Try setup again");
+    for (const autoSetup of [
+      { state: "idle" as const, step: 0, total: 4, detail: "" },
+      { state: "ready" as const, code: "ready" as const, step: 4, total: 4, detail: "Bud is ready." },
+    ]) {
+      const html = render({ ...ready, ready: false, cli: { ...ready.cli, compatible: false }, modelAccess: managed, autoSetup });
+      expect(html).toContain("Bud needs a check");
+      expect(html).toContain("Try setup again");
+      expect(html).not.toContain("nothing is needed from you");
+      expect(html).not.toContain("Bud update blocked");
+      expect(html).not.toContain("service administrator");
+      expect(html).not.toContain("Service administration");
+    }
+  });
+  it("keeps the administrator text for a computer with no office link", () => {
+    const html = render({ ...ready, ready: false, autoSetup: { state: "idle", step: 0, total: 4, detail: "" } });
+    expect(html).toContain("Your service administrator needs to complete the remaining check");
+  });
   it("offers Try again after automatic setup gave up, with fixed copy", () => {
     const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
       autoSetup: { state: "held", code: "held_exhausted", step: 1, total: 4, detail: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later." } });

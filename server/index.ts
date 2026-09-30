@@ -186,7 +186,8 @@ import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
 import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
-import { managedService } from "./managed-service.ts";
+import { managedService, serviceInstallationBinding } from "./managed-service.ts";
+import { createServiceGrantRenewal } from "./service-entitlement-renewal.ts";
 import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
@@ -2822,7 +2823,18 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
 // Vendor provisioning arrives with the pairing redeem: the connector credential
 // goes to config, the model key to the private vault, and the worker sees it
 // only through the launch-time snapshot below. Nothing here awaits a network.
-const workerModelAccess = createWorkerModelAccess({ directory: DATA_DIR, key: Buffer.from(desk.recoveryKeyHex(), 'hex') });
+const workerModelAccess = createWorkerModelAccess({ directory: DATA_DIR, key: Buffer.from(desk.recoveryKeyHex(), 'hex'),
+  // Apply and withdraw switch connected apps onto (or off) the managed
+  // connector. The running service and every open window must see that at
+  // once: without this the Apps tab asked a linked office for an administrator
+  // until the next restart.
+  saveConfig: patch => {
+    saveConfig(patch);
+    Object.assign(cfg, loadConfig());
+    invalidateConnectedAppAuthority();
+    broadcast({ kind: "config", ...configStatus() });
+    void officeSourcesChanged();
+  } });
 let workerModelAccessRevision = 0;
 const refreshWorkerModelAccess = async () => {
   const revision = ++workerModelAccessRevision;
@@ -2864,6 +2876,7 @@ const officeLink = createOfficeLink({
     },
     withdrawn: () => workerModelAccess.withdrawn(),
     active: async () => (await workerModelAccess.state()).provisioned,
+    serviceGrant: options => serviceGrantRenewal.ensure(options),
     reconcile: async () => {
       try { return await workerModelAccess.reconcile(); } finally { await refreshWorkerModelAccess(); }
     },
@@ -2911,6 +2924,21 @@ async function startOfficeBook(): Promise<void> {
     }
   } catch { oplog("boot", "linked office: the office book could not start yet; the sample was kept"); }
 }
+// This computer's signed service grant, from the managed gateway it was
+// provisioned against (`server/service-entitlement-renewal.ts`). Same authority
+// as automatic setup; a newly installed grant re-runs setup's readiness check.
+const serviceGrantRenewal = createServiceGrantRenewal({
+  directory: DATA_DIR,
+  active: officeServiceActive,
+  connector: () => {
+    const managed = loadConfig().composio?.managed;
+    return managed?.endpoint && managed.credential ? { endpoint: managed.endpoint, credential: managed.credential } : null;
+  },
+  binding: () => serviceInstallationBinding(DATA_DIR),
+  entitlement: () => managedService.status(),
+  onInstalled: () => { if (!process.env.VITEST) void workerAutoSetup.ensure("provisioned"); },
+  log: message => oplog("boot", message),
+});
 const workerAutoSetup = createWorkerAutoSetup({
   directory: DATA_DIR,
   active: officeServiceActive,
@@ -4385,10 +4413,14 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (path === "/api/hermes" && method === "GET") {
       const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
       const current = modelStatus();
+      // A stale readiness proof on a linked office is re-checked by the
+      // service itself, and this answer already says so.
+      workerAutoSetup.noteStatus(status);
       return json(res, 200, {
         ...status,
         restartRequired: recommendedUpdateAwaitingRestart(),
         autoSetup: workerAutoSetup.status(),
+        serviceGrant: serviceGrantRenewal.status(),
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         model: {

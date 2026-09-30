@@ -277,7 +277,7 @@ export interface HermesStatus {
 export interface BudAutoSetup {
   state: "idle" | "installing" | "verifying" | "ready" | "waiting_retry" | "held";
   /** Fixed server code; `detail` is the product copy for it. */
-  code?: "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
+  code?: "checking" | "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
     | "held_exhausted" | "held_failed" | "held_recovery" | "held_restart" | "held_unavailable";
   step: number;
   total: number;

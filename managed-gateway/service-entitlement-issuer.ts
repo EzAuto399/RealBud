@@ -71,6 +71,23 @@ export function issueDesktopServiceEntitlement(input: {
     trust: { schema: 1, keys: [{ keyId, publicKeyPem }] } }, publicKeySha256 };
 }
 
+/** The gateway's own signer for automatic desktop delivery (provisioning.ts).
+ * Loaded once at composition from `REALBUD_SERVICE_ISSUER_KEY_FILE` and
+ * `REALBUD_SERVICE_ISSUER_KEY_ID`. Both unset is `missing`: provisioning still
+ * works and no desktop grant is issued. A set but unusable pair is `invalid`,
+ * never a startup failure. Only the state leaves this function, never a path
+ * or key material. */
+export interface ServiceIssuer { keyId: string; privateKey: KeyObject }
+export type ServiceIssuerState = 'configured' | 'missing' | 'invalid';
+export function serviceIssuerFromEnv(env: NodeJS.ProcessEnv): { state: ServiceIssuerState; issuer?: ServiceIssuer } {
+  const file = (env.REALBUD_SERVICE_ISSUER_KEY_FILE ?? '').trim(), keyId = (env.REALBUD_SERVICE_ISSUER_KEY_ID ?? '').trim();
+  if (!file && !keyId) return { state: 'missing' };
+  try {
+    requireThat(file && KEY_ID.test(keyId), 'service_issuer_unconfigured', 503);
+    return { state: 'configured', issuer: { keyId, privateKey: readOperatorSigningKey(file) } };
+  } catch { return { state: 'invalid' }; }
+}
+
 /** Refuse links, loose permissions and non-owner files before loading a key. */
 export function readOperatorSigningKey(path: string): KeyObject {
   requireThat(isAbsolute(path), 'service_signing_key_path_invalid');

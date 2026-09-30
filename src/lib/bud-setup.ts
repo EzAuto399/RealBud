@@ -87,13 +87,18 @@ export function budSetupJourney(input: BudSetupInput): BudSetupJourney {
 }
 
 const AUTO_SETUP_STATES: BudAutoSetup["state"][] = ["idle", "installing", "verifying", "ready", "waiting_retry", "held"];
-const AUTO_SETUP_CODES: NonNullable<BudAutoSetup["code"]>[] = ["installing", "safeguards", "model", "readiness", "ready", "retry",
+const AUTO_SETUP_CODES: NonNullable<BudAutoSetup["code"]>[] = ["checking", "installing", "safeguards", "model", "readiness", "ready", "retry",
   "held_exhausted", "held_failed", "held_recovery", "held_restart", "held_unavailable"];
 
 /** A hold that pressing Try again can clear (the server re-checks the link). */
 export function budAutoSetupRetryable(status: HermesStatus | null): boolean {
   const code = status?.autoSetup?.state === "held" ? status.autoSetup.code : undefined;
-  return !status?.ready && (code === "held_exhausted" || code === "held_failed");
+  return !status?.ready && (code === "held_exhausted" || code === "held_failed" || (!!status && managedIdle(status)));
+}
+/** Managed and not ready, with automatic setup neither running nor holding. */
+function managedIdle(status: HermesStatus): boolean {
+  const state = status.autoSetup?.state;
+  return !status.ready && !status.modelAccess?.withdrawn && Boolean(status.modelAccess?.managed) && (state === "idle" || state === "ready");
 }
 
 /**
@@ -117,6 +122,12 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
     };
   }
   if (auto.state === "held") return { label: "Bud setup stopped", detail: budFacingCopy(auto.detail, "Bud’s setup could not finish. Contact service support."), working: false };
+  // A linked office whose grant is in force, with no setup run in progress:
+  // never an administrator dead end. The person can ask the service to run
+  // its own check again (the server re-checks the link).
+  if (managedIdle(status)) {
+    return { label: "Bud needs a check", detail: "Bud’s last check no longer matches this computer’s setup. Try setup again; if it keeps stopping, contact RealBud support.", working: false };
+  }
   return null;
 }
 

@@ -80,7 +80,21 @@ describe("Hermes child stream watchdog", () => {
       HERMES_ACP_SKIP_CONFIGURED_MCP: "1",
       HERMES_SAFE_MODE: "1",
       HERMES_EXEC_ASK: "1",
+      COPILOT_GH_HOST: "realbud.invalid",
       HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60",
     });
+  });
+});
+
+describe("Hermes child GitHub isolation", () => {
+  it("drops GitHub/Copilot logins and points upstream's gh lookup at a host with no login", () => {
+    const env: Record<string, string | undefined> = {
+      GH_TOKEN: "fictional-gh", GITHUB_TOKEN: "fictional-github", COPILOT_GITHUB_TOKEN: "fictional-copilot",
+      GH_ENTERPRISE_TOKEN: "fictional-enterprise", GH_HOST: "github.example.invalid", COPILOT_GH_HOST: "github.com", PATH: "/usr/bin",
+    };
+    hardenHermesChildEnv(env);
+    for (const key of ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_HOST"]) expect(env[key]).toBeUndefined();
+    expect(env.COPILOT_GH_HOST).toBe("realbud.invalid");
+    expect(env.PATH).toBe("/usr/bin");
   });
 });
