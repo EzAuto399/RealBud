@@ -24,6 +24,8 @@ export const SERVICE_GRANT_RENEW_BEFORE_MS = 30 * 24 * 60 * 60_000;
 /** After a failure the next ask waits this long (a refusal waits the longer one). */
 export const SERVICE_GRANT_RETRY_MS = 5 * 60_000;
 export const SERVICE_GRANT_REFUSED_RETRY_MS = 60 * 60_000;
+/** A grant that starts later on this computer's clock: retry soon. */
+export const SERVICE_GRANT_EARLY_RETRY_MS = 60_000;
 /** After a successful answer that is not yet 30 days clear (the office's own
  * service ends sooner, or the grant was already current), ask again only this
  * much later: the gateway would return the same grant. */
@@ -122,7 +124,11 @@ export function createServiceGrantRenewal(deps: ServiceGrantRenewalDeps) {
         const input = { dataDirectory: deps.directory, bundle: delivery.bundle, expectedPublicKeySha256: delivery.publicKeySha256, now: now() };
         installed = await (deps.pinnedIssuers ? installReceivedServiceBundle(input, deps.pinnedIssuers) : installReceivedServiceBundle(input));
       }
-      catch { throw new Held("held_invalid", SERVICE_GRANT_REFUSED_RETRY_MS); }
+      catch (error) {
+        // A valid grant this computer's clock says starts later: try again soon.
+        if ((error as { code?: unknown } | null)?.code === "not-yet-valid") throw new Held("held_unavailable", SERVICE_GRANT_EARLY_RETRY_MS);
+        throw new Held("held_invalid", SERVICE_GRANT_REFUSED_RETRY_MS);
+      }
       // Settled: whatever the gateway had is installed or already here.
       nextAttemptAt = now() + SERVICE_GRANT_SETTLED_RETRY_MS;
       current = { state: "ready", code: installed.kept ? "current" : "installed", detail: SERVICE_GRANT_COPY[installed.kept ? "current" : "installed"] };
@@ -146,6 +152,11 @@ export function createServiceGrantRenewal(deps: ServiceGrantRenewalDeps) {
       running = run(options.force === true).finally(() => { running = null; });
       return running;
     },
-    status(): ServiceGrantStatus { return { ...current }; },
+    /** A hold is stale once a grant in force is on disk (installed by an
+     * earlier try or the support script): report it as current. */
+    status(): ServiceGrantStatus {
+      if (current.state === "held" && covered()) current = { state: "ready", code: "current", detail: SERVICE_GRANT_COPY.current };
+      return { ...current };
+    },
   };
 }

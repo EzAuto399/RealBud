@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalServiceEntitlementPayload, readServiceEntitlement } from "./service-entitlement.ts";
 import { installReceivedServiceBundle } from "./service-entitlement-install.ts";
-import { createServiceGrantRenewal, SERVICE_GRANT_COPY, SERVICE_GRANT_RETRY_MS, SERVICE_GRANT_SETTLED_RETRY_MS } from "./service-entitlement-renewal.ts";
+import { createServiceGrantRenewal, SERVICE_GRANT_COPY, SERVICE_GRANT_EARLY_RETRY_MS, SERVICE_GRANT_RETRY_MS, SERVICE_GRANT_SETTLED_RETRY_MS } from "./service-entitlement-renewal.ts";
 import { PINNED_SERVICE_ISSUERS } from "../shared/service-issuer-trust.ts";
 import { parseServiceGrantDelivery, SERVICE_GRANT_REQUEST } from "../shared/office-link.ts";
 
@@ -160,6 +160,32 @@ describe("automatic grant renewal", () => {
     reply = () => Response.json(delivery(s, { issuedAt: NOW + SERVICE_GRANT_RETRY_MS + 1 }));
     await expect(h.renewal.ensure()).resolves.toBe(true);
     expect(h.onInstalled).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs a grant the gateway signed moments ahead of this computer's clock", async () => {
+    const s = signer();
+    // QA 2026-09-30: signed at …22.977, checked at …22.965 on the Mac.
+    const h = harness(() => Response.json(delivery(s, { issuedAt: NOW + 12 })), { pinned: [s] });
+    await expect(h.renewal.ensure({ force: true })).resolves.toBe(true);
+    expect(h.renewal.status()).toMatchObject({ state: "ready", code: "installed" });
+    expect(h.onInstalled).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries within a minute, not an hour, when this computer's clock is well behind", async () => {
+    const s = signer();
+    let issuedAt = NOW + 10 * 60_000;
+    const h = harness(() => Response.json(delivery(s, { issuedAt })), { pinned: [s] });
+    await expect(h.renewal.ensure({ force: true })).resolves.toBe(false);
+    expect(h.renewal.status()).toMatchObject({ state: "held", code: "held_unavailable", nextAttemptAt: NOW + SERVICE_GRANT_EARLY_RETRY_MS });
+    expect(localGrant(h.dir).state).toBe("unconfigured");
+    h.advance(SERVICE_GRANT_EARLY_RETRY_MS + 1);
+    // Installed another way meanwhile: the hold is not left on screen.
+    const other = delivery(s, { issuedAt: NOW });
+    await installReceivedServiceBundle({ dataDirectory: h.dir, bundle: other.bundle, expectedPublicKeySha256: other.publicKeySha256, now: NOW + SERVICE_GRANT_EARLY_RETRY_MS + 1 }, pins(s));
+    expect(h.renewal.status()).toMatchObject({ state: "ready", code: "current" });
+    rmSync(join(h.dir, "service-entitlement.json"));
+    issuedAt = NOW;
+    await expect(h.renewal.ensure()).resolves.toBe(true);
   });
 
   it("backs off for hours when the gateway has nothing newer, instead of asking every report", async () => {

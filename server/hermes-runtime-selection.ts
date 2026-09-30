@@ -38,9 +38,16 @@ export function selectedHermesCli(root = hermesHome(), platform = process.platfo
   if (cached) return cached;
   const selection = readRuntimeSelection(root);
   const owned = runtimeCli(root, platform);
-  const cli = selection.selected ? runtimeCli(releaseHome(root, selection.selected), platform) : existsSync(owned) ? owned : "hermes";
+  // The product only runs its own private worker. A personal Hermes on PATH is
+  // someone else's install: in production an absent private worker reads as
+  // missing so automatic setup installs one, never as an unsupported release.
+  const fallback = productionRuntime() ? owned : "hermes";
+  const cli = selection.selected ? runtimeCli(releaseHome(root, selection.selected), platform) : existsSync(owned) ? owned : fallback;
   processSelections.set(key, cli);
   return cli;
+}
+function productionRuntime(): boolean {
+  return process.env.REALBUD_PRODUCTION === "1" || process.env.REALBUD_MANAGED_SERVICE === "1";
 }
 export function resetRuntimeSelectionForTests(): void { processSelections.clear(); }
 /** Only used after a verified first install, when no working worker existed. */
