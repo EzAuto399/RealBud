@@ -78,7 +78,8 @@
     "package:linux:dir": "pnpm package:prepare && pnpm build:postgres && electron-builder --linux dir --x64 --publish never",
     "package": "pnpm package:mac",
     "qa:hermes-contract": "node --experimental-strip-types scripts/qa-hermes-contract.mjs",
-    "build:browser": "node scripts/prepare-browser.mjs"
+    "build:browser": "node scripts/prepare-browser.mjs",
+    "package:mac:qa": "pnpm package:prepare && pnpm build:speech && pnpm build:cua && pnpm build:postgres && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never && codesign --force --deep --sign - release/mac-arm64/RealBud.app && codesign --verify --deep --strict release/mac-arm64/RealBud.app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64 --prepackaged release/mac-arm64/RealBud.app --publish never"
   },
   "dependencies": {
     "@trycua/cua-driver": "0.19.3",
