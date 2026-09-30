@@ -304,6 +304,94 @@ describe("connected app authoritative broker", () => {
     expect(received).toHaveLength(0);
   });
 
+  describe("managed gateway session refresh", () => {
+    let gateway: Server;
+    let live: Set<string>;
+    let calls: { method: string; session?: string; status: number }[];
+    let refusals: string[];
+    let alwaysExpire: boolean;
+    let sessions: number;
+    const startManaged = async (managed: boolean) => {
+      broker.close();
+      const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
+      broker = await startConnectedAppsBroker({ threadId: "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
+        isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+    };
+    beforeEach(async () => {
+      live = new Set(); calls = []; refusals = []; alwaysExpire = false; sessions = 0;
+      // Mirrors managed-gateway/connectors.ts: an unknown or re-fingerprinted
+      // session is refused with `{ error }` before anything is dispatched.
+      gateway = createServer(async (req, res) => {
+        let body = ""; for await (const chunk of req) body += chunk;
+        const msg = JSON.parse(body); const session = req.headers["mcp-session-id"] as string | undefined;
+        const refuse = (error: string) => { calls.push({ method: msg.method, session, status: 409 }); res.writeHead(409, { "content-type": "application/json" }).end(JSON.stringify({ error })); };
+        if (msg.method === "initialize") {
+          if (session) { res.writeHead(429).end(); return; }
+          const fresh = `fixture-session-${++sessions}`; live.add(fresh); calls.push({ method: msg.method, status: 200 });
+          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": fresh }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} } } }));
+          return;
+        }
+        if (msg.method === "notifications/initialized") {
+          if (!session || !live.has(session)) { refuse("connector_session_expired"); return; }
+          calls.push({ method: msg.method, session, status: 202 }); res.writeHead(202).end(); return;
+        }
+        if (refusals.length) { refuse(refusals.shift()!); return; }
+        if (alwaysExpire || !session || !live.has(session)) { refuse("connector_session_expired"); return; }
+        calls.push({ method: msg.method, session, status: 200 });
+        if (msg.method === "tools/call") dispatchStatuses.push(operations.list()[0].status);
+        const result = msg.method === "tools/list" ? { tools: [{ name: "GMAIL_GET_PROFILE" }] } : { content: [{ type: "text", text: "Fixture profile" }] };
+        res.writeHead(200, { "content-type": "application/json", "mcp-session-id": session }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+      });
+      await new Promise<void>(resolve => gateway.listen(0, "127.0.0.1", resolve));
+      await startManaged(true);
+      approve.mockResolvedValue(true);
+      await invoke("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture-worker", version: "1" } });
+      live.clear(); // Gmail reconnected: the gateway's binding fingerprint moved.
+      calls = [];
+    });
+    afterEach(async () => { gateway.closeAllConnections(); await new Promise<void>(resolve => gateway.close(() => resolve())); });
+    const toolCalls = () => calls.filter(row => row.method === "tools/call");
+
+    it("re-initializes an expired session and retries the reviewed call once under one receipt", async () => {
+      const result = await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {} });
+      expect(result.body.result.isError).not.toBe(true);
+      expect(calls.map(row => `${row.method}:${row.status}`)).toEqual(["tools/call:409", "initialize:200", "notifications/initialized:202", "tools/call:200"]);
+      expect(toolCalls()[1].session).toBe("fixture-session-2");
+      expect(dispatchStatuses).toEqual(["started"]);
+      expect(approve).toHaveBeenCalledOnce();
+      expect(operations.list()).toEqual([expect.objectContaining({ threadId: "fixture-managed", toolName: "GMAIL_GET_PROFILE", status: "succeeded" })]);
+      // The fresh session carries later calls without another handshake.
+      expect((await invoke("tools/list")).body.result.tools).toHaveLength(1);
+      expect(calls.filter(row => row.method === "initialize")).toHaveLength(1);
+    });
+    it("reports a plain error without a third attempt when the fresh session is also refused", async () => {
+      alwaysExpire = true;
+      const result = await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {} });
+      expect(result.body.result.isError).toBe(true);
+      const text = result.body.result.content[0].text;
+      expect(text).not.toMatch(/409|HTTP|conflict/i);
+      expect(text).toContain("won't repeat this operation");
+      expect(toolCalls()).toHaveLength(2);
+      expect(calls.filter(row => row.method === "initialize")).toHaveLength(1);
+      expect(dispatchStatuses).toEqual([]);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_GET_PROFILE", status: "unknown" })]);
+    });
+    it.each(["connector_binding_changed", "connector_busy", "office_mailbox_review_required"])("does not retry a %s refusal", async code => {
+      refusals = [code];
+      const result = await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {} });
+      expect(result.body.result.isError).toBe(true);
+      expect(toolCalls()).toHaveLength(1);
+      expect(calls.some(row => row.method === "initialize")).toBe(false);
+      expect(operations.list()).toEqual([expect.objectContaining({ status: "unknown" })]);
+    });
+    it("does not retry an expired session on a direct (unmanaged) connection", async () => {
+      await startManaged(false); calls = [];
+      const result = await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {} });
+      expect(result.body.result.isError).toBe(true);
+      expect(calls.map(row => row.method)).toEqual(["tools/call"]);
+    });
+  });
+
   describe("project Gmail read-only transport", () => {
     const projectKey = "project_fixture_server_only";
     let request: ReturnType<typeof vi.fn<ConnectedAppsLocalTransport["request"]>>;

@@ -119,6 +119,10 @@ export async function startConnectedAppsBroker(options: {
     : { "x-api-key": options.key };
   let closed = false;
   let session: string | null = null;
+  // The worker's own handshake, replayed if the gateway expires the session.
+  let initializeParams: unknown = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Bud connected apps", version: "1.0.0" } };
+  let refreshing: Promise<boolean> | null = null;
+  let refreshCount = 0;
   let cachedBytes = 0;
   const operations = options.operations ?? connectedAppOperations;
   const controllers = new Set<AbortController>();
@@ -126,6 +130,32 @@ export async function startConnectedAppsBroker(options: {
   // and uncertain outcomes. A changed body cannot reuse an old approval.
   const requests = new Map<string, { body: string; response: Promise<unknown> }>();
   const errorResult = (text: string) => ({ content: [{ type: "text", text }], isError: true });
+  /** Open a fresh upstream session: initialize, then notifications/initialized.
+   * Concurrent refusals share one refresh; a session already replaced since the
+   * refused request is reused rather than opening another. */
+  const refreshSession = (stale: string | null, protocolVersion: string | undefined, signal: AbortSignal): Promise<boolean> => {
+    if (session !== stale) return Promise.resolve(Boolean(session));
+    refreshing ??= (async () => {
+      try {
+        session = null;
+        const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json, text/event-stream", ...upstreamAuth };
+        if (protocolVersion) headers["mcp-protocol-version"] = protocolVersion;
+        const rpcId = `bud-session-refresh-${++refreshCount}`;
+        const initialized = await fetch(upstream!, { method: "POST", headers, redirect: "error", signal,
+          body: JSON.stringify({ jsonrpc: "2.0", id: rpcId, method: "initialize", params: initializeParams }) });
+        const fresh = initialized.headers.get("mcp-session-id");
+        if (!initialized.ok || !fresh) { await initialized.body?.cancel().catch(() => {}); return false; }
+        await readMcpRpcResponse(initialized, rpcId, signal);
+        const notified = await fetch(upstream!, { method: "POST", headers: { ...headers, "mcp-session-id": fresh }, redirect: "error", signal,
+          body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
+        await notified.body?.cancel().catch(() => {});
+        if (!notified.ok) return false;
+        session = fresh;
+        return true;
+      } catch { return false; } finally { refreshing = null; }
+    })();
+    return refreshing;
+  };
   const server = createServer((req, res) => {
     void (async () => {
       if (closed || req.headers.origin || req.headers.authorization !== `Bearer ${token}`) { res.writeHead(403).end(); return; }
@@ -219,18 +249,32 @@ export async function startConnectedAppsBroker(options: {
             const params = msg.method === "tools/call" ? { name: msg.params.name, arguments: msg.params.arguments } : msg.params;
             result = await options.localTransport.request(msg.method, params, upstreamSignal);
           } else {
-            headers = {
-              "content-type": "application/json", accept: "application/json, text/event-stream",
-              ...upstreamAuth,
-              ...(session ? { "mcp-session-id": session } : {}),
+            const protocolVersion = typeof req.headers["mcp-protocol-version"] === "string" ? req.headers["mcp-protocol-version"] : undefined;
+            const post = async () => {
+              headers = {
+                "content-type": "application/json", accept: "application/json, text/event-stream",
+                ...upstreamAuth,
+                ...(session ? { "mcp-session-id": session } : {}),
+              };
+              if (protocolVersion) headers["mcp-protocol-version"] = protocolVersion;
+              return fetch(upstream!, { method: "POST", headers, body, redirect: "error", signal: upstreamSignal });
             };
-            if (typeof req.headers["mcp-protocol-version"] === "string") headers["mcp-protocol-version"] = req.headers["mcp-protocol-version"];
-            const upstreamResponse = await fetch(upstream!, { method: "POST", headers, body,
-              redirect: "error", signal: upstreamSignal });
+            if (msg.method === "initialize") initializeParams = msg.params;
+            const sessionUsed = session;
+            let upstreamResponse = await post();
+            // The managed gateway expires a session when the device's binding
+            // changes (e.g. after reconnecting Gmail). It raises this code at
+            // session lookup, before any adapter or tool is dispatched, so the
+            // same reviewed call is re-sent once on a fresh session under the
+            // same receipt. `connector_binding_changed` can be raised after an
+            // upstream call started and is never retried.
+            if (options.managed && upstreamResponse.status === 409 && msg.method !== "initialize" &&
+              await gatewayErrorCode(upstreamResponse) === "connector_session_expired" &&
+              await refreshSession(sessionUsed, protocolVersion, upstreamSignal)) upstreamResponse = await post();
             if (!upstreamResponse.ok) {
               await upstreamResponse.body?.cancel().catch(() => {});
               finish("unknown");
-              return errorResult(`Bud's connected app returned HTTP ${upstreamResponse.status}. Check its status before retrying; this operation was not automatically repeated.`);
+              return errorResult("Bud couldn't reach the connected app just now. Check the app before asking again; Bud won't repeat this operation on its own.");
             }
             if (upstreamResponse.headers.has("mcp-session-id")) session = upstreamResponse.headers.get("mcp-session-id");
             result = await readMcpRpcResponse(upstreamResponse, id, upstreamSignal);
@@ -295,6 +339,26 @@ export async function startConnectedAppsBroker(options: {
   };
   liveBrokers.add(broker);
   return broker;
+}
+
+/** Reads at most 2 KB of a refused gateway reply for its `{ error }` code.
+ * The body is always released; anything unexpected yields no code. */
+async function gatewayErrorCode(response: Response): Promise<string | undefined> {
+  if (!response.body) return undefined;
+  const reader = response.body.getReader();
+  let text = "";
+  try {
+    const decoder = new TextDecoder();
+    while (text.length < 2048) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    if (text.length >= 2048) return undefined;
+    const code = (JSON.parse(text) as { error?: unknown })?.error;
+    return typeof code === "string" && /^[a-z_]{1,64}$/.test(code) ? code : undefined;
+  } catch { return undefined; }
+  finally { await reader.cancel().catch(() => {}); }
 }
 
 /** Inspect protocol/provider status envelopes, never retain their payloads.
