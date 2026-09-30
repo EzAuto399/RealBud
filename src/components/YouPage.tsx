@@ -57,6 +57,9 @@ import { CompanySetupCard } from "./CompanySetupCard";
 import { Card } from "./SettingsPrimitives";
 import { ProfileFields } from "./SettingsModal";
 import { GoLiveCard } from "./desk/GoLiveCard";
+import { useOfficeSources } from "@/lib/connected-apps-refresh";
+import { officeAppsToConnect } from "@/lib/setup-sequence";
+import { officeAppLabel } from "@shared/office-sources";
 import { coerceOffice } from "../../shared/office";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
@@ -151,6 +154,7 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
 export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const { state, dispatch, refreshHermes } = useStore();
   const scrollRef = useWorkspaceScroll("you", !section);
+  const { snapshot: officeSnapshot } = useOfficeSources();
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
   const [deskError, setDeskError] = useState("");
   const [agencyError, setAgencyError] = useState("");
@@ -347,11 +351,17 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
     />
   ) : null;
 
+  // After an office link, an app the service offers with no account yet is
+  // the next thing to do, so Connections opens instead of hiding as optional.
+  // Opening it starts nothing: sign-in begins only when the person presses Connect.
+  const appsToConnect = officeAppsToConnect(officeSnapshot, state.config?.composio?.managed === true).map(officeAppLabel);
   const appsSection = (
-    <details id="you-connected-apps" className="settings-section">
+    <details id="you-connected-apps" className="settings-section" open={appsToConnect.length ? true : undefined}>
       <summary>
         <span>Connected apps</span>
-        <span className="settings-section-hint">Optional · bring email and files into a task</span>
+        <span className="settings-section-hint">
+          {appsToConnect.length ? `${appsToConnect.join(", ")} not connected yet · connect ${appsToConnect.length === 1 ? "it" : "them"} here` : "Optional · bring email and files into a task"}
+        </span>
       </summary>
       <div className="settings-section-body">
         <ConnectedAppsCard />

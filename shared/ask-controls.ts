@@ -49,11 +49,32 @@ export function parseConnectionIntent(text: string): ConnectionIntent | null {
   return { slug, label: titleCase(name) };
 }
 
+// "Is the water connected?" is property work, so "is X connected" only names
+// an office app. A question put to Bud itself ("are you connected to …") may
+// name any one short target: it is always about Bud's own connections.
+const APP_NAMES = `(?:${[...Object.keys(ALIASES), "google", "email", "mail", "inbox", "composio", "office apps?", "calendar", "drive"].sort((a, b) => b.length - a.length).join("|")})`;
+const ANY_TARGET = "(?:(?:my|our|the|your) )?[a-z0-9][a-z0-9 ._-]{0,39}?";
+const CONNECTED_STATUS = new RegExp(
+  "^(?:please )?(?:" + [
+    "(?:what|which) (?:services|apps|accounts|integrations|sources|tools)(?: (?:are (?:we |they |you )?|am i |is bud |does bud have |do (?:you|we) have ))?(?:connected|linked)(?: to)?",
+    "what(?:'s|’s| is| are)(?: (?:we|i|you|bud))? (?:connected|linked)(?: to)?",
+    "(?:show|list)(?: me)?(?: my| our| the| your)? (?:connected (?:apps|services|accounts|sources)|connections|office sources)",
+    "(?:my |our |your )?(?:connected (?:apps|services|accounts|sources)|connections)",
+    `(?:are (?:we|you)|am i|is bud) (?:connected|linked)(?: (?:to|with) ${ANY_TARGET})?`,
+    `is (?:my |our |the |your )?${APP_NAMES}(?: account| inbox)? (?:connected|linked)(?: (?:to|with) (?:you|bud|realbud))?`,
+    "(?:what|which) (?:apps|sources|tools) can (?:you|bud) use",
+  ].join("|") + ")$",
+  "i",
+);
+
 /** Whole-request matches only: work and pasted evidence must keep their meaning. */
 export function parseConnectedStatusIntent(text: string): boolean {
-  const value = text.trim().replace(/[?!.]+$/, "");
+  const value = text.trim().replace(/[?!.]+$/, "").replace(/\s+/g, " ");
   if (!value || value.length > 180 || /[\r\n]/.test(value)) return false;
-  return /^(?:please )?(?:(?:what|which) (?:services|apps|accounts|integrations|sources)(?: (?:are (?:we |they )?|am i ))?(?:connected|linked)(?: to)?|what(?:'s| is| are)(?: (?:we|i))? (?:connected|linked)(?: to)?|what are (?:we|you) connected to|(?:show|list)(?: me)?(?: my| our| the)? (?:connected (?:apps|services|accounts|sources)|connections|office sources)|(?:are we|am i) connected(?: to (?:gmail|outlook))?|is (?:gmail|outlook) connected|(?:what|which) (?:apps|sources|tools) can (?:you|bud) use)$/i.test(value);
+  // A status question names at most one short target. Anything joined to more
+  // work ("… and check payments") stays an ordinary turn.
+  if (/[,;]|\b(?:and|then|also|after|before|to (?:check|send|pay|read|find|open|do|get|make))\b/i.test(value)) return false;
+  return CONNECTED_STATUS.test(value);
 }
 
 /** Product controls are whole requests. Never interpret source text as a control. */

@@ -10,6 +10,8 @@ const loopsSlice = (routines: 'loading' | 'ready' | 'error', loops: unknown[] = 
   store.state = { activityLoad: { jobs: routines, routines }, loops };
 };
 afterEach(() => { store.state = {}; });
+const officeFixture = vi.hoisted(() => ({ snapshot: null as unknown }));
+vi.mock('@/lib/connected-apps-refresh', () => ({ useOfficeSources: () => ({ snapshot: officeFixture.snapshot, loading: false, error: '' }) }));
 
 import { GoLiveCard } from './GoLiveCard';
 
@@ -136,5 +138,17 @@ describe('three-step workspace setup card', () => {
     const html = renderToStaticMarkup(createElement(GoLiveCard, { ...basic, compact: true, ...setup() }));
     expect(html).toContain('Workspace setup · Step 3 of 3: Approve and schedule');
     expect(html).toContain('Each workflow is still reviewed on its own.');
+  });
+
+  it('names Connect Gmail when the linked office service offers Gmail with no account yet', () => {
+    store.state = { config: { composio: { managed: true } } };
+    officeFixture.snapshot = { configured: true, checkedAt: new Date().toISOString(), tools: { available: false, names: [] }, services: {
+      gmail: { connected: false, status: 'NOT_CONNECTED', accountSelectionRequired: false, accounts: [] },
+    } };
+    const html = renderToStaticMarkup(createElement(GoLiveCard, { ...basic, ...setup() }));
+    expect(html).toContain('Step 2 of 3: Connect your accounts');
+    expect(html.match(/aria-label="Connect Gmail"/g)).toHaveLength(1);
+    expect(html).toContain('Gmail is not connected yet.');
+    officeFixture.snapshot = null;
   });
 });

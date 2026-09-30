@@ -4,6 +4,7 @@ import {
   SETUP_STEP_COUNT,
   budStatusLine,
   currentSetupStep,
+  officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
   setupSequence as sequenceOf,
@@ -162,6 +163,29 @@ describe("step 2 starts with linking this computer to its RealBud account", () =
     const linked = sequenceOf({ agencySetup: facts(), websiteLink: "linked" });
     expect(currentSetupStep(linked)).toMatchObject({ id: "accounts", target: "you-connected-apps", actionLabel: "Open Connections" });
     expect(sequenceOf({ agencySetup: verified, websiteLink: "linked" })[1].state).toBe("done");
+  });
+
+  it("names Connect Gmail when the linked service offers Gmail with no account yet", () => {
+    const steps = sequenceOf({ agencySetup: verified, websiteLink: "linked", appsToConnect: ["gmail"] });
+    expect(currentSetupStep(steps)).toMatchObject({ id: "accounts", target: "you-connected-apps", actionLabel: "Connect Gmail" });
+    expect(steps[1].status).toBe("Gmail is not connected yet. In Connections, press Connect Gmail; sign-in opens in your browser and you finish it there.");
+    // The link still comes first.
+    expect(sequenceOf({ agencySetup: verified, websiteLink: "not-linked", appsToConnect: ["gmail"] })[1].actionLabel).toBe("Link with your RealBud account");
+  });
+
+  it("lists only fresh, managed, personal apps with no account as still to connect", () => {
+    const now = new Date().toISOString();
+    const offered = { configured: true, checkedAt: now, tools: { available: false, names: [] }, services: {
+      gmail: { connected: false, status: "NOT_CONNECTED", accountSelectionRequired: false, accounts: [] },
+    } };
+    expect(officeAppsToConnect(offered, true)).toEqual(["gmail"]);
+    expect(officeAppsToConnect(offered, false)).toEqual([]);
+    expect(officeAppsToConnect({ ...offered, error: "unreachable" }, true)).toEqual([]);
+    expect(officeAppsToConnect({ ...offered, sourceKind: "office_shared" }, true)).toEqual([]);
+    expect(officeAppsToConnect({ ...offered, checkedAt: "2020-01-01T00:00:00.000Z" }, true)).toEqual([]);
+    expect(officeAppsToConnect(null, true)).toEqual([]);
+    const connected = { ...offered, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } };
+    expect(officeAppsToConnect(connected, true)).toEqual([]);
   });
 
   it("never reads an unread or failed link as linked", () => {
