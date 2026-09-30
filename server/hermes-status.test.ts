@@ -143,6 +143,38 @@ it("does not reuse readiness proof for another profile or a changed OAuth login"
   } finally { rmSync(other, { recursive: true, force: true }); }
 });
 
+it("keeps readiness through the worker's own auth.json and cache writes, not through a policy change", () => {
+  const other = mkdtempSync(join(tmpdir(), "realbud-runtime-writes-"));
+  try {
+    cpSync(home, other, { recursive: true });
+    const profile = join(other, "profiles", HERMES_PIN.profile);
+    const auth = (pool: unknown, at: string, providers: unknown = {}) => writeFileSync(join(profile, "auth.json"),
+      JSON.stringify({ version: 1, providers, credential_pool: pool, updated_at: at }));
+    auth({}, "2026-09-30T11:00:00Z");
+    const before = hermesReadinessFingerprint("fixture-version", other);
+    writeFileSync(join(profile, "models_dev_cache.json"), "{}");
+    writeFileSync(join(profile, "provider_models_cache.json"), "{}");
+    auth({}, "2026-09-30T11:58:01Z");
+    expect(hermesReadinessFingerprint("fixture-version", other)).toBe(before);
+    // An adopted ambient login stales the proof; its token churn does not.
+    auth({ copilot: [{ id: "fictional-1", source: "gh_cli", label: "gh auth token", access_token: "fictional-runtime-token", request_count: 1 }] }, "2026-09-30T11:58:02Z");
+    const adopted = hermesReadinessFingerprint("fixture-version", other);
+    expect(adopted).not.toBe(before);
+    auth({ copilot: [{ id: "fictional-2", source: "gh_cli", label: "gh auth token", access_token: "fictional-refreshed-token", request_count: 9 }] }, "2026-09-30T12:30:00Z");
+    expect(hermesReadinessFingerprint("fixture-version", other)).toBe(adopted);
+    auth({}, "2026-09-30T12:00:00Z", { "fictional-provider": { api_key_env: "FICTIONAL" } });
+    expect(hermesReadinessFingerprint("fixture-version", other)).not.toBe(before);
+    auth({}, "2026-09-30T12:00:00Z");
+    expect(hermesReadinessFingerprint("fixture-version", other)).toBe(before);
+    const config = join(profile, "config.yaml");
+    writeFileSync(config, "model:\n  provider: fictional-other\n  default: fictional-model\n");
+    const changedProvider = hermesReadinessFingerprint("fixture-version", other);
+    expect(changedProvider).not.toBe(before);
+    writeFileSync(config, "model:\n  provider: fictional-other\n  default: fictional-model-2\n");
+    expect(hermesReadinessFingerprint("fixture-version", other)).not.toBe(changedProvider);
+  } finally { rmSync(other, { recursive: true, force: true }); }
+});
+
 it("binds readiness and setup to the same member profile", async () => {
   const base = await hermesStatus({ root: home, cli: PINNED_HERMES });
   const member = await withWorkerProfile("new-member", () => hermesStatus({ root: home, cli: PINNED_HERMES }));

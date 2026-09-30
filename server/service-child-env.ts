@@ -19,3 +19,20 @@ export function serviceSafeChildEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.P
   stripServiceSecrets(env);
   return env;
 }
+
+/** GitHub/Copilot login variables upstream Hermes' credential pool would adopt. */
+export const AMBIENT_GITHUB_ENV = /^(?:COPILOT_GITHUB_TOKEN|GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|COPILOT_GH_HOST|GH_HOST)$/i;
+/** RFC 2606 reserved: `gh auth token --hostname` finds no login for it. */
+export const NO_GITHUB_LOGIN_HOST = "realbud.invalid";
+
+/**
+ * For any Hermes process: upstream's credential pool seeds GitHub Copilot from
+ * these variables, or else from `gh auth token` (the person's own GitHub login,
+ * found through Homebrew's `gh` whatever PATH says). The variables are removed
+ * and upstream's own COPILOT_GH_HOST switch points the `gh` lookup at a host
+ * nobody is signed in to, so a Bud profile never adopts an ambient login.
+ */
+export function isolateGithubLogin(env: Record<string, string | undefined>): void {
+  for (const key of Object.keys(env)) if (AMBIENT_GITHUB_ENV.test(key)) delete env[key];
+  env.COPILOT_GH_HOST = NO_GITHUB_LOGIN_HOST;
+}

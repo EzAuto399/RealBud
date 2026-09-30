@@ -62,7 +62,7 @@ import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { scrollChatToEnd } from "@/lib/chat-scroll";
 import { useStreamPreview } from "@/lib/use-stream-preview";
-import { budAvailability } from "@/lib/bud-setup";
+import { budAutoSetupView, budAvailability } from "@/lib/bud-setup";
 import { PmTaskStarters } from "./PmTaskStarters";
 import { AskMessage } from "./AskMessage";
 import { channelMessage } from "@/lib/channel-message";
@@ -1698,6 +1698,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         productAsk={productAsk}
         askReady={!productAsk || askWorkerReady}
         askBlockedDetail={productAsk ? availability.detail : undefined}
+        askRecheckPending={productAsk && Boolean(budAutoSetupView(state.hermes)?.working)}
         askSetupLabel={availability.action ?? undefined}
         onAskSetup={productAsk && availability.action ? goYouSetup : undefined}
         readiness={productAsk ? <AskReadiness onSetup={goYouSetup} /> : undefined}

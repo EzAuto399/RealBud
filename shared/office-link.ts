@@ -189,6 +189,68 @@ export function parseInstallationProvisioning(value: unknown): InstallationProvi
   };
 }
 
+// ── Signed desktop service grant, pulled from the managed gateway ───────────
+//
+// A linked computer asks the gateway (its managed connector endpoint) with its
+// own connector credential; the device that credential belongs to decides the
+// company and installation. It is a separate reply, never a field on the
+// provisioning descriptor above, so desktops that parse that descriptor with
+// exact keys keep linking unchanged.
+
+export const SERVICE_GRANT_REQUEST = { version: 1, purpose: "desktop-service-entitlement-request" } as const;
+export const SERVICE_GRANT_PATH = "/v1/installations/service-entitlement";
+
+export interface ServiceGrantBundle {
+  schema: 1;
+  entitlement: { schema: 1; keyId: string; payload: string; signature: string };
+  trust: { schema: 1; keys: [{ keyId: string; publicKeyPem: string }] };
+}
+export interface ServiceGrantDelivery {
+  version: 1; purpose: "desktop-service-entitlement";
+  companyId: string; hostInstallationId: string; publicKeySha256: string; bundle: ServiceGrantBundle;
+}
+
+const SHA256 = /^[a-f0-9]{64}$/;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
+const PUBLIC_PEM = /^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]{1,1024}-----END PUBLIC KEY-----(?:\r?\n)?$/;
+
+function grantInvalid(): never { throw new Error("The service returned an entitlement this computer cannot accept. Contact service support."); }
+function grantExact(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (!object(value) || Object.keys(value).length !== keys.length || !keys.every(key => Object.hasOwn(value, key))) grantInvalid();
+  return value;
+}
+function grantText(value: unknown, pattern: RegExp, max = 4096): string {
+  if (typeof value !== "string" || value.length > max || !pattern.test(value)) grantInvalid();
+  return value;
+}
+
+/** Strict: exact keys at every level, and the reply must name this computer's
+ * own company and installation. The signature, lifetime and digest pin are
+ * checked by the installer, not here. */
+export function parseServiceGrantDelivery(value: unknown, expected: { companyId: string; hostInstallationId: string }): ServiceGrantDelivery {
+  // Every field below is pattern-checked; no free text rides along.
+  const root = grantExact(value, ["version", "purpose", "companyId", "hostInstallationId", "publicKeySha256", "bundle"]);
+  if (root.version !== 1 || root.purpose !== "desktop-service-entitlement") grantInvalid();
+  if (root.companyId !== expected.companyId || root.hostInstallationId !== expected.hostInstallationId) {
+    throw new Error("The service returned an entitlement for a different computer. Contact service support.");
+  }
+  const bundle = grantExact(root.bundle, ["schema", "entitlement", "trust"]);
+  const entitlement = grantExact(bundle.entitlement, ["schema", "keyId", "payload", "signature"]);
+  const trust = grantExact(bundle.trust, ["schema", "keys"]);
+  if (bundle.schema !== 1 || entitlement.schema !== 1 || trust.schema !== 1 || !Array.isArray(trust.keys) || trust.keys.length !== 1) grantInvalid();
+  const key = grantExact(trust.keys[0], ["keyId", "publicKeyPem"]);
+  const keyId = grantText(entitlement.keyId, KEY_ID);
+  if (key.keyId !== keyId) grantInvalid();
+  return {
+    version: 1, purpose: "desktop-service-entitlement",
+    companyId: text(root.companyId, ID), hostInstallationId: text(root.hostInstallationId, ID),
+    publicKeySha256: grantText(root.publicKeySha256, SHA256),
+    bundle: { schema: 1,
+      entitlement: { schema: 1, keyId, payload: grantText(entitlement.payload, /^\{[\x20-\x7e]*\}$/), signature: grantText(entitlement.signature, SIGNATURE) },
+      trust: { schema: 1, keys: [{ keyId, publicKeyPem: grantText(key.publicKeyPem, PUBLIC_PEM) }] } },
+  };
+}
+
 /** Apps a managed installation may connect when the website named none. */
 export const DEFAULT_MANAGED_APPS = ["gmail"] as const;
 

@@ -744,13 +744,13 @@ test('the HTTP portal route provisions once, is unavailable when unconfigured, a
     // /ready is the platform health check: 200 only when provisioning is composed.
     const readyOk = await fetch(`${base}/ready`);
     assert.equal(readyOk.status, 200);
-    assert.deepEqual(await readyOk.json(), { ready: true, provisioning: 'composed', modelviaOperator: 'configured', operatorAccess: 'missing' });
+    assert.deepEqual(await readyOk.json(), { ready: true, provisioning: 'composed', modelviaOperator: 'configured', operatorAccess: 'missing', serviceIssuer: 'missing' });
     const readyBare = await fetch(`${bareBase}/ready`);
     assert.equal(readyBare.status, 503);
-    assert.deepEqual(await readyBare.json(), { ready: false, error: 'provisioning_unavailable', modelviaOperator: 'missing', operatorAccess: 'missing' });
+    assert.deepEqual(await readyBare.json(), { ready: false, error: 'provisioning_unavailable', modelviaOperator: 'missing', operatorAccess: 'missing', serviceIssuer: 'missing' });
     const readyNamed = await fetch(`${misconfiguredBase}/ready`);
     assert.equal(readyNamed.status, 503);
-    assert.deepEqual(await readyNamed.json(), { ready: false, error: 'provisioning_unconfigured:REALBUD_COMPOSIO_ORG_KEY', modelviaOperator: 'configured', operatorAccess: 'missing' });
+    assert.deepEqual(await readyNamed.json(), { ready: false, error: 'provisioning_unconfigured:REALBUD_COMPOSIO_ORG_KEY', modelviaOperator: 'configured', operatorAccess: 'missing', serviceIssuer: 'missing' });
 
     const unconfigured = await post(bareBase, '/v1/portal/installations/provision', h.request);
     assert.equal(unconfigured.status, 503);

@@ -119,6 +119,13 @@ export interface OfficeLinkProvisioning {
   /** A grant was applied and the link that carries it is now saved. Runs after
    * the durable save, never before, so a failed save changes nothing else. */
   onLinked?: () => void;
+  /** Fetch and install this computer's signed service grant from the managed
+   * gateway when it is missing or due for renewal
+   * (`server/service-entitlement-renewal.ts`). Called after a successful link
+   * and after every accepted report while a grant is in force, outside the link
+   * lock; it throttles itself and never throws into the link. `force` skips its
+   * failure backoff (a fresh link). */
+  serviceGrant?: (options: { force?: boolean }) => Promise<unknown>;
 }
 export function createOfficeLink(options: { directory: string; appVersion: string; fetch?: typeof fetch; report: () => Promise<Report>; platform?: NodeJS.Platform; provisioning?: OfficeLinkProvisioning; origin?: string }) {
   const directory = join(options.directory, "office-link");
@@ -253,7 +260,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   }
 
   async function link(input: { code?: unknown; label?: unknown }) {
-    return exclusive(async () => {
+    await exclusive(async () => {
       input = input && typeof input === "object" ? input : {};
       const code = typeof input.code === "string" ? input.code.trim() : "";
       const label = typeof input.label === "string" ? input.label.trim() : "";
@@ -284,8 +291,17 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
         ...(isProvisioningSkipped(outcome) ? { provisioningSkipped: outcome.skipped } : {}) });
       if (provisioning) linked();
     });
+    if (await grantInForce()) serviceGrant(true);
   }
   function linked() { try { options.provisioning?.onLinked?.(); } catch { /* the link is saved; the hook retries on its own schedule */ } }
+  async function grantInForce(): Promise<boolean> {
+    const saved = await read().catch(() => null);
+    if (!saved?.companyId || saved.revoked) return false;
+    return saved.provisioned === true || ((await options.provisioning?.active?.().catch(() => false)) ?? false);
+  }
+  function serviceGrant(force: boolean) {
+    try { void options.provisioning?.serviceGrant?.({ force })?.catch(() => {}); } catch { /* held inside the hook */ }
+  }
 
   // ── Linking through the browser (shared/installation-link.ts) ──────────
   const unreachable = () => Object.assign(new Error("The website could not be reached. Check this computer’s internet connection, then try again."), { status: 503, code: "website_unreachable" });
@@ -426,6 +442,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
 
   async function report() {
     if (busy) return;
+    let accepted = false, fresh = false;
     await exclusive(async () => {
       const saved = await read();
       // A prior cleanup failure must retry before reconciliation can publish
@@ -473,7 +490,10 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       }
       await save({ ...rest, lastReportedAt: new Date().toISOString(), ...(provisioned ? { provisioned: true } : {}), ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
       if (newlyApplied) linked();
+      accepted = true; fresh = newlyApplied;
     });
+    // Outside the link lock: a slow service must never hold the next report.
+    if (accepted && await grantInForce()) serviceGrant(fresh);
   }
   async function disconnect() {
     return exclusive(async () => {

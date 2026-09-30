@@ -14,13 +14,17 @@ import { modelviaKeyClient } from './modelvia-keys.ts';
 import type { HttpTransport } from './composio-org.ts';
 import { composeGateway } from './composition.ts';
 import { signOperatorToken } from './operator-token.ts';
+import { createHash, createPublicKey, generateKeyPairSync } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { readServiceEntitlement } from '../server/service-entitlement.ts';
+import { serviceIssuerFromEnv, type ServiceIssuer } from './service-entitlement-issuer.ts';
 
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{while(cleanups.length)await cleanups.pop()!();});
 const OWNER='synthetic-portal-token-owner-000001',READER='synthetic-portal-token-reader-00001',UNKNOWN='synthetic-portal-token-unknown-0001';
 
 /** The real Modelvia client over a stand-in shaped like Modelvia's operator
  * routes, and a provisioning composition around it. Everything is fictional. */
-async function serverFixture(options:{provisioning?:boolean;customer?:Record<string,unknown>}={}) {
+async function serverFixture(options:{provisioning?:boolean;customer?:Record<string,unknown>;serviceIssuer?:ServiceIssuer}={}) {
   const f=fixture(),root=mkdtempSync(join(tmpdir(),'realbud-http-'));
   const modelviaCalls:string[]=[];
   const customer={id:'cus-fictional-office',clientId:'realbud',name:'Fictional office',active:true,monthlyCapNanoAud:'100000000000',maxConcurrent:4,allowedModels:['auto'],version:1,...options.customer};
@@ -39,7 +43,8 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
     scopedSecret:()=>'fictional-modelvia-operator-secret-32ch',operatorSubject:'realbud-provisioning',fetch:fetchLike,now:f.now});
   const org={async listProjects(){return [];},async createProject(name:string){return {id:'pr_1',name,apiKey:'ak_fictional_project_key_for_tests'};},async deleteProject(){return {revokeJobId:'job-fictional'};}};
   const provisioning=options.provisioning===false?undefined:new InstallationProvisioning({ledger:f.ledger,registry:join(root,'devices.json'),endpoint:'https://managed.example.invalid',
-    secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{resolveGmail:async () => 'ac-fictional-readonly'}});
+    secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{resolveGmail:async () => 'ac-fictional-readonly'},
+    ...(options.serviceIssuer?{serviceIssuer:options.serviceIssuer}:{})});
   const server=createGatewayServer({allowedOrigins:new Set(['https://portal.invalid']),...(provisioning?{provisioning}:{}),portal:{async authenticate(bearer){
     if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader'};
     // A signed-in portal user whose company the operator has not entitled.
@@ -166,10 +171,10 @@ test('/health carries no billing state and /ready reports the Modelvia operator 
   const f=await serverFixture();
   assert.deepEqual(await(await f.request('GET','/health',null)).json(),{service:'realbud-managed-ai'});
   const ready=await f.request('GET','/ready',null);assert.equal(ready.status,200);
-  assert.deepEqual(await ready.json(),{ready:true,provisioning:'composed',modelviaOperator:'configured',operatorAccess:'missing'});
+  assert.deepEqual(await ready.json(),{ready:true,provisioning:'composed',modelviaOperator:'configured',operatorAccess:'missing',serviceIssuer:'missing'});
   const bare=await serverFixture({provisioning:false});
   const unready=await bare.request('GET','/ready',null);assert.equal(unready.status,503);
-  assert.deepEqual(await unready.json(),{ready:false,error:'provisioning_unavailable',modelviaOperator:'missing',operatorAccess:'missing'});
+  assert.deepEqual(await unready.json(),{ready:false,error:'provisioning_unavailable',modelviaOperator:'missing',operatorAccess:'missing',serviceIssuer:'missing'});
   assert.deepEqual([...f.modelviaCalls,...bare.modelviaCalls],[]);
 });
 
@@ -303,4 +308,104 @@ test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET
   const closed=await call('POST','/v1/operator/billing/close',{companyId:f.tenant.companyId,period:'2026-10'});
   assert.deepEqual([closed.status,closed.body.ai,closed.body.invoice.totalCents,closed.body.invoice.status],[200,'included','0','nothing_due']);
   f.db.verify();
+});
+
+// ── Desktop service grant, pulled with the installation's own credential ──
+const GRANT_REQUEST={version:1,purpose:'desktop-service-entitlement-request'};
+function fictionalIssuer():ServiceIssuer { return {keyId:'fictional-issuer-a',privateKey:generateKeyPairSync('ed25519').privateKey}; }
+async function provisioned(issuer?:ServiceIssuer) {
+  const f=await serverFixture(issuer?{serviceIssuer:issuer}:{});
+  const created=await f.request('POST','/v1/portal/installations/provision',OWNER,f.provisionBody);
+  assert.equal(created.status,200);
+  const reply=await created.json() as {provisioning:Record<string,unknown>&{connector:{credential:string}}};
+  // The provision reply is unchanged: older desktops parse it with exact keys.
+  assert.deepEqual(Object.keys(reply.provisioning).sort(),['connector','model','service','version']);
+  const credential=reply.provisioning.connector.credential;
+  const ask=(bearer=credential,body:unknown=GRANT_REQUEST)=>f.request('POST','/v1/installations/service-entitlement',bearer,body);
+  return {...f,credential,ask};
+}
+type Delivery={version:number;purpose:string;companyId:string;hostInstallationId:string;publicKeySha256:string;bundle:{entitlement:{payload:string};trust:{keys:{publicKeyPem:string}[]}}};
+
+test('a provisioned desktop receives its own verifiable service grant, the same one on retry', async()=>{
+  const issuer=fictionalIssuer();
+  const f=await provisioned(issuer);
+  const first=await f.ask();assert.equal(first.status,200);
+  const text=await first.text();
+  assert.doesNotMatch(text,/PRIVATE KEY|rbc_|rbk_|ak_/);
+  const delivery=JSON.parse(text) as Delivery;
+  assert.equal(delivery.purpose,'desktop-service-entitlement');
+  assert.equal(delivery.companyId,f.tenant.companyId);assert.equal(delivery.hostInstallationId,'install-one');
+  const spki=createHash('sha256').update(createPublicKey(issuer.privateKey).export({type:'spki',format:'der'})).digest('hex');
+  assert.equal(delivery.publicKeySha256,spki);
+  const root=mkdtempSync(join(tmpdir(),'realbud-grant-'));cleanups.push(async()=>rmSync(root,{recursive:true,force:true}));
+  writeFileSync(join(root,'grant.json'),JSON.stringify(delivery.bundle.entitlement));writeFileSync(join(root,'trust.json'),JSON.stringify(delivery.bundle.trust));
+  assert.equal(readServiceEntitlement({managed:true,path:join(root,'grant.json'),trustedKeysPath:join(root,'trust.json'),companyId:f.tenant.companyId,hostInstallationId:'install-one',now:f.now()}).state,'active');
+  // Idempotent: a retry is the stored grant, the same signature, and one audit line.
+  assert.deepEqual(await(await f.ask()).json(),delivery);
+  assert.equal((f.ledger.db.get<{n:number}>("SELECT count(*) AS n FROM events WHERE kind='desktop_service_grant_issued'"))!.n,1);
+  const audit=JSON.stringify(f.ledger.db.all("SELECT body FROM events WHERE kind='desktop_service_grant_issued'"));assert.doesNotMatch(audit,/PRIVATE KEY|BEGIN PUBLIC KEY|signature/);
+  assert.doesNotMatch(JSON.stringify(f.ledger.db.all('SELECT body FROM events')),/PRIVATE KEY/);
+  const ready=await f.request('GET','/ready',null);assert.equal((await ready.json() as {serviceIssuer:string}).serviceIssuer,'configured');
+});
+
+const issuedCount=(f:{ledger:{db:{get:<T>(sql:string)=>T|undefined}}})=>f.ledger.db.get<{n:number}>("SELECT count(*) AS n FROM events WHERE kind='desktop_service_grant_issued'")!.n;
+test('a grant capped by the office expiry is signed once, and renewed when the office renews', async()=>{
+  const f=await provisioned(fictionalIssuer());
+  const first=await(await f.ask()).json() as Delivery;
+  // Its last month: a new grant could last no longer, so no re-signing storm.
+  f.setTime(f.now()+340*86_400_000);
+  for(let i=0;i<5;i++) assert.deepEqual(await(await f.ask()).json(),first);
+  assert.equal(issuedCount(f),1);
+  f.ledger.setService(f.tenant.companyId,true,f.now()+500*86_400_000,'fictional-renewal');
+  const extended=await(await f.ask()).json() as Delivery;
+  assert.equal(JSON.parse(extended.bundle.entitlement.payload).expiresAt,f.now()+366*86_400_000);
+  assert.equal(issuedCount(f),2);
+  // Capped at 366 days: renewed only inside its last 30 days, once.
+  f.setTime(f.now()+300*86_400_000);
+  assert.deepEqual(await(await f.ask()).json(),extended);
+  f.setTime(f.now()+40*86_400_000);
+  const renewed=await(await f.ask()).json() as Delivery;
+  assert.notEqual(renewed.bundle.entitlement.payload,extended.bundle.entitlement.payload);
+  assert.deepEqual(await(await f.ask()).json(),renewed);
+  assert.equal(issuedCount(f),3);
+  // A shortened office expiry replaces a grant that would outlive it.
+  f.ledger.setService(f.tenant.companyId,true,f.now()+10*86_400_000,'fictional-shortened');
+  assert.equal(JSON.parse((await(await f.ask()).json() as Delivery).bundle.entitlement.payload).expiresAt,f.now()+10*86_400_000);
+});
+
+test('grant asks are limited per installation', async()=>{
+  const f=await provisioned(fictionalIssuer());
+  for(let i=0;i<30;i++) assert.equal((await f.ask()).status,200);
+  const limited=await f.ask();assert.equal(limited.status,429);assert.deepEqual(await limited.json(),{error:'rate_limited'});
+  f.setTime(f.now()+61*60_000);
+  assert.equal((await f.ask()).status,200);
+});
+
+test('no signer, suspended office, revoked installation and foreign credentials get no grant', async()=>{
+  const bare=await provisioned();
+  const unsigned=await bare.ask();assert.equal(unsigned.status,503);assert.deepEqual(await unsigned.json(),{error:'service_issuer_unconfigured'});
+  const f=await provisioned(fictionalIssuer());
+  assert.equal((await f.ask(`rbc_${'0'.repeat(64)}`)).status,403);
+  assert.equal((await f.ask('not-a-connector-credential-000000')).status,401);
+  assert.equal((await f.ask(f.credential,{...GRANT_REQUEST,companyId:'company-b'})).status,400);
+  assert.equal((await f.ask()).status,200);
+  f.ledger.setService(f.tenant.companyId,false,f.now()+86_400_000,'fictional-suspension');
+  const suspended=await f.ask();assert.equal(suspended.status,403);assert.deepEqual(await suspended.json(),{error:'service_unavailable'});
+  f.ledger.setService(f.tenant.companyId,true,f.now()+86_400_000,'fictional-resume');
+  assert.equal((await f.request('POST','/v1/portal/installations/revoke',OWNER,{companyId:f.tenant.companyId,installationId:'install-one'})).status,200);
+  assert.equal((await f.ask()).status,403);
+});
+
+test('serviceIssuerFromEnv reports state only and never fails composition', ()=>{
+  assert.equal(serviceIssuerFromEnv({}).state,'missing');
+  assert.equal(serviceIssuerFromEnv({REALBUD_SERVICE_ISSUER_KEY_ID:'fictional-issuer-a'}).state,'invalid');
+  assert.equal(serviceIssuerFromEnv({REALBUD_SERVICE_ISSUER_KEY_FILE:'/synthetic/absent.pem',REALBUD_SERVICE_ISSUER_KEY_ID:'fictional-issuer-a'}).state,'invalid');
+  const root=mkdtempSync(join(tmpdir(),'realbud-signer-'));
+  try {
+    const pem=generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}).toString();
+    writeFileSync(join(root,'signer.pem'),pem,{mode:0o600});
+    const loaded=serviceIssuerFromEnv({REALBUD_SERVICE_ISSUER_KEY_FILE:join(root,'signer.pem'),REALBUD_SERVICE_ISSUER_KEY_ID:'fictional-issuer-a'});
+    assert.equal(loaded.state,'configured');assert.equal(loaded.issuer?.keyId,'fictional-issuer-a');
+    assert.doesNotMatch(JSON.stringify({state:loaded.state}),/PRIVATE/);
+  } finally { rmSync(root,{recursive:true,force:true}); }
 });

@@ -26,6 +26,12 @@ export function serviceInstallationPresent(directory = DATA_DIR): boolean {
   return Boolean(companyId && hostInstallationId);
 }
 
+/** The trusted company/host binding, or null when this computer has none. */
+export function serviceInstallationBinding(directory = DATA_DIR): { companyId: string; hostInstallationId: string } | null {
+  const { companyId, hostInstallationId } = installation(directory);
+  return companyId && hostInstallationId ? { companyId, hostInstallationId } : null;
+}
+
 function installation(directory = DATA_DIR): { companyId?: string; hostInstallationId?: string } {
   try {
     const path = serviceInstallationPath(directory);

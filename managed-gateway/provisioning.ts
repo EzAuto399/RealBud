@@ -24,11 +24,12 @@
  *     secret store are all injected. Nothing here is deployed.
  */
 import { composioAuthConfigClient, type ComposioAuthConfigClient } from './composio-auth-config.ts';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal } from './contracts.ts';
-import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
+import { canonical, exact, GatewayError, id, object, requireThat, type PortalPrincipal } from './contracts.ts';
+import { connectorRegistry, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
+import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServiceBundle, type ServiceIssuer, type ServiceIssuerState } from './service-entitlement-issuer.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
 import { hasCustomerTerms, modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
@@ -206,7 +207,27 @@ interface StoredRecord {
   /** Legacy, written by the removed cap sync before 24 September 2026. Old ready
    * records still carry it and still parse; nothing reads or writes it now. */
   modelviaCaps?: unknown;
+  /** Ready only: the last signed desktop service grant issued for this
+   * installation (public material only) and the office terms it was issued
+   * under, so a repeat returns the same grant until renewal is due. */
+  serviceGrant?: StoredServiceGrant;
 }
+interface StoredServiceGrant {
+  keyId: string; licenseId: string; serviceExpiresAt: number; expiresAt: number;
+  publicKeySha256: string; bundle: DesktopServiceBundle;
+}
+/** What the desktop receives (`shared/office-link.ts` parses it exactly). */
+export interface ServiceGrantDelivery {
+  version: 1; purpose: 'desktop-service-entitlement';
+  companyId: string; hostInstallationId: string; publicKeySha256: string; bundle: DesktopServiceBundle;
+}
+/** A stored grant closer than this to its expiry is replaced on the next ask. */
+export const SERVICE_GRANT_RENEW_BEFORE_MS = 30 * 24 * 60 * 60_000;
+const CONNECTOR_TOKEN = /^rbc_[a-f0-9]{64}$/;
+/** Same bound the issuer applies: a grant never outlives 366 days. */
+const SERVICE_GRANT_MAX_LIFETIME_MS = 366 * 24 * 60 * 60_000;
+/** Per installation, in this process: asks beyond this answer 429. */
+export const SERVICE_GRANT_ASKS_PER_HOUR = 30;
 export const MODELVIA_CUSTOMER = /^[A-Za-z0-9_.-]{1,128}$/;
 /** A pending attempt younger than this may still be running, so it is not
  * resumed. It comfortably exceeds `ATTEMPT_EFFECT_DEADLINE_MS` plus one bounded
@@ -286,11 +307,18 @@ export interface ProvisioningOptions {
   /** The customer's commercial terms at Modelvia, read before anything is
    * created. Always composed in production (`composeProvisioning`). */
   terms?: Pick<ModelviaTermsClient, 'customerTermsReadiness'>;
+  /** The gateway's desktop grant signer (`serviceIssuerFromEnv`). Absent, no
+   * desktop grant is issued and provisioning is otherwise unchanged. */
+  serviceIssuer?: ServiceIssuer;
+  /** For `/ready`; defaults to whether `serviceIssuer` is present. */
+  serviceIssuerState?: ServiceIssuerState;
 }
 
 export class InstallationProvisioning {
   private readonly options: ProvisioningOptions;
   private readonly endpoint: string;
+  /** Recent desktop grant asks per installation (in memory, per process). */
+  private readonly grantAsks = new Map<string, number[]>();
   constructor(options: ProvisioningOptions) {
     const url = new URL(options.endpoint);
     requireThat(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/', 'connector_endpoint_invalid', 503);
@@ -298,6 +326,70 @@ export class InstallationProvisioning {
     requireThat(options.requestCapNanoAud === undefined || NANO_AUD.test(options.requestCapNanoAud), 'modelvia_request_cap_invalid', 503);
     this.options = options; this.endpoint = url.origin;
     ensureProvisioningTable(options.ledger);
+  }
+
+  /** Configuration state for `/ready`; never the key, its path or its id. */
+  get serviceIssuerState(): ServiceIssuerState {
+    return this.options.serviceIssuerState ?? (this.options.serviceIssuer ? 'configured' : 'missing');
+  }
+
+  /**
+   * The signed desktop service grant for the installation that holds `token`,
+   * its own connector credential. The device the credential resolves to is the
+   * only authority for company and installation; the body names neither.
+   *
+   * Idempotent: the stored grant is returned again unless a fresh one would
+   * be different in substance: the signer or licence changed, the office's
+   * service now ends before the stored grant does, the office's service expiry
+   * moved and a new grant would last longer, or the stored grant is within
+   * `SERVICE_GRANT_RENEW_BEFORE_MS` of expiry and a new one would last longer.
+   * A grant capped by the office's own expiry is therefore signed once, not on
+   * every ask in its last month. Asks are limited per installation. A suspended or expired office, a revoked or inactive installation
+   * and a foreign device are refused, stored grant or not.
+   */
+  serviceEntitlement(token: unknown, value: unknown): ServiceGrantDelivery {
+    requireThat(typeof token === 'string' && CONNECTOR_TOKEN.test(token), 'connector_unauthenticated', 401);
+    object(value); exact(value, ['version', 'purpose']);
+    requireThat(value.version === 1 && value.purpose === 'desktop-service-entitlement-request', 'invalid_fields');
+    const issuer = this.options.serviceIssuer;
+    requireThat(issuer, 'service_issuer_unconfigured', 503);
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const device = connectorRegistry(this.options.registry).find(entry => entry.tokenHash === tokenHash);
+    requireThat(device && device.active && device.id === device.installationId, 'connector_access_denied', 403);
+    const companyId = device!.companyId, installationId = device!.installationId;
+    const ledger = this.options.ledger, now = ledger.now();
+    const recent = (this.grantAsks.get(installationId) ?? []).filter(at => now - at < 60 * 60_000);
+    requireThat(recent.length < SERVICE_GRANT_ASKS_PER_HOUR, 'rate_limited', 429);
+    recent.push(now); this.grantAsks.set(installationId, recent);
+    const saved = this.saved(companyId, installationId);
+    requireThat(saved?.state === 'ready' && saved.deviceId === installationId, 'service_installation_unavailable', 403);
+    const tenant = ledger.tenant(companyId);
+    requireThat(tenant.active && tenant.goLiveAt <= now && tenant.serviceExpiresAt > now && tenant.licenseId === device!.licenseId, 'service_unavailable', 403);
+    const held = saved!.serviceGrant;
+    const deliver = (grant: StoredServiceGrant): ServiceGrantDelivery => ({ version: 1, purpose: 'desktop-service-entitlement',
+      companyId, hostInstallationId: installationId, publicKeySha256: grant.publicKeySha256, bundle: grant.bundle });
+    if (held) {
+      const candidate = Math.min(tenant.serviceExpiresAt, now + SERVICE_GRANT_MAX_LIFETIME_MS);
+      const longer = candidate > held.expiresAt;
+      const reissue = held.keyId !== issuer!.keyId || held.licenseId !== tenant.licenseId || held.expiresAt > tenant.serviceExpiresAt
+        || (held.serviceExpiresAt !== tenant.serviceExpiresAt && longer)
+        || (held.expiresAt - now <= SERVICE_GRANT_RENEW_BEFORE_MS && longer);
+      if (!reissue) return deliver(held);
+    }
+    // The issuer re-checks the tenant, the ready record and the active device.
+    const issued = issueDesktopServiceEntitlement({ ledger, registryPath: this.options.registry, companyId, hostInstallationId: installationId,
+      keyId: issuer!.keyId, privateKey: issuer!.privateKey });
+    const grant: StoredServiceGrant = { keyId: issuer!.keyId, licenseId: tenant.licenseId, serviceExpiresAt: tenant.serviceExpiresAt,
+      expiresAt: (JSON.parse(issued.bundle.entitlement.payload) as { expiresAt: number }).expiresAt, publicKeySha256: issued.publicKeySha256, bundle: issued.bundle };
+    ledger.db.transaction(() => {
+      const current = this.saved(companyId, installationId);
+      requireThat(current?.state === 'ready', 'service_installation_unavailable', 403);
+      this.store(companyId, installationId, { ...current!, serviceGrant: grant });
+      // Identifiers only: the grant is public, the signer never leaves memory.
+      ledger.db.append(companyId, 'desktop_service_grant_issued', null, now,
+        { installationId, keyId: grant.keyId, publicKeySha256: grant.publicKeySha256, expiresAt: grant.expiresAt, ...(held ? { renewed: true } : {}) });
+    });
+    return deliver(grant);
   }
 
   /** Re-apply each ready installation's caps from its Modelvia customer. See
@@ -931,7 +1023,11 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
   if ('unavailable' in model) return model;
   try {
     const secrets = fileSecretStore(value('REALBUD_GATEWAY_SECRETS_DIR'));
+    // Optional: without a signer the desktop receives no service grant, and
+    // `/ready` says so. Never a reason to refuse provisioning.
+    const signer = serviceIssuerFromEnv(env);
     return { secrets, provisioning: new InstallationProvisioning({
+      ...(signer.issuer ? { serviceIssuer: signer.issuer } : {}), serviceIssuerState: signer.state,
       ledger: options.ledger,
       registry: value('REALBUD_GATEWAY_CONNECTOR_REGISTRY'),
       endpoint: value('REALBUD_GATEWAY_PUBLIC_ORIGIN'),

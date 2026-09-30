@@ -210,3 +210,49 @@ describe("automatic Bud setup after an approved office link", () => {
     expect(readFileSync(join(dir, AUTO_SETUP_FILE), "utf8")).toBe("{not json");
   });
 });
+
+describe("a readiness proof that went stale on a linked office", () => {
+  it("re-runs the service's own check once per changed setup, throttled, with no administrator", async () => {
+    const h = harness();
+    const setup = createWorkerAutoSetup(h.deps);
+    // Already installed and ready once.
+    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: true }));
+    await setup.ensure("boot");
+    expect(setup.status().state).toBe("ready");
+    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: false }));
+    const stale = { ready: false, workerFingerprint: "fingerprint-b" };
+    setup.noteStatus(stale);
+    // Reported at once, so the very next status answer shows progress.
+    expect(setup.status()).toMatchObject({ state: "verifying", code: "checking", detail: AUTO_SETUP_COPY.checking });
+    await vi.waitFor(() => expect(h.deps.readinessPing).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(setup.status().state).toBe("ready"));
+    // The same stale setup is not re-checked again, and a new one waits a minute.
+    setup.noteStatus(stale);
+    setup.noteStatus({ ready: false, workerFingerprint: "fingerprint-c" });
+    expect(h.deps.readinessPing).toHaveBeenCalledTimes(1);
+    h.advance(61_000);
+    setup.noteStatus({ ready: false, workerFingerprint: "fingerprint-c" });
+    await vi.waitFor(() => expect(h.deps.readinessPing).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(setup.status().state).toBe("ready"));
+    // Flipping between two setups does not re-run the paid check each minute.
+    h.advance(61_000);
+    setup.noteStatus(stale);
+    expect(h.deps.readinessPing).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 10; i++) {
+      h.advance(61_000);
+      setup.noteStatus({ ready: false, workerFingerprint: `fingerprint-new-${i}` });
+      await vi.waitFor(() => expect(setup.status().state).toBe("ready"));
+    }
+    expect(h.deps.readinessPing).toHaveBeenCalledTimes(6);
+    expect(h.deps.installOrRepair).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a computer whose office link is not active", async () => {
+    const h = harness({ active: false });
+    const setup = createWorkerAutoSetup(h.deps);
+    setup.noteStatus({ ready: false, workerFingerprint: "fingerprint-b" });
+    expect(setup.status().state).toBe("idle");
+    await setup.ensure("boot");
+    expect(h.deps.readinessPing).not.toHaveBeenCalled();
+  });
+});

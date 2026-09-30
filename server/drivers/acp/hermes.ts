@@ -10,7 +10,7 @@ import { baseWorkerProfile, currentWorkerProfile } from "../../hermes-profile.ts
 import { seedVault } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
-import { stripServiceSecrets } from "../../service-child-env.ts";
+import { isolateGithubLogin, stripServiceSecrets } from "../../service-child-env.ts";
 import { hermesHome } from "../../hermes-paths.ts";
 import { applyManagedModelLaunchEnv, selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
 
@@ -42,6 +42,8 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   // the grant (upstream's host-derived fallback reads `<VENDOR>_API_KEY`), so
   // none reaches the worker process; the grant is placed afterwards.
   for (const key of Object.keys(env)) if (AMBIENT_MODEL_ENV.test(key)) delete env[key];
+  // No ambient GitHub/Copilot login reaches upstream's credential pool.
+  isolateGithubLogin(env);
   delete env.COMPOSIO_KEY;
   delete env.REALBUD_CUA_CONTROL_TOKEN;
   delete env.REALBUD_CUA_CONTROL_URL;

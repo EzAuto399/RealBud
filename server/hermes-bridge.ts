@@ -5,7 +5,7 @@
 // models (`shared/managed-model-choices.ts`).
 // Install runs the pinned installer as a spawned child with streamed
 // output — same command the terminal used to run, no terminal.
-import { serviceSafeChildEnv } from "./service-child-env.ts";
+import { isolateGithubLogin, serviceSafeChildEnv } from "./service-child-env.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -126,8 +126,11 @@ export function startInstall(command: string, opts?: { timeoutMs?: number; onSuc
     if (installJob.lines.length > 400) installJob.lines.splice(0, installJob.lines.length - 400);
   };
 
+  // The installer runs Hermes too: the same GitHub-login isolation as a turn.
+  const installEnv = serviceSafeChildEnv({ PATH: augmentedPath() });
+  isolateGithubLogin(installEnv);
   const child = spawn("/bin/bash", ["-c", command], {
-    env: serviceSafeChildEnv({ PATH: augmentedPath() }),
+    env: installEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   installProc = child;

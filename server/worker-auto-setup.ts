@@ -24,10 +24,10 @@ import type { WorkerInstallOutcome } from "./hermes-update.ts";
 
 export type WorkerAutoSetupState = "idle" | "installing" | "verifying" | "ready" | "waiting_retry" | "held";
 export type WorkerAutoSetupCode =
-  | "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
+  | "checking" | "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
   | "held_exhausted" | "held_failed" | "held_recovery" | "held_restart" | "held_unavailable";
 export interface WorkerAutoSetupStatus { state: WorkerAutoSetupState; code?: WorkerAutoSetupCode; step: number; total: number; nextRetryAt?: number; detail: string }
-export type WorkerAutoSetupReason = "provisioned" | "boot" | "periodic" | "retry" | "manual";
+export type WorkerAutoSetupReason = "provisioned" | "boot" | "periodic" | "retry" | "manual" | "stale";
 
 export interface WorkerAutoSetupDeps {
   directory: string;
@@ -60,12 +60,20 @@ export const AUTO_SETUP_FILE = "worker-auto-setup.json";
 export const AUTO_SETUP_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 export const AUTO_SETUP_MAX_ATTEMPTS = 5;
 export const AUTO_SETUP_PERIOD_MS = 10 * 60_000;
+/** A readiness proof that went stale is re-checked at most once per changed
+ * setup, and never twice within this long. */
+export const AUTO_SETUP_STALE_RECHECK_MS = 60_000;
+/** And at most this many stale re-checks an hour, each setup fingerprint once
+ * an hour, so a profile flipping between two setups cannot run the paid check
+ * every minute. */
+export const AUTO_SETUP_STALE_RECHECKS_PER_HOUR = 6;
 const TOTAL = 4;
 const FRESH: Attempts = { version: 1, attempts: 0, nextRetryAt: null, held: null, stageRetried: false };
 const HELD: readonly HeldCode[] = ["held_exhausted", "held_failed", "held_recovery", "held_restart", "held_unavailable"];
 
 /** The only words a person sees. */
 export const AUTO_SETUP_COPY: Record<WorkerAutoSetupCode, string> = {
+  checking: "Checking Bud on this computer",
   installing: "Installing Bud",
   safeguards: "Applying Bud’s safeguards",
   model: "Connecting Bud’s model",
@@ -107,6 +115,8 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   let parked = false;
   /** The install in flight was started by this module, so it may stop it. */
   let ownInstall = false;
+  /** Stale re-checks in the last hour, by setup fingerprint and time. */
+  let staleRechecks: Array<{ fingerprint: string; at: number }> = [];
 
   const set = (state: WorkerAutoSetupState, step: number, code?: WorkerAutoSetupCode, nextRetryAt?: number) => {
     current = { state, step, total: TOTAL, detail: code ? AUTO_SETUP_COPY[code] : "", ...(code ? { code } : {}), ...(nextRetryAt ? { nextRetryAt } : {}) };
@@ -160,6 +170,8 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     if (!(await deps.active()) || deps.customRuntime?.()) { halt(); return; }
     if (reason === "periodic" && parked) return;
     parked = false;
+    // Visible at once: the first status probe can take a while.
+    if (current.state === "idle" || current.state === "ready") set("verifying", 0, "checking");
     let saved: Attempts;
     try { saved = await read(); }
     catch { cancelRetry(); set("held", 0, "held_recovery"); return; }
@@ -246,8 +258,29 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     return { ...current };
   }
 
+  /**
+   * Bud reached ready once, and a later status says the readiness proof no
+   * longer matches this setup (a changed profile or release). On a linked
+   * office the service re-runs its own check instead of asking for an
+   * administrator: each setup at most once an hour, at most once a minute, and
+   * at most `AUTO_SETUP_STALE_RECHECKS_PER_HOUR` times an hour. The run
+   * re-checks authority and persists its own backoff on failure.
+   */
+  function noteStatus(observed: { ready: boolean; workerFingerprint?: string | null }): void {
+    if (observed.ready || current.state !== "ready" || !observed.workerFingerprint) return;
+    const at = now();
+    staleRechecks = staleRechecks.filter(entry => at - entry.at < 60 * 60_000);
+    const last = staleRechecks[staleRechecks.length - 1];
+    if (staleRechecks.some(entry => entry.fingerprint === observed.workerFingerprint) || staleRechecks.length >= AUTO_SETUP_STALE_RECHECKS_PER_HOUR
+      || (last && at - last.at < AUTO_SETUP_STALE_RECHECK_MS)) return;
+    staleRechecks.push({ fingerprint: observed.workerFingerprint, at });
+    set("verifying", 0, "checking");
+    void ensure("stale");
+  }
+
   return {
     ensure, status,
+    noteStatus,
     /** Try again after a hold. Authority is re-checked inside the run. */
     retry: () => ensure("manual"),
     /** Grant withdrawn or link released: stop what this module started. */
@@ -255,7 +288,11 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     start() {
       void ensure("boot");
       if (periodic) return;
-      periodic = setInterval(() => { if (current.state !== "ready") void ensure("periodic"); }, AUTO_SETUP_PERIOD_MS);
+      periodic = setInterval(() => {
+        if (current.state !== "ready") { void ensure("periodic"); return; }
+        // A proof that went stale while nobody looked is found here too.
+        void deps.status().then(status => noteStatus(status)).catch(() => {});
+      }, AUTO_SETUP_PERIOD_MS);
       periodic.unref?.();
     },
     stop() { if (periodic) clearInterval(periodic); periodic = null; cancelRetry(); },

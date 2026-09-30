@@ -63,3 +63,15 @@ describe("Ask dictation control", () => {
     expect(render()).not.toContain('aria-label="Hold to speak into the message"');
   });
 });
+
+describe("Ask while Bud is re-checking", () => {
+  it("keeps the draft box open and never renders the notice before a send is tried", () => {
+    const bot: Bot = { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+      color: "green", unread: false, busy: false, messages: [], modelSelection: { instanceId: "fixture", model: "fixture" } };
+    const html = renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askReady: false, askRecheckPending: true, readiness: createElement("span") }));
+    expect(html).toContain('aria-label="Tell Bud what outcome you need"');
+    expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
+    expect(html).toContain("You can draft while we connect.");
+    expect(html).not.toContain("Bud is re-checking");
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { serviceSafeChildEnv, stripServiceSecrets } from "./service-child-env.ts";
+import { isolateGithubLogin, serviceSafeChildEnv, stripServiceSecrets } from "./service-child-env.ts";
 import { spawnCli } from './procs.ts';
 
 const operatorSecrets = [
@@ -61,5 +61,13 @@ describe("trusted host secrets at child-process boundaries", () => {
     });
     expect(JSON.parse(output)).toEqual({ HERMES_HOME: '/fictional/worker', DEEPSEEK_API_KEY: 'fictional-attached-provider' });
     for (const key of operatorSecrets) expect(source[key as keyof typeof source]).toBe('fictional-operator-secret');
+  });
+});
+
+describe("GitHub login isolation for Hermes processes", () => {
+  it("removes GitHub/Copilot logins and points the gh lookup at a host with no login", () => {
+    const env: Record<string, string | undefined> = { GH_TOKEN: "fictional", GITHUB_TOKEN: "fictional", COPILOT_GITHUB_TOKEN: "fictional", GH_HOST: "github.com", PATH: "/usr/bin" };
+    isolateGithubLogin(env);
+    expect(env).toEqual({ PATH: "/usr/bin", COPILOT_GH_HOST: "realbud.invalid" });
   });
 });
