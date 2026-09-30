@@ -122,10 +122,29 @@ describe("portal fence", () => {
     );
   });
 
-  it("treats shell and computer tools as computer actions", () => {
-    expect(isComputerTool("shell")).toBe(true);
+  it("treats namespaced shell and computer tools as computer actions", () => {
+    expect(isComputerTool("mcp__computer__shell")).toBe(true);
+    expect(isComputerTool("computer.shell")).toBe(true);
     expect(isComputerTool("mcp__computer__navigate")).toBe(true);
+    expect(isComputerTool("mcp__computer__screenshot_desktop")).toBe(true);
     expect(isComputerTool("edit")).toBe(false);
+  });
+
+  it("keeps bounded CUA and browser tools fenced", () => {
+    for (const tool of ["navigate", "click_semantic", "fill", "read", "click_xy", "javascript", "computer_exec", "browser_navigate", "mcp__browser__click", "mcp_computer_click"]) {
+      expect(isComputerTool(tool), tool).toBe(true);
+    }
+    // A non-command tool whose summary names a computer tool is still fenced.
+    expect(isComputerTool("other", "mcp_computer_click_xy")).toBe(true);
+  });
+
+  it("does not treat the engine's own code or terminal runs as computer actions", () => {
+    // Hermes execute_code permission as it reaches the host (ACP kind "execute" -> "shell").
+    expect(isComputerTool("shell", "execute_code <<'PY'\nimport csv\ndf.fillna(0)\nPY")).toBe(false);
+    expect(isComputerTool("shell", "python3 scrape.py --browser chrome --navigate https://example.com")).toBe(false);
+    expect(isComputerTool("terminal", "ls -la && open screenshot.png")).toBe(false);
+    expect(isComputerTool("execute_code", "print('fill')")).toBe(false);
+    expect(isComputerTool("Bash", "npx playwright screenshot")).toBe(false);
   });
 });
 
