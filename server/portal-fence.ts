@@ -36,7 +36,14 @@ export interface FencePayload {
 const ALLOWED = new Set<string>(ALLOWED_TOOLS);
 /** Read-only discovery so Bud can find an open Chrome/Brave pid + window. */
 const DISCOVERY = new Set(["get_browser_state", "list_windows", "verify_state"]);
-const COMPUTER = new Set<string>([...ALLOWED_TOOLS, ...FORBIDDEN_TOOLS, "shell", "prepare", ...DISCOVERY]);
+const COMPUTER = new Set<string>([...ALLOWED_TOOLS, ...FORBIDDEN_TOOLS, "prepare", ...DISCOVERY]);
+/** The engine's own code and command runs, by provenance: an ACP `kind: "execute"`
+ * permission (Hermes terminal/execute_code) arrives as bare "shell" with the script
+ * as its summary (server/drivers/acp/core.ts), Codex exec approvals are "shell", and
+ * Claude's is "Bash". A bounded-CUA `shell` only reaches the host namespaced
+ * (mcp__computer__shell, computer.shell), so a bare command name is never a
+ * browser/computer action, and its summary is script text, not a tool identity. */
+const LOCAL_COMMAND = new Set(["shell", "terminal", "bash", "execute", "execute_code", "run_command", "process"]);
 const PASSWORD_RE = /password|passcode|otp|one-time|verification code|mfa|2fa/i;
 const URL_RE = /https?:\/\/[^\s"'<>]+/gi;
 const HOST_RE = /(?:^|[\s"'=:])(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/:?#\s"'<>]|$)/gi;
@@ -57,6 +64,7 @@ export function normalizeToolName(tool: string): string {
 }
 
 export function isComputerTool(tool: string, summary?: string): boolean {
+  if (LOCAL_COMMAND.has(tool.trim().toLowerCase())) return false;
   const name = normalizeToolName(tool);
   if (COMPUTER.has(name) || ALLOWED.has(name)) return true;
   return /computer|browser|navigate|click_semantic|click_xy|screenshot|fill/i.test(
