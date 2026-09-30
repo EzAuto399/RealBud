@@ -100,6 +100,8 @@ async function installLocked(input: {
       hostInstallationId: binding.hostInstallationId, path: scratchGrant, trustedKeysPath: scratchTrust,
       now: input.now ?? Date.now() };
     const checked = readServiceEntitlement(options);
+    // Beyond ordinary drift: this computer's clock is behind. Not a bad grant.
+    if (checked.state === 'not-yet-valid') throw Object.assign(new Error('Service access starts shortly.'), { code: 'not-yet-valid' });
     if (checked.state !== 'active' || !checked.expiresAt) fail();
     if (input.keepLonger) {
       // Never downgrade: a verified grant in force that lasts as long stays.

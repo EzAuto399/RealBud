@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   assertServiceEntitlementCapability, canonicalServiceEntitlementPayload, createServiceEntitlementAuthority,
   readServiceEntitlement, type ServiceEntitlementOptions,
+  NOT_BEFORE_SKEW_MS,
 } from "./service-entitlement.ts";
 import type { ServiceEntitlementCapability, ServiceEntitlementPayload } from "../shared/service-entitlement.ts";
 
@@ -166,10 +167,17 @@ describe("signed entitlement admission", () => {
 describe("entitlement validity and strict schema", () => {
   it("uses inclusive notBefore and exclusive expiresAt boundaries", () => {
     writeGrant(payload({ notBefore: NOW, expiresAt: NOW + 1 }));
-    expect(readServiceEntitlement({ ...options, now: NOW - 1 })).toMatchObject({ state: "not-yet-valid", capabilities: [] });
+    expect(readServiceEntitlement({ ...options, now: NOW - NOT_BEFORE_SKEW_MS - 1 })).toMatchObject({ state: "not-yet-valid", capabilities: [] });
     expect(readServiceEntitlement(options).state).toBe("active");
     expect(readServiceEntitlement({ ...options, now: NOW + 1 })).toMatchObject({ state: "expired", capabilities: [] });
     expect(() => assertServiceEntitlementCapability("reasoning", { ...options, now: NOW + 1 })).toThrow(expect.objectContaining({ status: 402 }));
+  });
+
+  it("accepts a grant signed moments ahead of this computer's clock (ordinary drift)", () => {
+    writeGrant(payload({ issuedAt: NOW, notBefore: NOW, expiresAt: NOW + DAY }));
+    // The QA Mac checked 12 ms before the gateway's signing time.
+    expect(readServiceEntitlement({ ...options, now: NOW - 12 }).state).toBe("active");
+    expect(readServiceEntitlement({ ...options, now: NOW - NOT_BEFORE_SKEW_MS }).state).toBe("active");
   });
 
   it.each([

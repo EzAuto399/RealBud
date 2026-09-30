@@ -229,6 +229,14 @@ it("refuses corrupt or escaping selectors without replacing them", () => {
   }
 });
 
+it("never adopts a personal Hermes on PATH in the product build", () => {
+  // QA 2026-09-30: a personal v0.20.6 read as "Bud update blocked" until the
+  // private worker finished installing.
+  vi.stubEnv("REALBUD_PRODUCTION", "1");
+  expect(selectedHermesCli()).toBe(runtimeCli(home, process.platform));
+  expect(existsSync(selectedHermesCli())).toBe(false);
+});
+
 it("keeps a custom CLI outside managed installation", () => {
   vi.stubEnv("REALBUD_HERMES_CLI", "/custom/hermes");
   expect(selectedHermesCli()).toBe("/custom/hermes");

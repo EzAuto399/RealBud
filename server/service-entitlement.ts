@@ -5,6 +5,9 @@ import {
   type ServiceEntitlementState, type ServiceEntitlementStatus,
 } from "../shared/service-entitlement.ts";
 
+/** Clock drift tolerated between the signing service and this computer. */
+export const NOT_BEFORE_SKEW_MS = 5 * 60_000;
+
 const MAX_ENVELOPE_BYTES = 16 * 1024;
 const MAX_TRUST_BYTES = 64 * 1024;
 const MAX_PAYLOAD_BYTES = 4096;
@@ -136,7 +139,9 @@ export function readServiceEntitlement(options: ServiceEntitlementOptions): Serv
     const payload: unknown = JSON.parse(envelope.payload);
     if (!payloadValid(payload) || envelope.payload !== canonicalServiceEntitlementPayload(payload)) invalid();
     if (payload.companyId !== options.companyId || payload.hostInstallationId !== options.hostInstallationId) invalid();
-    if (now < payload.notBefore) return status("not-yet-valid", policy, "Managed service entitlement is not active yet.", payload);
+    // A grant signed seconds ago on a service whose clock runs ahead of this
+    // computer is not a future grant. Allow ordinary clock drift.
+    if (now + NOT_BEFORE_SKEW_MS < payload.notBefore) return status("not-yet-valid", policy, "Managed service entitlement is not active yet.", payload);
     if (now >= payload.expiresAt) return status("expired", policy, "Managed service entitlement has expired. Contact service support.", payload);
     return status("active", policy, null, payload);
   } catch (error) {
