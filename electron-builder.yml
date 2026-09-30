@@ -162,6 +162,12 @@ nsis:
   oneClick: true
   perMachine: false
   shortcutName: RealBud
+  uninstallDisplayName: RealBud
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
   # Versioned, like the .dmg. A stable RealBud-setup.exe can sit beside
   # RealBud-${version}-setup.exe on a release.
   artifactName: RealBud-${version}-setup.${ext}
