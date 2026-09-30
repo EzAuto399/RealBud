@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ManagedConnectors, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
-import { composioAuthConfigClient, managedAuthConfigName, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAuthConfigClient, managedAuthConfigName, oauthAppsFromEnv, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import type { AppBinding, ComposioAppAdapter } from './composio-apps.ts';
 import { fixture } from './testing.ts';
 import { GatewayError } from './contracts.ts';
@@ -233,5 +233,35 @@ test('connecting another app does not break a session in flight, and tool names 
     // A registry change to anything but the allowlist still ends the session.
     s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, userId: 'installation-other' } : d));
     await assert.rejects(() => broker.handle(s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id: 3, method: 'ping' }, opened.session)), /connector_session_expired|connector_binding_changed/);
+  } finally { s.f.close(); }
+});
+
+test('with RealBud\'s own Google client, a new Google app gets an own-client config while the bound Gmail config and a ready managed app stay as they were', async () => {
+  const s = setup(); try {
+    const posted: { slug: string; type: string; name: string; secret: unknown }[] = [];
+    const store: Record<string, unknown>[] = [{ id: 'ac_drive_managed', name: 'realbud-googledrive-managed-v1', toolkit: { slug: 'googledrive' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }];
+    const authConfigs = composioAuthConfigClient({ oauthApps: oauthAppsFromEnv({ REALBUD_OAUTH_GOOGLE_CLIENT_ID: 'fictional.apps.googleusercontent.com', REALBUD_OAUTH_GOOGLE_CLIENT_SECRET: 'fictional-own-secret' }), fetch: async (url, init) => {
+      const u = new URL(url); const toolkit = /\/toolkits\/([^/]+)$/.exec(u.pathname)?.[1];
+      if (toolkit) return Response.json({ slug: toolkit, composio_managed_auth_schemes: ['OAUTH2'] });
+      if (init.method === 'POST') {
+        const body = JSON.parse(init.body as string) as { toolkit: { slug: string }; auth_config: { type: string; name: string; credentials?: Record<string, unknown> } };
+        posted.push({ slug: body.toolkit.slug, type: body.auth_config.type, name: body.auth_config.name, secret: body.auth_config.credentials?.client_secret });
+        store.push({ id: `ac_${body.toolkit.slug}_own`, name: body.auth_config.name, toolkit: body.toolkit, auth_scheme: 'OAUTH2', is_composio_managed: false, status: 'ENABLED' });
+        return Response.json({ auth_config: { id: `ac_${body.toolkit.slug}_own` } }, { status: 201 });
+      }
+      return Response.json({ items: store.filter(c => (c.toolkit as { slug: string }).slug === u.searchParams.get('toolkit_slug')), next_cursor: null });
+    } });
+    // Office A already admitted Drive under the managed config; that row is kept.
+    const broker = s.make({ authConfigs });
+    s.f.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,auth_config,created) VALUES(?,?,?,?,?)', s.f.tenant.companyId, 'googledrive', 'ready', 'ac_drive_managed', s.f.now());
+    const reply = await broker.handle(s.request(s.a.token, '/v1/connectors/authorize', { app: 'googlecalendar' }));
+    assert.equal(JSON.stringify(reply.body).includes('fictional-own-secret'), false);
+    assert.deepEqual(posted, [{ slug: 'googlecalendar', type: 'use_custom_auth', name: 'realbud-googlecalendar-own-v1', secret: 'fictional-own-secret' }]);
+    assert.equal(s.bindings.find(b => b.op === 'authorize')!.binding.authConfigId, 'ac_googlecalendar_own');
+    await broker.handle(s.request(s.a.token, '/v1/connectors/authorize', { app: 'googledrive' }));
+    assert.equal(posted.length, 1);
+    assert.equal(s.bindings.filter(b => b.op === 'authorize').at(-1)!.binding.authConfigId, 'ac_drive_managed');
+    // The device's Gmail binding is exactly what provisioning wrote.
+    assert.equal(s.devices()[0]!.authConfigId, 'ac_gmail_company-a');
   } finally { s.f.close(); }
 });

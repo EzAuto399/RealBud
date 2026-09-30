@@ -58,6 +58,8 @@ For the first **customer-paid** office, Modelvia refuses a new customer with `bi
 | `REALBUD_GATEWAY_CONNECTOR_REGISTRY` | fly.toml | absolute path of the connector device registry on the volume |
 | `REALBUD_GATEWAY_PUBLIC_ORIGIN` | yes | this service's HTTPS origin, put into `connector.endpoint` |
 | `REALBUD_COMPOSIO_ORG_KEY` | yes | Composio `x-org-api-key`; a vendor credential, never held by customers |
+| `REALBUD_OAUTH_GOOGLE_CLIENT_ID`, `REALBUD_OAUTH_GOOGLE_CLIENT_SECRET` | no (both or neither) | RealBud's own Google OAuth client. With both, new Gmail and Google app auth configs use it (`realbud-<slug>-own-v1`) instead of Composio's shared client, which Google blocks for `gmail.readonly`. Allow redirect URI `https://backend.composio.dev/api/v3/toolkits/auth/callback`. Half a pair answers `connector_oauth_app_unconfigured:<NAME>`. See docs/MANAGED-CONNECTIONS-OPERATIONS.md |
+| `REALBUD_OAUTH_MICROSOFT_CLIENT_ID`, `REALBUD_OAUTH_MICROSOFT_CLIENT_SECRET` | no (both or neither) | Same, for Outlook, OneDrive, Teams, SharePoint, OneNote and To Do |
 | Gmail auth config | automatic | Provisioning resolves or creates a Gmail OAuth2 config with `gmail.readonly` inside each office's Composio project. Its project-scoped ID stays on the gateway; do not supply one deploy-wide ID. |
 | `REALBUD_MODELVIA_BASE_URL` | fly.toml | Modelvia origin, `https://api.modelvia.dev` |
 | `REALBUD_MODELVIA_SCOPED_SECRET` | yes | Modelvia RealBud-scoped HMAC secret, >=32 chars, distinct from the old global Modelvia operator secret and the gateway's portal/operator secrets. A fresh two-minute `managed-ai-realbud` bearer is minted per request; a static token would 401. Modelvia binds it to `MODELVIA_REALBUD_CLIENT_ID` server-side |

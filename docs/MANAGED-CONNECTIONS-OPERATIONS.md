@@ -178,6 +178,84 @@ auth-config, connected-account and tool-execution calls are exercised only
 through fakes here; the field names follow the v3 API reference and have not
 been confirmed against a live project from this change.
 
+## RealBud's own OAuth client (30 September 2026)
+
+Google blocks Composio's shared OAuth client for restricted scopes such as
+`gmail.readonly` on new accounts ("This app is blocked"). The gateway therefore
+creates auth configs with RealBud's own OAuth client whenever the operator has
+configured one for the toolkit's provider, and falls back to Composio-managed
+auth only when none is configured.
+
+| Provider | Gateway secrets (names only) | Toolkits |
+| --- | --- | --- |
+| Google | `REALBUD_OAUTH_GOOGLE_CLIENT_ID`, `REALBUD_OAUTH_GOOGLE_CLIENT_SECRET` | `gmail`, `googlecalendar`, `googledrive`, `googlesheets`, `googledocs`, `googlemeet`, `googleslides`, `googletasks` |
+| Microsoft | `REALBUD_OAUTH_MICROSOFT_CLIENT_ID`, `REALBUD_OAUTH_MICROSOFT_CLIENT_SECRET` | `outlook`, `one_drive`, `microsoft_teams`, `share_point`, `onenote`, `microsoft_todo` |
+
+Set both names for a provider or neither. Half a pair refuses that provider's
+toolkits with `connector_oauth_app_unconfigured:<MISSING_NAME>`; the value is
+never logged, returned to a desktop or put in an error. Other toolkits stay
+Composio-managed.
+
+Own-client configs are created in each office's own Composio project as
+`use_custom_auth` / `OAUTH2` with the client id and secret, the redirect URI
+below and, for Gmail, `gmail.readonly` only. They are named
+`realbud-<slug>-own-v1` (Gmail: `realbud-gmail-own-v1`), never the managed names
+(`realbud-gmail-readonly-v1`, `realbud-<slug>-managed-v1`), so an existing
+managed config is never found, changed or deleted by the switch. Readback
+requires `is_composio_managed: false`, `OAUTH2`, `ENABLED` and, for Gmail, only
+the read-only and basic sign-in scopes.
+
+What changes and what does not:
+
+- A device already provisioned keeps the `authConfigId` in its registry entry, so
+  its Gmail link keeps working. Nothing rebinds or rotates it.
+- New installations provisioned after the secrets are set, and apps first
+  admitted after that, get the own-client config.
+- An app an office already admitted (`connector_office_apps` row `ready`) keeps
+  its managed config. Moving it needs an explicit operator replacement.
+- Shared office mailbox mode requires all granted devices to share one auth
+  config; an office that mixes old and new installations reports
+  `office_mailbox_configuration_conflict` until the operator reprovisions the older ones.
+- Changing the client later needs a new version name (`-own-v2`); do not edit a
+  live config in place.
+
+**Redirect URI to allow in the provider console:**
+`https://backend.composio.dev/api/v3/toolkits/auth/callback`. The gateway sends
+it explicitly as `oauth_redirect_uri`.
+
+### Owner runbook: Google
+
+1. In Google Cloud console, create a project for RealBud (or pick the existing one).
+2. APIs & Services → Library: enable the Gmail API (and Calendar, Drive, Sheets,
+   Docs as offices need them).
+3. OAuth consent screen: User type **External**, publishing status **Testing**.
+   App name RealBud, support and developer contact email, the realbud.app domain.
+4. Scopes: add `https://www.googleapis.com/auth/gmail.readonly`, `openid`,
+   `userinfo.email`, `userinfo.profile`, plus any other Google app's scopes you
+   intend to admit.
+5. Test users: add each staff Google account that will connect (Testing mode admits
+   only listed users, up to 100). Publishing to Production for a restricted scope
+   needs Google verification and a security assessment first.
+6. Credentials → Create credentials → OAuth client ID → **Web application**.
+   Authorized redirect URI: `https://backend.composio.dev/api/v3/toolkits/auth/callback`.
+7. Set the Fly secrets from a terminal that already ran `fly auth login`, without
+   echoing the values into shell history or a shared log:
+   `fly secrets set -a <gateway app> REALBUD_OAUTH_GOOGLE_CLIENT_ID=… REALBUD_OAUTH_GOOGLE_CLIENT_SECRET=…`
+   (or export both before `deploy.sh`, which stages them when present).
+8. Connect Gmail from a newly provisioned installation. The consent screen should
+   name RealBud, not Composio. In Testing mode Google shows an "unverified app"
+   warning to test users; that is expected.
+
+Microsoft follows the same shape: an Entra app registration (Web platform) with
+the same redirect URI and a client secret, set as the `REALBUD_OAUTH_MICROSOFT_*`
+pair. Tenant restrictions and admin consent for Microsoft are not configured by
+this change.
+
+**Evidence tier: local tests against injected fakes.** The `use_custom_auth`
+request body (`authScheme`, `credentials.client_id`, `client_secret`, `scopes`,
+`oauth_redirect_uri`) follows Composio's v3 documentation and SDK examples; it has
+not been exercised against a live Composio project or Google consent from here.
+
 ## Desktop setup and recovery
 
 1. Unlock that installation's service administrator session. Enter only the service origin and scoped installation credential in Managed connections.

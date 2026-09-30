@@ -14,7 +14,7 @@ import type { ModelviaOperatorClient } from './modelvia-keys.ts';
 import { connectorRegistry, ManagedConnectors, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer, type PortalIdentity } from './http.ts';
 import { composeProvisioning, fileSecretStore, modelviaOperatorState, updateRegistry, type SecretStore } from './provisioning.ts';
-import { composioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAuthConfigClient, oauthAppsFromEnv } from './composio-auth-config.ts';
 import { composioAppAdapter } from './composio-apps.ts';
 import { composeOperatorRoutes, composeResaleTermsClient, operatorAccessState } from './office-ai-access.ts';
 import { officeAiTermsRoutes, syncOfficeResalePolicy } from './office-ai-terms.ts';
@@ -103,7 +103,7 @@ export function composeAppAdmission(options: { env: NodeJS.ProcessEnv; fetch: Ht
   const base = (options.env.REALBUD_COMPOSIO_API_BASE ?? '').trim();
   const baseOption = base ? { base } : {};
   return {
-    authConfigs: composioAuthConfigClient({ fetch: options.fetch, ...baseOption }),
+    authConfigs: composioAuthConfigClient({ fetch: options.fetch, ...baseOption, oauthApps: oauthAppsFromEnv(options.env) }),
     apps: composioAppAdapter({ fetch: options.fetch, ...baseOption }),
     admitApp: (deviceId, app) => updateRegistry(options.registry, devices => ({
       devices: devices.map(device => device.id === deviceId && !(device.apps ?? ['gmail']).includes(app) ? { ...device, apps: [...(device.apps ?? ['gmail']), app] } : device),

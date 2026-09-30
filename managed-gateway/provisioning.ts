@@ -23,7 +23,7 @@
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
-import { composioAuthConfigClient, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAuthConfigClient, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { serialized } from './serialized.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -1053,7 +1053,7 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
         ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}),
       }),
       modelvia: options.modelvia ?? model.modelvia,
-      authConfigs: options.authConfigs ?? composioAuthConfigClient({ fetch: options.fetch, ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}) }),
+      authConfigs: options.authConfigs ?? composioAuthConfigClient({ fetch: options.fetch, oauthApps: oauthAppsFromEnv(env), ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}) }),
       requestCapNanoAud: model.requestCapNanoAud,
       // The composed client always reads terms; an injected one only if it can.
       ...(hasCustomerTerms(options.modelvia ?? model.modelvia) ? { terms: (options.modelvia ?? model.modelvia) as unknown as ModelviaTermsClient } : {}),

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE } from './composio-auth-config.ts';
+import { COMPOSIO_OAUTH_REDIRECT_URI, composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE, managedAuthConfigName, oauthAppsFromEnv, oauthProviderFor, ownAuthConfigName } from './composio-auth-config.ts';
 const config = (changes: Record<string, unknown> = {}) => ({ id: 'ac_test', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: GMAIL_READONLY_SCOPE }, ...changes });
 const args = { projectKey: 'ak_fictional_office', allowCreate: true, beforeCreate() {} };
 test('managed create uses only office project key and exact readonly scope, then reads back before returning', async () => {
@@ -68,4 +68,99 @@ test('readback admits only adapter-reviewed basic sign-in scopes alongside gmail
   }
   const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [config({ credentials: { scopes: 'openid email profile' } })] }) });
   await assert.rejects(client.resolveGmail(args), /scopes_not_admitted/);
+});
+
+// RealBud's own OAuth client (30 September 2026). Fictional values only.
+const OWN_ID = 'fictional-client.apps.googleusercontent.com', OWN_SECRET = 'fictional-own-client-secret-value';
+const googleEnv = { REALBUD_OAUTH_GOOGLE_CLIENT_ID: OWN_ID, REALBUD_OAUTH_GOOGLE_CLIENT_SECRET: OWN_SECRET };
+/** A project's auth-config surface that stores what was created, exactly as posted. */
+function project(initial: Record<string, unknown>[] = []) {
+  const items = [...initial]; const posts: Record<string, unknown>[] = [];
+  const fetch = async (url: string, init: RequestInit) => {
+    if (init.method === 'POST') {
+      const body = JSON.parse(init.body as string) as { toolkit: { slug: string }; auth_config: Record<string, unknown> };
+      posts.push(body); const id = `ac_created_${posts.length}`; const c = body.auth_config;
+      items.push({ id, name: c.name, toolkit: { slug: body.toolkit.slug }, auth_scheme: 'OAUTH2', is_composio_managed: c.type === 'use_composio_managed_auth', status: 'ENABLED', credentials: { scopes: (c.credentials as Record<string, unknown> | undefined)?.scopes } });
+      return Response.json({ auth_config: { id } }, { status: 201 });
+    }
+    const slug = new URL(url).searchParams.get('toolkit_slug');
+    return Response.json({ items: items.filter(i => (i.toolkit as { slug: string }).slug === slug), next_cursor: null });
+  };
+  return { items, posts, fetch };
+}
+test('own OAuth client is chosen when the provider env is present, with a versioned own name and gmail.readonly only', async () => {
+  const p = project();
+  const client = composioAuthConfigClient({ fetch: p.fetch, oauthApps: oauthAppsFromEnv(googleEnv) });
+  assert.equal(await client.resolveGmail(args), 'ac_created_1');
+  assert.deepEqual(p.posts[0], { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_custom_auth', authScheme: 'OAUTH2', name: 'realbud-gmail-own-v1',
+    credentials: { client_id: OWN_ID, client_secret: OWN_SECRET, oauth_redirect_uri: COMPOSIO_OAUTH_REDIRECT_URI, scopes: GMAIL_READONLY_SCOPE } } });
+  assert.equal(await client.resolveAuthConfig!({ slug: 'googlecalendar', ...args }), 'ac_created_2');
+  assert.deepEqual(p.posts[1], { toolkit: { slug: 'googlecalendar' }, auth_config: { type: 'use_custom_auth', authScheme: 'OAUTH2', name: 'realbud-googlecalendar-own-v1',
+    credentials: { client_id: OWN_ID, client_secret: OWN_SECRET, oauth_redirect_uri: COMPOSIO_OAUTH_REDIRECT_URI } } });
+  // A toolkit on another provider, or none, stays Composio-managed.
+  assert.equal(await client.resolveAuthConfig!({ slug: 'outlook', ...args }), 'ac_created_3');
+  assert.equal(await client.resolveAuthConfig!({ slug: 'xero', ...args }), 'ac_created_4');
+  assert.deepEqual(p.posts.slice(2).map(b => (b.auth_config as Record<string, unknown>).type), ['use_composio_managed_auth', 'use_composio_managed_auth']);
+  assert.deepEqual(p.posts.slice(2).map(b => (b.auth_config as Record<string, unknown>).name), ['realbud-outlook-managed-v1', 'realbud-xero-managed-v1']);
+});
+test('without an operator OAuth app every toolkit falls back to the managed config exactly as before', async () => {
+  for (const oauthApps of [undefined, oauthAppsFromEnv({}), oauthAppsFromEnv({ REALBUD_OAUTH_GOOGLE_CLIENT_ID: ' ', REALBUD_OAUTH_GOOGLE_CLIENT_SECRET: '' })]) {
+    const p = project();
+    const client = composioAuthConfigClient({ fetch: p.fetch, ...(oauthApps ? { oauthApps } : {}) });
+    await client.resolveGmail(args); await client.resolveAuthConfig!({ slug: 'googledrive', ...args });
+    assert.deepEqual(p.posts, [
+      { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: GMAIL_AUTH_CONFIG_NAME, credentials: { scopes: GMAIL_READONLY_SCOPE } } },
+      { toolkit: { slug: 'googledrive' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-googledrive-managed-v1' } },
+    ]);
+  }
+});
+test('switching to the own client leaves the old managed Gmail config untouched and creates a separately named one', async () => {
+  const old = config({ id: 'ac_old_managed' });
+  const p = project([old]);
+  // Before the switch the office resolves its existing managed config with no write.
+  assert.equal(await composioAuthConfigClient({ fetch: p.fetch }).resolveGmail(args), 'ac_old_managed');
+  assert.equal(p.posts.length, 0);
+  const own = composioAuthConfigClient({ fetch: p.fetch, oauthApps: oauthAppsFromEnv(googleEnv) });
+  assert.equal(await own.resolveGmail(args), 'ac_created_1');
+  assert.equal(await own.resolveGmail({ ...args, allowCreate: false }), 'ac_created_1');
+  assert.equal(p.posts.length, 1);
+  assert.deepEqual(p.items[0], old); // never mutated, still resolvable by its old name
+  assert.equal(await composioAuthConfigClient({ fetch: p.fetch }).resolveGmail({ ...args, allowCreate: false }), 'ac_old_managed');
+  assert.notEqual(ownAuthConfigName('gmail'), managedAuthConfigName('gmail'));
+  assert.notEqual(ownAuthConfigName('googledrive'), managedAuthConfigName('googledrive'));
+});
+test('an own-named config that is Composio-managed, disabled or has widened Gmail scopes fails closed', async () => {
+  const own = (changes: Record<string, unknown>) => ({ ...config(), name: 'realbud-gmail-own-v1', is_composio_managed: false, ...changes });
+  for (const changes of [{ is_composio_managed: true }, { status: 'DISABLED' }, { auth_scheme: 'API_KEY' }, { credentials: { scopes: `${GMAIL_READONLY_SCOPE},https://mail.google.com/` } }]) {
+    const client = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [own(changes)] }); }, oauthApps: oauthAppsFromEnv(googleEnv) });
+    await assert.rejects(client.resolveGmail(args), /connector_auth_config_.*not_admitted/);
+  }
+});
+test('the client secret never appears in errors, and half a configuration names only the missing variable', async () => {
+  const outcomes: unknown[] = [];
+  for (const failure of ['throw', 'reject', 'unconfirmed', 'redirect'] as const) {
+    const client = composioAuthConfigClient({ oauthApps: oauthAppsFromEnv(googleEnv), fetch: async (_url, init) => {
+      if (init.method !== 'POST') return Response.json({ items: [] });
+      if (failure === 'throw') throw new Error(`socket closed ${OWN_SECRET}`);
+      if (failure === 'reject') return new Response(`{"error":"invalid ${OWN_SECRET}"}`, { status: 400 });
+      if (failure === 'redirect') return new Response(OWN_SECRET, { status: 302, headers: { location: 'https://other.invalid' } });
+      return new Response(OWN_SECRET, { status: 500 });
+    } });
+    try { await client.resolveGmail(args); } catch (error) { outcomes.push(error); }
+  }
+  assert.equal(outcomes.length, 4);
+  for (const error of outcomes) {
+    const text = `${(error as Error).message} ${(error as Error).stack} ${JSON.stringify(error)}`;
+    assert.ok(!text.includes(OWN_SECRET) && !text.includes(OWN_ID), text);
+  }
+  const half = oauthAppsFromEnv({ REALBUD_OAUTH_GOOGLE_CLIENT_ID: OWN_ID });
+  assert.throws(() => half('google'), (e: Error) => e.message === 'connector_oauth_app_unconfigured:REALBUD_OAUTH_GOOGLE_CLIENT_SECRET');
+  const other = oauthAppsFromEnv({ REALBUD_OAUTH_MICROSOFT_CLIENT_SECRET: OWN_SECRET });
+  assert.throws(() => other('microsoft'), (e: Error) => e.message === 'connector_oauth_app_unconfigured:REALBUD_OAUTH_MICROSOFT_CLIENT_ID' && !e.message.includes(OWN_SECRET));
+  assert.equal(oauthAppsFromEnv({})('google'), undefined);
+});
+test('toolkits map to one provider; unknown and prototype names map to none', () => {
+  for (const slug of ['gmail', 'googlecalendar', 'googledrive', 'googlesheets', 'googledocs', 'googlemeet']) assert.equal(oauthProviderFor(slug), 'google');
+  for (const slug of ['outlook', 'one_drive', 'microsoft_teams', 'share_point']) assert.equal(oauthProviderFor(slug), 'microsoft');
+  for (const slug of ['xero', 'slack', 'constructor', 'toString', '__proto__']) assert.equal(oauthProviderFor(slug), undefined);
 });

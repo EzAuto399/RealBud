@@ -184,11 +184,13 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
     printf 'REALBUD_INVOICE_RESEND_API_KEY=%s\n' "$REALBUD_INVOICE_RESEND_API_KEY"
     printf 'REALBUD_INVOICE_FROM=%s\n' "$REALBUD_INVOICE_FROM"
   fi
-  # Modelvia commercial terms and the per-request cap: non-secret, set only when
+  # Modelvia commercial terms, the per-request cap and the optional own OAuth
+  # clients (secret; both of a pair or neither): set only when
   # exported (DEPLOY.md, "Live Modelvia integration values").
   for name in REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE \
     REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS REALBUD_MODELVIA_RESALE_TERMS_REFERENCE REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD \
     REALBUD_INVOICE_TERMS_DAYS REALBUD_PAYID REALBUD_PAYID_NAME REALBUD_BANK_ACCOUNT_NAME REALBUD_BANK_BSB REALBUD_BANK_ACCOUNT_NUMBER \
+    REALBUD_OAUTH_GOOGLE_CLIENT_ID REALBUD_OAUTH_GOOGLE_CLIENT_SECRET REALBUD_OAUTH_MICROSOFT_CLIENT_ID REALBUD_OAUTH_MICROSOFT_CLIENT_SECRET \
     "${plan_names[@]}"; do
     [[ -z "${!name:-}" ]] || printf '%s=%s\n' "$name" "${!name}"
   done
