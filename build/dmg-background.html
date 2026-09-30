@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- Source for build/dmg-background.png (660x420) and @2x (1320x840).
+     Render: node scripts/render-dmg-background.mjs
+     Icons sit at (170,222) and (490,222) — keep in sync with electron-builder.yml dmg.contents.
+     Finder draws icon labels white in dark mode and black in light mode, so the
+     label band under the icons is a mid tone that reads for both. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --tile-0: #202923; --tile-1: #131916; --tile-2: #0B0F0D;
+    --bud: #3B8065; --bud-deep: #205843; --leaf: #B7D1BF;
+    --paper: #F3EFE5; --muted: #A9B5AC; --band: #5F7366;
+  }
+  html, body { margin: 0; width: 660px; height: 420px; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--paper);
+    background:
+      radial-gradient(120% 90% at 78% 12%, rgba(59,128,101,.28), transparent 60%),
+      radial-gradient(90% 70% at 8% 100%, rgba(32,88,67,.35), transparent 65%),
+      linear-gradient(160deg, var(--tile-0), var(--tile-1) 55%, var(--tile-2));
+    position: relative;
+  }
+  .grain { position: absolute; inset: 0; opacity: .06;
+    background-image: radial-gradient(rgba(255,255,255,.9) .5px, transparent .6px);
+    background-size: 3px 3px; }
+  header { position: absolute; top: 26px; left: 32px; right: 32px; display: flex; align-items: center; gap: 10px; }
+  header svg { width: 26px; height: 26px; }
+  .brand { font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+  .tag { margin-left: auto; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  h1 { position: absolute; top: 72px; left: 0; right: 0; margin: 0; text-align: center;
+    font-size: 25px; font-weight: 700; letter-spacing: -.02em; }
+  h1 em { font-style: normal; color: var(--leaf); }
+  .band { position: absolute; left: 64px; right: 64px; top: 146px; height: 150px; border-radius: 22px;
+    background: linear-gradient(180deg, rgba(95,115,102,.55), var(--band));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 18px 40px rgba(0,0,0,.35); }
+  .arrow { position: absolute; left: 250px; top: 196px; width: 160px; height: 52px; }
+  ol { position: absolute; left: 44px; right: 44px; bottom: 44px; margin: 0; padding: 0; list-style: none;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  li { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.35; color: var(--paper); }
+  li b { display: block; font-weight: 650; }
+  li span { color: var(--muted); font-size: 11.5px; }
+  .n { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 11.5px; font-style: normal; font-weight: 700; color: #0B0F0D; background: var(--leaf); }
+  footer { position: absolute; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 10.5px; color: rgba(169,181,172,.75); }
+</style>
+</head>
+<body>
+  <div class="grain"></div>
+  <header>
+    <svg viewBox="0 0 1024 1024" aria-hidden="true"><defs><linearGradient id="g" x1="18%" y1="16%" x2="82%" y2="88%"><stop offset="0" stop-color="#3B8065"/><stop offset="1" stop-color="#205843"/></linearGradient></defs>
+      <path fill="url(#g)" fill-rule="evenodd" d="M693 122C735 89 774 113 766 164L724 421C718 455 727 479 752 504L878 629C910 661 901 700 862 718L772 758 752 878C747 909 724 928 692 928H638V846C638 775 582 718 512 718S386 775 386 846V928H302C267 928 243 902 247 868L263 739 176 700C124 676 112 615 152 570L693 122ZM448 928V846C448 810 477 781 512 781S576 810 576 846V928Z"/></svg>
+    <span class="brand">RealBud</span>
+    <span class="tag">Install</span>
+  </header>
+
+  <h1>Drag <em>RealBud</em> into Applications</h1>
+  <div class="band"></div>
+
+  <svg class="arrow" viewBox="0 0 160 52" aria-hidden="true">
+    <defs><linearGradient id="a" gradientUnits="userSpaceOnUse" x1="8" y1="0" x2="140" y2="0"><stop offset="0" stop-color="#B7D1BF" stop-opacity=".25"/><stop offset="1" stop-color="#B7D1BF"/></linearGradient></defs>
+    <path d="M8 26 H136" stroke="url(#a)" stroke-width="5" stroke-linecap="round" stroke-dasharray="1 12"/>
+    <path d="M126 12 L148 26 L126 40" fill="none" stroke="#B7D1BF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+
+  <ol>
+    <li><i class="n">1</i><div><b>Open RealBud</b><span>From Applications</span></div></li>
+    <li><i class="n">2</i><div><b>Connect to your office</b><span>Approve in your browser</span></div></li>
+    <li><i class="n">3</i><div><b>Ask Bud</b><span>Bud sets itself up</span></div></li>
+  </ol>
+  <footer>Blocked on first open? Right-click RealBud → Open.</footer>
+</body>
+</html>

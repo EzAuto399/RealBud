@@ -108,6 +108,22 @@ mac:
 dmg:
   sign: true
   artifactName: RealBud-${version}.dmg
+  title: RealBud ${version}
+  # Install window: build/dmg-background.html → scripts/render-dmg-background.mjs
+  # renders the 1x/@2x PNGs. Icon centres must match the HTML's label band.
+  background: build/dmg-background.png
+  iconSize: 96
+  window:
+    width: 660
+    height: 420
+  contents:
+    - x: 170
+      y: 222
+      type: file
+    - x: 490
+      y: 222
+      type: link
+      path: /Applications
 
 win:
   extraResources:
