@@ -223,10 +223,10 @@ async function reproduceWelcomeRestoreBlock() {
   assert.equal(await page.getByRole('button', { name: /restore.*backup|backup.*restore/i }).count(), 0, 'This selected package has no welcome restore entry.');
   await page.screenshot({ path: join(output, 'welcome-before-completion.png') });
   await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.equal((await api('/api/private-backup')).canRestore, true, 'Saving the sample profile alone must not be mistaken for the book mutation.');
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'complete');
   const after = await api('/api/private-backup'), afterBook = await api('/api/desk');
@@ -355,7 +355,7 @@ async function finishNormalWelcomeAfterCancel(firstDigest) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel('Your name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   const rules = await api('/api/onboarding'); assert.equal(rules.stage, 'office-rules');
   assert.equal((await api('/api/config')).profile.name, name);
   assert.equal((await api('/api/desk')).revision, 1); assert.equal(welcomeAgencyWrites, 0); assert.equal(welcomeProfileWrites, 1);
@@ -366,7 +366,7 @@ async function finishNormalWelcomeAfterCancel(firstDigest) {
     assert.equal(await protectedDigest(), firstDigest); assert.equal(existsSync(join(data, 'desk.key')), false);
     await page.reload();
   };
-  await restart(); await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await restart(); await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.deepEqual(await api('/api/onboarding'), rules);
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
   await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
@@ -393,9 +393,9 @@ async function finishRestoredWelcome() {
   await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Restore Operator');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'complete');
   const after = await api('/api/desk'); assert.equal(after.book.office.pmUser, welcomeSourceContact); assert.equal(after.revision, before.revision);

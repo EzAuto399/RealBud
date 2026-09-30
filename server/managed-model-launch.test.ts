@@ -62,7 +62,7 @@ describe("managed launch guard", () => {
     writeFileSync(join(propertyProfileDir(root), ".env"), "REALBUD_MODEL_API_KEY=fictional-shadow\n");
     expect(managedModelLaunchRefusal(root)).toBe(MANAGED_ACCESS_MISMATCH);
     expect(productAskFailure(`Error: ${MANAGED_ACCESS_MISMATCH}`)).toBe(MANAGED_ACCESS_MISMATCH);
-    expect(productAskFailure(MANAGED_ACCESS_UNPAIRED)).toMatch(/Pair this computer from realbud\.app/);
+    expect(productAskFailure(MANAGED_ACCESS_UNPAIRED)).toMatch(/Connect this computer to your office on realbud\.app/);
   });
 
   it("reads a damaged or duplicate-key config as no choice, and refuses to write over it", () => {

@@ -3,9 +3,9 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  Check,
   ClipboardCheck,
   Loader2,
+  Send,
   ShieldCheck,
 } from "lucide-react";
 
@@ -16,6 +16,7 @@ import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
+import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
 
 const SAMPLE_PROFILE_NAME = "Sample PM";
 const FINISH_TIMEOUT_MS = 15_000;
@@ -37,8 +38,9 @@ function finishRequest(path: string, init?: RequestInit) {
 
 type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
-// First run establishes the person and leads directly into the same Bud
-// setup used in settings. Sample-only exploration remains available.
+// First run establishes the person, connects this computer to the office on
+// realbud.app, and leads into the same Bud setup used in settings (step 3).
+// Sample-only exploration remains available at every step.
 export function Onboarding({ initialState, onDone }: { initialState: OnboardingState; onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
   const [saved, setSaved] = useState(initialState);
@@ -52,6 +54,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const edited = useRef(false);
   const pending = useRef(false);
+  const connect = useConnectOffice(name.trim());
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
 
@@ -203,13 +206,13 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
           <section className="flex min-h-[360px] flex-col p-4 sm:p-5 md:min-h-[440px]">
             <header>
               <div className="flex items-center justify-between gap-4 text-[11.5px] text-ink-muted">
-                <span>Set up your desk</span>
-                <span>{step + 1} of 2</span>
+                <span>Set up this computer</span>
+                <span>Step {step + 1} of 3</span>
               </div>
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-line/60" aria-hidden="true">
                 <div
                   className="h-full origin-left rounded-full bg-agency transition-transform duration-300 motion-reduce:transition-none"
-                  style={{ transform: `scaleX(${step === 0 ? 0.5 : 1})` }}
+                  style={{ transform: `scaleX(${(step + 1) / 3})` }}
                 />
               </div>
             </header>
@@ -294,31 +297,22 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
             ) : (
               <div className="flex flex-1 animate-panel-in flex-col motion-reduce:animate-none">
                 <div className="mt-4">
-                  <div className="flex size-9 items-center justify-center rounded-full bg-agency text-white" aria-hidden="true">
-                    <Check size={17} />
-                  </div>
-                  <h1 className="mt-3 text-[27px] font-semibold tracking-[-0.035em] text-ink">You stay in charge</h1>
+                  <h1 className="text-[27px] font-semibold tracking-[-0.035em] text-ink">{connect.office ? "This computer is connected" : "Connect this computer to your office"}</h1>
                   <p className="mt-2 max-w-[29rem] text-[14px] leading-relaxed text-ink-secondary">
-                    Bud helps with the work around a decision. The decision itself stays visible and yours.
+                    {connect.office
+                      ? "Next, Bud sets itself up on this computer with your office’s AI access."
+                      : "Your office account on realbud.app approves this computer, then Bud sets itself up here. Your conversations and documents stay on this computer."}
                   </p>
                 </div>
 
-                <ul className="mt-3 divide-y divide-line border-y border-line">
-                  <BoundaryRow
-                    icon={ClipboardCheck}
-                    title="Bud prepares. You decide."
-                    detail="Drafts and flags wait on Desk. You copy approved wording into the PMS."
-                  />
-                  <BoundaryRow
-                    icon={ShieldCheck}
-                    title="No notices. No trust money."
-                    detail="Statutory work and payments stop with a licensed person."
-                  />
-                  <BoundaryRow
-                    icon={BookOpen}
-                    title="Start with a sample book."
-                    detail="Learn the rhythm safely, then connect a named office from You."
-                  />
+                <div className="mt-4">
+                  <ConnectOfficeView {...connect.view} />
+                </div>
+
+                <ul className="mt-4 space-y-1.5 border-t border-line pt-3" aria-label="You stay in charge">
+                  <BoundaryRow icon={ClipboardCheck} title="Bud prepares. You decide." />
+                  <BoundaryRow icon={ShieldCheck} title="No notices or trust money without a licensed person." />
+                  <BoundaryRow icon={Send} title="Nothing is sent without your approval." />
                 </ul>
 
                 <div className="mt-auto pt-4">
@@ -337,18 +331,18 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                       <ShieldCheck size={15} />
                       Open recovery
                     </button>
-                  ) : (
+                  ) : connect.office ? (
                     <button
                       type="button"
                       onClick={() => void finish("bud")}
                       disabled={busy !== null || !name.trim()}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {busy === "finish" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <BookOpen size={15} />}
+                      {busy === "finish" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={15} />}
                       Continue to Bud setup
                     </button>
-                  )}
-                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 disabled:opacity-40">Open the sample desk first</button>}
+                  ) : null}
+                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"><BookOpen size={14} />Open the sample desk first</button>}
                   <button
                     type="button"
                     onClick={() => void back()}
@@ -366,12 +360,12 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                 type="button"
                 onClick={() => void openRecovery('you-private-backup')}
                 disabled={busy !== null}
-                className="pm-control flex w-full items-center justify-center gap-2 rounded border border-line px-3 text-[13px] font-medium text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
+                className="pm-control flex w-full items-center justify-center gap-2 rounded px-3 text-[12.5px] text-ink-muted underline-offset-2 hover:text-ink hover:underline disabled:opacity-40"
               >
-                {busy === 'restore' ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck size={15} />}
+                {busy === 'restore' ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck size={14} />}
                 Restore a private backup
               </button>
-              <p className="mt-1.5 text-center text-[12px] leading-relaxed text-ink-muted">Choose an encrypted backup and review it before restoring.</p>
+              <p className="text-center text-[12px] leading-relaxed text-ink-muted">Choose an encrypted backup and review it before restoring.</p>
             </div>
           </section>
         </div>
@@ -380,24 +374,11 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   );
 }
 
-function BoundaryRow({
-  icon: Icon,
-  title,
-  detail,
-}: {
-  icon: typeof ClipboardCheck;
-  title: string;
-  detail: string;
-}) {
+function BoundaryRow({ icon: Icon, title }: { icon: typeof ClipboardCheck; title: string }) {
   return (
-    <li className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 py-2">
-      <span className="flex size-8 items-center justify-center rounded-full bg-selected text-agency" aria-hidden="true">
-        <Icon size={15} />
-      </span>
-      <div>
-        <div className="text-[13.5px] font-medium text-ink">{title}</div>
-        <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-muted">{detail}</p>
-      </div>
+    <li className="flex items-center gap-2.5 text-[12.5px] text-ink-secondary">
+      <Icon size={14} className="shrink-0 text-agency" aria-hidden="true" />
+      <span>{title}</span>
     </li>
   );
 }

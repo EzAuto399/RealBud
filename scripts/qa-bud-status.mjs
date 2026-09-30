@@ -145,9 +145,9 @@ try {
     await setState(null); await panel.getByText('Checking Bud', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); await shot('bud-checking');
     await setState({ ...ready, ready: false, lastPing: null }); await panel.getByText('Check needed', { exact: true }).waitFor(); await shot('bud-readiness-needed');
     await setState({ ...ready, ready: false, lastPing: null, model: { attached: false, provider: null, model: null }, modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' } });
-    await panel.getByRole('button', { name: 'Open website account', exact: true }).waitFor(); await shot('bud-model-needed');
+    await panel.getByRole('button', { name: 'Connect to your office', exact: true }).waitFor(); await shot('bud-model-needed');
     await setState({ ...ready, ready: false, model: { ...ready.model, attached: false }, modelAccess: { managed: true, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } });
-    await panel.getByText('Model access withdrawn', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Open website account', exact: true }).count(), 0); await shot('bud-withdrawn');
+    await panel.getByText('Model access withdrawn', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect to your office', exact: true }).count(), 0); await shot('bud-withdrawn');
     await setState(ready, { recovering: true }); await panel.getByText('Recovery needed', { exact: true }).waitFor(); assert.notEqual((await readRows()).at(-1).state, 'Ready'); await shot('bud-recovery');
     await setState(ready, { connected: false }); await panel.getByText('Reconnecting', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); assert.equal(await panel.getByRole('button', { name: 'Check again', exact: true }).isDisabled(), true); await shot('bud-offline');
     await setState({ ...safeguards, cli: { ...ready.cli, matchesPin: false, compatible: false }, installerAvailable: true });

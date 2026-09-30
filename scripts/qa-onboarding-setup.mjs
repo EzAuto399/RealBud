@@ -201,14 +201,14 @@ try {
   assert.equal((await request('/api/onboarding')).stage, 'profile');
   await desk.getByLabel('Your name', { exact: true }).fill(FRESH_PERSON);
   await desk.getByRole('button', { name: 'Continue', exact: true }).click();
-  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'office-rules');
   await desk.reload();
-  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.equal((await request('/api/config')).profile.name, FRESH_PERSON);
   await desk.screenshot({ path: join(output, 'onboarding-rules.png') });
   await desk.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   assert.equal((await request('/api/onboarding')).stage, 'complete');
   assert.equal((await request('/api/desk')).book.office.pmUser, FRESH_PERSON);
   checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact');
@@ -400,7 +400,7 @@ try {
   await fresh.goto(`${uiBase}/#/desk`);
   await fresh.getByRole('region', { name: 'This morning', exact: true }).waitFor();
   assert.equal(await fresh.getByRole('heading', { name: 'Make the desk yours', exact: true }).count(), 0);
-  assert.equal(await fresh.getByRole('heading', { name: 'You stay in charge', exact: true }).count(), 0);
+  assert.equal(await fresh.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).count(), 0);
   assert.equal(await fresh.evaluate(() => localStorage.getItem('realbud.first-run-done')), null);
   assert.equal((await request('/api/onboarding')).stage, 'complete');
   assert.equal((await request('/api/config')).profile.name, FRESH_PERSON);

@@ -1,123 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
-import { LINK_POLL_INTERVAL_MS, isLinkRequestIssued } from "@shared/installation-link";
-import { isProvisioningSkipReason, type ProvisioningSkipReason } from "@shared/office-link";
-import type { BrowserLinkRequest, BrowserLinkView, OfficeLinkStatus } from "../../../server/office-link";
+import type { BrowserLinkRequest, OfficeLinkStatus } from "../../../server/office-link";
+import { browserLinkMessage, modelAccessMessage, modelAccessState, openApproval, pendingRequest, useBrowserLink, type BrowserLinkPhase } from "./browser-link";
 
-/** Where the browser approval stands on this screen. */
-export type BrowserLinkPhase =
-  | { kind: "idle" }
-  | { kind: "starting" }
-  | { kind: "waiting"; request: BrowserLinkRequest }
-  | { kind: "cancelling"; request: BrowserLinkRequest }
-  /** With a request: a status check failed. Without: starting failed. */
-  | { kind: "unreachable"; message: string; request?: BrowserLinkRequest }
-  | { kind: "failed"; message: string }
-  | { kind: "declined" }
-  | { kind: "expired" }
-  | { kind: "linked"; agencyLabel: string };
-
-const UNREADABLE = "RealBud could not read the website link answer. Try again.";
-
-function approval(value: Record<string, unknown>): BrowserLinkRequest | null {
-  const { approvalUrl, displayCode, expiresAt } = value;
-  let origin: string;
-  try { origin = new URL(String(approvalUrl)).origin; } catch { return null; }
-  const issued = { version: 1, purpose: "installation-link-issued", approvalUrl, displayCode, expiresAt };
-  return isLinkRequestIssued(issued, origin) ? { approvalUrl: issued.approvalUrl, displayCode: issued.displayCode, expiresAt: issued.expiresAt } : null;
-}
-
-/** Re-validate a browser-link answer from the local service; anything malformed is null. */
-export function readBrowserLinkView(value: unknown): BrowserLinkView | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const view = value as Record<string, unknown>;
-  switch (view.state) {
-    case "none": case "expired": case "declined": return { state: view.state };
-    case "linked": return typeof view.agencyLabel === "string" ? { state: "linked", agencyLabel: view.agencyLabel } : null;
-    case "pending": { const pending = approval(view); return pending ? { state: "pending", ...pending } : null; }
-    default: return null;
-  }
-}
-
-/** A pending approval the service saved, for resuming after a restart. */
-export function savedBrowserRequest(status: OfficeLinkStatus | null): BrowserLinkRequest | null {
-  const browser: unknown = status?.state === "pending" ? status.browser : undefined;
-  return browser && typeof browser === "object" ? approval(browser as Record<string, unknown>) : null;
-}
-
-function phaseFor(view: BrowserLinkView): BrowserLinkPhase {
-  switch (view.state) {
-    case "pending": return { kind: "waiting", request: { approvalUrl: view.approvalUrl, displayCode: view.displayCode, expiresAt: view.expiresAt } };
-    case "linked": return { kind: "linked", agencyLabel: view.agencyLabel };
-    case "expired": return { kind: "expired" };
-    case "declined": return { kind: "declined" };
-    default: return { kind: "idle" };
-  }
-}
-
-/**
- * Bud's model access after a link. Approval carries no credential: it arrives
- * with the first status report, so until that report settles it is being set
- * up. `skipped` is the account saying, by reason, why it issued none yet.
- */
-export type ModelAccessState = "ready" | "setting-up" | "not-yet" | "failed" | "skipped";
-export function modelAccessState(status: OfficeLinkStatus | null): ModelAccessState | null {
-  if (status?.state !== "linked" || status.serviceWithdrawn) return null;
-  if (status.provisioned === true) return "ready";
-  if (status.provisioningSkipped) return "skipped";
-  if (status.error) return "failed";
-  return status.lastReportedAt ? "not-yet" : "setting-up";
-}
-/** The only way out once the account has recorded a delivery this computer never
- * received: the website replays nothing for a delivered installation. */
-const START_AGAIN_STEP = "remove this computer under Account → Computers on realbud.app, then link it again";
-const START_AGAIN = `To start again, ${START_AGAIN_STEP}.`;
-const CHECKS_AGAIN = "RealBud checks again with each status update.";
-const SERVICE_NOT_SET_UP = `RealBud’s AI service isn’t set up yet. Contact RealBud support; ${CHECKS_AGAIN}`;
-const SKIPPED: Record<ProvisioningSkipReason, string> = {
-  no_platform_customer: `Bud’s model access is waiting on your office’s AI account, which RealBud support sets up. ${CHECKS_AGAIN}`,
-  service_not_entitled: `AI isn’t turned on for your office yet. RealBud support turns it on; ${CHECKS_AGAIN}`,
-  service_not_active: `Your office’s AI service isn’t active right now. Check your subscription on realbud.app or contact RealBud support; ${CHECKS_AGAIN}`,
-  modelvia_customer_not_ready: `Your office’s AI account isn’t ready yet. RealBud support finishes it; ${CHECKS_AGAIN}`,
-  provisioning_gateway_unconfigured: SERVICE_NOT_SET_UP,
-  provisioning_gateway_same_as_platform: SERVICE_NOT_SET_UP,
-  provisioning_gateway_wrong_service: SERVICE_NOT_SET_UP,
-  provisioning_gateway_not_ready: SERVICE_NOT_SET_UP,
-  provisioning_attempt_requires_review: `Bud’s model access needs review by RealBud support before it can arrive here. ${START_AGAIN}`,
-};
-const MODEL_ACCESS: Record<Exclude<ModelAccessState, "skipped">, string> = {
-  ready: "Bud’s model access is set up.",
-  "setting-up": "Setting up Bud’s model access…",
-  "not-yet": `Bud’s model access has not arrived from your account yet. ${CHECKS_AGAIN} If it still hasn’t arrived after the next update, ${START_AGAIN_STEP}.`,
-  failed: "Bud’s model access is not set up yet. Use Update status to try again.",
-};
-/** One plain sentence on where Bud's model access stands, with the next step. */
-export function modelAccessMessage(status: OfficeLinkStatus | null): string | null {
-  const access = modelAccessState(status);
-  if (!access) return null;
-  if (access !== "skipped") return MODEL_ACCESS[access];
-  const reason = status?.provisioningSkipped ?? "";
-  return isProvisioningSkipReason(reason) ? SKIPPED[reason]
-    : `Bud’s model access was not set up by your account (it reported “${reason}”). Contact RealBud support; ${CHECKS_AGAIN}`;
-}
-
-/** The sentences the live region announces for a phase. */
-export function browserLinkMessage(phase: BrowserLinkPhase): string {
-  switch (phase.kind) {
-    case "waiting": case "cancelling": return `Approve this computer in your browser. The page shows code ${phase.request.displayCode}.`;
-    case "declined": return "This computer was declined in your browser. Nothing was linked.";
-    case "expired": return "The approval page expired before this computer was approved. Nothing was linked.";
-    case "linked": return `Linked to ${phase.agencyLabel}.`;
-    default: return "";
-  }
-}
-
-function openApproval(url: string) {
-  if (typeof window === "undefined") return;
-  if (window.ogb?.openExternal) void window.ogb.openExternal(url);
-  else window.open(url, "_blank", "noopener,noreferrer");
-}
+// The protocol lives in ./browser-link; these re-exports keep existing imports working.
+export { browserLinkMessage, modelAccessMessage, modelAccessState, readBrowserLinkView, savedBrowserRequest } from "./browser-link";
+export type { BrowserLinkPhase, ModelAccessState } from "./browser-link";
 
 const primary = "pm-decision inline-flex items-center rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40";
 const secondary = "pm-control rounded border border-line px-3 py-2";
@@ -150,7 +39,7 @@ export interface WebsiteLinkCardViewProps {
 export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const { status, phase, label, code, busy, action, error, confirm } = props;
   const linked = status?.state === "linked";
-  const request = phase.kind === "waiting" || phase.kind === "cancelling" || (phase.kind === "unreachable" && phase.request) ? phase.request : null;
+  const request = pendingRequest(phase);
   const codePending = status?.state === "pending" && !status.browser;
   const problem = phase.kind === "unreachable" || phase.kind === "failed" ? phase.message : "";
   // The service also keeps its last failure; never show the same sentence twice.
@@ -225,104 +114,35 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
 }
 
 export function WebsiteLinkCard() {
-  const [status, setStatus] = useState<OfficeLinkStatus | null>(null);
+  const link = useBrowserLink();
+  const { status, phase, error, setError } = link;
   const [code, setCode] = useState(""); const [label, setLabel] = useState("");
-  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<WebsiteLinkCardViewProps["action"]>(undefined);
   const [confirm, setConfirm] = useState(false);
-  const [phase, setPhase] = useState<BrowserLinkPhase>({ kind: "idle" });
-  const polling = useRef<Promise<unknown> | null>(null);
-  const changed = () => window.dispatchEvent(new Event("realbud-website-link-changed"));
-  /** Reads the link; with `resume`, an approval the service saved (after a restart) is picked up again. */
-  const refresh = async (resume = false) => {
-    const next = await api("/api/office-link") as OfficeLinkStatus;
-    setStatus(next);
-    const saved = resume ? savedBrowserRequest(next) : null;
-    if (saved) {
-      setPhase({ kind: "waiting", request: saved });
-      if (next.label) setLabel(current => current || next.label!);
-    }
-  };
-  useEffect(() => { void refresh(true).catch(() => setError("Website link status could not be loaded. Try again.")); }, []);
+  // A resumed approval keeps the computer name it was started with.
+  const resumedLabel = status?.state === "pending" && status.browser ? status.label : undefined;
+  useEffect(() => { if (resumedLabel) setLabel(current => current || resumedLabel); }, [resumedLabel]);
 
-  // Ask while this card is open and an approval is waiting: at once, then every interval.
-  const waitingFor = phase.kind === "waiting" ? phase.request : null;
-  useEffect(() => {
-    if (!waitingFor) return;
-    let alive = true;
-    let timer: number | undefined;
-    const tick = async () => {
-      const call = api("/api/office-link/browser-link", undefined, { timeoutMs: 30_000 });
-      polling.current = call.catch(() => undefined);
-      let next: BrowserLinkPhase;
-      try {
-        const view = readBrowserLinkView(await call);
-        next = view ? phaseFor(view) : { kind: "unreachable", message: UNREADABLE, request: waitingFor };
-      } catch (cause) {
-        next = { kind: "unreachable", message: cause instanceof Error ? cause.message : UNREADABLE, request: waitingFor };
-      } finally { polling.current = null; }
-      if (!alive) return;
-      if (next.kind === "waiting") { timer = window.setTimeout(() => void tick(), LINK_POLL_INTERVAL_MS); return; }
-      setPhase(next);
-      if (next.kind !== "unreachable") { void refresh().catch(() => {}); changed(); }
-    };
-    void tick();
-    return () => { alive = false; window.clearTimeout(timer); };
-  }, [waitingFor]);
-
-  // Just linked: re-read the link until the first report settles model access.
-  const settingUp = phase.kind === "linked" && modelAccessState(status) === "setting-up";
-  useEffect(() => {
-    if (!settingUp) return;
-    const timer = window.setTimeout(() => void refresh().catch(() => {}), LINK_POLL_INTERVAL_MS);
-    return () => window.clearTimeout(timer);
-  }, [settingUp, status]);
-
-  const start = async () => {
-    setPhase({ kind: "starting" }); setError("");
-    try {
-      const view = readBrowserLinkView(await api("/api/office-link/browser-link", { method: "POST", body: JSON.stringify({ label }) }, { timeoutMs: 20_000 }));
-      if (view?.state !== "pending") throw new Error(UNREADABLE);
-      openApproval(view.approvalUrl);
-      setPhase(phaseFor(view));
-      void refresh().catch(() => {});
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : UNREADABLE;
-      setPhase((cause as { code?: string })?.code === "website_unreachable" ? { kind: "unreachable", message } : { kind: "failed", message });
-      // A lost answer may still have saved a request: pick it up instead of starting a second one.
-      void refresh(true).catch(() => {});
-    }
-  };
-  const cancel = async (waiting: BrowserLinkRequest) => {
-    setPhase({ kind: "cancelling", request: waiting }); setError("");
-    // A status check already in flight finishes first, so the two never race.
-    await polling.current;
-    try {
-      const view = readBrowserLinkView(await api("/api/office-link/browser-link", { method: "DELETE", body: "{}" }, { timeoutMs: 20_000 }));
-      setPhase(view?.state === "linked" ? phaseFor(view) : { kind: "idle" });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The approval could not be cancelled. Try again.");
-      setPhase({ kind: "waiting", request: waiting });
-    } finally { void refresh().catch(() => {}); changed(); }
-  };
   const act = async (action: "link" | "report" | "disconnect") => {
     setBusy(true); setAction(action); setError("");
     try {
-      // The service waits up to 60 s on the website for redeem and for report,
-      // and linking with a code reports once straight after redeeming, so these
-      // budgets sit above the service's own or a slow account would read as a
-      // local outage.
-      const timeoutMs = action === "link" ? 130_000 : action === "report" ? 70_000 : 20_000;
-      await api(`/api/office-link${action === "report" ? "/report" : ""}`, { method: action === "disconnect" ? "DELETE" : "POST", body: action === "link" ? JSON.stringify({ code, label }) : "{}" }, { timeoutMs });
-      if (action !== "report") { setCode(""); setPhase({ kind: "idle" }); }
-      setConfirm(false); await refresh();
+      if (action === "link") { await link.linkCode(code, label); setCode(""); }
+      else {
+        // The service waits up to 60 s on the website to report, so this budget
+        // sits above its own or a slow account would read as a local outage.
+        await api(`/api/office-link${action === "report" ? "/report" : ""}`, { method: action === "disconnect" ? "DELETE" : "POST", body: "{}" }, { timeoutMs: action === "report" ? 70_000 : 20_000 });
+        if (action === "disconnect") { setCode(""); link.setPhase({ kind: "idle" }); }
+        await link.refresh();
+      }
+      setConfirm(false);
     } catch (e) { setError(e instanceof Error ? e.message : "The website link could not be updated."); }
-    finally { setBusy(false); setAction(undefined); changed(); }
+    finally { setBusy(false); setAction(undefined); link.changed(); }
   };
 
   return <WebsiteLinkCardView status={status} phase={phase} label={label} code={code} busy={busy} action={action} error={error} confirm={confirm}
-    onLabel={setLabel} onCode={setCode} onStart={() => void start()} onOpenAgain={item => openApproval(item.approvalUrl)}
-    onCancel={item => void cancel(item)} onRetry={item => { setError(""); setPhase({ kind: "waiting", request: item }); }}
+    onLabel={setLabel} onCode={setCode} onStart={() => void link.start(label)} onOpenAgain={item => openApproval(item.approvalUrl)}
+    onCancel={item => void link.cancel(item)} onRetry={link.retry}
     onLinkCode={() => void act("link")} onReport={() => void act("report")} onDisconnect={() => void act("disconnect")}
-    onConfirm={setConfirm} onRefresh={() => { setError(""); void refresh().catch(() => setError("Status could not be loaded.")); }} />;
+    onConfirm={setConfirm} onRefresh={() => { setError(""); void link.refresh().catch(() => setError("Status could not be loaded.")); }} />;
 }

@@ -38,6 +38,8 @@ try {
     installCommand: null, installerAvailable: true, ready: false, detail: 'Fictional setup status', homeDir: '', profileDir: '', signInCommand: '',
     model: { attached: false, provider: null, model: null },
   }));
+  // First run continues into Bud setup once this computer is connected to its (fictional) office.
+  await context.route('**/api/office-link', route => json(route, { state: 'linked', label: 'Fictional PM’s computer', agencyLabel: 'Fictional Harbour Agency', lastReportedAt: '2026-09-30T00:00:00.000Z', provisioningSkipped: 'service_not_entitled' }));
   await context.route('**/api/hermes/model', route => json(route, { model: { provider: null, model: null, choice: null, keyPresent: false, keyHint: null, managed: false } }));
   await context.route('**/api/hermes/install/status', route => failedReads-- > 0 ? json(route, { error: 'Fictional connection interruption' }, 503) : json(route, { install: job }));
   await context.route('**/api/hermes/install', route => {
@@ -90,7 +92,7 @@ try {
     await page.screenshot({ path: join(out, `setup-${width}.png`) });
   }
   installed = true; job = { state: 'done', error: null };
-  await setup.getByRole('button', { name: /Pair this computer/ }).first().waitFor({ timeout: 10000 });
+  await setup.getByText('Connected to Fictional Harbour Agency', { exact: true }).first().waitFor({ timeout: 10000 });
   assert.equal(await setup.getByText('Bud is ready', { exact: true }).count(), 0, 'installed is not ready without a model check');
   await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
   assert.equal(await composer.inputValue(), 'Prepare a repair follow-up for my first property.');

@@ -1,0 +1,8 @@
+locator.fill: Timeout 30000ms exceeded.
+Call log:
+  - waiting for getByRole('textbox', { name: 'Your name', exact: true })
+
+    at /Users/yo-da/projects/RealBud-connect/scripts/qa-hermes-updates.mjs:64:71
+(node:51345) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+realbud server on http://127.0.0.1:65278

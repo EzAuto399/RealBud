@@ -1,0 +1,225 @@
+{
+  "at": "2026-09-29T23:47:24.326Z",
+  "node": "v24.14.1",
+  "layer": "source",
+  "baseline": false,
+  "passed": true,
+  "checks": [
+    "Staff safeguards hold identifies the missing workroom, shows four dependency-ordered facts and provides no false Finish setup action.",
+    "Keyboard Enter opens status; twelve Tab presses stay inside; Escape preserves the Ask draft (focus restoration is recorded separately).",
+    "Safeguards status rendered at 360, 390, 768, 1280 and 1536 CSS px: heading visible, no document/modal overflow or offscreen content.",
+    "Manual refresh disables duplicate presses while pending; failed read clears stale readiness claims; retry restores observed status.",
+    "A later ready status is observed automatically within the 15-second read interval; bounded read refreshes update the visible facts without a model or repair request.",
+    "Checking, readiness-needed, model-needed, withdrawn, recovery, offline and unsupported-worker states are rendered; staff issued no Hermes POST for readiness or repair.",
+    "Reduced-motion setting retains a readable, usable status panel.",
+    "Return to Ask preserves the draft; ten repeated focus events after closing permit at most one handoff read for the surviving Ask observer.",
+    "An authorized development-administrator fixture opens the actual existing Set up workroom control; no setup mutation is executed."
+  ],
+  "findings": [],
+  "screenshots": [
+    "ask-safeguards-1280.png",
+    "bud-safeguards-1280.png",
+    "bud-safeguards-360.png",
+    "bud-safeguards-390.png",
+    "bud-safeguards-768.png",
+    "bud-safeguards-1280.png",
+    "bud-safeguards-1536.png",
+    "bud-refresh-pending.png",
+    "bud-refresh-error.png",
+    "bud-ready-auto-refresh.png",
+    "bud-checking.png",
+    "bud-readiness-needed.png",
+    "bud-model-needed.png",
+    "bud-withdrawn.png",
+    "bud-recovery.png",
+    "bud-offline.png",
+    "bud-reduced-motion.png",
+    "bud-administrator-real-action.png"
+  ],
+  "rendererPageErrors": [],
+  "observations": {
+    "focusAfterEscape": {
+      "tag": "BUTTON",
+      "name": null,
+      "text": "View Bud status"
+    },
+    "widths": [
+      {
+        "width": 360,
+        "documentWidth": 360,
+        "viewport": 360,
+        "dialogWidth": 334,
+        "dialogScrollWidth": 334,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 390,
+        "documentWidth": 390,
+        "viewport": 390,
+        "dialogWidth": 364,
+        "dialogScrollWidth": 364,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 768,
+        "documentWidth": 768,
+        "viewport": 768,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 1280,
+        "documentWidth": 1280,
+        "viewport": 1280,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      },
+      {
+        "width": 1536,
+        "documentWidth": 1536,
+        "viewport": 1536,
+        "dialogWidth": 718,
+        "dialogScrollWidth": 718,
+        "headingVisible": true,
+        "overflow": []
+      }
+    ],
+    "reducedMotion": true,
+    "readsAfterCloseAndTenFocusEvents": 1,
+    "finalStaffMutations": []
+  },
+  "source": {
+    "revision": "702f38ba31b3f650b2506b0b313099dc3e26e5df",
+    "startHashes": {
+      "src/components/ChatView.tsx": "bdb3a50896c2907a0ab906303c9c8f5317ec868576bac85a69c60a7706ded1f7",
+      "src/components/AskReadiness.tsx": "ce0c4f31800807ece0e65aff3d5ba7dbeb1d9785fbfd582bd3e09d1ec0341135",
+      "src/components/BudSetupCard.tsx": "a08edaec5e2d8856a6d3b9d1c384d99f9edf3d5097a1b59eb93b67fcd4f44769",
+      "src/components/ManagedBudStatus.tsx": "60e859046570a5097005f067a34226f5d68d43928217630d0d9fa0452189ecdf",
+      "src/components/WorkspaceSetup.tsx": "179db4bd50ff82e4db60778e6fa95e18d958353c2e3090709c869a24cdd00485",
+      "src/components/AskWorkspaceSheet.tsx": "d41f0e228da89e6a46b3625780356c54829c0626e9d0a7a685b9f4a656feb042",
+      "src/lib/bud-setup.ts": "06d0b5d4a298f27aeec3807c129f6a853bdf38be368b2e619c537ae47145090a",
+      "src/App.tsx": "b18d5fee1f49fdce7f08bfe636966c29353004ed40aa57e27ce4320456f57aed",
+      "src/lib/bud-status-monitor.ts": "d67cd7262b717aebd1c7bb1dfb5c35b9df924e8e5e88746c53fd6bdb1f039912",
+      "src/state/store.tsx": "f85ce8a5f3569102781f30925174b456e363bb19ea4f2bb6f32ed2de5ff43ae4",
+      "src/lib/boot-heal.ts": "4a6064a0b8b1f84868a2a79669516b6c5d12c7cccd4b4d08807a037d57ad57a2"
+    },
+    "endHashes": {
+      "src/components/ChatView.tsx": "bdb3a50896c2907a0ab906303c9c8f5317ec868576bac85a69c60a7706ded1f7",
+      "src/components/AskReadiness.tsx": "ce0c4f31800807ece0e65aff3d5ba7dbeb1d9785fbfd582bd3e09d1ec0341135",
+      "src/components/BudSetupCard.tsx": "a08edaec5e2d8856a6d3b9d1c384d99f9edf3d5097a1b59eb93b67fcd4f44769",
+      "src/components/ManagedBudStatus.tsx": "60e859046570a5097005f067a34226f5d68d43928217630d0d9fa0452189ecdf",
+      "src/components/WorkspaceSetup.tsx": "179db4bd50ff82e4db60778e6fa95e18d958353c2e3090709c869a24cdd00485",
+      "src/components/AskWorkspaceSheet.tsx": "d41f0e228da89e6a46b3625780356c54829c0626e9d0a7a685b9f4a656feb042",
+      "src/lib/bud-setup.ts": "06d0b5d4a298f27aeec3807c129f6a853bdf38be368b2e619c537ae47145090a",
+      "src/App.tsx": "b18d5fee1f49fdce7f08bfe636966c29353004ed40aa57e27ce4320456f57aed",
+      "src/lib/bud-status-monitor.ts": "d67cd7262b717aebd1c7bb1dfb5c35b9df924e8e5e88746c53fd6bdb1f039912",
+      "src/state/store.tsx": "f85ce8a5f3569102781f30925174b456e363bb19ea4f2bb6f32ed2de5ff43ae4",
+      "src/lib/boot-heal.ts": "4a6064a0b8b1f84868a2a79669516b6c5d12c7cccd4b4d08807a037d57ad57a2"
+    },
+    "baselineTransforms": [],
+    "fixtureFields": {
+      "safeguards": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": false
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": false,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": null
+      },
+      "ready": {
+        "pin": {
+          "product": "0.21.3",
+          "tag": "v2026.9.14",
+          "commit": "fictional-fixture",
+          "profile": "property"
+        },
+        "cli": {
+          "installed": true,
+          "compatible": true,
+          "matchesPin": true,
+          "probeState": "ok",
+          "versionText": "Hermes Agent v0.21.3 (2026.9.14)"
+        },
+        "pack": {
+          "installed": true,
+          "approvalsManual": true,
+          "workroomReady": true
+        },
+        "homeDir": "/synthetic/home",
+        "profileDir": "/synthetic/home/profiles/property",
+        "installCommand": null,
+        "signInCommand": "fictional-sign-in",
+        "ready": true,
+        "detail": "Fictional verified readiness.",
+        "model": {
+          "attached": true,
+          "provider": "openai-api",
+          "model": "fictional-model"
+        },
+        "modelAccess": {
+          "managed": true,
+          "withdrawn": false,
+          "attached": true,
+          "detail": "Model access is managed by the RealBud service."
+        },
+        "lastPing": {
+          "at": 1790725623396,
+          "ok": true,
+          "kind": "ping",
+          "detail": "Fictional private readiness check passed."
+        }
+      }
+    }
+  },
+  "network": {
+    "statusReads": 10,
+    "hermesMutations": [],
+    "externalRequests": []
+  },
+  "cleanup": {
+    "isolatedServiceStopped": true,
+    "temporaryDataRemoved": true
+  },
+  "limits": [
+    "Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.",
+    "The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.",
+    "All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.",
+    "Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed."
+  ]
+}

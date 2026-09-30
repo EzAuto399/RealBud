@@ -85,13 +85,16 @@ describe("provisioned installations never ask for a provider key", () => {
     expect(html).not.toMatch(/Hermes|MCP|OpenAI|Modelvia/);
   });
 
-  it("sends an unpaired computer to pair from realbud.app, never to a provider key", () => {
+  it("connects an unpaired computer inline from realbud.app, never with a provider key", () => {
     store.state.hermes = hermes(
       { managed: false, withdrawn: false, attached: false, detail: "" },
       { attached: false, provider: null, model: null },
     );
     const html = administration();
-    expect(html).toContain("Pair this computer from realbud.app");
+    // The model step is read after mount, so a static render shows its detail;
+    // the inline connect action is covered by ManagedBudStatus and ConnectOffice tests.
+    expect(html).toContain("Bud&#x27;s AI access comes from your office on realbud.app");
+    expect(html).not.toContain(">Pair this computer</button>");
     expect(html).not.toMatch(/Connect one provider key|Provider API key|Custom provider URL|Connect model/);
     expect(html).not.toContain("managed by RealBud service");
   });
@@ -138,11 +141,13 @@ describe("budAvailability for managed access", () => {
       id: "you-worker", status, connected: true, onRefresh: async () => {},
     }));
     const missing = hermes({ managed: false, withdrawn: false, attached: false, detail: "" }, { attached: false, provider: null, model: null });
-    expect(render(missing)).toContain(">Open website account</button>");
+    const connect = />Connect to your office<\/button>/;
+    expect(render(missing)).toMatch(connect);
+    expect(render(missing)).not.toContain("Open website account");
     expect(render(missing)).toContain("private readiness check still needs to pass");
-    expect(render(managed(false, null))).not.toContain(">Open website account</button>");
-    expect(render(withdrawn())).not.toContain(">Open website account</button>");
-    expect(render({ ...missing, ready: true, model: { attached: true, provider: "fictional", model: "fictional" } })).not.toContain(">Open website account</button>");
+    expect(render(managed(false, null))).not.toMatch(connect);
+    expect(render(withdrawn())).not.toMatch(connect);
+    expect(render({ ...missing, ready: true, model: { attached: true, provider: "fictional", model: "fictional" } })).not.toMatch(connect);
   });
   it("holds on a withdrawn grant with no action that could fix it", () => {
     const view = budAvailability(withdrawn(), true);

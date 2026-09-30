@@ -77,11 +77,11 @@ async function rules(page, name) {
   await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
   await page.getByLabel('Your name', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
 }
 async function finish(page) {
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
 }
 try {
@@ -156,7 +156,7 @@ try {
   assert.equal((await request('/api/onboarding')).stage, 'office-rules');
   record('Fresh workspace ignores unscoped browser completion; profile submission only reaches rules');
   await page.close(); await start(data); page = await open();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.equal((await request('/api/config')).profile.name, 'Fictional QA Person');
   record('Interrupted setup resumes rules after service restart at different service and renderer ports');
   await finish(page);
@@ -180,9 +180,9 @@ try {
 
   const sample = join(scratch, 'sample'); await start(sample); page = await open();
   await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   await page.close(); await start(sample); page = await open();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   await finish(page); assert.equal((await request('/api/desk')).book.office.pmUser, 'Sample PM');
   record('Sample exploration retains its profile and can finish after a changed-port restart');
   await page.close();
@@ -194,7 +194,7 @@ try {
   await page.getByRole('button', { name: 'Open recovery', exact: true }).waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'office-rules');
   await page.getByRole('button', { name: 'Open recovery', exact: true }).click();
-  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   assert.equal((await request('/api/onboarding')).stage, 'recovery');
   const quarantined = (await readdir(recovery)).filter(name => name.startsWith('desk.json.quarantine-'));
   assert.equal(quarantined.length, 1);
