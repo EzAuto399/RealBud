@@ -19,6 +19,7 @@ import { normalizeState } from "@/lib/mascot";
 import { ASK_ATTACH_ACCEPT } from "@/lib/ask-attach";
 import { openDeskCase } from "@/lib/desk-view-state";
 import { persistAskFile, persistAskFiles } from "@/lib/ask-attach-client";
+import { decidePaste, namedPastedFiles } from "@/lib/composer-paste";
 import { KEY_ON_YOU, looksLikeProviderKey } from "@/lib/looks-like-secret";
 import { groupComposerHint } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -389,7 +390,7 @@ export function Composer({
     };
   }, [recording]);
 
-  const pickFiles = async (list: FileList | null) => {
+  const pickFiles = async (list: FileList | readonly File[] | null) => {
     if (!list?.length) return;
     const files = Array.from(list);
     attachmentCopyChanged(1);
@@ -783,8 +784,17 @@ export function Composer({
             setDismissedAt(null);
           }}
           onPaste={(e) => {
-            // a wall of text becomes a chip instead of burying the input
             const pasted = e.clipboardData.getData("text/plain");
+            // Clipboard files (a screenshot, a copied image or file) attach
+            // through the same copy path as the Attach button; see
+            // lib/composer-paste for when text wins instead.
+            const paste = decidePaste(Array.from(e.clipboardData.files ?? []), pasted);
+            if (paste.kind === "files") {
+              e.preventDefault();
+              void pickFiles(namedPastedFiles(paste.files, new Date()));
+              return;
+            }
+            // a wall of text becomes a chip instead of burying the input
             if (!isLongPaste(pasted)) return;
             e.preventDefault();
             // Preserve native paste replacement semantics: if text was
