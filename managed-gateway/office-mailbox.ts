@@ -10,8 +10,10 @@ const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
 const grantKey=(device:ConnectorDevice)=>digest(canonical({companyId:device.companyId,profile:device.profile,installationId:device.installationId,tokenHash:device.tokenHash,id:device.id,memberId:device.memberId,licenseId:device.licenseId}));
 export class OfficeMailbox {
   private readonly options: ConnectorOptions;
-  constructor(options:ConnectorOptions) {
-    this.options=options;
+  /** Moves the office's devices off a Gmail config nobody could connect before a shared link is issued. */
+  private readonly prepareGmail?: (company:string,authority:()=>void)=>Promise<void>;
+  constructor(options:ConnectorOptions,prepareGmail?:(company:string,authority:()=>void)=>Promise<void>) {
+    this.options=options;this.prepareGmail=prepareGmail;
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS office_mailbox_policy (company TEXT PRIMARY KEY, body TEXT NOT NULL)');
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS office_mailbox_account (company TEXT PRIMARY KEY, body TEXT NOT NULL)');
   }
@@ -19,7 +21,7 @@ export class OfficeMailbox {
   private account(company:string):Mailbox|undefined {const row=this.options.ledger.db.get<{body:string}>('SELECT body FROM office_mailbox_account WHERE company=?',company);return row?JSON.parse(row.body):undefined;}
   private save(company:string,policy:Policy){this.options.ledger.db.run('INSERT INTO office_mailbox_policy(company,body) VALUES(?,?) ON CONFLICT(company) DO UPDATE SET body=excluded.body',company,canonical(policy));}
   private saveAccount(company:string,account:Mailbox){this.options.ledger.db.run('INSERT INTO office_mailbox_account(company,body) VALUES(?,?) ON CONFLICT(company) DO UPDATE SET body=excluded.body',company,canonical(account));}
-  private provider(account:Mailbox):GmailReadOnlyBinding {const apiKey=this.options.secret(account.projectKeyEnv);requireThat(apiKey && /^ak_[A-Za-z0-9_-]{5,1000}$/.test(apiKey),'connector_not_configured',503);return {apiKey,authConfigId:account.authConfigId,userId:account.userId,accountId:account.accountId};}
+  private provider(account:Mailbox):GmailReadOnlyBinding {const apiKey=this.options.secret(account.projectKeyEnv);requireThat(apiKey && /^ak_[A-Za-z0-9_-]{5,1000}$/.test(apiKey),'connector_not_configured',503);return {apiKey,authConfigId:account.authConfigId,userId:account.userId,accountId:account.accountId,acceptComposioManagedScopes:true};}
   fingerprint(device:ConnectorDevice):string {const policy=this.policy(device.companyId);return canonical({device,policy,account:policy.mode==='shared'?this.account(device.companyId):undefined});}
   /** Safe setup projection only; this never reads a secret or authorizes a read. */
   readyForDevice(device:ConnectorDevice):boolean {
@@ -66,6 +68,7 @@ export class OfficeMailbox {
     let account=this.account(company);
     if(operation==='authorize'){
       if(account){requireThat(account.state!=='unknown','office_mailbox_link_outcome_unknown',409);requireThat(account.state==='pending'&&account.url&&Date.parse(account.expiresAt??'')>now,'office_mailbox_link_needs_recovery',409);return {url:account.url,revision:policy.revision};}
+      await this.prepareGmail?.(company,authority);
       const devices=this.options.devices().filter(d=>d.companyId===company&&d.active);requireThat(devices.length>0,'office_mailbox_installation_required',409);
       const first=devices[0]!;requireThat(devices.every(d=>d.projectKeyEnv===first.projectKeyEnv&&d.authConfigId===first.authConfigId),'office_mailbox_configuration_conflict',409);
       account={projectKeyEnv:first.projectKeyEnv,authConfigId:first.authConfigId,userId:`office_${digest(company)}`,state:'unknown'};

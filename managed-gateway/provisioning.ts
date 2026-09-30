@@ -23,7 +23,7 @@
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
-import { composioAuthConfigClient, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { serialized } from './serialized.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -204,6 +204,10 @@ interface StoredRecord {
   deviceTokenHash?: string;
   /** Durable office-wide guard against retrying an uncertain config creation. */
   authConfigCreateProjectId?: string;
+  /** The Gmail config name that create was for. Absent on records written
+   * before `realbud-gmail-managed-v2`: those guarded the legacy managed or the
+   * own-client config, never v2, so they do not hold back a v2 create. */
+  authConfigCreateName?: string;
   /** Ready only, while a credential redelivery is running: which attempt owns
    * it and since when. Cleared when that redelivery is recorded. */
   redelivery?: { attempt: string; at: number };
@@ -590,12 +594,18 @@ export class InstallationProvisioning {
 
     const authConfigId = await serialized(`composio-auth-config:${companyId}`, async () => {
       const rows = this.options.ledger.db.all<{ body: string }>('SELECT body FROM installation_provisioning WHERE tenant=?', companyId);
-      const attempted = rows.some(row => (JSON.parse(row.body) as StoredRecord).authConfigCreateProjectId === projectId);
+      const name = this.options.authConfigs.gmailAuthConfigName?.();
+      const attempted = rows.some(row => {
+        const body = JSON.parse(row.body) as StoredRecord;
+        if (body.authConfigCreateProjectId !== projectId) return false;
+        if (!name || body.authConfigCreateName !== undefined) return body.authConfigCreateName === name;
+        return name !== GMAIL_AUTH_CONFIG_NAME;
+      });
       const projectKey = this.options.secrets.read(projectKeyEnv);
       requireThat(projectKey, 'connector_project_key_unavailable', 409);
       return this.options.authConfigs.resolveGmail({ projectKey: projectKey!, allowCreate: !attempted, beforeCreate: () => {
         requireThat(this.options.ledger.now() - attemptAt < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
-        pending = { ...pending, authConfigCreateProjectId: projectId };
+        pending = { ...pending, authConfigCreateProjectId: projectId, ...(name ? { authConfigCreateName: name } : {}) };
         this.options.ledger.db.transaction(() => this.journal(companyId, installationId, attempt, pending));
       } });
     });
@@ -667,7 +677,7 @@ export class InstallationProvisioning {
       connector: { endpoint: this.endpoint, profile, apps: apps as string[], projectId },
       model: { provider: 'modelvia', baseUrl: minted.baseUrl, keyId: minted.keyId, projectId: modelProject.projectId, spendCapLabel },
     };
-    const ready: StoredRecord = { state: 'ready', authConfigCreateProjectId: pending.authConfigCreateProjectId, profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
+    const ready: StoredRecord = { state: 'ready', authConfigCreateProjectId: pending.authConfigCreateProjectId, ...(pending.authConfigCreateName ? { authConfigCreateName: pending.authConfigCreateName } : {}), profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
     this.options.ledger.db.transaction(() => {
       this.journal(companyId, installationId, attempt, ready);
       // Audit line carries identifiers only: no project key, no connector

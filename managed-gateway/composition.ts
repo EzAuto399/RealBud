@@ -99,7 +99,7 @@ export function connectorSecret(secrets: SecretStore | undefined, env: NodeJS.Pr
 
 /** Everything `connectors.ts` needs to admit any Composio toolkit on a person's
  * ask. Without a registry there is nothing to admit into. */
-export function composeAppAdmission(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport; registry: string }): Pick<ConnectorOptions, 'authConfigs' | 'admitApp' | 'apps'> {
+export function composeAppAdmission(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport; registry: string }): Pick<ConnectorOptions, 'authConfigs' | 'admitApp' | 'apps' | 'rebindGmail'> {
   const base = (options.env.REALBUD_COMPOSIO_API_BASE ?? '').trim();
   const baseOption = base ? { base } : {};
   return {
@@ -107,6 +107,10 @@ export function composeAppAdmission(options: { env: NodeJS.ProcessEnv; fetch: Ht
     apps: composioAppAdapter({ fetch: options.fetch, ...baseOption }),
     admitApp: (deviceId, app) => updateRegistry(options.registry, devices => ({
       devices: devices.map(device => device.id === deviceId && !(device.apps ?? ['gmail']).includes(app) ? { ...device, apps: [...(device.apps ?? ['gmail']), app] } : device),
+    })),
+    // Compare-and-set: only the one device, only while it still records `from`.
+    rebindGmail: (deviceId, from, to) => updateRegistry(options.registry, devices => ({
+      devices: devices.map(device => device.id === deviceId && device.authConfigId === from ? { ...device, authConfigId: to } : device),
     })),
   };
 }

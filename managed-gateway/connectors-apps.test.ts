@@ -180,7 +180,7 @@ test('a registry written before on-demand admission reads as Gmail-only and its 
     const legacy = { ...s.devices()[0]! }; delete (legacy as Partial<ConnectorDevice>).apps;
     const [read] = validateConnectorDevices({ version: 1, devices: [legacy] });
     assert.deepEqual(read!.apps, ['gmail']); assert.equal(read!.authConfigId, 'ac_gmail_company-a');
-    assert.equal(managedAuthConfigName('gmail'), 'realbud-gmail-readonly-v1'); assert.equal(managedAuthConfigName('xero'), 'realbud-xero-managed-v1');
+    assert.equal(managedAuthConfigName('gmail'), 'realbud-gmail-managed-v2'); assert.equal(managedAuthConfigName('xero'), 'realbud-xero-managed-v1');
   } finally { s.f.close(); }
 });
 

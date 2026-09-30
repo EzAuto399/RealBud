@@ -380,7 +380,7 @@ function composio(): ComposioOrgClient & { created: string[] } {
 }
 
 /** The gateway as production composes it, over the stand-in. */
-const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-readonly-v1', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } }], next_cursor: null });
+const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-managed-v2', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }], next_cursor: null });
 
 function gateway(m: ReturnType<typeof liveModelvia>, env: Record<string, string> = {}) {
   const f = fixture(), root = mkdtempSync(join(tmpdir(), 'realbud-live-contract-')), org = composio();

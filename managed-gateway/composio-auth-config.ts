@@ -4,7 +4,16 @@ import { COMPOSIO_PLATFORM_API, type HttpTransport } from './composio-org.ts';
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 // Keep in parity with server/composio-gmail.ts; the gateway cannot import desktop code.
 const ALLOWED_SCOPES = new Set([GMAIL_READONLY_SCOPE, 'openid', 'email', 'profile', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']);
-export const GMAIL_AUTH_CONFIG_NAME = 'realbud-gmail-readonly-v1';
+/** The first managed Gmail config, created with a `gmail.readonly` scope override.
+ * Composio's shared Google client is approved only for its default scope set, so
+ * Google blocks every consent under it ("This app is blocked"). Never found,
+ * created or reused again; devices still recorded on it are rebound on their
+ * next Gmail connect (connectors.ts) while no account is active under it. */
+export const LEGACY_GMAIL_AUTH_CONFIG_NAME = 'realbud-gmail-readonly-v1';
+/** The managed Gmail config: Composio's default Gmail scopes, no override. Its
+ * token carries broad mail access; read-only is enforced by the gateway's fixed
+ * three-tool Gmail adapter, not by the token. */
+export const GMAIL_AUTH_CONFIG_NAME = 'realbud-gmail-managed-v2';
 /** Composio toolkit slugs are lower-case identifiers. Same shape as the registry's `apps`. */
 export const TOOLKIT_SLUG = /^[a-z][a-z0-9_]{0,31}$/;
 /** One Composio-managed auth config per office project and app, found by this name. */
@@ -43,12 +52,17 @@ export function oauthAppsFromEnv(env: NodeJS.ProcessEnv): (provider: OAuthProvid
 }
 export interface ResolveAuthConfigOptions { slug: string; projectKey: string; allowCreate: boolean; beforeCreate: () => void }
 export interface ComposioAuthConfigClient {
-  /** Gmail's reviewed read-only configuration, exactly as first shipped. */
+  /** Gmail's configuration: RealBud's own client with `gmail.readonly` only, or
+   * Composio's managed client with its default scopes (read-only at the gateway). */
   resolveGmail(options: { projectKey: string; allowCreate: boolean; beforeCreate: () => void }): Promise<string>;
   /** Find-or-create the office's Composio-managed configuration for any toolkit.
    * `slug: 'gmail'` is `resolveGmail`; nothing about Gmail changes here. Optional
    * so a Gmail-only fake stays a valid client; connectors refuse admission without it. */
   resolveAuthConfig?(options: ResolveAuthConfigOptions): Promise<string>;
+  /** The Gmail config name `resolveGmail` finds or creates right now (own client
+   * or managed). The durable create intent is keyed by it, so switching to the
+   * own client never inherits the managed config's intent. */
+  gmailAuthConfigName?(): string;
   /** The toolkit exists in Composio and offers managed auth under this project key. */
   toolkitSupportsManagedAuth?(options: { slug: string; projectKey: string }): Promise<boolean>;
 }
@@ -66,9 +80,15 @@ function checked(value: unknown, slug: string, own: boolean): string {
     requireThat(v.name === managedAuthConfigName(slug) && record(v.toolkit) && v.toolkit.slug === slug && v.is_composio_managed === true && v.status === 'ENABLED', 'connector_auth_config_not_admitted', 409);
     return v.id as string;
   } else {
+    // Managed Gmail: Composio's shared client, whose Google approval covers only
+    // its default scope set. No scope list is enforced here: any override outside
+    // that set is what Google blocks, and the scopes Composio reports for its own
+    // client are not RealBud's to choose. Read-only is the gateway's three-tool
+    // Gmail adapter (server/composio-gmail.ts), which refuses every other tool.
     requireThat(v.name === GMAIL_AUTH_CONFIG_NAME && record(v.toolkit) && v.toolkit.slug === 'gmail' && v.auth_scheme === 'OAUTH2' && v.is_composio_managed === true && v.status === 'ENABLED', 'connector_auth_config_not_admitted', 409);
+    return v.id as string;
   }
-  // Gmail, managed or own: read-only scope and basic sign-in only.
+  // Gmail on RealBud's own client: read-only scope and basic sign-in only.
   const raw = record(v.credentials) ? v.credentials.scopes : undefined;
   const scopes: unknown = typeof raw === 'string' && raw.length <= 4096 ? raw.trim().split(/[\s,]+/) : raw;
   requireThat(Array.isArray(scopes) && scopes.length > 0 && scopes.length <= 8 && scopes.includes(GMAIL_READONLY_SCOPE) && scopes.every(scope => typeof scope === 'string' && ALLOWED_SCOPES.has(scope)), 'connector_auth_config_scopes_not_admitted', 409);
@@ -122,10 +142,12 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
     beforeCreate();
     let createdId: string | undefined;
     try {
+      // Only RealBud's own client narrows Gmail to `gmail.readonly`. A managed
+      // config never carries a scope override (see GMAIL_AUTH_CONFIG_NAME).
       const scopes = slug === 'gmail' ? { scopes: GMAIL_READONLY_SCOPE } : {};
       const authConfig = app
         ? { type: 'use_custom_auth', authScheme: 'OAUTH2', name, credentials: { client_id: app.clientId, client_secret: app.clientSecret, oauth_redirect_uri: COMPOSIO_OAUTH_REDIRECT_URI, ...scopes } }
-        : slug === 'gmail' ? { type: 'use_composio_managed_auth', name, credentials: scopes } : { type: 'use_composio_managed_auth', name };
+        : { type: 'use_composio_managed_auth', name };
       const created = await call(projectKey, 'POST', '/auth_configs', { toolkit: { slug }, auth_config: authConfig });
       requireThat(record(created) && record(created.auth_config) && typeof created.auth_config.id === 'string', 'connector_auth_config_unreadable', 502);
       createdId = ((created as Record<string, unknown>).auth_config as Record<string, unknown>).id as string;
@@ -140,6 +162,7 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
   return {
     resolveGmail: ({ projectKey, allowCreate, beforeCreate }) => resolveAuthConfig({ slug: 'gmail', projectKey, allowCreate, beforeCreate }),
     resolveAuthConfig,
+    gmailAuthConfigName: () => options.oauthApps?.('google') ? ownAuthConfigName('gmail') : managedAuthConfigName('gmail'),
     async toolkitSupportsManagedAuth({ slug, projectKey }) {
       projectKeyOk(projectKey);
       requireThat(TOOLKIT_SLUG.test(slug), 'connector_app_not_admitted', 403);

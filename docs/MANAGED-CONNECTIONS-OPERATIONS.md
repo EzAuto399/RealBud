@@ -30,7 +30,7 @@ Run on the protected service/operator machine with Node 24. Create a private JSO
 }
 ```
 
-The date above is illustrative. Use the agreed service period and the installation's actual immutable private profile (a member profile can differ from `property`). The tenant/license must already exist in the service ledger. An optional `accountId` pins an already verified provider account. The admitted OAuth configuration must expose only Gmail read-only scopes; no account discovery fallback is allowed.
+The date above is illustrative. Use the agreed service period and the installation's actual immutable private profile (a member profile can differ from `property`). The tenant/license must already exist in the service ledger. An optional `accountId` pins an already verified provider account. An own-client (custom) OAuth configuration must expose only Gmail read-only scopes; a Composio-managed one carries Composio's default Gmail scopes and is kept read-only by the gateway's three-tool adapter (see "Managed Gmail uses Composio's default scopes" below). No account discovery fallback is allowed.
 
 ```sh
 node --experimental-strip-types managed-gateway/provision-connector.mjs \
@@ -79,7 +79,7 @@ key. The full contract, the environment variables and the failure codes are in
 One call journals its intent before external effects, then resolves or creates
 the company's Composio project (its `ak_` key goes to the gateway's secret store
 under the same `projectKeyEnv` name the registry already uses, never into a
-response), resolves and verifies that project's Gmail read-only OAuth config,
+response), resolves and verifies that project's Gmail OAuth config (read-only at the gateway),
 admits an `rbc_` device by hash, and creates one Modelvia project per
 installation (`rb-<installationId>`) under that customer, carrying the ledger
 tenant's monthly cap, request cap and concurrency, then mint one key in it. Caps
@@ -178,13 +178,97 @@ auth-config, connected-account and tool-execution calls are exercised only
 through fakes here; the field names follow the v3 API reference and have not
 been confirmed against a live project from this change.
 
+## Managed Gmail uses Composio's default scopes (30 September 2026)
+
+**Why.** Composio's managed Google OAuth client is verified by Google only for
+Composio's default Gmail scope set (basic profile and email, contacts read,
+`profile`/`user.*` read scopes, and `https://mail.google.com/`). The first managed
+Gmail config, `realbud-gmail-readonly-v1`, overrode that set with
+`gmail.readonly`. A restricted scope outside the client's approved set makes
+Google refuse the consent: every account saw "This app is blocked" and none ever
+connected under that config (confirmed live on 30 September 2026; a link under
+Composio's default managed Gmail config connected and reached ACTIVE).
+
+**What the gateway does now.**
+
+- The managed Gmail config is `realbud-gmail-managed-v2`, created as
+  `use_composio_managed_auth` with **no scope override**. The legacy
+  `realbud-gmail-readonly-v1` config is never found, reused, changed or deleted.
+- Readback of the managed Gmail config requires `is_composio_managed: true`,
+  `OAUTH2`, `ENABLED`, toolkit `gmail` and the v2 name. No scope list is
+  enforced for it: the scopes are Composio's, bounded by Google's approval of
+  Composio's client. The own-client config (`realbud-gmail-own-v1`) keeps the
+  strict check: `gmail.readonly` plus basic sign-in only.
+- The Gmail adapter (`server/composio-gmail.ts`) skips its config and account
+  scope checks only when the gateway opts in (`acceptComposioManagedScopes`)
+  **and** the config reads back as Composio-managed. The desktop never opts in,
+  and a custom config stays strict even at the gateway.
+- **Read-only is enforced by the gateway, not the token.** The token Google issues
+  carries broad mail access. The gateway exposes exactly `GMAIL_GET_PROFILE`,
+  `GMAIL_LIST_THREADS` and `GMAIL_FETCH_MESSAGE_BY_THREAD_ID`, plus the host-only
+  scan and PDF reads; every other Gmail tool (send, draft, delete, trash, modify
+  labels) is refused before any provider call. No desktop, worker or MCP caller
+  ever holds the token or chooses the tool slug, account or project key.
+- **What the person sees.** Google's consent screen names Composio, not RealBud,
+  and lists broad mail access ("Read, compose, send, and permanently delete all
+  your email from Gmail"). Tell staff before they connect that RealBud itself only
+  reads the last seven days of mail within the three read tools above.
+
+**Devices provisioned on the legacy config.** Their registry entries record the
+readonly-v1 `authConfigId`. On that device's next Gmail connect
+(`POST /v1/connectors/authorize`, personal mode) the gateway:
+
+1. finds or creates the office's current Gmail config (managed-v2, or own-v1 when
+   the Google client secrets are set). The create intent is journaled in
+   `connector_office_apps` under the config name before the POST
+   (`connector_gmail_config_requested` / `_ready` / `_rejected`) and is never
+   repeated after an uncertain outcome;
+2. asks the provider which Gmail accounts exist under the device's **recorded**
+   config for its own user. If any is ACTIVE, or the registry pins an
+   `accountId`, the device is left exactly as it is. If the provider cannot
+   answer, the connect is refused with 409 `connector_gmail_rebind_unconfirmed`
+   and nothing moves;
+3. otherwise removes the device's old link row (journaled as
+   `connector_gmail_rebind_requested` with the lapsed account id), moves that one
+   registry entry to the new config (compare-and-set on the old id), journals
+   `connector_gmail_rebound`, and issues the link under the new config.
+
+A crash between steps leaves the device on its old config with no link; the next
+connect repeats the check safely. Other devices of the office move on their own
+next connect.
+
+**Shared office mailbox.** Before the owner's first shared-mailbox link, every
+active device of the office goes through the same check and move. A device that
+cannot move (an active account or pinned account under the old config) keeps the
+existing `office_mailbox_configuration_conflict` refusal; reprovision or disable
+it first. An office link already issued under readonly-v1 (a `pending` shared
+account row) is not rebound automatically: it answers
+`office_mailbox_link_needs_recovery` once expired and needs operator
+reconciliation of that row.
+
+**New installations** resolve the current Gmail config at provisioning. A
+provisioning create marker written before v2 (no config name) guarded the legacy
+or own-client config and does not hold back the v2 create; a v2 marker does.
+
+**Long-term route.** RealBud's own Google client (next section) is the branded
+path: the consent screen names RealBud and asks for `gmail.readonly` only. It
+needs Google's restricted-scope verification (including the security assessment)
+before Production. In Testing mode only listed test users can connect, and Google
+expires their refresh tokens after 7 days, so a Testing-mode connection must be
+re-consented weekly.
+
+**Evidence tier: source and local tests with injected fakes.** The root cause and
+the successful default-scope link were observed live by the owner; this change has
+not itself been exercised against a live Composio project or Google consent.
+
 ## RealBud's own OAuth client (30 September 2026)
 
-Google blocks Composio's shared OAuth client for restricted scopes such as
-`gmail.readonly` on new accounts ("This app is blocked"). The gateway therefore
-creates auth configs with RealBud's own OAuth client whenever the operator has
-configured one for the toolkit's provider, and falls back to Composio-managed
-auth only when none is configured.
+Google blocks Composio's shared OAuth client for any scope outside its approved
+default set, including a `gmail.readonly` override ("This app is blocked"). The
+gateway therefore creates auth configs with RealBud's own OAuth client whenever
+the operator has configured one for the toolkit's provider, and falls back to
+Composio-managed auth (Composio's default scopes, read-only at the gateway; see
+above) only when none is configured.
 
 | Provider | Gateway secrets (names only) | Toolkits |
 | --- | --- | --- |
@@ -200,7 +284,8 @@ Own-client configs are created in each office's own Composio project as
 `use_custom_auth` / `OAUTH2` with the client id and secret, the redirect URI
 below and, for Gmail, `gmail.readonly` only. They are named
 `realbud-<slug>-own-v1` (Gmail: `realbud-gmail-own-v1`), never the managed names
-(`realbud-gmail-readonly-v1`, `realbud-<slug>-managed-v1`), so an existing
+(`realbud-gmail-managed-v2`, legacy `realbud-gmail-readonly-v1`,
+`realbud-<slug>-managed-v1`), so an existing
 managed config is never found, changed or deleted by the switch. Readback
 requires `is_composio_managed: false`, `OAUTH2`, `ENABLED` and, for Gmail, only
 the read-only and basic sign-in scopes.
@@ -208,7 +293,9 @@ the read-only and basic sign-in scopes.
 What changes and what does not:
 
 - A device already provisioned keeps the `authConfigId` in its registry entry, so
-  its Gmail link keeps working. Nothing rebinds or rotates it.
+  its Gmail link keeps working. The one exception is a device with no active Gmail
+  account under its recorded config: on its next Gmail connect it moves to the
+  office's current Gmail config (see "Devices provisioned on the legacy config").
 - New installations provisioned after the secrets are set, and apps first
   admitted after that, get the own-client config.
 - An app an office already admitted (`connector_office_apps` row `ready`) keeps

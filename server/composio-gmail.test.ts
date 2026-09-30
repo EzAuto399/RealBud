@@ -365,3 +365,35 @@ describe('host-selected Gmail PDF acquisition',()=>{
     await expect(readGmailPdfAttachment({...binding,assertAuthority:()=>{if(revoked)throw Error('revoked');}},selected,new AbortController().signal)).rejects.toThrow(/revoked/);expect(download).toHaveBeenCalledOnce();
   });
 });
+
+describe("Composio-managed Gmail at the gateway (default scopes, read-only by adapter)", () => {
+  const FULL = "https://mail.google.com/";
+  const managedConfig = (scopes?: unknown) => ({ ...config(), is_composio_managed: true, credentials: scopes === undefined ? {} : { scopes } });
+  const broadAccount = () => ({ ...account(), requested_scopes: [FULL, "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/contacts.readonly"] });
+  const managed: GmailReadOnlyBinding = { ...binding, acceptComposioManagedScopes: true };
+  it.each([undefined, [FULL, "https://www.googleapis.com/auth/userinfo.profile"]])("admits a Composio-managed config and account with broad default scopes (%j) only when the gateway opts in", async scopes => {
+    fixture({ auth: managedConfig(scopes), detail: broadAccount() });
+    const result = await getGmailReadOnlyAccess(managed);
+    expect(result.services.gmail).toMatchObject({ connected: true, status: "ACTIVE" });
+    expect(result.tools.names).toEqual(slugs);
+    // The desktop never opts in: the same config stays refused there.
+    await expect(getGmailReadOnlyAccess(binding)).rejects.toThrow(/scopes/);
+  });
+  it("keeps an own-client (not Composio-managed) config strict even when the gateway opts in", async () => {
+    fixture({ auth: { ...config(), is_composio_managed: false, credentials: { scopes: [READONLY, FULL] } }, detail: broadAccount() });
+    await expect(getGmailReadOnlyAccess(managed)).rejects.toThrow(/scopes/);
+  });
+  it("still exposes exactly the three read tools and refuses send, delete and modify although the token has full mail scope", async () => {
+    const calls = fixture({ auth: managedConfig([FULL]), detail: broadAccount() });
+    const gmail = client(managed);
+    const listed = await gmail.request("tools/list");
+    expect(listed.tools.map((row: { name: string }) => row.name)).toEqual(slugs);
+    for (const name of ["GMAIL_SEND_EMAIL", "GMAIL_DELETE_MESSAGE", "GMAIL_MOVE_TO_TRASH", "GMAIL_MODIFY_THREAD_LABELS", "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_BATCH_DELETE_MESSAGES"]) {
+      const result = await gmail.call(name, { recipient_email: "someone@example.test", body: "fictional" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/only supports the three fixed Gmail read tools/);
+    }
+    expect(calls.some(call => call.url.pathname.includes("/tools/execute/"))).toBe(false);
+    expect(data(await gmail.call("GMAIL_GET_PROFILE")).emailAddress).toBe("work@example.test");
+  });
+});
