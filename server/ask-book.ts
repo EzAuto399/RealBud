@@ -1,6 +1,6 @@
 import { PM_EVIDENCE_RULES } from "../shared/pm-evidence-rules.ts";
 import type { DeskSnapshot } from "../shared/contracts.ts";
-import { BUD_IDENTITY } from "../shared/bud-identity.ts";
+import { BUD_IDENTITY, budModelAnswerLine } from "../shared/bud-identity.ts";
 import { RENT_EVIDENCE_REVIEW_RULES } from "../shared/rent-workflow.ts";
 import { modelServiceFailure } from "./model-service-failure.ts";
 import { MANAGED_ACCESS_REFUSALS } from "./hermes-runtime-env.ts";
@@ -90,9 +90,12 @@ export function answerAskFromDesk(text: string, snap: DeskSnapshot): string | nu
   }
 }
 
-export function productBudSystemPrompt(): string {
+/** `modelChoice` is the office's saved managed choice id, when known, so Bud
+ * can name its model in customer words. */
+export function productBudSystemPrompt(opts?: { modelChoice?: unknown }): string {
   return [
     BUD_IDENTITY,
+    budModelAnswerLine(opts?.modelChoice),
     RENT_EVIDENCE_REVIEW_RULES,
     ...PM_EVIDENCE_RULES,
     "When asked to prepare, compare, draft or investigate, carry out the useful work and return the finished material, not instructions for the PM to do it. First use the context and permitted sources already available. Ask one focused question only when missing information blocks useful progress; otherwise complete the supported parts and identify the gap. Do not ask the user to repeat information already in this turn or the current book.",

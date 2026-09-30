@@ -2065,7 +2065,7 @@ async function startSeatTurn(
           model,
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
-          system: [productBudSystemPrompt(), officeSourceTurnContext(allowedApps),
+          system: [productBudSystemPrompt({ modelChoice: modelStatus().choice }), officeSourceTurnContext(allowedApps),
             integrations.memoryProposals ? 'For requested conversational preference changes, use memory_propose from memory-proposals with a complete typed add, replace, remove or batch payload. Use the same requestId and exact payload to check an interrupted proposal. The tool only creates a pending review: it does not apply or approve memory. Direct the person to You → Bud → Bud’s memory to review the complete change. Do not claim it was saved to memory until its human decision is confirmed. Preferences do not change business records, credentials or work permissions.' : undefined,
             allowedApps.length ? `Selected office account IDs: ${JSON.stringify(Object.fromEntries(allowedApps.map(slug => [slug, cfg.composio?.selectedAccounts?.[slug] ?? access?.services[slug]?.accounts.find(account => /^active$/i.test(account.status))?.id])))}. Use only these accounts. If the tool cannot target an account unambiguously, ask before proceeding.` : undefined,
             (gmailReadOnlyMode(cfg) || managedConnectorConfigured(cfg)) && allowedApps.includes("gmail") ? "This connection provides only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Use only the account and thread IDs allowed by the server. No alternate mail or computer route is allowed." : undefined,
