@@ -80,7 +80,7 @@ test('successful account status uses server binding and never returns project cr
     assert.equal(reply.status,200);assert.equal(s.calls(),1);
     const {assertAuthority,...binding}=s.captured() as Record<string,unknown>;
     assert.equal(typeof assertAuthority,'function');
-    assert.deepEqual(binding,{apiKey:'ak_fictional_vendor_secret',authConfigId:'auth-a',userId:'user-a',accountId:'account-a'});
+    assert.deepEqual(binding,{apiKey:'ak_fictional_vendor_secret',authConfigId:'auth-a',userId:'user-a',accountId:'account-a',acceptComposioManagedScopes:true});
     assert.ok(!JSON.stringify(reply).includes('ak_fictional'));
   }finally{s.f.close();}
 });
@@ -191,7 +191,7 @@ test('mail scan uses the server-owned account binding and refuses caller authori
     const scope = mailScope(s.f.now());
     const broker = s.make({ scan: async (binding, request) => {
       calls++; binding.assertAuthority?.();
-      assert.deepEqual({ ...binding, assertAuthority: undefined }, { apiKey: 'ak_fictional_vendor_secret', authConfigId: 'auth-a', userId: 'user-a', accountId: 'account-a', assertAuthority: undefined });
+      assert.deepEqual({ ...binding, assertAuthority: undefined }, { apiKey: 'ak_fictional_vendor_secret', authConfigId: 'auth-a', userId: 'user-a', accountId: 'account-a', acceptComposioManagedScopes: true, assertAuthority: undefined });
       assert.deepEqual(request, scope); return mailResult(request);
     } });
     const request = { ...s.request, method: 'POST', path: '/v1/connectors/mail-scan', body: { expectedAccountId: 'account-a', scope } };

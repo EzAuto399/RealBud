@@ -14,6 +14,13 @@ export interface GmailReadOnlyBinding {
   accountId?: string;
   /** Optional protected-service check immediately before every upstream call. */
   assertAuthority?: () => void;
+  /** Managed gateway only. When the auth config reads back as Composio-managed,
+   * its and the account's scope lists are not enforced: Composio's shared Google
+   * client is approved only for its default scopes (broad mail access), so a
+   * `gmail.readonly` override is blocked by Google. Read-only then rests on this
+   * adapter's three fixed read tools. A custom (own-client) config stays strict.
+   * The desktop never sets this. */
+  acceptComposioManagedScopes?: true;
 }
 
 export interface GmailReadOnlyAccount { id: string; label?: string; status: string }
@@ -36,7 +43,7 @@ function bindingCopy(input: GmailReadOnlyBinding): GmailReadOnlyBinding {
   if (!record(input) || typeof input.apiKey !== "string" || !/^[A-Za-z0-9_-]{8,1024}$/.test(input.apiKey) || input.apiKey.startsWith("ck_")) fail("provide a project API key in connection settings.");
   if (!identifier(input.authConfigId) || typeof input.userId !== "string" || !/^[A-Za-z0-9._@:+-]{1,256}$/.test(input.userId) ||
     (input.accountId !== undefined && !identifier(input.accountId)) || [input.authConfigId, input.userId, input.accountId].some(value => value?.includes(input.apiKey))) fail("the saved account binding is invalid.");
-  return { apiKey: input.apiKey, authConfigId: input.authConfigId, userId: input.userId, ...(input.accountId ? { accountId: input.accountId } : {}), ...(input.assertAuthority ? { assertAuthority: input.assertAuthority } : {}) };
+  return { apiKey: input.apiKey, authConfigId: input.authConfigId, userId: input.userId, ...(input.accountId ? { accountId: input.accountId } : {}), ...(input.assertAuthority ? { assertAuthority: input.assertAuthority } : {}), ...(input.acceptComposioManagedScopes === true ? { acceptComposioManagedScopes: true as const } : {}) };
 }
 function exactScopes(value: unknown): string[] {
   const values = typeof value === "string" && value.length <= 4096 ? value.trim().split(/[\s,]+/) : value;
@@ -104,12 +111,15 @@ async function verifyConfig(binding: GmailReadOnlyBinding, signal: AbortSignal) 
   const value = await rest(binding, `/auth_configs/${encodeURIComponent(binding.authConfigId)}`, signal);
   if (value.id !== binding.authConfigId || value.toolkit?.slug !== "gmail" || value.auth_scheme !== "OAUTH2" || value.status !== "ENABLED" || value.is_disabled === true) fail("use an enabled Gmail OAuth2 auth configuration.", 403);
   if (value.proxy_config?.proxy_url || value.proxy_config?.proxy_auth_key) fail("custom authentication proxies are not supported in this bounded reader.", 403);
-  const scopes = exactScopes(value.credentials?.scopes);
-  return { id: binding.authConfigId, toolkit: "gmail" as const, authScheme: "OAUTH2" as const, status: "ENABLED" as const, scopes };
+  const managed = binding.acceptComposioManagedScopes === true && value.is_composio_managed === true;
+  const scopes = managed ? [] : exactScopes(value.credentials?.scopes);
+  return { id: binding.authConfigId, toolkit: "gmail" as const, authScheme: "OAUTH2" as const, status: "ENABLED" as const, scopes, managed };
 }
+type VerifiedConfig = Awaited<ReturnType<typeof verifyConfig>>;
 
 export async function verifyGmailReadOnlyConfig(input: GmailReadOnlyBinding) {
-  return verifyConfig(bindingCopy(input), AbortSignal.timeout(30_000));
+  const { managed: _managed, ...projection } = await verifyConfig(bindingCopy(input), AbortSignal.timeout(30_000));
+  return projection;
 }
 
 /** Host-only saved-attachment acquisition; deliberately absent from MCP tools.
@@ -118,7 +128,7 @@ export async function readGmailPdfAttachment(input: GmailReadOnlyBinding, select
   const binding=bindingCopy(input), source=parseSourceAttachmentRequest(selected);
   const signal=AbortSignal.any([inputSignal,AbortSignal.timeout(30_000)]);
   if(binding.accountId!==source.accountId)fail('the selected PDF belongs to another account.',403);
-  await verifyConfig(binding,signal);const account=await verifyAccount(binding,signal);
+  const config=await verifyConfig(binding,signal);const account=await verifyAccount(binding,signal,config);
   const tools=await discoverTools(binding,signal),threadTool=tools.GMAIL_FETCH_MESSAGE_BY_THREAD_ID;
   const result=await rest(binding,'/tools/execute/GMAIL_FETCH_MESSAGE_BY_THREAD_ID',signal,{connected_account_id:account.id,user_id:binding.userId,version:threadTool.version,arguments:executionArguments(threadTool,0,0,source.threadId)});
   if(result.successful!==true || result.error || !record(result.data) || !Array.isArray(result.data.messages) || result.data.messages.length>100 || (result.data.id!==undefined&&result.data.id!==source.threadId))fail('the attachment message could not be verified.',502);
@@ -183,14 +193,14 @@ export async function listGmailReadOnlyAccounts(input: GmailReadOnlyBinding) {
   return listAccounts(binding, signal);
 }
 
-async function verifyAccount(binding: GmailReadOnlyBinding, signal: AbortSignal, accounts?: GmailReadOnlyAccount[]) {
+async function verifyAccount(binding: GmailReadOnlyBinding, signal: AbortSignal, config: VerifiedConfig, accounts?: GmailReadOnlyAccount[]) {
   const rows = accounts ?? await listAccounts(binding, signal);
   const account = binding.accountId ? rows.find(row => row.id === binding.accountId) : undefined;
   if (!account || account.status !== "ACTIVE") fail("choose one active Gmail account belonging to this user and auth configuration.", 403);
   const detail = await rest(binding, `/connected_accounts/${encodeURIComponent(account.id)}`, signal);
   const current = projectAccount(detail, binding);
   if (current.id !== account.id || current.status !== "ACTIVE") fail("the selected account is no longer active.", 403);
-  exactScopes(detail.requested_scopes);
+  if (!config.managed) exactScopes(detail.requested_scopes);
   return current;
 }
 
@@ -244,13 +254,13 @@ async function discoverTools(binding: GmailReadOnlyBinding, signal: AbortSignal)
 
 export async function getGmailReadOnlyAccess(input: GmailReadOnlyBinding): Promise<{ checkedAt: string; services: Record<string, ConnectionServiceStatus>; tools: { available: boolean; names: string[] } }> {
   const binding = bindingCopy(input), signal = AbortSignal.timeout(30_000);
-  await verifyConfig(binding, signal);
+  const config = await verifyConfig(binding, signal);
   const accounts = await listAccounts(binding, signal);
   const account = binding.accountId ? accounts.find(row => row.id === binding.accountId) : undefined;
   if (binding.accountId && !account) fail("the selected account no longer belongs to this user and auth configuration.", 403);
   const connected = account?.status === "ACTIVE";
   if (connected) {
-    await verifyAccount(binding, signal, accounts);
+    await verifyAccount(binding, signal, config, accounts);
     await discoverTools(binding, signal);
   }
   return { checkedAt: new Date().toISOString(), services: { gmail: {
@@ -330,8 +340,8 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
   let selectedId = binding.accountId;
   const reads = new Map<string, Promise<ObjectValue>>();
   async function ready(signal: AbortSignal) {
-    await verifyConfig(binding, signal);
-    const account = await verifyAccount({ ...binding, ...(selectedId ? { accountId: selectedId } : {}) }, signal);
+    const config = await verifyConfig(binding, signal);
+    const account = await verifyAccount({ ...binding, ...(selectedId ? { accountId: selectedId } : {}) }, signal, config);
     if (selectedId && selectedId !== account.id) fail("the selected account changed.", 403);
     selectedId = account.id;
     discovered ??= discoverTools(binding, signal);
@@ -404,8 +414,8 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
 export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailScanRequest, inputSignal: AbortSignal): Promise<MailScanResult> {
   const binding = bindingCopy(input), request = parseMailScanRequest(raw);
   const signal = AbortSignal.any([inputSignal, AbortSignal.timeout(240_000)]);
-  await verifyConfig(binding, signal);
-  const account = await verifyAccount(binding, signal), tools = await discoverTools(binding, signal);
+  const config = await verifyConfig(binding, signal);
+  const account = await verifyAccount(binding, signal, config), tools = await discoverTools(binding, signal);
   const result: MailScanResult = { accountId: account.id, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, threads: [], pages: 0, paginationComplete: false, gaps: [] };
   const gap = (text: string) => { if (!result.gaps.includes(text) && result.gaps.length < 200) result.gaps.push(text); };
   const from = Math.floor(request.windowStartAt / 1000), until = Math.ceil(request.windowEndAt / 1000);

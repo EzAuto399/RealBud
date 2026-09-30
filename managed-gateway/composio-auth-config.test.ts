@@ -1,15 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPOSIO_OAUTH_REDIRECT_URI, composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE, managedAuthConfigName, oauthAppsFromEnv, oauthProviderFor, ownAuthConfigName } from './composio-auth-config.ts';
-const config = (changes: Record<string, unknown> = {}) => ({ id: 'ac_test', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: GMAIL_READONLY_SCOPE }, ...changes });
+import { COMPOSIO_OAUTH_REDIRECT_URI, composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE, LEGACY_GMAIL_AUTH_CONFIG_NAME, managedAuthConfigName, oauthAppsFromEnv, oauthProviderFor, ownAuthConfigName } from './composio-auth-config.ts';
+// Composio's managed Gmail default scope set as it reads back (fictional id).
+const MANAGED_DEFAULT_SCOPES = ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/contacts.readonly', 'https://www.googleapis.com/auth/contacts.other.readonly', 'https://mail.google.com/'];
+const config = (changes: Record<string, unknown> = {}) => ({ id: 'ac_test', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', ...changes });
 const args = { projectKey: 'ak_fictional_office', allowCreate: true, beforeCreate() {} };
-test('managed create uses only office project key and exact readonly scope, then reads back before returning', async () => {
+test('managed Gmail create uses only the office project key, the v2 name and no scope override, then reads back before returning', async () => {
   const calls: string[] = []; let created = false, journalled = false;
   const client = composioAuthConfigClient({ fetch: async (url, init) => {
     calls.push(init.method!); assert.equal(new Headers(init.headers).get('x-api-key'), args.projectKey); assert.equal(new Headers(init.headers).get('x-org-api-key'), null);
     if (init.method === 'POST') {
       assert.equal(journalled, true); created = true;
-      assert.deepEqual(JSON.parse(init.body as string), { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: GMAIL_AUTH_CONFIG_NAME, credentials: { scopes: GMAIL_READONLY_SCOPE } } });
+      // Composio's managed Google client is approved only for its default scopes:
+      // any override (gmail.readonly included) makes Google block the consent.
+      assert.deepEqual(JSON.parse(init.body as string), { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-gmail-managed-v2' } });
       return Response.json({ auth_config: { id: 'ac_test' } }, { status: 201 });
     }
     assert.equal(new URL(url).searchParams.get('show_disabled'), 'true');
@@ -41,8 +45,8 @@ test('a definitive provider refusal of the create is reported as rejected, witho
   const flaky = composioAuthConfigClient({ fetch: async (_url, init) => init.method === 'POST' ? new Response('', { status: 429 }) : Response.json({ items: [] }) });
   await assert.rejects(flaky.resolveAuthConfig!({ slug: 'xero', ...args }), /connector_auth_config_create_unconfirmed/);
 });
-test('disabled, custom, wrong-toolkit, non-OAuth and widened or unreadable scopes fail closed without writes', async () => {
-  for (const changes of [{ status: 'DISABLED' }, { is_composio_managed: false }, { auth_scheme: 'API_KEY' }, { toolkit: { slug: 'slack' } }, { credentials: {} }, { credentials: { scopes: `${GMAIL_READONLY_SCOPE},https://mail.google.com/` } }]) {
+test('disabled, custom, wrong-toolkit and non-OAuth managed Gmail configs fail closed without writes', async () => {
+  for (const changes of [{ status: 'DISABLED' }, { is_composio_managed: false }, { is_composio_managed: undefined }, { auth_scheme: 'API_KEY' }, { toolkit: { slug: 'slack' } }]) {
     const client = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [config(changes)] }); } });
     await assert.rejects(client.resolveGmail(args), /connector_auth_config_.*not_admitted/);
   }
@@ -61,13 +65,33 @@ test('redirects and provider bodies do not leak project keys', async () => {
   await assert.rejects(client.resolveGmail(args), error => error instanceof Error && error.message === 'connector_auth_config_unconfirmed');
 });
 
-test('readback admits only adapter-reviewed basic sign-in scopes alongside gmail.readonly', async () => {
-  for (const scopes of [`${GMAIL_READONLY_SCOPE},openid,email,profile,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/userinfo.profile`, [GMAIL_READONLY_SCOPE, 'openid']]) {
-    const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [config({ credentials: { scopes } })] }) });
+test('managed Gmail readback accepts Composio default scopes (absent, listed or as a string); read-only is the gateway adapter', async () => {
+  for (const credentials of [undefined, {}, { scopes: MANAGED_DEFAULT_SCOPES }, { scopes: MANAGED_DEFAULT_SCOPES.join(',') }, { scopes: GMAIL_READONLY_SCOPE }]) {
+    const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [config(credentials === undefined ? {} : { credentials })] }) });
     assert.equal(await client.resolveGmail(args), 'ac_test');
   }
-  const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [config({ credentials: { scopes: 'openid email profile' } })] }) });
-  await assert.rejects(client.resolveGmail(args), /scopes_not_admitted/);
+});
+test('the legacy readonly-v1 managed config is never found, reused or mutated; v2 is created beside it', async () => {
+  assert.equal(GMAIL_AUTH_CONFIG_NAME, 'realbud-gmail-managed-v2'); assert.equal(managedAuthConfigName('gmail'), GMAIL_AUTH_CONFIG_NAME);
+  const legacy = config({ id: 'ac_legacy', name: LEGACY_GMAIL_AUTH_CONFIG_NAME, credentials: { scopes: GMAIL_READONLY_SCOPE } });
+  const p = project([legacy]);
+  const client = composioAuthConfigClient({ fetch: p.fetch });
+  assert.equal(client.gmailAuthConfigName!(), 'realbud-gmail-managed-v2');
+  await assert.rejects(client.resolveGmail({ ...args, allowCreate: false }), /create_unconfirmed/);
+  assert.equal(await client.resolveGmail(args), 'ac_created_1');
+  assert.deepEqual(p.posts, [{ toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-gmail-managed-v2' } }]);
+  assert.deepEqual(p.items[0], legacy);
+});
+test('an own-client Gmail config still admits only gmail.readonly with basic sign-in scopes', async () => {
+  const own = (scopes: unknown) => config({ name: 'realbud-gmail-own-v1', is_composio_managed: false, credentials: { scopes } });
+  for (const scopes of [`${GMAIL_READONLY_SCOPE},openid,email,profile,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/userinfo.profile`, [GMAIL_READONLY_SCOPE, 'openid']]) {
+    const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [own(scopes)] }), oauthApps: oauthAppsFromEnv(googleEnv) });
+    assert.equal(await client.resolveGmail(args), 'ac_test');
+  }
+  for (const scopes of ['openid email profile', undefined, `${GMAIL_READONLY_SCOPE},https://mail.google.com/`, MANAGED_DEFAULT_SCOPES]) {
+    const client = composioAuthConfigClient({ fetch: async () => Response.json({ items: [own(scopes)] }), oauthApps: oauthAppsFromEnv(googleEnv) });
+    await assert.rejects(client.resolveGmail(args), /scopes_not_admitted/);
+  }
 });
 
 // RealBud's own OAuth client (30 September 2026). Fictional values only.
@@ -109,7 +133,7 @@ test('without an operator OAuth app every toolkit falls back to the managed conf
     const client = composioAuthConfigClient({ fetch: p.fetch, ...(oauthApps ? { oauthApps } : {}) });
     await client.resolveGmail(args); await client.resolveAuthConfig!({ slug: 'googledrive', ...args });
     assert.deepEqual(p.posts, [
-      { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: GMAIL_AUTH_CONFIG_NAME, credentials: { scopes: GMAIL_READONLY_SCOPE } } },
+      { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: GMAIL_AUTH_CONFIG_NAME } },
       { toolkit: { slug: 'googledrive' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-googledrive-managed-v1' } },
     ]);
   }

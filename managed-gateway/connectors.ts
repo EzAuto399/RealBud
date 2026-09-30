@@ -85,6 +85,12 @@ export interface ConnectorOptions {
   /** Appends `app` to one device's registry allowlist (provisioning's
    * `updateRegistry`). Must be idempotent and leave every other device untouched. */
   admitApp?: (deviceId: string, app: string) => void;
+  /** Moves one device's Gmail binding from auth config `from` to `to` in the
+   * registry, only while it still records `from`; every other device untouched.
+   * With `authConfigs.gmailAuthConfigName`, it lets a device provisioned on a
+   * Gmail config nobody could connect (see LEGACY_GMAIL_AUTH_CONFIG_NAME) move
+   * to the current one on its next connect. Without it the binding never moves. */
+  rebindGmail?: (deviceId: string, from: string, to: string) => void;
   /** Generic toolkit adapter; defaults to the real Composio project API. */
   apps?: ComposioAppAdapter;
 }
@@ -99,7 +105,7 @@ export class ManagedConnectors {
   constructor(options: ConnectorOptions) {
     this.options = options;
     this.apps = options.apps ?? composioAppAdapter();
-    this.officeMailbox = new OfficeMailbox(options);
+    this.officeMailbox = new OfficeMailbox(options, (company, authority) => this.rebindOfficeGmail(company, authority));
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS connector_links (device TEXT PRIMARY KEY, binding TEXT NOT NULL, state TEXT NOT NULL, result TEXT, created INTEGER NOT NULL)');
     // One office-wide Composio-managed auth config per app, created on demand.
     // `pending` is the durable create intent: never a second POST for it.
@@ -138,7 +144,7 @@ export class ManagedConnectors {
   }
   private binding(device: ConnectorDevice): GmailReadOnlyBinding {
     const shared = this.officeMailbox.binding(device); if (shared) return shared;
-    const binding = { apiKey: this.projectKey(device), authConfigId: device.authConfigId, userId: device.userId, accountId: device.accountId };
+    const binding: GmailReadOnlyBinding = { apiKey: this.projectKey(device), authConfigId: device.authConfigId, userId: device.userId, accountId: device.accountId, acceptComposioManagedScopes: true };
     const saved = this.link(device);
     if (!binding.accountId && saved?.state === 'ready' && saved.result) {
       const result = JSON.parse(saved.result) as { accountId: string };
@@ -154,6 +160,95 @@ export class ManagedConnectors {
     const row = this.options.ledger.db.get<{ binding: string; state: string; result: string | null; created: number }>('SELECT * FROM connector_links WHERE device=?', device.id);
     if (row && row.binding !== this.linkIdentity(device)) throw new GatewayError('connector_binding_changed_needs_recovery', 409);
     return row;
+  }
+
+  // ── Gmail auth-config rebinding ──
+  /** The office's current Gmail auth config, found or created once in the
+   * office's own project under the name the client resolves now. The durable
+   * create intent is a `connector_office_apps` row keyed by that config name
+   * (never a toolkit slug, so it cannot collide with an app's row). Serialized
+   * with provisioning's Gmail resolution for the same office. */
+  private async currentGmailConfig(device: ConnectorDevice, current: () => void): Promise<string> {
+    const authConfigs = this.options.authConfigs!;
+    const name = authConfigs.gmailAuthConfigName!();
+    const company = device.companyId, now = () => this.options.ledger.now();
+    return serialized(`composio-auth-config:${company}`, async () => {
+      const office = this.officeApp(company, name);
+      if (office?.state === 'ready' && office.auth_config) return office.auth_config;
+      const projectKey = this.projectKey(device);
+      current();
+      let authConfigId: string;
+      try {
+        authConfigId = await authConfigs.resolveGmail({ projectKey, allowCreate: !office, beforeCreate: () => {
+          this.options.ledger.db.transaction(() => {
+            this.options.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,created) VALUES(?,?,?,?)', company, name, 'pending', now());
+            this.options.ledger.db.append(company, 'connector_gmail_config_requested', null, now(), { name, deviceId: device.id });
+          });
+        } });
+      } catch (error) {
+        if (error instanceof GatewayError && error.code === 'connector_auth_config_rejected') {
+          this.options.ledger.db.transaction(() => {
+            this.options.ledger.db.run('DELETE FROM connector_office_apps WHERE company=? AND app=? AND state=?', company, name, 'pending');
+            this.options.ledger.db.append(company, 'connector_gmail_config_rejected', null, now(), { name, deviceId: device.id });
+          });
+        }
+        throw error;
+      }
+      current();
+      this.options.ledger.db.transaction(() => {
+        this.options.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,auth_config,created) VALUES(?,?,?,?,?) ON CONFLICT(company,app) DO UPDATE SET state=excluded.state, auth_config=excluded.auth_config', company, name, 'ready', authConfigId, now());
+        this.options.ledger.db.append(company, 'connector_gmail_config_ready', null, now(), { name, authConfigId });
+      });
+      return authConfigId;
+    });
+  }
+  /**
+   * Move a device off a Gmail auth config nobody could connect. Only when the
+   * rebinding seam is composed, the device records a config other than the
+   * office's current one, no account is pinned in its registry entry, and the
+   * provider confirms no ACTIVE Gmail account under its recorded config. A
+   * device with an active account, or a provider that cannot answer, stays
+   * exactly as it is. The device's old link row is removed first (journaled with
+   * the account it initiated), then the registry moves; a crash between the two
+   * leaves the device on its old config with no link, which the next connect
+   * repeats safely. Returns true when the registry moved.
+   */
+  private async rebindGmail(device: ConnectorDevice, current: () => void): Promise<boolean> {
+    const { authConfigs, rebindGmail } = this.options;
+    if (!authConfigs?.gmailAuthConfigName || !rebindGmail || device.accountId) return false;
+    const target = await this.currentGmailConfig(device, current);
+    if (device.authConfigId === target) return false;
+    const recorded: GmailReadOnlyBinding = { apiKey: this.projectKey(device), authConfigId: device.authConfigId, userId: device.userId, acceptComposioManagedScopes: true, assertAuthority: current };
+    let accounts: Array<{ status: string }>;
+    try { accounts = (await (this.options.access ?? getGmailReadOnlyAccess)(recorded)).services.gmail?.accounts ?? []; }
+    catch { throw new GatewayError('connector_gmail_rebind_unconfirmed', 409); }
+    current();
+    if (accounts.some(account => account.status === 'ACTIVE')) return false;
+    const company = device.companyId, now = this.options.ledger.now();
+    const old = this.options.ledger.db.get<{ state: string; result: string | null }>('SELECT state, result FROM connector_links WHERE device=?', device.id);
+    const initiated = old?.result ? (JSON.parse(old.result) as { accountId?: string }).accountId : undefined;
+    this.options.ledger.db.transaction(() => {
+      this.options.ledger.db.run('DELETE FROM connector_links WHERE device=?', device.id);
+      this.options.ledger.db.append(company, 'connector_gmail_rebind_requested', null, now, { deviceId: device.id, from: device.authConfigId, to: target,
+        ...(old ? { previousLinkState: old.state } : {}), ...(initiated ? { lapsedAccountId: initiated } : {}) });
+    });
+    rebindGmail(device.id, device.authConfigId, target);
+    this.options.ledger.db.append(company, 'connector_gmail_rebound', null, now, { deviceId: device.id, installationId: device.installationId, from: device.authConfigId, to: target });
+    return true;
+  }
+  /** Shared-mailbox setup: every active device of the office must sit on one
+   * Gmail config. Devices on a stale config with no active account move to the
+   * current one first; any device that cannot move keeps the existing
+   * `office_mailbox_configuration_conflict` refusal. */
+  async rebindOfficeGmail(company: string, authority: () => void): Promise<void> {
+    if (!this.options.authConfigs?.gmailAuthConfigName || !this.options.rebindGmail) return;
+    for (const device of this.options.devices().filter(d => d.companyId === company && d.active)) {
+      await this.rebindGmail(device, () => {
+        authority();
+        const now = this.options.devices().find(d => d.id === device.id);
+        requireThat(now && now.active && now.authConfigId === device.authConfigId && now.tokenHash === device.tokenHash, 'connector_binding_changed', 409);
+      });
+    }
   }
 
   // ── Any other app: office auth config, per-device link, generic adapter ──
@@ -320,7 +415,7 @@ export class ManagedConnectors {
     const rate = this.rates.get(device.id) ?? { starts: now, count: 0 };
     requireThat(rate.count < 120, 'connector_rate_limited', 429); rate.count++; this.rates.set(device.id, rate);
     requireThat(!this.inflight.has(device.id), 'connector_busy', 409); this.inflight.add(device.id);
-    const fingerprint = this.fingerprint(device);
+    let fingerprint = this.fingerprint(device);
     const current = () => { input.signal.throwIfAborted(); requireThat(this.fingerprint(this.current(input.token, input.profile)) === fingerprint, 'connector_binding_changed', 409); };
     try {
       if (input.path === '/v1/connectors/mail-attachment' && input.method === 'POST') {
@@ -422,6 +517,13 @@ export class ManagedConnectors {
         }
         requireThat(this.officeMailbox.policy(device.companyId).mode === 'personal', 'office_mailbox_owner_authorization_required', 403);
         this.admit(device, app);
+        // A device still on a Gmail config nobody could connect moves to the
+        // office's current one before any link is read or issued.
+        if (await this.rebindGmail(device, current)) {
+          device = this.current(input.token, input.profile);
+          fingerprint = this.fingerprint(device);
+          this.admit(device, app);
+        }
         const existing = this.link(device);
         /** The account a lapsed link initiated, once the provider has said it never connected. */
         let lapsed: string | null | undefined;

@@ -843,6 +843,21 @@ test('three office installations reuse a verified config, another office uses it
   } finally { h.close(); }
 });
 
+test('a create intent recorded before managed-v2 does not hold back the v2 create; a v2 intent does', async () => {
+  const h = harness(); try {
+    const seen: boolean[] = [];
+    const legacy = { gmailAuthConfigName: () => 'realbud-gmail-readonly-v1', async resolveGmail(o: { allowCreate: boolean; beforeCreate(): void }) { if (o.allowCreate) o.beforeCreate(); return 'ac_legacy'; } };
+    await h.make({ authConfigs: { resolveGmail: legacy.resolveGmail } }).provision(h.f.owner, h.request);
+    const v2 = { gmailAuthConfigName: () => 'realbud-gmail-managed-v2', async resolveGmail(o: { allowCreate: boolean; beforeCreate(): void }) {
+      seen.push(o.allowCreate); if (o.allowCreate) o.beforeCreate(); return 'ac_v2'; } };
+    // The first installation's marker has no name: it guarded the legacy config.
+    await h.make({ authConfigs: v2 }).provision(h.f.owner, { ...h.request, installationId: 'install-two' });
+    await h.make({ authConfigs: v2 }).provision(h.f.owner, { ...h.request, installationId: 'install-three' });
+    assert.deepEqual(seen, [true, false]);
+    assert.deepEqual(h.devices().map(d => d.authConfigId), ['ac_legacy', 'ac_v2', 'ac_v2']);
+  } finally { h.close(); }
+});
+
 test('uncertain auth config intent survives restart and blocks another installation from creating again', async () => {
   const h = harness(); try {
     let creates = 0;
@@ -855,13 +870,14 @@ test('uncertain auth config intent survives restart and blocks another installat
   } finally { h.close(); }
 });
 
-test('config verification rejects broadened scopes before device admission and preserves ready bindings', async () => {
+test('an own-client config with broadened scopes is refused before device admission and ready bindings are preserved', async () => {
   const h = harness(); try {
     await h.make().provision(h.f.owner, h.request);
     const original = h.devices()[0]!;
-    const { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME } = await import('./composio-auth-config.ts');
+    const { composioAuthConfigClient, oauthAppsFromEnv } = await import('./composio-auth-config.ts');
     let reads = 0;
-    const authConfigs = composioAuthConfigClient({ fetch: async () => { reads++; return Response.json({ items: [{ id: 'ac_unsafe', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://mail.google.com/' } }] }); } });
+    const oauthApps = oauthAppsFromEnv({ REALBUD_OAUTH_GOOGLE_CLIENT_ID: 'fictional.apps.googleusercontent.com', REALBUD_OAUTH_GOOGLE_CLIENT_SECRET: 'fictional-own-secret' });
+    const authConfigs = composioAuthConfigClient({ oauthApps, fetch: async () => { reads++; return Response.json({ items: [{ id: 'ac_unsafe', name: 'realbud-gmail-own-v1', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: false, status: 'ENABLED', credentials: { scopes: 'https://mail.google.com/' } }] }); } });
     await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-two' }), /scopes_not_admitted/);
     assert.deepEqual(h.devices(), [original]); assert.equal(h.modelvia.minted.length, 1);
     await h.make({ authConfigs }).provision(h.f.owner, h.request);

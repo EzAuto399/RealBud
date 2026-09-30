@@ -122,7 +122,7 @@ function vendors() {
 /** One gateway over a file-backed ledger, secret store and registry, built by the
  * production composition. `restart()` drops every in-process object and composes
  * a fresh gateway over the same files. */
-const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-readonly-v1', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } }], next_cursor: null });
+const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-managed-v2', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }], next_cursor: null });
 
 function lifecycle() {
   const root = mkdtempSync(join(tmpdir(), 'realbud-lifecycle-'));
