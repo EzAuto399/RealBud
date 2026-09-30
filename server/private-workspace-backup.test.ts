@@ -24,6 +24,7 @@ import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
 import { batchBackupFixture, verifyRestoredBatchReader } from './testing/batch-backup-fixture.ts';
 import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+import { defaultDeskSections } from '../shared/workspace-tabs.ts';
 
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => removeFixture(dir))); });
@@ -302,6 +303,13 @@ describe('portable private business backup', () => {
   it.each(['agency-setup.json','recipes.json','job-runs.json','loops.json','expected-bills.json','customer-packs.json'])('rejects corrupt business schema in %s instead of exporting a falsely usable backup', async path => {
     const f = await fixture(); await writeJson(f.directory, path, {});
     await expect(f.service.exportBackup(passphrase)).rejects.toThrow(/recovery|workspace/);
+  });
+  it('exports a version 2 Desk layout and rejects one that hides Needs you', async () => {
+    const sections = defaultDeskSections();
+    const f = await fixture(); await writeJson(f.directory, 'workspace-views/tabs.json', { workspaceId: f.workspaceId, state: { version: 2, revision: 1, tabs: [], desk: { sections }, history: [{ revision: 1, savedAt: 1, sections }] } });
+    await expect(f.service.exportBackup(passphrase)).resolves.toBeTruthy();
+    const g = await fixture(); await writeJson(g.directory, 'workspace-views/tabs.json', { workspaceId: g.workspaceId, state: { version: 2, revision: 1, tabs: [], desk: { sections: sections.map(section => ({ ...section, visible: section.id !== 'queue' })) }, history: [] } });
+    await expect(g.service.exportBackup(passphrase)).rejects.toThrow(/Desk layout need recovery/);
   });
   it('resumes an interrupted multi-file restore idempotently and holds tampered staged bytes', async () => {
     const source = await populated(), target = await fixture(), { backup, receipt } = await source.service.exportBackup(passphrase);

@@ -146,7 +146,11 @@ function validateBusinessFile(path: string, value: unknown) {
     if (!object(value) || value.version !== 1 || !positive(value.revision) || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || !object(value.settings) || !object(value.reviews)) fail('Saved agency setup needs recovery.', 400);
     validateAgencySettings({ ...value.settings, workflowPackId: value.settings.workflowPackId ?? null });
     for (const [name, review] of Object.entries(value.reviews)) if (!['bank-references','bills-calendar','morning-priorities'].includes(name) || !object(review) || review.settingsRevision !== value.revision || !hex(review.evidenceDigest) || typeof review.reviewedAt !== 'number' || typeof review.actorId !== 'string') fail('Saved agency reviews need recovery.', 400);
-  } else if (path === 'workspace-views/tabs.json') { if (!object(value)) fail('Saved views need recovery.', 400); parseWorkspaceTabs(value.state); }
+  } else if (path === 'workspace-views/tabs.json') {
+    // Accepts version 1 (migrated on read) and version 2 with a strict Desk layout.
+    if (!object(value)) fail('Saved views need recovery.', 400);
+    try { parseWorkspaceTabs(value.state); } catch { fail('Saved views or the Desk layout need recovery.', 400); }
+  }
   else if (path === 'recipes.json') {
     const list = Array.isArray(value) ? value : object(value) && Array.isArray(value.recipes) ? value.recipes : null;
     if (!list || list.length > 5000 || new Set(list.map(r => object(r) ? r.id : null)).size !== list.length) fail('Saved plans need recovery.', 400);

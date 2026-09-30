@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { MAX_WORKSPACE_TABS, WORKSPACE_VIEW_FILTERS, type WorkspaceTab, type WorkspaceViewKind } from '@shared/workspace-tabs';
 import { useWorkspaceTabs, WORKSPACE_FILTER_LABELS, WORKSPACE_VIEW_LABELS } from '@/lib/workspace-tabs';
 import { useStore } from '@/state/store';
+import { DeskCustomizePanel } from './desk/DeskCustomizePanel';
 
 const button = 'min-h-11 rounded border border-line bg-sheet px-3 py-2 text-[14px] text-ink hover:bg-selected disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-agency';
 const input = 'min-h-11 w-full rounded border border-line bg-sheet px-3 py-2 text-[14px] text-ink focus-visible:outline-2 focus-visible:outline-agency';
@@ -13,6 +14,7 @@ export function WorkspaceTabsManager() {
   const [revision, setRevision] = useState(0);
   const [existing, setExisting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [customizeDesk, setCustomizeDesk] = useState(false);
   const [confirm, setConfirm] = useState<{ type: 'remove'; id: string; label: string; revision: number } | { type: 'reset'; revision: number | undefined; token: string | undefined } | null>(null);
   const state = data?.state;
   const blocked = loading || saving || !state;
@@ -36,6 +38,7 @@ export function WorkspaceTabsManager() {
     <div className="mx-auto max-w-3xl space-y-5">
       <header><p className="text-[13px] text-ink-muted">Your private workspace</p><h1 className="text-2xl font-semibold text-ink">Manage saved views</h1><p className="mt-2 text-[14px] leading-relaxed text-ink-secondary">Add shortcuts to the work you use most. Names, filters and order stay on this RealBud workspace. Changing a view does not change records, permissions or schedules.</p></header>
       <p className="text-[14px] text-ink-secondary">Desk, Ask, Schedule and You always stay available, with their usual keyboard shortcuts.</p>
+      <section aria-label="Desk layout" className="space-y-3"><div className="flex flex-wrap items-center gap-3"><button className={button} aria-expanded={customizeDesk} disabled={!state} onClick={() => setCustomizeDesk(value => !value)}>Customize desk</button><span className="text-[13px] text-ink-muted">Choose which Desk sections show and their order.</span></div>{customizeDesk && <DeskCustomizePanel onClose={() => setCustomizeDesk(false)} />}</section>
       {loading && <p role="status">Loading saved views…</p>}
       {error && <p role="alert" className="text-[14px] text-danger">{error} Refresh before making another change.</p>}
       {data?.recovery && <p role="alert" className="rounded border border-hold p-3 text-[14px]">{data.recovery.message}</p>}

@@ -54,6 +54,10 @@
 .desk-bud-hold { margin: 2px 0 4px; font-size: 12.5px; line-height: 1.45; color: var(--color-hold); }
 .desk-chat-button { color: var(--color-agency); }
 .desk-activity-feed { max-height: 220px; overflow-y: auto; padding-bottom: 12px; }
+/* Customize desk opens above the Desk so the saved layout underneath stays put. */
+.desk-customize-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px 16px; background: color-mix(in srgb, var(--color-ink) 22%, transparent); overflow-y: auto; }
+.desk-customize-dialog { width: min(560px, 100%); box-shadow: 0 12px 32px color-mix(in srgb, var(--color-ink) 18%, transparent); border-radius: 8px; }
+@media (max-width: 719px) { .desk-customize-overlay { padding-top: 16px; } }
 .desk-task-split .pm-split-queue { width: 280px; }
 .desk-task-split .pm-split-rail { width: 290px; }
 .desk-queue-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-bottom: 1px solid var(--color-line); padding: 10px 12px; }

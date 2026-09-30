@@ -33,6 +33,7 @@ describe("Ask mutation session boundary", () => {
     ['POST', '/api/mail-workspace/review'],
     ["PUT", "/api/workspace-tabs"],
     ["POST", "/api/workspace-tabs/reset"],
+    ["POST", "/api/workspace-tabs/revert"],
     ["GET", "/api/customer-packs"],
     ["POST", "/api/customer-packs/install"],
     ["POST", "/api/customer-packs/skill-proposals/review"],
