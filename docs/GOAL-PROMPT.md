@@ -4,7 +4,9 @@ Customer name: the customer is Auston Realty (澳仕登地產); earlier document
 
 Machine handoff: [Mac mini handoff](MAC-MINI-HANDOFF-2026-09-29.md) records the 29 September move to the Mac mini: all work committed and merged to `main`, setup steps, what git does not carry, and open items.
 
-Latest continuation: [Bud status and setup ownership](BUD-STATUS-2026-09-27.md) refines the setup dead end with permission-aware actions, explicit prerequisites and automatic read-only refresh. Local verification and remaining packaged/device limits are recorded in that checkpoint.
+Latest continuation: [macOS first-install QA and fixes](MACOS-QA-2026-09-30.md) records the 29–30 September from-scratch office rehearsal (invite, link, automatic Bud setup), the defects fixed in PRs #29–#37, live operational changes and the ordered open items (service entitlement on link, signing, release publish). Packaged builds were ad-hoc signed; no customer acceptance.
+
+Previous continuation: [Bud status and setup ownership](BUD-STATUS-2026-09-27.md) refines the setup dead end with permission-aware actions, explicit prerequisites and automatic read-only refresh. Local verification and remaining packaged/device limits are recorded in that checkpoint.
 
 Previous continuation: [External test lab](EXTERNAL-TEST-LAB-2026-09-24.md) records package qualification plus 8 native cancellation/setup and 14 restore groups on the same signed Mac candidate, with root-verified hashes, cleanup and screenshots. The sealed Mac/Windows test kit and installer transfer ISO have also passed artifact-integrity verification. Earlier failures remain preserved; OS custody remains fixture-only. VirtualBox is installed and the external Windows Arm VM has started successfully without an OS; the official Windows media has passed its checksum and the VM has reached Windows 11 Setup. Installation is still pending. No Windows guest/device acceptance is claimed.
 
