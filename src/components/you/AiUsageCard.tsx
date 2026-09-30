@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
-import { formatNanoAud, formatTokenCount, type InstallationUsageState } from "@shared/office-link";
+import { formatNanoAud, formatTokenCount, currentUsagePeriod, parseInstallationUsage, type InstallationUsageState } from "@shared/office-link";
+
+import { usageBudget, USAGE_BUDGET_NOTE } from "@shared/usage-budget";
 
 const SUBTITLE = "Recorded usage across your linked office’s RealBud account this month.";
 
@@ -52,19 +54,22 @@ export function AiUsageCardView({ usage, busy, onRefresh }: {
   </Card>;
 
   const { period, requests, tokens, money, remainingNanoAud, monthlyCapNanoAud, updatedAt } = usage.usage;
+  const budget = usageBudget(monthlyCapNanoAud, remainingNanoAud);
   return <Card title="AI usage this month" subtitle={SUBTITLE}>
     <dl aria-label={`AI usage for ${usagePeriodLabel(period)}`} className="divide-y divide-line">
+      <Row label="Cost so far" value={formatNanoAud(money.customerNetNanoAud)} />
+      <Row label="Budget used" value={budget.state === 'ready' ? budget.label : budget.state === 'disabled' ? 'Not enabled' : 'Not reported by your account'} />
+      <Row label="Budget remaining" value={budget.state === "disabled" ? "Not enabled" : remainingNanoAud === null ? "Not reported by your account" : formatNanoAud(remainingNanoAud)} />
+    </dl>
+    {budget.state === 'ready' ? <progress className="mt-3 h-3 w-full accent-agency" aria-label="Monthly spending budget used" aria-valuetext={budget.label} max={100} value={budget.percent} /> : null}
+    <p className="mt-2 text-xs text-ink-muted">{USAGE_BUDGET_NOTE}</p>
+    <details className="mt-3 text-sm text-ink-secondary"><summary>Request and token details</summary><dl>
       <Row label="Requests" value={requests.toLocaleString("en-AU")} />
       <Row label="Tokens in / out" value={`${formatTokenCount(tokens.input)} / ${formatTokenCount(tokens.output)}`} />
-      <Row label="Customer usage estimate" value={formatNanoAud(money.customerNetNanoAud)} />
-      {/* The account does not always report a spend cap. Absent is "not
-          reported", never "no limit": claiming an uncapped account it never
-          promised would be inventing a fact. */}
-      <Row label="Reported headroom" value={remainingNanoAud === null ? "Not reported by your account" : formatNanoAud(remainingNanoAud)} />
-    </dl>
+    </dl><p className="text-xs">Input excludes cache reads and writes.</p></details>
     <p className="mt-2 text-xs text-ink-muted">
-      {monthlyCapNanoAud === null ? "" : `Monthly limit ${formatNanoAud(monthlyCapNanoAud)}. `}
-      Reported by your account at {new Date(updatedAt).toLocaleString("en-AU")}. Reported headroom does not authorize new work. Usage is not a request for payment. Issued invoices show any amount due.
+      {monthlyCapNanoAud === null || budget.state === "disabled" ? "" : `Monthly limit ${formatNanoAud(monthlyCapNanoAud)}. `}
+      Reported by your account at {new Date(updatedAt).toLocaleString("en-AU")}. Available budget is subject to current service limits. Usage is not a request for payment. Issued invoices show any amount due.
     </p>
     {refresh}
     <p className="mt-3 text-sm"><a className="text-agency underline" href="https://realbud.app/account/ai-billing" target="_blank" rel="noreferrer">View usage and billing on the website</a></p>
@@ -74,19 +79,35 @@ export function AiUsageCardView({ usage, busy, onRefresh }: {
 export function AiUsageCard() {
   const [usage, setUsage] = useState<InstallationUsageState | null>(null);
   const [busy, setBusy] = useState(false);
+  const active = useRef(false);
+  const inFlight = useRef(false);
+  const generation = useRef(0);
   const load = useCallback(async () => {
-    setBusy(true);
-    try { const status = await api("/api/office-link") as { usage?: InstallationUsageState }; setUsage(status?.usage ?? { state: "unavailable" }); }
-    catch { setUsage({ state: "unavailable" }); }
-    finally { setBusy(false); }
+    if (inFlight.current || !active.current) return;
+    const requestGeneration = generation.current;
+    inFlight.current = true; setBusy(true);
+    try {
+      const status = await api("/api/office-link") as { usage?: InstallationUsageState };
+      const value = status?.usage;
+      let next: InstallationUsageState = { state: "unavailable" };
+      if (value?.state === 'ready') next = { state: 'ready', usage: parseInstallationUsage(value.usage, currentUsagePeriod()) };
+      else if (value && ['checking', 'not-linked', 'unavailable'].includes(value.state)) next = value;
+      if (active.current && requestGeneration === generation.current) setUsage(next);
+    } catch { if (active.current && requestGeneration === generation.current) setUsage({ state: "unavailable" }); }
+    finally { inFlight.current = false; if (active.current) setBusy(false); }
   }, []);
   useEffect(() => {
+    active.current = true;
     void load();
-    // The first read only starts the account request; the next one carries it.
-    const timer = setTimeout(() => { void load(); }, 2_500);
-    const onLinkChanged = () => { void load(); };
+    // Status is a local read. It starts due account refreshes in the background;
+    // frequent local reads collect the result even when the network is slow.
+    const refreshVisible = () => { if (document.visibilityState !== 'hidden') void load(); };
+    const timer = window.setInterval(refreshVisible, 5_000);
+    const onLinkChanged = () => { generation.current++; setUsage(null); refreshVisible(); };
     window.addEventListener("realbud-website-link-changed", onLinkChanged);
-    return () => { clearTimeout(timer); window.removeEventListener("realbud-website-link-changed", onLinkChanged); };
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => { active.current = false; generation.current++; window.clearInterval(timer); window.removeEventListener("realbud-website-link-changed", onLinkChanged); window.removeEventListener('focus', refreshVisible); document.removeEventListener('visibilitychange', refreshVisible); };
   }, [load]);
   return <AiUsageCardView usage={usage} busy={busy} onRefresh={() => { void load(); }} />;
 }

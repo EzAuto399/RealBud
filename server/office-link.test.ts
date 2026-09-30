@@ -697,7 +697,7 @@ describe("AI usage for the current month", () => {
     expect(calls.filter(url => url.endsWith("/report"))).toHaveLength(1);
   });
 
-  it("refreshes after three minutes and serves the cached figures before then", async () => {
+  it("refreshes after 30 seconds and serves the cached figures before then", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
@@ -705,10 +705,10 @@ describe("AI usage for the current month", () => {
       const { link, calls } = app(() => Response.json(body({ period: "2026-09", requests: ++requests })));
       await link.link({ code, label: "Desk" });
       expect(await link.usage()).toMatchObject({ state: "ready", usage: { requests: 1 } });
-      vi.setSystemTime(new Date("2026-09-15T12:02:59Z"));
+      vi.setSystemTime(new Date("2026-09-15T12:00:29Z"));
       expect(await link.usage()).toMatchObject({ usage: { requests: 1 } });
       expect(calls.filter(url => url.includes("usage"))).toHaveLength(1);
-      vi.setSystemTime(new Date("2026-09-15T12:03:00Z"));
+      vi.setSystemTime(new Date("2026-09-15T12:00:30Z"));
       expect(await link.usage()).toMatchObject({ usage: { requests: 2 } });
       expect(calls.filter(url => url.includes("usage"))).toHaveLength(2);
     } finally { vi.useRealTimers(); }

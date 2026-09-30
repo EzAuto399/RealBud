@@ -28,6 +28,10 @@ describe("AI usage card", () => {
     expect(html).toContain("12,345,678,901,234,567,890");
     expect(html).toContain("A$41.23");
     expect(html).toContain("A$38.77");
+    expect(html).toContain("51.5%");
+    expect(html).toContain('aria-label="Monthly spending budget used"');
+    expect(html).toContain("Request and token details");
+    expect(html).toContain("before credits");
     expect(html).toContain("Monthly limit A$80.00");
     expect(html).toContain("Check again");
     expect(html).toContain("across your linked office");
@@ -51,12 +55,20 @@ describe("AI usage card", () => {
   });
 
   it("never turns a cap the account did not report into 'no limit'", () => {
-    // The portal does not return monthlyCapNanoAud/remainingNanoAud today.
+    // An older or unconfigured account may omit limits.
     const html = render(ready({ monthlyCapNanoAud: null, remainingNanoAud: null, money: { customerNetNanoAud: null } }));
     expect(html).toContain("Not reported by your account");
     expect(html).toContain("Not priced");
     expect(html).not.toContain("No monthly limit");
     expect(html).not.toContain("Monthly limit");
+  });
+
+  it("keeps billing credits separate from budget consumption and does not invent a percentage", () => {
+    const credited = render(ready({ money: { customerNetNanoAud: '1000000000' } }));
+    expect(credited).toContain('A$1.00');
+    expect(credited).toContain('51.5%');
+    expect(render(ready({ monthlyCapNanoAud: '0', remainingNanoAud: '0' }))).toContain('Not enabled');
+    expect(render(ready({ remainingNanoAud: null }))).not.toContain('<progress');
   });
 
   it("falls back to a neutral month label rather than inventing one", () => {

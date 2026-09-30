@@ -160,7 +160,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     await windowsFilePrivacy(path, "file", true);
   }
   /**
-   * AI usage for one month, at most one check per three minutes.
+   * AI usage for one month, at most one check per 30 seconds.
    *
    * Held in memory and never written to disk: it is a reporting convenience,
    * not a record, and the authoritative figures live in the account. A check
@@ -170,7 +170,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   const usageOwner = (saved: Saved) => `${saved.id}:${saved.token}:${saved.companyId ?? ""}`;
   let usageCache: { owner: string; period: string; at: number; value: InstallationUsageState } | undefined;
   const usageBusy = new Set<string>();
-  const USAGE_TTL = 3 * 60_000;
+  const USAGE_TTL = 30_000;
   async function usage(period = currentUsagePeriod()): Promise<InstallationUsageState> {
     if (!USAGE_PERIOD.test(period)) throw Object.assign(new Error("Ask for a month as YYYY-MM."), { status: 400 });
     const saved = await read().catch(() => null);
