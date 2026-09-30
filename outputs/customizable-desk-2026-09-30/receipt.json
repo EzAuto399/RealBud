@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-30T00:26:31.912Z",
+  "passed": true,
+  "layer": "Built React UI in headless Chrome; real isolated source service; fictional sample book; no worker, no customer accounts",
+  "limits": [
+    "Fictional sample book only; not customer acceptance",
+    "Built renderer served by the source service, not a packaged or installed app",
+    "Bud-proposed layouts and department layouts are not built yet",
+    "Mail, bills and shared-work panels may render empty on the sample book"
+  ],
+  "checks": [
+    "Fictional sample Desk opens",
+    "Customize desk opens from More with Needs you fixed",
+    "Save persists the reordered layout with history (earlier layout kept)",
+    "A layout changed in another window keeps the draft and shows the reopen message",
+    "Desk renders the saved order: Needs you first, mail/bills/shared work hidden",
+    "Revert is revision-checked and restores the earlier layout as a new revision",
+    "390x844 shows the panel without horizontal scroll",
+    "Zero renderer page errors"
+  ],
+  "errors": []
+}

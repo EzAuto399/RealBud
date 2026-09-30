@@ -36,6 +36,9 @@ import { JobRunFeed } from "./desk/JobRunFeed";
 import { SharedWorkPanel } from "./desk/SharedWorkPanel";
 import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
 import { MailWorkPanel } from './desk/MailWorkPanel';
+import { DeskSections } from "./desk/DeskSections";
+import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
+import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
@@ -55,6 +58,10 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const { state, dispatch, refreshHermes } = useStore();
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const { preferences } = useWorkspacePreferences();
+  // Saved Desk sections; an absent or invalid layout renders today's order.
+  const deskLayout = useWorkspaceTabs().data?.state?.desk.sections;
+  const activityShown = deskLayout?.find(section => section.id === "activity")?.visible !== false;
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
   // Paint instantly from the SSE-pushed snapshot when we have one; the
   // effect below still refreshes from the server on mount.
@@ -453,9 +460,11 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             <details ref={moreMenuRef} className="desk-more">
               <summary className="desk-secondary-button">More</summary>
               <div className="desk-more-panel" role="group" aria-label="More Desk tools">
-                <button type="button" className="desk-more-item" aria-pressed={jobRunsOpen} onClick={chooseMore(() => setJobRunsOpen((value) => !value))}>
-                  {jobRunsOpen ? "Hide activity" : "Activity"}
-                </button>
+                {activityShown ? (
+                  <button type="button" className="desk-more-item" aria-pressed={jobRunsOpen} onClick={chooseMore(() => setJobRunsOpen((value) => !value))}>
+                    {jobRunsOpen ? "Hide activity" : "Activity"}
+                  </button>
+                ) : null}
                 {mode === "cases" ? (
                   <button
                     type="button"
@@ -471,6 +480,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 </button>
                 <button type="button" className="desk-more-item" aria-pressed={mode === "batch"} onClick={chooseMore(() => setMode("batch"))}>
                   Batch prepare
+                </button>
+                <button type="button" className="desk-more-item" aria-expanded={customizeOpen} onClick={chooseMore(() => setCustomizeOpen(true))}>
+                  Customize desk
                 </button>
                 <div className="desk-more-layout">
                   <WorkspaceLayout />
@@ -539,63 +551,87 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             </button>
           </div>
         ) : null}
-        {mode !== "batch" && <MorningBrief
-          brief={brief}
-          timezone={timezone}
-          interactive
-          collapsed={!briefExpanded}
-          onToggle={() => setBriefExpanded((value) => !value)}
-          onOpenAddress={(propertyId) => {
-            const row = rows.find((item) => item.propertyId === propertyId);
-            if (!row) return;
-            setMode("cases");
-            setFilter(row.bucket);
-            setCaseKind("all");
-            setQuery("");
-            setTaskScope(null);
-            setSelectedId(row.id);
-            setQueueOpen(false);
+        <DeskSections
+          sections={deskLayout}
+          render={{
+            brief: mode !== "batch" && <MorningBrief
+              brief={brief}
+              timezone={timezone}
+              interactive
+              collapsed={!briefExpanded}
+              onToggle={() => setBriefExpanded((value) => !value)}
+              onOpenAddress={(propertyId) => {
+                const row = rows.find((item) => item.propertyId === propertyId);
+                if (!row) return;
+                setMode("cases");
+                setFilter(row.bucket);
+                setCaseKind("all");
+                setQuery("");
+                setTaskScope(null);
+                setSelectedId(row.id);
+                setQueueOpen(false);
+              }}
+            />,
+            mail: mode !== "batch" ? <div className="mt-3 empty:hidden"><MailWorkPanel compact /></div> : null,
+            bills: mode !== "batch" ? <div className="mt-3 empty:hidden"><ExpectedBillsBoard compact /></div> : null,
+            "shared-work": mode !== "batch" ? <div className="mt-3 empty:hidden"><SharedWorkPanel /></div> : null,
+            /* Setup stays available with the expanded overview and on You. */
+            "go-live": mode === "batch" || !briefExpanded ? null : (
+              <GoLiveCard
+                mode={snap.mode}
+                agencyName={snap.book?.agency.name ?? ""}
+                workerReady={Boolean(state.hermes?.ready)}
+                compact
+                jurisdictions={snap.book?.agency.jurisdictions ?? []}
+                office={snap.book?.office ? coerceOffice(snap.book.office) : undefined}
+                onConnectExport={() => setMode("book")}
+                onAttachWorker={() => { openWorkspaceSetup("bud"); }}
+                onNameAgency={() => { openWorkspaceSetup("office"); }}
+              />
+            ),
+            queue: (
+              <>
+                {briefExpanded && keysHint && mode === "cases" ? (
+                  <p className="pm-desk-hint mt-2 flex items-center gap-3 text-[12px] text-ink-muted"><span>↑↓ move the queue · [ ] toggle Queue / Evidence</span><button type="button" onClick={dismissKeysHint} className="text-agency">Got it</button></p>
+                ) : null}
+                <nav className="desk-workspace-nav" aria-label="Desk workspace">
+                  <div className="desk-workspace-tabs">
+                    <button type="button" aria-pressed={mode === "cases"} onClick={() => setMode("cases")}>
+                      Needs you{counts.now > 0 ? <span>{counts.now}</span> : null}
+                    </button>
+                    {mode !== "cases" ? (
+                      <button type="button" aria-pressed={true} onClick={() => setMode("cases")} className="desk-workspace-back">
+                        Back to Needs you
+                      </button>
+                    ) : null}
+                  </div>
+                  <span className="desk-workspace-help">
+                    {mode === "cases"
+                      ? "Exceptions and wording from Recheck — Bud helps, you decide"
+                      : mode === "book"
+                        ? "Book tools for import and missing addresses"
+                        : "Batch prepare across a few addresses"}
+                  </span>
+                </nav>
+              </>
+            ),
+            activity: jobRunsOpen ? <div className="desk-activity-feed"><JobRunFeed limit={6} /></div> : null,
           }}
-        />}
-        {mode !== "batch" ? <div className="mt-3 space-y-3"><MailWorkPanel compact /><ExpectedBillsBoard compact /><SharedWorkPanel /></div> : null}
-        {/* Setup stays available with the expanded overview and on You. */}
-        {mode === "batch" || !briefExpanded ? null : (
-          <GoLiveCard
-            mode={snap.mode}
-            agencyName={snap.book?.agency.name ?? ""}
-            workerReady={Boolean(state.hermes?.ready)}
-            compact
-            jurisdictions={snap.book?.agency.jurisdictions ?? []}
-            office={snap.book?.office ? coerceOffice(snap.book.office) : undefined}
-            onConnectExport={() => setMode("book")}
-            onAttachWorker={() => { openWorkspaceSetup("bud"); }}
-            onNameAgency={() => { openWorkspaceSetup("office"); }}
-          />
-        )}
-        {briefExpanded && keysHint && mode === "cases" ? (
-          <p className="pm-desk-hint mt-2 flex items-center gap-3 text-[12px] text-ink-muted"><span>↑↓ move the queue · [ ] toggle Queue / Evidence</span><button type="button" onClick={dismissKeysHint} className="text-agency">Got it</button></p>
-        ) : null}
-        <nav className="desk-workspace-nav" aria-label="Desk workspace">
-          <div className="desk-workspace-tabs">
-            <button type="button" aria-pressed={mode === "cases"} onClick={() => setMode("cases")}>
-              Needs you{counts.now > 0 ? <span>{counts.now}</span> : null}
-            </button>
-            {mode !== "cases" ? (
-              <button type="button" aria-pressed={true} onClick={() => setMode("cases")} className="desk-workspace-back">
-                Back to Needs you
-              </button>
-            ) : null}
-          </div>
-          <span className="desk-workspace-help">
-            {mode === "cases"
-              ? "Exceptions and wording from Recheck — Bud helps, you decide"
-              : mode === "book"
-                ? "Book tools for import and missing addresses"
-                : "Batch prepare across a few addresses"}
-          </span>
-        </nav>
-        {jobRunsOpen ? <div className="desk-activity-feed"><JobRunFeed limit={6} /></div> : null}
+        />
       </header>
+      {customizeOpen ? (
+        <div
+          className="desk-customize-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="desk-customize-title"
+          ref={(node) => { if (node && !node.contains(document.activeElement)) node.querySelector<HTMLElement>('[aria-label="Close Customize desk"]')?.focus(); }}
+          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setCustomizeOpen(false); } }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setCustomizeOpen(false); }}
+        >
+          <div className="desk-customize-dialog"><DeskCustomizePanel onClose={() => setCustomizeOpen(false)} /></div>
+        </div>
+      ) : null}
 
       {mode === "batch" ? <BatchWorkspace snapshot={snap} scope={batchScope} onClearScope={() => setBatchScope(null)} openNewDraft={openNewBatchDraft} onDraftOpened={() => setOpenNewBatchDraft(false)}/> : mode === "book" ? (
         <DeskBook
