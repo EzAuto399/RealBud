@@ -155,6 +155,14 @@ describe("ask book", () => {
     expect(prompt).toMatch(/Durable office memory lives in book Notes/i);
   });
 
+  it("introduces Bud without runtime names and tells it the office's model", () => {
+    const prompt = productBudSystemPrompt({ modelChoice: "sonnet-high" });
+    expect(prompt).not.toMatch(/hermes|nous research|openmausbot/i);
+    expect(prompt).toMatch(/Bud, RealBud's assistant/);
+    expect(prompt).toContain("This office's selected AI model is Claude Sonnet 5.5 at high reasoning, provided through RealBud.");
+    expect(productBudSystemPrompt()).toMatch(/model this office selected in RealBud/);
+  });
+
   it("keeps Ask voice short, PM-plain, and free of prompt leakage", () => {
     const prompt = productBudSystemPrompt();
     expect(prompt).toMatch(/2–4 short sentences|2-4 short sentences/);
