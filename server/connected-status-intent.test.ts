@@ -56,4 +56,23 @@ describe("parseConnectedStatusIntent", () => {
     expect(text).toContain("you finish it there");
     expect(text).not.toMatch(/composio|You\s*→/i);
   });
+
+  it("names every listed app, not a fixed pair, and says any app can be connected by asking", async () => {
+    const { formatConnectedAppsReply } = await import("./connected-status-intent.ts");
+    const text = formatConnectedAppsReply({
+      configured: true,
+      services: {
+        gmail: { connected: true, status: "ACTIVE", accounts: [{ id: "1", label: "pm@office.com", status: "active" }] },
+        xero: { connected: true, status: "ACTIVE", accounts: [{ id: "2", status: "active" }] },
+        slack: { connected: false, status: "NOT_CONNECTED", accounts: [] },
+      },
+      tools: { available: true, names: ["GMAIL_GET_PROFILE", "XERO_LIST_INVOICES"] },
+    });
+    expect(text).toContain("**Xero** — connected");
+    expect(text).toContain("**Slack** — not connected yet. Ask **Connect Slack** here");
+    expect(text).toContain("asking **connect <app>** here");
+    expect(text).not.toMatch(/composio|You\s*→/i);
+    const empty = formatConnectedAppsReply({ configured: true, services: {}, tools: { available: false, names: [] } });
+    expect(empty).toContain("connect <app>");
+  });
 });

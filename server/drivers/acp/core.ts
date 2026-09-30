@@ -741,10 +741,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             mcpServers = mcpServers.map(server => server.name === "browser" ? browserBroker!.descriptor : server);
           }
           if (firstTurn.integrations?.composio) {
-            const { key, url, headers, gmailReadOnly, allowedApps } = firstTurn.integrations.composio;
+            const { key, url, headers, gmailReadOnly, allowedApps, managed } = firstTurn.integrations.composio;
             if (gmailReadOnly && (typeof gmailReadOnly.requestId !== "string" || !gmailReadOnly.requestId.trim())) throw new Error("Gmail review needs a fresh request identity.");
             appBroker = await startConnectedAppsBroker({
-              key, url, headers, allowedApps,
+              key, url, headers, allowedApps, ...(managed ? { managed: true } : {}),
               ...(gmailReadOnly ? { readOnlyAccountId: gmailReadOnly.accountId, localTransport: createGmailReadOnlyTransport({
                 apiKey: key, authConfigId: gmailReadOnly.authConfigId, userId: gmailReadOnly.userId, accountId: gmailReadOnly.accountId,
               }) } : {}),

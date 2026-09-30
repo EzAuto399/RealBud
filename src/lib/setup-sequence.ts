@@ -264,10 +264,11 @@ function websiteLinkFact(link: WebsiteLinkRead): Fact | null {
 
 /**
  * Step 2, after the account link: the accounts the selected work reads,
- * connected through Connections and checked. Today the only account any
- * workflow requires is the private Gmail source, so that is the one host check
- * this rolls up. The status is whatever the host's own check says; this step
- * invents no fact about an account or about what has been collected from it.
+ * connected through Connections and checked. Any app the office uses can be
+ * connected on demand there; the one account a shipped workflow requires today
+ * is the private Gmail source, so that is the host check this rolls up. The
+ * status is whatever the host's own check says; this step invents no fact about
+ * an account or about what has been collected from it.
  */
 function accountsFact(setup: AgencySetupFacts, link: WebsiteLinkRead, appsToConnect: readonly string[]): Fact {
   const linkFirst = websiteLinkFact(link);

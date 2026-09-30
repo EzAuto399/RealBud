@@ -65,11 +65,17 @@ describe('managed connector client',()=>{
     expect(await managedConnectorAccess(cfg)).toEqual(value);
   });
   it('allows only provider-owned sign-in links and never sends arbitrary account identity',async()=>{
-    const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({url:'https://evil.invalid/'})));vi.stubGlobal('fetch',fetcher);
+    const fetcher=vi.fn().mockImplementation(async()=>new Response(JSON.stringify({url:'https://evil.invalid/'})));vi.stubGlobal('fetch',fetcher);
     await expect(authorizeManagedConnection(cfg,'gmail')).rejects.toThrow();
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({app:'gmail'});
-    await expect(authorizeManagedConnection(cfg,'bank')).rejects.toThrow(/not part of this computer/);
-    expect(fetcher).toHaveBeenCalledOnce();
+    // Any toolkit slug goes to the gateway, which admits it into the office's
+    // project or refuses; a malformed name never leaves this computer.
+    await expect(authorizeManagedConnection(cfg,'bank')).rejects.toThrow(/needs review/);
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({app:'bank'});
+    await expect(authorizeManagedConnection(cfg,'Bank!')).rejects.toThrow(/Name the app/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fetcher.mockImplementation(async()=>new Response('provider detail',{status:404}));
+    await expect(authorizeManagedConnection(cfg,'nosuchapp')).rejects.toThrow(/not available to connect/);
   });
 });
 
@@ -117,9 +123,22 @@ describe('per-installation app allowlist', () => {
     const value = { ...access(), services: { ...access().services, outlook }, tools: { available: true, names: ['GMAIL_GET_PROFILE', 'OUTLOOK_LIST_MESSAGES'] } };
     reply(value);
     expect(await managedConnectorAccess(cfg)).toEqual(value);
-    // The response cannot widen the grant: this app is not in the record.
+    // Without an admitted-app list the linked record is the grant: an unlisted app is refused.
     reply({ ...access(), services: { ...access().services, slack: outlook } });
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    // The gateway's admitted-app list for this credential widens it (the office
+    // admitted Slack on the person's ask), but can never drop a linked app.
+    const admitted = { ...access(), apps: ['gmail', 'outlook', 'slack'], services: { ...access().services, slack: outlook }, tools: { available: true, names: ['GMAIL_GET_PROFILE', 'SLACK_LIST_CHANNELS', 'SLACK_POST_MESSAGE'] } };
+    reply(admitted);
+    const { apps: _apps, ...projected } = admitted;
+    expect(await managedConnectorAccess(cfg)).toEqual(projected);
+    reply({ ...admitted, apps: ['gmail', 'slack'] });
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    // A destructive, bulk or administrative tool name is refused whatever the gateway lists.
+    for (const name of ['SLACK_DELETE_MESSAGE', 'SLACK_ADMIN_USERS_REMOVE', 'SLACK_BULK_ARCHIVE']) {
+      reply({ ...admitted, tools: { available: true, names: [name] } });
+      await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    }
     // Nor can it borrow another app's tool namespace, or add a Gmail tool.
     reply({ ...access(), tools: { available: true, names: ['SLACK_POST_MESSAGE'] } });
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
@@ -133,7 +152,10 @@ describe('per-installation app allowlist', () => {
     await removePrivateJson(join(DATA_DIR, 'service-provisioning.json'));
     reply({ ...access(), services: { ...access().services, outlook } });
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
-    await expect(authorizeManagedConnection(cfg, 'outlook')).rejects.toThrow(/not part of this computer/);
+    // Connecting is still open to any app: the gateway decides, not the record.
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ url: 'https://connect.composio.dev/link/fictional' }))); vi.stubGlobal('fetch', fetcher);
+    expect(await authorizeManagedConnection(cfg, 'outlook')).toEqual({ url: 'https://connect.composio.dev/link/fictional' });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ app: 'outlook' });
   });
 });
 

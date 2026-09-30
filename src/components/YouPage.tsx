@@ -360,7 +360,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       <summary>
         <span>Connected apps</span>
         <span className="settings-section-hint">
-          {appsToConnect.length ? `${appsToConnect.join(", ")} not connected yet · connect ${appsToConnect.length === 1 ? "it" : "them"} here` : "Optional · bring email and files into a task"}
+          {appsToConnect.length ? `${appsToConnect.join(", ")} not connected yet · connect ${appsToConnect.length === 1 ? "it" : "them"} here` : "Optional · connect any app your office uses"}
         </span>
       </summary>
       <div className="settings-section-body">

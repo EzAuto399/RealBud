@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { readMcpRpcResponse } from "./composio.ts";
 import { redactSecrets } from "./redact.ts";
 import { connectedAppOperations, validAppToolName, validAppToolSlug, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
+import { classifyAppTool, combineAppToolPolicies } from "../shared/app-tool-policy.ts";
 
 const DISCOVERY = new Set(["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS"]);
 const BLOCKED = new Set(["COMPOSIO_REMOTE_WORKBENCH", "COMPOSIO_REMOTE_BASH_TOOL"]);
@@ -15,7 +16,7 @@ export const CONNECTED_APP_APPROVAL = "bud_connected_app_action";
 type Call = { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
 type Policy = "read" | "review" | "blocked";
 
-export function connectedAppPolicy(call: Call): Policy {
+export function connectedAppPolicy(call: Call, options: { managed?: boolean } = {}): Policy {
   if (!validAppToolName(call.name) || (call.arguments !== undefined &&
     (!call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)))) return "blocked";
   if (BLOCKED.has(call.name)) return "blocked";
@@ -30,10 +31,25 @@ export function connectedAppPolicy(call: Call): Policy {
     if (!Array.isArray(rows) || !rows.length || rows.length > 50 || rows.some(row =>
       !row || typeof row !== "object" || !validAppToolSlug(row.tool_slug) ||
       row.tool_slug.startsWith("COMPOSIO_") || !row.arguments || typeof row.arguments !== "object" || Array.isArray(row.arguments))) return "blocked";
+    // Behind the managed gateway a batch is as strict as its strictest member;
+    // one blocked slug blocks it all. A direct connection reviews every batch.
+    return options.managed ? combineAppToolPolicies(rows.map(row => namespacedPolicy(row.tool_slug))) : "review";
   }
-  // Unknown tools, read-looking names and readOnlyHint=true are not authority.
-  return "review";
+  // A direct connection keeps the original line: unknown tools, read-looking
+  // names and readOnlyHint=true are not authority; everything is reviewed.
+  if (!options.managed) return "review";
+  // Gmail's own tools never take this route (the fixed read-only triple is
+  // decided by the adapter that owns it); any other app's tool is classified by
+  // name: reads run, writes and unknowns are reviewed per instance, destructive,
+  // bulk and administrative operations are blocked. A tool's own readOnlyHint
+  // is not authority: the classifier only lets annotations tighten the class.
+  if (call.name.startsWith("GMAIL_")) return GMAIL_READ_ONLY.has(call.name) ? "review" : "blocked";
+  return namespacedPolicy(call.name);
 }
+/** Composio tool slugs are `APP_VERB_OBJECT`; only that shape is classified.
+ * Any other name (a consumer server's own tool) keeps the old default: review. */
+const NAMESPACED = /^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/;
+const namespacedPolicy = (name: string): Policy => NAMESPACED.test(name) ? classifyAppTool(name) : "review";
 
 /** Product-selected sources bind execution, including calls hidden in a batch. */
 export function allowedOfficeAppCall(call: Call, allowedApps?: string[]): boolean {
@@ -83,6 +99,8 @@ export async function startConnectedAppsBroker(options: {
   /** Server-selected account shown on read approvals, never a caller argument. */
   readOnlyAccountId?: string;
   allowedApps?: string[];
+  /** Upstream is the office's managed connection service (tools classified). */
+  managed?: boolean;
 }): Promise<ConnectedAppsBroker> {
   const generationAtStart = revocationGeneration;
   if (!options.key.trim()) throw new Error("Set up Bud's Connected apps key first.");
@@ -163,7 +181,7 @@ export async function startConnectedAppsBroker(options: {
             if (!allowedOfficeAppCall(call, options.allowedApps)) return errorResult("This source is off or unavailable in Ask. Open Add to choose office sources before starting a new request.");
             const policy = options.localTransport
               ? (GMAIL_READ_ONLY.has(call.name) ? "review" : "blocked")
-              : connectedAppPolicy(call);
+              : connectedAppPolicy(call, { managed: options.managed === true });
             if (policy === "blocked") return errorResult(options.localTransport
               ? "This Gmail review allows only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Sending, drafts, account changes and other app tools are unavailable."
               : "This operation is outside Bud's connected-app boundary. Use direct app tools to prepare reviewable work. Ask Bud to connect an app separately.");

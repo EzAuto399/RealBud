@@ -21,6 +21,7 @@ managed-gateway/sandbox-smoke.ts
 !shared/mail-ingestion.ts
 !shared/source-attachments.ts
 !shared/service-entitlement.ts
+!shared/app-tool-policy.ts
 # Belt and braces on top of the allowlist: nothing below may ever be copied.
 managed-gateway/.env
 managed-gateway/.env.*

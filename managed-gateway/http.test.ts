@@ -13,7 +13,7 @@ import { fileSecretStore, InstallationProvisioning, modelviaOperatorState } from
 import { modelviaKeyClient } from './modelvia-keys.ts';
 import type { HttpTransport } from './composio-org.ts';
 import { composeGateway } from './composition.ts';
-import { signOperatorToken } from './operator-token.ts';
+import { signOperatorToken, verifyOperatorToken } from './operator-token.ts';
 import { createHash, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { readServiceEntitlement } from '../server/service-entitlement.ts';
@@ -24,7 +24,8 @@ const OWNER='synthetic-portal-token-owner-000001',READER='synthetic-portal-token
 
 /** The real Modelvia client over a stand-in shaped like Modelvia's operator
  * routes, and a provisioning composition around it. Everything is fictional. */
-async function serverFixture(options:{provisioning?:boolean;customer?:Record<string,unknown>;serviceIssuer?:ServiceIssuer}={}) {
+const OPERATOR_SECRET='fictional-gateway-operator-secret-000001';
+async function serverFixture(options:{provisioning?:boolean;customer?:Record<string,unknown>;serviceIssuer?:ServiceIssuer;operator?:boolean}={}) {
   const f=fixture(),root=mkdtempSync(join(tmpdir(),'realbud-http-'));
   const modelviaCalls:string[]=[];
   const customer={id:'cus-fictional-office',clientId:'realbud',name:'Fictional office',active:true,monthlyCapNanoAud:'100000000000',maxConcurrent:4,allowedModels:['auto'],version:1,...options.customer};
@@ -41,11 +42,13 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
   };
   const modelvia=modelviaKeyClient({serviceOrigin:'https://api.modelvia.dev',environment:'production',clientId:'realbud',allowedModels:['auto'],
     scopedSecret:()=>'fictional-modelvia-operator-secret-32ch',operatorSubject:'realbud-provisioning',fetch:fetchLike,now:f.now});
-  const org={async listProjects(){return [];},async createProject(name:string){return {id:'pr_1',name,apiKey:'ak_fictional_project_key_for_tests'};},async deleteProject(){return {revokeJobId:'job-fictional'};}};
+  const created:{id:string;name:string}[]=[];
+  const org={async listProjects(){return created.map(p=>({...p}));},async createProject(name:string){const project={id:`pr_${created.length+1}`,name};created.push(project);return {...project,apiKey:'ak_fictional_project_key_for_tests'};},async deleteProject(){return {revokeJobId:'job-fictional'};}};
   const provisioning=options.provisioning===false?undefined:new InstallationProvisioning({ledger:f.ledger,registry:join(root,'devices.json'),endpoint:'https://managed.example.invalid',
     secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{resolveGmail:async () => 'ac-fictional-readonly'},
     ...(options.serviceIssuer?{serviceIssuer:options.serviceIssuer}:{})});
-  const server=createGatewayServer({allowedOrigins:new Set(['https://portal.invalid']),...(provisioning?{provisioning}:{}),portal:{async authenticate(bearer){
+  const server=createGatewayServer({allowedOrigins:new Set(['https://portal.invalid']),...(provisioning?{provisioning}:{}),
+    ...(options.operator?{operator:{authenticate:async(bearer:string)=>verifyOperatorToken(bearer,OPERATOR_SECRET)}}:{}),portal:{async authenticate(bearer){
     if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader'};
     // A signed-in portal user whose company the operator has not entitled.
     if(bearer===UNKNOWN)return {...f.owner,companyId:'company-unentitled'};
@@ -56,8 +59,42 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
   const request=(method:string,path:string,bearer:string|null=OWNER,body?:unknown,extra:Record<string,string>={})=>fetch(base+path,{method,
     headers:{...(bearer?{Authorization:`Bearer ${bearer}`}:{}),...(body===undefined?{}:{'Content-Type':'application/json'}),...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const provisionBody={companyId:f.tenant.companyId,installationId:'install-one',customerId:'cus-fictional-office',profile:'property'};
-  return {...f,base,request,provisionBody,modelviaCalls,projects};
+  return {...f,base,request,provisionBody,modelviaCalls,projects,created};
 }
+
+test('an operator creates an office connector project at office creation; the first desktop link reuses it', async()=>{
+  const s=await serverFixture({operator:true});
+  const token=signOperatorToken('ops@realbud.example',OPERATOR_SECRET,Date.now());
+  const path=`/v1/operator/offices/${s.tenant.companyId}/connector-project`;
+  // Operator bearer only: none, a portal token, a foreign secret's token.
+  for(const bearer of [null,OWNER,signOperatorToken('ops@realbud.example','another-secret-that-is-long-enough-000001')]) {
+    const refused=await s.request('POST',path,bearer);
+    assert.equal(refused.status,401);assert.deepEqual(await refused.json(),{error:'operator_unauthenticated'});
+  }
+  assert.equal(s.created.length,0);
+  const first=await s.request('POST',path,token);
+  assert.equal(first.status,200);
+  const body=await first.json() as Record<string,unknown>;
+  assert.deepEqual(body,{companyId:s.tenant.companyId,projectName:`realbud-${s.tenant.companyId}`,projectId:'pr_1',state:'ready'});
+  assert.ok(!JSON.stringify(body).includes('ak_'));
+  // Idempotent: a repeat returns the same project and creates nothing.
+  const again=await s.request('POST',path,token,{});
+  assert.equal(again.status,200);assert.deepEqual(await again.json(),body);
+  assert.equal(s.created.length,1);
+  // A body with fields, or a malformed company id, is refused before anything external.
+  assert.equal((await s.request('POST',path,token,{name:'x'})).status,400);
+  assert.equal((await s.request('POST','/v1/operator/offices/bad%2Fid/connector-project',token)).status,404);
+  // An office the ledger does not know gets no project.
+  const unknown=await s.request('POST','/v1/operator/offices/company-unknown/connector-project',token);
+  assert.equal(unknown.status,404);assert.deepEqual(await unknown.json(),{companyId:'company-unknown',projectName:'realbud-company-unknown',state:'held',error:'tenant_unavailable'});
+  assert.equal(s.created.length,1);
+  // The first desktop link then provisions into that same project.
+  const linked=await s.request('POST','/v1/portal/installations/provision',OWNER,s.provisionBody);
+  assert.equal(linked.status,200);
+  const descriptor=await linked.json() as {provisioning:{connector:{projectId:string}}};
+  assert.equal(descriptor.provisioning.connector.projectId,'pr_1');
+  assert.equal(s.created.length,1);
+});
 
 test('AI rate, usage, limit and model routes are gone; care routes answer 503 without billing composed', async()=>{
   const f=await serverFixture();
