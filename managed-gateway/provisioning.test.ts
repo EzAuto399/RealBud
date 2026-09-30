@@ -188,12 +188,25 @@ test('authority is the portal principal: role, company scope and service state g
   } finally { h.close(); }
 });
 
-test('an unknown or unconfigured app is refused before any external call', async () => {
+test('a malformed app list is refused before any external call; any toolkit slug is recorded for on-demand admission', async () => {
   const h = harness(); try {
-    for (const apps of [['slack'], ['gmail', 'slack'], ['gmail', 'gmail'], [], 'gmail']) {
+    for (const apps of [['gmail', 'gmail'], [], 'gmail', ['Slack'], ['../gmail'], [1]]) {
       await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, apps }));
     }
     assert.equal(h.org.orgKeyReads, 0); assert.equal(h.modelvia.minted.length, 0);
+    // No fixed app set: the office decides later, app by app, by asking Bud.
+    const first = await h.make().provision(h.f.owner, { ...h.request, apps: ['gmail', 'slack'] });
+    assert.deepEqual(first.provisioning.connector.apps, ['gmail', 'slack']);
+    assert.deepEqual(h.devices()[0]!.apps, ['gmail', 'slack']);
+    // A repeat naming another list is not a conflict: the recorded list stands.
+    const repeat = await h.make().provision(h.f.owner, { ...h.request, apps: ['xero'] });
+    assert.deepEqual(repeat.provisioning.connector.apps, ['gmail', 'slack']);
+    assert.equal(repeat.provisioning.connector.credential, undefined);
+    assert.equal(h.modelvia.minted.length, 1);
+    // The office project path is idempotent on its own.
+    const ensured = await h.make().ensureOfficeProject(h.request.companyId);
+    assert.equal(ensured.projectId, first.provisioning.connector.projectId);
+    assert.equal(h.org.created.length, 1);
   } finally { h.close(); }
 });
 

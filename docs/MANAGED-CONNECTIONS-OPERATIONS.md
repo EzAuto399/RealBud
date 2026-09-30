@@ -149,6 +149,35 @@ here, and the file-backed secret store is a next-to-an-operator arrangement that
 hosted deployment must replace with the platform secret manager before any
 vendor-only custody claim.
 
+## Connect any app (30 September 2026)
+
+Offices get no fixed app set. When a person asks Bud **connect Xero** (or any
+Composio toolkit), the desktop sends the slug to `/v1/connectors/authorize` with
+its own installation credential and the gateway admits the app into that
+office's own Composio project: toolkit lookup, find-or-create of the office's
+Composio-managed auth config (serialized per office and app, create intent
+journaled first), the device's registry allowlist extended, then the sign-in
+link for the installation's user. Another office's project, key or config is
+never consulted; the desktop never sees a project key or auth config id. Gmail
+keeps its reviewed read-only path unchanged, and registries written before this
+read as Gmail-only. An operator can create the office project ahead of the
+first link with `POST /v1/operator/offices/{companyId}/connector-project`
+(operator bearer; see [managed-gateway/DEPLOY.md](../managed-gateway/DEPLOY.md)).
+
+Tools of a connected app are classified by name and provider annotations
+(`shared/app-tool-policy.ts`): reads run directly, anything that writes, sends,
+pays or changes goes to Bud's per-instance Allow card, and destructive, bulk or
+administrative operations are refused on both the desktop and the gateway. The
+classifier is deliberately conservative (an unknown verb is a review; a name
+carrying DELETE, BULK, ADMIN, ROLE, PERMISSION, TOKEN and the like is blocked
+even where the operation is a read). Gmail's three-tool read-only allowlist is
+unchanged.
+
+**Evidence tier: local tests against injected fakes.** The Composio toolkit,
+auth-config, connected-account and tool-execution calls are exercised only
+through fakes here; the field names follow the v3 API reference and have not
+been confirmed against a live project from this change.
+
 ## Desktop setup and recovery
 
 1. Unlock that installation's service administrator session. Enter only the service origin and scoped installation credential in Managed connections.

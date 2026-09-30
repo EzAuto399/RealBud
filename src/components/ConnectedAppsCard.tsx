@@ -46,7 +46,10 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
   const currentState = useRef(state);
   currentState.current = state;
   const mode = connectedAppsMode(state.config?.composio);
-  const readOnly = mode === "gmail-readonly" || state.config?.composio.managed === true;
+  // Gmail read-only is the one fixed-app mode. A managed office connects any
+  // app on demand through its own connection service.
+  const readOnly = mode === "gmail-readonly";
+  const managed = state.config?.composio.managed === true;
   const configured = selectedConnectedAppsConfigured(state.config?.composio);
   const budId = resolveProductBudId(state.bots);
   const budBusy = Boolean(state.bots.find((bot) => bot.id === budId)?.busy);
@@ -61,6 +64,7 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [operationsError, setOperationsError] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [customApp, setCustomApp] = useState("");
   const operationsRequest = useRef<AbortController | null>(null);
   const id = useId();
 
@@ -126,7 +130,19 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
 
   const connectedSlugs = Object.keys(snapshot?.services ?? {}).filter((slug) => snapshot?.services[slug]?.connected);
   const sharedMail = snapshot?.sourceKind === "office_shared";
-  const connectable = EMAIL_APPS.filter((app) => !(app.slug === "gmail" && (sharedMail || (state.config?.composio.managed === true && (!snapshot?.services.gmail || !!snapshot.error)))) && (!readOnly || app.slug === "gmail") && !snapshot?.services[app.slug]?.connected);
+  const mailConnectable = EMAIL_APPS.filter((app) => !(app.slug === "gmail" && (sharedMail || (managed && (!snapshot?.services.gmail || !!snapshot.error)))) && (!readOnly || app.slug === "gmail") && !snapshot?.services[app.slug]?.connected);
+  // Apps the office's service already lists for this desk but nobody has signed into yet.
+  const listedConnectable = readOnly ? [] : Object.keys(snapshot?.services ?? {})
+    .filter((slug) => !snapshot?.services[slug]?.connected && !EMAIL_APPS.some((app) => app.slug === slug))
+    .map((slug) => ({ slug, label: officeAppLabel(slug) }));
+  const connectable: { slug: string; label: string }[] = [...mailConnectable, ...listedConnectable];
+  const canConnect = Boolean(budId) && !budBusy && state.connected && !loading && !settingsPending && !connecting;
+  const customConnect = () => {
+    const name = customApp.trim().replace(/\s+/g, " ");
+    if (!name || name.length > 40) return;
+    setCustomApp("");
+    askConnect(name);
+  };
 
   return (
     <Card title="Connected apps" subtitle="Connect your work accounts, check access, then prepare work in Ask.">
@@ -138,7 +154,7 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
         <div className="text-[13px] text-ink-secondary" aria-live="polite">
-          <p className="font-medium text-ink">{configured ? readOnly ? "Gmail read-only configured" : "Connection service configured" : "Connection setup needed"}</p>
+          <p className="font-medium text-ink">{configured ? readOnly ? "Gmail read-only configured" : managed ? "Office connection service configured" : "Connection service configured" : "Connection setup needed"}</p>
           <p>
             {loading
               ? "Checking…"
@@ -195,7 +211,7 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
                     type="button"
                     // With nothing connected yet this is the next step, so it reads as the primary action.
                     className={connectedSlugs.length ? control : `${control} !border-agency/30 !bg-agency !text-white hover:!bg-agency-hover`}
-                    disabled={!budId || budBusy || !state.connected || Boolean(loading) || settingsPending || Boolean(connecting)}
+                    disabled={!canConnect}
                     onClick={() => askConnect(app.label)}
                   >
                     <AppMark slug={app.slug} size="sm" />
@@ -204,6 +220,31 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
                 ))}
               </div>
               <p className="mt-2 text-[12px] text-ink-muted">Bud opens sign-in in your browser. Finish there, then return here.</p>
+            </section>
+          ) : null}
+
+          {!readOnly ? (
+            <section aria-labelledby={`${id}-any`}>
+              <h3 id={`${id}-any`} className="text-[13px] font-medium text-ink">Connect an app</h3>
+              <p className="mt-1 text-[12.5px] text-ink-secondary">Any app your office uses — accounting, calendar, chat, files, CRM. Name it here or ask Bud “connect Xero”.</p>
+              <form
+                className="mt-2 flex flex-wrap items-center gap-2"
+                onSubmit={(event) => { event.preventDefault(); customConnect(); }}
+              >
+                <input
+                  type="text"
+                  aria-label="App to connect"
+                  placeholder="App name, e.g. Xero"
+                  className="pm-control min-w-0 flex-1 rounded-lg border border-line bg-sheet px-3 text-[13px] text-ink"
+                  value={customApp}
+                  maxLength={40}
+                  disabled={!canConnect}
+                  onChange={(event) => setCustomApp(event.target.value)}
+                />
+                <button type="submit" className={control} disabled={!canConnect || !customApp.trim()}>
+                  Connect app
+                </button>
+              </form>
             </section>
           ) : null}
 
@@ -250,14 +291,14 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
 
           {!readOnly ? (
             <details className="text-[12.5px] text-ink-secondary">
-              <summary className="cursor-pointer">More apps · Notion, Calendar</summary>
+              <summary className="cursor-pointer">Suggestions · Xero, Slack, Notion, Calendar</summary>
               <div className="mt-2 flex flex-wrap gap-2">
-                {["Notion", "Google Calendar"].map((app) => (
+                {["Xero", "Slack", "Notion", "Google Calendar"].filter((app) => !connectedSlugs.includes(app.toLowerCase().replace(/\s+/g, ""))).map((app) => (
                   <button
                     key={app}
                     type="button"
                     className={control}
-                    disabled={!budId || budBusy || !state.connected || Boolean(loading) || settingsPending}
+                    disabled={!canConnect}
                     onClick={() => askConnect(app)}
                   >
                     Connect {app}

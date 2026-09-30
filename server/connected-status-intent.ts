@@ -8,17 +8,19 @@ export function formatConnectedAppsReply(access: Omit<ConnectedAppsStatus, "chec
 }): string {
   if (!access.configured) return "No office apps connected yet. Open **Add** to connect one here.";
   if (access.error) return "I couldn’t verify office apps just now. Your saved settings are kept. Open **Add** to try again.";
+  const anyApp = "Any other app your office uses can be connected by asking **connect <app>** here — for example **connect Xero** or **connect Slack**.";
   const snapshot: ConnectedAppsStatus = { ...access, checkedAt: access.checkedAt ?? new Date().toISOString(),
     services: Object.fromEntries(Object.entries(access.services).map(([slug, service]) => [slug, { ...service, accountSelectionRequired: service.accountSelectionRequired ?? false }])) };
-  const lines = Object.keys(snapshot.services).filter(slug => ["gmail", "outlook"].includes(slug) || snapshot.services[slug]?.connected || /init|pending|expir|revok|fail/i.test(snapshot.services[slug]?.status ?? "") || snapshot.excludedApps?.includes(slug)).map(slug => {
+  // Every app the office's service lists for this desk, whatever its state.
+  const lines = Object.keys(snapshot.services).map(slug => {
     const status = officeSourceState(snapshot, slug);
     const service = snapshot.services[slug]!;
     const label = officeAppLabel(slug);
     const account = service.accounts.find(row => /^active$/i.test(row.status));
     return `- **${label}** — ${appLine(status, label, account?.label)}`;
   });
-  if (!lines.length) return "No office apps are set up for this desk yet. Open **Add** here, then **Open Connections**.";
-  return [...lines, readyOfficeApps(snapshot).length ? `${snapshot.tools.names.length} app tools available. Manage sources in **Add**.` : "No office apps are available to this ask yet."].join("\n");
+  if (!lines.length) return `No office apps are connected to this desk yet. ${anyApp}`;
+  return [...lines, readyOfficeApps(snapshot).length ? `${snapshot.tools.names.length} app tools available. Manage sources in **Add**.` : "No office apps are available to this ask yet.", anyApp].join("\n");
 }
 
 /** One app's state plus the real control that moves it on. Sign-in is always the person's own. */

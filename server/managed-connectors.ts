@@ -4,6 +4,7 @@ import type { AppConfig } from './config.ts';
 import { currentWorkerProfile } from './hermes-profile.ts';
 import { parseMailScanResult, type MailScanRequest } from '../shared/mail-ingestion.ts';
 import { managedConnectorApps } from './worker-model-access.ts';
+import { classifyAppTool } from '../shared/app-tool-policy.ts';
 /** Re-exported so callers of the managed connector surface do not need to know
  * where the installation's provisioning record lives. */
 export { managedConnectorApps };
@@ -37,6 +38,7 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
     await response.body?.cancel().catch(()=>{});
     const message=response.status===402?'Your managed service is paused or expired. Contact service support.':
       response.status===403?'Managed connection access was revoked or changed. Contact service support.':
+      response.status===404&&path==='/v1/connectors/authorize'?'That app is not available to connect. Check the app’s name, or ask service support whether it can be added.':
       response.status===409&&['/v1/connectors/mail-scan','/v1/connectors/mail-attachment'].includes(path)?'The Gmail connection changed. Review the connected account and approve the mail source again before scanning.':
       response.status===400&&path==='/v1/connectors/mail-scan'?'This mail scan needs a reviewed Gmail account and a compatible managed service. Update RealBud and ask service support to check the connection.':
       response.status===409?'This connection needs recovery. Check its current result with service support before trying again.':'Managed connections could not be checked. Try again when the service is available.';
@@ -62,17 +64,21 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   const record = (input: unknown): input is Record<string, unknown> => !!input && typeof input === 'object' && !Array.isArray(input);
   const status = (input: unknown): input is string => typeof input === 'string' && /^[A-Z_]{1,40}$/.test(input);
   const invalid = (): never => { throw new Error('The managed connection response needs review.'); };
-  // The granted apps come from this installation's own provisioning record,
-  // never from the response: a broker cannot widen its own allowlist.
-  const granted = await managedConnectorApps();
+  // The admitted apps are the gateway's `apps` list for this installation's own
+  // credential: the office admits apps there, one at a time, on the person's
+  // "connect <app>". The apps recorded at link time are the floor, so a
+  // response can never drop Gmail from an installation provisioned with it.
+  const linked = await managedConnectorApps();
+  const granted = admittedApps(value, linked);
+  if (!granted) return invalid();
   if (!record(value) || value.managed !== true || !Number.isSafeInteger(value.serviceExpiresAt) || Number(value.serviceExpiresAt) < 0 ||
     typeof value.checkedAt !== 'string' || value.checkedAt.length > 40 || !Number.isFinite(Date.parse(value.checkedAt)) ||
-    !record(value.services) || !Object.keys(value.services).length || Object.keys(value.services).some(key => !granted.includes(key)) ||
+    !record(value.services) || Object.keys(value.services).some(key => !granted.includes(key)) ||
     !record(value.tools)) return invalid();
   if ((value.sourceKind !== undefined || value.policyRevision !== undefined) &&
     (!['personal', 'office_shared'].includes(String(value.sourceKind)) || !Number.isSafeInteger(value.policyRevision) || Number(value.policyRevision) < 0)) return invalid();
   const tools = value.tools;
-  if (typeof tools.available !== 'boolean' || !Array.isArray(tools.names) || tools.names.length > 8 * granted.length ||
+  if (typeof tools.available !== 'boolean' || !Array.isArray(tools.names) || tools.names.length > MAX_TOOLS_PER_APP * granted.length ||
     new Set(tools.names).size !== tools.names.length || tools.names.some(name => !toolNameAllowed(name, granted))) return invalid();
   const services: Status['services'] = {};
   let anyConnected = false;
@@ -90,23 +96,36 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   // silently become part of the desktop's cached status or renderer response.
   services[slug] = { connected: input.connected, status: input.status, accounts, accountSelectionRequired: false };
   }
-  if (tools.available !== anyConnected || (anyConnected ? tools.names.length === 0 : tools.names.length !== 0)) return invalid();
+  // Tools exist only for a connected app; a connected app may still expose none.
+  if (tools.available !== (tools.names.length > 0) || (tools.names.length > 0 && !anyConnected)) return invalid();
   return {
     checkedAt: new Date(value.checkedAt).toISOString(), managed: true, serviceExpiresAt: Number(value.serviceExpiresAt),
     ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
     services, tools: { available: tools.available, names: [...tools.names] as string[] },
   };
 }
-/** Gmail keeps its exact reviewed read-only triple. Another granted app may
- * expose whatever the broker allows under that app's own tool namespace — this
- * admits no tool the broker did not already return, and no cross-app name. */
-function toolNameAllowed(name: unknown, granted: string[]): boolean {
-  if (typeof name !== 'string' || !/^[A-Z][A-Z0-9_]{1,63}$/.test(name)) return false;
-  if (name.startsWith('GMAIL_')) return ['GMAIL_GET_PROFILE', 'GMAIL_LIST_THREADS', 'GMAIL_FETCH_MESSAGE_BY_THREAD_ID'].includes(name);
-  return granted.some(app => app !== 'gmail' && name.startsWith(`${app.toUpperCase().replaceAll('-', '_')}_`));
+const MAX_TOOLS_PER_APP = 400;
+const APP_SLUG = /^[a-z][a-z0-9_]{0,31}$/;
+/** The gateway's admitted-app list for this credential, checked for shape and
+ * for holding every app this installation was linked with. */
+function admittedApps(value: unknown, linked: string[]): string[] | undefined {
+  const apps = (value as { apps?: unknown } | null)?.apps;
+  if (apps === undefined) return linked;
+  if (!Array.isArray(apps) || apps.length > 64 || new Set(apps).size !== apps.length || apps.some(app => typeof app !== 'string' || !APP_SLUG.test(app))) return undefined;
+  return linked.every(app => apps.includes(app)) ? apps as string[] : undefined;
 }
+/** Gmail keeps its exact reviewed read-only triple. Another admitted app may
+ * expose only tools under its own namespace whose class is read or review —
+ * a destructive, bulk or administrative name is refused here as on the gateway. */
+function toolNameAllowed(name: unknown, granted: string[]): boolean {
+  if (typeof name !== 'string' || !/^[A-Z][A-Z0-9_]{1,127}$/.test(name)) return false;
+  if (name.startsWith('GMAIL_')) return granted.includes('gmail') && ['GMAIL_GET_PROFILE', 'GMAIL_LIST_THREADS', 'GMAIL_FETCH_MESSAGE_BY_THREAD_ID'].includes(name);
+  return granted.some(app => app !== 'gmail' && classifyAppTool(name, { app }) !== 'blocked');
+}
+/** Any Composio toolkit: the gateway admits it into this office's own project
+ * on demand, or refuses. Gmail follows its own reviewed path there. */
 export async function authorizeManagedConnection(cfg: AppConfig, app: string): Promise<{url:string}> {
-  if(!(await managedConnectorApps()).includes(app))throw Object.assign(new Error('This managed connection is not part of this computer’s service setup.'),{status:403});
+  if(typeof app!=='string'||!APP_SLUG.test(app))throw Object.assign(new Error('Name the app to connect, for example “connect Xero”.'),{status:400});
   const value=await request(cfg,'/v1/connectors/authorize',{app}) as {url?:unknown};
   if(typeof value?.url!=='string' || value.url.length>4096)throw new Error('The managed sign-in response needs review.');
   const url=new URL(value.url);

@@ -136,6 +136,9 @@ export interface SendTurnInput {
       headers?: Record<string, string>;
       /** Server-owned project Gmail binding. Never sent to the worker. */
       gmailReadOnly?: { authConfigId: string; userId: string; accountId: string; requestId: string };
+      /** The office's managed connection service is upstream: its tools are
+       * classified (read / review / blocked). Direct connections review everything. */
+      managed?: boolean;
     };
     /** Cloud computer, reached through RealBud's REST-to-MCP adapter. */
     computer?: { kind?: "box"; boxId: string; token: string };

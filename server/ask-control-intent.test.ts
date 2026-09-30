@@ -11,6 +11,12 @@ describe("product intent routing and PM copy", () => {
   });
   it("routes setup and schedule controls without enabling anything", () => {
     expect(parseAskControlIntent("How do I connect Gmail?")).toBe("connections");
+    expect(parseAskControlIntent("how do I connect Xero?")).toBe("connections");
+    expect(parseAskControlIntent("where can I link our Slack workspace")).toBe("connections");
+    expect(parseAskControlIntent("help me connect a new app")).toBe("connections");
+    expect(parseAskControlIntent("How do I set up Bud?")).toBe("setup");
+    expect(parseAskControlIntent("how do I connect Bud")).toBe("setup");
+    for (const text of ["how do i link the lease to the property", "how do I connect the tenant with the plumber", "how do i set up a rent increase for 14 Sample Street"]) expect(parseAskControlIntent(text)).toBeNull();
     expect(parseAskControlIntent("Set up Bud")).toBe("setup");
     expect(parseAskControlIntent("Schedule the arrears check every Wednesday")).toBe("schedule-edit");
     expect(parseAskControlIntent("what is scheduled?")).toBe("schedule-status");

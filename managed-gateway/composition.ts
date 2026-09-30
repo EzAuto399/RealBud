@@ -13,7 +13,9 @@ import type { HttpTransport, ComposioOrgClient } from './composio-org.ts';
 import type { ModelviaOperatorClient } from './modelvia-keys.ts';
 import { connectorRegistry, ManagedConnectors, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer, type PortalIdentity } from './http.ts';
-import { composeProvisioning, fileSecretStore, modelviaOperatorState, type SecretStore } from './provisioning.ts';
+import { composeProvisioning, fileSecretStore, modelviaOperatorState, updateRegistry, type SecretStore } from './provisioning.ts';
+import { composioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAppAdapter } from './composio-apps.ts';
 import { composeOperatorRoutes, composeResaleTermsClient, operatorAccessState } from './office-ai-access.ts';
 import { officeAiTermsRoutes, syncOfficeResalePolicy } from './office-ai-terms.ts';
 import { officeAiUsageCsv } from './office-ai-usage-csv.ts';
@@ -95,6 +97,20 @@ export function connectorSecret(secrets: SecretStore | undefined, env: NodeJS.Pr
   return name => secrets?.read(name) ?? env[name];
 }
 
+/** Everything `connectors.ts` needs to admit any Composio toolkit on a person's
+ * ask. Without a registry there is nothing to admit into. */
+export function composeAppAdmission(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport; registry: string }): Pick<ConnectorOptions, 'authConfigs' | 'admitApp' | 'apps'> {
+  const base = (options.env.REALBUD_COMPOSIO_API_BASE ?? '').trim();
+  const baseOption = base ? { base } : {};
+  return {
+    authConfigs: composioAuthConfigClient({ fetch: options.fetch, ...baseOption }),
+    apps: composioAppAdapter({ fetch: options.fetch, ...baseOption }),
+    admitApp: (deviceId, app) => updateRegistry(options.registry, devices => ({
+      devices: devices.map(device => device.id === deviceId && !(device.apps ?? ['gmail']).includes(app) ? { ...device, apps: [...(device.apps ?? ['gmail']), app] } : device),
+    })),
+  };
+}
+
 export function composeGateway(options: {
   env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport;
   portal: PortalIdentity; allowedOrigins: ReadonlySet<string>;
@@ -165,6 +181,9 @@ export function composeGateway(options: {
       ...(registry ? { connectors: new ManagedConnectors({ ledger,
         devices: () => connectorRegistry(registry),
         secret: connectorSecret(secrets, env),
+        // On-demand app admission: the office's own project key (same store),
+        // Composio behind the provider gate, and the registry writer.
+        ...composeAppAdmission({ env, fetch: gatedFetch, registry }),
         ...options.connectorAdapters,
       }) } : {}),
     },

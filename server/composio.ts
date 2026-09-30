@@ -578,12 +578,13 @@ let toolkitCache: { at: number; cards: ToolkitCard[] } | null = null;
  */
 export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
   if (managedConnectorConfigured(cfg)) {
-    // Exactly this installation's granted apps. The broker still decides which
-    // tools each one exposes; a card here is not a new tool surface.
-    const cards = (await managedConnectorApps()).map((slug): ToolkitCard => slug === 'gmail'
+    // This installation's linked apps first, then the curated catalogue: any
+    // toolkit can be connected on demand through the office's own project. The
+    // broker still decides which tools each one exposes; a card is not a tool surface.
+    const linked = (await managedConnectorApps()).map((slug): ToolkitCard => slug === 'gmail'
       ? { slug, label: 'Gmail', blurb: 'Read selected recent email with managed access', domain: 'gmail.com', logo: null }
       : CURATED.find(card => card.slug === slug) ?? { slug, label: slug, blurb: 'Connected with managed access', domain: null, logo: null });
-    return { cards, source: 'curated' };
+    return { cards: [...linked, ...CURATED.filter(card => !linked.some(row => row.slug === card.slug))], source: 'curated' };
   }
   if (toolkitCache && Date.now() - toolkitCache.at < 10 * 60_000) {
     return { cards: toolkitCache.cards, source: "api" };

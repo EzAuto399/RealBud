@@ -36,13 +36,21 @@ test('the per-device apps allowlist defaults to gmail and refuses an unknown or 
     s.set([{...s.device(),apps:['calendar']}]);
     const authorize={...s.request,method:'POST',path:'/v1/connectors/authorize',body:{app:'calendar'}};
     await assert.rejects(()=>broker.handle(authorize),/connector_app_not_admitted/);
+    // Status reports the admitted apps only: no gmail service, no provider call.
+    const noGmail=await broker.handle(s.request);
+    assert.deepEqual(Object.keys((noGmail.body as {services:Record<string,unknown>}).services),['calendar']);
+    assert.equal((noGmail.body as {services:Record<string,{connected:boolean}>}).services.calendar!.connected,false);
     // Gmail requests are refused once the device no longer admits gmail.
-    for(const request of [s.request,
+    for(const request of [
       {...s.request,method:'POST',path:'/v1/connectors/authorize',body:{app:'gmail'}},
-      {...s.request,method:'POST',path:'/v1/connectors/mcp',body:{jsonrpc:'2.0',id:1,method:'initialize'}},
       {...s.request,method:'POST',path:'/v1/connectors/mail-scan',body:{expectedAccountId:'account-a',scope:mailScope(s.f.now())}}]) {
       await assert.rejects(()=>broker.handle(request),/connector_app_not_admitted/);
     }
+    // A session opens over the admitted apps only: with none connected it has
+    // no tools, and the Gmail adapter is never constructed.
+    const opened=await broker.handle({...s.request,method:'POST',path:'/v1/connectors/mcp',body:{jsonrpc:'2.0',id:1,method:'initialize'}});
+    const listed=await broker.handle({...s.request,method:'POST',path:'/v1/connectors/mcp',session:opened.session,body:{jsonrpc:'2.0',id:2,method:'tools/list'}});
+    assert.deepEqual((listed.body as {result:{tools:unknown[]}}).result.tools,[]);
     assert.equal(s.calls(),0);
     // Restored, the same requests reach the adapter and the status reports the grant.
     s.set([{...s.device(),apps:['gmail']}]);

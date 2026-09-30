@@ -23,3 +23,15 @@ it('preserves personal connect and holds connection prompts while managed status
   fixture.snapshot!.sourceKind = 'personal'; expect(html()).toContain('Connect Gmail');
   fixture.snapshot = null; expect(html()).not.toContain('Connect Gmail');
 });
+it('offers to connect any app in a managed office, and lists an admitted but unsigned app to connect', () => {
+  fixture.snapshot!.sourceKind = 'personal';
+  fixture.snapshot!.services.xero = { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false };
+  const markup = html();
+  expect(markup).toContain('Connect an app');
+  expect(markup).toContain('aria-label="App to connect"');
+  expect(markup).toContain('Connect Xero');
+  expect(markup).toContain('Connect Outlook');
+  expect(markup).not.toContain('Gmail read-only configured');
+  expect(markup).toContain('Office connection service configured');
+  expect(markup).toContain('Suggestions ·');
+});

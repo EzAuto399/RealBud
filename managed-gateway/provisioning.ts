@@ -23,7 +23,8 @@
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
-import { composioAuthConfigClient, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { composioAuthConfigClient, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { serialized } from './serialized.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -169,9 +170,11 @@ export function fileSecretStore(directory: string): SecretStore {
 // Installation provisioning
 // ---------------------------------------------------------------------------
 
-/** Apps with an admitted read-only adapter in this service. Unknown apps are
- * refused; adding one needs its own reviewed OAuth configuration and adapter. */
+/** Apps a provisioning request admits when it names none. Any other Composio
+ * toolkit is admitted on demand when the person asks Bud to connect it
+ * (`connectors.ts` `admitApp`), so this is a default, not a catalogue. */
 export const ADMITTED_APPS = ['gmail'] as const;
+const MAX_PROVISIONED_APPS = 64;
 
 export interface ProvisioningDescriptor {
   version: 1;
@@ -440,97 +443,24 @@ export class InstallationProvisioning {
   }
 
   /**
-   * Idempotent per installationId. The call that reaches `ready` returns the
-   * secret material; every later call returns the same descriptor with none and
-   * touches nothing at Modelvia, unless it asks for `redeliver: true` (see
-   * `redeliver`). An interrupted call leaves a `pending` record.
-   * A retry while that attempt may still be running is refused; a later retry
-   * resumes it (see `resume`) and repeats each step against what the earlier
-   * attempt left behind, so a lost reply yields a fresh secret, not a second one.
+   * The office's one Composio project and the secret-store name of its `ak_`
+   * key: found, or created and stored. Idempotent and serialized per company in
+   * this process; across processes the store's exclusive write is the guard.
+   * Provisioning calls it at first link; it can equally be called when an office
+   * is created, so the project exists before any installation links.
+   * `installationId` only labels the audit line written on a failed key store.
    */
-  async provision(actor: PortalPrincipal, value: unknown): Promise<{ provisioning: ProvisioningDescriptor }> {
-    const body = this.scope(actor, value, ['companyId', 'installationId', 'customerId', 'profile', 'apps', 'redeliver']);
-    const companyId = actor.companyId, installationId = body.installationId as string;
-    requireThat(body.redeliver === undefined || body.redeliver === true, 'invalid_fields');
-    const redeliver = body.redeliver === true;
-    requireThat(typeof body.profile === 'string' && /^[a-z0-9-]{1,64}$/.test(body.profile), 'invalid_connector_profile');
-    const profile = body.profile as string;
-    // The company's Modelvia customer account. Required, with no default: guessing
-    // one would issue a model key against somebody else's account.
-    requireThat(typeof body.customerId === 'string' && MODELVIA_CUSTOMER.test(body.customerId), 'invalid_modelvia_customer');
-    const customerId = body.customerId as string;
-    // The installation id becomes a Modelvia project id in its request paths.
-    // `id()` admits ':' and '/'; a project id cannot carry them. Checked here so
-    // an unusable installation id is refused before any external call.
-    requireThat(MODELVIA_CUSTOMER.test(`rb-${installationId}`), 'installation_id_not_modelvia_safe');
-    const apps = body.apps === undefined ? [...ADMITTED_APPS] : body.apps;
-    requireThat(Array.isArray(apps) && apps.length > 0 && apps.length <= 8 && new Set(apps).size === apps.length, 'invalid_connector_apps');
-    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && (ADMITTED_APPS as readonly string[]).includes(app), 'connector_app_not_admitted', 403);
-    // One device carries one reviewed OAuth configuration, so a device is
-    // provisioned for exactly the app that configuration covers. A second app
-    // needs its own device and its own reviewed configuration.
-    requireThat((apps as string[]).length === 1, 'connector_app_not_admitted', 403);
-
-    // Service entitlement, from the operator's entitlement record
-    // (entitlement-cli.ts). A company without one is `tenant_unavailable`.
-    const tenant = this.options.ledger.tenant(companyId);
-    const entitled = this.options.ledger.now();
-    requireThat(tenant.active && tenant.serviceExpiresAt > entitled && entitled >= tenant.goLiveAt, 'service_unavailable', 402);
-    // The customer's commercial terms at Modelvia: a read, never an effect. A
-    // customer RealBud's client pays for serves nothing without an active policy
-    // (409 `customer_terms_required` on every request), so no key is issued into
-    // that state; to the office it is the same step as an unready customer. A
-    // delivered installation is not re-checked: a repeat asks Modelvia nothing.
-    if (this.options.terms && this.saved(companyId, installationId)?.state !== 'ready') {
-      requireThat(await this.options.terms.customerTermsReadiness(customerId) !== 'terms_required', 'modelvia_customer_not_ready', 409);
-    }
-
-    const recorded = (): StoredRecord | undefined => {
-      const existing = this.saved(companyId, installationId);
-      if (!existing) return undefined;
-      requireThat(existing.state !== 'revoked', 'installation_revoked', 409);
-      requireThat(existing.state === 'ready' ? Boolean(existing.descriptor) : existing.state === 'pending', 'installation_provisioning_outcome_unknown', 409);
-      requireThat(existing.profile === profile && canonical(existing.apps) === canonical(apps) && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
-      return existing;
-    };
-    // Delivered once already: a plain repeat never rotates or mints again and
-    // never asks Modelvia anything. Only an explicit redelivery replaces keys.
-    const delivered = recorded();
-    if (delivered?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, delivered) : { provisioning: delivered.descriptor! };
-    // The office's Modelvia customer must be able to serve before anything is
-    // created or journalled: a read, never an effect. Its caps become the project's.
-    const customer = await this.options.modelvia.findCustomer(customerId);
-    // The body names the customer; only a customer bound to this office may be
-    // provisioned into, or this office's spend would bill another one.
-    requireThat(!customer || customerBoundTo(this.options.ledger, companyId, customerId, customer), 'modelvia_customer_not_bound', 403);
-    const caps = projectCaps(readyCustomer(customer), this.options.requestCapNanoAud);
-
-    // Read again: another call may have started or finished while Modelvia answered.
-    const existing = recorded();
-    if (existing?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, existing) : { provisioning: existing.descriptor! };
-    const now = this.options.ledger.now();
-    let pending: StoredRecord;
-    if (existing) {
-      pending = this.resume(companyId, installationId, existing, now);
-    } else {
-      // Journal the intent before the first external effect, so a lost outcome is
-      // recoverable rather than repeatable. The audit line carries no customerId.
-      pending = { state: 'pending', profile, apps: apps as string[], customerId, attempt: randomBytes(12).toString('hex'), attemptAt: now };
-      this.options.ledger.db.transaction(() => {
-        this.options.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', companyId, installationId, 'pending', canonical(pending), now);
-        this.options.ledger.db.append(companyId, 'installation_provision_requested', null, now, { installationId, profile, apps });
-      });
-    }
-    const attempt = pending.attempt!, attemptAt = pending.attemptAt!;
-
-    // (a) The company's Composio project, and its `ak_` key in the secret store.
+  async ensureOfficeProject(companyId: string, installationId = '', options: { requireTenant?: boolean } = {}): Promise<{ projectId: string; projectKeyEnv: string }> {
+    id(companyId);
+    // The operator route creates ahead of any link, but only for an office the
+    // ledger knows (`tenant_unavailable` otherwise): no project for a typo.
+    if (options.requireTenant) this.options.ledger.tenant(companyId);
     const projectName = `realbud-${companyId}`;
     const projectKeyEnv = `REALBUD_COMPOSIO_PROJECT_${companyId.toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 80)}`;
     requireThat(SECRET_NAME.test(projectKeyEnv), 'invalid_connector_secret_reference');
     // One office project, shared by every installation of the company. Two first
     // installations provisioning at once must not both find none and create two:
     // the read-create-store step runs one at a time per company in this process.
-    // Across processes the store's exclusive write is the guard (below).
     const projectId = await serialized(`composio-project:${companyId}`, async () => {
       const held = this.options.secrets.read(projectKeyEnv);
       const named = (await this.options.org.listProjects()).filter(project => project.name === projectName);
@@ -566,6 +496,97 @@ export class InstallationProvisioning {
       }
       return created.id;
     });
+    return { projectId, projectKeyEnv };
+  }
+
+  /**
+   * Idempotent per installationId. The call that reaches `ready` returns the
+   * secret material; every later call returns the same descriptor with none and
+   * touches nothing at Modelvia, unless it asks for `redeliver: true` (see
+   * `redeliver`). An interrupted call leaves a `pending` record.
+   * A retry while that attempt may still be running is refused; a later retry
+   * resumes it (see `resume`) and repeats each step against what the earlier
+   * attempt left behind, so a lost reply yields a fresh secret, not a second one.
+   */
+  async provision(actor: PortalPrincipal, value: unknown): Promise<{ provisioning: ProvisioningDescriptor }> {
+    const body = this.scope(actor, value, ['companyId', 'installationId', 'customerId', 'profile', 'apps', 'redeliver']);
+    const companyId = actor.companyId, installationId = body.installationId as string;
+    requireThat(body.redeliver === undefined || body.redeliver === true, 'invalid_fields');
+    const redeliver = body.redeliver === true;
+    requireThat(typeof body.profile === 'string' && /^[a-z0-9-]{1,64}$/.test(body.profile), 'invalid_connector_profile');
+    const profile = body.profile as string;
+    // The company's Modelvia customer account. Required, with no default: guessing
+    // one would issue a model key against somebody else's account.
+    requireThat(typeof body.customerId === 'string' && MODELVIA_CUSTOMER.test(body.customerId), 'invalid_modelvia_customer');
+    const customerId = body.customerId as string;
+    // The installation id becomes a Modelvia project id in its request paths.
+    // `id()` admits ':' and '/'; a project id cannot carry them. Checked here so
+    // an unusable installation id is refused before any external call.
+    requireThat(MODELVIA_CUSTOMER.test(`rb-${installationId}`), 'installation_id_not_modelvia_safe');
+    let apps = body.apps === undefined ? [...ADMITTED_APPS] : body.apps;
+    requireThat(Array.isArray(apps) && apps.length > 0 && apps.length <= MAX_PROVISIONED_APPS && new Set(apps).size === apps.length, 'invalid_connector_apps');
+    // Any Composio toolkit slug is admissible: its office auth config is created
+    // on the person's first "connect <app>", in the office's own project. Only
+    // Gmail's reviewed read-only config is resolved here, as before.
+    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && TOOLKIT_SLUG.test(app), 'connector_app_not_admitted', 403);
+
+    // Service entitlement, from the operator's entitlement record
+    // (entitlement-cli.ts). A company without one is `tenant_unavailable`.
+    const tenant = this.options.ledger.tenant(companyId);
+    const entitled = this.options.ledger.now();
+    requireThat(tenant.active && tenant.serviceExpiresAt > entitled && entitled >= tenant.goLiveAt, 'service_unavailable', 402);
+    // The customer's commercial terms at Modelvia: a read, never an effect. A
+    // customer RealBud's client pays for serves nothing without an active policy
+    // (409 `customer_terms_required` on every request), so no key is issued into
+    // that state; to the office it is the same step as an unready customer. A
+    // delivered installation is not re-checked: a repeat asks Modelvia nothing.
+    if (this.options.terms && this.saved(companyId, installationId)?.state !== 'ready') {
+      requireThat(await this.options.terms.customerTermsReadiness(customerId) !== 'terms_required', 'modelvia_customer_not_ready', 409);
+    }
+
+    const recorded = (): StoredRecord | undefined => {
+      const existing = this.saved(companyId, installationId);
+      if (!existing) return undefined;
+      requireThat(existing.state !== 'revoked', 'installation_revoked', 409);
+      requireThat(existing.state === 'ready' ? Boolean(existing.descriptor) : existing.state === 'pending', 'installation_provisioning_outcome_unknown', 409);
+      requireThat(existing.profile === profile && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
+      // The app list is not identity: apps are admitted on demand later, so a
+      // repeat naming a different list continues with the list first recorded.
+      apps = existing.apps;
+      return existing;
+    };
+    // Delivered once already: a plain repeat never rotates or mints again and
+    // never asks Modelvia anything. Only an explicit redelivery replaces keys.
+    const delivered = recorded();
+    if (delivered?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, delivered) : { provisioning: delivered.descriptor! };
+    // The office's Modelvia customer must be able to serve before anything is
+    // created or journalled: a read, never an effect. Its caps become the project's.
+    const customer = await this.options.modelvia.findCustomer(customerId);
+    // The body names the customer; only a customer bound to this office may be
+    // provisioned into, or this office's spend would bill another one.
+    requireThat(!customer || customerBoundTo(this.options.ledger, companyId, customerId, customer), 'modelvia_customer_not_bound', 403);
+    const caps = projectCaps(readyCustomer(customer), this.options.requestCapNanoAud);
+
+    // Read again: another call may have started or finished while Modelvia answered.
+    const existing = recorded();
+    if (existing?.state === 'ready') return redeliver ? this.redeliver(companyId, installationId, existing) : { provisioning: existing.descriptor! };
+    const now = this.options.ledger.now();
+    let pending: StoredRecord;
+    if (existing) {
+      pending = this.resume(companyId, installationId, existing, now);
+    } else {
+      // Journal the intent before the first external effect, so a lost outcome is
+      // recoverable rather than repeatable. The audit line carries no customerId.
+      pending = { state: 'pending', profile, apps: apps as string[], customerId, attempt: randomBytes(12).toString('hex'), attemptAt: now };
+      this.options.ledger.db.transaction(() => {
+        this.options.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', companyId, installationId, 'pending', canonical(pending), now);
+        this.options.ledger.db.append(companyId, 'installation_provision_requested', null, now, { installationId, profile, apps });
+      });
+    }
+    const attempt = pending.attempt!, attemptAt = pending.attemptAt!;
+
+    // (a) The company's Composio project, and its `ak_` key in the secret store.
+    const { projectId, projectKeyEnv } = await this.ensureOfficeProject(companyId, installationId);
 
     const authConfigId = await serialized(`composio-auth-config:${companyId}`, async () => {
       const rows = this.options.ledger.db.all<{ body: string }>('SELECT body FROM installation_provisioning WHERE tenant=?', companyId);
@@ -872,14 +893,7 @@ export interface CapsApplied { installationId: string; state: 'applied' | 'faile
 
 /** One refresh per company at a time, within this process. Also used, under its
  * own key, by the operator office AI access route (office-ai-access.ts). */
-const capQueues = new Map<string, Promise<unknown>>();
-export function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const run = (capQueues.get(key) ?? Promise.resolve()).then(work, work);
-  const tail = run.then(() => undefined, () => undefined);
-  capQueues.set(key, tail);
-  void tail.then(() => { if (capQueues.get(key) === tail) capQueues.delete(key); });
-  return run;
-}
+export { serialized };
 
 /**
  * Provisioning copies caps once. When an office's Modelvia customer changes its

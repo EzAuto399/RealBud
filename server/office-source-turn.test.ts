@@ -36,6 +36,12 @@ describe("contextual mail and source exclusion", () => {
     expect(context).not.toMatch(/composio|You\s*→/i);
     // A failed or unconfigured read says nothing about which apps are missing.
     expect(officeSourceTurnContext([], { ...offered, error: "unreachable" })).not.toContain("Connect Gmail");
-    expect(officeSourceTurnContext([], null)).toContain("offer Add here in Ask");
+    expect(officeSourceTurnContext([], null)).toContain("**connect <app>** here in Ask");
+    // Any app, not a fixed set: the ready list is labelled and the door stays open.
+    const ready = officeSourceTurnContext(["gmail", "xero"], { ...access(), services: { ...access().services, xero: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "x", status: "ACTIVE" }] } } });
+    expect(ready).toContain("Gmail, Xero");
+    expect(ready).toContain("**connect <app>**");
+    expect(ready).toContain("separate per-action approval");
+    expect(ready).not.toMatch(/composio|You\s*→/i);
   });
 });

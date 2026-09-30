@@ -130,6 +130,67 @@ It needs the Modelvia operator variables. It reads the customer once and updates
 
 `revoke` does not need an entitlement. It deactivates the device, then revokes the model key. The Modelvia project is left in place. The Composio project is deleted only on an explicit `deleteProject: true`, which is irreversible. The Composio project and its key belong to the whole office, so `deleteProject: true` is refused with 409 `connector_project_in_use`, before any effect, while another installation of the office is ready or pending; revoke those first. A retried delete that finds the project already gone records `projectAlreadyAbsent` and removes the stored key. Revoke writes one audit line, with no secret in it.
 
+## Connect any app (30 September 2026)
+
+An office is not given a fixed app set. Its Composio project is the office's;
+each desktop installation is a user in it (`installation-<installationId>`).
+When a person asks Bud "connect Xero" (or Slack, Outlook, any Composio
+toolkit), the desktop posts `{ "app": "xero" }` to `/v1/connectors/authorize`
+with its own `rbc_` credential, and the gateway admits the app on demand:
+
+1. The slug is checked by shape (`^[a-z][a-z0-9_]{0,31}$`) and looked up with the
+   office's project key (`GET /toolkits/{slug}`); a toolkit Composio does not
+   know, or one without Composio-managed auth, answers 404
+   `connector_app_unavailable` before anything is created.
+2. Serialized per (office, app), the office's Composio-managed auth config
+   `realbud-<slug>-managed-v1` is found or created in the office's own project,
+   with the office's own key. The create intent is journaled first
+   (`connector_office_apps` row `pending`); an uncertain create is never
+   repeated, and stays 409 `connector_auth_config_create_unconfirmed` until an
+   operator reconciles it.
+3. The device's registry `apps` allowlist gains the slug (`admitApp`,
+   `updateRegistry`), audited as `connector_app_admitted`.
+4. `POST /connected_accounts/link` for the installation's user id returns the
+   sign-in link; the link is journaled per (device, app) in
+   `connector_app_links` exactly as Gmail's is in `connector_links`.
+
+Gmail is untouched: its reviewed read-only config, its per-device
+`authConfigId` binding, `connector_links` and the office mailbox policy all
+stay as they were. A registry written before this reads as Gmail-only. The
+provisioning body's `apps` may name any slugs (they are recorded, and their
+configs are created at first connect); a repeat with a different list keeps
+the recorded one rather than failing.
+
+`GET /v1/connectors/status` reports every admitted app under `services`, plus
+`apps` (the admitted list) and the union of tool names. A connected app's tool
+names are classified (`shared/app-tool-policy.ts`): `read` and `review` are
+listed, `blocked` (destructive, bulk, administrative) are dropped and refused
+at `tools/call` as well. The MCP session is one transport over Gmail's fixed
+adapter and one generic adapter per connected app; tool names route by
+namespace and no tool outside an admitted, connected app is reachable. The
+desktop shows its Allow card for `review` tools before dispatch; the gateway
+executes only what the desktop sent.
+
+### Operator: create the office project at office creation
+
+```
+POST /v1/operator/offices/{companyId}/connector-project
+Authorization: Bearer <operator token>   (REALBUD_GATEWAY_OPERATOR_SECRET, operator-token.ts)
+body: none, or {}
+200 { "companyId": "…", "projectName": "realbud-<companyId>", "projectId": "pr_…", "state": "ready" }
+409 { "companyId", "projectName", "state": "held",    "error": "connector_project_ambiguous" | "connector_project_key_unavailable" | "connector_project_key_orphaned" }
+503 { "companyId", "projectName", "state": "pending", "error": "<transient code>" }   — call again
+404 { …, "state": "held", "error": "tenant_unavailable" }   — the ledger has no such office (entitlement first)
+400 { …, "state": "held", "error": "invalid_id" | "invalid_connector_secret_reference" }
+401 { "error": "operator_unauthenticated" }   503 { "error": "operator_unconfigured" | "provisioning_unavailable" }
+```
+
+Idempotent (`InstallationProvisioning.ensureOfficeProject`): the same call
+provisioning makes at first link, so a project created here is the one every
+installation of the office links into. The response never carries the `ak_`
+key; it goes to the secret store under `REALBUD_COMPOSIO_PROJECT_<COMPANY>`.
+The website's admin office form is wired to this route by a separate change.
+
 ## Office AI access
 
 Each office's Modelvia customer has an AI monthly cap of A$200 by default. A RealBud operator can set a custom cap or disable AI for the office. Modelvia is the only source of caps; this gateway alone holds the Modelvia operator credential, so it makes the write.

@@ -32,6 +32,15 @@ test('uncertain create reconciles once; missing outcome refuses subsequent creat
     assert.equal(posts, 1);
   }
 });
+test('a definitive provider refusal of the create is reported as rejected, without reconciling', async () => {
+  const calls: string[] = [];
+  const client = composioAuthConfigClient({ fetch: async (_url, init) => { calls.push(init.method!); return init.method === 'POST' ? new Response('{"error":"bad toolkit"}', { status: 400 }) : Response.json({ items: [] }); } });
+  await assert.rejects(client.resolveAuthConfig!({ slug: 'xero', ...args }), /connector_auth_config_rejected/);
+  assert.deepEqual(calls, ['GET', 'POST']);
+  // Timeouts and rate limits stay uncertain and reconcile.
+  const flaky = composioAuthConfigClient({ fetch: async (_url, init) => init.method === 'POST' ? new Response('', { status: 429 }) : Response.json({ items: [] }) });
+  await assert.rejects(flaky.resolveAuthConfig!({ slug: 'xero', ...args }), /connector_auth_config_create_unconfirmed/);
+});
 test('disabled, custom, wrong-toolkit, non-OAuth and widened or unreadable scopes fail closed without writes', async () => {
   for (const changes of [{ status: 'DISABLED' }, { is_composio_managed: false }, { auth_scheme: 'API_KEY' }, { toolkit: { slug: 'slack' } }, { credentials: {} }, { credentials: { scopes: `${GMAIL_READONLY_SCOPE},https://mail.google.com/` } }]) {
     const client = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [config(changes)] }); } });

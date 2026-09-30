@@ -24,6 +24,25 @@ describe("connected app policy", () => {
   it.each(["COMPOSIO_REMOTE_WORKBENCH", "COMPOSIO_REMOTE_BASH_TOOL"])("blocks indirect remote execution via %s", name => {
     expect(connectedAppPolicy({ name })).toBe("blocked");
   });
+  it("behind the managed service classifies any app's tools by name: reads run, writes review, destructive or admin blocked", () => {
+    const managed = { managed: true };
+    expect(connectedAppPolicy({ name: "XERO_LIST_INVOICES" }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "SLACK_SEARCH_MESSAGES", arguments: { query: "rent" } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "XERO_CREATE_INVOICE" }, managed)).toBe("review");
+    expect(connectedAppPolicy({ name: "SLACK_POST_MESSAGE" }, managed)).toBe("review");
+    expect(connectedAppPolicy({ name: "XERO_FROBNICATE" }, managed)).toBe("review");
+    for (const name of ["XERO_DELETE_INVOICE", "SLACK_ADMIN_USERS_SET_OWNER", "NOTION_BULK_ARCHIVE_PAGES", "GITHUB_REVOKE_TOKEN"]) expect(connectedAppPolicy({ name }, managed)).toBe("blocked");
+    // Gmail never takes this route: its fixed triple reviews, anything else of Gmail's is blocked.
+    expect(connectedAppPolicy({ name: "GMAIL_LIST_THREADS" }, managed)).toBe("review");
+    expect(connectedAppPolicy({ name: "GMAIL_SEND_EMAIL" }, managed)).toBe("blocked");
+    // A batch is as strict as its strictest member.
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "XERO_LIST_INVOICES", arguments: {} }, { tool_slug: "XERO_GET_CONTACT", arguments: {} }] } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "XERO_LIST_INVOICES", arguments: {} }, { tool_slug: "XERO_DELETE_INVOICE", arguments: {} }] } }, managed)).toBe("blocked");
+  });
+  it("keeps the review-everything default for a direct connection", () => {
+    for (const name of ["XERO_LIST_INVOICES", "XERO_CREATE_INVOICE", "XERO_DELETE_INVOICE", "GMAIL_SEND_EMAIL", "send_email"]) expect(connectedAppPolicy({ name })).toBe("review");
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "XERO_LIST_INVOICES", arguments: {} }, { tool_slug: "XERO_DELETE_INVOICE", arguments: {} }] } })).toBe("review");
+  });
   it("holds a mixed batch for exact review, including any nested write", () => {
     expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [
       { tool_slug: "GMAIL_FETCH_EMAILS", arguments: {} }, { tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient: "fictional@example.test" } },

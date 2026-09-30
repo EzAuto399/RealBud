@@ -146,6 +146,27 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         }
         reply(res,200,await routes!.set(operator,json(await body(req,4096)))); return;
       }
+      // RealBud operator: an office's Composio connector project, created when the
+      // office is created rather than waiting for its first desktop link. Idempotent:
+      // provisioning at link reuses the same project. The response never carries the key.
+      const connectorProject=/^\/v1\/operator\/offices\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,159})\/connector-project$/.exec(url.pathname);
+      if(req.method==='POST' && connectorProject) {
+        requireThat(options.operator,'operator_unconfigured',503);
+        try { await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        requireThat(options.provisioning,'provisioning_unavailable',503);
+        const raw=await body(req,256); if(raw.length) { const value=json(raw); object(value); exact(value,[]); }
+        const companyId=connectorProject[1]!, projectName=`realbud-${companyId}`;
+        try { const ensured=await options.provisioning!.ensureOfficeProject(companyId,'',{requireTenant:true}); reply(res,200,{companyId,projectName,projectId:ensured.projectId,state:'ready'}); }
+        catch(error) {
+          // Held: an operator must look (two projects of that name, a key without a
+          // project or a project without its key). Pending: transient; call again.
+          const code=error instanceof GatewayError?error.code:'connector_project_failed';
+          if(code==='tenant_unavailable') { reply(res,404,{companyId,projectName,state:'held',error:code}); return; }
+          const held=['connector_project_ambiguous','connector_project_key_unavailable','connector_project_key_orphaned','invalid_id','invalid_connector_secret_reference'].includes(code);
+          reply(res,held?(code.startsWith('invalid_')?400:409):503,{companyId,projectName,state:held?'held':'pending',error:code});
+        }
+        return;
+      }
       // RealBud operator: one office's AI resale markup (a proposal the office must
       // accept), its invoice charge detail, and re-syncing Modelvia to the accepted markup.
       const officeTerms=/^\/v1\/operator\/offices\/(ai-markup|ai-markup\/sync|ai-charge-detail)$/.exec(url.pathname);

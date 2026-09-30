@@ -83,7 +83,10 @@ export function parseAskControlIntent(text: string): "schedule-status" | "schedu
   if (!value || value.length > 400 || /[\r\n]/.test(value)) return null;
   if (/^(?:what(?:'s| is| have (?:we|i))|show(?: me)?|list)(?: (?:my|our|the))? (?:scheduled(?: jobs| work)?|schedule|routines|recurring jobs)(?: (?:for today|today|this week))?$/i.test(value)) return "schedule-status";
   if (/^(?:please )?(?:schedule|remind me|set up (?:a |an )?(?:schedule|reminder|recurring)|(?:can you |help me )?(?:add|create|make|change|pause|stop|reschedule) (?:a |an |my |our |the |this )?(?:schedule|reminder|recurring job))\b/i.test(value)) return "schedule-edit";
-  if (/^(?:(?:how|where) (?:do|can) i (?:connect|link|set up) (?:my |our )?(?:gmail|outlook|office apps|connected apps)|(?:help me )?(?:connect (?:an? )?(?:app|office app)|set up (?:office apps|connected apps)))$/i.test(value)) return "connections";
+  // Any one app, named in one or two words: "how do I connect Xero?" is the same
+  // question as for Gmail. Bud itself is setup below; a longer phrase ("link the
+  // lease to the property") is property work and stays an ordinary turn.
+  if (/^(?:(?:how|where) (?:do|can) i (?:connect|link|set up) (?:my |our |the )?(?!bud\b)(?!realbud\b)[a-z0-9][a-z0-9.-]{0,24}(?: [a-z0-9][a-z0-9.-]{0,24})?(?: account| workspace| app)?|(?:help me )?(?:connect (?:an? )?(?:app|office app|new app)|set up (?:office apps|connected apps)))$/i.test(value)) return "connections";
   if (/^(?:(?:how|where) (?:do|can) i (?:set up|fix|connect) bud|(?:help me )?(?:set up|fix|connect) bud|why (?:isn't|is not) bud (?:ready|working))$/i.test(value)) return "setup";
   return null;
 }
