@@ -116,6 +116,9 @@ export interface OfficeLinkProvisioning {
   /** Optional authority on whether a grant is already in force. Absent, the
    * link's own durable marker is used, and `apply` remains idempotent anyway. */
   active?: () => Promise<boolean>;
+  /** A grant was applied and the link that carries it is now saved. Runs after
+   * the durable save, never before, so a failed save changes nothing else. */
+  onLinked?: () => void;
 }
 export function createOfficeLink(options: { directory: string; appVersion: string; fetch?: typeof fetch; report: () => Promise<Report>; platform?: NodeJS.Platform; provisioning?: OfficeLinkProvisioning; origin?: string }) {
   const directory = join(options.directory, "office-link");
@@ -279,8 +282,10 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       delete saved.code;
       await save({ ...saved, companyId: result.companyId, agencyLabel: result.agencyLabel, ...(provisioning ? { provisioned: true } : {}),
         ...(isProvisioningSkipped(outcome) ? { provisioningSkipped: outcome.skipped } : {}) });
+      if (provisioning) linked();
     });
   }
+  function linked() { try { options.provisioning?.onLinked?.(); } catch { /* the link is saved; the hook retries on its own schedule */ } }
 
   // ── Linking through the browser (shared/installation-link.ts) ──────────
   const unreachable = () => Object.assign(new Error("The website could not be reached. Check this computer’s internet connection, then try again."), { status: 503, code: "website_unreachable" });
@@ -452,6 +457,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // already in force is left alone: re-applying would replace a live
       // revocable key with whatever this reply happened to carry.
       let provisioned = saved.provisioned === true;
+      let newlyApplied = false;
       const { provisioningSkipped: previous, ...rest } = saved;
       let skipped = previous;
       if (!provisioned) {
@@ -462,10 +468,11 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
           // A grant has arrived: whatever the website said before no longer holds.
           skipped = undefined;
           const already = (await options.provisioning?.active?.().catch(() => false)) ?? false;
-          if (!already) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; }
+          if (!already) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; newlyApplied = true; }
         }
       }
       await save({ ...rest, lastReportedAt: new Date().toISOString(), ...(provisioned ? { provisioned: true } : {}), ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
+      if (newlyApplied) linked();
     });
   }
   async function disconnect() {

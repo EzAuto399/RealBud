@@ -1,4 +1,4 @@
-import type { HermesStatus } from "@/state/store";
+import type { BudAutoSetup, HermesStatus } from "@/state/store";
 import { isManagedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
 
 export type BudSetupStage = "checking" | "install" | "safeguards" | "model" | "verify" | "ready";
@@ -86,6 +86,40 @@ export function budSetupJourney(input: BudSetupInput): BudSetupJourney {
   return { stage, completed, total: BUD_SETUP_STEPS.length, stepState };
 }
 
+const AUTO_SETUP_STATES: BudAutoSetup["state"][] = ["idle", "installing", "verifying", "ready", "waiting_retry", "held"];
+const AUTO_SETUP_CODES: NonNullable<BudAutoSetup["code"]>[] = ["installing", "safeguards", "model", "readiness", "ready", "retry",
+  "held_exhausted", "held_failed", "held_recovery", "held_restart", "held_unavailable"];
+
+/** A hold that pressing Try again can clear (the server re-checks the link). */
+export function budAutoSetupRetryable(status: HermesStatus | null): boolean {
+  const code = status?.autoSetup?.state === "held" ? status.autoSetup.code : undefined;
+  return !status?.ready && (code === "held_exhausted" || code === "held_failed");
+}
+
+/**
+ * What automatic setup (after this computer was linked and approved) is doing,
+ * for everyone — no administrator is needed for it. Null when it is not
+ * running or Bud is already ready. `working` means nothing is needed from the
+ * person; a hold carries the existing product copy of what stopped it.
+ */
+export function budAutoSetupView(status: HermesStatus | null, now = Date.now()): { label: string; detail: string; working: boolean } | null {
+  const auto = status?.autoSetup;
+  if (!status || !auto || status.ready || status.modelAccess?.withdrawn) return null;
+  if (auto.state === "installing" || auto.state === "verifying") {
+    return { label: "Setting up Bud", detail: `Setting up Bud on this computer… step ${Math.max(1, auto.step)} of ${auto.total}. Keep RealBud open.`, working: true };
+  }
+  if (auto.state === "waiting_retry") {
+    const minutes = auto.nextRetryAt ? Math.max(1, Math.round((auto.nextRetryAt - now) / 60_000)) : null;
+    return {
+      label: "Setting up Bud",
+      detail: `Bud’s setup paused and will try again ${minutes ? `in about ${minutes} minute${minutes === 1 ? "" : "s"}` : "shortly"}. Keep RealBud open; nothing is needed from you.`,
+      working: true,
+    };
+  }
+  if (auto.state === "held") return { label: "Bud setup stopped", detail: budFacingCopy(auto.detail, "Bud’s setup could not finish. Contact service support."), working: false };
+  return null;
+}
+
 /** One dependency-ordered description for Ask and Schedule. A workroom alone
  * never proves an installed worker, model connection or permission to run. */
 function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, recovering = false) {
@@ -99,6 +133,10 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   if (status.modelAccess?.withdrawn) {
     return unavailable("Model access withdrawn", status.modelAccess.detail, null);
   }
+  // Automatic setup after an approved link comes first: an unsupported
+  // personal worker's probe miss is not a dead end while it runs.
+  const automatic = budAutoSetupView(status);
+  if (automatic) return { ...unavailable(automatic.label, automatic.detail), automatic: true };
   if (status.cli.probeState === "timeout" || status.cli.probeState === "error") {
     return unavailable("Check Bud", "Bud's last setup check did not finish. Check the connection before trying new work.", "Check Bud");
   }
@@ -149,6 +187,8 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
   const availability = budAvailabilityFacts(status, connected, recovering);
   if (context?.statusError && connected && !recovering) return { ...availability, ready: false, label: "Status unavailable", detail: "Could not refresh Bud’s status. Your draft is kept; status will retry automatically.", action: "View Bud status", target: "you-worker", canVerify: false };
   if (!context || context.canAdminister || availability.ready || !connected || recovering || !status || status.modelAccess?.withdrawn) return availability;
+  // Automatic setup needs nobody; only a hold points at Bud's status.
+  if ("automatic" in availability) return budAutoSetupView(status)?.working ? availability : { ...availability, action: "View Bud status", target: "you-worker" };
   return {
     ...availability,
     label: availability.label === "Setup needed" ? "Service setup needed" : availability.label,
@@ -188,6 +228,11 @@ export function parseBudStatus(value: unknown): HermesStatus {
     || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)
       || (value.model.choice !== undefined && value.model.choice !== null && !isManagedModelChoice(value.model.choice))))
     || (value.modelAccess !== undefined && (!record(value.modelAccess) || typeof value.modelAccess.managed !== "boolean" || typeof value.modelAccess.withdrawn !== "boolean" || typeof value.modelAccess.attached !== "boolean" || typeof value.modelAccess.detail !== "string"))
+    || (value.autoSetup !== undefined && (!record(value.autoSetup) || !AUTO_SETUP_STATES.includes(value.autoSetup.state as BudAutoSetup["state"])
+      || ![value.autoSetup.step, value.autoSetup.total].every(item => Number.isInteger(item) && (item as number) >= 0 && (item as number) <= 20)
+      || typeof value.autoSetup.detail !== "string"
+      || (value.autoSetup.code !== undefined && !AUTO_SETUP_CODES.includes(value.autoSetup.code as NonNullable<BudAutoSetup["code"]>))
+      || (value.autoSetup.nextRetryAt !== undefined && (typeof value.autoSetup.nextRetryAt !== "number" || !Number.isFinite(value.autoSetup.nextRetryAt)))))
     || !receipt(value.lastPing) || !receipt(value.lastTest)) {
     throw new Error("Bud's status could not be confirmed. Try checking again.");
   }

@@ -18,7 +18,7 @@ import { applyManagedModelProfile, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_M
 import { recordManagedModelReceipt, workerModelGrant } from "./worker-model-access.ts";
 import { normalizedGatewayUrl } from "./hermes-runtime-env.ts";
 import { clearHermesVersionCache, probeHermesVersion } from "./hermes-status.ts";
-import { BootstrapError, finishWorkerBootstrap, runWorkerBootstrap } from "./worker-bootstrap.ts";
+import { BootstrapError, bootstrapFailureKind, finishWorkerBootstrap, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
 import { parseHermesVersion } from "./hermes-pin.ts";
 
@@ -31,6 +31,8 @@ export interface InstallJob {
   finishedAt: number | null;
   error: string | null;
   progress?: { detail: string; step: number; total: number };
+  /** Set on failure: how automatic setup may follow up on its own. */
+  failureKind?: "retry" | "once" | "final";
 }
 
 const installJob: InstallJob = { state: "idle", lines: [], startedAt: null, finishedAt: null, error: null };
@@ -49,7 +51,7 @@ export function startBootstrapInstall(opts?: { timeoutMs?: number; onSuccess?: (
   const release = opts?.release ?? HERMES_RECOMMENDED;
   const controller = new AbortController();
   bootstrapAbort = controller;
-  Object.assign(installJob, { state: "preflight", lines: [], startedAt: Date.now(), finishedAt: null, error: null, progress: undefined });
+  Object.assign(installJob, { state: "preflight", lines: [], startedAt: Date.now(), finishedAt: null, error: null, progress: undefined, failureKind: undefined });
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 30 * 60_000);
   bootstrapCompletion = (async () => {
     let finalized = false;
@@ -83,6 +85,8 @@ export function startBootstrapInstall(opts?: { timeoutMs?: number; onSuccess?: (
       installJob.state = "done";
     } catch (error) {
       installJob.state = "failed";
+      // A stop (shutdown, timeout or cancel) is retried later; so is a network miss.
+      installJob.failureKind = controller.signal.aborted ? "retry" : bootstrapFailureKind(error);
       installJob.error = controller.signal.aborted ? "Setup stopped before it finished. Your property data is kept. Try again when you’re ready." : error instanceof BootstrapError ? error.message : "Bud setup could not finish. Check your connection, available space and folder permissions, then try again.";
     } finally {
       clearTimeout(timer); bootstrapAbort = null; installJob.finishedAt = Date.now();

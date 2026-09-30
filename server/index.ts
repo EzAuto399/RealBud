@@ -164,9 +164,8 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
-import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
 import { answerAskFromDesk, polishProductAskReply, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
@@ -180,8 +179,10 @@ import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { installInFlight, installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { productSelectionApproved, rebindProductBud } from "./product-bud-selection.ts";
-import { repairExistingProfile, uninstallWorker } from "./hermes-lifecycle.ts";
-import { checkUpstreamRelease, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { uninstallWorker } from "./hermes-lifecycle.ts";
+import { checkUpstreamRelease, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { createWorkerAutoSetup } from "./worker-auto-setup.ts";
+import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
 import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
@@ -926,6 +927,23 @@ function broadcast(payload: unknown) {
 
 function publishWorkerIssue(input: Parameters<typeof noteWorkerIssue>[0]): void {
   noteWorkerIssue(input);
+}
+
+/** The private readiness ping with its receipt: `POST /api/hermes/test` and
+ * automatic setup after an approved office link take this one path. */
+async function runHandsReadinessPing() {
+  const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
+  writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
+  if (ping.ok) {
+    resolveWorkerIssues("hands");
+  } else {
+    publishWorkerIssue({
+      source: "hands",
+      summary: "Bud readiness check missed",
+      detail: productAskFailure(ping.detail),
+    });
+  }
+  return ping;
 }
 
 /** Clear a recovered hands miss, or retry the ping when the last receipt failed. Reload still does not invent ready. */
@@ -2829,10 +2847,19 @@ const officeLink = createOfficeLink({
   directory: DATA_DIR,
   appVersion: appVersion(),
   provisioning: {
-    apply: async (provisioning, installationId) => { await workerModelAccess.apply(provisioning, installationId); await refreshWorkerModelAccess(); },
+    apply: async (provisioning, installationId) => {
+      await workerModelAccess.apply(provisioning, installationId); await refreshWorkerModelAccess();
+    },
+    // After the link carrying the grant is saved: the approved link authorizes
+    // the service's own reviewed worker setup and a clean office book.
+    onLinked: () => {
+      void startOfficeBook();
+      if (!process.env.VITEST) void workerAutoSetup.ensure("provisioned");
+    },
     withdraw: async () => {
       workerModelAccessRevision++;
       setWorkerModelAccessSnapshot({});
+      workerAutoSetup.halt();
       try { return await workerModelAccess.withdraw(); } finally { await refreshWorkerModelAccess(); }
     },
     withdrawn: () => workerModelAccess.withdrawn(),
@@ -2843,6 +2870,7 @@ const officeLink = createOfficeLink({
     clear: async () => {
       workerModelAccessRevision++;
       setWorkerModelAccessSnapshot({});
+      workerAutoSetup.halt();
       try { await workerModelAccess.clear(); } finally { await refreshWorkerModelAccess(); }
     },
   },
@@ -2853,6 +2881,56 @@ const officeLink = createOfficeLink({
   }),
 });
 void refreshWorkerModelAccess();
+
+// Automatic Bud setup once this computer is linked and its service grant is
+// active (`server/worker-auto-setup.ts`). Only the pinned catalog release, the
+// safeguards pack, the managed model profile and one readiness check.
+const officeServiceActive = async () => (await workerModelAccess.state()).provisioned && (await officeLink.credentials()) !== null;
+/** A linked office starts clean: the untouched sample becomes an empty office
+ * book. An edited sample is kept; Desk offers "Start your office book". This
+ * happens once per computer: a sample the linked person replays later is
+ * theirs, and a later boot never replaces it. */
+const OFFICE_BOOK_START_FILE = join(DATA_DIR, "office-book-start.json");
+async function startOfficeBook(): Promise<void> {
+  try {
+    if (desk.recovery.active) return;
+    if (await readPrivateJson(OFFICE_BOOK_START_FILE, 1_000) !== undefined) return;
+    const started = desk.startLiveBookIfUntouched();
+    await writePrivateJson(OFFICE_BOOK_START_FILE, { version: 1, decidedAt: new Date().toISOString(), replacedSample: started });
+    if (started) {
+      commitDesk(desk.snapshot()); oplog("boot", "linked office: sample replaced with an empty office book");
+      // The same fresh start gets the simple desk, unless a layout was ever saved here.
+      // Deferred: this can run during boot before the saved-views handler exists.
+      setImmediate(() => {
+        try {
+          void workspaceTabs.simpleDeskIfNeverCustomized()
+            .then(applied => { if (applied) oplog("boot", "linked office: desk starts on the simple layout"); })
+            .catch(() => oplog("boot", "linked office: the simple desk layout could not be applied; the standard desk stays"));
+        } catch { oplog("boot", "linked office: the simple desk layout could not be applied; the standard desk stays"); }
+      });
+    }
+  } catch { oplog("boot", "linked office: the office book could not start yet; the sample was kept"); }
+}
+const workerAutoSetup = createWorkerAutoSetup({
+  directory: DATA_DIR,
+  active: officeServiceActive,
+  status: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
+  installOrRepair: async () => {
+    const outcome = await installOrRepairWorker();
+    // Same receipts as the administrator route: no stale "ready" survives.
+    if (outcome.kind === "started") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" });
+    if (outcome.kind === "repaired") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
+    return outcome;
+  },
+  installInFlight, installStatus, waitForInstall: waitForBootstrapStop, cancelInstall: () => { cancelBootstrapInstall(); },
+  ensurePack: () => { ensurePropertyPack(); },
+  reconcileProfile: () => reconcileManagedModelProfile(),
+  syncBud: syncProductBud,
+  readinessPing: runHandsReadinessPing,
+  customRuntime: () => Boolean(process.env.REALBUD_HERMES_CLI?.trim()),
+  runInContext: fn => withWorkerProfile(desk.memberKeyForWorker(), fn),
+  log: message => oplog("boot", message),
+});
 
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -3902,6 +3980,23 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
+    if (path === "/api/desk/live" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      if (!body || typeof body.expectedRevision !== "number" || !Number.isSafeInteger(body.expectedRevision)) {
+        return json(res, 400, { error: "A valid book revision is required to start the office book." });
+      }
+      try {
+        const snapshot = desk.startLiveBook({ expectedRevision: body.expectedRevision });
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     if (path === "/api/desk/agency" && method === "PATCH") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
@@ -4293,6 +4388,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, 200, {
         ...status,
         restartRequired: recommendedUpdateAwaitingRestart(),
+        autoSetup: workerAutoSetup.status(),
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         model: {
@@ -4322,18 +4418,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
-      writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
-      if (ping.ok) {
-        resolveWorkerIssues("hands");
-      } else {
-        publishWorkerIssue({
-          source: "hands",
-          summary: "Bud readiness check missed",
-          detail: productAskFailure(ping.detail),
-        });
-      }
-      return json(res, 200, ping);
+      return json(res, 200, await runHandsReadinessPing());
     }
     if (path === "/api/hermes/model" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -4389,30 +4474,30 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      if (installInFlight()) return json(res, 202, { install: installStatus() });
-      const current = await hermesStatus();
-      if (current.cli.installed && !(current.cli.compatible ?? current.cli.matchesPin)) {
-        // The supported runtime is already installed for the next launch.
-        // Another download would end in the same state, so say what finishes it.
-        if (recommendedUpdateAwaitingRestart()) {
-          return json(res, 200, { install: { state: "done", lines: ["Bud’s update is installed. Restart RealBud to use it."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, restartRequired: true });
-        }
-        // A personal or newer Hermes installation is never downgraded by
-        // Repair. Prepare an independent supported runtime for the next launch.
-        return json(res, 202, { install: startRuntimeUpdate({ repair: true }) });
+      // Same decision automatic setup uses (`installOrRepairWorker`).
+      const outcome = await installOrRepairWorker();
+      if (outcome.kind === "running") return json(res, 202, { install: outcome.install });
+      if (outcome.kind === "awaiting_restart") {
+        return json(res, 200, { install: { state: "done", lines: ["Bud’s update is installed. Restart RealBud to use it."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, restartRequired: true });
       }
-      // A partially installed, RealBud-owned runtime must finish its stages
-      // before a working version command can be treated as a successful install.
-      const existingProfile = bootstrapPending(hermesHome()) ? null : await repairExistingProfile();
-      if (existingProfile) {
+      if (outcome.kind === "repaired") {
         syncProductBud();
         writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
-        return json(res, 200, { install: { state: "done", lines: ["Private setup repaired."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, hermes: existingProfile });
+        return json(res, 200, { install: { state: "done", lines: ["Private setup repaired."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, hermes: outcome.hermes });
       }
-      if (!bootstrapPlan(process.platform)) return json(res, 400, { error: "Automatic Bud setup is not available on this computer yet." });
-      const job = startRuntimeUpdate({ repair: true, firstInstall: current.cli.probeState === "missing" && !modelStatus().keyPresent });
+      if (outcome.kind === "unavailable") return json(res, 400, { error: "Automatic Bud setup is not available on this computer yet." });
       writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" });
-      return json(res, 202, { install: job });
+      return json(res, 202, { install: outcome.install });
+    }
+    if (path === "/api/hermes/auto-setup/retry" && method === "POST") {
+      // Try again after automatic setup held. Exempt from the administrator
+      // gate: it only re-runs the service's own reviewed setup, and the run
+      // itself requires this computer's active office link and grant.
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = await readBody(req, 64);
+      if (!body || typeof body !== "object" || Object.keys(body).length) return json(res, 400, { error: "Try again takes no options." });
+      void workerAutoSetup.retry();
+      return json(res, 202, { autoSetup: workerAutoSetup.status() });
     }
     if (path === "/api/hermes/install/status" && method === "GET") {
       return json(res, 200, { install: installStatus() });
@@ -5721,7 +5806,9 @@ server.listen(PORT, "127.0.0.1", () => {
     startDiscordBridge();
     startSlackBridge();
     startRemoteDecisionFlush();
-    void withWorkerProfile(desk.memberKeyForWorker(), healHandsReadiness);
+    // Automatic setup starts after the boot heal so one boot never pings twice.
+    void officeServiceActive().then(active => active ? startOfficeBook() : undefined).catch(() => {});
+    void withWorkerProfile(desk.memberKeyForWorker(), healHandsReadiness).catch(() => {}).finally(() => workerAutoSetup.start());
     officeLink.start();
     websiteRequests.start();
     departmentWork.start();
@@ -5742,6 +5829,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     workspaceActivity.cancelPause();
     oplog("shutdown", signal);
     officeLink.stop();
+    workerAutoSetup.stop();
     websiteRequests.stop();
     departmentWork.stop();
     stopTelegramBridge();

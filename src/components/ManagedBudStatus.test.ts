@@ -21,6 +21,31 @@ function render(status: HermesStatus | null, options: { connected?: boolean; rec
 beforeEach(() => { monitor.pending = false; monitor.error = ""; });
 
 describe("managed Bud status", () => {
+  it("shows automatic setup progress to a non-administrator, with no administrator dead end", () => {
+    const html = render({ ...ready, ready: false, cli: { ...ready.cli, compatible: false, probeState: "timeout" },
+      modelAccess: { managed: true, withdrawn: false, attached: true, detail: "managed" },
+      lastPing: { at: 1, ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" },
+      autoSetup: { state: "installing", step: 1, total: 4, detail: "Downloading Bud" } });
+    expect(html).toContain("Setting up Bud on this computer… step 1 of 4. Keep RealBud open.");
+    expect(html).toMatch(/Bud installed<\/dt><dd[^>]*>In progress/);
+    expect(html).toMatch(/Private readiness check<\/dt><dd[^>]*>Waiting/);
+    expect(html).not.toContain("service administrator");
+    expect(html).not.toContain("Service administration");
+    expect(html).not.toContain("Last readiness check");
+  });
+  it("offers Try again after automatic setup gave up, with fixed copy", () => {
+    const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
+      autoSetup: { state: "held", code: "held_exhausted", step: 1, total: 4, detail: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later." } });
+    expect(html).toContain("RealBud support has the details");
+    expect(html).toContain("Try setup again");
+    expect(html).not.toContain("service administrator");
+  });
+  it("says plainly when automatic setup is waiting to retry", () => {
+    const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
+      autoSetup: { state: "waiting_retry", step: 1, total: 4, nextRetryAt: Date.now() + 5 * 60_000, detail: "busy" } });
+    expect(html).toContain("will try again in about 5 minutes");
+    expect(html).toContain("nothing is needed from you");
+  });
   it("names the incomplete safeguard, preserves configured model facts and holds readiness", () => {
     const html = render({ ...ready, pack: { ...ready.pack, workroomReady: false } });
     expect(html).toContain("Service setup needed");

@@ -111,6 +111,30 @@ describe("zero-touch provisioning through the website link", () => {
     expect(readFileSync(join(root, "office-link/link.json"), "utf8")).not.toContain(provisioning.model.key);
   });
 
+  it("announces a new link only after it is saved, and never when the save fails", async () => {
+    const p = sink();
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    let credentialsAtHook: unknown = "not called";
+    const app = createOfficeLink({ directory: root, appVersion: "0.1.19",
+      provisioning: { ...p, onLinked: vi.fn(() => { void app.credentials().then(value => { credentialsAtHook = value; }); }) },
+      report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }),
+      fetch: vi.fn(async (_u: any, init: any) => linked(JSON.parse(init.body), { provisioning })) as any });
+    await app.link({ code, label: "Reception Mac" });
+    await vi.waitFor(() => expect(credentialsAtHook).toMatchObject({ companyId: "office-a" }));
+
+    if (process.platform === "win32") return;
+    const failRoot = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(failRoot);
+    const onLinked = vi.fn();
+    const failing = createOfficeLink({ directory: failRoot, appVersion: "0.1.19",
+      // The link save after the grant fails: its directory stops being private.
+      provisioning: { ...p, apply: vi.fn(async () => { chmodSync(join(failRoot, "office-link"), 0o755); }), onLinked },
+      report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }),
+      fetch: vi.fn(async (_u: any, init: any) => linked(JSON.parse(init.body), { provisioning })) as any });
+    await expect(failing.link({ code, label: "Reception Mac" })).rejects.toThrow();
+    expect(onLinked).not.toHaveBeenCalled();
+    chmodSync(join(failRoot, "office-link"), 0o700);
+  });
+
   /** A website and gateway pair modelled on the SQL rules: a replayed redeem or
    * a report is answered only for the id + token that first redeemed; once
    * provisioned, credentials are redelivered by rotating the one key and

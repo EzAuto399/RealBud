@@ -6,8 +6,10 @@ import { applyPropertyPack, packInstalled } from "./hermes-pack.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES, type HermesRelease } from "./hermes-releases.ts";
 import { hermesCli } from "./hermes-pin.ts";
 import { adoptFirstRuntime, readRuntimeSelection, releaseHome, runtimeCommit, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
-import { installInFlight, startBootstrapInstall, type InstallJob } from "./hermes-bridge.ts";
-import { acquireWorkerSetupLock, bootstrapChildRunning, finishWorkerBootstrap, runWorkerBootstrap, BootstrapError } from "./worker-bootstrap.ts";
+import { installInFlight, installStatus, startBootstrapInstall, type InstallJob } from "./hermes-bridge.ts";
+import { acquireWorkerSetupLock, bootstrapChildRunning, bootstrapPending, bootstrapPlan, finishWorkerBootstrap, runWorkerBootstrap, BootstrapError } from "./worker-bootstrap.ts";
+import { hermesStatus, type HermesStatus } from "./hermes-status.ts";
+import { repairExistingProfile } from "./hermes-lifecycle.ts";
 import { verifyRuntime } from "./hermes-runtime-check.ts";
 import { ensureProfileDirectory } from "./hermes-profile-storage.ts";
 
@@ -94,6 +96,54 @@ export function startRuntimeUpdate(options: {
       if (options.firstInstall) adoptFirstRuntime(home);
     },
   });
+}
+
+export type WorkerInstallOutcome =
+  | { kind: "running"; install: InstallJob }
+  | { kind: "awaiting_restart" }
+  | { kind: "repaired"; hermes: HermesStatus }
+  | { kind: "started"; install: InstallJob }
+  | { kind: "unavailable" };
+
+/**
+ * The one install-or-repair decision, shared by `POST /api/hermes/install`
+ * (an administrator) and automatic setup after an approved office link, so the
+ * two cannot drift. Only the pinned catalog release is ever staged; no caller
+ * chooses a release, profile or path.
+ *
+ * A computer with no RealBud-selected runtime, or whose resolved worker is
+ * missing, adopts the verified private runtime at once (no restart): nothing
+ * usable ran before it (a compatible worker is repaired in place instead), so
+ * there are no warm sessions to keep on an older executable. A personal or unsupported `hermes` on PATH does not block
+ * that adoption and is never modified.
+ */
+export async function installOrRepairWorker(options: {
+  home?: string; run?: typeof runWorkerBootstrap; verify?: typeof verifyRuntime; platform?: NodeJS.Platform;
+  status?: () => Promise<HermesStatus>; repairExisting?: () => Promise<HermesStatus | null>;
+} = {}): Promise<WorkerInstallOutcome> {
+  if (installInFlight()) return { kind: "running", install: installStatus() };
+  const home = options.home ?? hermesHome();
+  const current = await (options.status ?? hermesStatus)();
+  // Adopt at once only when no usable worker runs: the resolved one is
+  // missing, or RealBud never selected its own and the one found is not
+  // compatible. Otherwise the private runtime waits for the next restart.
+  const compatibleCli = current.cli.compatible ?? current.cli.matchesPin;
+  const firstInstall = () => current.cli.probeState === "missing" || (readRuntimeSelection(home).selected === null && !compatibleCli);
+  const start = () => startRuntimeUpdate({ home, run: options.run, verify: options.verify, repair: true, firstInstall: firstInstall() });
+  if (current.cli.installed && !(current.cli.compatible ?? current.cli.matchesPin)) {
+    // The supported runtime is already installed for the next launch.
+    // Another download would end in the same state, so say what finishes it.
+    if (recommendedUpdateAwaitingRestart(home)) return { kind: "awaiting_restart" };
+    // A personal or newer Hermes installation is never downgraded by
+    // Repair. Prepare an independent supported runtime instead.
+    return { kind: "started", install: start() };
+  }
+  // A partially installed, RealBud-owned runtime must finish its stages
+  // before a working version command can be treated as a successful install.
+  const existing = bootstrapPending(home) ? null : await (options.repairExisting ?? repairExistingProfile)();
+  if (existing) return { kind: "repaired", hermes: existing };
+  if (!bootstrapPlan(options.platform ?? process.platform)) return { kind: "unavailable" };
+  return { kind: "started", install: start() };
 }
 
 export function restorePreviousRuntime(home = hermesHome()) {

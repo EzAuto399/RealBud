@@ -184,6 +184,8 @@ describe("service mutation route contract", () => {
     ["POST", "/api/hermes/update/restore", {}],
     ["POST", "/api/hermes/uninstall", {}],
     ["POST", "/api/hermes/repair", {}],
+    ["POST", "/api/hermes/auto-setup", {}],
+    ["POST", "/api/hermes/auto-setup/retry/extra", {}],
     ["POST", "/api/hermes/apply-pack", {}],
     ["POST", "/api/instances/other/setup", {}],
     ["PATCH", "/api/bots/bud", { modelSelection: { instanceId: "other", model: "other" } }],
@@ -204,6 +206,7 @@ describe("service mutation route contract", () => {
 
   it.each([
     ["GET", "/api/hermes/model", undefined],
+    ["POST", "/api/hermes/auto-setup/retry", {}],
     ["POST", "/api/hermes/memory-reviews/1234abcd/decision", { expectedDigest: 'a'.repeat(64), decision: 'approve' }],
     ["POST", "/api/care/unlock", { secret: PASSWORD }],
     ["POST", "/api/care/lock", {}],

@@ -42,6 +42,7 @@ import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
+import { OfficeBookEmpty, StartOfficeBook, isEmptyOfficeBook, offersOfficeBookStart } from "./desk/OfficeBookNotice";
 import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
 import { deskCheckAction, workdayGuide } from "@/lib/workday";
 import { coerceOffice } from "../../shared/office";
@@ -376,8 +377,13 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // Empty book already shows the primary check in MorningEmpty — keep the
   // header control secondary so the page has one agency CTA.
   const headerCheckPrimary = snap.lastRunAt != null;
+  // A live, empty office book has nothing to check and no sample to run.
+  const liveEmpty = isEmptyOfficeBook(snap);
+  const offerOfficeBook = offersOfficeBookStart(snap, Boolean(state.hermes?.modelAccess?.managed));
   const empty =
-    snap.lastRunAt == null ? (
+    liveEmpty ? (
+      <OfficeBookEmpty onOpenBook={() => setMode("book")} onAsk={() => dispatch({ type: "showAsk" })} />
+    ) : snap.lastRunAt == null ? (
       <MorningEmpty checkLabel={checkAction.label} brief={brief} busy={busy !== null} onAction={() => { if (!busy) void run(checkAction.path, "POST", undefined, "check", checkAction.path.endsWith("practice") ? "Sample morning ready" : "Recheck ran"); }} />
     ) : visible.length === 0 ? (
       query.trim() ? (
@@ -435,7 +441,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 {queueOpen ? "Hide queue" : `Queue · ${counts.now}`}
               </button>
             ) : null}
-            <button
+            {liveEmpty ? null : <button
               type="button"
               onClick={() => {
                 if (busy === "check") return;
@@ -453,7 +459,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             >
               {busy === "check" ? <Loader2 size={14} className="animate-spin" /> : null}
               {checkAction.label}
-            </button>
+            </button>}
             <button type="button" onClick={() => dispatch({ type: "showAsk" })} className="desk-secondary-button desk-chat-button">
               <MessageSquare size={16} aria-hidden />Ask Bud
             </button>
@@ -499,6 +505,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               ? "Import or tidy the book when an address is missing — daily work stays on Needs you."
               : "Recheck the office systems, clear what needs you, let Bud assist. No second property catalogue."}
         </p>
+        {offerOfficeBook ? (
+          <StartOfficeBook busy={busy !== null} onStart={() => { void run("/api/desk/live", "POST", { expectedRevision: snap.revision }, "live", "Office book started"); }} />
+        ) : null}
         {mode !== "batch" && isDemoWorkerMiss(snap.hands, snap.handsDetail) && snap.handsDetail ? (
           <div role="status" className="mt-2 flex max-w-full flex-wrap items-center gap-2 border border-hold/30 bg-hold/10 px-3 py-2 text-[13px] text-hold">
             <span className="min-w-0 flex-1">Missed — facts held. {snap.handsDetail}</span>

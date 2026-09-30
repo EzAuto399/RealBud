@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { checkUpstreamRelease, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { checkUpstreamRelease, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import type { HermesStatus } from "./hermes-status.ts";
 import { cancelBootstrapInstall, installStatus, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
@@ -101,6 +102,39 @@ it("makes a verified first install available without a restart or a false rollba
   expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
   expect(runtimeUpdateStatus()).toMatchObject({ restartRequired: false, canRestorePrevious: false });
   expect(() => restorePreviousRuntime()).toThrow(/No previous/);
+});
+
+const workerStatus = (cli: Partial<HermesStatus["cli"]>) => async () => ({ cli: { installed: true, versionText: "Hermes Agent v0.20.6 (fixture)", matchesPin: false, compatible: false, probeState: "ok", ...cli } }) as HermesStatus;
+
+it("adopts RealBud's private runtime at once over an unsupported personal worker, without touching it", async () => {
+  expect(selectedHermesCli()).toBe("hermes");
+  const repairExisting = vi.fn(async () => null);
+  const outcome = await installOrRepairWorker({ home, run, verify: async () => version, status: workerStatus({}), repairExisting });
+  expect(outcome.kind).toBe("started");
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  expect(repairExisting).not.toHaveBeenCalled();
+  // No restart: this process now resolves the verified private runtime.
+  expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
+  expect(runtimeUpdateStatus()).toMatchObject({ restartRequired: false, canRestorePrevious: false });
+  expect(recommendedUpdateAwaitingRestart(home)).toBe(false);
+});
+
+it("adopts a first install when no worker exists, and joins a run already in flight", async () => {
+  const outcome = await installOrRepairWorker({ home, run, verify: async () => version, status: workerStatus({ installed: false, versionText: null, probeState: "missing" }), repairExisting: async () => null });
+  expect(outcome.kind).toBe("started");
+  const second = await installOrRepairWorker({ home, run, verify: async () => version, status: workerStatus({}) });
+  expect(second.kind).toBe("running");
+  await waitForBootstrapStop();
+  expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
+});
+
+it("repairs a compatible worker in place instead of downloading, and keeps an update waiting for restart", async () => {
+  const repaired = { cli: { installed: true, compatible: true } } as HermesStatus;
+  expect(await installOrRepairWorker({ home, run, status: workerStatus({ compatible: true, matchesPin: true }), repairExisting: async () => repaired }))
+    .toEqual({ kind: "repaired", hermes: repaired });
+  start(); await waitForBootstrapStop();
+  expect(await installOrRepairWorker({ home, run, status: workerStatus({}) })).toEqual({ kind: "awaiting_restart" });
 });
 
 it("restores the previous selection on the next launch without touching profile data", async () => {

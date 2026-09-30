@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { budFacingCopy, budSetupJourney, type BudSetupInput } from "./bud-setup";
+import { budAutoSetupView, budAvailability, budFacingCopy, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
   statusLoaded: true,
@@ -84,5 +85,36 @@ describe("budFacingCopy", () => {
       expect(copy).toBe("Could not read Bud's private setup; check permissions.");
       expect(copy).not.toMatch(/Hermes|\.hermes|Office Manager|config\.yaml/i);
     }
+  });
+});
+
+describe("automatic Bud setup status", () => {
+  const status = {
+    pin: { product: "fixture", tag: "fixture", commit: "fixture", profile: "property" },
+    cli: { installed: false, versionText: null, matchesPin: false, probeState: "missing" },
+    pack: { installed: false, approvalsManual: false, workroomReady: false },
+    ready: false, detail: "", homeDir: "/synthetic", profileDir: "/synthetic", installCommand: null, signInCommand: "",
+    autoSetup: { state: "verifying", step: 3, total: 4, detail: "Connecting Bud’s model" },
+  } as HermesStatus;
+
+  it("validates the automatic setup field and rejects a malformed one", () => {
+    expect(parseBudStatus(status).autoSetup?.state).toBe("verifying");
+    expect(() => parseBudStatus({ ...status, autoSetup: { state: "done", step: 1, total: 4, detail: "" } })).toThrow();
+    expect(() => parseBudStatus({ ...status, autoSetup: { state: "installing", step: "1", total: 4, detail: "" } })).toThrow();
+  });
+
+  it("gives a non-administrator progress with nothing to press, and ready at the end", () => {
+    const availability = budAvailability(status, true, false, { canAdminister: false });
+    expect(availability.detail).toBe("Setting up Bud on this computer… step 3 of 4. Keep RealBud open.");
+    expect(availability.action).toBeNull();
+    expect(budAutoSetupView({ ...status, ready: true, autoSetup: { state: "ready", step: 4, total: 4, detail: "Bud is ready." } })).toBeNull();
+  });
+
+  it("surfaces a hold with its product copy and a way to Bud's status", () => {
+    const held = { ...status, autoSetup: { state: "held", step: 1, total: 4, detail: "Hermes setup record could not be read." } } as HermesStatus;
+    const availability = budAvailability(held, true, false, { canAdminister: false });
+    expect(availability.label).toBe("Bud setup stopped");
+    expect(availability.detail).toBe("Bud setup record could not be read.");
+    expect(availability.action).toBe("View Bud status");
   });
 });

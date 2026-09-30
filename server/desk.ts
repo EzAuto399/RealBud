@@ -33,7 +33,10 @@ import {
   shopDefaults,
   withCourtesyDisclaimer,
 } from "./desk-evaluate.ts";
-import { DeskStore, type DeskFileV2 } from "./desk-store.ts";
+import { DeskStore, emptyV2, type DeskFileV2 } from "./desk-store.ts";
+import { projectWorkingV2 } from "./desk-v3-project.ts";
+import { ensureDemoBreadth } from "./desk-v3-demo-breadth.ts";
+import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, uncoveredPropertyIds, type HermesLedgerAttempt } from "./hermes-hands.ts";
 import { writeHandsLast } from "./hands-last.ts";
@@ -181,7 +184,8 @@ export class Desk {
       book: fixtureBook(),
       key: opts?.key,
     });
-    if (this.store.data.recipes.length === 0 && !this.store.recovery.active) {
+    // The fictional portal recipe belongs to the sample book only.
+    if (this.store.data.recipes.length === 0 && !this.store.recovery.active && this.store.data.mode === "demo") {
       this.store.data.recipes.push({ ...FAKE_PORTAL_RECIPE });
       this.store.data.portalBindings.push({
         propertyId: "prop-oak",
@@ -448,6 +452,7 @@ export class Desk {
     const proposalIds = new Set(proposals.map((proposal) => proposal.id));
     this.store.runBatch(() => {
       for (const row of prepared) this.insertProperty(row);
+      this.leaveSampleIfOnlyRealProperties();
       this.store.v3.bookProposals = this.store.v3.bookProposals.filter((proposal) => !proposalIds.has(proposal.id));
       if (this.store.data.lastRunAt != null) {
         this.reevaluateOrKeepMiss({ stampRun: false });
@@ -730,6 +735,73 @@ export class Desk {
     return this.snapshot();
   }
 
+  /** The sample exactly as RealBud made it: demo mode, the fixture
+   * properties unedited, none added or removed, no accepted proposals. */
+  isUntouchedSample(): boolean {
+    const data = this.store.data;
+    if (this.store.recovery.active || data.mode !== "demo") return false;
+    // Used: a sample morning ran, a card was decided, or work was held.
+    if (data.lastRunAt != null || data.drafts.length || data.escalations.length || data.results.length) return false;
+    if (this.store.v3.decisions.length) return false;
+    const seed = fixtureBook();
+    // The sample's own training work items, in their seeded state, and nothing else.
+    const at = this.now();
+    const seededWork = projectWorkingV2(ensureDemoBreadth(migrateV2ToV3(emptyV2(fixtureBook()), at), at)).workItems;
+    const workKey = (items: typeof data.workItems) => items.map((item) => `${item.id}|${item.state}`).sort().join(",");
+    if (workKey(data.workItems) !== workKey(seededWork)) return false;
+    const same = (actual: unknown, expected: unknown) => JSON.stringify(actual) === JSON.stringify(expected);
+    const matches = <T extends object>(rows: T[], expected: T[], key: (row: T) => string) =>
+      rows.length === expected.length && expected.every((want) => {
+        const have = rows.find((row) => key(row) === key(want)) as Record<string, unknown> | undefined;
+        return Boolean(have) && Object.entries(want).every(([field, value]) => same(have![field], value));
+      });
+    if (!matches(data.properties, seed.properties, (row) => row.id)) return false;
+    if (!matches(data.ledger, seed.ledger, (row) => row.propertyId)) return false;
+    if (!same(data.sources, emptyV2(seed).sources)) return false;
+    const binding = { propertyId: "prop-oak", recipeId: FAKE_PORTAL_RECIPE.id, recipeVersion: FAKE_PORTAL_RECIPE.version, remotePropertyId: "oak-1" };
+    return data.portalBindings.length === 0 || (data.portalBindings.length === 1 && same(data.portalBindings[0], binding));
+  }
+
+  /**
+   * Replace the sample with an empty office book. Idempotent: a book that is
+   * already live is returned as it is and never wiped. `expectedRevision`
+   * guards the person's explicit choice against a book that changed.
+   */
+  startLiveBook(input: { expectedRevision?: unknown } = {}): DeskSnapshot {
+    this.assertWritable();
+    if (input.expectedRevision !== undefined && input.expectedRevision !== this.revision) {
+      throw Object.assign(new Error("The book changed while you were deciding. Nothing was replaced. Review the book and try again."), { status: 409, code: "revision-conflict" });
+    }
+    if (this.store.data.mode !== "demo") return this.snapshot();
+    this.store.startLiveBook(this.now(), (id) => id !== FAKE_PORTAL_RECIPE.id);
+    this.emit();
+    return this.snapshot();
+  }
+
+  /** Linked office: start clean, but only over the untouched sample. An
+   * edited sample is kept and the person chooses (`startLiveBook`). */
+  startLiveBookIfUntouched(): boolean {
+    if (!this.isUntouchedSample()) return false;
+    this.startLiveBook();
+    return true;
+  }
+
+  /** A sample whose fixture rows are all gone holds only the person's own
+   * properties: the first one added or accepted makes it the office book.
+   * While any fixture row remains it stays the sample, so fixture facts never
+   * pose as live; a linked computer offers "Start your office book" instead. */
+  private leaveSampleIfOnlyRealProperties(): void {
+    if (this.store.data.mode !== "demo" || !this.store.data.properties.length) return;
+    const fixtureIds = new Set(fixtureBook().properties.map((property) => property.id));
+    if (this.store.data.properties.some((property) => fixtureIds.has(property.id))) return;
+    const ids = new Set(this.store.data.properties.map((property) => property.id));
+    this.store.replaceWithLiveBook(this.now(), (id) => id !== FAKE_PORTAL_RECIPE.id, {
+      properties: this.store.data.properties,
+      ledger: this.store.data.ledger.filter((row) => ids.has(row.propertyId)),
+    });
+  }
+
+
   patchProperty(id: string, patch: Partial<PropertyOptions>): Property {
     this.assertWritable();
     const property = this.store.data.properties.find((p) => p.id === id);
@@ -757,6 +829,7 @@ export class Desk {
     }
     const prepared = this.prepareProperty(input);
     this.insertProperty(prepared);
+    this.leaveSampleIfOnlyRealProperties();
     // Book membership changed — recompute cards from facts already on the book.
     // Do not stamp lastRunAt: adding a row is not a Recheck. Unchecked books
     // stay empty of cards until a real check (same honesty as patchProperty).
