@@ -1,13 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mailEvidenceHash as hash, validMailReceipt as validReceipt, validMailWorkItem, buildMailSourceInput } from './mail-workspace-integrity.ts';
 import { join } from 'node:path';
 import { MailStorage } from './mail-storage.ts';
 import { mailRecordId, mailRecovery, validateMailSource, validateMailItemSource, validateMailPrepared, type MailPrepared, type MailRegister, type MailSourceBundle } from './mail-records.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
-import { mailWorkGroup, type MailTaskPageQuery, type MailTaskPage, type MailScanPageQuery, type MailScanPage } from '../shared/mail-ingestion.ts';
+import { mailWorkGroup, mailChangedSinceReview, mailNeedsPreparation, type MailTaskPageQuery, type MailTaskPage, type MailScanPageQuery, type MailScanPage } from '../shared/mail-ingestion.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { mailConversationComplete, mailScanCoverageComplete, parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult, type MailScanReceipt, type MailThread, type MailWorkItem, type MailWorkspaceSnapshot } from '../shared/mail-ingestion.ts';
 import { planMailHistory, mailHistoryWindows, parseMailHistoryCheckpoint, mailHistoryCoverage, mailHistoryStatusDetail, type MailHistoryCheckpoint, type MailHistoryCoverage, type MailHistoryMessageRecord, type MailHistoryPlan, type MailHistoryRunState, type MailHistoryStatus, type MailHistoryWindowStatus } from '../shared/mail-ingestion.ts';
+import { gmailThreadId, mailScanWindowCovered, mergeMailIntervals, subtractMailInterval, validMailIntervals, type MailInterval } from '../shared/mail-ingestion.ts';
 import { redactSecretsInText } from './redact.ts';
 import type { AgencySetupSettings } from '../shared/agency-setup.ts';
 import type { InboxReview } from '../shared/accounts-review.ts';
@@ -24,6 +26,23 @@ const HISTORY_FILE_BYTES = 600_000;
  * plans again rather than presenting stale coverage as current. */
 const HISTORY_RESUME_MS = 7 * 86_400_000;
 const object = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
+/** Rolling-collection bookkeeping per mail account, kept beside (not inside) the
+ * encrypted work graph. `horizonAt` is the end of the last admitted window;
+ * `uncovered` is elapsed time no confirmed scan has checked yet; `missed` is
+ * unchecked time that left the approved lookback (kept until a wider check
+ * covers it); `carryAfter` rotates the saved unresolved backlog. */
+interface MailCoverageAccount { horizonAt: number | null; uncovered: MailInterval[]; missed: MailInterval[]; carryAfter: string | null }
+interface MailCoverageState { version: 1; purpose: 'mail-coverage'; workspaceId: string; accounts: Record<string, MailCoverageAccount> }
+const COVERAGE_FILE_BYTES = 400_000;
+const emptyCoverageAccount = (): MailCoverageAccount => ({ horizonAt: null, uncovered: [], missed: [], carryAfter: null });
+function validCoverageState(value: unknown, workspaceId: string): value is MailCoverageState {
+    return object(value) && Object.keys(value).sort().join(',') === 'accounts,purpose,version,workspaceId' && value.version === 1 &&
+        value.purpose === 'mail-coverage' && value.workspaceId === workspaceId && object(value.accounts) &&
+        Object.entries(value.accounts).every(([id, a]) => /^[A-Za-z0-9_-]{1,128}$/.test(id) && object(a) &&
+            Object.keys(a).sort().join(',') === 'carryAfter,horizonAt,missed,uncovered' &&
+            (a.horizonAt === null || (Number.isSafeInteger(a.horizonAt) && a.horizonAt >= 0)) &&
+            (a.carryAfter === null || gmailThreadId(a.carryAfter)) && validMailIntervals(a.uncovered) && validMailIntervals(a.missed));
+}
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
 /** A fresh fetch must prove that the last message is still outgoing. Completeness
  * is judged per conversation: the scan's coverage must be complete (every listed
@@ -69,6 +88,22 @@ export function createMailIngestionService(options: Options) {
     const storage = new MailStorage(options), now = options.now ?? Date.now;
     let serial: Promise<unknown> = Promise.resolve(), active: AbortController | null = null, closed = false;
     let activeSettled: Promise<void> = Promise.resolve();
+    const workflowContext = new AsyncLocalStorage<symbol>();
+    let workflowOwner: symbol | null = null;
+    const assertWorkflowAccess = () => {
+        if (workflowOwner && workflowContext.getStore() !== workflowOwner)
+            fail('A mail workflow is collecting or preparing its saved sources. Wait for its result before starting another collection.');
+    };
+    /** Keep collection and all preparation batches in one source scope. Manual
+     * scans and historical acquisition use the same door and cannot replace it. */
+    async function withWorkflow<T>(work: () => Promise<T>): Promise<T> {
+        if (closed) fail('The mail service is closed.', 503);
+        if (workflowOwner || active) fail('A mail workflow is already running. Wait for its saved result.');
+        const owner = Symbol('mail-workflow');
+        workflowOwner = owner;
+        try { return await workflowContext.run(owner, work); }
+        finally { if (workflowOwner === owner) workflowOwner = null; }
+    }
     const locked = <T>(fn: () => Promise<T> | T): Promise<T> => { const run = serial.then(async () => { if (closed)
         fail('The mail service is closed.', 503); await storage.ready(); return fn(); }); serial = run.catch(() => { }); return run; };
     const itemId = (accountId: string, threadId: string) => hash([options.workspaceId, accountId, threadId]);
@@ -107,7 +142,43 @@ export function createMailIngestionService(options: Options) {
             storage.saveRegister(reg);
     }
     const read = () => storage.run(() => { recover(); return storage.metadata(); });
+    const coveragePath = () => join(options.workroomDirectory, 'mail-coverage', 'state.json');
+    /** A damaged file is preserved and holds collection; it is never reset, since
+     * a reset would erase the record of unchecked time. */
+    async function readCoverage(): Promise<MailCoverageState> {
+        let raw: unknown;
+        try { raw = await readPrivateJson(coveragePath(), COVERAGE_FILE_BYTES); }
+        catch { fail('The saved mail coverage record needs recovery. Its original file was preserved.', 503); }
+        if (raw === undefined)
+            return { version: 1, purpose: 'mail-coverage', workspaceId: options.workspaceId, accounts: {} };
+        if (!validCoverageState(raw, options.workspaceId))
+            fail('The saved mail coverage record needs recovery. Its original file was preserved.', 503);
+        return raw;
+    }
+    async function writeCoverage(state: MailCoverageState): Promise<void> {
+        if (!validCoverageState(state, options.workspaceId) || Buffer.byteLength(JSON.stringify(state)) > COVERAGE_FILE_BYTES)
+            fail('The mail coverage record could not be saved within its limits.', 500);
+        await privateDirectory(join(options.workroomDirectory, 'mail-coverage'));
+        // The admission check refuses to replace a damaged existing record.
+        await writePrivateJson(coveragePath(), state, { maxBytes: COVERAGE_FILE_BYTES, validate: (value: unknown) => {
+            if (!validCoverageState(value, options.workspaceId)) fail('The saved mail coverage record needs recovery. Its original file was preserved.', 503);
+        } });
+    }
+    /** Time checked by a confirmed scan or history window leaves both lists. */
+    const markChecked = (account: MailCoverageAccount, checked: MailInterval): MailCoverageAccount =>
+        ({ ...account, uncovered: subtractMailInterval(account.uncovered, checked), missed: subtractMailInterval(account.missed, checked) });
+    function missedGap(intervals: MailInterval[], timeZone: string): string {
+        let date: Intl.DateTimeFormat;
+        // An unset office zone still names the dates; UTC is stated, not implied.
+        try { date = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }); }
+        catch { date = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', timeZoneName: 'short' }); }
+        const from = date.format(intervals[0].startAt), to = date.format(intervals.at(-1)!.endAt - 1);
+        return intervals.length === 1
+            ? `Mail from ${from} to ${to} was never checked and has left the approved lookback; review that interval in Gmail.`
+            : `${intervals.length} intervals between ${from} and ${to} were never checked and have left the approved lookback; review them in Gmail.`;
+    }
     async function collect(purpose: MailCollectionPurpose = 'morning-priorities') {
+        assertWorkflowAccess();
         if (closed)
             fail('The mail service is closed.', 503);
         if (active)
@@ -120,21 +191,26 @@ export function createMailIngestionService(options: Options) {
         try {
             const authority = await options.authorize(purpose);
             controller.signal.throwIfAborted();
+            // Read before admission: a damaged record holds collection without a receipt.
+            const coverage = await readCoverage();
+            const account = coverage.accounts[authority.accountId] ?? emptyCoverageAccount();
             const admission = await locked(() => storage.run(() => {
                 recover();
                 const reg = storage.register();
                 if (reg.activeScan)
                     fail('A mail scan is already running. Wait for its receipt.');
-                const carry: string[] = [];
-                let carryCount = 0;
+                const unresolved: string[] = [];
                 for (const row of storage.records('mail-item')) {
                     const item = row.value as MailWorkItem;
-                    if (item.accountId === authority.accountId && item.status !== 'done' && !['reference', 'noise'].includes(item.disposition)) {
-                        carryCount++;
-                        if (carry.length < 100)
-                            carry.push(item.threadId);
-                    }
+                    if (item.accountId === authority.accountId && item.status !== 'done' && (!['reference', 'noise'].includes(item.disposition) || mailChangedSinceReview(item)))
+                        unresolved.push(item.threadId);
                 }
+                // A backlog over the bound rotates: each run continues after the
+                // last carried conversation the previous confirmed scan read.
+                unresolved.sort();
+                const after = account.carryAfter === null ? 0 : unresolved.findIndex(id => id > account.carryAfter!);
+                const start = after < 0 ? 0 : after, carryCount = unresolved.length;
+                const carry = [...unresolved.slice(start), ...unresolved.slice(0, start)].slice(0, 100);
                 const end = now(), request: MailScanRequest = { windowStartAt: end - authority.settings.mailScope.historyDays * 86400000, windowEndAt: end, maxMessages: authority.settings.mailScope.maxMessages, includeSent: authority.settings.mailScope.includeSent, carryThreadIds: carry };
                 parseMailScanRequest(request, end);
                 receipt = { id: randomUUID(), accountId: authority.accountId, bindingRevision: authority.bindingRevision, startedAt: end, completedAt: null, windowStartAt: request.windowStartAt, windowEndAt: end, status: 'running', messageCount: 0, threadCount: 0, pages: 0, gaps: [], inputDigest: null };
@@ -144,14 +220,39 @@ export function createMailIngestionService(options: Options) {
                 storage.saveRegister(reg);
                 return { request, carryCount };
             }));
+            // Intent before the provider call: newly elapsed time (including any
+            // stretch older than this window) is unchecked until a confirmed scan
+            // says otherwise, so an interrupted run leaves it visible and resumable.
+            const { windowStartAt, windowEndAt } = admission.request;
+            const elapsedFrom = Math.min(account.horizonAt ?? windowStartAt, windowEndAt);
+            let nextAccount: MailCoverageAccount = { ...account, horizonAt: Math.max(account.horizonAt ?? 0, windowEndAt),
+                uncovered: mergeMailIntervals([...account.uncovered, { startAt: elapsedFrom, endAt: windowEndAt }]) };
+            await writeCoverage({ ...coverage, accounts: { ...coverage.accounts, [authority.accountId]: nextAccount } });
             const data = parseMailScanResult(await options.scan(authority, admission.request, controller.signal), admission.request, authority.accountId);
             controller.signal.throwIfAborted();
             const currentAuthority = await options.authorize(purpose);
             controller.signal.throwIfAborted();
             if (currentAuthority.accountId !== authority.accountId || currentAuthority.bindingRevision !== authority.bindingRevision || currentAuthority.settingsRevision !== authority.settingsRevision)
                 fail('Mail setup changed during collection. The previous work list is preserved.');
-            if (admission.carryCount > 100)
-                data.gaps = [...data.gaps.slice(0, 199), 'More unresolved conversations exist than this scan can carry; review or narrow the saved work list.'];
+            // Unchecked time before this window can no longer be read by a rolling
+            // scan: it moves to `missed` and is reported on this receipt, never
+            // dropped. A confirmed window clears its own time from both lists.
+            const reachable = subtractMailInterval(nextAccount.uncovered, { startAt: 0, endAt: windowStartAt });
+            const leaving = subtractMailInterval(nextAccount.uncovered, { startAt: windowStartAt, endAt: Number.MAX_SAFE_INTEGER });
+            nextAccount = { ...nextAccount, uncovered: reachable, missed: mergeMailIntervals([...nextAccount.missed, ...leaving]) };
+            if (mailScanWindowCovered(data))
+                nextAccount = markChecked(nextAccount, { startAt: windowStartAt, endAt: windowEndAt });
+            // Advance the backlog rotation past the furthest carried conversation read.
+            const returned = new Set(data.threads.map(t => t.id));
+            const lastRead = admission.request.carryThreadIds.findLast(id => returned.has(id));
+            if (lastRead !== undefined)
+                nextAccount = { ...nextAccount, carryAfter: lastRead };
+            const extra = [
+                ...(admission.carryCount > 100 ? ['More unresolved conversations exist than this scan can carry; review or narrow the saved work list.'] : []),
+                ...(leaving.length ? [missedGap(leaving, authority.settings.timeZone)] : []),
+            ];
+            if (extra.length)
+                data.gaps = [...data.gaps.filter(gap => !extra.includes(gap)).slice(0, 200 - extra.length), ...extra];
             const complete: MailScanReceipt = { ...receipt!, status: data.paginationComplete && !data.gaps.length ? 'complete' : 'partial', completedAt: now(), pages: data.pages, gaps: data.gaps, threadCount: data.threads.length, messageCount: data.threads.reduce((n, t) => n + t.messages.length, 0) };
             complete.inputDigest = hash(sourceInput(complete, data, authority.settings));
             const sourceBundle: MailSourceBundle = { version: 1, workspaceId: options.workspaceId, request: admission.request, data, settings: authority.settings };
@@ -159,7 +260,7 @@ export function createMailIngestionService(options: Options) {
                 fail('The collected source exceeds private storage limits. Narrow the scope and repeat the scan.', 413);
             // A failed final projection retains the acquired source as evidence of the attempt.
             await locked(() => storage.run(() => { assertOwner(); storage.put('mail-source', mailRecordId('mail-source', receipt!.id), sourceBundle); storage.saveRegister(storage.register()); }));
-            return await locked(() => storage.run(() => {
+            const committed = await locked(() => storage.run(() => {
                 controller.signal.throwIfAborted();
                 assertOwner();
                 for (const t of data.threads) {
@@ -192,6 +293,10 @@ export function createMailIngestionService(options: Options) {
                 recover();
                 return storage.metadata();
             }));
+            // Only a committed receipt may clear time. If this write is lost, the
+            // admission record (window still unchecked) stands: conservative.
+            await writeCoverage({ ...coverage, accounts: { ...coverage.accounts, [authority.accountId]: nextAccount } }).catch(() => undefined);
+            return committed;
             function assertOwner() { const reg = storage.register(); if (reg.activeScan?.receiptId !== receipt?.id || reg.activeScan?.ownerToken !== ownerToken || storage.receipt(receipt!.id)?.status !== 'running')
                 fail('The mail collection owner changed. Its evidence was preserved.'); }
         }
@@ -239,6 +344,7 @@ export function createMailIngestionService(options: Options) {
      * between pages resumes from the checkpoint; a completed window is never
      * requested again; the approved total still bounds every plan. */
     async function collectHistory(purpose: MailCollectionPurpose = 'bills-calendar'): Promise<MailHistoryCoverage> {
+        assertWorkflowAccess();
         if (closed)
             fail('The mail service is closed.', 503);
         if (active)
@@ -318,6 +424,13 @@ export function createMailIngestionService(options: Options) {
                     fail('Mail setup changed during collection. The previous history coverage is preserved.');
                 }
                 state = await settle(state, window.index, data, []);
+                // A confirmed history window is checked time for rolling coverage
+                // too. A lost update only leaves that time listed as unchecked.
+                if (state.windows[window.index].status === 'complete' && data && mailScanWindowCovered(data))
+                    await readCoverage().then(saved => {
+                        const prior = saved.accounts[plan.accountId];
+                        return prior ? writeCoverage({ ...saved, accounts: { ...saved.accounts, [plan.accountId]: markChecked(prior, { startAt: window.startAt, endAt: window.endAt }) } }) : undefined;
+                    }).catch(() => undefined);
                 controller.signal.throwIfAborted();
             }
             return mailHistoryCoverage(state);
@@ -411,11 +524,14 @@ export function createMailIngestionService(options: Options) {
         };
         return { version: 1, ...status, detail: mailHistoryStatusDetail(status) };
     }
-    async function prepareInput() {
+    async function prepareInput(expected?: Pick<MailScanReceipt, 'id' | 'accountId' | 'bindingRevision'>) {
+        assertWorkflowAccess();
         const authority = await options.authorize('morning-priorities');
         const prepared = await locked(() => storage.run(() => {
                 recover();
                 const state = storage.metadata(), receipt = state.latestScan;
+                if (expected && (!receipt || receipt.id !== expected.id || receipt.accountId !== expected.accountId || receipt.bindingRevision !== expected.bindingRevision))
+                    fail('The Gmail source changed during preparation. Start a fresh review for the current source.');
                 if (!receipt || !['complete', 'partial'].includes(receipt.status) || receipt.accountId !== authority.accountId || receipt.bindingRevision !== authority.bindingRevision || now() - receipt.startedAt > 12 * 60 * 60000)
                     fail('Collect a fresh scan for the reviewed Gmail source before preparing this list.');
                 const raw = storage.source(receipt.id);
@@ -431,7 +547,7 @@ export function createMailIngestionService(options: Options) {
                     const thread = source.data.threads.find(t => t.id === item.threadId);
                     const followUp = item.status === 'open' && item.disposition === 'waiting' && thread && hash(thread) === item.sourceDigest
                         ? dueFollowUpKey(thread, source.data, receipt, source.settings) : null;
-                    if (item.accountId === authority.accountId && (item.newEvidence && !item.reviewed || followUp !== null && followUp !== item.followUpReviewedKey)) {
+                    if (item.accountId === authority.accountId && (mailNeedsPreparation(item) || followUp !== null && followUp !== item.followUpReviewedKey)) {
                         pendingCount++;
                         if (fullInput.threads.some(t => t.threadId === item.threadId))
                             pending.add(item.threadId);
@@ -441,7 +557,7 @@ export function createMailIngestionService(options: Options) {
                 if (!threads.length)
                     return null;
                 const reference = `realbud-mail:${receipt.id}:${hash(threads).slice(0, 16)}`, input = { ...fullInput, sourceReference: reference, threadCount: threads.length, maxThreads: 20, threads, reviewBatch: { selectedThreadCount: threads.length, collectedThreadCount: fullInput.threadCount, pendingThreadCount: pendingCount }, coverage: { ...fullInput.coverage, accounts: fullInput.coverage.accounts.map(a => ({ ...a, expectedThreadCount: threads.length, returnedThreadCount: threads.length })) } };
-                if (Buffer.byteLength(JSON.stringify(input)) > 950000)
+                if (Buffer.byteLength(JSON.stringify(input, null, 2)) > 950000)
                     fail('The collected evidence exceeds the preparation size. Narrow the source scope before review.', 413);
                 return { receipt, revision: state.revision, binding: { receiptId: receipt.id, sourceReference: reference, digest: hash(input), input } satisfies MailPrepared };
         }));
@@ -449,7 +565,9 @@ export function createMailIngestionService(options: Options) {
                 return null;
             const directory = join(options.workroomDirectory, 'workflow-inputs');
             await privateDirectory(directory);
-            await writePrivateJson(join(directory, 'accounts-inbox.json'), prepared.binding.input);
+            // The worker reads bounded line ranges. A minified large JSON line
+            // can be clamped mid-line, making its remaining messages unreadable.
+            await writePrivateJson(join(directory, 'accounts-inbox.json'), prepared.binding.input, undefined, 'readable');
             // Authorization may observe this service. Never await it inside the serial lock.
             const current = await options.authorize('morning-priorities');
             if (current.accountId !== authority.accountId || current.bindingRevision !== authority.bindingRevision || current.settingsRevision !== authority.settingsRevision)
@@ -460,6 +578,7 @@ export function createMailIngestionService(options: Options) {
         }));
     }
     async function applyReview(run: JobRun) {
+        assertWorkflowAccess();
         const authority = await options.authorize('morning-priorities'), recipeId = workflowRecipeId(authority.settings.workflowPackId, 'inbox-triage');
         if (!recipeId || run.jobId !== recipeId || !['completed', 'awaiting-approval'].includes(run.status))
             fail('Only a validated review from the selected morning workflow can update this list.');
@@ -508,8 +627,15 @@ export function createMailIngestionService(options: Options) {
                 // Staff fields remain authoritative. A due follow-up can produce a
                 // source-bound review job without replacing their task decisions.
                 if (item.reviewed) {
-                    if (item.status === 'open' && item.disposition === 'waiting' && followUp !== null && followUp !== item.followUpReviewedKey)
-                        storage.saveItem({ ...item, followUpReviewedKey: followUp, revision: item.revision + 1, updatedAt: now() });
+                    // A reply since their review: Bud's view goes only into its own
+                    // fields, and this source is marked prepared so a rerun stays quiet.
+                    const changed = mailNeedsPreparation(item);
+                    const due = item.status === 'open' && item.disposition === 'waiting' && followUp !== null && followUp !== item.followUpReviewedKey;
+                    if (changed || due)
+                        storage.saveItem({ ...item, ...(due ? { followUpReviewedKey: followUp } : {}),
+                            ...(changed ? { preparedDigest: item.sourceDigest, missingFacts: row.missingFacts,
+                                reason: `Since your review, Bud suggests ${row.disposition.replace('-', ' ')} at ${row.priority} priority: ${row.reason}`.slice(0, 2000) } : {}),
+                            revision: item.revision + 1, updatedAt: now() });
                     continue;
                 }
                 storage.saveItem({ ...item, disposition: row.disposition, priority: row.priority, owner: row.owner, reason: row.reason, nextAction: row.nextAction, missingFacts: row.missingFacts, newEvidence: false,
@@ -595,7 +721,30 @@ export function createMailIngestionService(options: Options) {
         fail('The mail list changed. Refresh it before loading more.'); const p = storage.db.projectPage<MailScanReceipt, MailScanReceipt>('mail-receipt', { limit: size, before: c?.before }, r => { validReceipt(r.value) || mailRecovery(); return r.value; }); return { version: 2, revision: reg.revision, items: p.records, total: storage.db.count('mail-receipt'), nextCursor: p.next ? Buffer.from(JSON.stringify({ version: 1, kind: 'mail-scans', revision: reg.revision, before: p.next })).toString('base64url') : null }; })); }
     return {
         get epoch() { return storage.run(() => storage.register().revision); },
-        get busy() { return active !== null || storage.run(() => ownerAlive(storage.register())); },
+        get busy() { return workflowOwner !== null || active !== null || storage.run(() => ownerAlive(storage.register())); },
+        withWorkflow,
+        reviewSummary: () => locked(() => storage.run(() => {
+            recover();
+            const state = storage.metadata(), digest = createHash('sha256');
+            for (const row of storage.records('mail-item')) {
+                const item = row.value as MailWorkItem;
+                if (item.accountId === state.latestScan?.accountId) digest.update(JSON.stringify([item.id, item.revision, item.sourceDigest, item.status]));
+            }
+            return { ...state, resultKey: digest.digest('hex') };
+        })),
+        async collectedSource(expected: MailScanReceipt, purpose: MailCollectionPurpose) {
+            assertWorkflowAccess();
+            const authority = await options.authorize(purpose);
+            return locked(() => storage.run(() => {
+                const receipt = storage.receipt(expected.id), raw = storage.source(expected.id);
+                if (!receipt || !raw || receipt.accountId !== authority.accountId || receipt.bindingRevision !== authority.bindingRevision ||
+                    receipt.accountId !== expected.accountId || receipt.bindingRevision !== expected.bindingRevision || !['complete', 'partial'].includes(receipt.status))
+                    fail('The saved collection does not match the reviewed Gmail source.');
+                const source = validateMailSource(raw, receipt, options.workspaceId);
+                if (hash(source.settings) !== hash(authority.settings)) fail('Mail settings changed. Collect the current source again.');
+                return structuredClone({ receipt, data: source.data, settings: source.settings });
+            }));
+        },
         collect, collectHistory, historyCoverage, startHistory, resumeHistoryIfPending, historyStatus,
         prepareInput, applyReview, update, page, scanHistory,
         cancel: () => active?.abort(), get: async () => ({ ...await locked(read), history: await historyStatus() }),

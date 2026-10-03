@@ -8,6 +8,9 @@
 //                 broker with that grant (no model turn). Anything the recipe
 //                 cannot answer for goes to the person's approval card through
 //                 this module's channel; Stop, expiry and the step limit end it.
+// Ask starts read recipes, and an upload-and-preview recipe (UPLOAD_PREVIEW_RECIPES)
+// only when bound to one reviewed file's {name, sha256}: the Start grant must list
+// that exact file, and the upload itself is still asked once of the person.
 // The pack file comes from a fixed list, never from a request. A terminal
 // (scripts/portal-run.mjs) never reaches a live site: only this path does.
 import { randomUUID } from "node:crypto";
@@ -15,12 +18,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserApprovalProjection } from "./browser-broker.ts";
-import type { BrowserJson, BrowserRuntime } from "./browser-runtime.ts";
+import type { BrowserJson } from "./browser-runtime.ts";
+import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { validBrowserTaskRecipe, type BrowserTaskProposal, type BrowserTaskRecipe, type BrowserTaskRecord } from "./browser-grants.ts";
 import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { redactSecretsInText } from "./redact.ts";
-import type { BrowserTaskGrant } from "../shared/browser-task.ts";
+import { browserTaskUploadName, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Portal name → the workflow pack's recipes document. The only packs a task can name. */
@@ -38,7 +42,7 @@ export async function loadPortalRecipePack(portal: string): Promise<PortalRecipe
 export type PackLoader = (portal: string) => Promise<PortalRecipePack>;
 
 /** The card for a recipe or batch: sites and action classes are exactly what the recipes need. */
-export async function portalRecipeTaskProposal(input: { threadId: string; messageId: string; portal: unknown; target: unknown; inputs?: unknown; account: unknown }, load: PackLoader = loadPortalRecipePack): Promise<BrowserTaskProposal & { recipe: BrowserTaskRecipe }> {
+export async function portalRecipeTaskProposal(input: { threadId: string; messageId: string; portal: unknown; target: unknown; inputs?: unknown; account: unknown; upload?: unknown }, load: PackLoader = loadPortalRecipePack): Promise<BrowserTaskProposal & { recipe: BrowserTaskRecipe }> {
   if (typeof input.portal !== "string" || typeof input.target !== "string") throw fail(400, "Choose the portal and the recipe to run.");
   const pack = await load(input.portal);
   const members = Object.hasOwn(pack.batches, input.target) ? pack.batches[input.target] : Object.hasOwn(pack.recipes, input.target) ? [input.target] : null;
@@ -51,17 +55,46 @@ export async function portalRecipeTaskProposal(input: { threadId: string; messag
     if (seen.has(name)) return []; seen.add(name);
     return [name, ...pack.recipes[name].steps.flatMap(step => "run" in step ? reachable(String(step.run), seen) : [])];
   };
+  // Read recipes only from Ask, apart from an upload-and-preview recipe bound to one reviewed file:
+  // other prepare recipes change records and belong to a reviewed job.
+  const prepare = [...new Set(names.flatMap(name => reachable(name)))].filter(name => pack.recipes[name].kind !== "read");
+  const upload = prepare.length ? uploadBinding(input.upload, prepare, inputs) : null;
   const recipe = { portal: input.portal, account: input.account,
-    runs: names.map(name => ({ recipe: name, inputs: Object.fromEntries(reachable(name).flatMap(inner => pack.recipes[inner].inputs).map(field => [field, inputs[field]])) })) };
-  if (!validBrowserTaskRecipe(recipe)) throw fail(400, "Give each recipe input and the account (its web address value and the name shown in the portal header).");
-  // Read recipes only from Ask: a prepare recipe changes records and belongs to a reviewed job.
-  if (names.flatMap(name => reachable(name)).some(name => pack.recipes[name].kind !== "read")) throw fail(400, "Only read recipes can run as a task from Ask.");
+    runs: names.map(name => ({ recipe: name, inputs: Object.fromEntries([...reachable(name).flatMap(inner => pack.recipes[inner].inputs).map(field => [field, inputs[field]]),
+      ...(upload && reachable(name).some(inner => UPLOAD_PREVIEW_RECIPES.has(inner)) ? [["approved_sha256", upload.sha256]] : [])]) })) };
+  if (!validBrowserTaskRecipe(recipe)) throw fail(400, "Give each recipe input and the account (the business code shown in the portal header; its web address value only if saved).");
   const needs = portalRecipeGrantNeeds(pack, recipe.runs);
   return {
     threadId: input.threadId, messageId: input.messageId, siteSource: "request", savedJob: null,
-    request: `Run the ${pack.portal} read recipes (${names.join(", ")}) for the account ${recipe.account.marker}. Read only: nothing is saved, sent or paid.`,
+    request: upload
+      ? `Run the ${pack.portal} recipes (${names.join(", ")}) for the account ${recipe.account.marker}: upload only the reviewed file ${upload.name} (sha256 ${upload.sha256}) after your approval, then read the preview. Bud stops before ${[...new Set(prepare.flatMap(name => pack.recipes[name].stopBefore))].join(", ")}; posting stays with you.`
+      : `Run the ${pack.portal} read recipes (${names.join(", ")}) for the account ${recipe.account.marker}. Read only: nothing is saved, sent or paid.`,
     sites: needs.sites, actions: needs.actions, recipe,
   };
+}
+
+/** Prepare recipes Ask may start: they upload one reviewed file into a preview and stop before
+ * anything that posts. Each needs the file's exact name and sha256, which the Start grant must list. */
+export const UPLOAD_PREVIEW_RECIPES: ReadonlySet<string> = new Set(["bulk-receipting-preview"]);
+const SHA256 = /^[0-9a-f]{64}$/;
+function uploadBinding(value: unknown, prepare: string[], inputs: Record<string, unknown>): { name: string; sha256: string } {
+  if (prepare.some(name => !UPLOAD_PREVIEW_RECIPES.has(name))) throw fail(400, "Only read recipes can run as a task from Ask.");
+  const upload = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!upload || Object.keys(upload).length !== 2 || !browserTaskUploadName(upload.name) || typeof upload.sha256 !== "string" || !SHA256.test(upload.sha256)) {
+    throw fail(400, "An upload recipe needs the reviewed file's exact name and sha256.");
+  }
+  if (inputs.approved_file !== upload.name) throw fail(400, "The file this recipe uploads must be the reviewed file.");
+  return { name: upload.name, sha256: upload.sha256 };
+}
+/** Every run that uploads names a file the grant lists with the same hash; anything else is refused before the browser. */
+function assertUploadBinding(recipe: BrowserTaskRecipe, grant: BrowserTaskGrant): void {
+  for (const run of recipe.runs) {
+    if (run.inputs.approved_file === undefined && run.inputs.approved_sha256 === undefined) continue;
+    const granted = grant.uploads.find(upload => upload.name === run.inputs.approved_file);
+    if (!granted || granted.sha256 !== run.inputs.approved_sha256 || !grant.actions.includes("upload")) {
+      throw fail(409, "The file given to this task is not the reviewed file. Nothing was uploaded; attach the reviewed file and ask again.");
+    }
+  }
 }
 
 // ── the person's approval channel for a running recipe task ────────────────
@@ -105,13 +138,14 @@ export function releasePortalRecipeGrant(grantId: string): void { running.delete
 
 /** Runs a started recipe task with its saved grant. The record, not the caller, says what runs. */
 export async function runPortalRecipeTask(input: {
-  record: BrowserTaskRecord; grant: BrowserTaskGrant; runtime: BrowserRuntime; approve: PersonApprove;
+  record: BrowserTaskRecord; grant: BrowserTaskGrant; runtime: BrowserSessionRuntime; approve: PersonApprove;
   signal: AbortSignal; isActive: () => boolean; load?: PackLoader;
 } & Pick<PortalRunOptions, "operations" | "approvals" | "rules" | "assertCapability" | "now" | "workroom" | "pollMs">): Promise<PortalRunResult> {
   const { record, grant } = input;
   if (!record.recipe || grant.route !== "ask" || grant.id !== record.id || grant.request.text !== record.request || record.status !== "active") {
     throw fail(409, "This portal task's saved permission does not match it. Ask again to start it.");
   }
+  assertUploadBinding(record.recipe, grant);
   if (dispatching.has(grant.id)) throw fail(409, "This portal task is already running.");
   // Held here too when no host holds it (a direct call); a host's hold outlives the run.
   const own = !running.has(grant.id);

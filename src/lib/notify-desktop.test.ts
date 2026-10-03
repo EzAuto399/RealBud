@@ -31,7 +31,7 @@ describe("notify miss vocabulary", () => {
   } as MorningBrief;
 
   it("uses Recheck-missed body copy", () => {
-    expect(notifyBody(miss)).toBe("Recheck missed — facts held. Open Desk.");
+    expect(notifyBody(miss)).toBe("This morning's check didn't run. Open Desk.");
   });
 
   it("notifies once when the miss headline appears", () => {

@@ -6,13 +6,13 @@ import { WorkflowDatabase } from './workflow-database.ts';
 import { SourceBillRegister, previewBillSource } from './source-bills.ts';
 import { listExpectedBills, upsertExpectedBill } from './expected-bills.ts';
 import { anchoredBillMonth, billDateInZone } from '../shared/bill-dates.ts';
-import type { BillMailSource, BillFacts } from '../shared/source-bills.ts';
+import type { BillMailSource, BillFacts, BillCalendarEntry } from '../shared/source-bills.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
 afterEach(() => { for (const { dir, db } of resources.splice(0)) { db.close(); rmSync(dir, { recursive: true, force: true }); } });
 const source = (overrides: Partial<BillMailSource['message']> = {}): BillMailSource => ({ accountId: 'fictional-account', receiptId: 'scan-one', threadId: 'thread-one', message: {
   id: 'message-one', at: Date.parse('2026-01-31T01:00:00Z'), from: 'utility@example.test', subject: 'Fictional water bill',
-  body: 'Fictional invoice dated 2026-01-31 for $123.45, due 2026-02-20.', bodyTruncated: false, attachments: [], ...overrides,
+  body: `Fictional invoice ${overrides.id ?? 'message-one'} dated 2026-01-31 for $123.45, due 2026-02-20.`, bodyTruncated: false, attachments: [], ...overrides,
 } });
 const facts = (): BillFacts => ({ propertyId: 'property-one', kind: 'Water', vendor: 'Fictional utility', amountCents: 12345, currency: 'AUD', invoiceDate: '2026-01-31', dueDate: '2026-02-20', note: 'Reviewed fictional message' });
 const acceptance = (s = source()) => ({ expectedSourceDigest: previewBillSource(s).digest, sourceReviewed: true, facts: facts(), reviewReason: 'Manually confirmed source and property' });
@@ -109,7 +109,8 @@ describe('source-linked bill acceptance', () => {
 describe('approved bill arrival patterns and calendar projection', () => {
   it('keeps a reviewed actual due date separate from human-approved predicted arrival windows', () => {
     const { store } = fixture(), bill = store.accept(acceptance(), source(), 'reviewer');
-    expect(store.snapshot(range).calendar).toMatchObject([{ type: 'invoice-due', date: '2026-02-20', state: 'received' }]);
+    expect(store.snapshot(range).calendar).toMatchObject([{ type: 'invoice-due', date: '2026-02-20', state: 'received' },
+      { type: 'expected-payment', date: '2026-02-20', basis: 'reviewed-bill-due-date', billId: bill.id, state: 'received' }]);
     const series = store.approveSeries(pattern(bill.id), 'reviewer');
     expect(store.approveSeries(pattern(bill.id), 'reviewer')).toEqual(series);
     const calendar = store.snapshot(range).calendar;
@@ -188,5 +189,67 @@ describe('approved bill arrival patterns and calendar projection', () => {
     expect(store.snapshot(range).calendar.every(e => e.type === 'expected-arrival')).toBe(true);
     expect(() => store.snapshot({ from: '2026-01-01', to: '2036-01-01' })).toThrow(/550 days/);
     expect(store.snapshot(range).occurrences[0].facts.dueDate).toBeNull();
+  });
+});
+
+describe('expected payment forecasts', () => {
+  const payments = (calendar: BillCalendarEntry[]) => calendar.filter(e => e.type === 'expected-payment');
+  const pages = (store: SourceBillRegister, query: { from: string; to: string }) => {
+    const items: BillCalendarEntry[] = []; let cursor: string | undefined;
+    do { const page = store.calendarPage({ ...query, cursor, limit: 1 }); items.push(...page.items); cursor = page.nextCursor ?? undefined; } while (cursor);
+    return items;
+  };
+  function linkedPattern() {
+    const f = fixture(), founding = f.store.accept(acceptance(), source(), 'reviewer');
+    const series = f.store.approveSeries(pattern(founding.id), 'reviewer');
+    expect(payments(f.store.snapshot(range).calendar).map(e => e.basis)).toEqual(['reviewed-bill-due-date']);
+    const next = source({ id: 'february-bill', at: Date.parse('2026-02-28T01:00:00Z') });
+    const linked = f.store.accept({ ...acceptance(next), facts: { ...facts(), dueDate: '2026-03-14' }, seriesId: series.id, expectedArrivalDate: '2026-02-28' }, next, 'reviewer');
+    return { ...f, founding, series, next, linked };
+  }
+  it('forecasts payment on a received, unpaid bill due date and drops it on hold or cancellation', () => {
+    const { store } = fixture(), bill = store.accept(acceptance(), source(), 'reviewer');
+    expect(payments(store.snapshot(range).calendar)).toMatchObject([{ id: `payment:${bill.id}`, date: '2026-02-20', endDate: '2026-02-20', billId: bill.id }]);
+    const held = store.correct(bill.id, { ...acceptance(), expectedRevision: 1, state: 'hold' }, source(), 'reviewer');
+    expect(payments(store.snapshot(range).calendar)).toEqual([]);
+    expect(store.snapshot(range).calendar.map(e => e.type)).toEqual(['invoice-due']);
+    store.correct(bill.id, { ...acceptance(), expectedRevision: held.revision, state: 'cancelled' }, source(), 'reviewer');
+    expect(store.snapshot(range).calendar).toEqual([]);
+  });
+  it('needs two reviewed bills before shifting approved arrival windows by their usual terms', () => {
+    const { store, series, linked } = linkedPattern();
+    // Founding: arrives 31 Jan, due 20 Feb (20 days). Linked: arrives 28 Feb, due 14 Mar (14 days). Median 17.
+    const forecast = payments(store.snapshot(range).calendar);
+    expect(forecast.map(e => [e.basis, e.date])).toEqual([
+      ['reviewed-bill-due-date', '2026-02-20'], ['reviewed-bill-due-date', '2026-03-14'],
+      ['approved-pattern-payment-terms', '2026-04-17'], ['approved-pattern-payment-terms', '2026-05-17'], ['approved-pattern-payment-terms', '2026-06-17']]);
+    expect(forecast.filter(e => e.basis === 'approved-pattern-payment-terms').every(e => e.billId === null && e.seriesId === series.id && e.state === 'predicted')).toBe(true);
+    expect(forecast.at(-1)!.paymentTerms).toEqual({ days: 17, reviewedBills: 2 });
+    expect(forecast.find(e => e.billId === linked.id)!.paymentTerms).toBeUndefined();
+    expect(store.snapshot(range).calendar.filter(e => e.type === 'invoice-due').map(e => e.date)).toEqual(['2026-02-20', '2026-03-14']);
+    expect(pages(store, range).map(e => e.id).sort()).toEqual(store.snapshot(range).calendar.map(e => e.id).sort());
+  });
+  it('carries a forecast across a month boundary from an earlier arrival window', () => {
+    const { store } = linkedPattern(), may = { from: '2026-05-01', to: '2026-05-31' };
+    expect(payments(store.snapshot(may).calendar).map(e => e.id.slice(e.id.lastIndexOf(':') + 1) + '>' + e.date)).toEqual(['2026-04-30>2026-05-17']);
+    expect(pages(store, may).filter(e => e.type === 'expected-payment').map(e => e.date)).toEqual(['2026-05-17']);
+  });
+  it('replaces stale forecasts after a correction, paid status or paused pattern', () => {
+    const { store, founding, series, next, linked } = linkedPattern();
+    store.correct(linked.id, { ...acceptance(next), expectedRevision: 1, state: 'received', facts: { ...facts(), dueDate: '2026-03-30' } }, next, 'reviewer');
+    expect(payments(store.snapshot(range).calendar).filter(e => e.basis === 'approved-pattern-payment-terms').map(e => e.date)).toEqual(['2026-04-25', '2026-05-25', '2026-06-25']);
+    store.correct(linked.id, { ...acceptance(next), expectedRevision: 2, state: 'received', facts: { ...facts(), dueDate: null } }, next, 'reviewer');
+    expect(payments(store.snapshot(range).calendar).map(e => e.basis)).toEqual(['reviewed-bill-due-date']);
+    store.correct(linked.id, { ...acceptance(next), expectedRevision: 3, state: 'received', facts: { ...facts(), dueDate: '2026-03-14' } }, next, 'reviewer');
+    store.reviewFinancial(founding.id, { expectedRevision: 1, expectedSourceDigest: founding.source.digest, sourceReviewed: true, reviewReason: 'Reviewed fictional payment record.',
+      observation: { provenance: 'simulated', sourceKind: 'external-record', sourceIds: ['fictional-payment'], locator: 'Fictional ledger', accountContext: 'Fictional office', observedAt: Date.parse('2026-01-31T12:00:00Z'),
+        coverage: 'complete', entry: 'recorded', payment: 'confirmed-paid', funding: 'unknown', advance: 'unknown', note: '' } }, 'reviewer');
+    const afterPaid = payments(store.snapshot(range).calendar);
+    expect(afterPaid.some(e => e.billId === founding.id)).toBe(false);
+    expect(afterPaid.filter(e => e.basis === 'approved-pattern-payment-terms')).toHaveLength(3);
+    const { occurrenceId: _, expectedOccurrenceRevision: __, ...settings } = pattern(founding.id);
+    store.reviseSeries(series.id, { ...settings, expectedRevision: 1, active: false }, 'reviewer');
+    expect(payments(store.snapshot(range).calendar).map(e => e.basis)).toEqual(['reviewed-bill-due-date']);
+    expect(pages(store, range).filter(e => e.seriesId === series.id && e.billId === null)).toEqual([]);
   });
 });

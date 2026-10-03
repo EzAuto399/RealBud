@@ -1,11 +1,12 @@
 import { readFileSync, statSync } from "node:fs";
 import type { LoopRun } from "../shared/contracts.ts";
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
+import { validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 
 export interface LoopsFile {
   version: 3;
   timezone: string;
-  state: Record<string, { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[]; timezone?: string }; revision?: number }>;
+  state: Record<string, { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[]; timezone?: string } & CalendarCadence; revision?: number }>;
   runs: LoopRun[];
 }
 
@@ -36,14 +37,16 @@ export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFil
   for (const [id, value] of Object.entries(raw.state)) {
     if (!identifier(id) || !record(value) || typeof value.enabled !== "boolean" || !timestamp(value.handledThrough)) invalid();
     if (value.revision !== undefined && !positiveInteger(value.revision)) invalid();
-    let schedule: { time: string; weekdays: number[]; timezone?: string } | undefined;
+    let schedule: ({ time: string; weekdays: number[]; timezone?: string } & CalendarCadence) | undefined;
     if (value.schedule !== undefined) {
       const clock = value.schedule;
       if (!record(clock) || typeof clock.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(clock.time) ||
         !Array.isArray(clock.weekdays) || !clock.weekdays.length || clock.weekdays.length > 7 ||
         clock.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) invalid();
       if (clock.timezone !== undefined && !validTimezone(clock.timezone)) invalid();
+      if (!validCalendarCadence(clock as CalendarCadence)) invalid();
       schedule = { time: clock.time, weekdays: [...new Set(clock.weekdays as number[])].sort((a, b) => a - b), ...(typeof clock.timezone === 'string' ? { timezone: clock.timezone } : {}) };
+      if (clock.intervalDays !== undefined) Object.assign(schedule, { intervalDays: clock.intervalDays, anchorDate: clock.anchorDate });
     }
     state[id] = { enabled: value.enabled, handledThrough: value.handledThrough, ...(schedule ? { schedule } : {}), ...(value.revision === undefined ? {} : { revision: Number(value.revision) }) };
   }

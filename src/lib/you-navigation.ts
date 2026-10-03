@@ -16,6 +16,8 @@ export function youHashTarget(hash: string): string | null {
     case "you-profile": return "you-profile";
     case "you-advanced": return "you-advanced";
     case "you-service-admin": return "you-service-admin";
+    case "you-memory": return "you-memory";
+    case "you-settings": return "you-settings";
     default: return null;
   }
 }
@@ -35,16 +37,14 @@ export function revealSettingsTarget(target: HTMLElement): void {
   }
 }
 
-/** Scroll a You-page section into view, opening any parent disclosures first. */
+/** Scroll a Workspace section into view, opening any parent disclosures first. */
 export function scrollYouTarget(id: string): void {
   const target = document.getElementById(id);
   const scroller = document.querySelector<HTMLElement>("[data-you-scroll]");
   if (!target || !scroller) return;
   revealSettingsTarget(target);
   const scrollerTop = scroller.getBoundingClientRect().top;
-  const navigation = scroller.querySelector<HTMLElement>('[aria-label="Jump to a settings group"]');
-  const stickyHeight = navigation ? Math.max(0, navigation.getBoundingClientRect().bottom - scrollerTop) : 0;
-  const top = scroller.scrollTop + target.getBoundingClientRect().top - scrollerTop - stickyHeight - 8;
+  const top = scroller.scrollTop + target.getBoundingClientRect().top - scrollerTop - 8;
   scroller.scrollTo({
     top: Math.max(0, top),
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",

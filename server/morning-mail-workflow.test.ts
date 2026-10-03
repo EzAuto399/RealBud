@@ -6,7 +6,7 @@ const clock = { id: 'clock-1', manual: false, scheduledFor: 1 } as LoopRun;
 const recipe = { id: 'recipe-mail', revision: 4, status: 'active', planApprovedAt: 1, approvedRevision: 4 } as Recipe;
 function fixture(count: number, partial = false) {
   let remaining = count;
-  const scan = { id: 'source-1', status: partial ? 'partial' : 'complete', threadCount: count } as MailScanReceipt;
+  const scan = { id: 'source-1', accountId: 'mail-a', bindingRevision: 'binding-a', status: partial ? 'partial' : 'complete', threadCount: count } as MailScanReceipt;
   const state = { version: 2, revision: 1, latestScan: scan, latestReview: null, nextSnoozeAt: null,
     counts: { total: count, open: count, waiting: 0, reference: 0, done: 0, snoozed: 0, highPriority: 0, needsReview: count } } satisfies MailWorkspaceMetadata;
   const deps = { recipe: () => recipe, admitPack: vi.fn(async () => {}), collect: vi.fn(async () => state),
@@ -33,6 +33,34 @@ describe('morning mail workflow orchestration', () => {
   it('keeps completed batches and stops paid work when the plan changes', async () => {
     const deps=fixture(25); let reads=0; deps.recipe=()=>({...recipe,revision:++reads>2?5:4,approvedRevision:reads>2?5:4});
     expect(await runMorningMailWorkflow(clock,deps)).toMatchObject({ok:false,status:'partial'}); expect(deps.execute).toHaveBeenCalledTimes(1);
+  });
+  it.each(['id', 'accountId', 'bindingRevision'] as const)('holds a changed source %s before spending a model call', async field => {
+    const deps = fixture(25), prepare = deps.prepareInput.getMockImplementation()!;
+    deps.prepareInput = vi.fn(async () => ({ ...(await prepare())!, [field]: 'replacement-source' }));
+
+    const result = await runMorningMailWorkflow(clock, deps);
+
+    expect(result).toMatchObject({ ok: false, status: 'failed' });
+    expect(result.detail).toContain('Gmail source changed');
+    expect(result).not.toHaveProperty('jobRunId');
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.applyReview).not.toHaveBeenCalled();
+  });
+  it.each(['id', 'accountId', 'bindingRevision'] as const)('keeps the first saved batch when the source %s changes before the next batch', async field => {
+    const deps = fixture(25), prepare = deps.prepareInput.getMockImplementation()!;
+    let calls = 0;
+    deps.prepareInput = vi.fn(async () => {
+      const source = (await prepare())!;
+      return ++calls === 1 ? source : { ...source, [field]: 'replacement-source', status: 'partial' as const };
+    });
+
+    const result = await runMorningMailWorkflow(clock, deps);
+
+    expect(result).toMatchObject({ ok: false, status: 'partial', jobRunId: 'job-25' });
+    expect(result.detail).toContain('completed review batches were kept');
+    expect(deps.execute).toHaveBeenCalledTimes(1);
+    expect(deps.applyReview).toHaveBeenCalledTimes(1);
+    expect(deps.prepareInput).toHaveBeenCalledTimes(2);
   });
   it('preserves failure and never applies failed worker output', async () => {
     const deps=fixture(4); deps.execute=vi.fn(async()=>({run:{id:'failed-job',status:'failed',detail:'Provider unavailable'} as JobRun}));

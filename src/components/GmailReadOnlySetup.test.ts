@@ -116,10 +116,11 @@ describe("optional setup and Gmail-only layout", () => {
   it("preserves consumer defaults and app shortcuts", () => {
     store.state.config = status();
     const html = renderToStaticMarkup(createElement(ConnectedAppsCard));
-    expect(html).toContain("Connect Gmail");
-    expect(html).toContain("Connect Outlook");
-    expect(html).toContain("Connect Notion");
-    expect(html).toContain("Connect Google Calendar");
+    expect(html).toContain('data-app-slug="gmail"');
+    expect(html).toContain('aria-label="Find Gmail connection"');
+    expect(html).toContain('data-app-slug="outlook"');
+    expect(html).toContain('data-app-slug="notion"');
+    expect(html).toContain('data-app-slug="googlecalendar"');
     expect(store.api).not.toHaveBeenCalled();
   });
 
@@ -138,10 +139,11 @@ describe("optional setup and Gmail-only layout", () => {
     store.state.config = status({ ...ready().composio, configured: false, mode: "gmail-readonly", readOnlyConfigured: true });
     const html = renderToStaticMarkup(createElement(ConnectedAppsCard));
     expect(html).toContain("Gmail read-only configured");
-    expect(html).toContain("Connect Gmail");
-    expect(html).not.toContain("Connect Outlook");
-    expect(html).not.toContain("Connect Notion");
-    expect(html).not.toContain("Connect Google Calendar");
+    expect(html).toContain('data-app-slug="gmail"');
+    expect(html).toContain('aria-label="Find Gmail connection"');
+    expect(html).not.toContain('data-app-slug="outlook"');
+    expect(html).not.toContain('data-app-slug="notion"');
+    expect(html).not.toContain('data-app-slug="googlecalendar"');
     expect(html).not.toContain("Advanced setup");
     expect(html).not.toContain('type="password"');
   });

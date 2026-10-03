@@ -1,9 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOfficeLink, installationWorkerVersion, websiteOrigin } from "./office-link.ts";
-import { ConfigRecoveryError } from "./config.ts";
+import { ConfigRecoveryError, type AppConfig } from "./config.ts";
 import { createWorkerModelAccess, setWorkerModelGrant } from "./worker-model-access.ts";
 import { privateFixtureRoot, privateFixtureDirectory, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
 const roots: string[] = [];
@@ -86,10 +86,11 @@ describe("zero-touch provisioning through the website link", () => {
   };
   const sink = () => {
     const applied: any[] = []; let state: "none" | "active" | "withdrawn" = "none";
+    let installationId: string | undefined;
     return { applied,
-      apply: vi.fn(async (value: any, id: string) => { applied.push({ value, id }); state = "active"; }),
+      apply: vi.fn(async (value: any, id: string) => { applied.push({ value, id }); installationId = id; state = "active"; }),
       withdraw: vi.fn(async () => { const was = state === "active"; if (was) state = "withdrawn"; return was; }),
-      withdrawn: vi.fn(async () => state === "withdrawn"),
+      withdrawn: vi.fn(async (id?: string) => state === "withdrawn" && (id === undefined || id === installationId)),
       reconcile: vi.fn(async () => false),
       clear: vi.fn(async () => { state = "none"; }),
     };
@@ -201,15 +202,18 @@ describe("zero-touch provisioning through the website link", () => {
     });
     return { state, fetch: fetcher as unknown as typeof fetch };
   };
-  const managedDesk = (fetcher: typeof fetch) => {
+  const managedDesk = (fetcher: typeof fetch, beforeSaveConfig?: () => void, beforeReadConfig?: () => void) => {
     const root = privateFixtureRoot(join(tmpdir(), "realbud-link-redeliver-")); roots.push(root);
     const hermesRoot = join(root, "hermes"), profile = join(hermesRoot, "profiles", "property");
     privateFixtureDirectory(profile); writePrivateFixtureFile(join(profile, "SOUL.md"), "# Fictional profile\n");
     const configs: any[] = [];
-    const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 9), hermesRoot, saveConfig: patch => { configs.push(patch); } });
-    const app = createOfficeLink({ directory: root, appVersion: "fictional", fetch: fetcher, provisioning: { ...access, active: async () => (await access.state()).provisioned },
+    let config = {} as AppConfig;
+    const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 9), hermesRoot,
+      readConfig: () => { beforeReadConfig?.(); return config; },
+      saveConfig: patch => { beforeSaveConfig?.(); configs.push(patch); config = { ...config, ...patch, composio: { ...config.composio, ...patch.composio } }; } });
+    const app = createOfficeLink({ directory: root, appVersion: "fictional", fetch: fetcher, provisioning: access,
       report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: true }) });
-    return { app, access, configs };
+    return { app, access, configs, root, hermesRoot };
   };
 
   it("recovers from a redeem reply lost after provisioning: the retry gets replaced keys and the lost ones stop working", async () => {
@@ -258,6 +262,80 @@ describe("zero-touch provisioning through the website link", () => {
     expect(site.state.keys).toHaveLength(2);
   });
 
+  it("keeps requesting provisioning after a connector write failure instead of stranding a linked computer", async () => {
+    const site = website();
+    // The link is already approved, while service setup arrives on its next
+    // report (the same delivery path used after browser approval).
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const reply = await site.fetch(url, init);
+      if (!String(url).endsWith("redeem")) return reply;
+      const { provisioning: _pending, ...rest } = await reply.json() as Record<string, unknown>;
+      return Response.json(rest);
+    }) as unknown as typeof fetch;
+    let configNeedsRecovery = true;
+    const desk = managedDesk(fetcher, () => { if (configNeedsRecovery) throw new ConfigRecoveryError(); });
+    await desk.app.link({ code, label: "Fictional desk" });
+    await expect(desk.app.report()).rejects.toMatchObject({ code: "config_recovery_required" });
+    expect(await desk.app.status()).toMatchObject({ state: "linked", provisioned: false });
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({});
+    expect(desk.configs).toEqual([]);
+
+    configNeedsRecovery = false;
+    await desk.app.report();
+    expect(site.state.reports.at(-1).needsProvisioning).toBe(true);
+    expect(await desk.app.status()).toMatchObject({ state: "linked", provisioned: true });
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ REALBUD_MODEL_API_KEY: site.state.keys[2] });
+    expect(desk.configs.at(-1).composio.managed.credential).toBe(site.state.credentials[2]);
+    expect(site.state.revoked).toEqual(site.state.keys.slice(0, 2));
+    await desk.app.report();
+    expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
+    expect(site.state.keys).toHaveLength(3);
+  });
+
+  it("holds credential requests locally through a persistent recovery failure and resumes once repaired", async () => {
+    const site = website();
+    let rejectReports = false;
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      if (String(url).endsWith("/report") && rejectReports) return Response.json({}, { status: 403 });
+      const reply = await site.fetch(url, init);
+      if (!String(url).endsWith("redeem")) return reply;
+      const { provisioning: _pending, ...rest } = await reply.json() as Record<string, unknown>;
+      return Response.json(rest);
+    }) as unknown as typeof fetch;
+    let blocked = false;
+    const desk = managedDesk(fetcher, undefined, () => { if (blocked) throw new ConfigRecoveryError(); });
+    await desk.app.link({ code, label: "Fictional approved desk" });
+    expect(site.state.keys).toHaveLength(1);
+    blocked = true;
+    for (let attempt = 0; attempt < 3; attempt++) await expect(desk.app.report()).rejects.toMatchObject({ code: "service_provisioning_local_recovery" });
+    expect(site.state.reports).toHaveLength(0);
+    expect(site.state.keys).toHaveLength(1);
+    expect(await desk.app.status()).toMatchObject({ state: "linked", provisioned: false, error: expect.stringContaining("need recovery") });
+
+    blocked = false;
+    await desk.app.report();
+    expect(site.state.reports).toHaveLength(1);
+    expect(site.state.keys).toHaveLength(2);
+    expect(await desk.app.status()).toMatchObject({ state: "linked", provisioned: true });
+    expect((await desk.app.status()).error).toBeUndefined();
+
+    // Local recovery must not suppress the revocation report of a grant that
+    // is already active. Cleanup may hold, but the link loses authority first.
+    blocked = true; rejectReports = true;
+    await expect(desk.app.report()).rejects.toMatchObject({ code: "config_recovery_required" });
+    expect(await desk.app.status()).toMatchObject({ state: "revoked" });
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({});
+  });
+
+  it("checks local provisioning storage before redeem without exposing its raw error", async () => {
+    const fetcher = vi.fn();
+    const desk = managedDesk(fetcher, undefined, () => { throw new Error("fictional-private-storage-detail"); });
+    await expect(desk.app.link({ code, label: "Fictional desk" })).rejects.toMatchObject({ code: "service_provisioning_local_recovery" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await desk.app.status()).toMatchObject({ state: "unlinked" });
+    expect(JSON.stringify(await desk.app.status())).not.toContain("fictional-private-storage-detail");
+  });
+
   it("refuses a grant for another office, an unsupported build, and a vendor organization key", async () => {
     const reply = (extra: any) => {
       const p = sink();
@@ -298,6 +376,36 @@ describe("zero-touch provisioning through the website link", () => {
     expect(await app.status()).toEqual({ state: "unlinked", usage: { state: "not-linked" } });
   });
 
+  it("does not label a newly approved installation with the previous installation's withdrawal", async () => {
+    const p = sink();
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-new-installation-")); roots.push(root);
+    let revoked = false, provision = true, localBlocked = false;
+    const app = createOfficeLink({ directory: root, appVersion: "fictional", provisioning: { ...p, preflight: async () => { if (localBlocked) throw new ConfigRecoveryError(); } },
+      report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }),
+      fetch: vi.fn(async (url: any, init: any) => String(url).endsWith("redeem")
+        ? linked(JSON.parse(init.body), { provisioning: provision ? provisioning : { skipped: "no_platform_customer" } })
+        : Response.json({}, { status: revoked ? 403 : 200 })) as any });
+    await app.link({ code, label: "Fictional old desk" });
+    const oldId = (await app.status()).id;
+    revoked = true; await app.report();
+    expect(await app.status()).toMatchObject({ id: oldId, state: "revoked", serviceWithdrawn: true });
+
+    provision = false; revoked = false;
+    await app.link({ code, label: "Fictional approved desk" });
+    const current = await app.status();
+    expect(current).toMatchObject({ state: "linked", provisioned: false, provisioningSkipped: "no_platform_customer" });
+    expect(current.id).not.toBe(oldId);
+    expect(current.serviceWithdrawn).toBeUndefined();
+    expect(p.withdrawn).toHaveBeenLastCalledWith(current.id);
+    // The old marker is retained; only its attribution changed.
+    expect(await p.withdrawn(oldId)).toBe(true);
+    expect(await p.withdrawn()).toBe(true);
+    localBlocked = true;
+    await expect(app.report()).rejects.toMatchObject({ code: "service_provisioning_local_recovery" });
+    expect(await app.status()).toMatchObject({ id: current.id, state: "linked", provisioned: false, error: expect.stringContaining("need recovery") });
+    expect((await app.status()).serviceWithdrawn).toBeUndefined();
+  });
+
   it("preserves the link on config recovery refusal and completes a repaired disconnect after remote revocation", async () => {
     const p = sink();
     const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
@@ -331,9 +439,11 @@ describe("zero-touch provisioning through the website link", () => {
     const hermesRoot = join(root, "hermes"), profile = join(hermesRoot, "profiles", "property");
     privateFixtureDirectory(profile); writePrivateFixtureFile(join(profile, "SOUL.md"), "# Fictional profile\n");
     let configBlocked = false, reportCalls = 0;
+    let config = {} as AppConfig;
     const make = () => {
       const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 7), hermesRoot,
-        saveConfig: () => { if (configBlocked) throw new ConfigRecoveryError(); } });
+        readConfig: () => config,
+        saveConfig: patch => { if (configBlocked) throw new ConfigRecoveryError(); config = { ...config, ...patch, composio: { ...config.composio, ...patch.composio } }; } });
       const reconcile = vi.fn(access.reconcile);
       const app = createOfficeLink({ directory: root, appVersion: "fictional", report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }),
         provisioning: { ...access, reconcile },
@@ -362,6 +472,102 @@ describe("zero-touch provisioning through the website link", () => {
     expect(reportCalls).toBe(1);
     expect(await restarted.access.state()).toMatchObject({ provisioned: false, withdrawn: true });
     expect(await restarted.access.env()).toEqual({});
+  });
+
+  it.each(["config", "vault"] as const)("keeps a failed %s withdrawal durable through code/browser relink and restart, then recovers", async fault => {
+    const root = privateFixtureRoot(join(tmpdir(), "realbud-relink-recovery-")); roots.push(root);
+    const hermesRoot = join(root, "hermes"), profile = join(hermesRoot, "profiles", "property");
+    privateFixtureDirectory(profile); writePrivateFixtureFile(join(profile, "SOUL.md"), "# Fictional profile\n");
+    let config: AppConfig = {}, configBlocked = false, revoked = false, generation = 0;
+    const calls: string[] = [];
+    let browserId = "";
+    const grantFor = (id: string) => ({ ...provisioning,
+      service: { companyId: "office-a", hostInstallationId: id },
+      model: { ...provisioning.model, keyId: `fixture-key-${++generation}`, key: `rbk_${String(generation).repeat(40)}` } });
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const route = String(url).split("/api/installations/")[1]; calls.push(route);
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      if (route === "redeem") return linked(body, { provisioning: grantFor(body.id) });
+      if (route === "report") return revoked ? Response.json({}, { status: 403 }) : Response.json({ provisioning: grantFor(browserId) });
+      if (route === "link-requests") {
+        browserId = body.id;
+        return Response.json({ version: 1, purpose: "installation-link-issued", approvalUrl: `https://realbud.app/link/${"A".repeat(43)}`,
+          displayCode: "ABCD-EFGH", expiresAt: new Date(Date.now() + 600_000).toISOString() });
+      }
+      if (route === "link-requests/status") return Response.json({ version: 1, purpose: "installation-link-status", state: "linked",
+        companyId: "office-a", agencyLabel: "Synthetic Office", installationId: browserId });
+      return Response.json({}, { status: 404 });
+    }) as unknown as typeof fetch;
+    const make = () => {
+      const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 7), hermesRoot, readConfig: () => config,
+        saveConfig: patch => { if (configBlocked) throw new ConfigRecoveryError(); config = { ...config, ...patch, composio: { ...config.composio, ...patch.composio } }; } });
+      const app = createOfficeLink({ directory: root, appVersion: "fictional", fetch: fetcher, provisioning: access,
+        report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }) });
+      return { access, app };
+    };
+    let desk = make();
+    await desk.app.link({ code, label: "Fictional old desk" });
+    const firstId = (await desk.app.status()).id;
+    const vaultPath = join(root, "company-installation/private/worker-model-access.json");
+    const vaultBytes = readFileSync(vaultPath);
+    if (fault === "config") configBlocked = true;
+    else writePrivateFixtureFile(vaultPath, "{damaged");
+    revoked = true;
+    await expect(desk.app.report()).rejects.toThrow();
+    const linkPath = join(root, "office-link/link.json"), revokedBytes = readFileSync(linkPath);
+    expect(JSON.parse(revokedBytes.toString()).revoked).toBe(true);
+    const mutationCalls = () => calls.filter(route => route !== "usage");
+    const before = mutationCalls();
+    // Neither path may replace the only durable cleanup instruction, even
+    // after its in-memory withdrawal hold has been lost in a process restart.
+    for (const restart of [false, true]) {
+      if (restart) desk = make();
+      await expect(desk.app.link({ code, label: "New code desk" })).rejects.toThrow();
+      await expect(desk.app.beginBrowserLink({ label: "New browser desk" })).rejects.toThrow();
+      expect(readFileSync(linkPath)).toEqual(revokedBytes);
+      expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({});
+      expect(await desk.app.status()).toMatchObject({ state: "revoked", id: firstId });
+    }
+    expect(mutationCalls()).toEqual(before);
+    expect(generation).toBe(1);
+
+    configBlocked = false;
+    if (fault === "vault") writePrivateFixtureFile(vaultPath, vaultBytes);
+    revoked = false;
+    // Exercise recovery through both entry points across the two failures.
+    if (fault === "config") await desk.app.link({ code, label: "Repaired code desk" });
+    else {
+      await desk.app.beginBrowserLink({ label: "Repaired browser desk" });
+      await desk.app.browserLinkStatus();
+      await vi.waitFor(async () => expect((await desk.app.status()).provisioned).toBe(true));
+    }
+    const current = await desk.app.status();
+    expect(current).toMatchObject({ state: "linked", provisioned: true });
+    expect(current.id).not.toBe(firstId);
+    expect(await desk.access.active(firstId!)).toBe(false);
+    expect(await desk.access.active(current.id!)).toBe(true);
+    expect(generation).toBe(2);
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ REALBUD_MODEL_API_KEY: `rbk_${"2".repeat(40)}` });
+  });
+
+  it("holds a restarted foreign grant before status, key resolution, or credential redelivery", async () => {
+    const site = website(); const desk = managedDesk(site.fetch);
+    await desk.app.link({ code, label: "Fictional old desk" });
+    const file = join(desk.root, "office-link/link.json");
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    const id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    writePrivateFixtureFile(file, JSON.stringify({ ...saved, id, provisioned: true }));
+    const access = createWorkerModelAccess({ directory: desk.root, hermesRoot: desk.hermesRoot, key: Buffer.alloc(32, 9),
+      readConfig: () => desk.configs.at(-1), saveConfig: () => { throw new Error("foreign grant must not mutate settings"); } });
+    const app = createOfficeLink({ directory: desk.root, appVersion: "fictional", fetch: site.fetch, provisioning: access,
+      report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }) });
+    expect(await app.status()).toMatchObject({ id, state: "linked", provisioned: false });
+    const resolveEnv = vi.fn(access.env);
+    expect(await app.modelAccessEnv(resolveEnv)).toEqual({});
+    expect(resolveEnv).not.toHaveBeenCalled();
+    await expect(app.report()).rejects.toMatchObject({ code: "service_provisioning_local_recovery" });
+    expect(site.state.reports).toHaveLength(0);
+    expect(site.state.keys).toHaveLength(1);
   });
 
   it("does not publish a vault read that finishes after disconnect and relinking", async () => {
@@ -591,7 +797,14 @@ describe("provisioning retried on the report path", () => {
 });
 
 describe("AI usage for the current month", () => {
-  const period = new Date().toISOString().slice(0, 7);
+  // It is October in Brisbane while still September in UTC. Keep fixtures
+  // deterministic and assert the portal's accounting month, not the host's.
+  const period = "2026-10";
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-30T14:30:00Z"));
+  });
+  afterEach(() => { vi.useRealTimers(); });
   const body = (over: Record<string, unknown> = {}) => ({ period, requests: 12, tokens: { input: "900", output: "100" },
     money: { customerNetNanoAud: "41230000000" }, monthlyCapNanoAud: "80000000000", remainingNanoAud: "38770000000",
     updatedAt: "2026-09-22T03:00:00.000Z", ...over });
@@ -603,6 +816,39 @@ describe("AI usage for the current month", () => {
       fetch: vi.fn(async (url: any, init: any) => { calls.push(String(url)); return String(url).includes("redeem") ? linked(init) : usageReply(); }) as any });
     return { link, calls };
   };
+
+  it("explicitly refreshes before the passive TTL and coalesces concurrent checks", async () => {
+    let requests = 0, release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { app: link } = fixture(vi.fn(async (url, init) => {
+      if (String(url).endsWith("redeem")) return linked(init);
+      const count = ++requests;
+      if (count === 2) await gate;
+      return Response.json(body({ requests: count }));
+    }));
+    await link.link({ code, label: "Fictional usage desk" });
+    expect(await link.usage()).toMatchObject({ usage: { requests: 1 } });
+    const refresh = link.refreshUsage(), concurrent = link.refreshUsage();
+    await vi.waitFor(() => expect(requests).toBe(2));
+    expect((await link.status()).usage).toMatchObject({ usage: { requests: 1 } });
+    release();
+    for (const result of await Promise.all([refresh, concurrent])) expect(result.usage).toMatchObject({ usage: { requests: 2 } });
+    // Repeated clicks share a short cooldown; normal polls retain the 30s TTL.
+    await link.refreshUsage(); expect(requests).toBe(2);
+    vi.setSystemTime(new Date("2026-09-30T14:30:03Z"));
+    expect((await link.refreshUsage()).usage).toMatchObject({ usage: { requests: 3 } });
+    expect(requests).toBe(3);
+  });
+
+  it("explicit refresh can recover a cached unavailable result without waiting thirty seconds", async () => {
+    let unavailable = true;
+    const { link, calls } = app(() => unavailable ? Response.json({}, { status: 403 }) : Response.json(body()));
+    await link.link({ code, label: "Fictional usage desk" });
+    expect(await link.usage()).toEqual({ state: "unavailable" });
+    unavailable = false;
+    expect((await link.refreshUsage()).usage).toMatchObject({ state: "ready" });
+    expect(calls.filter(url => url.includes("usage"))).toHaveLength(2);
+  });
 
   it("does not expose or cache a prior office's delayed usage after the installation changes", async () => {
     let office = "a", release!: () => void, entered!: () => void, currentCalls = 0;
@@ -636,7 +882,7 @@ describe("AI usage for the current month", () => {
     expect(await link.usage()).toMatchObject({ usage: { requests: beforeNewUsage + 1 } });
   });
 
-  it("asks once per three minutes, sends the bearer token, and never persists the figures", async () => {
+  it("asks once per 30 seconds, sends the bearer token, and never persists the figures", async () => {
     const { link, calls } = app(() => Response.json(body()));
     await link.link({ code, label: "Desk" });
     const first = await link.usage();
@@ -712,6 +958,22 @@ describe("AI usage for the current month", () => {
       expect(await link.usage()).toMatchObject({ usage: { requests: 2 } });
       expect(calls.filter(url => url.includes("usage"))).toHaveLength(2);
     } finally { vi.useRealTimers(); }
+  });
+
+  it("refreshes at the Brisbane month boundary even while the previous month is cached", async () => {
+    vi.setSystemTime(new Date("2026-09-30T13:59:59Z"));
+    let replyPeriod = "2026-09", requests = 0;
+    const { link, calls } = app(() => Response.json(body({ period: replyPeriod, requests: ++requests })));
+    await link.link({ code, label: "Desk" });
+    expect(await link.usage()).toMatchObject({ state: "ready", usage: { period: "2026-09", requests: 1 } });
+    vi.setSystemTime(new Date("2026-09-30T14:00:00Z"));
+    replyPeriod = "2026-10";
+    expect(await link.usage()).toMatchObject({ state: "ready", usage: { period: "2026-10", requests: 2 } });
+    expect((await link.status()).usage).toMatchObject({ state: "ready", usage: { period: "2026-10", requests: 2 } });
+    expect(calls.filter(url => url.includes("usage"))).toEqual([
+      "https://realbud.app/api/installations/usage?period=2026-09",
+      "https://realbud.app/api/installations/usage?period=2026-10",
+    ]);
   });
 
   it("reports not-linked without contacting the account, and rejects a bad month", async () => {

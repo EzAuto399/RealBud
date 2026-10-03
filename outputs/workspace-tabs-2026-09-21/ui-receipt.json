@@ -1,5 +1,6 @@
 {
-  "checkedAt": "2026-09-21T03:55:22.612Z",
+  "checkedAt": "2026-10-02T22:15:36.638Z",
+  "layer": "local-built-ui-with-real-api",
   "realServer": true,
   "realSavedViewPersistence": true,
   "syntheticBusinessRecords": true,
@@ -9,22 +10,29 @@
     "PUT",
     "reset"
   ],
-  "addRenameReorderHideShowRemove": true,
+  "apiAddRenameReorderHideShowRemove": true,
+  "readOnlySavedViews": true,
+  "askBudNavigation": true,
   "reloadAndDeepLink": true,
   "realTasksBillsJobsViews": true,
-  "mailShortcutCreatesOnce": true,
+  "deskMailReplacesTasksWithoutCreatingViews": true,
   "mailSavedFilter": true,
   "mailEmptyCoverageNotClaimed": true,
   "jobOpensExactPlan": true,
   "unsavedJobWordingPreserved": true,
   "sharedWorkRequiresSignIn": true,
-  "staleWindowRejected": true,
+  "staleApiRevisionRejected": true,
   "coreShortcuts": true,
   "desktop": 1365,
   "mobile": 390,
   "noHorizontalOverflow": true,
-  "explicitRecoveryReset": true,
+  "explicitRecoveryResetAndCancellation": true,
   "damagedBytesArchived": true,
   "businessRecordsPreserved": true,
-  "pageErrors": []
+  "pageErrors": [],
+  "limits": [
+    "Built React UI and isolated local service with synthetic business records and an offline worker; no installed-device, live integration or customer proof.",
+    "Saved views are seeded and changed through the revisioned API. Bud approval/execution, removed manual editing and stale-editor draft retention are not exercised.",
+    "Desk mail now replaces the work area without creating a shortcut; saved mail presentation is checked using an API-seeded view. No Gmail collection, model calls or external sends."
+  ]
 }

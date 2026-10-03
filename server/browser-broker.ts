@@ -4,7 +4,8 @@
 // server/index.ts only displays this broker's decision.
 import { createServer } from "node:http";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import {
   browserDownloadTarget,
   browserRuntime,
@@ -13,8 +14,8 @@ import {
   saveBrowserDownload,
   type BrowserDownloadReceipt,
   type BrowserJson,
-  type BrowserRuntime,
 } from "./browser-runtime.ts";
+import type { BrowserSessionRuntime, BrowserSessionAction } from "./browser-session.ts";
 import { fenceDenialNote, fenceEvidenceLine, type FenceContext } from "./portal-fence.ts";
 import {
   authorizeBrowserAction,
@@ -22,6 +23,8 @@ import {
   browserChoices,
   browserKey,
   browserLoginFields,
+  browserAccountMarkerShown,
+  browserReadOnlyAction,
   jobBrowserUrl,
   observationRefs,
   type BrowserApprovalStore,
@@ -31,6 +34,9 @@ import {
   type BrowserFenceProjection,
 } from "./browser-authority.ts";
 import { loadRules } from "./rules.ts";
+import { signInHandoverBlocks } from "./browser-sign-in.ts";
+import { ASK_ATTACH_MAX_BYTES, isAskAttachName, saveAskAttachment } from "./ask-attach.ts";
+import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { managedService } from "./managed-service.ts";
@@ -71,6 +77,9 @@ export function browserToolsFor(grant: Pick<BrowserTaskGrant, "actions" | "uploa
     !(grant.origin === BROWSER_LEGACY_JOB_ORIGIN && Object.hasOwn(TASK_TOOLS, tool.name)) &&
     (tool.name !== "browser_upload" || grant.uploads.length > 0)).map(tool => tool.name);
 }
+/** RealBud's own work-browser profile (NativeBrowserRuntime), never a borrowed
+ * personal browser. A read-only runtime is held to read-only steps regardless. */
+const ownsProfile = (runtime: BrowserSessionRuntime) => runtime.readOnly || (runtime as { ownsProfile?: unknown }).ownsProfile === true;
 const WRONG_BROWSER = "This tab is in a different browser from the one this task was started with, so Bud did not borrow it. Start the task again with the browser you want Bud to use.";
 /** One dispatched action for the run's log: identifiers and hashes, never page values or file contents. */
 export interface BrowserActionRecord {
@@ -88,12 +97,27 @@ export interface BrowserActionRecord {
   download?: BrowserDownloadReceipt;
   upload?: { fileIdHash: string; sha256: string };
 }
-const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "object" && !Array.isArray(v));
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
 const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
 const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
 type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
+/** The type the bytes must show for a download to become a readable workroom attachment. */
+const ATTACHABLE: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+  docx: "application/zip", xlsx: "application/zip", txt: "text/plain", csv: "text/plain", json: "text/plain", md: "text/plain", rtf: "text/plain", log: "text/plain" };
+/** Copies a kept download into the workroom's ask-uploads exactly as a person's
+ * attachment is copied (server/ask-attach.ts), so Bud reads it with its file
+ * tool. Only a readable document whose bytes match its name and receipt; it is
+ * never opened or run. */
+async function attachDownload(root: string, workroom: string, saved: BrowserDownloadReceipt): Promise<{ path: string; name: string } | null> {
+  const extension = saved.name.includes(".") ? saved.name.slice(saved.name.lastIndexOf(".") + 1).toLowerCase() : "";
+  if (!isAskAttachName(saved.name) || ATTACHABLE[extension] !== saved.contentType || saved.size > ASK_ATTACH_MAX_BYTES) return null;
+  const bytes = await readFile(join(workroom, "downloads", saved.name));
+  if (bytes.length !== saved.size || hash(bytes) !== saved.sha256) return null;
+  const attached = saveAskAttachment(root, { name: saved.name, contentBase64: bytes.toString("base64") });
+  return { path: attached.path, name: attached.name };
+}
 const NOUNS: Record<string, string> = { pay: "payment", sign: "signature", send: "message", notice: "notice", delete: "deletion", "account-change": "account change" };
 /** What the approval card shows: the broker's own decision, never re-decided by the host. */
 export interface BrowserApprovalProjection { fence: BrowserFenceProjection; approvalPolicy?: "once" }
@@ -140,6 +164,8 @@ export function onBrowserSignIn(host: BrowserSignInHost): () => void {
   signInHost = host; return () => { if (signInHost === host) signInHost = null; };
 }
 const SIGN_IN_NEEDED = "This page contains sign-in or security fields. Stop browser work and let the person finish sign-in directly; keep passwords and codes out of chat.";
+const SIGN_IN_HANDOVER = "The person is signing in on this site. Bud takes no action there until they finish; wait for open_for_sign_in to return.";
+const ACCOUNT_SELECTION_NEEDED = "Choose and verify the intended account using the sign-in card before Bud reads this portal. Being signed in alone does not identify the account for this task.";
 const live = new Set<BrowserBroker>();
 export async function releaseBrowserBrokers(): Promise<void> {
   const brokers = [...live]; for (const b of brokers) b.close();
@@ -155,7 +181,7 @@ export async function startBrowserBroker(options: {
   checkpoint?: BrowserCheckpoint;
   isActive(): boolean;
   approve(tool: string, params: BrowserJson, summary: string, signal: AbortSignal, projection?: BrowserApprovalProjection): Promise<boolean>;
-  runtime?: BrowserRuntime;
+  runtime?: BrowserSessionRuntime;
   operations?: ConnectedAppOperationStore;
   approvals?: BrowserApprovalStore;
   /** Site read/prefill rules, read per step so a newly saved rule applies. */
@@ -166,6 +192,8 @@ export async function startBrowserBroker(options: {
   workroom?: string;
   /** A workflow pack's declared controls for its portal (server/portal-recipe-runner.ts), from the host; never from a model. */
   portal?: BrowserPortalControls;
+  /** Data folder whose workroom receives readable downloads as attachments (default DATA_DIR); null keeps them in the task folder only. */
+  attachRoot?: string | null;
 }): Promise<BrowserBroker> {
   const runtime = options.runtime ?? browserRuntime;
   const operations = options.operations ?? connectedAppOperations;
@@ -183,7 +211,7 @@ export async function startBrowserBroker(options: {
   if (grant.runId !== options.runId) throw problem("This browser task permission belongs to another run. Start the task again.");
   const sites = grant.sites;
   const workroom = options.workroom ?? browserTaskWorkroom(runtime.root, grant.id);
-  const allowed = new Set(browserToolsFor(grant));
+  const allowed = new Set(browserToolsFor(grant).filter(name => runtime.supportedActions.includes(TOOL_CLASSES[name])));
   const tools = BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } });
@@ -206,23 +234,27 @@ export async function startBrowserBroker(options: {
     const entry = { at: now(), kind, note };
     for (const listener of decisionListeners) { try { listener({ threadId: options.threadId, runId: options.runId, entry, ...(action ? { action } : {}) }); } catch { /* evidence display is best effort */ } }
   };
-  const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string): BrowserAuthorization =>
-    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used, ...(portal ? { portal } : {}) });
+  const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string, taskScope?: NonNullable<Parameters<typeof authorizeBrowserAction>[4]>["taskScope"]): BrowserAuthorization =>
+    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used, taskScope, ...(portal ? { portal } : {}) });
   const ensure = async (signal: AbortSignal) => {
     check(signal);
     if (checkpoint && (await runtime.status()).selectedBrowserId !== checkpoint.browserId) throw problem("The browser profile changed after sign-in. Check the intended page again before continuing.");
     session ??= await runtime.acquire(owner); await runtime.checkSession(owner); check(signal); return session;
   };
   const tabs = async (signal: AbortSignal) => {
-    const data = await runtime.command(["tab", "list", "--scope", "all", "--session", await ensure(signal)], signal);
+    await ensure(signal);
+    const rows = await runtime.listTabs(owner, signal);
     check(signal);
-    return (Array.isArray(data.tabs) ? data.tabs : []).filter(record).filter(row => Number.isSafeInteger(row.tab_id) && jobBrowserUrl(row.url, sites))
-      .filter(row => !checkpoint || row.tab_id === checkpoint.tabId && new URL(String(row.url)).origin === checkpoint.origin);
+    return rows.filter(row => jobBrowserUrl(row.url, sites))
+      .filter(row => !checkpoint || row.id === checkpoint.tabId && new URL(row.url).origin === checkpoint.origin);
   };
   const currentTab = async (tabId: number, signal: AbortSignal, owned = true) => {
-    const row = (await tabs(signal)).find(row => row.tab_id === tabId);
-    if (borrowed.has(tabId) && row?.scope !== "agent") { broker.close(); throw problem("The borrowed tab was closed or returned to you. This job has stopped; review the page before starting again."); }
+    const row = (await tabs(signal)).find(row => row.id === tabId);
+    if (row && grant.browser.id && row.browserId !== grant.browser.id) { broker.close(); throw problem(WRONG_BROWSER); }
+    if (borrowed.has(tabId) && row?.claimed !== true) { broker.close(); throw problem("The borrowed tab was closed or returned to you. This job has stopped; review the page before starting again."); }
     if (!row || (owned && !borrowed.has(tabId))) throw problem("That tab is outside this job or is no longer borrowed. Stop and choose the intended page again.");
+    // The person is signing in on this site (server/browser-sign-in.ts): Bud takes no action in that tab until they finish.
+    if (signInHandoverBlocks(row.url)) throw problem(SIGN_IN_HANDOVER);
     return row;
   };
   /** Routine steps: allow (grant or site rule), ask, or deny, exactly as decided. */
@@ -236,24 +268,30 @@ export async function startBrowserBroker(options: {
   };
   const observe = async (tabId: number, signal: AbortSignal, help = false): Promise<{ text: string; truncated: boolean; source: string }> => {
     const before = await currentTab(tabId, signal);
-    const data = await runtime.command(["observe", "--session", session!, "--tab-id", String(tabId), "--max-tokens", "6000"], signal);
+    const marker = checkpoint?.accountMarker ?? grant.browser.accountMarker;
+    if (portal?.accountMarker && !marker) {
+      snapshots.delete(tabId);
+      if (help) await signIn(tabId, before.url, "", signal, true);
+      throw problem(ACCOUNT_SELECTION_NEEDED);
+    }
+    const data = await runtime.observeTab(owner, tabId, signal);
     const after = await currentTab(tabId, signal);
-    if (data.tab_id !== tabId || typeof data.text !== "string" || before.url !== after.url) throw problem("The page changed during the read. Read it again before acting.");
-    if (browserLoginFields(data.text)) {
+    if (data.tabId !== tabId || typeof data.text !== "string" || before.url !== after.url) throw problem("The page changed during the read. Read it again before acting.");
+    if (browserLoginFields(data.text) || portal?.signInHosts.some(host => host.toLowerCase() === new URL(after.url).hostname.toLowerCase())) {
       snapshots.delete(tabId);
       const resumed = help ? await signIn(tabId, String(after.url), data.text, signal) : null;
       if (resumed) return resumed;
       throw problem(SIGN_IN_NEEDED);
     }
-    if (checkpoint && !data.text.includes(checkpoint.accountMarker)) { broker.close(); throw problem("The verified account label is no longer visible. This step stopped. Check the account and page before continuing."); }
+    if (marker && !browserAccountMarkerShown(data.text, marker, portal)) { broker.close(); throw problem("The verified account label is no longer visible in its expected place. This step stopped. Check the account and page before continuing."); }
     snapshots.set(tabId, { refs: observationRefs(data.text), at: now(), url: String(after.url), text: data.text });
-    return { text: data.text, truncated: data.truncated === true || Boolean(data.next_cursor), source: new URL(String(after.url)).origin };
+    return { text: data.text, truncated: data.truncated, source: new URL(String(after.url)).origin };
   };
   /** Login hand-off on the page itself: the pause (grant, budget, completed
    * steps) is saved before the person is asked, they sign in in their own
    * browser, and a fresh read, not their word, confirms it. The same task then
    * continues in this call. Nothing typed is seen, kept or replayed. */
-  const signIn = async (tabId: number, url: string, page: string, signal: AbortSignal) => {
+  const signIn = async (tabId: number, url: string, page: string, signal: AbortSignal, accountSelection = false) => {
     const at = new URL(url);
     const reason: "login" | "mfa" = /verification|one.time|\botp\b|two.factor|\b2fa\b|\bmfa\b|security code/i.test(page) ? "mfa" : "login";
     const task = (): BrowserTaskUsage => ({ grantId: grant.id, runId: options.runId, expiresAt: grant.expiresAt, budget: grant.budget, used });
@@ -261,11 +299,11 @@ export async function startBrowserBroker(options: {
     let waiting = false;
     try { waiting = signInHost?.waiting(event) === true; } catch { waiting = false; }
     if (!waiting) return null;
-    const step = reason === "mfa" ? "verification step" : "sign-in page";
+    const step = accountSelection ? "account selection" : reason === "mfa" ? "verification step" : "sign-in page";
     publish("asked", `Asked you to finish the ${step} on ${at.hostname} in your browser. Bud does not see or keep what you type.`);
     let resumed: Awaited<ReturnType<typeof observe>> | null = null;
     try {
-      const outcome = await runtime.requestHelp(owner, { tabId, title: reason === "mfa" ? "Finish verification to continue" : "Sign in to continue",
+      const outcome = await runtime.requestHelp(owner, { tabId, title: accountSelection ? "Choose the account to continue" : reason === "mfa" ? "Finish verification to continue" : "Sign in to continue",
         prompt: `Bud paused this task at a ${step} on ${at.hostname}. Finish it on this page yourself, then press Done. Bud does not see or keep what you type, and continues the same task afterwards.` }, signal);
       check(signal);
       if (outcome === "completed" || outcome === "continued") resumed = await observe(tabId, signal);
@@ -349,46 +387,65 @@ export async function startBrowserBroker(options: {
     try {
       if (name === "browser_tabs") {
         await gate(name, authorize(name, null, args), {}, signal);
-        return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.tab_id, site: new URL(String(row.url)).origin, borrowed: borrowed.has(Number(row.tab_id)) })) });
+        return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.id, site: new URL(row.url).origin, borrowed: borrowed.has(row.id) })) });
       }
       if (!Number.isSafeInteger(args.tab_id) || Number(args.tab_id) < 1) throw problem("Choose a tab from this job's browser list.");
       const tabId = Number(args.tab_id);
       const row = await currentTab(tabId, signal, name !== "browser_borrow");
       const url = String(row.url);
+      // Only RealBud's own work-browser session can carry task-local routine
+      // authority. This proof is rebuilt per call; it is never a model argument,
+      // saved rule or fallback to a different browser. gate/observe/dispatch
+      // retain the same active-grant, owner, account and fresh-page checks.
+      const currentBrowser = ownsProfile(runtime) && grant.route === "ask" && !grant.origin && grant.browser.id ? await runtime.status() : null;
+      const browserId = currentBrowser?.state === "ready" && currentBrowser.active ? currentBrowser.selectedBrowserId : null;
+      check(signal);
+      const taskScope = browserId && browserId === grant.browser.id && row.browserId === browserId ? {
+        grantId: grant.id, runId: grant.runId, requestHash: grant.request.sha256, browserId, tabId,
+        origin: new URL(url).origin, accountMarker: checkpoint?.accountMarker ?? grant.browser.accountMarker, readOnly: true as const,
+      } : undefined;
       if (name === "browser_borrow") {
         if (borrowed.has(tabId)) return text("This tab is already available to this job.");
         if (deniedBorrows.has(tabId)) throw problem("This tab request already ended or has an unknown outcome. Do not repeat it.");
         // A grant bound to a browser borrows only from that browser: the session's (the runtime's selected) browser, and the tab's own when the helper names it.
         if (grant.browser.id && ((await runtime.status()).selectedBrowserId !== grant.browser.id ||
-          typeof row.browser_instance_id === "string" && row.browser_instance_id !== grant.browser.id)) {
+          row.browserId !== grant.browser.id)) {
           publish("denied", fenceDenialNote(name, WRONG_BROWSER)); throw problem(WRONG_BROWSER);
         }
         check(signal);
-        await gate(name, authorize(name, url, args), { url }, signal, "browser_read");
+        await gate(name, authorize(name, url, args, undefined, taskScope), { url }, signal, "browser_read");
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
         receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
-        await runtime.command(["tab", "borrow", String(tabId), "--session", session!, "--timeout", "60s"], signal);
+        await runtime.claimTab(owner, tabId, signal);
         check(signal); borrowed.add(tabId);
         await currentTab(tabId, signal); operations.finish(receipt, "succeeded"); receipt = undefined;
         return text("The tab is borrowed for this job. Read it before doing anything else.");
       }
       if (name === "browser_read") {
-        await gate(name, authorize(name, url, args), { url }, signal);
-        return text(await observe(tabId, signal, true));
+        const auth = authorize(name, url, args, undefined, taskScope);
+        await gate(name, auth, { url }, signal);
+        const observed = await observe(tabId, signal, true);
+        if (taskScope && auth.decision === "allow" && (snapshots.get(tabId)?.url !== url || authorize(name, url, args, observed.text, taskScope).decision !== "allow")) throw problem(CHANGED);
+        return text(observed);
       }
-      let command: string[];
+      let action: BrowserSessionAction;
+      let taskAllowed = false;
       if (name === "browser_navigate") {
-        if (checkpoint) await observe(tabId, signal);
-        const auth = authorize(name, url, args, snapshots.get(tabId)?.text);
+        if (checkpoint || grant.browser.accountMarker || portal?.accountMarker) await observe(tabId, signal, true);
+        const auth = authorize(name, url, args, snapshots.get(tabId)?.text, taskScope);
+        taskAllowed = !!taskScope && auth.decision === "allow";
+        if (runtime.readOnly && !browserReadOnlyAction(grant, { url, text: snapshots.get(tabId)?.text }, name, args, portal)) throw problem("This work browser cannot navigate to a link that may change records.");
         const target = auth.decision === "deny" ? null : jobBrowserUrl(args.url, sites);
         if (!target) { await gate(name, auth, {}, signal); throw problem("Open this page yourself."); }
-        command = ["navigate", target.href, "--session", session!, "--tab-id", String(tabId), "--timeout", "30s"];
+        action = { kind: "navigate", tabId, url: target.href };
         await gate(name, auth, { url: target.href }, signal);
       } else {
         const snap = snapshots.get(tabId); const target = typeof args.ref === "string" ? args.ref : "";
         const label = snap?.refs.get(target);
         if (!snap || !/^@e\d+$/.test(target) || !label || now() - snap.at > 120_000 || snap.url !== url) throw problem("Read the page again before choosing a control. The previous reference is no longer current.");
-        const auth = authorize(name, url, args, snap.text);
+        const auth = authorize(name, url, args, snap.text, taskScope);
+        taskAllowed = !!taskScope && auth.decision === "allow";
+        if (runtime.readOnly && !browserReadOnlyAction(grant, { url, text: snap.text }, name, args, portal)) throw problem("This work browser can only read, search and navigate. This control is not confirmed as a read-only step.");
         const upload = name === "browser_upload" ? grant.uploads.find(file => file.name === args.file) : undefined;
         // A missing or changed file fails before the person is asked about it.
         if (upload && auth.decision !== "deny") await grantedUploadPath(workroom, upload);
@@ -402,18 +459,19 @@ export async function startBrowserBroker(options: {
           await observe(tabId, signal);
           const fresh = snapshots.get(tabId);
           if (!fresh || fresh.refs.get(target) !== label) throw problem(CHANGED);
-          const again = authorize(name, url, args, fresh.text);
+          const again = authorize(name, url, args, fresh.text, taskScope);
+          if (runtime.readOnly && !browserReadOnlyAction(grant, { url, text: fresh.text }, name, args, portal)) throw problem("The page no longer confirms this as a read-only step.");
           if (again.decision === "deny") throw problem(again.reason);
+          if (taskAllowed && again.decision !== "allow") throw problem(CHANGED);
           if (!sameStep(again.classification, auth.classification)) throw problem(CHANGED);
         }
-        const on = ["--session", session!, "--tab-id", String(tabId)];
-        if (name === "browser_fill") command = ["fill", "--ref", target, "--value", String(args.value), ...on];
-        else if (name === "browser_press") command = ["press", browserKey(args.key)!.spec, "--ref", target, ...on];
-        else if (name === "browser_select") command = ["select", "--ref", target, ...browserChoices(args.values)!.map(value => `--value=${value}`), ...on];
+        if (name === "browser_fill") action = { kind: "fill", tabId, ref: target, value: String(args.value) };
+        else if (name === "browser_press") action = { kind: "press", tabId, ref: target, key: browserKey(args.key)!.spec };
+        else if (name === "browser_select") action = { kind: "select", tabId, ref: target, values: browserChoices(args.values)! };
         // RealBud chooses both paths: a fresh private download target, and the granted file re-verified just before dispatch.
-        else if (name === "browser_download") { staged = await browserDownloadTarget(workroom); command = ["download", "--ref", target, "--out", staged, ...on, "--timeout", "60s"]; }
-        else if (upload) command = ["upload", "--ref", target, "--file", await grantedUploadPath(workroom, upload), ...on, "--timeout", "60s"];
-        else command = ["click", "--ref", target, ...on];
+        else if (name === "browser_download") { staged = await browserDownloadTarget(workroom); action = { kind: "download", tabId, ref: target, path: staged }; }
+        else if (upload) action = { kind: "upload", tabId, ref: target, path: await grantedUploadPath(workroom, upload) };
+        else action = { kind: "click", tabId, ref: target };
         if (Object.hasOwn(TASK_TOOLS, name)) {
           const at = new URL(url); const choices = browserChoices(args.values);
           logged = { grantId: grant.id, tool: name, origin: at.origin, path: at.pathname, label: redactSecretsInText(label).slice(0, 200),
@@ -423,14 +481,16 @@ export async function startBrowserBroker(options: {
             ...(upload ? { upload: { fileIdHash: hash(upload.name), sha256: upload.sha256 } } : {}) };
         }
       }
-      await currentTab(tabId, signal); check(signal); snapshots.delete(tabId);
+      const current = await currentTab(tabId, signal); check(signal);
+      if (taskAllowed && (current.url !== url || authorize(name, url, args, snapshots.get(tabId)?.text, taskScope).decision !== "allow")) throw problem(CHANGED);
+      snapshots.delete(tabId);
       if (approval) { await approvals.update(approval.id, { outcome: "dispatching" }); claim = approval.id; }
       receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
-      const result = await runtime.command(command, signal); check(signal);
+      const result = await runtime.perform(owner, action, signal); check(signal);
       let saved: BrowserDownloadReceipt | undefined;
       if (staged) {
         // The helper confirmed the capture; a file that cannot be kept privately is a known failure, not an unknown effect.
-        try { saved = await saveBrowserDownload(workroom, staged, result.suggested_filename ?? result.filename); } catch (error) {
+        try { saved = await saveBrowserDownload(workroom, staged, result.suggested_filename ?? result.suggestedFilename ?? result.filename); } catch (error) {
           operations.finish(receipt, "failed"); receipt = undefined;
           if (logged) publish("note", `The download on ${new URL(logged.origin).hostname} could not be kept. Nothing was saved.`, { ...logged, outcome: "failed" });
           throw error;
@@ -443,7 +503,14 @@ export async function startBrowserBroker(options: {
         publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Read the page back to confirm its result.`);
       }
       if (logged) publish("action", actionNote(logged, saved), { ...logged, outcome: "succeeded", ...(saved ? { download: saved } : {}) });
-      if (saved) return text({ downloaded: saved, note: "Saved in this task's private folder. Read the page again before the next step; do not download it again." });
+      if (saved) {
+        const attachRoot = options.attachRoot === undefined ? DATA_DIR : options.attachRoot;
+        let attachment: { path: string; name: string } | null = null;
+        if (attachRoot !== null) { try { attachment = await attachDownload(attachRoot, workroom, saved); } catch { attachment = null; } }
+        return text({ downloaded: saved, ...(attachment ? { attachment } : {}),
+          note: attachment ? "Saved in this task's private folder and attached to the workroom at the attachment path; read it with the file read tool. It was not opened. Read the page again before the next step; do not download it again."
+            : "Saved in this task's private folder. This file type is not readable in the workroom, and it was not opened. Read the page again before the next step; do not download it again." });
+      }
       return text("The browser acknowledged the step. Read the page again to verify its result; do not repeat the action.");
     } catch (error) {
       if (claim && approval) {

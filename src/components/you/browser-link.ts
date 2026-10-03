@@ -99,10 +99,35 @@ const MODEL_ACCESS: Record<Exclude<ModelAccessState, "skipped">, string> = {
   "not-yet": `Bud’s model access has not arrived from your account yet. ${CHECKS_AGAIN} If it still hasn’t arrived after the next update, ${START_AGAIN_STEP}.`,
   failed: "Bud’s model access is not set up yet. Use Update status to try again.",
 };
-/** One plain sentence on where Bud's model access stands, with the next step. */
-export function modelAccessMessage(status: OfficeLinkStatus | null): string | null {
+/** Known local recovery failures become fixed product copy, never file paths,
+ * credentials or arbitrary upstream error text from the saved status. */
+export function officeLinkRecoveryMessage(status: OfficeLinkStatus | null): string | null {
+  const error = status?.error;
+  if (typeof error !== "string") return null;
+  if (/^Saved settings need recovery\b/i.test(error)) {
+    return "Saved settings on this computer need recovery. Your original settings are kept. Contact RealBud support before trying setup again.";
+  }
+  if (/^This computer[’']s service setup needs local storage recovery\b/i.test(error)) {
+    return "Bud’s service setup needs local storage recovery. Existing settings are kept. Contact RealBud support before trying setup again.";
+  }
+  if (/^This computer[’']s saved settings or private service storage need recovery\b/i.test(error)) {
+    return "This computer’s saved settings or private service storage need recovery. Your work is kept. Contact RealBud support before trying office setup again.";
+  }
+  if (/^(?:The saved website link needs (?:private-file )?recovery|The model access for this computer needs recovery|This computer[’']s service setup needs recovery|Service withdrawal needs recovery)\b/i.test(error)) {
+    return "This computer’s saved service setup needs recovery. Your work is kept. Contact RealBud support before linking again.";
+  }
+  return null;
+}
+
+/** One plain sentence on where Bud's model access stands. Passive surfaces
+ * must not point at the website card's separate Update status action. */
+export function modelAccessMessage(status: OfficeLinkStatus | null, options: { passive?: boolean } = {}): string | null {
   const access = modelAccessState(status);
   if (!access) return null;
+  const recovery = officeLinkRecoveryMessage(status);
+  if (recovery && access !== "ready") return recovery;
+  if (options.passive && access === "failed") return "Bud’s model access is not set up yet. Your office connection is saved. Contact RealBud support if setup stays stopped.";
+  if (options.passive && access === "not-yet") return "Bud’s model access has not arrived from your account yet. Keep RealBud open. Contact RealBud support if setup stays pending.";
   if (access !== "skipped") return MODEL_ACCESS[access];
   const reason = status?.provisioningSkipped ?? "";
   return isProvisioningSkipReason(reason) ? SKIPPED[reason]

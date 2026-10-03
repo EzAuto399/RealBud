@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DeskSnapshot } from "../../shared/contracts.ts";
-import { deskCheckAction, workdayGuide } from "./workday";
+import { deskCheckAction, missedCheckLine, workdayGuide } from "./workday";
 
 function snapshot(patch: Partial<DeskSnapshot> = {}): DeskSnapshot {
   return {
@@ -57,7 +57,7 @@ describe("workdayGuide", () => {
     expect(guide).toMatchObject({
       phase: "worker-miss",
       eyebrow: "Live check missed",
-      title: "Facts stay held",
+      title: "Check didn't run",
       action: "practice",
       actionLabel: "Run the sample morning",
     });
@@ -150,5 +150,17 @@ describe("book label", () => {
   });
   it("never claims a book it has not loaded", () => {
     expect(workdayGuide({ connected: true, desk: null, workerReady: false }).bookLabel).toBe("Book loading");
+  });
+});
+
+describe("missedCheckLine", () => {
+  it("says once, in plain words, why the check did not run", () => {
+    expect(missedCheckLine("Bud is not installed — open Workspace → Settings & help. Facts stay held.")).toBe("Bud isn't set up yet, so this morning's check didn't run. Saved results are shown.");
+    expect(missedCheckLine("Bud needs an update — open Workspace → Settings & help. Facts stay held.")).toBe("Bud needs an update, so this morning's check didn't run. Saved results are shown.");
+    expect(missedCheckLine("Bud isn't installed yet. Install it from Workspace. Saved facts are unchanged.")).toBe("Bud isn't set up yet, so this morning's check didn't run. Saved results are shown.");
+    expect(missedCheckLine("Bud isn't set up yet. Finish setup in Workspace. Saved facts are unchanged.")).toBe("Bud isn't set up yet, so this morning's check didn't run. Saved results are shown.");
+    expect(missedCheckLine("No model connection")).toContain("model connection needs attention");
+    expect(missedCheckLine("Bud answered without ledger facts — facts stay held.")).toBe("The check didn't finish. The last saved results are shown.");
+    expect(missedCheckLine(null)).toBe("The check didn't finish. The last saved results are shown.");
   });
 });

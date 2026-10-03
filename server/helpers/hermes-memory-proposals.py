@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 REQ_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 MAX_INPUT = 64 * 1024
-REVIEW_LOCATION = "You → Bud → Bud’s memory"
+REVIEW_LOCATION = "Workspace → What Bud learned"
 KEY_DOMAIN = b"realbud-memory-propose-key-v1\0"
 JOURNAL_DOMAIN = b"realbud-memory-propose-v1\0"
 CLOSED_DOMAIN = b"realbud-memory-propose-closed-v2\0"
@@ -612,6 +612,10 @@ def _write_stage(review: Any, ctx: Any, stage: str, blob: bytes, digest: str) ->
         if data is None or review._sha(data) != digest:
             raise review.ReviewError("recovery-required")
         return
+    if review._sha(blob) != digest:
+        # The journaled proposal cannot be reproduced (memory moved under a
+        # pinned replace/remove): the prepared journal stays for recovery.
+        raise review.ReviewError("conflict")
     if len(blob) > review.MAX_BYTES:
         raise review.ReviewError("capacity")
     if _count_dir(review, ctx, _proposals_dir(ctx)) + 1 > review.MAX_DIR:
@@ -643,11 +647,9 @@ def _recover_prepared(
     parsed: Dict[str, Any],
     rec_key: str,
     item_id: str,
-    blob: bytes,
+    created_at: int,
 ) -> Dict[str, Any]:
     digest = journal["pendingDigest"]
-    if review._sha(blob) != digest:
-        raise review.ReviewError("conflict")
     if journal["id"] != item_id or journal["scopeId"] != parsed["scope_id"]:
         raise review.ReviewError("recovery-required")
     if journal["requestKey"] != rec_key or journal["requestDigest"] != parsed["request_digest"]:
@@ -676,28 +678,25 @@ def _recover_prepared(
         return _commit_published(review, ctx, parsed, rec_key, item_id, digest)
     s_st = _lstat_opt(review, stage)
     p_st = _lstat_opt(review, pending)
-    if p_st is None:
-        # Retrying a prepared intent must not publish under newly disabled or
-        # incompatible native memory state. Already visible pending work is
-        # reviewed afresh by the existing preview/decision path.
-        _dry_run(review, ctx, parsed["payload"])
-        _ensure_native_room(review, ctx, new_item=True)
-    if s_st is not None and p_st is not None:
-        data = _read_pair(review, ctx.profile_dir, stage, pending)
-        if review._sha(data) != digest:
-            raise review.ReviewError("conflict")
-        _unlink_stage(review, ctx, stage, pending, digest)
+    if p_st is not None:
+        if s_st is not None:
+            data = _read_pair(review, ctx.profile_dir, stage, pending)
+            if review._sha(data) != digest:
+                raise review.ReviewError("conflict")
+            _unlink_stage(review, ctx, stage, pending, digest)
+        else:
+            live = review._safe_read(ctx.profile_dir, pending, missing_ok=True)
+            if live is None or review._sha(live) != digest:
+                raise review.ReviewError("recovery-required")
         return _commit_published(review, ctx, parsed, rec_key, item_id, digest)
-    if s_st is not None and p_st is None:
-        _write_stage(review, ctx, stage, blob, digest)
-        _link_stage(review, ctx, stage, pending, digest)
-        _unlink_stage(review, ctx, stage, pending, digest)
-        return _commit_published(review, ctx, parsed, rec_key, item_id, digest)
-    if s_st is None and p_st is not None:
-        live = review._safe_read(ctx.profile_dir, pending, missing_ok=True)
-        if live is None or review._sha(live) != digest:
-            raise review.ReviewError("recovery-required")
-        return _commit_published(review, ctx, parsed, rec_key, item_id, digest)
+    # Retrying a prepared intent must not publish under newly disabled or
+    # incompatible native memory state. Already visible pending work is
+    # reviewed afresh by the existing preview/decision path. The bytes are
+    # rebuilt from the request (pinned against current memory on the pinning
+    # runtime); a surviving stage is reused only if it matches the journal.
+    payload = _dry_run(review, ctx, parsed["payload"])
+    _ensure_native_room(review, ctx, new_item=True)
+    blob = _pending_bytes(item_id, created_at, payload)
     _write_stage(review, ctx, stage, blob, digest)
     _link_stage(review, ctx, stage, pending, digest)
     _unlink_stage(review, ctx, stage, pending, digest)
@@ -738,13 +737,17 @@ def _success_existing(
     raise review.ReviewError("recovery-required")
 
 
-def _dry_run(review: Any, ctx: Any, payload: Dict[str, Any]) -> None:
+def _dry_run(review: Any, ctx: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate against current memory and return the payload to stage: on the pinning
+    runtime each replace/remove carries the full entry it selects now (matched_entry)."""
     target = payload["target"]
     with review._target_lock(ctx, target, required=False):
         review._refresh_config(ctx)
         review._require_ready(ctx, target)
         before = review._read_memory(ctx, target)
-        review._apply_dry(ctx, payload, before)
+        pinned = review._pin_entries(ctx, payload, before)
+        review._apply_dry(ctx, pinned, before)
+    return pinned
 
 
 def propose(review: Any, ctx: Any, scope_id: Any, input: Any) -> Dict[str, Any]:
@@ -793,9 +796,7 @@ def propose(review: Any, ctx: Any, scope_id: Any, input: Any) -> Dict[str, Any]:
             return _ok(item_id)
         if journal["state"] == "published":
             return _success_existing(review, ctx, journal, item_id, parsed["request_digest"])
-        created_at = journal["createdAt"] // 1000
-        blob = _pending_bytes(item_id, created_at, parsed["payload"])
-        return _recover_prepared(review, ctx, journal, parsed, rec_key, item_id, blob)
+        return _recover_prepared(review, ctx, journal, parsed, rec_key, item_id, journal["createdAt"] // 1000)
     receipt = review._read_receipt(ctx, item_id)
     if receipt is not None:
         raise review.ReviewError("recovery-required")
@@ -809,9 +810,9 @@ def propose(review: Any, ctx: Any, scope_id: Any, input: Any) -> Dict[str, Any]:
     if nprop + 2 > review.MAX_DIR:
         raise review.ReviewError("capacity")
     _ensure_native_room(review, ctx, new_item=True)
-    _dry_run(review, ctx, parsed["payload"])
+    payload = _dry_run(review, ctx, parsed["payload"])
     created_at = int(time.time())
-    blob = _pending_bytes(item_id, created_at, parsed["payload"])
+    blob = _pending_bytes(item_id, created_at, payload)
     if len(blob) > review.MAX_BYTES:
         raise review.ReviewError("capacity")
     digest = review._sha(blob)

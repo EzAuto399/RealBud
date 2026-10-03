@@ -1,0 +1,34 @@
+{
+  "version": "hermios-2026-10-02-r3",
+  "productId": "hermios-crm",
+  "capability": "hermios.crm",
+  "currency": "AUD",
+  "gstInclusive": true,
+  "gstBasisPoints": 1000,
+  "trialDays": 14,
+  "trialCardRequired": true,
+  "termsReference": "hermios-crm-terms-2026-10-02",
+  "square": { "planName": "Hermios CRM" },
+  "options": [
+    {
+      "key": "per_person", "name": "Per person", "role": "anchor", "billing": "square_subscription", "cadence": "monthly",
+      "includedPeople": 1, "baseCents": "4900", "extraPersonCents": "4900", "requiresCareFee": false,
+      "square": { "variationName": "Hermios CRM per person, monthly", "baseItem": "Hermios CRM person", "extraItem": "Hermios CRM person" }
+    },
+    {
+      "key": "office_monthly", "name": "Office pack", "role": "default", "billing": "square_subscription", "cadence": "monthly",
+      "includedPeople": 3, "baseCents": "12900", "extraPersonCents": "3900", "requiresCareFee": false,
+      "square": { "variationName": "Hermios Office pack, monthly", "baseItem": "Hermios Office pack (3 people), monthly", "extraItem": "Hermios extra person, monthly" }
+    },
+    {
+      "key": "office_yearly", "name": "Office pack, paid yearly", "role": "offer", "billing": "square_subscription", "cadence": "yearly",
+      "includedPeople": 3, "baseCents": "129000", "extraPersonCents": "39000", "requiresCareFee": false,
+      "square": { "variationName": "Hermios Office pack, yearly", "baseItem": "Hermios Office pack (3 people), yearly", "extraItem": "Hermios extra person, yearly" }
+    },
+    {
+      "key": "bundle", "name": "RealBud + Hermios bundle", "role": "offer", "billing": "realbud_invoice", "cadence": "monthly",
+      "includedPeople": 3, "baseCents": "9900", "extraPersonCents": "3900", "requiresCareFee": true,
+      "square": { "variationName": "Hermios with RealBud, monthly", "baseItem": "Hermios with RealBud (3 people), monthly", "extraItem": "Hermios extra person, monthly" }
+    }
+  ]
+}

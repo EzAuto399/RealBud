@@ -7,12 +7,27 @@ const LABELED_PLACE =
   /\b(?:for|at|property|address|case)\s*[:#]\s*([^\n,;]{2,48})/i;
 
 const ALIAS: Record<string, string> = {
-  bud_connected_app_action: "reviewing Bud's connected-app action",
+  bud_connected_app_action: "reviewing an action Bud prepared",
   read_file: "reading a file",
   read: "reading a file",
   write_file: "writing a file",
   write: "writing a file",
   edit: "writing a file",
+  read_page: "reading a web page",
+  crm_search: "searching Hermios CRM",
+  crm_get_record: "opening a Hermios CRM record",
+  crm_set_stage: "proposing a Hermios CRM stage change",
+  crm_add_note: "proposing a Hermios CRM note",
+  crm_add_task: "proposing a Hermios CRM task",
+  set_reminder: "setting a reminder",
+  views_list: "checking saved views",
+  views_create: "proposing a new saved view",
+  views_rename: "proposing a saved view name",
+  views_set_visible: "proposing to show or hide a saved view",
+  views_reorder: "proposing a saved view order",
+  views_delete: "proposing to delete a saved view",
+  bank_accounts_list: "checking the bank accounts",
+  bank_transactions_list: "reading bank transactions",
   web_search: "searching the web",
   search: "searching the web",
   fetch: "reading a web page",
@@ -54,6 +69,9 @@ function humanise(id: string): string {
 export function toolLabel(name: string): string {
   const id = normalizeToolId(name);
   if (!id) return "working";
+  // An office connector's tool (`<connector>__<tool>`): its name is the service's own text.
+  const added = /^([a-z][a-z0-9-]{1,39})__([a-z0-9_.-]{1,64})$/.exec(id);
+  if (added) return `using ${humanise(added[1]!)} (${humanise(added[2]!)})`;
   if (id.includes("desk")) return "reading the Desk book";
   const exact = ALIAS[id];
   if (exact) return exact;

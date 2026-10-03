@@ -13,6 +13,16 @@ describe("parseConnectionIntent", () => {
     expect(parseConnectionIntent("authorize Airtable workspace")).toEqual({ slug: "airtable", label: "Airtable" });
   });
 
+  it("reads 'connect to X' as X and keeps an unknown app in the person's own words", () => {
+    expect(parseConnectionIntent("connect to notion")).toEqual({ slug: "notion", label: "Notion" });
+    expect(parseConnectionIntent("connect to xero")).toEqual({ slug: "xero", label: "xero" });
+    expect(parseConnectionIntent("Connect MYOB")).toEqual({ slug: "myob", label: "MYOB" });
+  });
+
+  it("leaves the bank feed to RealBud's own answer", () => {
+    for (const text of ["connect to redbark", "Connect Redbark", "connect my bank", "set up our bank feed", "link the bank account"]) expect(parseConnectionIntent(text)).toBeNull();
+  });
+
   it("does not turn advice or compound consequential work into an automatic connection", () => {
     expect(parseConnectionIntent("how do I connect Notion?")).toBeNull();
     expect(parseConnectionIntent("connect Notion and delete a page")).toBeNull();

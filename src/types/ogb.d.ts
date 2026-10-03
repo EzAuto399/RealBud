@@ -64,6 +64,22 @@ declare global {
     saved?: boolean;
   }
 
+  /** The native Hermios view. The person signs in to Hermios themselves; no
+   * credential, cookie or page content crosses this bridge. Each call resolves
+   * true when the view did what was asked. */
+  interface HermiosViewBridge {
+    /** Place and show the view over this rectangle, in CSS pixels. The first
+     * show opens the Hermios sign-in page; later ones keep the current page. */
+    show(bounds: { x: number; y: number; width: number; height: number }): Promise<boolean>;
+    hide(): Promise<boolean>;
+    back(): Promise<boolean>;
+    reload(): Promise<boolean>;
+    /** Clear Hermios' saved sign-in on this computer only, then show sign-in. */
+    signOut(): Promise<boolean>;
+    /** Open the current Hermios page, or its sign-in page, in the default browser. */
+    openExternal(): Promise<boolean>;
+  }
+
   interface Window {
     ogb?: {
       platform: NodeJS.Platform;
@@ -119,6 +135,9 @@ declare global {
       /** Help and support: shows a save dialog and writes one redacted plain-text
        * report. Resolves with the outcome only, never a path or the contents. */
       saveSupportFile?: () => Promise<unknown>;
+      /** Hermios, the office CRM, in its own signed-in view inside this window.
+       * Absent in older builds and in a plain browser. */
+      hermiosView?: HermiosViewBridge;
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {

@@ -11,7 +11,7 @@ export const BUD_IDENTITY =
 export function budModelAnswerLine(choiceId: unknown): string {
   const choice = managedModelChoice(choiceId);
   if (!choice) {
-    return "If asked which AI model you use, say it is the model this office selected in RealBud (You → Bud), provided through RealBud.";
+    return "If asked which AI model you use, say it is the model this office selected in RealBud (Workspace → Set up Bud), provided through RealBud.";
   }
   const name = choice.label.split(" · ")[0]!;
   const effort = choice.effort === "xhigh" ? "extra high" : choice.effort;

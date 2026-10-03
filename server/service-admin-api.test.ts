@@ -71,7 +71,7 @@ beforeAll(async () => {
     writeFileSync(join(data, "config.json"), JSON.stringify({ profile: { name: `Fixture ${name}` },
       instances: { fixture: { driver: "not-a-real-driver" } }, composio: { key: "ak_fictional-never-contact-provider", apiKey: 'ak_fictional_legacy_alias' } }));
     writeFileSync(join(data, "service-admin.json"), JSON.stringify({ version: 1, passwordVerifier: await createServiceAdminPasswordVerifier(password) }), { mode: 0o600 });
-    writeFileSync(join(data, "service-installation.json"), JSON.stringify({ schema: 1, companyId: "fixture-company", hostInstallationId: `fixture-${name}` }));
+    writeFileSync(join(data, "service-installation.json"), JSON.stringify({ schema: 1, companyId: "fixture-company", hostInstallationId: `fixture-${name}` }), { mode: 0o600 });
     writeFileSync(join(data, "service-trust-keys.json"), JSON.stringify({ schema: 1, keys: [{ keyId: "fixture-key", publicKeyPem: keys.publicKey.export({ type: "spki", format: "pem" }) }] }));
     const socket = createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening");
     const port = (socket.address() as { port: number }).port;

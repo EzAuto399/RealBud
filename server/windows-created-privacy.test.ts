@@ -227,14 +227,23 @@ describe('boot-time creators in the data directory', () => {
     expect(acl.launches).toEqual([]);
   });
 
-  it('seedVault protects its folders and empty default documents in one process, then writes them', () => {
+  it('seedVault protects its new folders and documents, including each atomic replacement before content', () => {
     const vault = join(fixture(), 'vault');
     seedVault(vault);
-    expect(acl.launches).toEqual([[
-      ...[vault, join(vault, 'properties'), join(vault, 'owners'), join(vault, 'decisions')].map(path => [path, 'directory', 'restrict', null]),
+    expect(acl.launches[0]).toEqual([
+      ...[vault, ...['properties', 'owners', 'decisions', 'uploads', 'bud-work'].map(name => join(vault, name))].map(path => [path, 'directory', 'restrict', null]),
       ...Object.keys(DEFAULT_VAULT_DOCUMENTS).map(name => [join(vault, name), 'file', 'restrict', 0]),
-    ]]);
-    for (const [name, content] of Object.entries(DEFAULT_VAULT_DOCUMENTS)) expect(readFileSync(join(vault, name), 'utf8')).toBe(content);
+    ]);
+    expect(acl.launches).toHaveLength(1 + Object.keys(DEFAULT_VAULT_DOCUMENTS).length);
+    for (const [name, content] of Object.entries(DEFAULT_VAULT_DOCUMENTS)) {
+      const path = join(vault, name), replacement = held.renames.find(([, target]) => target === path);
+      expect(replacement).toBeDefined();
+      expect(acl.launches).toContainEqual([[replacement![0], 'file', 'restrict', 0]]);
+      expect(acl.restricted.has(identity(path))).toBe(true);
+      expect(existsSync(replacement![0])).toBe(false);
+      expect(readFileSync(path, 'utf8')).toBe(content);
+    }
+    expect(acl.unadmitted).toEqual([]);
     acl.launches.length = 0; seedVault(vault);
     expect(acl.launches).toEqual([]);
   });
@@ -247,13 +256,26 @@ describe('boot-time creators in the data directory', () => {
     expect(restricted()).toContain(join(vault, 'USER.md'));
   });
 
-  it('a new decisions day log is protected while empty; later lines add no launch for it', () => {
-    const vault = join(fixture(), 'vault'); seedVault(vault); acl.launches.length = 0;
+  it('each decisions day log replacement is protected while empty and retains its descriptor after rename', () => {
+    const vault = join(fixture(), 'vault'); seedVault(vault); acl.launches.length = 0; held.renames.length = 0;
     appendAllowedLine('fictional-property', 'Allowed a fictional reminder', vault);
     const day = join(vault, 'decisions', `${new Date().toISOString().slice(0, 10)}.md`);
-    expect(acl.launches.flat()).toContainEqual([day, 'file', 'restrict', 0]);
-    acl.launches.length = 0; appendAllowedLine('fictional-property', 'Allowed another fictional reminder', vault);
+    const first = held.renames.find(([, target]) => target === day);
+    expect(first).toBeDefined();
+    expect(acl.launches.flat()).toContainEqual([first![0], 'file', 'restrict', 0]);
+    expect(acl.restricted.has(identity(day))).toBe(true);
+    expect(existsSync(first![0])).toBe(false);
+    acl.launches.length = 0; held.renames.length = 0;
+    appendAllowedLine('fictional-property', 'Allowed another fictional reminder', vault);
+    const second = held.renames.find(([, target]) => target === day);
+    expect(second).toBeDefined();
+    expect(second![0]).not.toBe(first![0]);
+    expect(acl.launches.flat()).toContainEqual([second![0], 'file', 'restrict', 0]);
+    expect(acl.restricted.has(identity(day))).toBe(true);
+    expect(existsSync(second![0])).toBe(false);
+    expect(acl.unadmitted).toEqual([]);
     expect(restricted()).not.toContain(day);
+    expect(readFileSync(day, 'utf8')).toContain('Allowed a fictional reminder');
     expect(readFileSync(day, 'utf8')).toContain('Allowed another fictional reminder');
   });
 

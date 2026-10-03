@@ -1,9 +1,13 @@
-import { bankBatchSource, bankDigest, createBankReferenceBatch, decodeBankSource, reviewBankReferences, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
-import type { BankDownloadArtifact } from "../shared/bank-source.ts";
+import { bankBatchSource, bankDigest, bankImportArtifact, createBankReferenceBatch, decisionDisposition, decodeBankSource, reviewBankReferences, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
+import { isLocalDate, REDBARK_ACCOUNT_ID, REDBARK_CONNECTION_ID, REDBARK_TRANSACTION_ID, type BankDownloadArtifact, type RedbarkBatchProvenance } from "../shared/bank-source.ts";
+import { join } from "node:path";
+import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { WorkflowDatabase, workflowConflict } from "./workflow-database.ts";
 import type { BankBatchSummary, BankHistoryPage, BankHistoryQuery } from '../shared/bank-reference-history.ts';
 import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
+import type { W1ImportProof } from './w1-rei-workflow.ts';
+import { bankFirstPass } from './bank-reference-match.ts';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
 type Cursor = { version: 1; kind: 'bank-history'; high: number; before: number };
@@ -66,13 +70,67 @@ export class BankReferenceStore {
       return rows;
     });
   }
-  get(id: string) {
+  get(id: string) { return this.view(this.load(id)); }
+  private load(id: string) {
     const record = this.db.get<SavedBankBatch>("bank", id);
     if (!record) throw Object.assign(new Error("That bank review is no longer available."), { status: 404 });
     if (Number.isInteger(record.value?.version) && record.value.version > 2) throw Object.assign(new Error("This bank review needs a newer RealBud version."), { status: 409 });
     return this.validated(record);
   }
+  /** A review as shown to the person: the saved record plus the first-pass
+   * suggestions, derived from the saved batch on every read and never stored. */
+  private view<T extends { value: SavedBankBatch }>(record: T) { return { ...record, firstPass: bankFirstPass(record.value.batch) }; }
   create(input: BankReferenceInput | BankReferenceUpload) {
+    // Source provenance is set only by the server's own Redbark pull.
+    if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
+      throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
+    }
+    return this.view(this.save(input));
+  }
+  /** Internal: a batch generated from validated Redbark rows. */
+  createFromRedbark(input: BankReferenceUpload) {
+    if (!input?.source?.provenance) throw Object.assign(new Error("The bank source record failed its integrity check."), { status: 400 });
+    return this.save(input);
+  }
+  /** The REI import file of a reviewed batch: only its import rows, with every source row's disposition. */
+  importArtifact(id: string) {
+    const { value } = this.load(id);
+    if (!value.result) throw Object.assign(new Error("Review every transaction before preparing the REI import file."), { status: 409 });
+    // Reviews that kept only changed rows: a changed reference was an assignment, everything else was kept (now: held).
+    const decisions = value.decisions ?? value.batch.rows.map((row): BankReferenceDecision => {
+      const change = value.result!.changes.find(item => item.rowId === row.id);
+      const rule = change && value.batch.input.rules.find(item => item.reference === change.to);
+      return rule ? { rowId: row.id, action: "assign", propertyId: rule.propertyId, reason: change!.reason } : { rowId: row.id, action: "keep", reason: "Earlier review kept this row." };
+    });
+    const result = bankImportArtifact(value.batch, decisions);
+    return { ...result, artifact: result.artifact && { ...result.artifact, filename: `REI-import-${result.artifact.digest.slice(0, 12)}.csv` } };
+  }
+  /** The REI import of a reviewed Redbark batch was read back complete by the W1
+   * workflow: advance that account's coverage. Nothing else moves it. `proof` must
+   * be the host's own W1ImportProof for this batch, its import file and REI account
+   * (the host hands it over only while it matches the saved account: sameW1Destination). */
+  async confirmRedbarkImport(coverage: RedbarkCoverage, id: unknown, expectedRevision: unknown, proof?: W1ImportProof | null) {
+    if (typeof id !== "string") throw Object.assign(new Error("Choose the reviewed bank batch whose import was confirmed."), { status: 400 });
+    const { value } = this.load(id);
+    const provenance = value.batch.source?.provenance;
+    if (!provenance) throw Object.assign(new Error("This review did not come from the Redbark bank source."), { status: 409 });
+    if (value.supersededBy) throw Object.assign(new Error("This review was replaced. Confirm the import of its newest version."), { status: 409 });
+    if (!value.result) throw Object.assign(new Error("Review every transaction and prepare the REI file before confirming its import."), { status: 409 });
+    const file = this.importArtifact(id);
+    const imported = file.rows.filter(row => row.disposition === "import").map(row => row.rowId);
+    const destination = proof?.destination;
+    if (!proof || proof.kind !== "w1-rei-import-proof" || proof.batchId !== id || proof.version !== bankReviewVersion(id) || !file.artifact || proof.artifactSha256 !== file.artifact.digest ||
+        destination?.portal !== "rei-cloud" || (destination.urlValue !== undefined && (typeof destination.urlValue !== "string" || !destination.urlValue.trim())) || typeof destination.marker !== "string" || !destination.marker.trim() ||
+        !Array.isArray(proof.rowIds) || proof.rowIds.length !== imported.length || [...proof.rowIds].sort().join("\n") !== [...imported].sort().join("\n"))
+      throw Object.assign(new Error("REI's Receipt Register has not been read back complete for this batch's import file and REI account. Coverage was not advanced."), { status: 409 });
+    // Held rows stay out of the confirmed set and are carried into every later
+    // pull until a person imports or excludes them, however old they get.
+    const settled = value.batch.rows.flatMap((_, index) => file.rows[index].disposition === "hold" ? [] : [index]);
+    const held: Record<string, RedbarkHeldRow> = {};
+    value.batch.rows.forEach((row, index) => { if (file.rows[index].disposition === "hold") held[provenance.transactionIds[index]] = { date: row.date, amount: row.amount, narrative: row.narrative, reference: row.reference, heldSince: provenance.runDate }; });
+    return coverage.confirm({ ...provenance, transactionIds: settled.map(index => provenance.transactionIds[index]) }, id, settled.map(index => value.batch.rows[index].date), expectedRevision, held);
+  }
+  private save(input: BankReferenceInput | BankReferenceUpload) {
     const batch = createBankReferenceBatch(input);
     // Repeated downloads of the exact same file reuse the existing review.
     const id = `bank:${batch.originalDigest}`;
@@ -86,18 +144,20 @@ export class BankReferenceStore {
   }
   review(id: string, revision: number, decisions: BankReferenceDecision[]) {
     return this.db.transaction(() => {
-      this.get(id);
-      return this.validated(this.db.update<SavedBankBatch>("bank", id, revision, value => {
+      this.load(id);
+      return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, revision, value => {
       validateSavedBankBatch(id,value);
       if (value.result || value.supersededBy) throw workflowConflict();
       const result = reviewBankReferences(value.batch, decisions);
       const byRow = new Map(decisions.map(decision => [decision.rowId, decision]));
       const retained = value.batch.rows.map(row => {
         const decision = byRow.get(row.id)!;
-        return {rowId:row.id,action:decision.action,reason:decision.reason.trim(),...(decision.action === 'assign' ? {propertyId:decision.propertyId} : {})};
+        // Import is saved as assign, the action earlier reviews and saved-review validation already know.
+        const action = decision.action === 'import' ? 'assign' : decision.action;
+        return {rowId:row.id,action,reason:decision.reason.trim(),...(decisionDisposition(action) === 'import' ? {propertyId:decision.propertyId} : {})};
       });
       return { ...value, version: 2, result, decisions: retained, reviewedAt: Date.now() };
-      }));
+      })));
     });
   }
   /** Atomic successor creation preserves previous artifacts. An identical retry
@@ -112,16 +172,16 @@ export class BankReferenceStore {
     const mapping = body.mapping as Pick<BankReferenceInput,'columns'|'dateFormat'|'rules'>;
     const reason = body.reason.trim(), revision = Number(body.revision);
     return this.db.transaction(() => {
-      const parent = this.get(id), source = bankBatchSource(parent.value.batch);
+      const parent = this.load(id), source = bankBatchSource(parent.value.batch);
       const batch = createBankReferenceBatch(parent.value.batch.version === 2 ? {...mapping,source:source.artifact} : {...mapping,csv:source.csv});
       const requestDigest = bankDigest(JSON.stringify({id,revision,reason,input:batch.input}));
       const existing = parent.value.supersededBy;
       if (existing) {
         if (existing.previousRevision !== revision || existing.requestDigest !== requestDigest || parent.revision !== revision + 1) throw workflowConflict();
-        const saved = this.get(existing.id);
+        const saved = this.load(existing.id);
         if (saved.value.amends?.id !== id || saved.value.amends.revision !== revision || saved.value.amends.reason !== reason ||
             bankDigest(JSON.stringify(saved.value.batch.input)) !== bankDigest(JSON.stringify(batch.input))) throw Object.assign(new Error('This bank review history needs recovery.'), {status:503});
-        return saved;
+        return this.view(saved);
       }
       if (parent.revision !== revision) throw workflowConflict();
       const version = bankReviewVersion(id) + 1;
@@ -132,11 +192,11 @@ export class BankReferenceStore {
       this.db.update<SavedBankBatch>('bank',id,revision,value => ({...value,version:2,
         ...(value.version === 1 && value.result ? {legacyDecisionsUnavailable:true as const} : {}),
         supersededBy:{id:nextId,previousRevision:revision,requestDigest}}));
-      return this.validated(saved);
+      return this.view(this.validated(saved));
     });
   }
   export(id: string, original = false): BankDownloadArtifact {
-    const { value } = this.get(id);
+    const { value } = this.load(id);
     let source: ReturnType<typeof bankBatchSource>;
     try { source = bankBatchSource(value.batch); }
     catch { throw Object.assign(new Error("The saved source failed its integrity check. Keep this review and recover the saved data."), { status: 503 }); }
@@ -149,5 +209,102 @@ export class BankReferenceStore {
         (value.result.byteLength !== undefined && result.artifact.byteLength !== value.result.byteLength) ||
         (value.result.encoding !== undefined && result.artifact.encoding !== value.result.encoding)) throw Object.assign(new Error("The prepared copy failed its integrity check."), { status: 503 });
     return { ...result.artifact, csv: result.csv, originalBytesCaptured: source.originalBytesCaptured };
+  }
+}
+
+/** One REI account: the same top-bar business code, and the same reicid or none on both. */
+export const sameW1Destination = (a: { urlValue?: string; marker: string }, b: { urlValue?: string; marker: string }) =>
+  a.marker === b.marker && (a.urlValue ?? "") === (b.urlValue ?? "");
+
+/** Days re-read before the confirmed coverage, for late postings. */
+export const REDBARK_OVERLAP_DAYS = 3;
+/** First pull for an account, before any import is confirmed. */
+export const REDBARK_FIRST_RUN_DAYS = 2;
+const RETAIN_CONFIRMED_DAYS = REDBARK_OVERLAP_DAYS + 7;
+export interface RedbarkCoverageState {
+  connection: string;
+  /** Last requested `to` date of a confirmed import (inclusive). */
+  coveredThrough: string;
+  revision: number;
+  confirmedAt: string;
+  lastBatchId: string;
+  /** Redbark ids already imported that a later overlapping window can return,
+   * with their row date; older entries are pruned. */
+  confirmed: Record<string, string>;
+  /** Rows a person held, kept with their bank data until imported or excluded (absent on older files). */
+  held?: Record<string, RedbarkHeldRow>;
+}
+/** A held Redbark row as it appeared in its review batch; `heldSince` is that batch's run date. */
+export interface RedbarkHeldRow { date: string; amount: string; narrative: string; reference: string; heldSince: string }
+const HELD_AMOUNT = /^-?(?:0|[1-9]\d{0,11})\.\d{2}$/;
+const heldText = (v: unknown, max: number) => typeof v === "string" && v.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(v);
+interface CoverageFile { version: 1; kind: "redbark-coverage"; accounts: Record<string, RedbarkCoverageState> }
+export const addDays = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const coverageHold = (): never => { throw Object.assign(new Error("The saved bank coverage needs recovery. No coverage was changed."), { status: 503 }); };
+
+export function validateCoverage(value: unknown): CoverageFile {
+  const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+  if (!object(value) || Object.keys(value).sort().join(",") !== "accounts,kind,version" || value.version !== 1 || value.kind !== "redbark-coverage" || !object(value.accounts)) return coverageHold();
+  for (const [account, state] of Object.entries(value.accounts)) {
+    if (!REDBARK_ACCOUNT_ID.test(account) || !object(state) || Object.keys(state).filter(key => key !== "held").sort().join(",") !== "confirmed,confirmedAt,connection,coveredThrough,lastBatchId,revision" ||
+        typeof state.connection !== "string" || !REDBARK_CONNECTION_ID.test(state.connection) || !isLocalDate(state.coveredThrough) ||
+        !Number.isSafeInteger(state.revision) || Number(state.revision) < 1 || typeof state.confirmedAt !== "string" || Number.isNaN(Date.parse(state.confirmedAt)) ||
+        typeof state.lastBatchId !== "string" || !/^bank:[a-f0-9]{64}(?::r\d{1,6})?$/.test(state.lastBatchId) || !object(state.confirmed) ||
+        Object.entries(state.confirmed).some(([id, date]) => !REDBARK_TRANSACTION_ID.test(id) || !isLocalDate(date)) ||
+        ("held" in state && (!object(state.held) || Object.entries(state.held).some(([id, row]) => !REDBARK_TRANSACTION_ID.test(id) || !object(row) ||
+          Object.keys(row).sort().join(",") !== "amount,date,heldSince,narrative,reference" || !isLocalDate(row.date) || !isLocalDate(row.heldSince) ||
+          typeof row.amount !== "string" || !HELD_AMOUNT.test(row.amount) || !heldText(row.narrative, 5000) || !heldText(row.reference, 500))))) return coverageHold();
+  }
+  return value as unknown as CoverageFile;
+}
+
+/** Per-account Redbark coverage cursor. Kept as a private 0600 file beside the
+ * workflow database (a new workflow record kind would need backup admission
+ * first). Writes are serialized in this process; the server is the only writer. */
+export class RedbarkCoverage {
+  private path: string;
+  private queue: Promise<unknown> = Promise.resolve();
+  constructor(directory: string) { this.path = join(directory, "bank-source", "redbark-coverage.json"); }
+  private async load(): Promise<CoverageFile> {
+    const saved = await readPrivateJson(this.path, 2_000_000);
+    return saved === undefined ? { version: 1, kind: "redbark-coverage", accounts: {} } : validateCoverage(saved);
+  }
+  private serial<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+  async state(account: string): Promise<RedbarkCoverageState | null> {
+    return (await this.load()).accounts[account] ?? null;
+  }
+  /** cursor − overlap … today; a missed run simply widens it. */
+  window(state: RedbarkCoverageState | null, today: string): { from: string; to: string } {
+    if (!isLocalDate(today)) throw Object.assign(new Error("The office date is invalid."), { status: 400 });
+    const from = state ? addDays(state.coveredThrough, -REDBARK_OVERLAP_DAYS) : addDays(today, -REDBARK_FIRST_RUN_DAYS);
+    return { from: from > today ? today : from, to: today };
+  }
+  /** `held`: this batch's held rows. Its other rows (provenance.transactionIds) are settled and stop being carried. */
+  confirm(provenance: RedbarkBatchProvenance, batchId: string, rowDates: string[], expectedRevision: unknown, held: Record<string, RedbarkHeldRow> = {}) {
+    return this.serial(async () => {
+      const file = await this.load();
+      const current = file.accounts[provenance.account] ?? null;
+      // An identical retry after a lost reply reconciles to the saved result.
+      if (current?.lastBatchId === batchId) return { reused: true, account: provenance.account, ...current };
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== (current?.revision ?? 0)) throw Object.assign(new Error("The bank coverage changed. Refresh it before confirming this import."), { status: 409 });
+      if (current && current.connection !== provenance.connection) throw Object.assign(new Error("This batch came from a different bank connection for this account. Review it before confirming."), { status: 409 });
+      if (current && provenance.requestedFrom > addDays(current.coveredThrough, 1)) throw Object.assign(new Error("This batch starts after the confirmed coverage, so it would leave a gap. Pull a new batch instead."), { status: 409 });
+      const coveredThrough = current && current.coveredThrough > provenance.requestedTo ? current.coveredThrough : provenance.requestedTo;
+      const keepFrom = addDays(coveredThrough, -RETAIN_CONFIRMED_DAYS);
+      const confirmed: Record<string, string> = {};
+      const merged: [string, string][] = [...Object.entries(current?.confirmed ?? {}), ...provenance.transactionIds.map((id, index): [string, string] => [id, rowDates[index]])];
+      for (const [id, date] of merged) if (date >= keepFrom) confirmed[id] = date;
+      const stillHeld: Record<string, RedbarkHeldRow> = { ...current?.held };
+      for (const [id, row] of Object.entries(held)) stillHeld[id] = { ...row, heldSince: stillHeld[id]?.heldSince ?? row.heldSince };
+      for (const id of provenance.transactionIds) delete stillHeld[id];
+      const next: RedbarkCoverageState = { connection: provenance.connection, coveredThrough, revision: (current?.revision ?? 0) + 1,
+        confirmedAt: new Date().toISOString(), lastBatchId: batchId, confirmed, ...(Object.keys(stillHeld).length ? { held: stillHeld } : {}) };
+      await writePrivateJson(this.path, { ...file, accounts: { ...file.accounts, [provenance.account]: next } }, { maxBytes: 2_000_000, validate: validateCoverage });
+      return { reused: false, account: provenance.account, ...next };
+    });
   }
 }

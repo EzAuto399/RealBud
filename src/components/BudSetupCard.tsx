@@ -20,7 +20,7 @@ import {
 
 import { fmtDateTime } from "@/lib/au";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
-import { BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy, budSetupJourney, type BudSetupStep, type ManagedModelStatus } from "@/lib/bud-setup";
+import { BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy, budSetupJourney, type BudSetupStep, type ManagedModelStatus, budDocumentToolsNeedRepair } from "@/lib/bud-setup";
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { workerIssueLine } from "@/lib/worker-issues";
@@ -33,7 +33,7 @@ import { ManagedBudStatus } from "./ManagedBudStatus";
 import { ConnectOffice } from "./ConnectOffice";
 import { WEBSITE_LINK_CHANGED } from "./you/browser-link";
 
-type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "uninstall" | "cancel-install";
+type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "cancel-install";
 
 type InstallStatus = {
   state: "idle" | "preflight" | "running" | "verifying" | "done" | "failed";
@@ -120,8 +120,8 @@ function BudCapabilities({ onShowAsk, onSchedule }: { onShowAsk?: () => void; on
       <dl className="divide-y divide-line" aria-label="Bud capabilities">
         {[
           ["Use your property context", "Prepare updates and priorities from the book, notes and previous work."],
-          ["Compare files and figures", "Read attached documents and images, calculate differences and prepare working files."],
-          ["Research with sources", "Check public information and bring back links, dates and unanswered questions."],
+          ["Compare files and figures", "Read attached documents and images, calculate differences and keep text or CSV working files."],
+          ["Research from your sources", "Work from your documents, connected apps and pages you open in the work browser, citing where each finding came from."],
           ["Prepare repeatable work", "Turn a task into a reviewed plan you can run on demand or schedule."],
           ["Guide work in progress", "Steer the current task, queue a follow-up, or stop Bud from Ask."],
           ["Assist in a named portal", "Review and attach one permitted site, then run the job beside you."],
@@ -177,13 +177,11 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
   const [modelReadState, setModelReadState] = useState<"loading" | "loaded" | "error">("loading");
   const [lastTest, setLastTest] = useState<{ ok: boolean; detail: string; at: number } | null>(null);
   const [sheet, setSheet] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
   const [selectedChoice, setSelectedChoice] = useState<ManagedModelChoiceId>(DEFAULT_MANAGED_MODEL_CHOICE);
   const [checkTick, setCheckTick] = useState(0);
   const [checkingMs, setCheckingMs] = useState(0);
   const mounted = useRef(false);
   const pollGeneration = useRef(0);
-  const confirmRemoveTimer = useRef<number | null>(null);
   const status = state.hermes;
   // Managed-only: the provider, endpoint and credential all come from the
   // service grant. An unpaired computer is sent to pair from realbud.app.
@@ -194,7 +192,6 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     return () => {
       mounted.current = false;
       pollGeneration.current += 1;
-      if (confirmRemoveTimer.current != null) window.clearTimeout(confirmRemoveTimer.current);
     };
   }, []);
 
@@ -381,7 +378,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
       return pinMismatch ? "This worker version needs a compatibility check. Your existing installation is preserved." : "Installs what Bud needs to work with your properties.";
     }
     if (step === "safeguards") {
-      if (journey.stepState.safeguards === "complete") return "Private workroom ready for files, research, calculations, and code. Consequential actions still ask you.";
+      if (journey.stepState.safeguards === "complete") return "Private workroom ready for your files, calculations and code. Consequential actions still ask you.";
       return "Adds Bud's private workroom and keeps every consequential action with you.";
     }
     if (step === "model") {
@@ -400,16 +397,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     return "Asks one private question to prove Bud can answer before Desk relies on it.";
   };
 
-  const clearConfirmRemove = () => {
-    if (confirmRemoveTimer.current != null) {
-      window.clearTimeout(confirmRemoveTimer.current);
-      confirmRemoveTimer.current = null;
-    }
-    setConfirmRemove(false);
-  };
-
-  const runAction = async (action: Exclude<BusyAction, "model" | "check" | "uninstall">) => {
-    clearConfirmRemove();
+  const runAction = async (action: Exclude<BusyAction, "model" | "check">) => {
     setBusy(action);
     setError("");
     setFeedback(null);
@@ -456,35 +444,6 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     } catch {
       if (mounted.current) setError("Couldn’t stop setup. Reconnect and check its progress before trying again.");
     } finally { if (mounted.current) setBusy(null); }
-  };
-
-  const requestRemove = async () => {
-    if (!confirmRemove) {
-      setConfirmRemove(true);
-      if (confirmRemoveTimer.current != null) window.clearTimeout(confirmRemoveTimer.current);
-      confirmRemoveTimer.current = window.setTimeout(() => {
-        confirmRemoveTimer.current = null;
-        if (mounted.current) setConfirmRemove(false);
-      }, 5_000);
-      return;
-    }
-    clearConfirmRemove();
-    setBusy("uninstall");
-    setError("");
-    setFeedback(null);
-    try {
-      const fresh = await api("/api/hermes/uninstall", { method: "POST", body: "{}" });
-      if (!mounted.current) return;
-      dispatch({ type: "hermesStatus", status: fresh });
-      setLastTest(null);
-      setModel(null);
-      await loadModel();
-      await refreshHermes();
-    } catch (cause) {
-      if (mounted.current) setError(budFacingCopy(cause, "RealBud could not remove Bud."));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
   };
 
   const saveModel = async () => {
@@ -737,7 +696,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-[14px] font-medium text-ink">Set up Bud's workroom</div>
-              <p className="mt-0.5 text-[12.5px] text-ink-muted">Enables files, research, calculations, and code in private storage. Risky commands still ask.</p>
+              <p className="mt-0.5 text-[12.5px] text-ink-muted">Enables files, calculations and code in private storage. Risky commands still ask.</p>
             </div>
             <button type="button" onClick={() => void runAction("safeguards")} disabled={locked} className={primaryButton}>
               {busy === "safeguards" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck size={14} />}
@@ -812,9 +771,12 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         ) : null}
 
         {!sheet ? <AgentUpdates disabled={locked} onSettled={refreshHermes} /> : null}
-        {status?.cli.installed && (journey.stage === "ready" || hasFailure) && !sheet && !installActive ? (
+        {status?.cli.installed && !sheet && !installActive && budDocumentToolsNeedRepair(status) ? (
+          <p className="mt-4 text-[13px] text-ink-muted" role="status">Word, Excel and PDF tools need Repair. Open “Repair Bud” below and choose Repair Bud.</p>
+        ) : null}
+        {status?.cli.installed && (journey.stage === "ready" || hasFailure || budDocumentToolsNeedRepair(status)) && !sheet && !installActive ? (
           <details className="mt-4 border-t border-line/70 pt-3" open={hasFailure}>
-            <summary className="cursor-pointer text-[13px] text-ink-muted">Repair or reset Bud</summary>
+            <summary className="cursor-pointer text-[13px] text-ink-muted">Repair Bud</summary>
             <div className="mt-3 flex flex-wrap items-center gap-4">
             {journey.stage === "ready" ? null : (
               <>
@@ -836,21 +798,8 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
               {busy === "repair" ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : null}
               Repair Bud
             </button>
-            {journey.stage === "ready" ? (
-              <button
-                type="button"
-                onClick={() => void requestRemove()}
-                disabled={locked}
-                className={cn(
-                  "inline-flex items-center gap-1.5 text-[12px] underline-offset-2 hover:underline disabled:opacity-40",
-                  confirmRemove ? "text-danger hover:text-danger" : "text-ink-muted hover:text-danger",
-                )}
-              >
-                {busy === "uninstall" ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : null}
-                {confirmRemove ? "Confirm reset — your book stays" : "Reset Bud setup"}
-              </button>
-            ) : null}
             </div>
+            <p className="mt-3 text-[13px] text-ink-muted">Reset is unavailable because RealBud cannot yet verify that every worker has stopped. Your setup is kept. Repair Bud remains available.</p>
           </details>
         ) : null}
 

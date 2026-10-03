@@ -187,3 +187,49 @@ test('ungranted or unfinished shared desktops receive safe setup status without 
     assert.equal(personal.sourceKind,'personal');assert.equal(personal.services.gmail.connected,true);assert.equal(s.seen.at(-1),'personal-a');
   }finally{s.f.close();}
 });
+test('shared mailbox full access: read-only by default, owner-only versioned grant with exact wording, enforced by the gateway, revocable', async () => {
+  const executed: string[] = [];
+  const apps = { async listAccounts() { return []; }, async authorize(): Promise<never> { throw new Error('unused'); },
+    async listTools(_b: unknown, slug: string) { return ['GMAIL_LIST_THREADS', 'GMAIL_SEND_EMAIL'].map(name => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, policy: (name.includes('SEND') ? 'review' : 'read') as 'read' | 'review' })).filter(() => slug === 'gmail'); },
+    async execute(_b: unknown, _s: string, tool: string) { executed.push(tool); return { content: [{ type: 'text', text: '{}' }] }; } };
+  const s = setup({ apps });
+  try {
+    await s.shared();
+    s.options.transport = undefined; // The gateway's own transport choice from here on.
+    const company = s.f.tenant.companyId;
+    const sendOnce = async (id: number) => {
+      const opened = await s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method: 'initialize' });
+      const reply = await s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id: id + 1, method: 'tools/call', params: { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.invalid' } } }, opened.session);
+      return (reply.body as { result: { isError?: boolean; content: { text: string }[] } }).result;
+    };
+    // Default: an existing shared grant stays on the three bounded reads.
+    let status = await s.call('status') as { revision: number; fullMailboxAccess: { granted: boolean } };
+    assert.deepEqual(status.fullMailboxAccess, { granted: false });
+    assert.equal((((await s.request()).body) as { mailboxAccess: string }).mailboxAccess, 'read_only');
+    const refused = await sendOnce(1);
+    assert.equal(refused.isError, true); assert.match(refused.content[0]!.text, /three fixed Gmail read tools/); assert.deepEqual(executed, []);
+    // Only the owner, only with the exact wording, only for the shared mailbox.
+    const grant = { mode: 'shared', expectedRevision: status.revision, fullMailboxAccess: true, acknowledgement: 'Bud can draft, label and archive, and send after a per-message approval, from the shared mailbox' };
+    await assert.rejects(() => s.call('policy', grant, { ...s.f.owner, role: 'billing_reader' }), /forbidden/);
+    await assert.rejects(() => s.call('policy', { ...grant, acknowledgement: 'ok' }), /office_mailbox_access_wording_required/);
+    await assert.rejects(() => s.call('policy', { ...grant, extra: true }), /./);
+    assert.equal(s.broker.officeMailbox.mailboxAccess(company), 'read_only');
+    status = await s.call('policy', grant) as typeof status & { fullMailboxAccess: { granted: boolean; version: number; grantedBy: string; grantedAt: string } };
+    assert.deepEqual(status.fullMailboxAccess, { granted: true, version: 1, grantedBy: s.f.owner.subject, grantedAt: new Date(s.f.now()).toISOString() });
+    assert.equal(status.revision, 5);
+    assert.equal(s.f.ledger.db.all<{ kind: string }>('SELECT kind FROM events WHERE kind LIKE ?', 'office_mailbox_full_access%').length, 1);
+    // The desktop is told, and the gateway now runs the mailbox policy for this shared mailbox.
+    assert.equal((((await s.request()).body) as { mailboxAccess: string }).mailboxAccess, 'full');
+    assert.equal((await sendOnce(3)).isError, undefined); assert.deepEqual(executed, ['GMAIL_SEND_EMAIL']);
+    // Revoke: back to the three reads, recorded, revision moved.
+    status = await s.call('policy', { mode: 'shared', expectedRevision: 5, fullMailboxAccess: false }) as typeof status;
+    assert.deepEqual(status.fullMailboxAccess, { granted: false }); assert.equal(status.revision, 6);
+    assert.equal((await sendOnce(5)).isError, true); assert.deepEqual(executed, ['GMAIL_SEND_EMAIL']);
+    assert.equal(s.f.ledger.db.all<{ kind: string }>('SELECT kind FROM events WHERE kind = ?', 'office_mailbox_full_access_revoked').length, 1);
+    // A grant never survives a mode change, and a personal mailbox cannot carry one.
+    await s.call('policy', { ...grant, expectedRevision: 6 });
+    await s.call('policy', { mode: 'personal', expectedRevision: 7 });
+    assert.equal(s.broker.officeMailbox.policy(company).fullMailboxAccess, undefined);
+    await assert.rejects(() => s.call('policy', { ...grant, expectedRevision: 8 }), /office_mailbox_shared_required/);
+  } finally { s.f.close(); }
+});

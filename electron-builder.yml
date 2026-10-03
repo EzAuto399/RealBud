@@ -42,10 +42,13 @@ files:
   - package.json
 
 asar: true
+afterSign: scripts/seal-mac-browser.mjs
 
 extraResources:
-  - from: dist-browser
-    to: browser
+  # Only the reviewed Hermes native engine ships. Old BrowserSkill staging
+  # must not accidentally reintroduce an extension requirement.
+  - from: dist-browser/hermes-native
+    to: browser/hermes-native
   - from: dist
     to: ui
   - from: dist-server/server

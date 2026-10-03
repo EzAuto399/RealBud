@@ -7,10 +7,10 @@
   "firstParty": true,
   "derivedFrom": "docs/REI-CLOUD-MAP-2026-09-24.md and site-map.json: read-only structural map of REI Cloud v26.0922.0 observed 2026-09-24. Structure only; account values are placeholders. references/task-recipes.md folds task recipes, traps and coverage gaps from the 25 September study notes (placeholders only; no simulation tier claimed). references/website-map.md is the task-first source map v2, safety revised 2026-09-25: account checks bind both URL reicid and header business code, report Preview is unverified, Receipt Register uses Export Only with per-instance download approval, and no categorical legal clock is stated. Its tier S means recipes passed scripts/qa-rei-map-sim.mjs against a fictional local mock, never that REI behaves this way or that a live register readback occurred.",
   "sha256": "720abf23969589e9b1549a535dbce7b91ba60005ead9f9f4ab16fd8701ade359",
-  "siteMapSha256": "68ec0a08b283dda515e49e812c3641dacd861069a0097074c62912286a68ba03",
+  "siteMapSha256": "b5c06b566c2167e15ee556458a02977c392ef6e6f8f3fe7b54bcfa3ac841bdef",
   "referencesSha256": {
-    "references/task-recipes.md": "66f45aaa9007ba3f46723c7a28638da43c3f17d6b17107c92ce4e322afc1ef6e",
-    "references/website-map.md": "976772564f49946af81f9c9a5a8954074c4ebe3aa097223c0abd915a18f19b80"
+    "references/task-recipes.md": "457a33cc77aa6480a0a61873aa25f9df0eb6cd97583c8d8b153df5be1669b92b",
+    "references/website-map.md": "0ea0dbf2845159a1c71e239f211a63bb581437f0c45c2824d6ba925c21e84810"
   },
   "bindingPath": "workflow-support/rei-cloud-navigation/SKILL.md",
   "allowedReuse": "Navigation guidance for browser tasks in the person's selected signed-in REI Cloud session. Grants no authority: the RealBud portal fence (server/portal-fence.ts, server/browser-runtime.ts) decides account scope, task permission, per-instance approval and Stop.",

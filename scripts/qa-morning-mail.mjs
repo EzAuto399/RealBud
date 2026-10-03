@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), temp=mkdtempSync(join(realpathSync(tmpdir()),'rb-morning-'));
 const data=join(temp,'data'), output=resolve(process.env.QA_OUTPUT??join(root,'outputs/morning-mail-2026-09-21')); mkdirSync(data,{mode:0o700});mkdirSync(output,{recursive:true});
 const wait=ms=>new Promise(r=>setTimeout(r,ms)), checks=[],errors=[]; let child,childClosed,browser,logs='',scanCalls=0,revoked=false;
@@ -43,9 +44,15 @@ const connector=createServer(async(req,res)=>{
 try{
   connector.listen(0,'127.0.0.1');await once(connector,'listening');const endpoint=`http://127.0.0.1:${connector.address().port}`;
   const reserve=createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const port=reserve.address().port;await new Promise(r=>reserve.close(r));const base=`http://127.0.0.1:${port}`;
-  const worker=join(temp,'fictional-worker.mjs'), workerCalls=join(temp,'worker-calls.json');
+  // Only Bud's work folder is writable under the real worker sandbox.
+  const worker=join(temp,'fictional-worker.mjs'), workerCalls=join(data,'vault','bud-work','worker-calls.json');
   writeFileSync(worker,`#!${process.execPath}\nimport {readFileSync,writeFileSync,existsSync} from 'node:fs';
 if(process.argv.includes('--version')){console.log('Hermes Agent v0.21.3 (2026.9.14)');process.exit(0);}
+// The provider key stays with the host; this worker receives only the loopback relay token.
+if(process.env.REALBUD_MODEL_API_KEY===${JSON.stringify(fictionalWorkerModelKey)}||!/^[a-f0-9]{64}$/.test(process.env.REALBUD_MODEL_API_KEY??''))throw new Error('Fictional worker did not receive an isolated relay token');
+const relayOverlay=JSON.parse(readFileSync(process.env.HERMES_MANAGED_DIR+'/config.yaml','utf8'));
+const relayProviders=Object.values(relayOverlay.providers??{});
+if(relayProviders.length!==1||!['api','url','base_url'].every(key=>{const url=new URL(relayProviders[0][key]);return url.protocol==='http:'&&url.hostname==='127.0.0.1'&&url.port;}))throw new Error('Fictional worker relay must use loopback only');
 const inputPath=${JSON.stringify(join(data,'vault/workflow-inputs/accounts-inbox.json'))};
 if(!existsSync(inputPath)){console.log('{}');process.exit(0);}
 const input=JSON.parse(readFileSync(inputPath,'utf8'));
@@ -53,8 +60,11 @@ const result={version:1,kind:'accounts-inbox-triage',skillSource:'email-inbox-tr
 const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readFileSync(log,'utf8'));}catch{}calls.push({source:input.sourceReference,count:input.threads.length});writeFileSync(log,JSON.stringify(calls));
 console.log(JSON.stringify({summary:'Fictional deterministic preparation',evidence:['Fictional fixture sources'],outputs:[JSON.stringify(result)],needsApproval:[]}));\n`,{mode:0o700});chmodSync(worker,0o700);
   writeFileSync(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}},composio:{managed:{endpoint,credential,profile:'property'}}}),{mode:0o600});
-  // This fixture exercises a private workspace, not managed-service provisioning.
-  child=spawn(process.execPath,[join(root,'server/bootstrap.ts')],{cwd:root,env:{...serviceSmokeEnv({executable:process.execPath,home:temp,data,scratch:temp,port}),REALBUD_MANAGED_SERVICE:'0',REALBUD_HERMES_CLI:worker,REALBUD_TEST_LAB:'1',OMB_STATIC_DIR:process.env.OMB_STATIC_DIR??join(root,'dist')},stdio:['ignore','pipe','pipe']});
+  provisionMockWorkerGrant({ home: temp, data, endpoint, credential, companyId: 'fictional-morning-office', hostInstallationId: 'fictional-morning-host' });
+  const networkGuard=join(temp,'network-guard.mjs');
+  writeFileSync(networkGuard,`const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(url.origin!==${JSON.stringify(endpoint)})throw new Error('QA denied non-connector fetch');return realFetch(input,init);};`,{mode:0o600});
+  // This private-workspace fixture uses a synthetic grant, never a live model.
+  child=spawn(process.execPath,['--import',networkGuard,join(root,'server/bootstrap.ts')],{cwd:root,env:{...serviceSmokeEnv({executable:process.execPath,home:temp,data,scratch:temp,port}),REALBUD_MANAGED_SERVICE:'0',REALBUD_HERMES_CLI:worker,REALBUD_TEST_LAB:'1',OMB_STATIC_DIR:process.env.OMB_STATIC_DIR??join(root,'dist')},stdio:['ignore','pipe','pipe']});
   childClosed=new Promise((resolve,reject)=>{child.once('close',resolve);child.once('error',reject);});
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{logs=(logs+b).slice(-30000);});
   let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null||child.signalCode)break;try{if((await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json()).pid===child.pid){ready=true;break;}}catch{}await wait(100);}assert.ok(ready,logs);
@@ -75,7 +85,9 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   setup=await request('/api/agency-setup/check-gmail','POST',{expectedRevision:setup.state.revision});
   const workflow=setup.workflows.find(w=>w.id==='morning-priorities');assert.ok(workflow.canReview,JSON.stringify(workflow));
   await request('/api/agency-setup/workflows/morning-priorities/review','POST',{expectedRevision:setup.state.revision,expectedEvidenceDigest:workflow.evidenceDigest});
-  let state=await request('/api/mail-workspace');assert.equal(state.schedule.enabled,false);
+  let state=await request('/api/mail-workspace');
+  for(let i=0;i<300&&state.history?.state==='checking';i++){await wait(100);state=await request('/api/mail-workspace');}
+  assert.notEqual(state.history?.state,'checking');assert.equal(state.schedule.enabled,false);
   const reviewRequest={requestId:crypto.randomUUID(),expectedRevision:state.schedule.revision};
   const accepted=await request('/api/mail-workspace/review','POST',reviewRequest,202);assert.ok(accepted.run.id);
   for(let i=0;i<200;i++){state=await request('/api/mail-workspace');if(state.operation?.state!=='running')break;await wait(100);}
@@ -90,6 +102,15 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(state.schedule.enabled,false);const calls=JSON.parse(readFileSync(workerCalls,'utf8'));assert.deepEqual(calls.map(c=>c.count),[20,20,5]);
   await request('/api/mail-workspace/review','POST',reviewRequest,202);await wait(100);assert.equal(scanCalls,1);assert.equal(JSON.parse(readFileSync(workerCalls,'utf8')).length,3);
   checks.push('Actual HTTP agency setup, scoped connector acquisition and three deterministic worker batches produce45 persistent source-linked items; manual run leaves schedule disabled; same request is not repeated');
+  const another={requestId:crypto.randomUUID(),expectedRevision:state.schedule.revision};
+  const repeated=await request('/api/mail-workspace/review','POST',another,202);
+  for(let i=0;i<200;i++){state=await request('/api/mail-workspace');if(state.operation?.state!=='running')break;await wait(100);}
+  assert.equal(state.operation.state,'complete',JSON.stringify(state.operation));
+  assert.equal(JSON.parse(readFileSync(workerCalls,'utf8')).length,3);
+  const unchanged=(await request('/api/loops')).runs.find(run=>run.id===repeated.run.id);
+  assert.ok(unchanged.seenAt,JSON.stringify(unchanged));
+  assert.ok(unchanged.detail.includes('No changed results'));
+  checks.push('A new W3 run on unchanged source makes zero additional model calls, preserves saved work and marks its result quiet');
   // Windowed, checkpointed history acquisition over the same fictional connector,
   // started only by checking the selected Gmail account. The app's own wiring is
   // delivered as outputs/mail-history-2026-09-22/index-patch.diff, so this
@@ -182,11 +203,21 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const before=scanCalls;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   revoked=true;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   checks.push('Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources');
-  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');await page.getByRole('button',{name:'Open mail priorities',exact:true}).click();const panel=page.getByRole('region',{name:'Mail priorities and follow-ups'});await panel.waitFor();await panel.getByRole('button',{name:'Review or edit this item',exact:true}).first().click();const editor=panel.getByRole('form',{name:'Review saved mail item'});await editor.waitFor();await editor.getByLabel('Your note').fill('Browser-reviewed fictional follow-up');await editor.getByRole('button',{name:'Save reviewed item',exact:true}).click();await editor.waitFor({state:'hidden'});await panel.getByRole('button',{name:'View source conversation',exact:true}).first().click();const source=panel.getByRole('complementary',{name:'Saved source conversation'});await source.waitFor();assert.equal(await source.evaluate(el=>el===document.activeElement),true);await page.screenshot({path:join(output,'morning-source-desktop.png')});await panel.getByRole('button',{name:'Close source conversation',exact:true}).click();await panel.getByRole('heading',{name:'Mail priorities and follow-ups',exact:true}).evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:join(output,'morning-desktop.png')});await page.setViewportSize({width:390,height:844});await panel.getByRole('heading',{name:'Mail priorities and follow-ups',exact:true}).evaluate(el=>el.scrollIntoView({block:'start'}));assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:join(output,'morning-mobile.png')});assert.deepEqual(errors,[]);checks.push('Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow');}
+  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');
+  await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
+  await page.locator('.desk-options > summary').click();
+  await page.getByRole('button',{name:'Customize desk',exact:true}).click();
+  const showMail=page.getByLabel('Show Mail priorities',{exact:true});
+  if(!await showMail.isChecked()){await showMail.check();await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Desk layout saved.',{exact:true}).waitFor();}
+  await page.getByRole('button',{name:'Close Customize desk',exact:true}).click();
+  await page.locator('.desk-other-work > summary').click();
+  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();const panel=page.getByRole('region',{name:'Mail priorities and follow-ups'});await panel.waitFor();await panel.getByRole('button',{name:'Review or edit this item',exact:true}).first().click();const editor=panel.getByRole('form',{name:'Review saved mail item'});await editor.waitFor();await editor.getByLabel('Your note').fill('Browser-reviewed fictional follow-up');await editor.getByRole('button',{name:'Save reviewed item',exact:true}).click();await editor.waitFor({state:'hidden'});await panel.getByRole('button',{name:'View source conversation',exact:true}).first().click();const source=panel.getByRole('complementary',{name:'Saved source conversation'});await source.waitFor();assert.equal(await source.evaluate(el=>el===document.activeElement),true);await page.screenshot({path:join(output,'morning-source-desktop.png')});await panel.getByRole('button',{name:'Close source conversation',exact:true}).click();await panel.getByRole('heading',{name:'Mail priorities and follow-ups',exact:true}).evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:join(output,'morning-desktop.png')});await page.setViewportSize({width:390,height:844});await panel.getByRole('heading',{name:'Mail priorities and follow-ups',exact:true}).evaluate(el=>el.scrollIntoView({block:'start'}));assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:join(output,'morning-mobile.png')});assert.deepEqual(errors,[]);checks.push('Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow');}
   writeFileSync(join(output,'receipt.json'),JSON.stringify({at:new Date().toISOString(),layer:'actual local HTTP app; fictional connector and deterministic CLI; not live Gmail/LLM/Windows proof',checks,scanCalls,
+    browser:process.env.PLAYWRIGHT_MODULE?{state:'passed'}:{state:'skipped',reason:'PLAYWRIGHT_MODULE is not configured'},
     historyTrigger:'agency-setup check-gmail and plan review only; no collectHistory call in this script',
     historyWindows:[...historyWindows.values()],historyPageReads:historyPages.length,workerBatches:calls.map(c=>c.count),errors,
     limits:['Fictional connector and deterministic CLI: no live Gmail OAuth, no real pagination or mailbox mutation.',
+      'A synthetic model grant admits the deterministic CLI; no model network or inference is exercised.',
       'The history coverage group composes production service seams in process; it does not prove the app server history trigger end to end.',
       'No packaged, Electron, Windows or backup/restore evidence; the history checkpoint is not carried by backup.',
       'Coverage is acquisition progress only: no bill records, no recurrence detection and no schedule activation follow from it.']},null,2));console.log(JSON.stringify({output,checks},null,2));

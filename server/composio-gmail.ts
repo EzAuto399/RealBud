@@ -6,7 +6,7 @@
 import type { ConnectionServiceStatus } from "./composio.ts";
 import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { attachmentHash, downloadSourcePdf, validateSourceAttachmentBytes } from './source-attachments.ts';
-import { MAIL_CONVERSATION_GAPS, parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
+import { MAIL_CONVERSATION_GAPS, MAIL_SCAN_GAPS, parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
 export interface GmailReadOnlyBinding {
   apiKey: string;
   authConfigId: string;
@@ -18,7 +18,7 @@ export interface GmailReadOnlyBinding {
    * its and the account's scope lists are not enforced: Composio's shared Google
    * client is approved only for its default scopes (broad mail access), so a
    * `gmail.readonly` override is blocked by Google. Read-only then rests on this
-   * adapter's three fixed read tools. A custom (own-client) config stays strict.
+   * adapter's fixed read operations. A custom (own-client) config stays strict.
    * The desktop never sets this. */
   acceptComposioManagedScopes?: true;
 }
@@ -107,6 +107,35 @@ async function rest(binding: GmailReadOnlyBinding, path: string, signal: AbortSi
   }
 }
 
+/** Internal fixed read, never a general proxy tool. Composio's thread tool
+ * normalizes away Gmail's internalDate; the raw Gmail API preserves the
+ * receipt timestamp needed by both Ask's window and the saved mail workflow.
+ * Callers must verify the account/configuration before reaching this helper.
+ * https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteProxy */
+async function readRawGmailThread(binding: GmailReadOnlyBinding, account: GmailReadOnlyAccount, id: unknown, signal: AbortSignal): Promise<ObjectValue> {
+  if (!threadId(id) || !identifier(account.id) || account.id !== binding.accountId || account.status !== 'ACTIVE') fail('the raw mail read needs the exact verified account and thread.', 403);
+  const response = await rest(binding, '/tools/execute/proxy', signal, {
+    connected_account_id: account.id,
+    endpoint: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${id}?format=full`,
+    method: 'GET',
+  });
+  signal.throwIfAborted();
+  // HTTP 200 only confirms Composio answered. The proxied Gmail status must
+  // also be exactly 200; headers and binary download metadata are never used.
+  if (response.status !== 200 || !record(response.data)) fail('the provider could not confirm this raw Gmail read. No automatic retry was made.', 502);
+  const data = response.data;
+  if (data.id !== id || !Array.isArray(data.messages) || data.messages.length > 100) fail('the returned thread did not match the bounded request.', 502);
+  const seen = new Set<string>();
+  for (const message of data.messages) {
+    if (!record(message) || !threadId(message.id) || message.threadId !== id || !/^\d{10,16}$/.test(String(message.internalDate))) fail('the returned message identity or date was incomplete.', 502);
+    if (seen.has(message.id)) fail('the returned thread repeated a message identity.', 502);
+    seen.add(message.id);
+    const at = Number(message.internalDate);
+    if (!Number.isSafeInteger(at) || !Number.isFinite(new Date(at).getTime())) fail('the returned message date was invalid.', 502);
+  }
+  return data;
+}
+
 async function verifyConfig(binding: GmailReadOnlyBinding, signal: AbortSignal) {
   const value = await rest(binding, `/auth_configs/${encodeURIComponent(binding.authConfigId)}`, signal);
   if (value.id !== binding.authConfigId || value.toolkit?.slug !== "gmail" || value.auth_scheme !== "OAUTH2" || value.status !== "ENABLED" || value.is_disabled === true) fail("use an enabled Gmail OAuth2 auth configuration.", 403);
@@ -129,10 +158,9 @@ export async function readGmailPdfAttachment(input: GmailReadOnlyBinding, select
   const signal=AbortSignal.any([inputSignal,AbortSignal.timeout(30_000)]);
   if(binding.accountId!==source.accountId)fail('the selected PDF belongs to another account.',403);
   const config=await verifyConfig(binding,signal);const account=await verifyAccount(binding,signal,config);
-  const tools=await discoverTools(binding,signal),threadTool=tools.GMAIL_FETCH_MESSAGE_BY_THREAD_ID;
-  const result=await rest(binding,'/tools/execute/GMAIL_FETCH_MESSAGE_BY_THREAD_ID',signal,{connected_account_id:account.id,user_id:binding.userId,version:threadTool.version,arguments:executionArguments(threadTool,0,0,source.threadId)});
-  if(result.successful!==true || result.error || !record(result.data) || !Array.isArray(result.data.messages) || result.data.messages.length>100 || (result.data.id!==undefined&&result.data.id!==source.threadId))fail('the attachment message could not be verified.',502);
-  const matches=result.data.messages.filter((m:unknown)=>record(m)&&m.id===source.messageId&&m.threadId===source.threadId);
+  await discoverTools(binding,signal);
+  const data=await readRawGmailThread(binding,account,source.threadId,signal);
+  const matches=data.messages.filter((m:unknown)=>record(m)&&m.id===source.messageId&&m.threadId===source.threadId);
   if(matches.length!==1)fail('the attachment message changed or is missing.',409);
   let count=0,found=0;
   const visit=(part:unknown,depth:number)=>{
@@ -349,6 +377,7 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
   }
   async function execute(slug: Slug, signal: AbortSignal, id?: string) {
     const { tools, account } = await ready(signal), tool = tools[slug];
+    if (slug === 'GMAIL_FETCH_MESSAGE_BY_THREAD_ID') return readRawGmailThread(binding, account, id, signal);
     const value = await rest(binding, `/tools/execute/${slug}`, signal, {
       connected_account_id: account.id, user_id: binding.userId, version: tool.version,
       arguments: executionArguments(tool, from, until, id),
@@ -461,10 +490,18 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
     cursor = data.nextPageToken; cursors.add(cursor);
   }
   if (!result.paginationComplete) gap('More mailbox pages remain; this scan is partial.');
-  // Previously observed unresolved conversations take precedence over new ones
-  // when the bounded window contains more than this run can read.
-  const selected = [...new Set([...request.carryThreadIds, ...ids])];
-  if (selected.length > 100) gap('Some conversations were held by the 100-conversation limit.');
+  // Saved unresolved conversations and newly listed ones alternate, so a full
+  // carried backlog cannot starve new arrivals (or the reverse) when the bounded
+  // window holds more than one run can read. The host rotates its carry list.
+  const carried = new Set(request.carryThreadIds), fresh = [...ids].filter(id => !carried.has(id));
+  const all: string[] = [];
+  for (let at = 0; at < Math.max(request.carryThreadIds.length, fresh.length); at++) {
+    if (at < request.carryThreadIds.length) all.push(request.carryThreadIds[at]);
+    if (at < fresh.length) all.push(fresh[at]);
+  }
+  const selected = all.slice(0, 100);
+  if (all.slice(100).some(id => !carried.has(id))) gap('Some conversations were held by the 100-conversation limit.');
+  else if (all.length > 100) gap(MAIL_SCAN_GAPS.carryHeld);
   let count = 0, textBytes = 0, evidenceBytes = 0, sizeLimitReached = false;
   const clean = (value: unknown, max: number) => safeText(value, max).replaceAll(binding.apiKey, '[private app key]');
   const fitText = (value: string, bytes: number) => {
@@ -477,11 +514,11 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
     if (low && /[\uD800-\uDBFF]/.test(value[low - 1])) low--;
     return value.slice(0, low);
   };
-  for (const id of selected.slice(0, 100)) {
+  for (const id of selected) {
     signal.throwIfAborted();
     if (sizeLimitReached) break;
     if (count >= request.maxMessages) { gap('The approved message limit was reached; some conversations remain unread.'); break; }
-    const data = await execute('GMAIL_FETCH_MESSAGE_BY_THREAD_ID', executionArguments(tools.GMAIL_FETCH_MESSAGE_BY_THREAD_ID, from, until, id));
+    const data = await readRawGmailThread(binding, account, id, signal);
     if (data.id !== id || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.length) fail('the returned conversation identity or history was incomplete.', 502);
     const thread: MailThread = { id, messages: [], historyComplete: true };
     for (const rawMessage of data.messages) {

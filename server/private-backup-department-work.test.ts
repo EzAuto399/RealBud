@@ -99,7 +99,7 @@ describe('department work history through encrypted backup and cold restore',()=
     }
     const network=vi.fn(async()=>{throw Error('Restored authority must not be contacted');}),execute=vi.fn(async()=>{throw Error('Restored work must not dispatch');});
     const client=createCompanyExecutionClient({vault:createPrivateVault(target.directory,target.key),identity:network,forward:network});
-    const service=createDepartmentWork({db,client,forward:network,recipes:()=>[recipe],instructions:network,assertRecipeReady:network,assertAdmission(){},epoch:()=> 'restored',runContext:fn=>fn(),findJob:key=>jobs.getByIdempotencyKey(key),execute,ask:network});
+    const service=createDepartmentWork({db,client,forward:network,recipes:()=>[recipe],instructions:network,assertRecipeReady:network,pack:network,assertAdmission(){},epoch:()=> 'restored',runContext:fn=>fn(),findJob:key=>jobs.getByIdempotencyKey(key),execute,ask:network});
     await service.tick();await service.drain();service.stop();expect(network).not.toHaveBeenCalled();expect(execute).not.toHaveBeenCalled();
     const rebound=createPrivateWorkspaceBackup({directory:target.directory,key:()=>target.key,workspaceId:source.workspaceId,epoch:()=> 'idle',assertIdle(){},assertFresh(){}});
     await expect(rebound.exportBackup(phrase)).resolves.toHaveProperty('receipt');

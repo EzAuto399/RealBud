@@ -43,11 +43,27 @@ import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
 import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
+import { startWebResearchBroker, WEB_RESEARCH_SERVER, type LoopbackToolServer } from "../../web-research-broker.ts";
+import { SIGN_IN_SERVER, startSignInBroker } from "../../browser-sign-in.ts";
+import { HERMIOS_CRM_SERVER, startHermiosCrmBroker } from "../../hermios-crm-broker.ts";
+import { REMINDERS_SERVER, startRemindersBroker } from "../../reminders-broker.ts";
+import { WORKSPACE_VIEWS_SERVER, startWorkspaceViewsBroker } from "../../workspace-views-broker.ts";
+import { BANK_SOURCE_SERVER, startBankSourceBroker } from "../../bank-source-broker.ts";
+import { MCP_CONNECTORS_SERVER, startMcpConnectorBroker } from "../../mcp-connector-broker.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
 import { HERMES_MEMORY_APPROVAL, hermesMemoryPermission } from "./hermes-memory-approval.ts";
+import { productTurnWrapUp } from "../../product-mode.ts";
+import { classifyWorkroomCommand, shellWords } from "../../workroom-command-policy.ts";
+/** Off until the worker cannot reach the network and the classifier fixes from the 2 Oct review land
+ * (docs/decisions/2026-10-02-workroom-script-approvals.md). Every terminal approval keeps its card. */
+const WORKROOM_AUTO_APPROVE = false;
+import { ownedRuntimeHome } from "../../hermes-document-deps.ts";
+import { vaultDir } from "../../vault.ts";
 
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
+const READ_PROGRAMS = new Set(["cat", "head", "wc", "ls"]);
 import { appendNative } from "../native.ts";
+import { NETWORK_ISOLATION_UNAVAILABLE, startBrokerPortPool, stopSandboxedChildren, trackSandboxedChild, WORKERS_HELD, workerLaunchesHeld, type BrokerPortPool } from "../../worker-network-sandbox.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -105,14 +121,33 @@ export interface AcpSupport {
   /** Optional conservative session mode applied after session/new or load.
    * Failure is non-fatal: the provider keeps its manual approval defaults. */
   defaultSessionMode?: string;
+  /** Wrap the worker launch so it reaches only these loopback ports (the
+   * broker port pool, plus any the support adds) and writes only its own
+   * folders; throws to refuse the launch. A `diagnostic` launch (`--version`)
+   * gets no network and writes nothing. When set, every loopback broker is
+   * mounted through a pool port bound at driver creation
+   * (server/worker-network-sandbox.ts). `release` is called once the process
+   * ended. */
+  networkSandbox?(command: string, args: string[], env: Record<string, string | undefined>, loopbackPorts: number[], job?: "ask" | "diagnostic"): { command: string; args: string[]; release?(): void };
 }
 
 const INIT_TIMEOUT = 20_000;
+/** A stopped worker that ignores SIGTERM is killed after this. */
+const STOP_DEADLINE_MS = 5_000;
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 const SESSION_MODE_TIMEOUT = 5_000;
 const CANCEL_GRACE_MS = 2_000;
 const WARM_SESSION_IDLE_MS = 10 * 60_000;
+/** Every RealBud review card closes (as a deny) before the worker stops
+ * waiting for it. Hermes waits 300 s for an ACP permission answer (0.21.5
+ * reads the pack's `approvals.timeout: 300`; 0.21.3 waits a fixed 60 s and
+ * self-denies) and 300 s for an MCP tool call, which carries the
+ * connected-app and browser cards (tools/mcp_tool_common.py
+ * `_DEFAULT_TOOL_TIMEOUT`, both versions). A longer card could take an answer
+ * the worker no longer waits for, or let a broker act after Hermes reported
+ * the call failed; the margin lets the deny arrive first. */
+export const WORKER_APPROVAL_CARD_MS = 285_000;
 const MAX_WARM_SESSIONS = 8;
 
 type AcpStdioMcpServer = {
@@ -142,6 +177,16 @@ export function hermesNativeBrowserTool(...values: unknown[]): string | null {
   }
   return null;
 }
+
+/** Model-visible wrap-up note for a Hermes Ask turn nearing RealBud's hard
+ * call/time ceiling. Delivered through Hermes ACP's own `/steer` command,
+ * which appends it to the next tool result without interrupting the turn. */
+export const HERMES_WRAP_UP_NOTE =
+  "RealBud: this request is close to its work limit and will be stopped soon. Do not start new searches, files or other tool calls. Reply now with what you have so far, say plainly what is unfinished, and what the person could ask next.";
+const WRAP_UP_TIMEOUT = 10_000;
+/** Hermes answers `/steer` with a short status line on the same session
+ * stream (acp_adapter/commands.py `_cmd_steer`); it is not Bud's answer. */
+const HERMES_STEER_ACK = /^\s*(?:⏩ Steer queued for the active turn:|⚠️ Steer failed:|No active turn — queued for the next turn\.)/u;
 
 export const HERMES_BROWSER_REFUSED =
   "Bud tried to use a web browser of its own, which RealBud does not allow, so this request was stopped. Website work runs in RealBud’s browser, where you sign in yourself.";
@@ -175,6 +220,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
       const { instanceId, config } = input;
       const listeners = new Set<RuntimeEventListener>();
+      // Bound once, before any worker, so a sandbox profile can name the ports.
+      // A failed bind refuses sandboxed launches below; never an open fallback.
+      const brokerPorts: BrokerPortPool | null = support.networkSandbox ? await startBrokerPortPool().catch(() => null) : null;
       interface ActiveTurn {
         stop: () => void;
         interrupt: () => Promise<void>;
@@ -185,7 +233,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         signature: string;
         lastUsed: number;
         resume: (turn: SendTurnInput, first?: boolean) => string;
-        stop: () => void;
+        /** Stops the process and resolves once it has exited (SIGKILL after a deadline). */
+        stop: () => Promise<void>;
       }
       interface RunningTurn {
         turn: SendTurnInput;
@@ -199,6 +248,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         cancellationRequested: boolean;
         asks: Map<string, (decision: { behavior: string; scope?: "once" | "session" }) => void>;
         interruptTimer: ReturnType<typeof setTimeout> | null;
+        startedAt: number;
+        /** Tool calls seen this turn, for the wrap-up note only. */
+        toolCount: number;
+        wrapUpTimer: ReturnType<typeof setTimeout> | null;
+        wrapUpSent: boolean;
+        /** Hermes' one status line answering the wrap-up `/steer`. */
+        steerAckPending: boolean;
         done: Promise<void>;
         resolveDone: () => void;
       }
@@ -243,6 +299,44 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           servers.push({ type: "http", name: "memory-proposals", url: "http://127.0.0.1/realbud-memory-proposals", headers: [] });
         }
         if (turn.integrations?.browser) servers.push({ type: "http", name: "browser", url: "http://127.0.0.1/realbud-browser", headers: [] });
+        // Replaced with private loopback brokers before session/new or load.
+        const pages = turn.integrations?.webPages;
+        if (pages && (!Array.isArray(pages.allowedUrls) || pages.allowedUrls.length > 200 || pages.allowedUrls.some(url => typeof url !== "string" || url.length > 2048))) {
+          throw new Error("Bud’s page reader is unavailable. Start a new request.");
+        }
+        if (pages) servers.push({ type: "http", name: WEB_RESEARCH_SERVER, url: "http://127.0.0.1/realbud-web-pages", headers: [] });
+        const signIn = turn.integrations?.signIn;
+        if (signIn && (!Array.isArray(signIn.personUrls) || !Array.isArray(signIn.approvedSites) || signIn.personUrls.length > 200 || signIn.approvedSites.length > 200 ||
+          [...signIn.personUrls, ...signIn.approvedSites].some(url => typeof url !== "string" || url.length > 2048))) throw new Error("Bud’s sign-in helper is unavailable. Start a new request.");
+        if (signIn) servers.push({ type: "http", name: SIGN_IN_SERVER, url: "http://127.0.0.1/realbud-sign-in", headers: [] });
+        const reminders = turn.integrations?.reminders;
+        if (reminders) {
+          if (typeof reminders.create !== "function" || typeof reminders.timeZone !== "function") throw new Error("Bud’s reminders are unavailable. Start a new request.");
+          servers.push({ type: "http", name: REMINDERS_SERVER, url: "http://127.0.0.1/realbud-reminders", headers: [] });
+        }
+        const views = turn.integrations?.workspaceViews;
+        if (views) {
+          if (typeof views.read !== "function" || typeof views.save !== "function") throw new Error("Bud’s saved views are unavailable. Start a new request.");
+          servers.push({ type: "http", name: WORKSPACE_VIEWS_SERVER, url: "http://127.0.0.1/realbud-workspace-views", headers: [] });
+        }
+        const bank = turn.integrations?.bankSource;
+        if (bank) {
+          if (typeof bank.listBankAccounts !== "function" || typeof bank.listBankTransactions !== "function") throw new Error("Bud’s bank feed is unavailable. Start a new request.");
+          servers.push({ type: "http", name: BANK_SOURCE_SERVER, url: "http://127.0.0.1/realbud-bank-source", headers: [] });
+        }
+        const officeConnectors = turn.integrations?.mcpConnectors;
+        if (officeConnectors) {
+          // The broker lists at most 100; a larger list is cut there, never a reason to stop Ask.
+          if (!Array.isArray(officeConnectors.tools) || typeof officeConnectors.invoke !== "function" ||
+            typeof officeConnectors.toolClass !== "function") throw new Error("Bud’s office connectors are unavailable. Start a new request.");
+          if (officeConnectors.tools.length) servers.push({ type: "http", name: MCP_CONNECTORS_SERVER, url: "http://127.0.0.1/realbud-office-connectors", headers: [] });
+        }
+        const crm = turn.integrations?.hermiosCrm;
+        if (crm) {
+          if (typeof crm.scope !== "string" || !crm.scope || crm.scope.length > 4096 || !Number.isSafeInteger(crm.generation) || crm.generation < 1 ||
+            typeof crm.accessToken !== "function") throw new Error("Bud’s Hermios connection is unavailable. Start a new request.");
+          servers.push({ type: "http", name: HERMIOS_CRM_SERVER, url: "http://127.0.0.1/realbud-hermios-crm", headers: [] });
+        }
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
         const composio = turn.integrations?.composio;
@@ -286,9 +380,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
-      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"], memoryScope?: string) =>
+      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"], memoryScope?: string,
+        hermiosCrm?: NonNullable<SendTurnInput["integrations"]>["hermiosCrm"]) =>
         createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers,
           ...(mcpServers.some(server => server.name === "memory-proposals") ? { memoryScope } : {}),
+          // A CRM mount is bound to one member and one connection generation.
+          ...(mcpServers.some(server => server.name === HERMIOS_CRM_SERVER) ? { hermiosScope: hermiosCrm?.scope, hermiosGeneration: hermiosCrm?.generation } : {}),
           ...(composio?.allowedApps ? { allowedApps: composio.allowedApps } : {}),
           ...(composio?.gmailReadOnly ? { gmailReadOnly: composio.gmailReadOnly, appKey: composio.key } : {}),
           ...(mcpServers.some(server => server.name === "connected-apps") ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
@@ -319,12 +416,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         signature: string,
       ): SessionRuntime => {
         const { threadId } = firstTurn;
-        const child = spawnCli(config.cli, args, {
+        const env = childEnv();
+        // The runtime whose venv/bin hardenHermesChildEnv put first on PATH.
+        const runtimeHome = DRIVER_KIND === "hermesAgent" ? ownedRuntimeHome(env.HERMES_HOME) : null;
+        if (support.networkSandbox && !brokerPorts) throw new Error(NETWORK_ISOLATION_UNAVAILABLE);
+        const launch = support.networkSandbox ? support.networkSandbox(config.cli, args, env, brokerPorts!.ports) : { command: config.cli, args };
+        const child = spawnCli(launch.command, launch.args, {
           cwd,
-          env: childEnv(),
+          env,
           stdio: ["pipe", "pipe", "pipe"],
           privateFiles: support.privateWorkspace === true,
         });
+        if (support.networkSandbox) trackSandboxedChild(child);
+        /** Settles once the process is gone; `stop` waits on it with a kill deadline. */
+        const exited = new Promise<void>(resolve => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
         let current: RunningTurn | null = null;
         let nextId = 1;
         let sessionId: string | null = null;
@@ -336,6 +441,31 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let appBroker: ConnectedAppsBroker | undefined;
         let browserBroker: BrowserBroker | undefined;
         let memoryBroker: Awaited<ReturnType<typeof startMemoryProposalBroker>> | undefined;
+        let pagesBroker: LoopbackToolServer | undefined;
+        let signInBroker: LoopbackToolServer | undefined;
+        let crmBroker: LoopbackToolServer | undefined;
+        let remindersBroker: LoopbackToolServer | undefined;
+        let viewsBroker: LoopbackToolServer | undefined;
+        let bankBroker: LoopbackToolServer | undefined;
+        let connectorsBroker: LoopbackToolServer | undefined;
+        const brokerMounts: Array<() => void> = [];
+        // The CRM mount is pinned to the first turn's member scope and generation;
+        // a later turn on this warm process may use it only while both still match.
+        const crmMount = firstTurn.integrations?.hermiosCrm
+          ? { scope: firstTurn.integrations.hermiosCrm.scope, generation: firstTurn.integrations.hermiosCrm.generation } : undefined;
+        const actingTurn = () => {
+          const run = current;
+          return !closed && run && !run.settled && !run.cancellationRequested && run.promptSent ? run : undefined;
+        };
+        const currentCrmAccess = () => {
+          const integration = actingTurn()?.turn.integrations?.hermiosCrm;
+          return crmMount && integration && integration.scope === crmMount.scope && integration.generation === crmMount.generation &&
+            typeof integration.accessToken === "function" ? integration : undefined;
+        };
+        // A `/steer` that reaches an idle Hermes session runs as a new prompt,
+        // and one left undelivered is queued for the next turn. Neither may
+        // outlive the turn it was meant for, so a steered process is retired.
+        let steered = false;
         const memoryScope = DRIVER_KIND === "hermesAgent" ? firstTurn.integrations?.memoryProposals?.scope : undefined;
         const currentMemoryIntegration = () => {
           const run = current;
@@ -375,6 +505,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           browserBroker?.close();
           appBroker?.close();
           memoryBroker?.close();
+          pagesBroker?.close();
+          signInBroker?.close();
+          crmBroker?.close();
+          remindersBroker?.close();
+          viewsBroker?.close();
+          bankBroker?.close();
+          connectorsBroker?.close();
+          for (const release of brokerMounts.splice(0)) release();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
           if (warm.get(threadId) === runtime) warm.delete(threadId);
@@ -410,9 +548,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           run.settled = true;
           // A browser capability belongs to one job attempt, never a warm chat.
           if (browserBroker) { browserBroker.close(); keepWarm = false; }
+          if (steered) keepWarm = false;
           appBroker?.cancelPending();
           memoryBroker?.cancelPending();
+          pagesBroker?.cancelPending();
+          signInBroker?.cancelPending();
+          crmBroker?.cancelPending();
+          remindersBroker?.cancelPending();
+          viewsBroker?.cancelPending();
+          bankBroker?.cancelPending();
+          connectorsBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
+          if (run.wrapUpTimer) clearTimeout(run.wrapUpTimer);
+          run.wrapUpTimer = null;
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           const tracked = active.get(threadId);
           if (tracked?.turnId === run.turnId) active.delete(threadId);
@@ -433,6 +581,31 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (run.settled || run.cancellationRequested) return;
           emit({ ...eventBase(run), type: "runtime.error", message: HERMES_BROWSER_REFUSED });
           void interrupt(run);
+        };
+
+        // Product Ask stops a turn at a hard call/time ceiling. Shortly before
+        // it, ask Hermes once to answer with what it has. Best effort: a
+        // refused or slow `/steer` never blocks or fails the turn.
+        const wrapUpPoint = DRIVER_KIND === "hermesAgent" ? productTurnWrapUp() : null;
+        const wrapUp = (run: RunningTurn, trigger: "tools" | "time") => {
+          if (run.wrapUpSent || run.settled || run.cancellationRequested || !run.promptSent || current !== run || closed || !sessionId) return;
+          run.wrapUpSent = true;
+          run.steerAckPending = true;
+          steered = true;
+          if (run.wrapUpTimer) clearTimeout(run.wrapUpTimer);
+          run.wrapUpTimer = null;
+          request("session/prompt", { sessionId, prompt: [{ type: "text", text: `/steer ${HERMES_WRAP_UP_NOTE}` }] }, WRAP_UP_TIMEOUT)
+            .catch((error: unknown) => {
+              // Category only; the provider's error text stays in the raw log.
+              const reason = error instanceof Error && /timed out$/.test(error.message) ? "timeout" : "rejected";
+              appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { wrapUpNote: "not-delivered", trigger, reason } });
+            });
+        };
+        const armWrapUp = (run: RunningTurn) => {
+          if (!wrapUpPoint) return;
+          const delay = Math.max(0, wrapUpPoint.afterMs - (Date.now() - run.startedAt));
+          run.wrapUpTimer = setTimeout(() => wrapUp(run, "time"), delay);
+          run.wrapUpTimer.unref?.();
         };
 
         const handleServerRequest = (message: any) => {
@@ -492,6 +665,21 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               typeof toolCall.kind !== "string" || kind !== "execute" || !command.trim() ||
               (Boolean(actionName) && !["terminal", "shell"].includes(actionName)));
           const onceOption = () => options.find(option => option.kind === "allow_once" && typeof option.optionId === "string")?.optionId ?? null;
+          // Reviewed document scripts and plain workroom reads run without a
+          // card (docs/decisions/2026-10-02-workroom-script-approvals.md).
+          // Hermes sends a terminal approval as kind "execute" with rawInput
+          // { command, description } and no tool name. Memory, execute_code,
+          // conflicting or non-terminal names never qualify; no allow_once
+          // option means the card below handles it as before.
+          if (DRIVER_KIND === "hermesAgent" && memoryPermission.kind === "other" && !scriptRequest && !conflictingAction &&
+            toolCall.kind === "execute" && (!actionName || ["terminal", "shell"].includes(actionName)) && onceOption() &&
+            WORKROOM_AUTO_APPROVE && classifyWorkroomCommand({ command, workroom: vaultDir(), runtimeHome }) === "auto") {
+            const [program, script] = shellWords(command) ?? [];
+            appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: READ_PROGRAMS.has(program)
+              ? { workroomCommand: "read workroom file", program }
+              : { workroomCommand: "ran reviewed document script", script: script?.split("/").pop() } });
+            return send({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "selected", optionId: onceOption() } } });
+          }
           if (config.fullAuto && !singleApproval) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
@@ -549,7 +737,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const timer = setTimeout(() => {
             emit({ ...eventBase(run), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
             finish({ behavior: "deny" });
-          }, 15 * 60_000);
+          }, WORKER_APPROVAL_CARD_MS);
           timer.unref?.();
           run.asks.set(requestId, finish);
           emit({
@@ -575,6 +763,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             case "agent_message_chunk": {
               const delta = update.content?.text;
               if (typeof delta === "string" && delta) {
+                if (run.steerAckPending && HERMES_STEER_ACK.test(delta)) {
+                  run.steerAckPending = false;
+                  break;
+                }
                 run.text += delta;
                 if (run.sawTool) run.answerText += delta;
                 emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
@@ -601,7 +793,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               });
               if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
                 refuseHermesBrowser(run);
+                break;
               }
+              run.toolCount += 1;
+              if (wrapUpPoint && run.toolCount >= wrapUpPoint.afterTools) wrapUp(run, "tools");
               break;
             case "tool_call_update":
               if (update.status === "completed" || update.status === "failed") {
@@ -663,6 +858,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         child.on("close", (code) => {
           if (closed) return;
           closed = true;
+          launch.release?.();
           removeRuntime();
           for (const pending of rpcPending.values()) {
             if (pending.timer) clearTimeout(pending.timer);
@@ -680,6 +876,28 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         });
 
+        /** RealBud's one-time review card for an external action (connected apps
+         * and Hermios CRM writes): one explicit allow, never a session grant. */
+        const reviewOnce = (summary: string, signal: AbortSignal) => new Promise<boolean>((resolve) => {
+          const run = current;
+          if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+          const requestId = newId();
+          const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+            if (!run.asks.delete(requestId)) return;
+            clearTimeout(timer);
+            signal.removeEventListener("abort", aborted);
+            // Broad/session grants cannot authorize an external action.
+            const allowed = decision.behavior === "allow" && decision.scope !== "session" &&
+              !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
+            emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" });
+            resolve(allowed);
+          };
+          const aborted = () => finish({ behavior: "deny" });
+          const timer = setTimeout(aborted, WORKER_APPROVAL_CARD_MS); timer.unref();
+          run.asks.set(requestId, finish);
+          signal.addEventListener("abort", aborted, { once: true });
+          emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary });
+        });
         const ready = (async () => {
           if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {
             memoryBroker = await startMemoryProposalBroker({
@@ -730,7 +948,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" }); resolve(allowed);
                 };
                 const aborted = () => finish({ behavior: "deny" });
-                const timer = setTimeout(aborted, 5 * 60_000); timer.unref();
+                const timer = setTimeout(aborted, WORKER_APPROVAL_CARD_MS); timer.unref();
                 run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
                 emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary,
                   ...(projection ? { fence: projection.fence, ...(projection.approvalPolicy ? { approvalPolicy: projection.approvalPolicy } : {}) } : {}),
@@ -750,29 +968,96 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }) } : {}),
               threadId,
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
-              approve: (summary, signal) => new Promise<boolean>((resolve) => {
-                const run = current;
-                if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
-                const requestId = newId();
-                const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
-                  if (!run.asks.delete(requestId)) return;
-                  clearTimeout(timer);
-                  signal.removeEventListener("abort", aborted);
-                  // Broad/session grants cannot authorize an external action.
-                  const allowed = decision.behavior === "allow" && decision.scope !== "session" &&
-                    !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
-                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" });
-                  resolve(allowed);
-                };
-                const aborted = () => finish({ behavior: "deny" });
-                const timer = setTimeout(aborted, 15 * 60_000); timer.unref();
-                run.asks.set(requestId, finish);
-                signal.addEventListener("abort", aborted, { once: true });
-                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary });
-              }),
+              approve: reviewOnce,
             });
             if (closed) { appBroker.close(); throw new Error("Bud's app session stopped."); }
             mcpServers = mcpServers.map(server => server.name === "connected-apps" ? appBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === WEB_RESEARCH_SERVER)) {
+            // Bounded public page reads, no approval card; receipts name the host only.
+            pagesBroker = await startWebResearchBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              // Only the current turn's person-given links; never page or tool text.
+              allowedUrls: () => actingTurn()?.turn.integrations?.webPages?.allowedUrls ?? [],
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { webPages: receipt } }),
+            });
+            if (closed) { pagesBroker.close(); throw new Error("Bud’s page-reading session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === WEB_RESEARCH_SERVER ? pagesBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === SIGN_IN_SERVER)) {
+            // Opens the work browser on a sign-in page and waits for the person; only the current turn's person-typed links and the office's sites.
+            signInBroker = await startSignInBroker({
+              threadId,
+              personUrls: () => actingTurn()?.turn.integrations?.signIn?.personUrls ?? [],
+              approvedSites: () => actingTurn()?.turn.integrations?.signIn?.approvedSites ?? [],
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+            });
+            if (closed) { signInBroker.close(); throw new Error("Bud’s sign-in session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === SIGN_IN_SERVER ? signInBroker!.descriptor : server);
+          }
+          if (crmMount && mcpServers.some(server => server.name === HERMIOS_CRM_SERVER)) {
+            // Read-only CRM; receipts carry the tool and generation, never a token.
+            crmBroker = await startHermiosCrmBroker({
+              generation: crmMount.generation,
+              access: currentCrmAccess,
+              // Writes show RealBud's connected-app card; one explicit allow each.
+              approve: reviewOnce,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { hermiosCrm: receipt } }),
+            });
+            if (closed) { crmBroker.close(); throw new Error("Bud’s Hermios session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === HERMIOS_CRM_SERVER ? crmBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === REMINDERS_SERVER)) {
+            // Private Desk reminders; no card. The current turn's binding is used.
+            remindersBroker = await startRemindersBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              reminders: () => actingTurn()?.turn.integrations?.reminders,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { reminders: receipt } }),
+            });
+            if (closed) { remindersBroker.close(); throw new Error("Bud’s reminders session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === REMINDERS_SERVER ? remindersBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === WORKSPACE_VIEWS_SERVER)) {
+            // Saved views: a read with no card; every change shows the one-time card first.
+            viewsBroker = await startWorkspaceViewsBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              views: () => actingTurn()?.turn.integrations?.workspaceViews,
+              approve: reviewOnce,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { workspaceViews: receipt } }),
+            });
+            if (closed) { viewsBroker.close(); throw new Error("Bud’s saved views session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === WORKSPACE_VIEWS_SERVER ? viewsBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === BANK_SOURCE_SERVER)) {
+            // Read-only bank feed; no card. The current turn's binding is used.
+            bankBroker = await startBankSourceBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              bank: () => actingTurn()?.turn.integrations?.bankSource,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { bankSource: receipt } }),
+            });
+            if (closed) { bankBroker.close(); throw new Error("Bud’s bank feed session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === BANK_SOURCE_SERVER ? bankBroker!.descriptor : server);
+          }
+          if (firstTurn.integrations?.mcpConnectors && mcpServers.some(server => server.name === MCP_CONNECTORS_SERVER)) {
+            // Office connectors: reads with no card, writes with the one-time card; tools fixed at mount, re-checked per call.
+            connectorsBroker = await startMcpConnectorBroker({
+              tools: firstTurn.integrations.mcpConnectors.tools,
+              turnId: () => actingTurn()?.turnId ?? null,
+              connectors: () => actingTurn()?.turn.integrations?.mcpConnectors,
+              approve: reviewOnce,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { officeConnectors: receipt } }),
+            });
+            if (closed) { connectorsBroker.close(); throw new Error("Bud’s office connectors session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === MCP_CONNECTORS_SERVER ? connectorsBroker!.descriptor : server);
+          }
+          if (brokerPorts) {
+            // A sandboxed worker reaches the brokers only through the pool ports its profile names.
+            mcpServers = mcpServers.map(server => {
+              const mount = "url" in server ? brokerPorts.mount(server.url) : null;
+              if (!mount) return server;
+              brokerMounts.push(mount.release);
+              return { ...server, url: mount.url };
+            });
           }
           const init = await request(
             "initialize",
@@ -841,6 +1126,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               });
             }
             run.promptSent = true;
+            armWrapUp(run);
             const promptTurn = first && !readyState.loaded ? replayOnFreshSession(run.turn) : run.turn;
             const text = support.buildPromptText
               ? support.buildPromptText(promptTurn)
@@ -852,13 +1138,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               prompt: [{ type: "text", text }],
             });
             if (run.settled || current !== run) return;
-            const usage = result?._meta ?? {};
+            // ACP PromptResponse.usage (Hermes); `_meta` kept for older agents.
+            const usage = result?.usage ?? result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
               emit({
                 ...eventBase(run),
                 type: "thread.token-usage.updated",
                 input: usage.inputTokens ?? 0,
                 output: usage.outputTokens ?? 0,
+                ...(typeof usage.cachedReadTokens === "number" ? { cachedRead: usage.cachedReadTokens } : {}),
+                ...(typeof usage.thoughtTokens === "number" ? { thought: usage.thoughtTokens } : {}),
               });
             }
             const reason = result?.stopReason;
@@ -880,6 +1169,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           browserBroker?.close();
           appBroker?.cancelPending();
           memoryBroker?.cancelPending();
+          pagesBroker?.cancelPending();
+          signInBroker?.cancelPending();
+          crmBroker?.cancelPending();
+          remindersBroker?.cancelPending();
+          viewsBroker?.cancelPending();
+          bankBroker?.cancelPending();
+          connectorsBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
@@ -913,6 +1209,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             cancellationRequested: false,
             asks: new Map(),
             interruptTimer: null,
+            startedAt: Date.now(),
+            toolCount: 0,
+            wrapUpTimer: null,
+            wrapUpSent: false,
+            steerAckPending: false,
             done,
             resolveDone,
           };
@@ -936,6 +1237,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const run = current;
             if (run && !run.settled) settle(run, false, "interrupted", false);
             else terminate();
+            if (child.exitCode !== null || child.signalCode !== null || !child.pid) return Promise.resolve();
+            const pid = child.pid;
+            const timer = setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } } }, STOP_DEADLINE_MS);
+            timer.unref();
+            return exited.then(() => clearTimeout(timer));
           },
         };
         sessions.add(runtime);
@@ -944,13 +1250,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const sendTurn = async (turn: SendTurnInput) => {
         managedService.assertCapability("reasoning");
+        if (support.networkSandbox && workerLaunchesHeld()) throw new Error(WORKERS_HELD);
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
         if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
-        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope);
+        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm);
         let runtime = warm.get(threadId);
         // A rewind or poisoned-session recovery deliberately clears the
         // persisted cursor. Do not let the warm-process optimization undo
@@ -971,16 +1278,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const snapshot = async (): Promise<ProviderSnapshot> => {
         const env = childEnv();
         const version = await new Promise<string | null>((resolve) => {
-          execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-            resolve(err ? null : stdout.trim()),
-          );
+          // The same boundary as a turn: a binary in worker-writable storage
+          // never runs unconfined, not even to print its version.
+          let launch: { command: string; args: string[]; release?(): void };
+          try { launch = support.networkSandbox ? support.networkSandbox(config.cli, ["--version"], env, [], "diagnostic") : { command: config.cli, args: ["--version"] }; }
+          catch { resolve(null); return; }
+          execCli(launch.command, launch.args, { timeout: 8000, env }, (err, stdout) => {
+            launch.release?.();
+            resolve(err ? null : stdout.trim());
+          });
         });
         if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
         return { state: "available", version, authenticated: support.isAuthenticated(env) };
       };
 
-      const stopAll = () => {
-        for (const session of [...sessions]) session.stop();
+      /** Stops every session and resolves once each process has exited. */
+      const stopAll = async () => {
+        await Promise.all([...sessions].map(session => session.stop()));
+        if (support.networkSandbox) await stopSandboxedChildren(STOP_DEADLINE_MS);
       };
 
       return {
@@ -1012,8 +1327,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           },
         },
         dispose: async () => {
-          stopAll();
+          await stopAll();
           listeners.clear();
+          brokerPorts?.close();
         },
       };
     },

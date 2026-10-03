@@ -1,13 +1,15 @@
 import { withWorkerProfile } from "./hermes-profile.ts";
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { applyHandsReadiness, hermesReadinessFingerprint, hermesStatus, modelAccessStatus } from "./hermes-status.ts";
+import { applyHandsReadiness, clearHermesVersionCache, documentToolsState, hermesReadinessFingerprint, hermesStatus, modelAccessStatus } from "./hermes-status.ts";
+import { DOCUMENT_TOOLS_NEED_REPAIR, DOCUMENT_TOOLS_READY, DOCUMENT_TOOLS_UNSUPPORTED } from "./hermes-document-deps.ts";
+import { runtimeCli } from "./hermes-paths.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { OFF_SCOPE_BUNDLED_SKILLS } from "./hermes-pack.ts";
+import { OFF_SCOPE_BUNDLED_SKILLS, WORKER_ACP_TOOLSETS, WORKER_DEFERRED_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS } from "./hermes-pack.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
 let home: string;
@@ -21,7 +23,7 @@ beforeAll(() => {
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
   writeFileSync(
     join(profile, "config.yaml"),
-    `approvals:\n  mode: manual\n  timeout: 300\nagent:\n  max_turns: 60\n  budget_warning_ratio: 0.75\ntoolsets:\n  - web\n  - terminal\n  - file\n  - vision\n  - todo\n  - session_search\n  - delegation\nsecurity:\n  redact_secrets: true\n  allow_lazy_installs: false\nterminal:\n  backend: local\n  home_mode: profile\n  env_passthrough: []\nmodel:\n  default: test\nskills:\n  write_approval: true\n  disabled:\n${OFF_SCOPE_BUNDLED_SKILLS.map(name => `    - ${name}\n`).join("")}memory:\n  write_approval: true\nauxiliary:\n  title_generation:\n    enabled: false\n  background_review:\n    enabled: false\n    extra_tools: []\ntool_loop_guardrails:\n  loop_caps:\n    max_web_searches: 10\n    max_subagents: 4\nbrowser:\n  backend: \"off\"\n  cloud_provider: local\n  cdp_url: \"\"\n  engine: chrome\n  use_real_profile: false\n`,
+    `approvals:\n  mode: manual\n  timeout: 300\n  deny:\n${WORKER_DENIED_COMMANDS.map(glob => `    - ${JSON.stringify(glob)}\n`).join("")}agent:\n  max_turns: 60\n  budget_warning_ratio: 0.75\n  execution_guidance: true\n  intent_ack_continuation: true\n  coding_context: \"off\"\n  auto_recovery_cycles: 1\n  run_budget_seconds: 840\n  disabled_toolsets: [${WORKER_DISABLED_TOOLSETS.join(", ")}]\nauth:\n  adopt_external_logins: false\nplatform_toolsets:\n  acp: [${WORKER_ACP_TOOLSETS.join(", ")}]\ntoolsets:\n  - web\n  - terminal\n  - file\n  - vision\n  - todo\n  - session_search\n  - delegation\nsecurity:\n  redact_secrets: true\n  allow_lazy_installs: false\nterminal:\n  backend: local\n  home_mode: profile\n  env_passthrough: []\nmodel:\n  default: test\nskills:\n  write_approval: true\n  disabled:\n${OFF_SCOPE_BUNDLED_SKILLS.map(name => `    - ${name}\n`).join("")}memory:\n  write_approval: true\nauxiliary:\n  title_generation:\n    enabled: false\n  background_review:\n    enabled: false\n    extra_tools: []\n    max_input_tokens: 120000\ntool_loop_guardrails:\n  hard_stop_enabled: true\n  loop_caps:\n    max_web_searches: 10\n    max_subagents: 4\ncompression:\n  min_tail_user_messages: 3\n  proactive_prune_tokens: 64000\ndelegation:\n  child_timeout_seconds: 900\ncurator:\n  enabled: false\ntools:\n  tool_search:\n    defer: [${WORKER_DEFERRED_TOOLS.join(", ")}]\n  connectors:\n    enabled: false\nbrowser:\n  backend: \"off\"\n  cloud_provider: local\n  cdp_url: \"\"\n  engine: chrome\n  use_real_profile: false\nvault:\n${WORKER_DISABLED_VAULTS.map(name => `  ${name}:\n    enabled: false\n`).join("")}`,
   );
   OLD_HERMES = fakeHermesVersion("Hermes Agent v0.20.0 (2026.8.3)", "fake-hermes-old");
   PINNED_HERMES = fakeHermesVersion("Hermes Agent v0.20.3 (2026.8.16.2)", "fake-hermes-pinned");
@@ -238,5 +240,72 @@ describe("model access readiness", () => {
     const ready = applyHandsReadiness(status, { at: 1, kind: "ping", ok: true, detail: "OK", workerFingerprint: status.workerFingerprint });
     expect(ready.ready).toBe(false);
     expect(ready.detail).toMatch(/withdrawn/i);
+  });
+});
+
+describe("document tools status", () => {
+  const ready = { ready: true, detail: DOCUMENT_TOOLS_READY };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  function ownedRuntime(): { root: string; sitePackages: string } {
+    const root = mkdtempSync(join(tmpdir(), "realbud-document-tools-"));
+    mkdirSync(dirname(runtimeCli(root)), { recursive: true });
+    writeFileSync(runtimeCli(root), "");
+    const sitePackages = process.platform === "win32"
+      ? join(root, "hermes-agent", "venv", "Lib", "site-packages")
+      : join(root, "hermes-agent", "venv", "lib", "python3.11", "site-packages");
+    mkdirSync(sitePackages, { recursive: true });
+    return { root, sitePackages };
+  }
+  afterEach(() => { vi.unstubAllEnvs(); clearHermesVersionCache(); });
+
+  it("checks once per runtime, never on every poll, and re-checks after Repair changes it", async () => {
+    const { root, sitePackages } = ownedRuntime();
+    try {
+      const checkDocuments = vi.fn(async () => ready);
+      expect(documentToolsState({ root, checkDocuments })).toBe("unknown");
+      await settle();
+      for (let poll = 0; poll < 5; poll++) expect(documentToolsState({ root, checkDocuments })).toBe("ready");
+      expect(checkDocuments).toHaveBeenCalledTimes(1);
+      expect(checkDocuments).toHaveBeenCalledWith(root);
+      // An install adds folders to site-packages.
+      mkdirSync(join(sitePackages, "fictional_pkg-1.0.dist-info"));
+      utimesSync(sitePackages, new Date(), new Date(Date.now() + 5_000));
+      documentToolsState({ root, checkDocuments }); await settle();
+      expect(checkDocuments).toHaveBeenCalledTimes(2);
+      // Repair clears the cache before it runs.
+      clearHermesVersionCache();
+      documentToolsState({ root, checkDocuments }); await settle();
+      expect(checkDocuments).toHaveBeenCalledTimes(3);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("maps the import check to needs_repair or unavailable_here", async () => {
+    const { root } = ownedRuntime();
+    try {
+      documentToolsState({ root, checkDocuments: async () => ({ ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR }) }); await settle();
+      expect(documentToolsState({ root })).toBe("needs_repair");
+      clearHermesVersionCache();
+      documentToolsState({ root, checkDocuments: async () => ({ ready: false, detail: DOCUMENT_TOOLS_UNSUPPORTED }) }); await settle();
+      expect(documentToolsState({ root })).toBe("unavailable_here");
+      clearHermesVersionCache();
+      documentToolsState({ root, checkDocuments: async () => { throw new Error("fictional failure"); } }); await settle();
+      expect(documentToolsState({ root })).toBe("needs_repair");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("is unknown without an owned runtime and unavailable for a separate Hermes", () => {
+    const checkDocuments = vi.fn(async () => ready);
+    expect(documentToolsState({ root: home, checkDocuments })).toBe("unknown");
+    vi.stubEnv("REALBUD_HERMES_CLI", "/synthetic/hermes");
+    expect(documentToolsState({ root: home, checkDocuments })).toBe("unavailable_here");
+    expect(checkDocuments).not.toHaveBeenCalled();
+  });
+
+  it("never changes worker readiness or its detail", async () => {
+    const status = await hermesStatus({ root: home, cli: PINNED_HERMES });
+    const ping = { at: 1, kind: "ping" as const, ok: true, detail: "OK", workerFingerprint: status.workerFingerprint };
+    const passed = applyHandsReadiness({ ...status, documentTools: "needs_repair" }, ping);
+    expect(passed.ready).toBe(true);
+    expect(passed.detail).toBe(applyHandsReadiness({ ...status, documentTools: "ready" }, ping).detail);
   });
 });

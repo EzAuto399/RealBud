@@ -40,9 +40,9 @@ async function stopService() {
   if (alive()) { child.kill('SIGKILL'); await once(child, 'exit'); }
 }
 async function openOffice(page) {
-  await page.getByRole('button', { name: /^You\b/ }).first().click();
-  // The You page mounts after the click; wait for the section rather than skipping it.
-  const summary = page.locator('summary').filter({ has: page.getByText('This office', { exact: true }) }).first();
+  await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+  // The Workspace page mounts after the click; wait for the section rather than skipping it.
+  const summary = page.locator('summary').filter({ has: page.getByText('Office details', { exact: true }) }).first();
   await summary.waitFor();
   await summary.evaluate(node => { node.parentElement.open = true; });
   await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
@@ -175,6 +175,7 @@ try {
   await page.reload(); await openOffice(page); await expand(page, 'Connection and work recovery');
   await page.getByText('Past office access still needs checking', { exact: true }).waitFor();
   checks.push('Encrypted offline-detachment receipt visible after native renderer reload');
+  await expand(page, /^Settings & help/);
   await page.getByRole('button', { name: 'Stop the office service', exact: true }).click();
   await page.getByRole('group', { name: 'Confirm stopping the office service', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.scrollingElement.scrollTop), 0, 'Native focus must not scroll the app shell out of view');
@@ -192,23 +193,29 @@ try {
   await page.getByRole('button', { name: 'Open saved-job import and export', exact: true }).click();
   assert.ok(await page.locator('#you-packs').isVisible());
   checks.push('Records guidance distinguishes shared office backups from encrypted private business backup; recovery controls render in the native app');
-  await page.goto(origin + '/#/views');
-  await page.getByRole('heading', { name: 'Manage saved views', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Add saved view', exact: true }).click();
-  await page.getByLabel('View name', { exact: true }).fill('Accounts work');
-  await page.getByLabel('Work to show', { exact: true }).selectOption('tasks');
-  await page.getByLabel('Filter', { exact: true }).selectOption('all');
-  await page.getByRole('button', { name: 'Save view', exact: true }).click();
-  await page.getByText('Saved view added.', { exact: true }).waitFor();
+  // Saved views are read-only for people; seed the fictional view through the revisioned API.
+  const viewHeaders = { 'x-realbud-session': session, 'content-type': 'application/json' };
+  const currentViewsResponse = await fetch(origin + '/api/workspace-tabs', { headers: viewHeaders });
+  assert.equal(currentViewsResponse.status, 200);
+  const currentViews = (await currentViewsResponse.json()).state;
+  const seededView = { id: 'view-fictional-accounts', label: 'Accounts work', visible: true, view: { kind: 'tasks', filter: 'all' } };
+  const seedViewsResponse = await fetch(origin + '/api/workspace-tabs', { method: 'PUT', headers: viewHeaders, body: JSON.stringify({ version: 1, expectedRevision: currentViews.revision, tabs: [...currentViews.tabs, seededView] }) });
+  assert.equal(seedViewsResponse.status, 200, await seedViewsResponse.text());
+  await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await expand(page, /^Settings & help/);
+  await page.locator('#you-settings').getByRole('button', { name: 'See saved views', exact: true }).click();
+  await page.getByRole('heading', { level: 1, name: 'Saved views', exact: true }).waitFor();
   await page.reload();
   await page.getByRole('button', { name: 'Open Accounts work', exact: true }).waitFor();
   await page.screenshot({ animations: 'disabled', path: join(output, 'custom-tabs-native.png') });
   await page.getByRole('button', { name: 'Open Accounts work', exact: true }).click();
   await page.getByRole('heading', { name: 'Accounts work', exact: true }).waitFor();
   const savedViews = await (await fetch(origin + '/api/workspace-tabs', { headers: { 'x-realbud-session': session } })).json();
-  assert.equal(savedViews.state.tabs[0].label, 'Accounts work');
-  checks.push('Native saved-view creation, persistent reload and real task view navigation');
+  assert.deepEqual(savedViews.state.tabs.find(tab => tab.id === seededView.id), seededView);
+  checks.push('Revisioned API-seeded view appears in native Saved views through Workspace, persists after reload and opens its real task view');
   await page.goto(origin + '/#/schedule');
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-packs'; });
   const packCard = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
   await packCard.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await packCard.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
@@ -220,6 +227,7 @@ try {
   await packCard.scrollIntoViewIfNeeded();
   await page.screenshot({ animations: 'disabled', path: join(output, 'customer-pack-native.png') });
   checks.push('Native customer-pack resource loading, preview, import and truthful incomplete live acceptance');
+  await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
   await openOffice(page);
 
   // Narrow browser layout uses the same packaged server, real database and built assets.
@@ -244,7 +252,7 @@ try {
   await page.getByRole('heading', { name: 'Who can use Accounts' }).scrollIntoViewIfNeeded();
   assert.deepEqual(errors, []);
   rmSync(join(output, 'native-failure.png'), { force: true });
-  writeFileSync(join(output, 'native-qa.json'), JSON.stringify({ date: new Date().toISOString(), executable, native: true, database: fixture.version, fictionalDataOnly: true, checks, rendererErrors: errors, limitations: ['Unsigned local Mac build', 'No model calls, bank accounts or customer office', 'Same-Mac PostgreSQL fixture; no physical peer/device proof', 'Department access administration only; no departmental work queue or retirement'] }, null, 2));
+  writeFileSync(join(output, 'native-qa.json'), JSON.stringify({ date: new Date().toISOString(), executable, native: true, database: fixture.version, fictionalDataOnly: true, checks, rendererErrors: errors, limitations: ['Unsigned local Mac build', 'No model calls, bank accounts or customer office', 'Same-Mac PostgreSQL fixture; no physical peer/device proof', 'Department access administration only; no departmental work queue or retirement', 'Saved-view creation is seeded through the revisioned API; native presentation and persistence are exercised, not Bud approval or execution'] }, null, 2));
   console.log(JSON.stringify({ ok: true, checks: checks.length, output, nativeWindowOpen: process.argv.includes('--keep-open') }));
   if (process.argv.includes('--keep-open')) {
     writeFileSync(join(output, 'preview-processes.json'), JSON.stringify({ controllerPid: process.pid, appPid: nativeChild.pid, servicePid: child.pid, temporaryDirectory: temp, cleanup: 'Quit this fictional preview window to stop its service and remove its temporary database.' }, null, 2));

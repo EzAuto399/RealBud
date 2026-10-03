@@ -5,10 +5,11 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { Document, isMap, isSeq, parseDocument, YAMLMap } from "yaml";
+import { Document, isMap, isScalar, isSeq, parseDocument, visit, YAMLMap } from "yaml";
 
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { HERMES_RELEASES } from "./hermes-releases.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, managedModelChoiceFor, managedModelChoiceKeepingModel, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
@@ -193,8 +194,9 @@ function readIf(path: string): string {
 /**
  * Hermes' bundled skills that Bud's worker must neither list nor load: every
  * name in the bundled `skills/` tree of the admitted releases (0.21.0 29112bef,
- * 0.21.2 939e45c9 and 0.21.3 345cd2b0 ship the same 58) except `hermes-agent`
- * (upstream ESSENTIAL_SKILLS, never disableable), `pdf`, `xlsx` and `docx`.
+ * 0.21.2 939e45c9, 0.21.3 345cd2b0 and 0.21.5 f97608f1 ship the same 58) except `hermes-agent`
+ * (upstream ESSENTIAL_SKILLS, never disableable), `pdf`, `xlsx`, `docx` and the
+ * office-work skills in `PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS`.
  *
  * `skills.disabled` is enforced by Hermes itself: the system-prompt skill index
  * drops these names (agent/prompt_builder.py `_build_skills_system_prompt_inner`),
@@ -209,14 +211,29 @@ function readIf(path: string): string {
  */
 export const OFF_SCOPE_BUNDLED_SKILLS: readonly string[] = [
   "airtable", "apple-notes", "apple-reminders", "architecture-diagram", "arxiv", "ascii-video", "baoyu-infographic",
-  "blocked-page-recovery", "box", "claude-code", "claude-design", "codebase-inspection", "codex", "competitor-news-monitor",
-  "computer-use", "design-md", "document-to-action-items", "dogfood", "email-inbox-triage", "findmy", "gif-search", "github",
-  "google-workspace", "grounded-citations", "hermes-agent-skill-authoring", "himalaya", "humanizer", "imessage",
-  "inspecting-hermes-desktop-dom", "llm-wiki", "manim-video", "maps", "meeting-action-items", "node-inspect-debugger",
-  "notion", "obsidian", "opencode", "p5js", "popular-web-designs", "powerpoint", "product-price-monitor", "python-debugpy",
+  "box", "claude-code", "claude-design", "codebase-inspection", "codex", "competitor-news-monitor",
+  "computer-use", "design-md", "dogfood", "email-inbox-triage", "findmy", "gif-search", "github",
+  "google-workspace", "hermes-agent-skill-authoring", "himalaya", "imessage",
+  "inspecting-hermes-desktop-dom", "llm-wiki", "manim-video", "maps", "node-inspect-debugger",
+  "notion", "obsidian", "opencode", "p5js", "popular-web-designs", "product-price-monitor", "python-debugpy",
   "requesting-code-review", "sdlc-review", "simplify-code", "songsee", "songwriting-and-ai-music", "spike",
-  "systematic-debugging", "teams-meeting-pipeline", "test-driven-development", "weekly-review-planning", "xurl",
+  "systematic-debugging", "teams-meeting-pipeline", "test-driven-development", "xurl",
   "youtube-content",
+];
+
+/** Bundled skills an earlier floor hid and Bud now lists. Each is instruction
+ * text plus at most stdlib scripts: no credential, install, cron, browser or
+ * outbound message is required (an optional key or browser step is skipped
+ * when absent, and every external write stays behind the person's approval).
+ * `powerpoint` (reopened 2026-10-02) creates, reads and edits local .pptx files
+ * with python-pptx, which Repair installs from the reviewed lock
+ * (server/hermes-document-deps.lock.json), never lazily; its optional render
+ * step runs a local LibreOffice only when one is already installed.
+ * Repair removes exactly these from an existing `skills.disabled` before
+ * adding the floor, so any other name an office hid stays hidden. */
+export const PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS: readonly string[] = [
+  "blocked-page-recovery", "document-to-action-items", "grounded-citations", "humanizer", "meeting-action-items",
+  "powerpoint", "weekly-review-planning",
 ];
 
 const UNREADABLE_LEARNING = "Bud’s learning settings could not be read. The existing file has been kept.";
@@ -252,6 +269,8 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   for (const key of keys) {
     if (policy.has(key)) result.set(key, policy.get(key));
   }
+  if (!isMap(result.get("approvals"))) throw new Error(UNREADABLE_PROFILE);
+  result.setIn(["approvals", "deny"], result.createNode([...WORKER_DENIED_COMMANDS]));
   if (keepEffort && isMap(result.get("agent"))) result.setIn(["agent", "reasoning_effort"], keepEffort);
   // Own the write gate and a floor of hidden upstream skills; retain memory
   // preferences and any further skills the office has hidden itself.
@@ -262,20 +281,105 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
   }
   for (const key of ["skills", "memory"]) result.setIn([key, "write_approval"], true);
-  const disabled = new Set([...disabledSkillNames(result.getIn(["skills", "disabled"])), ...OFF_SCOPE_BUNDLED_SKILLS]);
+  const reopened = new Set(PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS);
+  const officeHidden = disabledSkillNames(result.getIn(["skills", "disabled"])).filter(name => !reopened.has(name));
+  const disabled = new Set([...officeHidden, ...OFF_SCOPE_BUNDLED_SKILLS]);
   result.setIn(["skills", "disabled"], result.createNode([...disabled].sort()));
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
   // Owned whole: with titles off, the rest of the block (provider, model) is unused.
   if (policy.hasIn(["auxiliary", "title_generation"])) result.setIn(["auxiliary", "title_generation"], policy.getIn(["auxiliary", "title_generation"]));
   // Portal work goes through RealBud's own fenced browser, and the person signs
   // in themselves; Ask and its subagents get no Hermes browser or credential
-  // vault. Hermes 0.21.3 ACP ignores `agent.disabled_toolsets`, so these keys
-  // keep its availability check (tools/browser_tool_install.py
-  // `check_browser_requirements`, which also gates browser_vault_*) from being
-  // satisfied by settings. Other browser settings stay the office's.
+  // vault. 0.21.5 also drops the `browser` toolset (`WORKER_DISABLED_TOOLSETS`);
+  // 0.21.3 ACP ignores that list, so these keys keep its availability check
+  // (tools/browser_tool_install.py `check_browser_requirements`, which also
+  // gates browser_vault_*) from being satisfied by settings. An `agent-browser`
+  // CLI plus Chromium on PATH still satisfies it there, which the host's
+  // native-browser refusal covers. Other browser settings stay the office's.
   for (const [key, value] of Object.entries(WORKER_BROWSER_POLICY)) result.setIn(["browser", key], value);
+  // Own only the listed compression, curator, login-policy and ACP-selection
+  // keys and the tool-search deferral list; every other setting in those
+  // sections (other platforms' toolsets included) stays the office's.
+  for (const key of ["compression", "curator", "tools", "auth", "platform_toolsets", "vault"]) {
+    if (result.has(key) && !isMap(result.get(key))) throw new Error(UNREADABLE_PROFILE);
+    if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
+  }
+  for (const [key, subkeys] of Object.entries(OWNED_SUBKEYS)) {
+    for (const subkey of subkeys) if (policy.hasIn([key, subkey])) result.setIn([key, subkey], policy.getIn([key, subkey]));
+  }
+  const search = result.getIn(["tools", "tool_search"]);
+  if (!isMap(search)) {
+    // Upstream reads a bare `false` here as `enabled: off` and anything else as
+    // auto (tools/tool_search.py `ToolSearchConfig.from_raw`); keep that meaning.
+    const map = new YAMLMap(result.schema);
+    if (search === false) map.set("enabled", "off");
+    result.setIn(["tools", "tool_search"], map);
+  }
+  // Hermes Connectors stay off; the rest of `tools.connectors` stays the office's.
+  if (!isMap(result.getIn(["tools", "connectors"]))) result.setIn(["tools", "connectors"], new YAMLMap(result.schema));
+  result.setIn(["tools", "connectors", "enabled"], false);
+  // No password-manager login source; the rest of each vault entry stays the office's.
+  for (const name of WORKER_DISABLED_VAULTS) {
+    if (!isMap(result.getIn(["vault", name]))) result.setIn(["vault", name], new YAMLMap(result.schema));
+    result.setIn(["vault", name, "enabled"], false);
+  }
+  // Flow style: no block line in the profile reads like an enabled `- computer_use` toolset.
+  result.setIn(["tools", "tool_search", "defer"], result.createNode([...WORKER_DEFERRED_TOOLS], { flow: true }));
   return result.toString();
 }
+
+const UNREADABLE_PROFILE = "Bud’s profile has unreadable or duplicate settings. The existing file has been kept.";
+
+/** Sections where Install and Repair own only these keys, taken from the pack. */
+const OWNED_SUBKEYS = {
+  compression: ["min_tail_user_messages", "proactive_prune_tokens"],
+  curator: ["enabled"],
+  auth: ["adopt_external_logins"],
+  platform_toolsets: ["acp"],
+} as const;
+
+/** Owned `platform_toolsets.acp`: Ask's explicit selection, which Hermes 0.21.5
+ * resolves per platform (acp_adapter/session.py `_make_agent` →
+ * hermes_cli/tools_config.py `_get_platform_tools`) instead of 0.21.3's fixed
+ * `hermes-acp`. hermes-acp's tools minus `WORKER_DISABLED_TOOLSETS`; `no_mcp`
+ * keeps configured MCP servers out, while RealBud's per-turn ACP mounts still
+ * join (acp_adapter/server.py `_register_session_mcp_servers`). */
+export const WORKER_ACP_TOOLSETS = [
+  "web", "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution", "no_mcp",
+] as const;
+
+/** Owned `agent.disabled_toolsets` (inside the owned `agent` block): removed at
+ * tool granularity from Ask, CLI jobs and every subagent, which inherits them
+ * (tools/delegate_tool_toolsets.py `_resolve_child_toolsets`). Every name is a
+ * toolset in both 0.21.3 and 0.21.5, so neither warns about an unknown name.
+ * `setup` (`manage_catalog`) is not listed: 0.21.3 has no such toolset, and
+ * 0.21.5 strips it from every profile without `role: setup`, which the pack's
+ * profile.yaml never declares. 0.21.3 ACP ignores this list; there the host
+ * refuses a native browser call (drivers/acp/core.ts `hermesNativeBrowserTool`). */
+export const WORKER_DISABLED_TOOLSETS = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts"] as const;
+
+/** Tools Bud uses on most jobs that upstream defers behind `tool_search` by
+ * default (tools/tool_search.py `_DEFAULT_DEFERRED_TOOLS`, 0.21.3 and 0.21.5). */
+export const WORKER_DIRECT_TOOLS = ["todo_list", "session_search", "process_manage"] as const;
+
+/** Owned `tools.tool_search.defer`. An explicit list replaces upstream's
+ * curated default wholesale, so this is that default (0.21.3) minus
+ * `WORKER_DIRECT_TOOLS`: core tools defer only when named, so those three
+ * become directly visible, and MCP and plugin tools still defer as before.
+ * 0.21.5's default is the same set without `setup_mcp`, a tool it no longer
+ * has; naming it there defers nothing. Promoting a release whose default
+ * differs needs this list reviewed again. */
+export const WORKER_DEFERRED_TOOLS = [
+  "computer_use", "image_generate", "cronjob_manage",
+  "drive_preview", "gui_tour", "desktop_preview", "annotate_preview", "show_tip", "setup_mcp", "desktop_project",
+  "close_terminal", "apply_layout", "read_terminal", "read_window_below", "focus_pane",
+] as const;
+
+/** Owned `vault.<name>.enabled: false`. Hermes 0.21.5 defaults both to true
+ * and, in 0.21.3 and 0.21.5 alike, treats an installed `op`/`bw` CLI as a login
+ * source unless the value is exactly `False` (agent/vault_backends/base.py
+ * `is_enabled`). Credentials never pass through Bud. */
+export const WORKER_DISABLED_VAULTS = ["onepassword", "bitwarden"] as const;
 
 /** Owned `browser.*` keys. `backend: off` stops Browser Use mode (`browser_exec`
  * plus the vault, which Hermes enables whenever `uvx` runs). `cloud_provider:
@@ -293,22 +397,75 @@ export const WORKER_BROWSER_POLICY = {
   use_real_profile: false,
 } as const;
 
-function policyDocument(raw: string) {
-  // Match upstream's YAML 1.1 booleans, and reject malformed/duplicate mappings
-  // before its write gate can fail open on a config-loading exception.
+/** Programs Bud's terminal may never start, at the start of a command or after
+ * any separator (`;`, `|`, `&&`, `$(`, a path `/`), with or without `.exe`. */
+const DENIED_PROGRAMS = [
+  "curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "sftp", "rsync", "ftp", "telnet", "socat",
+  "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "certutil", "bitsadmin", "osascript", "pwsh", "powershell",
+] as const;
+/** Inline code an interpreter would run without a reviewable file. */
+const DENIED_INLINE_CODE = ["python* -c *", "node -e *", "node --eval *", "perl -e *", "ruby -e *"] as const;
+
+/** Owned `approvals.deny`: fnmatch globs Hermes checks before any approval
+ * mode, yolo included, lower-cased and over its de-obfuscated variants, against
+ * the WHOLE command (tools/approval_floors.py `_match_user_deny_rule`). This
+ * is a blocklist, not a guarantee: a renamed binary, a script file or a tab
+ * separator gets past it. The boundary on macOS is the Ask worker's network
+ * sandbox (server/worker-network-sandbox.ts); Windows still needs a
+ * per-program firewall rule, and Linux an equivalent. */
+export const WORKER_DENIED_COMMANDS: readonly string[] = [
+  ...DENIED_PROGRAMS.flatMap(name => [`${name}[ .]*`, `*[!a-z0-9_-]${name}[ .]*`]),
+  ...DENIED_INLINE_CODE.flatMap(glob => [glob, `*[!a-z0-9_-]${glob}`]),
+];
+
+/** The profile as Hermes' own parser (PyYAML, YAML 1.1) reads it: duplicate
+ * or malformed mappings are unreadable, so are collection keys (PyYAML refuses
+ * them), and a bare `y`/`n`, a boolean to this library but a string to
+ * PyYAML, stays a string. Exported for the readiness tests only. */
+export function policyDocument(raw: string): Document {
   const doc = parseDocument(raw, { uniqueKeys: true, version: "1.1" });
-  if (doc.errors.length || doc.warnings.length || !isMap(doc.contents)) throw new Error("Bud’s profile has unreadable or duplicate settings. The existing file has been kept.");
+  if (doc.errors.length || doc.warnings.length || !isMap(doc.contents)) throw new Error(UNREADABLE_PROFILE);
+  visit(doc, {
+    Pair(_, pair) { if (!isScalar(pair.key)) throw new Error(UNREADABLE_PROFILE); },
+    // `!!pairs`, `!!omap`, `!!set`, ... : PyYAML's SafeLoader refuses them.
+    Map(_, node) { if (node.tag) throw new Error(UNREADABLE_PROFILE); },
+    Seq(_, node) { if (node.tag) throw new Error(UNREADABLE_PROFILE); },
+    // An explicit tag (`!!bool n`, `!!str`, ...) is nothing the pack writes, and
+    // PyYAML raises on `!!bool y/n`: the whole file reads as unreadable.
+    Scalar(_, node) {
+      if (node.tag) throw new Error(UNREADABLE_PROFILE);
+      if (typeof node.value === "boolean" && /^[yn]$/i.test(node.source ?? "")) node.value = node.source;
+    },
+  });
   doc.toJS({ maxAliasCount: 50 });
   return doc;
 }
 
-/** Native staged writes are reviewed only at this exact upstream source pin.
- * A pending update must not enable them on an older process-cached executable. */
+/** A security switch counts only as the canonical `true`/`false` token: a
+ * real boolean here, spelled the one way every parser agrees on. */
+export function strictBool(doc: Document, path: readonly string[], expected: boolean): boolean {
+  const node = doc.getIn([...path], true);
+  return isScalar(node) && node.value === expected && node.source === String(expected);
+}
+
+/** Admitted runtimes whose native memory/skill proposal schema RealBud's
+ * review helpers match (server/hermes-memory-review.ts): 0.21.3 and 0.21.5
+ * (v2026.9.24 peeled; its `matched_entry` proposal schema is migrated). A
+ * further release stays out until its memory side is reviewed. */
+export const MEMORY_SCHEMA_READY_COMMITS: readonly string[] = [
+  "345cd2b057a452236de401d3534b8502a7465e8d",
+  "f97608f178d1ffeca59860195ab7da295f7c8e5f",
+];
+
+/** Native staged writes are reviewed only at an admitted upstream commit whose
+ * memory schema is ready. A pending update must not enable them on an older
+ * process-cached executable. */
 export function stagedLearningSupported(root?: string): boolean {
   try {
     const home = hermesHome(root);
     const selected = readRuntimeSelection(home).selected;
-    if (!selected || runtimeCommit(selected) !== "345cd2b057a452236de401d3534b8502a7465e8d") return false;
+    const commit = runtimeCommit(selected);
+    if (!selected || !commit || !HERMES_RELEASES.some(release => release.commit === commit) || !MEMORY_SCHEMA_READY_COMMITS.includes(commit)) return false;
     const cli = runtimeCli(releaseHome(home, selected));
     return existsSync(cli) && selectedHermesCli(home) === cli;
   } catch { return false; }
@@ -320,10 +477,12 @@ export function learningPolicyReady(root?: string): boolean {
     const background = doc.getIn(["auxiliary", "background_review"]);
     if (!isMap(background)) return false;
     const settings = background.toJSON() as { enabled?: unknown; extra_tools?: unknown };
-    return doc.getIn(["skills", "write_approval"]) === true && doc.getIn(["memory", "write_approval"]) === true &&
-      (settings.enabled === false || (settings.enabled === true && stagedLearningSupported(root))) &&
+    // The curator archives agent-created skills outside the write gate.
+    return strictBool(doc, ["skills", "write_approval"], true) && strictBool(doc, ["memory", "write_approval"], true) &&
+      strictBool(doc, ["curator", "enabled"], false) &&
+      (strictBool(doc, ["auxiliary", "background_review", "enabled"], false) || (strictBool(doc, ["auxiliary", "background_review", "enabled"], true) && stagedLearningSupported(root))) &&
       JSON.stringify(settings.extra_tools) === "[]" &&
-      background.items.every(item => ["enabled", "extra_tools"].includes(String(item.key)));
+      background.items.every(item => ["enabled", "extra_tools", "max_input_tokens"].includes(String(item.key)));
   } catch { return false; }
 }
 
@@ -340,13 +499,55 @@ export function workerLimitsReady(root?: string): boolean {
       // Upstream reads 0 as unlimited, so a cap must be a positive integer.
       return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= max;
     };
+    const integer = (path: string[], min: number, max: number) => {
+      const value = doc.getIn(path);
+      return Number.isInteger(value) && (value as number) >= min && (value as number) <= max;
+    };
     const ratio = doc.getIn(["agent", "budget_warning_ratio"]);
+    const defer = doc.getIn(["tools", "tool_search", "defer"]);
+    const deferred = isSeq(defer) ? new Set((defer.toJSON() as unknown[]).map(String)) : null;
     return doc.getIn(["auxiliary", "title_generation", "enabled"]) === false &&
       doc.getIn(["security", "allow_lazy_installs"]) === false &&
       Object.entries(WORKER_BROWSER_POLICY).every(([key, value]) => doc.getIn(["browser", key]) === value) &&
       cap("max_web_searches", 10) && cap("max_subagents", 4) &&
-      typeof ratio === "number" && ratio > 0 && ratio < 1;
+      typeof ratio === "number" && ratio > 0 && ratio < 1 &&
+      doc.getIn(["agent", "execution_guidance"]) === true && doc.getIn(["agent", "intent_ack_continuation"]) === true &&
+      doc.getIn(["agent", "coding_context"]) === "off" &&
+      doc.getIn(["tool_loop_guardrails", "hard_stop_enabled"]) === true &&
+      // At least three requests kept; pruning on, no later than 64K (0 is off).
+      integer(["compression", "min_tail_user_messages"], 3, 1_000) &&
+      integer(["compression", "proactive_prune_tokens"], 1, 64_000) &&
+      // Upstream reads 0 as no timeout and floors a positive value at 30 s.
+      integer(["delegation", "child_timeout_seconds"], 1, 900) &&
+      deferred !== null && WORKER_DEFERRED_TOOLS.every(name => deferred.has(name)) &&
+      WORKER_DIRECT_TOOLS.every(name => !deferred.has(name)) &&
+      // Upstream reads `bool(value)`, so only a real YAML false refuses borrowing.
+      strictBool(doc, ["auth", "adopt_external_logins"], false) &&
+      strictBool(doc, ["tools", "connectors", "enabled"], false) &&
+      includesAll(doc.getIn(["approvals", "deny"]), WORKER_DENIED_COMMANDS) &&
+      sameList(doc.getIn(["platform_toolsets", "acp"]), WORKER_ACP_TOOLSETS) &&
+      includesAll(doc.getIn(["agent", "disabled_toolsets"]), WORKER_DISABLED_TOOLSETS) &&
+      // 0 disables the extra recovery wait; anything above one cycle is looser.
+      integer(["agent", "auto_recovery_cycles"], 0, 1) &&
+      // Upstream reads only `is False` as off, so the string "false" leaves it on.
+      WORKER_DISABLED_VAULTS.every(name => strictBool(doc, ["vault", name, "enabled"], false)) &&
+      // Wrap-up notice at 80%, before RealBud's 900 s hard stop.
+      integer(["agent", "run_budget_seconds"], 60, 870) &&
+      // Upstream reads <= 0 as unlimited.
+      integer(["auxiliary", "background_review", "max_input_tokens"], 1, 120_000);
   } catch { return false; }
+}
+
+/** A YAML sequence holding exactly these names in this order. */
+function sameList(value: unknown, names: readonly string[]): boolean {
+  return isSeq(value) && JSON.stringify((value.toJSON() as unknown[]).map(String)) === JSON.stringify(names);
+}
+
+/** A YAML sequence holding at least these names. */
+function includesAll(value: unknown, names: readonly string[]): boolean {
+  if (!isSeq(value)) return false;
+  const held = new Set((value.toJSON() as unknown[]).map(String));
+  return names.every(name => held.has(name));
 }
 
 /** Every off-scope bundled skill is hidden, as a real sequence: upstream's
@@ -415,10 +616,17 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
 //
 // RealBud is managed-only: every office reasons through its paired Modelvia
 // grant, with one of the three choices in `shared/managed-model-choices.ts`.
-// The key reaches the worker only through the launch environment; the profile
-// SELECTS the gateway. Every key below was taken from the installed release
-// (`HERMES_RECOMMENDED`, hermes-agent 0.21.3, commit 345cd2b0) and proven by
-// `server/managed-model-wire.native.test.ts` against the real CLI:
+// The profile SELECTS the gateway and never holds the key. One-shot CLI workers
+// receive the key through their launch environment; Ask (ACP) receives only a
+// token for RealBud's loopback model relay, which holds the key, is pointed to
+// per launch by a managed-scope overlay over these same keys, and enforces the
+// choice's reasoning effort on every request (server/ask-model-relay.ts):
+// 0.21.3 ACP never puts it on the wire, and 0.21.5 ACP sends this profile's
+// effort, which the relay replaces with the same value. Every key below was taken from the installed release
+// (hermes-agent 0.21.3, commit 345cd2b0, then `HERMES_RECOMMENDED`) and proven by
+// `server/managed-model-wire.native.test.ts` against that real CLI. 0.21.5
+// (f97608f1) is now recommended; that wire proof has NOT been re-run on 0.21.5
+// and must be before these keys are claimed for it:
 //
 //   model.provider  `custom:realbud` names the `providers.realbud` entry
 //                   (hermes_cli/runtime_provider_custom.py
@@ -438,6 +646,9 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
 //   providers.realbud.api_mode
 //                   `chat_completions`: the gateway publishes an
 //                   OpenAI-compatible /chat/completions surface.
+//   model.supports_vision
+//                   agent/image_routing.py `_supports_vision_override`: true
+//                   makes image input native and shows `vision_analyze`.
 //   agent.reasoning_effort
 //                   hermes_constants.py `resolve_reasoning_config`, clamped by
 //                   the custom profile to OPENAI_COMPAT_WIRE_EFFORTS (which
@@ -527,8 +738,16 @@ export interface ManagedModelApply {
 export function managedModelConfig(raw: string, baseUrl: string, choiceId: ManagedModelChoiceId): string {
   const choice = managedModelChoice(choiceId);
   const doc: Document = raw.trim() ? policyDocument(raw) : new Document({}, { version: "1.1" });
-  if (doc.has("agent") && !isMap(doc.get("agent"))) throw new Error("Bud’s profile has unreadable or duplicate settings. The existing file has been kept.");
-  doc.set("model", doc.createNode({ default: choice.model, provider: MANAGED_MODEL_PROVIDER }));
+  if (doc.has("agent") && !isMap(doc.get("agent"))) throw new Error(UNREADABLE_PROFILE);
+  // `model.supports_vision` is the first override upstream consults
+  // (agent/image_routing.py `_supports_vision_override`); without it a custom
+  // provider reads as text-only and `vision_analyze` stays hidden
+  // (tools/vision_tools.py `check_vision_requirements`). Written only for a
+  // choice whose model takes images; the section is owned whole, so a switch
+  // to a text-only choice drops it.
+  doc.set("model", doc.createNode({
+    default: choice.model, provider: MANAGED_MODEL_PROVIDER, ...(choice.supportsVision ? { supports_vision: true } : {}),
+  }));
   doc.set("providers", doc.createNode({
     [MANAGED_MODEL_PROVIDER_ENTRY]: { base_url: baseUrl, key_env: MANAGED_MODEL_KEY_ENV, api_mode: MANAGED_MODEL_API_MODE },
   }));
@@ -593,8 +812,8 @@ export function removeManagedEnvKey(profileDir: string): boolean {
 
 export function approvalsAreManual(root?: string): boolean {
   try {
-    const raw = readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8");
-    return /approvals:[\s\S]*?mode:\s*manual/.test(raw) && !/mode:\s*(off|smart|yolo)/.test(raw.split("approvals:")[1] ?? "");
+    // Parsed, not pattern-matched: a comment or block scalar must never read as manual.
+    return policyDocument(readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8")).getIn(["approvals", "mode"]) === "manual";
   } catch {
     return false;
   }
@@ -604,21 +823,22 @@ export function approvalsAreManual(root?: string): boolean {
  * keeping subprocess credentials isolated from the user's normal HOME. */
 export function propertyWorkroomReady(root?: string): boolean {
   try {
-    const raw = readIf(join(propertyProfileDir(root), "config.yaml")).replace(/\r\n/g, "\n");
-    const terminal = yamlBlock(raw, "terminal") ?? "";
-    const agent = yamlBlock(raw, "agent") ?? "";
-    const security = yamlBlock(raw, "security") ?? "";
-    const toolsets = yamlBlock(raw, "toolsets") ?? "";
-    const maxTurns = Number(agent.match(/^\s+max_turns:\s*(\d+)\s*$/m)?.[1] ?? 0);
+    const doc = policyDocument(readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8"));
+    const maxTurns = doc.getIn(["agent", "max_turns"]);
+    const passthrough = doc.getIn(["terminal", "env_passthrough"]);
+    const toolsetsNode = doc.get("toolsets");
+    const toolsets: unknown[] = isSeq(toolsetsNode) ? toolsetsNode.toJSON() : [];
     const requiredToolsets = ["web", "terminal", "file", "vision", "todo", "session_search", "delegation"];
     return (
-      /^\s+backend:\s*local\s*$/m.test(terminal) &&
-      /^\s+home_mode:\s*profile\s*$/m.test(terminal) &&
-      /^\s+env_passthrough:\s*\[\]\s*$/m.test(terminal) &&
-      /^\s+redact_secrets:\s*true\s*$/m.test(security) &&
-      requiredToolsets.every((name) => new RegExp(`^\\s+-\\s*${name}\\s*$`, "m").test(toolsets)) &&
-      !/^\s+-\s*(code_execution|computer_use|cronjob|skills)\s*$/m.test(toolsets) &&
-      maxTurns >= 60 && learningPolicyReady(root) && workerLimitsReady(root) && skillScopeReady(root)
+      doc.getIn(["terminal", "backend"]) === "local" &&
+      doc.getIn(["terminal", "home_mode"]) === "profile" &&
+      isSeq(passthrough) && passthrough.items.length === 0 &&
+      doc.getIn(["security", "redact_secrets"]) === true &&
+      toolsets.every((name) => typeof name === "string") &&
+      requiredToolsets.every((name) => toolsets.includes(name)) &&
+      !["code_execution", "computer_use", "cronjob", "skills"].some((name) => toolsets.includes(name)) &&
+      Number.isInteger(maxTurns) && (maxTurns as number) >= 60 &&
+      learningPolicyReady(root) && workerLimitsReady(root) && skillScopeReady(root)
     );
   } catch {
     return false;

@@ -1,4 +1,5 @@
 import type { ManagedModelChoiceId } from "@shared/managed-model-choices";
+import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
 import { budStatusObserverRevision, hasBudStatusObservers } from "@/lib/bud-status-monitor";
 import { ensureSession } from "@/lib/local-session";
@@ -6,6 +7,7 @@ import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
 import type { ServiceAdminStatus } from "../../shared/service-admin";
 import { officeSources, watchOfficeSources } from "@/lib/connected-apps-refresh";
+import { createWorkspaceViewsRefresh } from "@/lib/workspace-views-refresh";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -31,7 +33,10 @@ import { currentCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
+import { notifyRoutineRun } from '@/lib/notify-routine';
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
+import { parseLiveStreamSnapshot, restoredLiveStreams } from "@shared/live-stream";
+import { hydrateLiveSnapshot } from "@/lib/live-hydration";
 import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
 import type { AskWorkContext } from "@/lib/work-continuation";
 import type { ApprovalPolicy, MemoryApprovalReview } from "@shared/approval-policy";
@@ -1063,6 +1068,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      if (DESIGN_PREVIEW_REASON && (action.type === 'send' || action.type === 'sendGroup' || action.type === 'editMessage')) {
+        const error = new Error(DESIGN_PREVIEW_REASON);
+        if (action.type === 'send') action.onSettled?.(error);
+        showError(error);
+        return;
+      }
       if (!allowWorkspaceNavigation(action.type, stateRef.current.activeView)) return;
       if (action.type === "send") {
         if (sending.has(action.botId)) {
@@ -1311,7 +1322,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     const stopOfficeSources = watchOfficeSources();
-    let deskLoad = 0, deskEvents = 0;
+    let deskLoad = 0, deskEvents = 0, botLoad = 0, botEvents = 0;
+    let botHydrationDeferred = false;
+    const streamTurns = new Map<string, string>();
+    const viewsRefresh = createWorkspaceViewsRefresh();
+    const loadBots = () => {
+      const load = ++botLoad;
+      botHydrationDeferred = false;
+      void hydrateLiveSnapshot({
+        read: () => api("/api/bots"),
+        revision: () => botEvents,
+        current: () => alive && load === botLoad,
+        apply: ({ bots, groups }) => rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }),
+      }).then(applied => {
+        if (alive && load === botLoad) botHydrationDeferred = !applied;
+      }).catch(() => {});
+    };
+    window.addEventListener("focus", loadBots);
     const loadAll = () => {
       void refreshActivity();
       // Saved-view and settings deep links may never mount DeskPage. Hydrate
@@ -1320,9 +1347,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api('/api/desk').then(snapshot => {
         if (alive && load === deskLoad && events === deskEvents) rawDispatch({type:'deskSnapshot',snapshot});
       }).catch(() => {});
-      api("/api/bots")
-        .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
-        .catch(() => {});
+      loadBots();
       api("/api/instances")
         .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
         .catch(() => {});
@@ -1344,7 +1369,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
+      if (["message", "message.patch", "thread", "bot", "bot.deleted", "group"].includes(frame.kind)) botEvents++;
+      if (botHydrationDeferred && frame.kind === "bot" && frame.bot?.busy === false) loadBots();
       switch (frame.kind) {
+        case "hello": {
+          // This snapshot and subsequent deltas share one ordered SSE stream.
+          // Clear pre-disconnect buffered text as well as the visible preview.
+          if (deltaFlush.current !== null) clearTimeout(deltaFlush.current);
+          deltaFlush.current = null;
+          deltaBuffer.current.clear();
+          const snapshot = parseLiveStreamSnapshot(frame.streams) ?? [];
+          setStream(restoredLiveStreams(snapshot));
+          streamTurns.clear();
+          for (const row of snapshot) streamTurns.set(row.threadId, row.turnId);
+          break;
+        }
         case "office-sources":
           try { officeSources.accept(frame.access); } catch { officeSources.invalidate(); }
           break;
@@ -1448,6 +1487,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "loop.run":
           rawDispatch({ type: "loopRunPatched", run: frame.run });
+          notifyRoutineRun(frame.run);
           break;
         case "job.run":
           rawDispatch({ type: "jobRun", run: frame.run });
@@ -1467,6 +1507,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "runtime": {
           const event = frame.event;
+          viewsRefresh(event);
+          if (event.type === "turn.started") {
+            streamTurns.set(event.threadId, event.turnId);
+            clearStream(event.threadId);
+            break;
+          }
+          const currentTurn = streamTurns.get(event.threadId);
+          if (currentTurn && event.turnId && currentTurn !== event.turnId) break;
+          if (event.turnId && !currentTurn) streamTurns.set(event.threadId, event.turnId);
           if (event.type === "item.started" && event.itemType === "tool") {
             // Drop pre-tool narration from the live bubble; the finished
             // answer streams after the tool work.
@@ -1565,7 +1614,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         es = null;
         scheduleReconnect();
       };
-      source.onmessage = onFrame;
+      source.onmessage = event => { if (es === source) onFrame(event); };
     };
     const onServiceUnavailable = () => {
       rawDispatch({ type: "connected", value: false });
@@ -1582,6 +1631,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       activityRequest.current += 1;
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
+      window.removeEventListener("focus", loadBots);
       window.removeEventListener(SERVICE_UNAVAILABLE_EVENT, onServiceUnavailable);
     };
   }, [refreshActivity]);

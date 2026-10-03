@@ -74,6 +74,29 @@ describe("connect this computer to your office", () => {
     expect(html).not.toContain("Use a link code instead");
   });
 
+  it("uses passive guidance when linked provisioning failed, without naming an absent Update status button", () => {
+    const html = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: false, error: "The website could not be reached." });
+    expect(html).toContain("Your office connection is saved");
+    expect(html).toContain("Contact RealBud support if setup stays stopped");
+    expect(html).not.toContain("Update status");
+    expect(html).not.toContain("has not arrived after the next update");
+  });
+
+  it("shows fixed local-recovery guidance without echoing paths or credentials", () => {
+    const html = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: false,
+      error: "Saved settings need recovery. /private/customer/config.json token=fictional-secret" });
+    expect(html).toContain("Saved settings on this computer need recovery");
+    expect(html).toContain("Contact RealBud support before trying setup again");
+    expect(html).not.toMatch(/Update status|next update|private\/customer|fictional-secret/);
+    const storage = view({ state: "linked", provisioned: false, error: "This computer’s service setup needs local storage recovery. Existing settings are kept." });
+    expect(storage).toContain("Bud’s service setup needs local storage recovery");
+    const preflight = view({ state: "linked", provisioned: false,
+      error: "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup." });
+    expect(preflight).toContain("This computer’s saved settings or private service storage need recovery");
+    expect(preflight).toContain("Contact RealBud support before trying office setup again");
+    expect(preflight).not.toMatch(/Update status|next update|Keep RealBud open/);
+  });
+
   it("opens an interrupted pasted-code link so it can be finished", () => {
     const html = view({ state: "pending" });
     expect(html).toContain("<details open=\"\"");

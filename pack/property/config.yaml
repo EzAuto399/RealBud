@@ -9,17 +9,67 @@
 # dangerous commands still route through the manual approval callback below.
 approvals:
   mode: manual
+  # Hermes 0.21.5 ACP waits this long for a permission answer (0.21.3 ACP
+  # waits a fixed 60 s); MCP tool calls, which carry RealBud's own review
+  # cards, wait 300 s in both. RealBud's cards close before this
+  # (server/drivers/acp/core.ts WORKER_APPROVAL_CARD_MS), so a card never
+  # outlives the worker's wait and a late answer can never act.
   timeout: 300
   cron_mode: deny
   mcp_reload_confirm: true
+  # Install and Repair also write `deny` here: globs no approval mode can
+  # override (curl, ssh, powershell, inline `python -c`, …), owned by
+  # server/hermes-pack.ts WORKER_DENIED_COMMANDS. A blocklist only; on macOS
+  # the Ask worker's network sandbox is the boundary.
 agent:
   max_turns: 60
   # One model-visible wrap-up notice at 75% of the turn cap, so a long job
   # returns a partial answer instead of being cut off at the cap.
   budget_warning_ratio: 0.75
   verbose: false
+  # Execution-discipline block for every model, not only upstream's name list
+  # (Claude is not on it): tools for arithmetic, read back after a write.
+  execution_guidance: true
+  # Continue when the model states an action but calls no tool; upstream only
+  # does this for codex_responses, and Claude stops after stating intent.
+  intent_ack_continuation: true
+  # No coding brief or git snapshot in Bud's prompt; Bud is not a coding agent.
+  coding_context: "off"
+  # Hermes 0.21.5 subtracts these at tool granularity from ACP, CLI and every
+  # subagent (a child inherits them): no Hermes browser (browser_vault and
+  # browser_exec included), connectors, cron, computer use, images, speech or
+  # kanban. 0.21.3 ACP ignores this list; there RealBud refuses a native browser
+  # call at the host. Owned with platform_toolsets.acp
+  # (server/hermes-pack.ts WORKER_ACP_TOOLSETS, WORKER_DISABLED_TOOLSETS).
+  disabled_toolsets: [browser, computer_use, connections, cronjob, image_gen, kanban, tts]
+  # One quiet retry cycle (15 s) after a transient model outage, not upstream's
+  # five (0.21.5: 15/30/60/60/60 s, longer on Retry-After) that Ask cannot show
+  # and that would spend most of the 15-minute turn ceiling waiting. 0.21.3
+  # does not read it.
+  auto_recovery_cycles: 1
+  # Wall-clock turn budget: one wrap-up notice at 80% (672 s) so a slow model
+  # answers before RealBud's 15-minute hard stop (server/turn-watchdog.ts), and
+  # an unset stale-call timeout is capped at half the remaining budget. Read by
+  # 0.21.3 and 0.21.5 when the agent is built, ACP included (agent/agent_init.py
+  # `_apply_agent_section`).
+  run_budget_seconds: 840
+# Ask's own tool selection (Hermes 0.21.5 reads it; 0.21.3 ACP uses its fixed
+# hermes-acp bundle). The same tools as hermes-acp minus the exclusions above;
+# no_mcp keeps every configured MCP server out, while servers RealBud mounts
+# per turn over ACP still join. Install and Repair own only platform_toolsets.acp.
+platform_toolsets:
+  acp: [web, terminal, file, vision, todo, memory, session_search, skills, delegation, code_execution, no_mcp]
+# Bud's model access comes only from RealBud's grant: never borrow a Codex CLI
+# or Claude Code login from this computer (Hermes 0.21.5
+# agent/credential_sources.py adopt_external_logins_enabled; 0.21.3 has no
+# such borrowing switch and ignores the key). Install and Repair own only this key.
+auth:
+  adopt_external_logins: false
+# Stop a turn that keeps repeating a failing or non-progressing tool call
+# (upstream hard-stops only unattended platforms; Ask is interactive ACP).
 # Per-turn hard ceilings on web searches and subagent spawns (upstream 50 each).
 tool_loop_guardrails:
+  hard_stop_enabled: true
   loop_caps:
     max_web_searches: 10
     max_subagents: 4
@@ -31,9 +81,10 @@ tool_output:
   max_line_length: 32000
   max_lines: 2000
   max_bytes: 50000
-# Prepare CLI jobs use this bounded toolset. Hermes ACP supplies its own native
-# bundle; this list does not disable ACP execute_code. RealBud's adapter forces
-# upstream HERMES_EXEC_ASK so native scripts require a whole-script decision.
+# Prepare CLI jobs use this bounded toolset. Ask uses platform_toolsets.acp
+# (0.21.5) or Hermes' native hermes-acp bundle (0.21.3); neither list is this
+# one, and both keep execute_code. RealBud's adapter forces upstream
+# HERMES_EXEC_ASK so native scripts require a whole-script decision.
 toolsets:
   - web
   - terminal
@@ -53,8 +104,10 @@ security:
 # Native foreground and background learning proposes durable changes for review.
 # RealBud enables the learner only for its exact admitted runtime during Repair.
 # Install and Repair also add skills.disabled: Hermes' bundled skills outside
-# office work (server/hermes-pack.ts OFF_SCOPE_BUNDLED_SKILLS). pdf, xlsx, docx
-# and hermes-agent stay; RealBud and office skills are never listed there.
+# office work (server/hermes-pack.ts OFF_SCOPE_BUNDLED_SKILLS). pdf, xlsx, docx,
+# hermes-agent, blocked-page-recovery, document-to-action-items,
+# grounded-citations, humanizer, meeting-action-items and weekly-review-planning
+# stay; RealBud and office skills are never listed there.
 skills:
   write_approval: true
 memory:
@@ -63,12 +116,55 @@ auxiliary:
   background_review:
     enabled: false
     extra_tools: []
+    # Input-token cap for one background review (0.21.3 default 600K; 0.21.5
+    # derives it from the model window, up to 600K). agent/background_review.py.
+    max_input_tokens: 120000
   # No extra model call per session just to name it.
   title_generation:
     enabled: false
 delegation:
   max_concurrent_children: 2
   max_iterations: 24
+  # 0.21.3: a subagent stops after 15 minutes. 0.21.5: after 15 minutes with
+  # no progress (progress resets it). The absolute bound is RealBud's own turn
+  # ceiling (15 minutes, server/turn-watchdog.ts), whose Stop reaches subagents.
+  child_timeout_seconds: 900
+# Install and Repair own only these two compression keys; the office's other
+# compression settings stay.
+compression:
+  # Keep the last three real requests verbatim when a long job is compacted,
+  # so bulky tool output cannot push out what the person asked for.
+  min_tail_user_messages: 3
+  # Past 64K tokens, prune old bulky tool results (no model call) instead of
+  # re-sending them every turn.
+  proactive_prune_tokens: 64000
+  # threshold_tokens stays the office's: 0.21.5's 256K default only caps when a
+  # 1M-window model compacts (cheaper than 0.21.3's 500K) and the 64K prune
+  # above runs first.
+# Hermes' curator archives agent-created skills on its own schedule, outside
+# skills.write_approval. Install and Repair own only curator.enabled.
+curator:
+  enabled: false
+# Hermes Connectors (remote connector discovery and account authorization
+# through the Nous tool gateway) stay off in both 0.21.3 and 0.21.5
+# (tools/*/gateway/config.py ConnectorConfig); RealBud's connected apps are
+# its own host broker. Install and Repair own only tools.connectors.enabled.
+tools:
+  connectors:
+    enabled: false
+# Hermes 0.21.5 turns on a detected 1Password or Bitwarden CLI as a login source
+# unless the profile says false (agent/vault_backends/base.py `is_enabled`; 0.21.3
+# reads the same way, with false defaults). Credentials never pass through Bud.
+# Install and Repair own only vault.onepassword.enabled and vault.bitwarden.enabled.
+vault:
+  onepassword:
+    enabled: false
+  bitwarden:
+    enabled: false
+# Install and Repair also own tools.tool_search.defer (server/hermes-pack.ts
+# WORKER_DEFERRED_TOOLS): upstream's default minus todo_list, session_search and
+# process_manage, so those three stay directly visible. Other tool_search
+# settings stay the office's.
 terminal:
   backend: local
   home_mode: profile

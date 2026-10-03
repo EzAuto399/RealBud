@@ -158,10 +158,10 @@ export function GoLiveCard({
     if (typeof document !== "undefined") document.getElementById("schedule-packs")?.scrollIntoView({ block: "start" });
   };
 
-  // The account link and connected accounts live on You; the other two steps
-  // are taken in the agency setup card on Schedule. Each step has exactly one.
+  // The account link and connected accounts live in Workspace; the other two
+  // steps are taken in the agency setup card on Schedule. Each step has exactly one.
   const openStep = (step: SetupStep) => {
-    if (step.target === "you-connected-apps" || step.target === "you-office") {
+    if (step.target === "you-connected-apps" || step.target === "you-office" || step.target === "you-website") {
       if (typeof location !== "undefined") location.hash = step.target;
       dispatch({ type: "showYou" });
       return;

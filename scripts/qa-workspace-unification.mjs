@@ -39,7 +39,7 @@ try {
   const reservation = createServer(); await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { ...env, OMB_PORT: String(port), OMB_STATIC_DIR: join(root, "dist") }, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { ...env, OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR ?? join(root, "dist") }, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", data => { logs += data; }); child.stderr.on("data", data => { logs += data; });
   const until = async (check, label) => {
     const deadline = Date.now() + 15_000;
@@ -51,7 +51,6 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   await context.addInitScript(() => {
-    localStorage.setItem("realbud.first-run-done", "1");
     window.copyAttempts = []; window.failCopy = false;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => {
       window.copyAttempts.push(text);
@@ -60,7 +59,11 @@ try {
   });
   page = await context.newPage(); const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(base); await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.goto(base);
+  await page.getByLabel('Your name', { exact: true }).fill('Fictional Workspace Reviewer');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'Work', exact: true }).click();
   const request = page.getByRole("article", { name: "Yoda · Telegram", exact: true }).filter({ hasText: short });
   await request.waitFor();
   assert.equal(await request.locator(".ask-request-body").innerText(), short);
@@ -93,13 +96,17 @@ try {
   assert.equal(await versions.getByRole("button", { name: "Previous request version" }).isDisabled(), true);
   await versions.getByRole("button", { name: "Next request version" }).click();
   await page.getByText("Revised response (fictional).", { exact: true }).waitFor();
-  await page.reload(); await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.reload(); await page.getByRole("button", { name: /^Work\b/ }).first().click();
   await page.getByText("Revised response (fictional).", { exact: true }).waitFor();
   await request.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(out, "telegram-ask-desktop.png") });
   await request.screenshot({ path: join(out, "telegram-request-detail.png") });
   const nav = page.getByRole("navigation", { name: "Main navigation", exact: true });
-  const go = async name => { await nav.getByRole("button", { name, exact: true }).click(); };
+  const go = async name => {
+    const scheduleDrawer = page.locator('.schedule-drawer[role="dialog"]');
+    if (await scheduleDrawer.isVisible()) await scheduleDrawer.getByRole("button", { name: /^Close / }).click();
+    await (name === "Workspace" ? page.locator('aside.rb-sidebar') : nav).getByRole("button", { name, exact: true }).click();
+  };
   // Read older work, visit another screen, and return to the same position.
   await page.keyboard.press("PageUp");
   const thread = page.locator(".ask-thread");
@@ -107,7 +114,10 @@ try {
   await until(async () => Math.abs(await thread.evaluate(el => el.scrollTop) - 35) < 2, "conversation position");
   await go("Desk");
   await page.getByRole("heading", { name: "Desk", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  // The old Desk support rail is gone. Exercise the shared setup entry event
+  // (src/lib/workspace-setup.ts) while Desk remains the underlying screen.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
+  await page.getByRole("dialog", { name: "Bud status", exact: true }).getByRole("button", { name: "Apps", exact: true }).click();
   let setup = page.getByRole("dialog", { name: "Office connections", exact: true });
   await setup.waitFor();
   assert.equal(await page.locator(".rb-app-shell").getAttribute("inert"), "", "background is inert during setup");
@@ -115,26 +125,31 @@ try {
   setup = page.getByRole("dialog", { name: "Phone connections", exact: true });
   await setup.getByRole("region", { name: "Telegram", exact: true }).waitFor();
   assert.equal(await setup.getByRole("region", { name: "Telegram", exact: true }).locator("svg circle").count(), 1);
+  // Bot tokens are service administration (Settings & help); the Phone setup
+  // section never offers a token field (src/components/YouPage.tsx ChannelRow).
   const telegramSetup = setup.getByRole("region", { name: "Telegram", exact: true });
-  await telegramSetup.getByRole("button", { name: "Connect", exact: true }).click();
-  await telegramSetup.locator('input[type="password"]').fill("fictional-unsaved-token");
+  await telegramSetup.getByText(/^(Administrator setup needed|Service configured)$/).waitFor();
+  assert.equal(await telegramSetup.getByRole("button", { name: "Connect", exact: true }).count(), 0, "phone setup does not offer bot connection");
+  assert.equal(await telegramSetup.locator('input[type="password"]').count(), 0, "phone setup has no token field");
   await setup.getByRole("button", { name: "Apps", exact: true }).click();
   await page.getByRole("dialog", { name: "Office connections", exact: true }).getByRole("button", { name: "Phone", exact: true }).click();
   setup = page.getByRole("dialog", { name: "Phone connections", exact: true });
-  assert.equal(await setup.getByRole("region", { name: "Telegram", exact: true }).locator('input[type="password"]').inputValue(), "fictional-unsaved-token");
-  await setup.getByRole("region", { name: "Telegram", exact: true }).locator('input[type="password"]').fill("");
-  await setup.getByRole("region", { name: "Telegram", exact: true }).getByRole("button", { name: "Hide", exact: true }).click();
+  await setup.getByRole("region", { name: "Telegram", exact: true }).waitFor();
   await page.keyboard.press("Meta+3");
   await setup.waitFor();
   await page.screenshot({ path: join(out, "desk-phone-setup.png") });
   await setup.getByRole("button", { name: "Close Phone connections", exact: true }).click();
   await page.getByRole("heading", { name: "Desk", exact: true }).waitFor();
-  await go("Ask");
+  await go("Work");
   await until(async () => Math.abs(await thread.evaluate(el => el.scrollTop) - 35) < 3, "conversation position restored");
   assert.equal(await composer.inputValue(), "My unfinished desk request");
   await go("Schedule");
   await page.getByRole("heading", { name: "Schedule", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Write the steps myself", exact: true }).click();
+  await page.getByRole("button", { name: "Add a job", exact: true }).click();
+  const builder = page.getByRole("dialog", { name: "Add a job", exact: true });
+  const writeSteps = builder.getByRole("button", { name: "Write the steps myself", exact: true });
+  if (!await writeSteps.isVisible()) await builder.locator('summary').filter({ hasText: /^Write a plan yourself$/ }).click();
+  await writeSteps.click();
   await page.getByRole("textbox", { name: "Job name", exact: true }).fill("Repair follow-up (fictional)");
   await page.getByRole("textbox", { name: "Inputs and context", exact: true }).fill("Review the supplied repair quote for 14 Sample Street.");
   await page.getByRole("textbox", { name: "Steps — one per line", exact: true }).fill("Read the supplied quote.\nPrepare a draft follow-up for review.");
@@ -143,7 +158,7 @@ try {
   let failScheduleRefresh = true, saves = 0;
   page.on("request", req => { if (new URL(req.url()).pathname === "/api/recipes" && req.method() === "POST") saves++; });
   await page.route("**/api/loops", route => failScheduleRefresh ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fictional refresh failure" }) }) : route.continue());
-  await page.getByRole("button", { name: "Save plan", exact: true }).click();
+  await builder.getByRole("button", { name: "Save changes", exact: true }).click();
   const partial = page.getByRole("alert").filter({ hasText: "Your job was saved, but its latest schedule and results could not be loaded." });
   await partial.waitFor();
   assert.equal(saves, 1, "one plan save");
@@ -153,19 +168,26 @@ try {
   assert.equal(saves, 1, "refresh recovery never repeats the save");
   assert.ok(await page.getByRole("region", { name: "Work context", exact: true }).filter({ hasText: "Repair follow-up" }).count());
   // Setup does not erase plan inputs or move the PM to another page.
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Bud", exact: true }).click();
-  await page.getByRole("dialog", { name: "Set up Bud", exact: true }).waitFor();
+  // The action label follows the fixture's Bud status (src/lib/bud-setup.ts); any of them opens setup.
+  await page.locator('#bud-job-builder').getByRole("button", { name: /^(Set up Bud|Check Bud|Check Bud setup|Finish Bud setup)$/ }).click();
+  const budSetup = page.getByRole("dialog", { name: "Bud status", exact: true });
+  await budSetup.waitFor();
   await page.keyboard.press("Escape");
+  await budSetup.waitFor({ state: "hidden" });
+  await builder.waitFor();
   assert.equal(await page.getByRole("textbox", { name: "Job name", exact: true }).inputValue(), "Repair follow-up (fictional)");
-  await page.getByRole("button", { name: "Job plans", exact: true }).click();
+  await page.getByRole("button", { name: "Close Add a job", exact: true }).click();
+  await page.getByRole("button", { name: "Open job: Repair follow-up (fictional)", exact: true }).waitFor();
   await page.screenshot({ path: join(out, "schedule-plan.png") });
-  await go("You");
-  await page.getByRole("heading", { name: "You", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Phone", exact: true }).click();
+  await go("Workspace");
+  await page.getByRole("heading", { name: "Workspace", exact: true }).waitFor();
+  await page.locator('#you-settings > summary').click();
+  await page.locator('#you-phone > summary').click();
   await page.getByRole("region", { name: "Telegram", exact: true }).waitFor();
   await page.screenshot({ path: join(out, "you-phone.png") });
   await go("Schedule");
+  await page.getByRole("button", { name: "Open job: Repair follow-up (fictional)", exact: true }).click();
+  await page.locator('#bud-job-builder summary').filter({ hasText: /^Edit job details$/ }).click();
   assert.equal(await page.getByRole("textbox", { name: "Job name", exact: true }).inputValue(), "Repair follow-up (fictional)");
   // Carry a fictional saved-result reference into Ask and remove it explicitly.
   const roster = await (await fetch(`${base}/api/bots`)).json();
@@ -175,7 +197,7 @@ try {
     rows[draftKey] = [{ kind: "paste", id: "job-result-fixture", label: "Repair follow-up (fictional)", text: "Fictional saved reference, not approval.", size: 38, lines: 1 }];
     localStorage.setItem("omb-draft-attachments", JSON.stringify(rows));
   }, { draftKey });
-  await go("Ask");
+  await go("Work");
   const reference = page.getByRole("region", { name: "Work context", exact: true }).filter({ hasText: "Repair follow-up (fictional)" });
   await reference.waitFor();
   assert.equal(await composer.inputValue(), "My unfinished desk request");
@@ -183,18 +205,21 @@ try {
   await reference.waitFor({ state: "hidden" });
   assert.equal(await composer.inputValue(), "My unfinished desk request");
   await go("Schedule");
-  const timing = page.locator('input[type="time"][aria-label$="time of day"]').first();
+  await page.getByRole("button", { name: "Open job: Morning money check", exact: true }).click();
+  const routine = page.getByRole("article", { name: "Morning money check details", exact: true });
+  await routine.locator('summary').filter({ hasText: /^Timing ·/ }).click();
+  const timing = routine.getByLabel("Morning money check time of day", { exact: true });
   assert.ok(await timing.count(), "a routine timing control is available for the navigation check");
   {
     const timingLabel = await timing.getAttribute("aria-label");
-    await timing.evaluate(el => { for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true; });
     await timing.fill("10:30");
-    await go("Ask"); await go("Schedule");
+    await go("Work"); await go("Schedule");
+    await page.getByRole("button", { name: "Open job: Morning money check", exact: true }).click();
     const retainedTiming = page.getByLabel(timingLabel, { exact: true });
     assert.equal(await retainedTiming.inputValue(), "10:30", "unsaved timing survives navigation");
   }
   // Unconfirmed actions need a persistent dismissible notice, never a timed disappearance.
-  await go("Ask");
+  await go("Work");
   await page.route("**/active-branch", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fictional action could not be confirmed" }) }));
   await versions.getByRole("button", { name: "Previous request version" }).click();
   const notice = page.getByRole("alert").filter({ hasText: "Fictional action could not be confirmed" });
@@ -204,14 +229,14 @@ try {
   await notice.getByRole("button", { name: "Dismiss message", exact: true }).click();
   await notice.waitFor({ state: "hidden" });
   await page.unroute("**/active-branch");
-  for (const screen of ["Desk", "Schedule", "You"]) {
+  for (const screen of ["Desk", "Schedule", "Workspace"]) {
     await go(screen); await page.getByRole("heading", { name: screen, exact: true }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} mobile overflow`);
     await page.screenshot({ path: join(out, `${screen.toLowerCase()}-390.png`) });
     await page.setViewportSize({ width: 1280, height: 900 });
   }
-  await go("Ask");
+  await go("Work");
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await request.scrollIntoViewIfNeeded();
@@ -224,11 +249,11 @@ try {
     await page.screenshot({ path: join(out, `telegram-ask-${width}.png`) });
   }
   assert.deepEqual(errors, []);
-  const result = { passed: true, checks: ["setup stays on Desk and Schedule", "shared phone mark", "setup fields survive section switching", "background inert and focus recovery", "conversation reading position", "plan save partial success and read-only retry", "plan retained across navigation", "unsaved routine timing", "persistent dismissible failure", "all four mobile screens", "remove work reference without losing wording", "channel mark and sender", "body-only copy", "edit body and cancel focus", "composer draft preserved", "clipboard failure expansion and retry", "empty legacy record", "version navigation, focus and persistence", "320px and 390px layout", "44px mobile actions", "no browser errors"], liveTelegram: false, liveModel: false };
+  const result = { passed: true, checks: ["setup stays on Desk and Schedule", "shared phone mark", "phone setup has no token field outside service administration", "background inert and focus recovery", "conversation reading position", "plan save partial success and read-only retry", "plan retained across navigation", "unsaved routine timing", "persistent dismissible failure", "all four mobile screens", "remove work reference without losing wording", "channel mark and sender", "body-only copy", "edit body and cancel focus", "composer draft preserved", "clipboard failure expansion and retry", "empty legacy record", "version navigation, focus and persistence", "320px and 390px layout", "44px mobile actions", "no browser errors"], liveTelegram: false, liveModel: false };
   writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
 } catch (error) {
   await page?.screenshot({ path: join(out, "failure.png") }).catch(() => {});
   writeFileSync(join(out, "failure.log"), `${error.stack}\n${logs}`); throw error;
 } finally {
-  await browser?.close(); child?.kill("SIGTERM"); rmSync(scratch, { recursive: true, force: true });
+  await browser?.close(); child?.kill("SIGTERM"); rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

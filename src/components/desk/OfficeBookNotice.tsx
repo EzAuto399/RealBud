@@ -15,11 +15,12 @@ export function offersOfficeBookStart(snap: Pick<DeskSnapshot, "mode" | "demo" |
 
 export function OfficeBookEmpty({ onOpenBook, onAsk }: { onOpenBook: () => void; onAsk: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center px-6 text-center" role="status">
-      <p className="max-w-[28rem] text-[15px] text-ink">{OFFICE_BOOK_EMPTY}</p>
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
+    <div className="desk-office-book-empty max-w-xl rounded-lg border border-line bg-sheet p-6" role="status">
+      <h2 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-ink">Start your office book</h2>
+      <p className="mt-3 max-w-[28rem] text-[15px] leading-relaxed text-ink-secondary">{OFFICE_BOOK_EMPTY}</p>
+      <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className="desk-primary-button" onClick={onOpenBook}>Add properties</button>
-        <button type="button" className="desk-secondary-button" onClick={onAsk}>Ask Bud to import</button>
+        <button type="button" className="desk-office-book-help" onClick={onAsk}>Ask Bud for help</button>
       </div>
     </div>
   );

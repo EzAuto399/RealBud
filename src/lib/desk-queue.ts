@@ -146,7 +146,7 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
       headline: "A licensed or human decision is required",
       missing: "The decision and any office instruction that applies",
       source: "The current case evidence and your licensed office process",
-      next: "Review the evidence; RealBud will not draft a notice or start a statutory clock",
+      next: "Review the evidence and decide; RealBud will not draft a legal notice or set a legal deadline",
       action: "none",
     };
   }
@@ -154,7 +154,7 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
     return ask(
       "The payment evidence is incomplete",
       "The matched amount, expected rent, and settlement date",
-      "The connected PMS or trust-account export",
+      "The connected property management system or trust-account export",
       "Reconcile the partial payment and leave any uncertainty held",
     );
   }
@@ -162,7 +162,7 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
     return ask(
       "A payment appears to have been reversed",
       "The original receipt, reversal, and current settlement state",
-      "The connected PMS or trust-account export",
+      "The connected property management system or trust-account export",
       "Trace the reversal and report the current balance without drafting contact",
     );
   }
@@ -170,7 +170,7 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
     return ask(
       "Bud could not verify the current facts",
       "Current rent, payment, or levy evidence for this property",
-      "The connected PMS, approved export, or current Desk book",
+      "The connected property management system, approved export, or current Desk book",
       "Inspect the current evidence for this property only and name the failed source; then Recheck after the source is restored",
     );
   }
@@ -186,15 +186,15 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
     return ask(
       "The lease review needs current dates and documents",
       "The current agreement, key dates, and the office instruction",
-      "The connected PMS, lease file, and property record",
-      "Prepare a factual review; leave statutory action to the licensee",
+      "The connected property management system, lease file, and property record",
+      "Prepare a factual review; leave any legal step to the licensee",
     );
   }
   if (item.kind === "inspection-prep") {
     return ask(
       "The inspection pack is not ready",
       "The inspection date, access details, checklist, and prior photos or notes",
-      "The connected calendar, PMS, and property files",
+      "The connected calendar, property management system, and property files",
       "Prepare the checklist and draft wording; do not book or send",
     );
   }
@@ -211,7 +211,7 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
   return ask(
     "This case needs a current fact before it can move",
     "The latest property, payment, and safeguard evidence",
-    "The connected PMS, approved export, or current Desk book",
+    "The connected property management system, approved export, or current Desk book",
     "Check this property only and keep any uncertainty held",
   );
 }
@@ -240,12 +240,12 @@ function actionFor(bucket: QueueBucket, kind: QueueKind, holdReason?: string): s
   if (bucket === "next") return "On the book — not this check";
   if (bucket === "waiting") return waitingRepair(holdReason);
   if (bucket === "done") return "Recorded decision";
-  if (kind === "owner-update") return "Allow owner wording";
+  if (kind === "owner-update") return "Approve owner wording";
   if (kind === "maintenance-intake") return "Classify intake";
   if (kind === "lease-review") return "Review dates";
   if (kind === "inspection-prep") return "Prep checklist";
   if (kind === "inbound-triage") return "Triage inbound";
-  return "Allow wording";
+  return "Approve wording";
 }
 
 /** One-line repair for Waiting rows — name the blocker, not a vague hold. */
@@ -300,6 +300,17 @@ function draftRow(
   };
 }
 
+/** One short fact line for a licensee hold. The recorded escalation detail
+ *  carries the days late at the time it was raised; the ledger is the fallback. */
+export function licenseeFact(snap: Pick<DeskSnapshot, "ledger" | "properties" | "demo" | "mode">, propertyId: string, detail: string): string {
+  const recorded = /\bis (\d+) days? late\b/.exec(detail)?.[1];
+  const days = recorded != null ? Number(recorded) : snap.ledger.find((row) => row.propertyId === propertyId)?.daysSinceDue;
+  if (days == null || !Number.isFinite(days)) return "Days late not recorded.";
+  const book = snap.demo || snap.mode === "demo" ? " on this sample book" : "";
+  const courtesy = snap.properties.find((row) => row.id === propertyId)?.options.courtesyUntilDay;
+  return `${days} ${days === 1 ? "day" : "days"} late${book}${courtesy != null ? `; courtesy window ends day ${courtesy}` : ""}.`;
+}
+
 export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
   const addressById = new Map(snap.properties.map((property) => [property.id, property.address]));
   for (const archived of snap.book?.archivedProperties ?? []) {
@@ -321,7 +332,7 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
       propertyId: item.propertyId,
       address: addressById.get(item.propertyId) ?? item.propertyId,
       action: actionFor("now", "licensee-required"),
-      meta: item.detail,
+      meta: licenseeFact(snap, item.propertyId, item.detail),
       holdReason: item.reason,
       updatedAt: item.createdAt,
       escalationId: item.id,

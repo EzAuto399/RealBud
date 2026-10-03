@@ -45,14 +45,25 @@ const provider = createServer(async (req, res) => {
   }
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
 });
+const finishFirstRun = async base => {
+  // First run is a server receipt (/api/onboarding), not a browser flag: walk the
+  // profile -> office-rules -> complete stages without seeding the sample desk.
+  const headers = { "content-type": "application/json", "x-realbud-session": (await (await fetch(`${base}/api/session`)).json()).token };
+  let state = await (await fetch(`${base}/api/onboarding`, { headers })).json();
+  for (const stage of ["office-rules", "complete"]) {
+    const saved = await fetch(`${base}/api/onboarding`, { method: "PUT", headers, body: JSON.stringify({ expectedScope: state.scope, expectedRevision: state.revision, stage }) });
+    state = await saved.json();
+    assert.equal(saved.status, 200, `Onboarding ${stage} failed: ${JSON.stringify(state)}`);
+  }
+};
 let child, browser, page, logs = "";
 try {
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
-  writeFileSync(join(dataDir, "config.json"), JSON.stringify({ composio: { url: `http://127.0.0.1:${provider.address().port}/mcp` }, instances: { ghost: { driver: "not-a-real-driver", displayName: "Offline fixture" } } }));
+  writeFileSync(join(dataDir, "config.json"), JSON.stringify({ composio: { key: fixtureKey, url: `http://127.0.0.1:${provider.address().port}/mcp` }, instances: { ghost: { driver: "not-a-real-driver", displayName: "Offline fixture" } } }));
   const reservation = createServer(); await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { PATH: process.env.PATH, HOME: scratch, USERPROFILE: scratch, REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_CLI: cli, OMB_PORT: String(port), OMB_STATIC_DIR: join(root, "dist"), VITEST: "true" }, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { PATH: process.env.PATH, HOME: scratch, USERPROFILE: scratch, REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_CLI: cli, OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR ?? join(root, "dist"), VITEST: "true" }, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", data => { logs += data; }); child.stderr.on("data", data => { logs += data; });
   const until = async (check, label, ms = 15_000) => {
     const deadline = Date.now() + ms;
@@ -63,26 +74,24 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await context.route("https://signin.example.test/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Fictional sign-in</h1>" }));
-  await context.addInitScript(() => { localStorage.setItem("realbud.first-run-done", "1"); });
+  await finishFirstRun(base);
   page = await context.newPage(); const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(base); await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.goto(base); await page.getByRole("button", { name: /^Work\b/ }).first().click();
   const composer = page.locator("textarea").first();
   const draft = "Chase the repair quote for 14 Sample Street.";
   await composer.fill(draft);
-  await page.getByRole("button", { name: "Add files or office sources", exact: true }).click();
-  await page.getByRole("dialog", { name: "Add files or office sources" }).getByRole("button", { name: "Open Connections", exact: true }).click();
+  await page.getByRole("button", { name: "Add files or apps", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add to your work" }).getByRole("button", { name: "Connect an app", exact: true }).click();
   const connections = page.getByRole("dialog", { name: "Office connections", exact: true });
-  await connections.locator('input[type="password"]').first().fill(fixtureKey);
-  await connections.locator('button[title="Save"]').click();
+  // Connections are activated by the administrator (fictional key in config.json), not typed in Work.
   await connections.getByRole("button", { name: "Connect Gmail", exact: true }).click();
   await until(async () => signingIn, "fictional sign-in request");
   active = true; await page.bringToFront(); await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await page.getByText("Gmail · Ready", { exact: true }).waitFor();
   await connections.waitFor({ state: "hidden" });
   assert.equal(await composer.inputValue(), draft, "connecting keeps the PM draft");
-  await page.getByRole("button", { name: "Add files or office sources", exact: true }).click();
-  await page.getByRole("dialog", { name: "Add files or office sources" }).getByText("Ready", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Add files or apps", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add to your work" }).getByText("Available", { exact: true }).waitFor();
   await page.screenshot({ path: join(outDir, "ask-connected-desktop.png") });
   await page.keyboard.press("Escape");
   const ask = async text => { await composer.fill(text); await composer.press("Enter"); await until(async () => !(await composer.inputValue()), "Ask accepts product control"); };
@@ -91,7 +100,7 @@ try {
   await composer.fill(draft);
   // Connected apps stay available in Ask — no per-turn on/off control.
   assert.equal(await page.getByRole("button", { name: /Turn off Gmail in Ask/i }).count(), 0);
-  assert.equal(await page.getByText("Gmail · Ready", { exact: true }).count(), 1);
+  assert.equal(await page.locator(".ask-composer-frame").getByText(/Gmail/).count(), 0, "connected apps do not add persistent composer badges");
   assert.equal(await composer.inputValue(), draft);
   await ask("what are we connected to?");
   await until(async () => /Gmail.*connected/i.test(await page.locator("main").innerText()), "connected source stays available in Ask");
@@ -109,19 +118,19 @@ try {
   await page.getByRole("button", { name: "Schedule work", exact: true }).last().click();
   await schedule.getByRole("button", { name: "Open Schedule", exact: true }).click();
   await page.getByRole("heading", { name: "Schedule", exact: true }).waitFor();
-  await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.getByRole("button", { name: /^Work\b/ }).first().click();
   assert.equal(await composer.inputValue(), draft, "schedule navigation preserves work");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Add files or office sources", exact: true }).click();
-  await page.getByRole("dialog", { name: "Add files or office sources" }).getByText("Available in Ask", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Add files or apps", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add to your work" }).getByText("Available", { exact: true }).waitFor();
   await page.screenshot({ path: join(outDir, "ask-sources-mobile.png") });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal overflow");
   fail = true;
-  await page.getByRole("dialog", { name: "Add files or office sources" }).getByRole("button", { name: "Refresh", exact: true }).click();
-  await until(async () => /Couldn’t check office apps|Could not verify app access/.test(await page.getByRole("dialog", { name: "Add files or office sources" }).innerText()), "failed refresh visible");
+  await page.getByRole("dialog", { name: "Add to your work" }).getByRole("button", { name: "Check access", exact: true }).click();
+  await until(async () => /Couldn’t check office apps|Could not verify app access/.test(await page.getByRole("dialog", { name: "Add to your work" }).innerText()), "failed refresh visible");
   fail = false;
-  await page.getByRole("dialog", { name: "Add files or office sources" }).getByRole("button", { name: "Refresh", exact: true }).click();
-  await until(async () => (await page.getByRole("dialog", { name: "Add files or office sources" }).innerText()).includes("Available in Ask"), "refresh recovery restores source availability");
+  await page.getByRole("dialog", { name: "Add to your work" }).getByRole("button", { name: "Check access", exact: true }).click();
+  await until(async () => (await page.getByRole("dialog", { name: "Add to your work" }).innerText()).includes("Available"), "refresh recovery restores source availability");
   assert.deepEqual(errors, []);
   const result = { passed: true, checks: ["draft survives setup", "automatic OAuth return refresh", "live deterministic inventory", "source remains available", "source state survives refresh", "schedule stays in Ask", "mobile overflow", "failed refresh and recovery", "no browser errors"], liveProvider: false, liveModel: false, providerRequests: calls.length, signInRequests: calls.filter(call => call.params?.arguments?.toolkits?.some(row => row.action === "add")).length, mailboxOperations: 0 };
   writeFileSync(join(outDir, "result.json"), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
@@ -130,5 +139,5 @@ try {
   writeFileSync(join(outDir, "result.json"), JSON.stringify({ passed: false, error: error.message }));
   writeFileSync(join(outDir, "failure.log"), `${error.stack}\n${logs}`); throw error;
 } finally {
-  await browser?.close(); child?.kill("SIGTERM"); provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve)); rmSync(scratch, { recursive: true, force: true });
+  await browser?.close(); child?.kill("SIGTERM"); provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve)); rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

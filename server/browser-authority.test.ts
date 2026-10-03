@@ -86,6 +86,46 @@ describe("browser action classification (one table)", () => {
   });
 });
 
+describe("task-scoped submit and filings", () => {
+  const VOM = (lines: string[]) => page(["@vom 1", "L1 page", "  main", ...lines].join("\n"));
+  const bound = (actions: BrowserActionClass[] = ["read", "navigate", "click", "fill", "keys", "submit"]) =>
+    explicitTask({ route: "ask", browser: { id: "fictional-work", accountMarker: null }, actions, expiresAt: 2_000_000, budget: 50 });
+  const scopeFor = (task: BrowserTaskGrant, origin = "https://portal.example") => ({ grantId: task.id, runId: task.runId, requestHash: task.request.sha256,
+    browserId: "fictional-work", tabId: 1, origin, accountMarker: null, readOnly: true as const });
+  const DRAFT = VOM(['    form "Maintenance request"', '      @e1 textbox "Description"', '      @e2 button "Save draft"']);
+
+  it("treats lodging a filing as consequential, but not an ordinary request", () => {
+    for (const label of ["Lodge bond", "Lodge the application", "Lodge a claim", "Lodge dispute"]) expect(consequentialKind(label), label).toBe("notice");
+    for (const label of ["Lodge request", "Lodge maintenance request"]) expect(consequentialKind(label), label).toBeNull();
+    expect(classifyBrowserAction(bound(), VOM(['    form "Bond"', '      heading "Bond lodgement"', '      @e1 button "Lodge"']), "browser_click_semantic", { ref: "@e1" }))
+      .toMatchObject({ class: "consequential", kind: "notice" });
+  });
+
+  it("treats a submit on a form with an amount and a payee field as a payment, before any currency shows", () => {
+    const form = VOM(['    form "Transfer"', '      @e1 textbox "Payee"', '      @e2 spinbutton "Amount"', '      @e3 button "Submit"']);
+    expect(classifyBrowserAction(bound(), form, "browser_click_semantic", { ref: "@e3" })).toMatchObject({ class: "consequential", kind: "pay" });
+    expect(classifyBrowserAction(bound(), form, "browser_press", { ref: "@e2", key: "Enter" })).toMatchObject({ class: "consequential", kind: "pay" });
+    // Unconfirmed facts are never approvable.
+    expect(authorizeBrowserAction(bound(), form, "browser_click_semantic", { tab_id: 1, ref: "@e3" }, { now: 1_000_000, taskScope: scopeFor(bound()) }))
+      .toMatchObject({ decision: "deny" });
+  });
+
+  it("never runs a submit inside the read-only task scope: an ordinary submit asks", () => {
+    const task = bound();
+    // The task scope is read-only by design; Save draft and Enter-to-submit go to the prompt.
+    expect(authorizeBrowserAction(task, DRAFT, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { now: 1_000_000, taskScope: scopeFor(task) })).toMatchObject({ decision: "ask", fence: { surface: "portal-submit" } });
+    expect(authorizeBrowserAction(task, DRAFT, "browser_press", { tab_id: 1, ref: "@e1", key: "Enter" }, { now: 1_000_000, taskScope: scopeFor(task) })).not.toMatchObject({ decision: "allow" });
+    expect(authorizeBrowserAction(task, DRAFT, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { now: 1_000_000 })).toMatchObject({ decision: "ask", once: false, fence: { surface: "portal-submit" } });
+    expect(authorizeBrowserAction(task, DRAFT, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { now: 2_000_000, taskScope: scopeFor(task) })).toMatchObject({ decision: "deny" });
+    const noSubmit = bound(["read", "navigate", "click", "fill"]);
+    expect(authorizeBrowserAction(noSubmit, DRAFT, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { now: 1_000_000, taskScope: scopeFor(noSubmit) }))
+      .toMatchObject({ decision: "deny", reason: "This job cannot press Submit. Add 'Bud may press Submit' on the job if it should." });
+    // A bank page's confirming step is a payment, never an ordinary submit.
+    const bank = VOM(['    heading "Fictional Bank"', '    form "Transfer"', '      @e1 button "Confirm"']);
+    expect(authorizeBrowserAction(task, bank, "browser_click_semantic", { tab_id: 1, ref: "@e1" }, { now: 1_000_000, taskScope: scopeFor(task) })).not.toMatchObject({ decision: "allow" });
+  });
+});
+
 describe("browser action authorisation", () => {
   const readRule = [{ key: "portal:read:portal.example", decision: "allow" as const }, { key: "portal:prefill:portal.example", decision: "allow" as const }];
 
@@ -300,7 +340,7 @@ describe("keys, dropdowns, downloads and uploads", () => {
     expect(authorizeBrowserAction(task(), FORM, "browser_press", { ref: "@e1", key: "Tab" }, { rules: everyRule })).toMatchObject({ decision: "ask", summary: "Press Tab in textbox \"Property code\" on portal.example." });
     expect(authorizeBrowserAction(task(), FORM, "browser_select", { ref: "@e4", values: ["date"] }, { rules: everyRule })).toMatchObject({ decision: "ask", fence: { surface: "portal-prefill", ruleOffer: null } });
     expect(authorizeBrowserAction(task(), FORM, "browser_upload", { ref: "@e6", file: "fictional-lease.pdf" }, { rules: everyRule }))
-      .toMatchObject({ decision: "ask", once: false, summary: "Upload the task's file 'fictional-lease.pdf' into button \"Choose file\" on portal.example.", fence: { surface: "portal-prefill", ruleOffer: null } });
+      .toMatchObject({ decision: "ask", once: true, summary: "Upload the file 'fictional-lease.pdf' to https://portal.example through Choose file. This sends the file to that site; this approval applies once.", fence: { surface: "portal-prefill", ruleOffer: null } });
     expect(authorizeBrowserAction(task(), FORM, "browser_download", { ref: "@e8" }, { rules: everyRule })).toMatchObject({ decision: "ask", once: true });
     expect(authorizeBrowserAction(task(), PAY_PAGE, "browser_download", { ref: "@e1" }, { rules: everyRule })).toMatchObject({ decision: "deny", draft: null });
     expect(authorizeBrowserAction(task(), FORM, "browser_press", { ref: "@e9", key: "Enter" }, { rules: everyRule })).toMatchObject({ decision: "deny" });

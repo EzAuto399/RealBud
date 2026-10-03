@@ -12,6 +12,7 @@ import { loopHistoryBinding, parseHistoryLoopRun } from './execution-history-bac
 import type { WorkflowDatabase } from './workflow-database.ts';
 import type { ExecutionHistoryQuery } from '../shared/execution-history.ts';
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
+import { cadenceIncludesDay, validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
@@ -30,6 +31,7 @@ export interface LoopExecuteResult {
   covered?: number;
   uncovered?: number;
   jobRunId?: string;
+  quiet?: boolean;
 }
 
 export interface LoopManagerOptions {
@@ -152,6 +154,18 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     evaluatorId: "inbound-triage",
     evaluatorVersion: 1,
   },
+  {
+    id: 'bank-references', name: 'Bank reference review', available: false,
+    description: 'Every two days: export the selected bank account, review references and reconcile the REI preview. Account mapping and original/corrected examples still need qualification.',
+    schedule: { type: 'daily', time: '08:00', weekdays: [0,1,2,3,4,5,6], intervalDays: 2, anchorDate: '2026-10-02' },
+    evaluatorId: 'bank-references', evaluatorVersion: 1,
+  },
+  {
+    id: 'weekly-bills', name: 'Weekly bills review', available: true,
+    description: 'Collects the reviewed Gmail scope, prepares saved bill reviews and checks expected arrivals. Review the results in Bills.',
+    schedule: { type: 'daily', time: '08:00', weekdays: [1] },
+    evaluatorId: 'weekly-bills', evaluatorVersion: 1,
+  },
 ];
 
 export function hostTimezone(): string {
@@ -197,23 +211,28 @@ function utcFromWall(timeZone: string, year: number, month: number, day: number,
 }
 
 export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?: string): number | null {
+  if (!validCalendarCadence(schedule)) return null;
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(schedule.weekdays);
+  // Up to seven cycles covers an interval restricted to selected weekdays.
+  // Start at the anchor when it lies beyond the normal search horizon.
+  const start = schedule.anchorDate ? Math.max(after, Date.parse(`${schedule.anchorDate}T00:00:00Z`) - 2 * 86_400_000) : after;
+  const horizon = Math.max(8, (schedule.intervalDays ?? 1) * 7 + 2);
   if (!timeZone) {
-    for (let offset = 0; offset <= 8; offset++) {
-      const d = new Date(after);
+    for (let offset = 0; offset <= horizon; offset++) {
+      const d = new Date(start);
       d.setDate(d.getDate() + offset);
       d.setHours(hour, minute, 0, 0);
-      if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
+      if (d.getTime() > after && weekdays.has(d.getDay()) && cadenceIncludesDay(schedule, d.getFullYear(), d.getMonth() + 1, d.getDate())) return d.getTime();
     }
     return null;
   }
-  for (let offset = 0; offset <= 8; offset++) {
-    const wall = wallInZone(after + offset * 86_400_000, timeZone);
+  for (let offset = 0; offset <= horizon; offset++) {
+    const wall = wallInZone(start + offset * 86_400_000, timeZone);
     const candidate = utcFromWall(timeZone, wall.year, wall.month, wall.day, hour, minute);
     const candWall = wallInZone(candidate, timeZone);
     // A nonexistent DST minute is skipped, not silently moved an hour later.
-    if (candidate > after && candWall.hour === hour && candWall.minute === minute && weekdays.has(candWall.dow)) return candidate;
+    if (candidate > after && candWall.hour === hour && candWall.minute === minute && weekdays.has(candWall.dow) && cadenceIncludesDay(schedule, candWall.year, candWall.month, candWall.day)) return candidate;
   }
   return null;
 }
@@ -227,7 +246,7 @@ export class LoopManager {
   private runs: LoopRun[] = [];
   private handledThrough = new Map<LoopId, number>();
   /** PM-retuned clocks; null means the catalog schedule still stands. */
-  private overrides = new Map<LoopId, { time: string; weekdays: number[]; timezone?: string } | null>();
+  private overrides = new Map<LoopId, ({ time: string; weekdays: number[]; timezone?: string } & CalendarCadence) | null>();
   private revisions = new Map<LoopId, number>();
   private savedState: LoopsFile["state"] = {};
   /** Recipe catalog clocks (before a PM retune). */
@@ -282,7 +301,7 @@ export class LoopManager {
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
       // First-run inbox access must be deliberately enabled after scope review.
-      const enabled = loop.available && (loop.id === 'inbound-triage' ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
+      const enabled = loop.available && (['inbound-triage', 'weekly-bills', 'bank-references'].includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -292,7 +311,7 @@ export class LoopManager {
       const savedSchedule = savedState[loop.id]?.schedule;
       const override =
         savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
-          ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)!, ...(savedSchedule.timezone ? { timezone: savedSchedule.timezone } : {}) }
+          ? { ...savedSchedule, weekdays: parseWeekdays(savedSchedule.weekdays)! }
           : null;
       this.overrides.set(loop.id, override);
       this.revisions.set(loop.id, Number.isInteger(savedState[loop.id]?.revision) ? savedState[loop.id]!.revision! : 1);
@@ -374,7 +393,7 @@ export class LoopManager {
    * retune never backfills an already-passed slot. An idempotent PATCH
    * (values identical to current) is acknowledged without touching the
    * bookmark or revision, so it can never swallow a pending slot. */
-  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string }): Loop {
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string; intervalDays?: number | null; anchorDate?: string }): Loop {
     this.assertWritable();
     this.refreshRecipeLoops();
     this.assertWritable();
@@ -391,7 +410,7 @@ export class LoopManager {
     if (wantsEnable && !loop.available) {
       throw Object.assign(new Error("that loop is declared but not built yet"), { status: 409 });
     }
-    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined && patch.timezone === undefined) {
+    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined && patch.timezone === undefined && patch.intervalDays === undefined && patch.anchorDate === undefined) {
       throw Object.assign(new Error("nothing to change — send enabled, time, or weekdays"), { status: 400 });
     }
     if (patch.time !== undefined && !parseClockTime(patch.time)) {
@@ -404,14 +423,19 @@ export class LoopManager {
     const currentOverride = this.overrides.get(id);
     const nextTime = patch.time ?? currentOverride?.time ?? loop.schedule.time;
     const nextZone = patch.timezone ?? currentOverride?.timezone ?? loop.schedule.timezone;
+    const nextCadence: CalendarCadence = patch.intervalDays === null ? {} : {
+      intervalDays: patch.intervalDays ?? loop.schedule.intervalDays,
+      anchorDate: patch.anchorDate ?? loop.schedule.anchorDate,
+    };
+    if (!validCalendarCadence(nextCadence)) throw Object.assign(new Error('Choose an interval of 1–31 calendar days and a valid first date.'), { status: 400 });
     // compare by content: catalog arrays are shared references
     const nextDays = (patch.weekdays ?? currentOverride?.weekdays ?? loop.schedule.weekdays).slice().sort((a, b) => a - b);
     const clockChanged =
-      (patch.time !== undefined || patch.weekdays !== undefined || patch.timezone !== undefined) &&
-      (nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(",") || nextZone !== loop.schedule.timezone);
+      nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(",") || nextZone !== loop.schedule.timezone ||
+      nextCadence.intervalDays !== loop.schedule.intervalDays || nextCadence.anchorDate !== loop.schedule.anchorDate;
     if (!clockChanged && !wantsEnable) return cloneLoop(loop);
     this.commit(() => {
-      if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays, ...(nextZone ? { timezone: nextZone } : {}) });
+      if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays, ...(nextZone ? { timezone: nextZone } : {}), ...nextCadence });
       // A deliberate clock change starts strictly forward, including resume.
       this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
       if (wantsEnable) {
@@ -438,6 +462,21 @@ export class LoopManager {
 
   setEnabled(id: LoopId, enabled: boolean): Loop {
     return this.patchClock(id, { enabled });
+  }
+
+  /** A loop the catalog declares unavailable (bank-references) becomes
+   * runnable once the office opts in, here: its bank account and REI account
+   * are saved (server/w1-host.ts). It still runs only after the office turns
+   * it on; its saved on/off choice is kept while it is unavailable. */
+  setAvailable(id: LoopId, available: boolean): void {
+    const loop = this.loops.find((candidate) => candidate.id === id);
+    const declared = LOOP_CATALOG.find((item) => item.id === id);
+    if (!loop || !declared || declared.available || loop.available === available) return;
+    loop.available = available;
+    loop.enabled = available && this.savedState[id]?.enabled === true;
+    loop.nextRunAt = loop.enabled && !loop.timezonePaused && !this.recovery.active
+      ? nextOccurrence(loop.schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock(loop.schedule)) : null;
+    this.emitLoop(loop);
   }
 
   /** A reviewed job plan owns its time; older per-loop overrides cannot win. */
@@ -475,7 +514,7 @@ export class LoopManager {
     if (request && loop && request.expectedRevision !== loop.revision) {
       throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
     }
-    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && id !== 'inbound-triage')) return null;
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !['inbound-triage', 'weekly-bills', 'bank-references'].includes(id))) return null;
     if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     let run!: LoopRun;
     this.commit(() => {
@@ -576,7 +615,7 @@ export class LoopManager {
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(loop.id === 'inbound-triage' && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(['inbound-triage', 'weekly-bills', 'bank-references'].includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
           this.commit(() => {
             run.status = "interrupted";
             run.finishedAt = this.now();
@@ -641,6 +680,7 @@ export class LoopManager {
         run.detail = redactSecretsInText(outcome.result?.detail ?? (outcome.error instanceof Error ? outcome.error.message : "The work could not complete.")).slice(0, 500);
         if (outcome.result?.jobRunId) run.jobRunId = outcome.result.jobRunId;
         run.finishedAt = this.now();
+        if (outcome.result?.quiet) run.seenAt = run.finishedAt;
       });
       this.emitRun(run);
       try {
@@ -738,7 +778,7 @@ export class LoopManager {
     try { change(); } catch (error) { restore(); throw error; }
     const state: LoopsFile["state"] = {};
     for (const loop of this.loops) state[loop.id] = {
-      enabled: recipeIdFromLoopId(loop.id) ? (this.clockEnabled.get(loop.id) ?? true) : loop.enabled,
+      enabled: recipeIdFromLoopId(loop.id) ? (this.clockEnabled.get(loop.id) ?? true) : loop.available ? loop.enabled : this.savedState[loop.id]?.enabled === true,
       handledThrough: this.handledThrough.get(loop.id) ?? 0,
       schedule: this.overrides.get(loop.id) ?? undefined,
       revision: this.revisions.get(loop.id) ?? 1,
@@ -798,7 +838,7 @@ export class LoopManager {
         const savedSchedule = saved?.schedule;
         const override =
           savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
-            ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)!, ...(savedSchedule.timezone ? { timezone: savedSchedule.timezone } : {}) }
+            ? { ...savedSchedule, weekdays: parseWeekdays(savedSchedule.weekdays)! }
             : null;
         this.overrides.set(id, override);
       }

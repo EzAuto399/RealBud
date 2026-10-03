@@ -3,6 +3,7 @@ import type { CompanyDepartment, DepartmentAccess, DepartmentAccessPage, Departm
 import { companyApi, departmentMutationUncertain } from '@/lib/company-api';
 import { departmentOperationTitle, type DepartmentOutboxState } from '@shared/company-department-outbox';
 import { CompanyDepartmentCases } from './CompanyDepartmentCases';
+import { CompanyDepartmentConfiguration } from './CompanyDepartmentConfiguration';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-[14px] text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const input = 'min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-[14px] text-ink focus-visible:outline-2 focus-visible:outline-agency';
@@ -13,6 +14,7 @@ export function CompanyDepartments() {
   const [data, setData] = useState<DepartmentPage | null>(null);
   const [access, setAccess] = useState<DepartmentAccessPage | null>(null);
   const [selected, setSelected] = useState('');
+  const [configurationDirty, setConfigurationDirty] = useState(false);
   const [workDepartment, setWorkDepartment] = useState('');
   const [offset, setOffset] = useState(0);
   const [memberOffset, setMemberOffset] = useState(0);
@@ -122,7 +124,7 @@ export function CompanyDepartments() {
     void run(() => companyApi.setDepartmentAccess(change), 'Department access saved and checked.');
   };
   const operationBlocked = !outbox || Boolean(outbox.pending) || outbox.otherOfficePending;
-  return <details className="rounded-lg border border-line p-3">
+  return <details className="rounded-lg border border-line p-3 max-[719px]:border-0 max-[719px]:p-0">
     <summary className="min-h-11 cursor-pointer content-center text-[14px] font-medium text-ink">Departments and access</summary>
     <div className="mt-2 space-y-4 text-[14px]" aria-busy={busy || loading}>
       <p className="text-ink-secondary">Departments organise access to shared office records. Each person keeps their own Bud, browser sign-ins and private work on their computer.</p>
@@ -130,7 +132,7 @@ export function CompanyDepartments() {
       {outbox?.pending && <section aria-label="Saved department change" className="rounded-lg border border-hold p-3 space-y-2">
         <h4 className="font-medium">A saved department change needs your attention</h4>
         <p className="break-words">{departmentOperationTitle(outbox.pending)}</p>
-        <p>{outbox.pending.phase === 'confirmed' ? 'The office host confirmed this change. Acknowledge it before starting another change.' : 'The last result is uncertain. Resume the original request to check it without creating a duplicate.'}</p>
+        <p>{outbox.pending.phase === 'confirmed' ? 'The office host confirmed this change. Acknowledge it before starting another change.' : 'The last result is uncertain. Retry resends the exact saved change. If the host has not recorded it and it is still allowed, the change may be applied. An already recorded change is not applied twice.'}</p>
         <p className="text-ink-secondary">This request is stored privately on this installation. If the original office or membership is unavailable, use Connection and work recovery.</p>
         <button className={button} disabled={busy || loading} onClick={() => void resume()}>{outbox.pending.phase === 'confirmed' ? 'Acknowledge saved department change' : 'Retry saved department change'}</button>
       </section>}
@@ -141,10 +143,10 @@ export function CompanyDepartments() {
         {data.departments.length === 0 && <p>{data.canManage ? 'No departments on this page. Create one such as Accounts, Leasing or Maintenance, then choose who can use it.' : 'No departments are available to you on this page. Ask your office owner if you need access.'}</p>}
         <ul className="divide-y divide-line">{data.departments.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
           <span className="min-w-0 break-words"><strong className="font-medium">{item.name}</strong><span className="block text-ink-secondary">{item.retiredAt ? 'Retired · records are read only' : data.canManage ? 'You manage access as office owner' : accessLabels[item.access]}</span></span>
-          <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || loading} aria-pressed={workDepartment === item.id} onClick={() => setWorkDepartment(workDepartment === item.id ? '' : item.id)}>View work<span className="sr-only"> in {item.name}</span></button>{data.canManage && <button className={button} disabled={busy || loading} aria-pressed={selected === item.id} onClick={() => { setAccess(null); setSelected(selected === item.id ? '' : item.id); setMemberOffset(0); }}>Manage {item.name}</button>}{data.canManage && <button className={button} disabled={busy || loading || operationBlocked || Boolean(uncertainRetirement)} onClick={() => { setRetirement(item); setRetirementNote(''); setRetirementConfirmed(false); setConfirm(null); setNotice(''); }}>{item.retiredAt ? 'Reopen department' : 'Retire department'}<span className="sr-only">: {item.name}</span></button>}</div>
+          <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || loading} aria-pressed={workDepartment === item.id} onClick={() => setWorkDepartment(workDepartment === item.id ? '' : item.id)}>View work<span className="sr-only"> in {item.name}</span></button>{data.canManage && <button className={button} disabled={busy || loading || configurationDirty} aria-pressed={selected === item.id} onClick={() => { setAccess(null); setSelected(selected === item.id ? '' : item.id); setMemberOffset(0); }}>Manage {item.name}</button>}{data.canManage && <button className={button} disabled={busy || loading || operationBlocked || Boolean(uncertainRetirement)} onClick={() => { setRetirement(item); setRetirementNote(''); setRetirementConfirmed(false); setConfirm(null); setNotice(''); }}>{item.retiredAt ? 'Reopen department' : 'Retire department'}<span className="sr-only">: {item.name}</span></button>}</div>
           {item.retiredAt && <p className="w-full whitespace-pre-wrap break-words text-ink-secondary">Retired {new Date(item.retiredAt).toLocaleString()}. {item.retirementNote}</p>}
         </li>)}</ul>
-        {(offset > 0 || data.hasMore) && <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || loading || offset === 0} onClick={() => { setSelected(''); setOffset(value => value - 50); }}>Previous departments</button><button className={button} disabled={busy || loading || !data.hasMore} onClick={() => { setSelected(''); setOffset(value => value + 50); }}>Next departments</button></div>}
+        {(offset > 0 || data.hasMore) && <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || loading || configurationDirty || offset === 0} onClick={() => { setSelected(''); setOffset(value => value - 50); }}>Previous departments</button><button className={button} disabled={busy || loading || configurationDirty || !data.hasMore} onClick={() => { setSelected(''); setOffset(value => value + 50); }}>Next departments</button></div>}
         {data.canManage && !operationBlocked && !uncertainRetirement && <form className="border-t border-line pt-3 space-y-2" onSubmit={event => {
           event.preventDefault();
           const trimmed = name.trim();
@@ -158,6 +160,8 @@ export function CompanyDepartments() {
         </form>}
       </>}
       {data?.departments.filter(item => item.id === workDepartment).map(item => <CompanyDepartmentCases key={`${item.id}:${item.revision}:${caseRefresh}`} departmentId={item.id} operationBlocked={operationBlocked} onChanged={() => void load()} onOperationChange={() => void load()} />)}
+      {configurationDirty && <p role="status">You have an unsaved workflow draft. Save it or choose Discard unsaved workflow draft before switching departments.</p>}
+      {selected && <CompanyDepartmentConfiguration key={selected} departmentId={selected} operationBlocked={operationBlocked || busy} onDirtyChange={setConfigurationDirty} />}
       {access && !operationBlocked && !uncertainRetirement && <section aria-label={`${access.department.name} member access`} className="border-t border-line pt-3 space-y-3">
         <h4 className="font-medium">Who can use {access.department.name}</h4>
         <p className="text-ink-secondary">{access.department.retiredAt ? 'This department is retired. Existing access only permits viewing history. You can reduce or remove access here; reopen the department before granting more access.' : 'Read only lets a person view shared department records. Read and edit also lets them update those records. Office owners always manage department access.'}</p>

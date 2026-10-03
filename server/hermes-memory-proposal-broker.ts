@@ -15,7 +15,7 @@ const operationSchemas = [
 const targetSchema = { type: 'string', enum: ['memory', 'user'] };
 export const MEMORY_PROPOSAL_TOOL = {
   name: 'memory_propose', title: 'Propose a memory change for human review',
-  description: 'Propose preferences for exact human review in You → Bud → Bud’s memory. This tool only saves a pending proposal; it does not change saved memory, approve work or grant permissions. After an uncertain response, retry the same requestId and identical payload with a new transport request ID so RealBud can check the saved proposal. Never create a new requestId just to retry. A closed proposal is terminal: do not retry it or create a replacement unless the user asks for a new proposal.',
+  description: 'Propose preferences for exact human review in Workspace → What Bud learned. This tool only saves a pending proposal; it does not change saved memory, approve work or grant permissions. After an uncertain response, retry the same requestId and identical payload with a new transport request ID so RealBud can check the saved proposal. Never create a new requestId just to retry. A closed proposal is terminal: do not retry it or create a replacement unless the user asks for a new proposal.',
   inputSchema: properties({
     requestId: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$', description: 'Stable idempotency key for this exact proposal; reuse unchanged after an uncertain response.' },
     payload: { oneOf: [...operationSchemas.map(schema => properties({ target: targetSchema, ...schema.properties })), properties({ target: targetSchema, action: { const: 'batch' }, operations: { type: 'array', minItems: 1, maxItems: 100, items: { oneOf: operationSchemas } } })] },

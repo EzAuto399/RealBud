@@ -40,6 +40,35 @@ function fixture() {
 }
 
 describe('private source-bill host API', () => {
+  it('previews exact-evidence candidates without writing, then requires an explicit current distinctness review', async () => {
+    const f = fixture(), original = (await f.call('/api/bill-occurrences', 'POST', f.acceptance()))!.body;
+    f.source.message.id = 'ac'; f.source.threadId = 'def';
+    f.host.source.mockImplementation(async () => structuredClone(f.source));
+    const input = { itemId, messageId: 'ac', expectedSourceDigest: previewBillSource(f.source).digest, facts };
+    const before = f.store.counts();
+    const check = (await f.call('/api/bill-occurrences/duplicate-candidates', 'POST', input))!.body as { reviewDigest: string };
+    expect(check).toMatchObject({ complete: true, candidates: [{ billId: (original as { id: string }).id }] });
+    expect(f.store.counts()).toEqual(before); expect(f.host.collect).not.toHaveBeenCalled();
+    const accepted = { ...input, sourceReviewed: true, reviewReason: 'Two separately checked fictional invoice originals.' };
+    expect(await f.call('/api/bill-occurrences', 'POST', accepted)).toMatchObject({ status: 409, body: { code: 'bill_duplicate_review_required' } });
+    const saved = await f.call('/api/bill-occurrences', 'POST', { ...accepted, duplicateReview: { reviewDigest: check.reviewDigest } });
+    expect(saved).toMatchObject({ status: 200, body: { duplicateReview: { reviewedBy: 'private-local-reviewer', reason: accepted.reviewReason } } });
+    expect(f.store.counts().occurrences).toBe(2);
+  });
+
+  it.each(['source', 'actorId', 'accountId', 'candidateIds', 'reviewDigest'])('rejects caller-controlled duplicate preview %s', field => {
+    const f = fixture();
+    const input = { itemId, messageId, expectedSourceDigest: previewBillSource(f.source).digest, facts, [field]: 'fictional-forged-value' };
+    return expect(f.call('/api/bill-occurrences/duplicate-candidates', 'POST', input)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it.each(['recovery', 'property'] as const)('rechecks %s after duplicate preview source resolution', async changed => {
+    const f = fixture();
+    f.host.source.mockImplementationOnce(async () => { if (changed === 'recovery') f.recovery(true); else f.properties([]); return f.source; });
+    await expect(f.call('/api/bill-occurrences/duplicate-candidates', 'POST', { itemId, messageId, expectedSourceDigest: previewBillSource(f.source).digest, facts })).rejects.toMatchObject({ status: changed === 'recovery' ? 503 : 409 });
+    expect(f.host.register).not.toHaveBeenCalled(); expect(f.host.collect).not.toHaveBeenCalled();
+  });
+
   it('accepts only a host-resolved saved message and host actor, preserving evidence across rescan and restart', async () => {
     const f = fixture();
     const preview = await f.call(`/api/bill-evidence/${itemId}?messageId=${messageId}`);
@@ -135,7 +164,7 @@ describe('private source-bill host API', () => {
     const settings = { intervalMonths: 1, anchorDate: '2026-09-21', windowBeforeDays: 0, windowAfterDays: 0, timeZone: 'Australia/Brisbane', reviewReason: 'Confirmed monthly arrival.' };
     await f.call('/api/bill-series', 'POST', { ...settings, occurrenceId: origin.id, expectedOccurrenceRevision: origin.revision });
     const series = f.store.snapshot(range).series[0];
-    const nextSource = { ...f.source, threadId: 'abd', message: { ...f.source.message, id: 'ac', at: Date.parse('2026-10-21T01:00:00Z') } };
+    const nextSource = { ...f.source, threadId: 'abd', message: { ...f.source.message, id: 'ac', at: Date.parse('2026-10-21T01:00:00Z'), body: 'Fictional next monthly invoice.' } };
     f.host.source.mockImplementation(async () => nextSource);
     const accepted = { ...f.acceptance(), itemId: 'b'.repeat(64), messageId: 'ac', expectedSourceDigest: previewBillSource(nextSource).digest,
       seriesId: series.id, expectedArrivalDate: '2026-10-21' };
@@ -252,7 +281,7 @@ describe('private source-bill host API', () => {
   it('binds continuation pages to the property and calendar query and distinguishes a missing exact record', async () => {
     const f = fixture();
     for (let i=0;i<3;i++) {
-      const source = { ...f.source, message: { ...f.source.message, id: (10+i).toString(16) } };
+      const source = { ...f.source, message: { ...f.source.message, id: (10+i).toString(16), body: `Fictional separate invoice ${i}.` } };
       f.store.accept({ expectedSourceDigest: previewBillSource(source).digest, sourceReviewed: true, facts, reviewReason: 'Synthetic review.' },source,'local');
     }
     const first = (await f.call('/api/bill-occurrences?limit=1&propertyId=private-property'))!.body as import('../shared/source-bills.ts').SourceBillPage<import('../shared/source-bills.ts').SourceBillOccurrence>;

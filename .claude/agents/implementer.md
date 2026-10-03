@@ -5,7 +5,7 @@ model: opus
 permissionMode: acceptEdits
 ---
 
-You implement one packet in /Users/yoda/projects/RealBud. The packet names the files you own; edit nothing else. Never revert, reformat or stage other people's uncommitted work (a long-running Codex session shares this checkout). Never commit or push.
+You implement one packet in /Users/yo-da/projects/RealBud. The packet names the files you own; edit nothing else. Never revert, reformat or stage other people's uncommitted work (a long-running Codex session shares this checkout). Never commit or push.
 
 Method
 1. Read the owned files and the matching `.claude/rules/` file. Confirm the premise in current source before changing anything; if the reported problem is not real, stop and report that instead.

@@ -8,7 +8,8 @@ import { join } from "node:path";
 
 import { applyManagedModelProfile, applyPropertyPack, managedModelProfile, propertyProfileDir } from "./hermes-pack.ts";
 import {
-  MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, applyManagedModelLaunchEnv, managedModelLaunchRefusal,
+  MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, MANAGED_ACCESS_RECOVERY,
+  applyManagedModelLaunchEnv, managedModelLaunchRefusal, setWorkerModelAccessSnapshot,
 } from "./hermes-runtime-env.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { modelStatus, reconcileManagedModelProfile, setManagedModelChoice } from "./hermes-bridge.ts";
@@ -32,6 +33,22 @@ const tamper = (root: string, from: string, to: string) => writeFileSync(configO
 afterEach(() => { clearManagedAccess(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("managed launch guard", () => {
+  it('holds a recorded active grant when its key could not be recovered', () => {
+    const root = home();
+    grantManagedAccess(root);
+    const unavailable: Record<string, string>[] = [{}, { REALBUD_MODEL_API_KEY: '' }, { REALBUD_MODEL_API_KEY: '  ' }];
+    for (const access of unavailable) {
+      setWorkerModelAccessSnapshot(access);
+      expect(managedModelLaunchRefusal(root)).toBe(MANAGED_ACCESS_RECOVERY);
+      const env = {};
+      expect(applyManagedModelLaunchEnv(env, root)).toBe(MANAGED_ACCESS_RECOVERY);
+      expect(env).toEqual({});
+      expect(productAskFailure(MANAGED_ACCESS_RECOVERY)).toBe(MANAGED_ACCESS_RECOVERY);
+    }
+    grantManagedAccess(root);
+    expect(managedModelLaunchRefusal(root)).toBeNull();
+  });
+
   it("adds the key only while the profile names exactly the granted endpoint and wire", () => {
     const root = home();
     expect(managedModelLaunchRefusal(root)).toBe(MANAGED_ACCESS_UNPAIRED);
@@ -89,6 +106,7 @@ describe("managed launch guard", () => {
     for (const [prepare, expected] of [
       [() => clearManagedAccess(), MANAGED_ACCESS_UNPAIRED],
       [() => { grantManagedAccess(root); tamper(root, FICTIONAL_GATEWAY, "https://attacker.invalid/v1"); }, MANAGED_ACCESS_MISMATCH],
+      [() => { grantManagedAccess(root); setWorkerModelAccessSnapshot({}); }, MANAGED_ACCESS_RECOVERY],
     ] as const) {
       prepare();
       const instance = await make();

@@ -25,7 +25,7 @@ export type SetupStepState = "done" | "current" | "later" | "unknown";
  * Connections on You, where accounts are actually connected, or the office
  * section on You, where this computer is linked with its RealBud account.
  */
-export type SetupJumpTarget = "schedule-packs" | "you-connected-apps" | "you-office";
+export type SetupJumpTarget = "schedule-packs" | "you-connected-apps" | "you-office" | "you-website";
 
 export interface SetupStep {
   id: SetupStepId;
@@ -251,7 +251,7 @@ const LINK_ACTION = "Link with your RealBud account";
  */
 function websiteLinkFact(link: WebsiteLinkRead): Fact | null {
   if (link === "linked") return null;
-  const action = { actionLabel: LINK_ACTION, target: "you-office" as const };
+  const action = { actionLabel: LINK_ACTION, target: "you-website" as const };
   if (link === "not-linked") {
     return { fact: "todo", status: "Link this computer with your RealBud account first; your account then sets up Bud’s model access and account connections. Then connect the accounts your work reads.", ...action };
   }

@@ -123,12 +123,14 @@ describe('unanswered conversation calendar aging through the real mail workflow'
     const item = await f.item(); await f.service.update(item.id, { expectedRevision: item.revision, note: 'Retain staff ranking.' });
     f.advance(3 * day);
     f.thread.messages.push({ ...f.thread.messages[0], id: 'ab', at: initialTime + day, direction: 'incoming', body: 'The fictional appointment is confirmed.' });
-    await f.morning(); expect(f.execute).toHaveBeenCalledTimes(1);
+    // The reply since staff review is prepared once for fresh attention, never as a follow-up.
+    await f.morning(); expect(f.execute).toHaveBeenCalledTimes(2);
     expect(await f.item()).toMatchObject({ newEvidence: true, reviewed: true, note: 'Retain staff ranking.' });
     expect((await f.item()).followUpReviewedKey).toBeUndefined();
     f.thread.messages.push({ ...f.thread.messages[0], id: 'ac', at: initialTime + 3 * day - 1000, body: 'Please confirm the next fictional appointment.' });
-    await f.morning(); expect(f.execute).toHaveBeenCalledTimes(1);
-    f.advance(3 * day); await f.morning(); expect(f.execute).toHaveBeenCalledTimes(2);
+    await f.morning(); expect(f.execute).toHaveBeenCalledTimes(3);
+    await f.morning(); expect(f.execute).toHaveBeenCalledTimes(3);
+    f.advance(3 * day); await f.morning(); expect(f.execute).toHaveBeenCalledTimes(4);
     expect((await f.item()).followUpReviewedKey).toMatch(/^[a-f0-9]{64}$/);
   });
 

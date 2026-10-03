@@ -97,7 +97,9 @@ describe.skipIf(process.platform === "win32")("browser grants through the server
     home = mkdtempSync(join(tmpdir(), "realbud-browser-signin-"));
     // RealBud keeps its data folder private (0700); task records refuse a looser one.
     mkdirSync(join(home, ".realbud"), { recursive: true, mode: 0o700 });
-    dump = join(home, "fake-acp-dump.json");
+    const evidence = join(home, ".realbud", "vault", "bud-work");
+    mkdirSync(evidence, { recursive: true, mode: 0o700 });
+    dump = join(evidence, "fake-acp-dump.json");
     script = join(home, "fake-acp-script.json");
     writeScript({ permission: false, reply: "hello from fake acp" });
     writeFileSync(join(home, ".realbud", "config.json"), JSON.stringify({

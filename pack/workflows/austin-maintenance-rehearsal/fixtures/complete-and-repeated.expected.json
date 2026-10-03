@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kind": "maintenance-rehearsal-comparison",
+  "sourceReference": "fictional-maintenance-complete",
+  "reviewer": "Sherry",
+  "invoiceReviewer": "Kevin",
+  "actionsPerformed": [],
+  "status": "ready-for-review",
+  "decisions": [
+    "include",
+    "include",
+    "repeated-evidence",
+    "exclude",
+    "exclude",
+    "include",
+    "exclude",
+    "exclude"
+  ],
+  "related": {
+    "E3": [
+      "E2"
+    ]
+  },
+  "holdIds": []
+}

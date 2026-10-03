@@ -1,105 +1,108 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, useStore } from "@/state/store";
-import { BROWSER_EXTENSION_LINKS, type BrowserStatus } from "../../../shared/browser";
+import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
+import type { BrowserStatus } from "../../../shared/browser";
 
 const labels: Record<BrowserStatus["state"], string> = {
-  not_installed: "Helper missing", off: "Not connected", starting: "Connecting", extension_needed: "Add the browser extension",
-  choose_browser: "Choose your browser", ready: "Connected", disconnected: "Connection lost", needs_update: "Update needed", recovery_required: "Needs attention",
+  not_installed: "Browser unavailable", off: "Not connected", starting: "Opening work browser", extension_needed: "Browser setup needs an update",
+  choose_browser: "Choose your browser", ready: "Work browser ready", disconnected: "Work browser closed", needs_update: "Update needed", recovery_required: "Needs attention",
 };
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm font-medium text-ink hover:bg-selected focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency disabled:cursor-not-allowed disabled:opacity-50";
 
-export function BrowserCard() {
+function actionError(cause: unknown, name: string): string {
+  const message = cause instanceof Error ? cause.message : "";
+  if (/QA denied non-connector fetch/i.test(message)) return "This design preview cannot open a work browser. Open the RealBud desktop app to connect your browser.";
+  if (/install.*(?:Chrome|Edge)|(?:Chrome|Edge).*not (?:found|installed)/i.test(message)) return "Install Google Chrome or Microsoft Edge, then check the browser connection again.";
+  if (name === "stop" || name === "disconnect") return "Browser release could not be confirmed. Check the connection before taking over or starting more work.";
+  return "The work browser could not be opened or changed. Check the connection for the next recovery step.";
+}
+
+export function BrowserCard({ id = "you-browser", defaultOpen = false, disabledReason, onAsk }: {
+  id?: string; defaultOpen?: boolean; disabledReason?: string; onAsk?: () => void;
+} = {}) {
   const { state } = useStore();
+  const unavailable = disabledReason ?? DESIGN_PREVIEW_REASON;
   const [status, setStatus] = useState<BrowserStatus | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [checking, setChecking] = useState(false);
   const epoch = useRef(0);
   const mounted = useRef(true);
   const mutating = useRef(false);
   const refresh = useCallback(async () => {
-    if (mutating.current) return;
+    if (mutating.current || unavailable || !state.connected) return;
     const request = ++epoch.current;
+    setChecking(true);
     try {
       const next = await api("/api/browser", undefined, { timeoutMs: 10_000 }) as BrowserStatus;
       if (mounted.current && request === epoch.current) { setStatus(next); setError(""); }
     } catch {
       if (mounted.current && request === epoch.current) setError("The browser connection could not be checked. Check again before starting work.");
-    }
-  }, []);
+    } finally { if (mounted.current && request === epoch.current) setChecking(false); }
+  }, [unavailable, state.connected]);
   useEffect(() => {
     mounted.current = true;
-    if (state.connected) void refresh();
-    const onFocus = () => { if (state.connected) void refresh(); };
+    if (state.connected && !unavailable) void refresh(); else setChecking(false);
+    const onFocus = () => { if (state.connected && !unavailable) void refresh(); };
     window.addEventListener("focus", onFocus);
     return () => { mounted.current = false; epoch.current++; window.removeEventListener("focus", onFocus); };
-  }, [state.connected, refresh]);
+  }, [state.connected, unavailable, refresh]);
   const action = async (name: string, body = {}) => {
-    if (mutating.current) return;
-    mutating.current = true; epoch.current++; setBusy(name); setError(""); setNotice("");
+    if (mutating.current || unavailable || !state.connected) return;
+    mutating.current = true; const request = ++epoch.current; setChecking(false); setBusy(name); setError(""); setNotice("");
     try {
       const next = await api(`/api/browser/${name}`, { method: "POST", body: JSON.stringify(body) }, { timeoutMs: 90_000 }) as BrowserStatus;
-      if (mounted.current) { setStatus(next); setNotice(name === "stop" ? "Browser work stopped. Check unfinished work before running it again." : name === "disconnect" ? "Browser access is off. Your browser sign-ins have not been changed." : name === "select" ? "Browser selected for this computer." : "Browser helper connected. Follow the next step below."); }
-    } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "This change could not be confirmed. Check the connection before retrying."); }
+      if (mounted.current && request === epoch.current) { setStatus(next); setNotice(name === "stop" ? "Browser work stopped. You can take over in the browser." : name === "disconnect" ? "Browser closed. Your work profile is saved." : name === "select" ? "Browser selected." : ""); }
+    } catch (cause) { if (mounted.current && request === epoch.current) setError(actionError(cause, name)); }
     finally { mutating.current = false; if (mounted.current) setBusy(""); }
   };
-  const disabled = !!busy || !state.connected;
-  const ready = status?.state === "ready" && !error && state.connected;
+  const disabled = !!busy || !state.connected || !!unavailable;
+  const ready = status?.state === "ready" && !error && state.connected && !unavailable;
   const chosen = status?.browsers.find(b => b.id === status.selectedBrowserId);
-  return <details id="you-browser" className="settings-section">
-    <summary><span>Browser</span><span className="settings-section-hint">{!state.connected ? "RealBud is offline" : error ? "Check connection" : status ? labels[status.state] : "Checking connection…"}</span></summary>
-    <div className="settings-section-body space-y-4 text-sm leading-relaxed">
-      <div>
-        <h3 className="text-[15px] font-medium">Use the browser you already know</h3>
-        <p className="mt-1 text-ink-secondary">Bud works in your selected Chrome or Edge profile on this computer. Joining an office does not share your browser or sign-ins.</p>
-      </div>
-      <div className="border-l-2 border-agency pl-3" role="status" aria-live="polite">
-        <p className="font-medium">{ready ? status?.active ? "Browser work is running" : `${chosen?.name || "Browser"} connected` : status ? labels[status.state] : "Checking your browser"}</p>
-        <p className="mt-1 text-ink-secondary">{status?.detail || "Reading this computer’s connection status…"}</p>
-      </div>
-      {status?.state === "not_installed" && <p className="text-ink-secondary">Ask your setup person for the complete RealBud app. No terminal commands are needed.</p>}
-      {status && ["off", "disconnected"].includes(status.state) && <button type="button" className={button + " bg-agency text-white hover:bg-agency-hover"} disabled={disabled} onClick={() => void action("connect")}>{busy === "connect" ? "Connecting…" : status.enabled ? "Reconnect browser helper" : "Connect my browser"}</button>}
-      {status?.enabled && ["extension_needed", "disconnected", "needs_update"].includes(status.state) && <div className="space-y-3">
-        <ol className="list-decimal space-y-2 pl-5 text-ink-secondary">
-          <li>Add the browser extension to the profile you use for work.</li>
-          <li>Open the extension beside your address bar and enable <strong className="font-medium text-ink">Local connection</strong>. Keep tab confirmation and requests for help on.</li>
-          <li>Come back here and check the connection.</li>
-        </ol>
-        <div className="flex flex-wrap gap-2">
-          <a className={button + " inline-flex items-center"} href={BROWSER_EXTENSION_LINKS.chrome} target="_blank" rel="noreferrer">Add to Chrome <span className="sr-only">(opens browser store)</span></a>
-          <a className={button + " inline-flex items-center"} href={BROWSER_EXTENSION_LINKS.edge} target="_blank" rel="noreferrer">Add to Edge <span className="sr-only">(opens browser store)</span></a>
-        </div>
-      </div>}
-      {status?.enabled && !status.active && !!status.browsers.length && <fieldset className="space-y-2" disabled={disabled}>
-        <legend className="mb-2 font-medium">Browser for this computer</legend>
-        {status.browsers.map(browser => <div key={browser.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2">
-          <span className="min-w-0 break-words">{browser.name}{browser.label ? ` · ${browser.label}` : ""}{!browser.compatible ? " · Update extension" : ""}</span>
-          {browser.id === status.selectedBrowserId ? <span className="text-agency">Selected</span> : <button type="button" className={button} disabled={disabled || !browser.compatible} onClick={() => void action("select", { browserId: browser.id })}>Use this browser<span className="sr-only">: {browser.name} {browser.label}</span></button>}
-        </div>)}
-      </fieldset>}
-      {ready && !status?.active && <p className="text-ink-secondary"><strong className="font-medium text-ink">To start:</strong> open the job’s website and sign in yourself. In Schedule, choose your saved job and press <strong className="font-medium text-ink">Run beside me</strong>. The browser will ask before lending Bud a tab.</p>}
-      {(status?.active || status?.state === "recovery_required") && <div className="space-y-2">
-        <button type="button" className={button + " border-danger text-danger"} disabled={disabled} onClick={() => void action("stop")}>{busy === "stop" ? "Releasing browser…" : "Stop browser work and take over"}</button>
-        <p className="text-ink-secondary">Wait for release to finish before entering passwords or codes. Stop does not undo an action that already happened.</p>
-      </div>}
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className={button} disabled={disabled} onClick={() => void refresh()}>Check connection</button>
-        {status?.enabled && <button type="button" className={button} disabled={disabled} onClick={() => void action("disconnect")}>{busy === "disconnect" ? "Disconnecting…" : "Turn browser access off"}</button>}
-      </div>
+  const connectionLabel = unavailable ? "Preview only" : !state.connected ? "RealBud is offline" : error ? "Connection needs checking" : checking ? "Checking browser connection…" : ready && status?.active ? "Browser work is running" : status ? labels[status.state] : "Checking browser connection…";
+  const connectionDetail = unavailable || (!state.connected ? "Reconnect RealBud to use the work browser." : error ? "" : status?.active ? "Bud is using the work browser. Stop the task to take over."
+    : ready ? "Tell Bud what you want to do in Ask. Use the work browser to sign in if the website asks."
+    : status?.state === "recovery_required" ? "Release the earlier browser task, then check any unfinished work."
+    : status?.state === "not_installed" ? "Install Google Chrome or Microsoft Edge, then check again."
+    : status && ["extension_needed", "needs_update"].includes(status.state) ? "Update RealBud, then check the connection again."
+    : status?.state === "choose_browser" ? "Choose a compatible browser in Browser options below."
+    : status && ["off", "disconnected"].includes(status.state) ? "Open your saved work profile to use websites with Bud."
+    : "Checking this computer’s work browser…");
+  const needsRelease = !!status?.active || status?.state === "recovery_required";
+  const canOpen = status && ["off", "disconnected"].includes(status.state) && !error;
+  const checkedAt = status?.checkedAt && Number.isFinite(status.checkedAt) ? new Date(status.checkedAt) : null;
+  return <details id={id} open={defaultOpen || undefined} className="settings-section">
+    <summary><span>Work browser</span><span className="settings-section-hint">{connectionLabel}</span></summary>
+    <div className="settings-section-body space-y-3 text-sm leading-relaxed">
+      <p role="status" aria-live="polite" className="text-ink-secondary">{connectionDetail}</p>
+      {!unavailable && (needsRelease ? <button type="button" className={button + " border-danger text-danger"} disabled={disabled} onClick={() => void action("stop")}>{busy === "stop" ? "Releasing browser…" : "Stop browser work and take over"}</button>
+        : canOpen ? <button type="button" className={button + " bg-agency text-white hover:bg-agency-hover"} disabled={disabled} onClick={() => void action("connect")}>{busy === "connect" ? "Opening work browser…" : "Open work browser"}</button>
+        : ready && onAsk ? <button type="button" className={button + " bg-agency text-white hover:bg-agency-hover"} disabled={disabled || checking} onClick={onAsk}>Ask Bud to use a website</button>
+        : !ready && <button type="button" className={button} disabled={disabled || checking} onClick={() => void refresh()}>{checking ? "Checking connection…" : "Check browser connection"}</button>)}
+      {!unavailable && error && <p role="alert" className="text-danger">{error}</p>}
+      {!unavailable && notice && <p role="status" className="text-agency">{notice}</p>}
       <details className="border-t border-line pt-3">
-        <summary className="cursor-pointer font-medium">How Bud works on websites</summary>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-ink-secondary">
-          <li>One saved job, its named websites and the browser you chose.</li>
-          <li>You sign in and control payments, transfers, sending and signing.</li>
-          <li>For bank work, start with reading statements and transaction history. Enter financial details yourself.</li>
-          <li>A stopped or interrupted job stays stopped. Review what happened before starting another step.</li>
-          <li>Page content Bud reads is used by your connected model to do the job. Keep unrelated tabs outside the job.</li>
-        </ul>
+        <summary className="cursor-pointer font-medium">Browser options and sign-in help</summary>
+        <div className="mt-3 space-y-3 text-ink-secondary">
+          <p>Your separate work profile retains website sign-ins. Websites decide when they expire; this connection check does not renew them.</p>
+          <p>To sign in or change account, stop any running browser work and wait for release, then use the work browser yourself. Return to Ask when you are ready. Stopping does not undo completed actions or restart the task.</p>
+          <p>Bud can read websites and use permitted search and filter controls. Website record changes, uploads and downloads are not available in this build.</p>
+          {!unavailable && status?.enabled && !status.active && (status.browsers.length > 1 || status.state === "choose_browser") && <fieldset className="space-y-2" disabled={disabled}>
+            <legend className="mb-2 font-medium">Browser for this computer</legend>
+            {status.browsers.map(browser => <div key={browser.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2">
+              <span className="min-w-0 break-words">{browser.name}{browser.label ? ` · ${browser.label}` : ""}{!browser.compatible ? " · Update needed" : ""}</span>
+              {browser.id === status.selectedBrowserId ? <span className="text-agency">Selected</span> : <button type="button" className={button} disabled={disabled || !browser.compatible} onClick={() => void action("select", { browserId: browser.id })}>Use this browser<span className="sr-only">: {browser.name} {browser.label}</span></button>}
+            </div>)}
+          </fieldset>}
+          {!unavailable && <div className="flex flex-wrap gap-2">
+            {(ready || needsRelease || canOpen) && <button type="button" className={button} disabled={disabled || checking} onClick={() => void refresh()}>{checking ? "Checking connection…" : "Check browser connection"}</button>}
+            {status?.enabled && <button type="button" className={button} disabled={disabled} onClick={() => void action("disconnect")}>{busy === "disconnect" ? "Disconnecting…" : "Turn browser access off"}</button>}
+          </div>}
+          {!unavailable && checkedAt && <p className="text-xs text-ink-muted">Last checked <time dateTime={checkedAt.toISOString()}>{checkedAt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>{chosen ? ` · ${chosen.name}` : ""}. Engine {status?.version}.</p>}
+          <p className="text-xs text-ink-muted">Turning browser access off closes the work browser and retains its profile. No extension is needed.</p>
+        </div>
       </details>
-      <details className="border-t border-line pt-3 text-ink-secondary"><summary className="cursor-pointer">Connection details</summary><p className="mt-2">BrowserSkill {status?.version || "0.3.0"} · Local connection port {status?.port || 52800}. Browser access is managed by this RealBud installation.</p></details>
-      {busy && <p role="status">{busy === "stop" || busy === "disconnect" ? "Waiting for the browser to confirm release…" : "Saving and checking your connection…"}</p>}
-      {notice && <p role="status" className="text-agency">{notice}</p>}
-      {error && <p role="alert" className="text-danger">{error}</p>}
     </div>
   </details>;
 }

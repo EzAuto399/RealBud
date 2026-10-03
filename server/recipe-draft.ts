@@ -5,8 +5,9 @@ import { randomUUID } from "node:crypto";
 
 import type { Recipe } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
-import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
-import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
+import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
+import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
@@ -142,11 +143,11 @@ export async function askWorker(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve({ ok: false, detail: serviceFailure });
     hardenHermesChildEnv(env);
-    // Strip first, then place only the grant RealBud resolved for this
-    // installation, and only while the checked profile names the granted
-    // endpoint. The selected worker is refused without usable access; a
-    // caller-supplied (development) CLI just gets no key.
-    const refusal = applyManagedModelLaunchEnv(env, root);
+    // Strip first, then reason through Ask's loopback relay (the office key
+    // stays in this process), and only while the checked profile names the
+    // granted endpoint. The selected worker is refused without usable access;
+    // a caller-supplied (development) CLI just gets no access.
+    const refusal = applyAskModelRelayEnv(env, root);
     if (refusal && !opts?.cli) return resolve({ ok: false, detail: refusal });
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? WORKER_TIMEOUT_MS,
@@ -155,22 +156,27 @@ export async function askWorker(
       env,
       encoding: "utf8",
     };
-    execFileCli(
-      cli,
-      [
-        "--profile",
-        selection.profile,
-        "chat",
-        "-Q",
-        "--toolsets",
-        toolsets.join(","),
-        "-q",
-        `${BUD_IDENTITY}\n\n${prompt}`,
-        "--max-turns",
-        String(Math.max(1, Math.min(12, opts?.maxTurns ?? 6))),
-      ],
+    const args = [
+      "--profile",
+      selection.profile,
+      "chat",
+      "-Q",
+      "--toolsets",
+      toolsets.join(","),
+      "-q",
+      `${BUD_IDENTITY}\n\n${prompt}`,
+      "--max-turns",
+      String(Math.max(1, Math.min(12, opts?.maxTurns ?? 6))),
+    ];
+    let launch: ReturnType<typeof hermesWorkerSandbox>;
+    try { launch = hermesWorkerSandbox("cli", cli, args, env, []); }
+    catch (error) { return resolve({ ok: false, detail: error instanceof Error ? error.message : String(error) }); }
+    trackSandboxedChild(execFileCli(
+      launch.command,
+      launch.args,
       execOpts,
       (err, stdout, stderr) => {
+        launch.release();
         if (opts?.signal?.aborted) return resolve({ ok: false, detail: "Preparation cancelled." });
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
@@ -184,18 +190,24 @@ export async function askWorker(
         }
         resolve({ ok: true, stdout: String(stdout) });
       },
-    );
+    ));
   });
 }
 
-function draftPrompt(text: string): string {
+function draftPrompt(text: string, correction?: string): string {
   return (
+    (correction
+      ? `Regenerate the job card once to correct this validation failure: ${correction} ` +
+        `Keep the original job and its restrictions intact. Do not remove requested work merely to fit the schema, or add action authority.\n\n`
+      : "") +
     `The user described a recurring property-management job. Return JSON ONLY as the last line: ` +
     `{ "title": "…", "steps": ["…"], "allowedOrigins": ["portal.example.com"], "evidence": "what each run must capture", ` +
-    `"capabilities": ["read-book", "read-files", "web-research", "analyse", "draft"], ` +
+    `"capabilities": ["read-book", "read-files", "web-research", "analyse", "draft", "portal-read", "portal-prefill"], ` +
     `"schedule": { "time": "HH:MM", "weekdays": [0] } or null }\n` +
     `Origins are bare https hosts of the portals named in the description (no paths). ` +
-    `Capabilities must contain only the safe abilities actually needed; never return send, submit, payment, trust, legal, notice, or record-mutation authority. ` +
+    `Capabilities must contain only the safe abilities actually needed. Include portal-read when the job must read a named website. ` +
+    `Include portal-prefill only when that job requires entering search or filter fields; it does not permit creating or editing records, and the current work browser enforces read-only actions. ` +
+    `Never return portal-submit, send, submit, payment, trust, legal, notice, or record-mutation authority. The card is an unapproved suggestion, not permission to act. ` +
     `The title must be 1–80 characters; include 1–12 steps of 1–200 characters each; evidence must be at most 200 characters; include at most 5 origins. ` +
     `Steps are plain imperative sentences. Never include credentials. Do not include an introduction, reasoning or commentary in this structured result. ` +
     `If the description names no portal site, allowedOrigins may be []. ` +
@@ -210,36 +222,59 @@ export async function shapeRecipeDraft(
   text: string,
   opts?: WorkerChatOpts,
 ): Promise<{ draft: Recipe | null; detail: string }> {
-  const result = await askWorker(draftPrompt(text), opts);
-  if (!result.ok) return { draft: null, detail: result.detail };
-  const parsed = lastJsonObject(result.stdout);
-  if (parsed == null) return { draft: null, detail: "Bud answered without a job card." };
-  try {
-    const fields = validateRecipe({ ...(parsed as Record<string, unknown>), description: text });
-    const createdAt = Date.now();
-    return {
-      draft: {
-        id: randomUUID(),
-        ...fields,
-        status: "shadow",
-        createdAt,
-        planApprovedAt: null,
-        revision: 1,
-        updatedAt: createdAt,
-        approvedRevision: null,
-        attachment: null,
-        submitAcknowledgedAt: null,
-      },
-      detail: "Bud shaped the job.",
-    };
-  } catch (error) {
-    // Recipe validation supplies fixed, actionable field constraints. Never
-    // expose raw worker output or unexpected exception details to the PM.
-    const detail = error instanceof Error && (error as { status?: number }).status === 400
-      ? `Bud's job card needs a correction: ${error.message}`
-      : "that job card was not usable.";
-    return { draft: null, detail };
+  const budgetMs = opts?.timeoutMs ?? WORKER_TIMEOUT_MS;
+  const deadline = Date.now() + budgetMs;
+  const timeout = AbortSignal.timeout(budgetMs);
+  const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+  let correction: string | undefined;
+  let detail = "Bud answered without a job card.";
+  // Regeneration shares the first attempt's budget and cannot acquire tools
+  // or authority. Only parsed/schema failures reach the second attempt.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (opts?.signal?.aborted) return { draft: null, detail: "Preparation cancelled." };
+    const remaining = deadline - Date.now();
+    if (timeout.aborted || remaining <= 0) return { draft: null, detail: "Bud took too long." };
+    const result = await askWorker(draftPrompt(text, correction), {
+      ...opts, timeoutMs: remaining, signal, toolsets: ["todo"],
+    });
+    if (opts?.signal?.aborted) return { draft: null, detail: "Preparation cancelled." };
+    if (timeout.aborted || Date.now() >= deadline) return { draft: null, detail: "Bud took too long." };
+    if (!result.ok) return { draft: null, detail: result.detail };
+    const parsed = lastJsonObject(result.stdout);
+    if (parsed == null) {
+      correction = "Return one complete JSON job card with the required fields.";
+      detail = "Bud answered without a job card.";
+      continue;
+    }
+    try {
+      const fields = validateRecipe({ ...(parsed as Record<string, unknown>), description: text });
+      const createdAt = Date.now();
+      return {
+        draft: {
+          id: randomUUID(),
+          ...fields,
+          status: "shadow",
+          createdAt,
+          planApprovedAt: null,
+          revision: 1,
+          updatedAt: createdAt,
+          approvedRevision: null,
+          attachment: null,
+          submitAcknowledgedAt: null,
+        },
+        detail: "Bud shaped the job.",
+      };
+    } catch (error) {
+      // Only the validator's fixed field constraints may enter the repair
+      // prompt. Never echo the failed output or retry an unexpected failure.
+      if (!(error instanceof Error) || (error as { status?: number }).status !== 400) {
+        return { draft: null, detail: "that job card was not usable." };
+      }
+      correction = error.message;
+      detail = `Bud's job card needs a correction: ${correction}`;
+    }
   }
+  return { draft: null, detail };
 }
 
 export async function draftRecipeFromText(text: string, opts?: { cli?: string; root?: string }): Promise<Recipe | null> {

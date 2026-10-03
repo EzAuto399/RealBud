@@ -90,7 +90,9 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
 
   beforeAll(async () => {
     scratch = mkdtempSync(join(realpathSync(tmpdir()), `RealBud memory HTTP ${mode} `));
-    data = join(scratch, 'data'); script = join(scratch, 'peer-script.json'); dump = join(scratch, 'peer-result.json');
+    data = join(scratch, 'data'); script = join(scratch, 'peer-script.json');
+    // The fictional ACP peer obeys the same write fence as the real worker.
+    dump = join(data, 'vault', 'bud-work', 'peer-result.json');
     mkdirSync(data, { recursive: true, mode: 0o700 });
     writeFileSync(script, JSON.stringify(memoryScript()), { mode: 0o600 });
     writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: Object.fromEntries(

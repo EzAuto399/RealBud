@@ -57,6 +57,12 @@ describe("Hermes adapter compatibility", () => {
     expect(hermesIsCompatible("Hermes Agent v0.21.3 (2026.9.11)")).toBe(false);
     expect(hermesIsCompatible("Hermes Agent v0.21.3")).toBe(false);
   });
+  it("admits the 0.21.5 candidate only by its exact product and calendar pair", () => {
+    expect(hermesIsCompatible("Hermes Agent v0.21.5 (2026.9.24)")).toBe(true);
+    expect(hermesIsCompatible("Hermes Agent v0.21.5 (2026.9.14)")).toBe(false);
+    expect(hermesIsCompatible("Hermes Agent v0.21.4 (2026.9.24)")).toBe(false);
+    expect(hermesMatchesPin("Hermes Agent v0.21.5 (2026.9.24)")).toBe(false);
+  });
   it("keeps the compatibility floor admitted so an existing 0.20.3 office is not treated as foreign", () => {
     expect(hermesIsCompatible("Hermes Agent v0.20.3 (2026.8.16.2)")).toBe(true);
   });

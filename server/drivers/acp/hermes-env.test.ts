@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv } from "./hermes.ts";
@@ -11,6 +12,19 @@ describe("Hermes child stream watchdog", () => {
       hardenHermesChildEnv(env);
       expect(env.HERMES_HOME).toBe(join(data, "hermes"));
     }
+  });
+
+  it.skipIf(process.platform === "win32")("puts the owned runtime's venv first so `python3` is Bud's own Python", () => {
+    const home = mkdtempSync(join(tmpdir(), "rb-venv-path-"));
+    try {
+      const bin = join(home, "hermes-agent", "venv", "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "hermes"), "");
+      const env: Record<string, string | undefined> = { REALBUD_HERMES_HOME: home, PATH: "/usr/bin:/bin" };
+      hardenHermesChildEnv(env);
+      expect(env.PATH?.split(":")[0]).toBe(bin);
+      expect(env.PATH).toContain("/usr/bin");
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
   it("honors the explicit owned worker home and retains safe mode", () => {

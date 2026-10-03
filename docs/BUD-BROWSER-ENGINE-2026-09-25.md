@@ -1,5 +1,7 @@
 # Bud browser engine candidate — 25 September 2026
 
+Historical checkpoint: the owner's 1 October direction supersedes the dormant-only decision below. Native runtime adoption and its evidence are tracked in [Kevin's invoice checkpoint](KEVIN-INVOICE-MOCK-2026-10-01.md). The checks below describe only the original source addition.
+
 **Decision:** Keep the pinned native `agent-browser` transport as dormant host-side source for Bud. RealBud owns the visible app and browser task flow. No Hermes window, Hermes.app, worker browser tool, or vendor-branded UI is introduced by this change. The existing browser broker remains the authority for task grants, account scope, approvals, and Stop.
 
 The candidate lives in `server/hermes-browser-transport.ts`. It admits an exact staged binary by manifest and SHA-256, attaches only to a host-supplied local browser endpoint, uses an isolated private control directory, allows a small typed command set, and holds uncertain effects for recovery. `scripts/prepare-hermes-browser.mjs` describes a pinned build-time bundle; it is **not** called by the current package scripts. The fixture observation helper and native QA script are available for later integration checks. None of these files is imported by the current product runtime.

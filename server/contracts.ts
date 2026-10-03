@@ -93,7 +93,7 @@ export type RuntimeEvent = RuntimeEventBase &
         };
       }
     | { type: "request.resolved"; behavior: string; source: string }
-    | { type: "thread.token-usage.updated"; input: number; output: number }
+    | { type: "thread.token-usage.updated"; input: number; output: number; cachedRead?: number; thought?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
     | { type: "runtime.error"; message: string; setup?: boolean }
@@ -140,6 +140,29 @@ export interface SendTurnInput {
        * classified (read / review / blocked). Direct connections review everything. */
       managed?: boolean;
     };
+    /** RealBud's own SSRF-guarded public page reader (`read_page`). `allowedUrls`
+     * are the links the person wrote in this conversation's own messages
+     * (`personUrls`); no other link can be read. No credentials. */
+    webPages?: { allowedUrls: string[] };
+    /** `open_for_sign_in` (server/browser-sign-in.ts): opens the work browser on a
+     * known site's or a person-typed HTTPS address's sign-in page. `personUrls`
+     * come from the person's own messages; `approvedSites` from the office. */
+    signIn?: { personUrls: string[]; approvedSites: string[] };
+    /** A member's own Hermios CRM, read-only (`crm_search`, `crm_get_record`).
+     * `scope` (opaque, per member) and `generation` bind warm-session reuse;
+     * `accessToken` must refuse any other generation. Never serialized. */
+    hermiosCrm?: { scope: string; generation: number; accessToken(signal: AbortSignal): Promise<string>;
+      /** Hermios workspace UUID (record-lease namespace) and membership id
+       * (`expectedProfileId`); attribution labels are descriptive only. */
+      workspace?: string; profileId?: string; memberName?: string; department?: string };
+    /** Private Desk reminders for this member and thread (`set_reminder`). No card. */
+    reminders?: import("./reminders-broker.ts").BudReminders;
+    /** The person's Desk saved views (`views_*`). Changes show the one-time card. */
+    workspaceViews?: import("./workspace-views-broker.ts").BudWorkspaceViews;
+    /** The office's bank feed, read-only (`bank_accounts_list`, `bank_transactions_list`). No card, no writes. */
+    bankSource?: import("./bank-source-broker.ts").BudBankSource;
+    /** The office's added connectors: reviewed, allowlisted tools of active connectors. Reads have no card; writes show the one-time card; credentials stay with the host. */
+    mcpConnectors?: import("./mcp-connector-broker.ts").BudMcpConnectors;
     /** Cloud computer, reached through RealBud's REST-to-MCP adapter. */
     computer?: { kind?: "box"; boxId: string; token: string };
     /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */

@@ -337,6 +337,15 @@ export function formatNanoAud(value: string | null, decimals = 2): string {
   return `${negative && rounded !== BigInt(0) ? "-" : ""}A$${(rounded / denominator).toLocaleString("en-AU")}${decimals ? `.${(rounded % denominator).toString().padStart(decimals, "0")}` : ""}`;
 }
 
+/** A positive customer charge must not read as free at the selected precision. */
+export function formatCustomerCharge(value: string | null, decimals = 2): string {
+  if (value !== null && /^\d+$/.test(value) && Number.isInteger(decimals) && decimals >= 0 && decimals <= 9) {
+    const amount = BigInt(value), minimum = BigInt(10) ** BigInt(9 - decimals);
+    if (amount > BigInt(0) && amount < minimum) return `<${formatNanoAud(minimum.toString(), decimals)}`;
+  }
+  return formatNanoAud(value, decimals);
+}
+
 export function formatTokenCount(value: string): string {
   return /^\d+$/.test(value) ? BigInt(value).toLocaleString("en-AU") : "Unavailable";
 }

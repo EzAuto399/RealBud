@@ -59,6 +59,7 @@ import { composeOperatorRoutes } from './office-ai-access.ts';
 import { OPERATOR_ROLE } from './operator-token.ts';
 import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, type InstallationProvisioning } from './provisioning.ts';
 import { modelviaRefusal, parseModelviaReceipt } from '../shared/modelvia-receipt.ts';
+import { MANAGED_MODEL_CHOICES } from '../shared/managed-model-choices.ts';
 
 type Row = Record<string, unknown>;
 const OPERATOR_SECRET = 'fictional-modelvia-operator-secret-32ch';
@@ -80,14 +81,9 @@ const CHAT_FIELDS: readonly string[] = ['model', 'messages', 'stream', 'max_toke
  * chat completions. That matters on r4: Sonnet refuses `parallel_tool_calls: false`.
  */
 const WORKER_WIRE: readonly string[] = ['messages', 'model', 'stream', 'stream_options', 'tools', 'reasoning_effort'];
-/** The desktop's three managed choices (29 September 2026): concrete route ids
- * plus an effort, never a mode alias, and never `xhigh` with Flash. Captured
- * from Hermes 0.21.3 on the custom `realbud` provider. */
-const DESKTOP_CHOICES = [
-  { model: 'deepseek-v4.1-flash', reasoning_effort: 'high' },
-  { model: 'claude-sonnet-5.5', reasoning_effort: 'high' },
-  { model: 'claude-sonnet-5.5', reasoning_effort: 'xhigh' },
-] as const;
+/** Exercise the same choices the desktop offers, so a future menu change must
+ * still satisfy Modelvia's wire contract. */
+const DESKTOP_CHOICES = MANAGED_MODEL_CHOICES.map(choice => ({ model: choice.model, reasoning_effort: choice.effort }));
 const MODES = ['auto', 'flash', 'max'] as const;
 /** The r4 catalogue (managed-gateway/catalogue.openrouter.example.json) priced on
  * rate card `openrouter-2026-09-r4`, nanoAUD per 1M tokens. */

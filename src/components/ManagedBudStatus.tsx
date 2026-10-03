@@ -1,12 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HermesStatus } from "@/state/store";
 import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEPS } from "@/lib/bud-setup";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
 import { Card } from "./SettingsPrimitives";
-import { ConnectOffice } from "./ConnectOffice";
-import { WEBSITE_LINK_CHANGED } from "./you/browser-link";
+import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
+import { modelAccessState, WEBSITE_LINK_CHANGED } from "./you/browser-link";
 
 type ManagedBudStatusProps = {
   id: string;
@@ -25,21 +25,62 @@ const stepLabels = {
 const secondaryButton = "pm-control rounded border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50";
 
 export function ManagedBudStatus({ id, status, connected, recovering = false, active = true, onRefresh, onServiceAdministration, onShowAsk }: ManagedBudStatusProps) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  const office = useConnectOffice(state?.config?.profile?.name);
   const { pending, error, refresh } = useBudStatusMonitor({ enabled: connected && active, onRefresh });
-  const availability = budAvailability(status, connected, recovering, { canAdminister: false });
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
+  const retryInFlight = useRef(false);
+  const mounted = useRef(true);
+  const refreshOffice = useRef(office.refresh);
+  refreshOffice.current = office.refresh;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Office status scopes withdrawal to the current installation. A worker
+  // snapshot may still describe the previous link during an approved relink.
+  // This affects presentation only; the retry guard retains the worker hold.
+  const withdrawn = office.status ? office.status.serviceWithdrawn === true : Boolean(status?.modelAccess?.withdrawn);
+  const displayStatus = status?.modelAccess && withdrawn !== status.modelAccess.withdrawn ? {
+    ...status, ready: false, autoSetup: undefined, lastPing: null, lastTest: null,
+    ...(status.model ? { model: { ...status.model, attached: false } } : {}),
+    modelAccess: { ...status.modelAccess, managed: false, withdrawn, attached: false,
+      detail: withdrawn ? "Model access was withdrawn for this computer. Your records are kept. Contact RealBud support." : status.modelAccess.detail },
+  } : status;
+  const availability = budAvailability(displayStatus, connected, recovering, { canAdminister: false });
   const known = connected && !error && !!status && status.cli.probeState !== "timeout" && status.cli.probeState !== "error";
   const ready = known && availability.ready;
-  const needsAccountLink = known && !recovering && !ready && !status?.modelAccess?.managed && !status?.modelAccess?.withdrawn
-    && budAvailability(status, connected).target === "attach-model";
-  const lastFailure = budAutoSetupView(status)?.working ? null : budReadinessFailure(status);
-  // Connecting inline delivers model access: check Bud again once the link settles.
+  // An approved office link is what authorizes automatic installation. It
+  // cannot wait behind the installation or safeguards it is meant to enable.
+  const needsOfficeAccess = known && !recovering && !ready && !displayStatus?.modelAccess?.managed && !withdrawn;
+  const officeLinked = office.status?.state === "linked";
+  const officeAccess = modelAccessState(office.status);
+  const officeSetupLabel = officeLinked
+    ? officeAccess === "failed" || officeAccess === "skipped" || officeAccess === "not-yet" ? "Office service setup needed" : "Setting up your office connection"
+    : office.status ? "Connect to your office" : office.error ? "Office connection unavailable" : "Checking office connection";
+  const lastFailure = budAutoSetupView(displayStatus)?.working ? null : budReadinessFailure(displayStatus);
+  // A link may finish on another setup surface. Refresh here even while a
+  // missing worker prevented the old model step from becoming current.
   useEffect(() => {
-    if (!needsAccountLink) return;
-    const linked = () => { void refresh(); };
+    if (!active || !connected) return;
+    const linked = () => {
+      void refresh();
+      void refreshOffice.current().catch(() => {});
+    };
     window.addEventListener(WEBSITE_LINK_CHANGED, linked);
     return () => window.removeEventListener(WEBSITE_LINK_CHANGED, linked);
-  }, [needsAccountLink, refresh]);
+  }, [active, connected, refresh]);
+  // Saved links can still be receiving service access after a restart. This
+  // is a read-only, single-flight check; it stops when access arrives or this
+  // panel closes, and never starts OAuth or changes service configuration.
+  useEffect(() => {
+    if (!active || !connected || !needsOfficeAccess || !officeLinked) return;
+    let reading = false;
+    const timer = window.setInterval(() => {
+      if (reading || document.visibilityState === "hidden") return;
+      reading = true;
+      void refreshOffice.current().then(() => refresh()).catch(() => {}).finally(() => { reading = false; });
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [active, connected, needsOfficeAccess, officeLinked, refresh]);
   const journey = budSetupJourney({
     statusLoaded: known,
     workerInstalled: Boolean(status?.cli.installed && !status.bootstrapPending),
@@ -47,17 +88,37 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
     safeguardsInstalled: Boolean(status?.pack.installed),
     approvalsManual: Boolean(status?.pack.approvalsManual),
     workroomReady: Boolean(status?.pack.workroomReady),
-    modelChecked: Boolean(status?.model),
-    modelAttached: Boolean(status?.model?.attached && !status.modelAccess?.withdrawn),
-    verified: Boolean(status?.ready && !status.modelAccess?.withdrawn && !recovering),
+    modelChecked: Boolean(displayStatus?.model),
+    modelAttached: Boolean(displayStatus?.model?.attached && !withdrawn),
+    verified: Boolean(displayStatus?.ready && !withdrawn && !recovering),
   });
   // Automatic setup after an approved office link needs no administrator.
-  const automatic = connected && !error && !recovering ? budAutoSetupView(status) : null;
-  const autoStep = automatic?.working ? status?.autoSetup?.step ?? 0 : 0;
-  // Automatic setup's own hold already says what to do; the administrator text
-  // is only for a computer without an active office link and grant.
-  const needsAdministrator = known && !ready && !recovering && !status?.modelAccess?.withdrawn && !needsAccountLink && !automatic?.working
-    && !budAutoSetupRetryable(status) && status?.autoSetup?.state !== "held" && !status?.modelAccess?.managed;
+  const automatic = connected && !error && !recovering ? budAutoSetupView(displayStatus) : null;
+  const autoStep = automatic?.working ? displayStatus?.autoSetup?.step ?? 0 : 0;
+  const waitingRetry = automatic?.working && displayStatus?.autoSetup?.state === "waiting_retry";
+  const showOfficeAccess = needsOfficeAccess && !automatic;
+  const canRetrySetup = connected && !recovering && !withdrawn && !status?.modelAccess?.withdrawn && budAutoSetupRetryable(status);
+  useEffect(() => {
+    // A later authoritative status can settle an uncertain response without
+    // another click. Do not leave the earlier request warning beside Ready.
+    if (ready || automatic?.working) setRetryError("");
+  }, [ready, automatic?.working]);
+
+  async function retrySetup() {
+    if (retryInFlight.current || !canRetrySetup) return;
+    retryInFlight.current = true;
+    setRetrying(true);
+    setRetryError("");
+    try {
+      await api("/api/hermes/auto-setup/retry", { method: "POST", body: "{}" });
+    } catch {
+      if (mounted.current) setRetryError("The setup request could not be confirmed. Checking its current status; your work is kept.");
+    } finally {
+      await refresh();
+      retryInFlight.current = false;
+      if (mounted.current) setRetrying(false);
+    }
+  }
 
   function openYou(target: string) {
     onServiceAdministration?.();
@@ -70,20 +131,23 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
     <Card>
       <h2 className="text-lg font-semibold">Bud on this computer</h2>
       <div className="mt-2" role="status" aria-live="polite">
-        <p className="text-sm font-medium">{error ? "Status unavailable" : availability.label}</p>
+        <p className="text-sm font-medium">{error ? "Status unavailable" : showOfficeAccess ? officeSetupLabel : availability.label}</p>
         <p className="mt-1 text-sm leading-relaxed text-ink-secondary">{error
           ? `${budFacingCopy(error, "Could not check Bud's status.")} Your draft and saved plans are kept.`
+          : showOfficeAccess ? officeLinked
+            ? "Your office connection is saved. Bud must finish its setup and private readiness check before work can start."
+            : "Connect this computer to your office. RealBud will then set up Bud and your office’s app connection service automatically."
           : availability.detail}</p>
       </div>
       <dl className="mt-4 divide-y divide-line" aria-label="Bud setup checks">
         {BUD_SETUP_STEPS.map(step => {
           const progress = journey.stepState[step];
           const index = BUD_SETUP_STEPS.indexOf(step) + 1;
-          const label = autoStep ? (index < autoStep ? "Ready" : index === autoStep ? "In progress" : "Waiting")
+          const label = autoStep ? (index < autoStep ? "Ready" : index === autoStep ? waitingRetry ? "Will retry" : "In progress" : "Waiting")
             : !known ? "Not checked"
-            : step === "model" && status?.modelAccess?.withdrawn ? "Access withdrawn"
-            : step === "model" && status?.model?.attached && progress !== "complete" ? "Configured"
-            : step === "model" && status?.model && !status.model.attached ? "Not connected"
+            : step === "model" && withdrawn ? "Access withdrawn"
+            : step === "model" && displayStatus?.model?.attached && progress !== "complete" ? "Configured"
+            : step === "model" && displayStatus?.model && !displayStatus.model.attached ? "Not connected"
             : progress === "complete" ? "Ready"
             : progress === "current" ? (step === "verify" && !lastFailure ? "Not checked" : "Needs attention")
             : step === "model" && journey.stage === "checking" ? "Not checked" : "Waiting";
@@ -94,19 +158,18 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
         })}
       </dl>
       {!ready && known && lastFailure && <p className="mt-3 text-sm text-danger" role="status">Last readiness check: {lastFailure}</p>}
-      {needsAccountLink ? <div className="mt-3 space-y-3">
-          <p className="text-sm leading-relaxed text-ink-secondary">Connect this computer to your office so Bud gets its AI access. The private readiness check still needs to pass before Bud can work.</p>
-          <div className="max-w-[32rem]"><ConnectOffice /></div>
-        </div>
-        : needsAdministrator ? <p className="mt-3 text-sm leading-relaxed text-ink-secondary">Your service administrator needs to complete the remaining check. Status updates automatically. You can keep drafting and save plans in Schedule.</p> : null}
+      {showOfficeAccess && <div className="mt-3 space-y-3">
+        <div className="max-w-[32rem]"><ConnectOfficeView {...office.view} /></div>
+        <p className="text-sm leading-relaxed text-ink-secondary">The private readiness check still needs to pass. Accounts that need your sign-in will still ask you to connect. Your office’s permissions and work approvals stay in place.</p>
+      </div>}
+      {retryError && <p role="alert" className="mt-3 text-sm text-danger">{retryError}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
-        {onShowAsk && <button type="button" className={ready ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>Return to Ask</button>}
-        {budAutoSetupRetryable(status) && connected && <button type="button" className={secondaryButton} disabled={pending}
-          onClick={() => { void api("/api/hermes/auto-setup/retry", { method: "POST", body: "{}" }).catch(() => {}).finally(() => { void refresh(); }); }}>Try setup again</button>}
-        <button type="button" className={secondaryButton} disabled={pending || !connected} aria-busy={pending} onClick={() => { void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>
+        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{automatic?.working ? "Keep preparing" : "Return to Ask"}</button>}
+        {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
+          onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
+        {!automatic?.working && <button type="button" className={secondaryButton} disabled={pending || !connected} aria-busy={pending} onClick={() => { void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>}
       </div>
-      {needsAdministrator && <button type="button" className="pm-control mt-2 text-sm text-ink-secondary underline underline-offset-4" onClick={() => openYou("you-service-admin")}>Service administration</button>}
     </Card>
   </section>;
 }

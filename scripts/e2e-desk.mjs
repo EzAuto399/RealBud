@@ -134,14 +134,15 @@ try {
   check("remove property drops it with its facts", removed.status === 200 && removed.body.properties.length === 6 && !removed.body.ledger.some((r) => r.propertyId === property.id));
 
   // ── Schedule: named loops ──
-  // All three are built. Morning priorities (inbound-triage) is available but
+  // W1 stays unqualified; W2 and Morning priorities are available but paused.
+  // Morning priorities (inbound-triage) is available but
   // its clock stays off until agency setup adopts the reviewed schedule, so a
   // fresh book must show it disabled with no next run.
   const loops = (await api("GET", "/api/loops")).body;
   const inbound = loops?.loops?.find((l) => l.id === "inbound-triage");
   check(
-    "three named loops; inbound is available but disabled until agency setup enables it",
-    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" &&
+    "five named loops; inbound is available but disabled until agency setup enables it",
+    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills" &&
       loops.loops[0].available === true && loops.loops[1].available === true &&
       inbound?.available === true && inbound?.enabled === false && inbound?.nextRunAt === null,
     `inbound available=${inbound?.available} enabled=${inbound?.enabled} nextRunAt=${inbound?.nextRunAt}`,

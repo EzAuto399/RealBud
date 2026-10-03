@@ -41,6 +41,16 @@ const file = () => join(directory, 'state', 'record.json');
 const leftovers = () => readdirSync(join(directory, 'state')).filter(name => name.endsWith('.tmp'));
 
 describe('private JSON writes on a full disk', () => {
+  it('supports readable worker input without changing private admission or atomic recovery', async () => {
+    await writePrivateJson(file(), { rows: [{ value: 'fictional' }] }, undefined, 'readable');
+    const before = readFileSync(file(), 'utf8');
+    expect(before.split('\n').length).toBeGreaterThan(3);
+    expect(await readPrivateJson(file())).toEqual({ rows: [{ value: 'fictional' }] });
+    fault.at = 'write';
+    await expect(writePrivateJson(file(), { rows: [] }, undefined, 'readable')).rejects.toBeInstanceOf(DiskFullError);
+    expect(readFileSync(file(), 'utf8')).toBe(before);
+    expect(leftovers()).toEqual([]);
+  });
   it.each([
     ['ENOSPC', 'write'],
     ['EDQUOT', 'sync'],

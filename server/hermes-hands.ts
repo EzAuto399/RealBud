@@ -6,8 +6,9 @@ import { managedServiceFailure } from "./managed-service.ts";
 import { modelServiceFailure } from "./model-service-failure.ts";
 import { randomUUID } from "node:crypto";
 
-import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
-import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
+import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
+import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 
@@ -49,11 +50,11 @@ const PING_STARTUP_NOTICE = /^(?:⚠\s*)?tirith security scanner enabled but not
 
 const WORKER_MISS_REASONS: Array<[RegExp, string]> = [
   // Hermes refuses to start when no preloaded skill resolves in the profile.
-  [/Unknown skill\(s\)/i, "Bud's pack skill is missing; re-apply Bud's safeguards on You"],
-  [/UnrecognizedClient|invalid.?api.?key|incorrect api key|authentication|unauthori[sz]ed|\b401\b|\b403\b/i, "the model provider refused Bud's key; check the model connection on You"],
+  [/Unknown skill\(s\)/i, "Bud's pack skill is missing; re-apply Bud's safeguards in Workspace → Settings & help"],
+  [/UnrecognizedClient|invalid.?api.?key|incorrect api key|authentication|unauthori[sz]ed|\b401\b|\b403\b/i, "the model provider refused Bud's key; check the model connection in Workspace → Settings & help"],
   [/insufficient|credit|billing|quota|\b402\b/i, "Billing or credits exhausted at the model provider"],
   [/rate.?limit|\b429\b|too many requests/i, "the model provider is rate-limiting; try again shortly"],
-  [/no model|model (is )?not (set|configured)|missing model|api key (is )?(not set|missing)/i, "no model is connected; attach one on You"],
+  [/no model|model (is )?not (set|configured)|missing model|api key (is )?(not set|missing)/i, "no model is connected; attach one in Workspace → Settings & help"],
   [/ECONNREFUSED|ENOTFOUND|getaddrinfo|network|timed? ?out|unreachable/i, "the model provider could not be reached"],
 ];
 
@@ -98,15 +99,15 @@ async function scopedHermesPing(opts?: {
   const access = modelAccessStatus(opts?.root);
   if (access.withdrawn) return done(false, access.detail);
   if (workerSetupPending(opts?.root)) return done(false, "Bud setup did not finish. Finish setup before checking the connection.");
-  if (!packInstalled(opts?.root)) return done(false, "Bud is not set up — open Bud on You.");
+  if (!packInstalled(opts?.root)) return done(false, "Bud isn't set up yet. Finish setup in Workspace.");
   if (!approvalsAreManual(opts?.root)) {
-    return done(false, "Bud's safeguards need attention — open Bud on You.");
+    return done(false, "Bud's safeguards need attention. Check them in Workspace.");
   }
   const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
-  if (!version) return done(false, "Bud is not installed — install Bud on You.");
+  if (!version) return done(false, "Bud isn't installed yet. Install it from Workspace.");
   if (!hermesIsCompatible(version)) {
-    return done(false, "Bud needs an update — open Bud on You.");
+    return done(false, "Bud needs an update. Update it from Workspace.");
   }
 
   workerFingerprint = hermesReadinessFingerprint(version, opts?.root);
@@ -115,11 +116,12 @@ async function scopedHermesPing(opts?: {
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(done(false, serviceFailure));
     hardenHermesChildEnv(env);
-    // Strip ambient credentials first, then use the same installation grant as
-    // Ask — only while the profile names the granted endpoint. The selected
-    // worker is refused outright without usable access; a caller-supplied
-    // (development) CLI just gets no key.
-    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    // Strip ambient credentials first, then reason through the same loopback
+    // relay as Ask (the office key stays in this process; the worker gets the
+    // relay's token), only while the profile names the granted endpoint. The
+    // selected worker is refused outright without usable access; a
+    // caller-supplied (development) CLI just gets no access.
+    const refusal = applyAskModelRelayEnv(env, opts?.root);
     if (refusal && !opts?.cli) return resolve(done(false, refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? TIMEOUT_MS,
@@ -127,13 +129,18 @@ async function scopedHermesPing(opts?: {
       env,
       encoding: "utf8",
     };
-    execFileCli(
-      cli,
-      // New explicit checks have distinct request bodies. A worker's transport
-      // retry keeps this same marker, preserving the gateway's replay fence.
-      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "--toolsets", "todo", "-q", `Readiness check ${randomUUID()}. Reply with exactly OK, without punctuation or explanation. Do not use tools.`, "--max-turns", "1"],
+    // New explicit checks have distinct request bodies. A worker's transport
+    // retry keeps this same marker, preserving the gateway's replay fence.
+    const args = ["--profile", currentWorkerProfile().profile, "chat", "-Q", "--toolsets", "todo", "-q", `Readiness check ${randomUUID()}. Reply with exactly OK, without punctuation or explanation. Do not use tools.`, "--max-turns", "1"];
+    let launch: ReturnType<typeof hermesWorkerSandbox>;
+    try { launch = hermesWorkerSandbox("cli", cli, args, env, []); }
+    catch (error) { return resolve(done(false, error instanceof Error ? error.message : String(error))); }
+    trackSandboxedChild(execFileCli(
+      launch.command,
+      launch.args,
       execOpts,
       (err, stdout, stderr) => {
+        launch.release();
         const clean = (s: string) =>
           String(s)
             .replace(/\x1b\[[0-9;]*m/g, "")
@@ -151,11 +158,11 @@ async function scopedHermesPing(opts?: {
           // The supported CLI can print a provider failure and still exit 0.
           const refusal = modelServiceFailure(answer);
           if (refusal) return resolve(done(false, `Bud could not answer — ${refusal}.`));
-          return resolve(done(false, "Bud answered, but not with OK — open the model connection on You."));
+          return resolve(done(false, "Bud answered, but not with OK — check the model connection in Workspace → Settings & help."));
         }
         resolve(done(true, "Bud answered OK — Recheck can ask for the morning ledger."));
       },
-    );
+    ));
   });
 }
 
@@ -231,19 +238,19 @@ async function scopedHermesLedger(
   if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
   const access = modelAccessStatus(opts?.root);
-  if (access.withdrawn) return miss(`${access.detail} Facts stay held.`);
+  if (access.withdrawn) return miss(`${access.detail} Saved facts are unchanged.`);
   if (workerSetupPending(opts?.root)) return miss("Bud setup did not finish. Finish setup before checking property facts.");
   if (!packInstalled(opts?.root)) {
-    return miss("Bud is not set up — open Bud on You. Facts stay held.");
+    return miss("Bud isn't set up yet. Finish setup in Workspace. Saved facts are unchanged.");
   }
   if (!approvalsAreManual(opts?.root)) {
-    return miss("Bud's safeguards need attention — open Bud on You. Facts stay held.");
+    return miss("Bud's safeguards need attention. Check them in Workspace. Saved facts are unchanged.");
   }
   const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
-  if (!version) return miss("Bud is not installed — install Bud on You. Facts stay held.");
+  if (!version) return miss("Bud isn't installed yet. Install it from Workspace. Saved facts are unchanged.");
   if (!hermesIsCompatible(version)) {
-    return miss("Bud needs an update — open Bud on You. Facts stay held.");
+    return miss("Bud needs an update. Update it from Workspace. Saved facts are unchanged.");
   }
 
   const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
@@ -269,8 +276,8 @@ async function scopedHermesLedger(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    // Same guarded grant as Ask; see the ping above.
-    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    // Same relay and sandbox as the ping above.
+    const refusal = applyAskModelRelayEnv(env, opts?.root);
     if (refusal && !opts?.cli) return resolve(miss(refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? LEDGER_TIMEOUT_MS,
@@ -278,11 +285,18 @@ async function scopedHermesLedger(
       env,
       encoding: "utf8",
     };
-    execFileCli(
-      cli,
-      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "-s", LEDGER_SKILL, "-q", prompt, "--max-turns", "6"],
+    // The check reads the book (DESK-CONTEXT.md, property notes) and answers;
+    // it never needs a terminal, the web or vision.
+    const args = ["--profile", currentWorkerProfile().profile, "chat", "-Q", "--toolsets", "todo,file", "-s", LEDGER_SKILL, "-q", prompt, "--max-turns", "6"];
+    let launch: ReturnType<typeof hermesWorkerSandbox>;
+    try { launch = hermesWorkerSandbox("cli", cli, args, env, []); }
+    catch (error) { return resolve(miss(`${error instanceof Error ? error.message : String(error)} Saved facts are unchanged.`)); }
+    trackSandboxedChild(execFileCli(
+      launch.command,
+      launch.args,
       execOpts,
       (err, stdout, stderr) => {
+        launch.release();
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
           if (timedOut) return resolve(miss("Bud took too long — facts stay held."));
@@ -290,7 +304,7 @@ async function scopedHermesLedger(
           return resolve(
             miss(
               reason
-                ? `Bud could not answer — ${reason}. Facts stay held.`
+                ? `Bud could not answer — ${reason}. Saved facts are unchanged.`
                 : "Bud could not answer — facts stay held.",
             ),
           );
@@ -300,7 +314,7 @@ async function scopedHermesLedger(
         if (rows.length === 0) return resolve(miss("Bud found no ledger facts — facts stay held."));
         resolve({ rows, detail: `Bud answered with ${rows.length} ledger rows.` });
       },
-    );
+    ));
   });
 }
 

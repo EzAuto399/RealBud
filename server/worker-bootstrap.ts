@@ -10,6 +10,7 @@ import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
 import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
+import { DOCUMENT_TOOLS_NEED_REPAIR, ensureDocumentDeps } from "./hermes-document-deps.ts";
 
 // The OS releases this transaction lock on process death. The durable child
 // record separately prevents a retry from overlapping an orphaned installer.
@@ -286,6 +287,7 @@ export async function runWorkerBootstrap(options: {
   request?: typeof fetch; execute?: StageRun;
   finalize?: () => Promise<void>;
   download?: typeof downloadBootstrap;
+  documentDeps?: (home: string, options: { signal: AbortSignal; platform: NodeJS.Platform }) => Promise<unknown>;
 }) {
   if (process.env.VITEST && !options.execute) throw new BootstrapError("Real installation is disabled in automated tests.");
   const platform = options.platform ?? process.platform;
@@ -303,6 +305,15 @@ export async function runWorkerBootstrap(options: {
       options.signal.throwIfAborted();
       options.progress(bootstrapStageLabel(stage), index + 1, plan.stages.length);
       await (options.execute ?? runBootstrapStage)(bootstrapInvocation(platform, file, stage, options.home, options.release, options.privateRuntime), options.home, options.signal, options.lockHome);
+    }
+    // Document libraries are part of a fresh runtime, but their absence
+    // alone must not fail the worker: verification still runs and Repair
+    // can add them later.
+    options.signal.throwIfAborted();
+    try { await (options.documentDeps ?? ensureDocumentDeps)(options.home, { signal: options.signal, platform }); }
+    catch (error) {
+      if (options.signal.aborted) throw error;
+      options.progress(DOCUMENT_TOOLS_NEED_REPAIR, plan.stages.length, plan.stages.length);
     }
     await options.finalize?.();
   } finally {

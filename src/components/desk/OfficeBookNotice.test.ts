@@ -8,9 +8,10 @@ const idle = { active: false } as never;
 describe("office book notices", () => {
   it("renders the empty office book without sample copy", () => {
     const html = renderToStaticMarkup(createElement(OfficeBookEmpty, { onOpenBook: () => {}, onAsk: () => {} }));
+    expect(html).toMatch(/<h2[^>]*>Start your office book<\/h2>/);
     expect(html).toContain("Your office book is empty — add properties or ask Bud to import them.");
     expect(html).toContain("Add properties");
-    expect(html).toContain("Ask Bud to import");
+    expect(html).toContain("Ask Bud for help");
     expect(html).not.toMatch(/sample/i);
   });
 

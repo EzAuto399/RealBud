@@ -42,6 +42,8 @@ try {
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#/schedule');
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-packs'; });
   const card = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
@@ -76,7 +78,11 @@ try {
   assert.equal(readFileSync(skill, 'utf8'), baseline);
   const history = await request('/api/customer-packs/austin-office/skills/email-inbox-triage/history', 'POST', {}); assert.equal(history.revisions.length, 3); assert.equal(history.revisions.find(item => item.active).revision, 3);
   checks.push('Exact native staged edit is visibly reviewed, applied to owned skill, and reverted as revision 3 with baseline/history retained');
-  await page.reload(); await card.getByText('Plans and instructions installed', { exact: true }).waitFor();
+  await page.goto(origin + '/#/schedule');
+  await page.reload();
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-packs'; });
+  await card.getByText('Plans and instructions installed', { exact: true }).waitFor();
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();
   await card.getByText('Pack installed locally. Review the setup checks below; account access and real workflow results still need verification.', { exact: true }).waitFor();

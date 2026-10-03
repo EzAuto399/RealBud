@@ -49,7 +49,10 @@ describe.skipIf(!runtime || process.platform === 'win32')('Product Ask typed nat
   }
   beforeAll(async () => {
     scratch = await realpath(await mkdtemp(join(tmpdir(), 'RealBud proposal HTTP '))); await chmod(scratch, 0o700);
-    data = join(scratch, 'data'); script = join(scratch, 'input.json'); output = join(scratch, 'peer.json');
+    data = join(scratch, 'data'); script = join(scratch, 'input.json');
+    // The actual server grants writes only to Bud's work folder. Keep this
+    // fixture under the production boundary, without extra sandbox grants.
+    output = join(data, 'vault', 'bud-work', 'peer.json');
     native = await prepareNativeMemoryFixture(data, runtime!);
     const peerCli = join(scratch, 'fictional-hermes.mjs'); await copyFile(peer, peerCli); await chmod(peerCli, 0o700);
     await native.privateWrite(join(data, 'config.json'), JSON.stringify({ instances: { hermes: {
@@ -84,7 +87,7 @@ describe.skipIf(!runtime || process.platform === 'win32')('Product Ask typed nat
     const diagnosis = response.isError ? { response, list: await api(reviews), pending: await readdir(native.pendingDirectory) } : response;
     expect(response.isError, JSON.stringify(diagnosis)).not.toBe(true);
     const proposed = JSON.parse(response.content[0].text) as MemoryProposalResult; recordedId = proposed.id;
-    expect(proposed).toEqual({ version: 1, id: expect.stringMatching(/^[a-f0-9]{8}$/), reviewLocation: 'You → Bud → Bud’s memory' });
+    expect(proposed).toEqual({ version: 1, id: expect.stringMatching(/^[a-f0-9]{8}$/), reviewLocation: 'Workspace → What Bud learned' });
     expect((await peerState()).discovery).toEqual([['memory_propose']]);
     expect(await readFile(native.memoryFile, 'utf8')).toBe(before);
     const staged = JSON.parse(await readFile(join(native.pendingDirectory, `${recordedId}.json`), 'utf8'));

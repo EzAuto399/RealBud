@@ -12,6 +12,7 @@ managed-gateway/sandbox-smoke.ts
 !managed-gateway/package.json
 !managed-gateway/package-lock.json
 !managed-gateway/tsconfig.json
+!managed-gateway/hermios-catalog.json
 !server/composio-gmail.ts
 !server/source-attachments.ts
 !server/pdf-text.ts

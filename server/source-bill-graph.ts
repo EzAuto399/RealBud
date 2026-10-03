@@ -2,7 +2,7 @@
  * and all retained identity/reservation records form one restore unit. */
 import { validBillDate, billDateInZone, addBillDays } from '../shared/bill-dates.ts';
 import type { SourceBillOccurrence, BillRecurrenceSeries } from '../shared/source-bills.ts';
-import { object, positive, at, text, hash, recovery, versionOf, seriesVersion, validateVersion, validateSeriesVersion, validRegister, normalized, sameBillKind, cadenceDate } from './source-bill-rules.ts';
+import { object, positive, at, text, hash, recovery, versionOf, seriesVersion, validateVersion, validateSeriesVersion, validRegister, normalized, sameBillKind, cadenceDate, billEvidenceMatch, validateFinancialHistory } from './source-bill-rules.ts';
 
 export const SOURCE_BILL_RECORD_KINDS = ['bill-register', 'bill-occurrence', 'bill-series', 'bill-source-alias', 'bill-pattern-slot', 'bill-arrival-slot', 'bill-origin'] as const;
 export type SourceBillRecordKind = typeof SOURCE_BILL_RECORD_KINDS[number];
@@ -36,11 +36,12 @@ export const originId = (occurrenceId: string) => `bill-origin:${hash(occurrence
 
 export function validateOccurrence(value: unknown): SourceBillOccurrence {
   try {
-    const row = exact(value, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason']) as unknown as SourceBillOccurrence;
+    const row = exact(value, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', ...(['duplicateReview', 'financialReview'].filter(key => value && typeof value === 'object' && Object.hasOwn(value, key)))]) as unknown as SourceBillOccurrence;
     if (!occurrenceId(row.id)) recovery();
     at(row.createdAt); validateVersion(versionOf(row));
     if (!Array.isArray(row.history) || row.history.length > 50 || row.revision !== row.history.length + 1) recovery();
     row.history.forEach((v, i) => { validateVersion(v); if (v.revision !== i + 1) recovery(); });
+    validateFinancialHistory(row);
     if (row.id !== `source-bill:${(row.history[0] ?? row).source.identity}`) recovery();
     for (const v of [...row.history, row]) {
       exact(v.source, ['accountId', 'threadId', 'message', 'receiptId', 'digest', 'identity']);
@@ -121,6 +122,14 @@ function deriveBillLookupsInto(
     lookups.set(id, { kind: 'bill-arrival-slot', value: { version: 1, seriesId: s, date, occurrenceId: occupant ?? previous?.occurrenceId ?? null } });
   };
   for (const row of occurrences) for (const v of [...row.history, row]) {
+    for (const ref of v.duplicateReview?.candidates ?? []) {
+      const candidate = occurrence(ref.billId);
+      const versions = candidate && [...candidate.history, candidate];
+      const head = versions?.find(version => version.revision === ref.revision);
+      const matched = versions?.find(version => version.revision === ref.matchedRevision);
+      const match = matched && billEvidenceMatch(v, matched);
+      if (!candidate || candidate.id === row.id || !head || head.state === 'cancelled' || !matched || matched.source.digest !== ref.sourceDigest || !match || match === 'invoice-conflict') recovery();
+    }
     const id = aliasId(v.source.identity), old = lookups.get(id)?.value as Alias | undefined;
     if (old && old.occurrenceId !== row.id) recovery();
     lookups.set(id, { kind: 'bill-source-alias', value: { version: 1, identity: v.source.identity, occurrenceId: row.id } });

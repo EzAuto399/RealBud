@@ -159,7 +159,7 @@ await withHome("a", async ({ api, dataDir }) => {
   check(
     "U6  malformed morning-review request is refused without a new run",
     beforeInbound.status === 200 && afterInbound.status === 200 &&
-      inbound.status === 400 && inbound.body?.error === "Morning review requires its request identifier and current schedule revision." &&
+      inbound.status === 400 && inbound.body?.error === "This workflow requires its request identifier and current schedule revision." &&
       Array.isArray(beforeInbound.body?.runs) && Array.isArray(afterInbound.body?.runs) &&
       JSON.stringify(afterInbound.body.runs) === JSON.stringify(beforeInbound.body.runs),
   );

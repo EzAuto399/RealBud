@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -12,6 +12,8 @@ import { createCompanyPortalCertificateGate } from './company/portal-proof.ts';
 import * as hostModule from './company-host.ts';
 import * as vaultModule from './private-vault.ts';
 import * as clientModule from './company-execution-client.ts';
+import { canonicalWebsiteCommand } from '../shared/website-commands.ts';
+import { departmentConfigurationReviewMaterial, type DepartmentConfiguration } from '../shared/department-configuration.ts';
 import type { CompanyExecutionGrant } from '../shared/company-execution.ts';
 
 // The same behavioral suite can exercise emitted runtime modules. The PG
@@ -46,6 +48,13 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('encrypted department 
     const invite=await kernel.issueInvitation(owner.sessionToken,{displayName:'Assigned member'}),member=await kernel.redeemInvitation(invite.invitationToken);
     let department=await kernel.createDepartment(owner.sessionToken,{requestId:randomUUID(),name:`Accounts ${randomUUID().slice(0,8)}`});
     department=await kernel.setDepartmentAccess(owner.sessionToken,{departmentId:department.id,memberId:member.memberId,expectedRevision:department.revision,access:'write'});
+    const review={plan:{title:'Review a synthetic case',description:'Review selected fictional facts.',steps:['Summarize the case'],evidence:'Supplied facts',capabilities:['analyse' as const],allowedOrigins:[],limits:{maxRuntimeMinutes:1,maxTurns:2},siteNotes:null},instructions:'Ask for missing information.'};
+    const hash=(v:unknown)=>createHash('sha256').update(canonicalWebsiteCommand(v)).digest('hex');
+    const recipe={id:'review-synthetic-case',revision:1,digest:hash(review.plan),instructionDigest:hash(review.instructions),review};
+    const configuration:DepartmentConfiguration={version:1,template:'custom',plans:[{recipe,pack:null}],workflowDefaults:[]};
+    const change={departmentId:department.id,expectedRevision:department.revision,configuration,note:'Reviewed isolated transport fixture',sourceReceiptId:null};
+    const configured=await call('/api/company/departments/configuration/save',{memberToken:owner.sessionToken},{...change,requestId:randomUUID(),reviewDigest:createHash('sha256').update(departmentConfigurationReviewMaterial(owner.companyId,change)).digest('hex')});
+    expect(configured.status).toBe(200);department=(configured.body as {department:typeof department}).department;
     const work=await kernel.createDepartmentCase(member.sessionToken,{departmentId:department.id,requestId:randomUUID(),title:'Review a synthetic case',description:'Only this selected case is a source.',assigneeMemberId:member.memberId});
     const directory=join(output,randomUUID()),vault=createPrivateVault(directory,randomBytes(32));
     const identity={companyId:owner.companyId,memberId:member.memberId,workspaceId:randomUUID(),workerBinding:'a'.repeat(64),certificateDigest:companyCertificateFingerprint(cert)};
@@ -53,7 +62,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('encrypted department 
     const client=()=>createCompanyExecutionClient({vault,identity:async()=>({...identity}),now:()=>Date.now()+clockOffset,forward:async(path,auth,body)=>{
       calls.push({path,body:structuredClone(body)});const result=await call(path,auth,body);if(lose===path&&result.status===200){lose='';throw Error('Synthetic lost committed reply');}return result;
     }});
-    const input={version:1 as const,requestId:randomUUID(),departmentId:department.id,expectedDepartmentRevision:department.revision,caseId:work.item.id,expectedCaseFence:work.item.fence,recipe:{id:'review-synthetic-case',revision:1,digest:'b'.repeat(64),instructionDigest:'c'.repeat(64)},durationMs:86400000};
+    const input={version:1 as const,requestId:randomUUID(),departmentId:department.id,expectedDepartmentRevision:department.revision,caseId:work.item.id,expectedCaseFence:work.item.fence,recipe,durationMs:86400000};
     async function confirm(g:CompanyExecutionGrant){const result=await call('/api/company/execution-grants/confirm',{memberToken:owner.sessionToken},{version:1,requestId:randomUUID(),grantId:g.id,expectedRevision:g.revision,grantDigest:g.digest});expect(result.status).toBe(200);return result.body as CompanyExecutionGrant;}
     return {owner,member,department,work,directory,vault,identity,client,input,confirm,calls,loseNext:(path:string)=>{lose=path;},advanceClientClock:(ms:number)=>{clockOffset=ms;}};
   }

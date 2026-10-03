@@ -92,6 +92,9 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
           <label className={labelClass}>Agency name
             <input aria-label="Agency name" value={name} maxLength={80} onChange={event => edit({ name: event.target.value })} placeholder="Your agency" className={inputClass} />
           </label>
+          <label className={labelClass}>Office contact for RealBud
+            <input aria-label="Office contact for RealBud" value={draft.pmUser} maxLength={80} onChange={event => edit({ office: { pmUser: event.target.value } })} placeholder={profileName || "Name of the office contact"} className={inputClass} />
+          </label>
           <fieldset>
             <legend className={labelClass}>Where are your properties?</legend>
             <p className="mt-1 text-[12px] text-ink-muted">Choose the states and territories in your book. RealBud uses these for location-specific workflows.</p>
@@ -139,7 +142,7 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
         </details>
 
         <details id="office-group-software" className={cn(detailClass, "scroll-mt-6")}>
-          <summary className={summaryClass}>Software & office contact <span className="font-normal text-ink-muted">· optional</span></summary>
+          <summary className={summaryClass}>Property software <span className="font-normal text-ink-muted">· optional</span></summary>
           <div className={fieldsClass}>
             <label className={labelClass}>Property management software
               <select aria-label="Property management software" value={draft.pmsBrand} onChange={event => edit({ office: { pmsBrand: readClosed(event.target.value, PMS_BRANDS) } })} className={inputClass}>
@@ -147,9 +150,6 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
                 {PMS_BRANDS.map(brand => <option key={brand} value={brand}>{PMS_BRAND_LABELS[brand]}</option>)}
               </select>
               <span className="mt-1.5 block text-[12px] text-ink-muted">A reference for your office. Choosing software does not connect it or import data. You can use Desk and import CSV files without choosing one.</span>
-            </label>
-            <label className={labelClass}>Office contact for RealBud
-              <input aria-label="Office contact for RealBud" value={draft.pmUser} maxLength={80} onChange={event => edit({ office: { pmUser: event.target.value } })} placeholder={profileName || "Optional name"} className={inputClass} />
             </label>
           </div>
         </details>
@@ -215,46 +215,44 @@ function OfficeSetupStrip({
   jurisdictions: readonly string[];
   office: OfficeInput;
 }) {
+  const stripRef = useRef<HTMLElement>(null);
   const setup = officeSetup({ agencyName, jurisdictions, office: coerceOffice(office) });
   if (setup.complete) return null;
 
   const jump = (id: string) => {
-    const target = document.getElementById(id);
+    const target = stripRef.current?.closest("form")?.querySelector<HTMLElement>(`[id="${id}"]`);
     if (!target) return;
     // A collapsed <details> hides its fields; open it so the jump lands on
     // something visible rather than a closed summary.
     if (target instanceof HTMLDetailsElement) target.open = true;
-    target.scrollIntoView({ block: "start", behavior: "smooth" });
+    target.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    target.querySelector<HTMLElement>("input, select, button")?.focus({ preventScroll: true });
   };
 
   return (
     <section
-      className="rounded-lg border border-agency/30 bg-selected/50 p-3"
+      ref={stripRef}
+      className="border-l-2 border-agency bg-selected/30 px-3 py-2"
       aria-label="Finish setting up this office"
     >
-      <p className="text-[13px] font-medium text-ink">Finish setting up this office</p>
-      <p className="mt-0.5 text-[12.5px] text-ink-secondary">
-        {setup.doneCount} of {setup.total} filled. The rest of the form can wait.
+      <p className="text-[12.5px] text-ink-secondary">
+        {setup.essential.filter(item => item.done).length} of {setup.essential.length} essentials filled. Optional details can wait.
       </p>
-      <ul className="mt-2 space-y-1.5">
+      <ul className="mt-1 flex flex-wrap gap-x-4">
         {setup.remaining.map((item) => (
           <li key={item.id}>
             <button
               type="button"
               onClick={() => jump(item.groupId)}
-              className="flex w-full items-center justify-between gap-3 rounded border border-line bg-sheet px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-raised focus-visible:outline-2 focus-visible:outline-agency"
+              className="min-h-11 text-left text-[13px] text-agency underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-agency"
             >
               <span>{item.label}</span>
-              <span className="shrink-0 text-[12px] text-agency">{item.groupLabel} →</span>
+
             </button>
           </li>
         ))}
       </ul>
-      {setup.optional.length > 0 && (
-        <p className="mt-2 text-[12px] text-ink-muted">
-          Optional later: {setup.optional.map((item) => item.label.toLowerCase()).join(", ")}.
-        </p>
-      )}
+
     </section>
   );
 }

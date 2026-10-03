@@ -45,7 +45,7 @@ export function CompanyWorkflowTemplates({ onInstalled }: { onInstalled?: () => 
   return <section aria-label="Company workflow templates" className="mt-5 border-t border-line pt-4">
     <h3 className="text-[14px] font-medium text-ink">Company workflow templates</h3>
     <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">Share a reviewed set of plans between profiles. Each person reviews sources and permissions on their own computer.</p>
-    {!company?.member ? <p className="mt-3 text-[13px] text-ink-secondary">Sign in to your company under You → This office, then refresh here.</p> : <>
+    {!company?.member ? <p className="mt-3 text-[13px] text-ink-secondary">Sign in to your company in Workspace → Office details, then refresh here.</p> : <>
       <p className="mt-3 text-[13px] text-ink-secondary">{company.company?.name} · {company.member.displayName}</p>
       {saved?.template ? <>
         <p className="mt-2 text-[13px] text-ink">Shared version {saved.revision} · {saved.template.recipes.length} plans</p>

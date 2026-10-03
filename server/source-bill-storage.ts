@@ -150,6 +150,16 @@ export class SourceBillStorage {
     if (!old) this.countProperty(row.propertyId, 'series', 1);
     this.touch(0, old ? 0 : 1, Number(row.active) - Number(old?.active ?? false));
   }
+  /** The founding bill and every bill linked to this pattern, for its payment terms. */
+  patternOccurrences(series: Pick<BillRecurrenceSeries, 'id' | 'occurrenceId'>): SourceBillOccurrence[] {
+    const rows: SourceBillOccurrence[] = []; let before: number | undefined;
+    do {
+      const page = this.db.page<SourceBillOccurrence>('bill-occurrence', { before, limit: 200 });
+      rows.push(...page.records.map(row => row.value).filter(row => row.id === series.occurrenceId || row.seriesId === series.id));
+      before = page.next ?? undefined;
+    } while (before);
+    return rows;
+  }
   hasLinkedOccurrences(seriesId: string): boolean {
     let before: number | undefined;
     do {

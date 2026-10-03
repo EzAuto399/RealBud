@@ -22,12 +22,14 @@ const ALIASES: Record<string, ConnectionIntent> = {
   "microsoft 365": { slug: "microsoft365", label: "Microsoft 365" },
 };
 
-function titleCase(value: string): string {
-  return value
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
+// "connect to redbark", "set up our bank feed", "how do I connect my bank?":
+// whole requests only, so property work that mentions a bank stays a turn.
+const BANK_FEED = /^(?:please\s+)?(?:(?:how|where)\s+(?:do|can)\s+i\s+)?(?:(?:connect|link|set\s*up|add|hook\s+up)\s+)?(?:(?:me|us)\s+)?(?:to\s+|with\s+)?(?:(?:my|our|the|a|an)\s+)?(?:office(?:'s|’s)?\s+)?(?:redbark|bank(?:\s+(?:feeds?|accounts?))?)(?:\s+(?:feed|account|connection|app|integration))?$/i;
+/** Ask renders this link as the inline Connect bank feed action. */
+export const BANK_FEED_CONNECT_HREF = "#connect-bank-feed";
+export function isBankFeedRequest(text: string): boolean {
+  const value = text.trim().replace(/[?!.]+$/, "").replace(/\s+/g, " ");
+  return value.length <= 120 && BANK_FEED.test(value) && /\b(?:connect|link|set ?up|add|hook|redbark|feeds?)\b/i.test(value);
 }
 
 /**
@@ -36,17 +38,20 @@ function titleCase(value: string): string {
  * "connect Notion and delete a page" deliberately stay ordinary turns.
  */
 export function parseConnectionIntent(text: string): ConnectionIntent | null {
-  const match = /^\s*(?:please\s+)?(?:connect|link|authori[sz]e|set\s*up)\s+(?:(?:me|us)\s+to\s+|my\s+|our\s+)?(?:the\s+)?([a-z0-9][a-z0-9 ._-]{0,48}?)(?:\s+(?:account|workspace|app|integration))?[.!]?\s*$/i.exec(
+  const match = /^\s*(?:please\s+)?(?:connect|link|authori[sz]e|set\s*up)\s+(?:(?:me|us)\s+to\s+|to\s+|with\s+|my\s+|our\s+)?(?:the\s+)?([a-z0-9][a-z0-9 ._-]{0,48}?)(?:\s+(?:account|workspace|app|integration))?[.!]?\s*$/i.exec(
     text,
   );
   if (!match) return null;
+  // The bank feed is not a connected app; parseAskControlIntent answers it.
+  if (isBankFeedRequest(text)) return null;
   const name = match[1]!.trim().replace(/[._-]+/g, " ").replace(/\s+/g, " ").toLowerCase();
   if (!name || /\b(and|then|after|before|delete|send|pay|publish|submit)\b/i.test(name)) return null;
   const known = ALIASES[name];
   if (known) return known;
   const slug = name.replace(/[^a-z0-9]+/g, "");
   if (slug.length < 2 || slug.length > 40) return null;
-  return { slug, label: titleCase(name) };
+  // An unknown app keeps the person's own wording, never a guessed product name.
+  return { slug, label: match[1]!.trim().replace(/\s+/g, " ") };
 }
 
 // "Is the water connected?" is property work, so "is X connected" only names
@@ -78,9 +83,10 @@ export function parseConnectedStatusIntent(text: string): boolean {
 }
 
 /** Product controls are whole requests. Never interpret source text as a control. */
-export function parseAskControlIntent(text: string): "schedule-status" | "schedule-edit" | "setup" | "connections" | null {
+export function parseAskControlIntent(text: string): "schedule-status" | "schedule-edit" | "setup" | "connections" | "bank-feed" | null {
   const value = text.trim().replace(/[?!.]+$/, "");
   if (!value || value.length > 400 || /[\r\n]/.test(value)) return null;
+  if (isBankFeedRequest(value)) return "bank-feed";
   if (/^(?:what(?:'s| is| have (?:we|i))|show(?: me)?|list)(?: (?:my|our|the))? (?:scheduled(?: jobs| work)?|schedule|routines|recurring jobs)(?: (?:for today|today|this week))?$/i.test(value)) return "schedule-status";
   if (/^(?:please )?(?:schedule|remind me|set up (?:a |an )?(?:schedule|reminder|recurring)|(?:can you |help me )?(?:add|create|make|change|pause|stop|reschedule) (?:a |an |my |our |the |this )?(?:schedule|reminder|recurring job))\b/i.test(value)) return "schedule-edit";
   // Any one app, named in one or two words: "how do I connect Xero?" is the same

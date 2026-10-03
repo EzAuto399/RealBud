@@ -349,7 +349,7 @@ posixOnly("attended run route (fake ACP)", () => {
     fixtureControl = await startCuaControl({ release: async () => {}, verify: async () => false, restore: async () => {} });
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "realbud-attend-"));
-    mkdirSync(join(home, ".realbud"), { recursive: true });
+    mkdirSync(join(home, ".realbud", "vault", "bud-work"), { recursive: true });
     scriptPath = join(home, "fake-acp-script.json");
     cuaPath = join(home, "cua-connection.json");
     writeScript({ permission: false, reply: "hello from fake acp" });
@@ -369,7 +369,7 @@ posixOnly("attended run route (fake ACP)", () => {
           hermes: {
             driver: "hermesAgent",
             config: { cli: FAKE_CLI },
-            environment: { FAKE_ACP_SCRIPT: scriptPath, FAKE_ACP_DUMP: join(home, "fake-acp-dump.json") },
+            environment: { FAKE_ACP_SCRIPT: scriptPath, FAKE_ACP_DUMP: join(home, ".realbud", "vault", "bud-work", "fake-acp-dump.json") },
           },
         },
       }),
@@ -699,7 +699,7 @@ browserRuntime.resumeConnection = async () => {};
       const after = await api("GET", "/api/job-runs?jobId=att-scope");
       return after.body.runs[0]?.status !== "running";
     }, "the scoped run to settle");
-    const dump = JSON.parse(readFileSync(join(home, "fake-acp-dump.json"), "utf8"));
+    const dump = JSON.parse(readFileSync(join(home, ".realbud", "vault", "bud-work", "fake-acp-dump.json"), "utf8"));
     expect(dump.selectedPermissionOption).toBe("allow-once");
   });
 

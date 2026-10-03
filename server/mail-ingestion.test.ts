@@ -26,6 +26,7 @@ function createMailIngestionService(options: Parameters<typeof createNormalizedM
     collect: async (...args: Parameters<typeof service.collect>) => { await service.collect(...args); return service.getLegacySnapshot(); },
     update: async (...args: Parameters<typeof service.update>) => { await service.update(...args); return service.getLegacySnapshot(); },
     applyReview: async (...args: Parameters<typeof service.applyReview>) => { await service.applyReview(...args); return service.getLegacySnapshot(); },
+    page: service.page,
   };
 }
 vi.mock('./recipes.ts', () => ({ getRecipe: (id: string) => ({ id, capabilities: ['read-files'] }) }));
@@ -70,6 +71,38 @@ async function reviewRun(f: Awaited<ReturnType<typeof fixture>>, patch: Partial<
 }
 
 describe('durable private mail acquisition and work list', () => {
+  it('makes every message in a large prepared input reachable through bounded line reads', async () => {
+    const f = await fixture();
+    f.data.threads = Array.from({ length: 10 }, (_, index) => {
+      const row = thread((0xabc0 + index).toString(16), (0xaab0 + index).toString(16));
+      row.messages[0]!.body = '\"\n'.repeat(6000);
+      return row;
+    });
+    await f.service.collect();
+    await f.service.prepareInput();
+    const raw = await readFile(join(f.options.workroomDirectory, 'workflow-inputs/accounts-inbox.json'), 'utf8');
+    expect(raw.length).toBeGreaterThan(32_000);
+    const lines = raw.split('\n');
+    // Model the worker's whole-line pagination. A single line over its budget
+    // loses its tail permanently even if the caller follows next_offset.
+    expect(Math.max(...lines.map(line => line.length))).toBeLessThan(32_000);
+    const pages: string[][] = [];
+    for (let offset = 0; offset < lines.length;) {
+      const page: string[] = []; let size = 0;
+      while (offset < lines.length && size + lines[offset]!.length + 1 <= 32_000) {
+        const line = lines[offset++]!; page.push(line); size += line.length + 1;
+      }
+      expect(page.length).toBeGreaterThan(0);
+      pages.push(page);
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    const reconstructed = JSON.parse(pages.flat().join('\n'));
+    expect(reconstructed.threads.map((row: { threadId: string }) => row.threadId)).toEqual(f.data.threads.map(row => row.id));
+    expect(reconstructed.threads[9].messages[0].body).toBe(f.data.threads[9]!.messages[0]!.body);
+    const saved = await f.service.applyReview(await reviewRun(f));
+    expect(saved.latestReview).not.toBeNull();
+    expect(saved.items).toHaveLength(10);
+  });
   it('uses the explicitly selected collection purpose without falling back to morning authority', async () => {
     const f = await fixture();
     await f.service.collect('bills-calendar');
@@ -169,6 +202,32 @@ describe('durable private mail acquisition and work list', () => {
     const changed = (await f.service.collect()).items[0];
     expect(changed).toMatchObject({ status: 'open', snoozedUntil: null, newEvidence: true, priority: 'high', owner: 'Practice reviewer', note: 'Keep my decision.', disposition: 'waiting' });
     expect(changed.sourceMessageIds).toEqual(['aa', 'ab']); expect(changed.revision).toBeGreaterThan(manual.revision);
+  });
+
+  it.each(['done', 'waiting', 'reference'] as const)('surfaces a reviewed %s item for fresh review after an urgent reply, keeping saved human fields and staying quiet on reruns', async kind => {
+    const f = await fixture(), first = await f.service.collect(), id = first.items[0].id;
+    const saved = { owner: 'Fictional reviewer', note: 'FYI only, filed.', priority: 'low' as const, disposition: kind === 'waiting' ? 'waiting' as const : 'reference' as const };
+    await f.service.update(id, { expectedRevision: first.items[0].revision, ...saved, status: kind === 'done' ? 'done' : 'open' });
+    f.advance(); await f.service.collect(); expect(await f.service.prepareInput()).toBeNull();
+    f.data.threads[0].messages.push({ ...thread().messages[0], id: 'ab', at: initialTime + 500, body: 'Urgent: the fictional leak is now flooding the unit.' });
+    const changed = (await f.service.collect()).items[0];
+    expect(changed).toMatchObject({ ...saved, status: 'open', reviewed: true, newEvidence: true });
+    let page = await f.service.page({ group: 'open' });
+    expect(page.items.map(i => i.id)).toEqual([id]);
+    expect(page.counts).toMatchObject({ open: 1, waiting: 0, reference: 0, done: 0, needsReview: 1 });
+    const run = await reviewRun(f, {}), input = JSON.parse(run.evidence[0].note) as InboxReview;
+    input.threads[0] = { ...input.threads[0], disposition: 'urgent-review', priority: 'high', owner: 'accounts-reviewer', reason: 'The tenant reports active flooding.', nextAction: 'Model next action.', missingFacts: ['Access time'] };
+    const prepared = (await f.service.applyReview({ ...run, evidence: [{ kind: 'output', note: JSON.stringify(input) }] } as JobRun)).items[0];
+    expect(prepared).toMatchObject({ ...saved, nextAction: changed.nextAction, status: 'open', reviewed: true, newEvidence: true, preparedDigest: changed.sourceDigest, missingFacts: ['Access time'] });
+    expect(prepared.reason).toBe('Since your review, Bud suggests urgent review at high priority: The tenant reports active flooding.');
+    page = await f.service.page({ group: 'open' });
+    expect(page.items.map(i => i.id)).toEqual([id]); expect(page.counts.needsReview).toBe(0);
+    // An unchanged rerun neither resurfaces nor asks the model again.
+    f.advance(); await f.service.collect();
+    expect(await f.service.prepareInput()).toBeNull(); expect((await f.service.get()).items[0]).toEqual(prepared);
+    // The person's fresh review settles it back into their chosen group.
+    await f.service.update(id, { expectedRevision: prepared.revision, note: 'Seen the reply.' });
+    expect((await f.service.page({ group: kind === 'waiting' ? 'waiting' : 'reference' })).items.map(i => i.id)).toEqual([id]);
   });
 
   it('does not reopen completed work just because a later scan has reduced coverage', async () => {
@@ -653,5 +712,74 @@ describe('bounded, checkpointed historical mail acquisition', () => {
     expect(() => parseMailHistoryCheckpoint({ ...state, messages: Array.from({ length: 7 }, (_, i) => ({ key: 'a'.repeat(63) + i,
       threadId: 'aa', messageId: (i + 16).toString(16), at: 1, direction: 'incoming', digest: 'b'.repeat(64), windowIndex: 0 })) },
       f.options.workspaceId, value => createHash('sha256').update(JSON.stringify(value)).digest('hex'))).toThrow();
+  });
+});
+
+describe('rolling collection coverage and backlog fairness', () => {
+  const day = 86_400_000;
+  const coverageFile = (f: Awaited<ReturnType<typeof fixture>>) => join(f.options.workroomDirectory, 'mail-coverage', 'state.json');
+  const coverage = async (f: Awaited<ReturnType<typeof fixture>>) => JSON.parse(await readFile(coverageFile(f), 'utf8')).accounts['mail-a'];
+
+  it('rotates a backlog over 100 unresolved conversations across runs so every one is carried in turn', async () => {
+    const f = await fixture();
+    const ids = Array.from({ length: 150 }, (_, i) => (0x1000 + i).toString(16));
+    for (const batch of [ids.slice(0, 100), ids.slice(100)]) { f.data.threads = batch.map(id => thread(id, id)); await f.service.collect(); f.advance(); }
+    // Each confirmed run reads only the first 60 carried conversations.
+    f.scan.mockImplementation(async (current, request) => ({ accountId: current.accountId, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt,
+      threads: request.carryThreadIds.slice(0, 60).map(id => thread(id, id)), pages: 1, paginationComplete: true, gaps: [] }));
+    const carried: string[][] = [];
+    for (let run = 0; run < 3; run++) { const state = await f.service.collect(); carried.push(f.scan.mock.calls.at(-1)![1].carryThreadIds); f.advance();
+      expect(state.latestScan?.gaps).toContain('More unresolved conversations exist than this scan can carry; review or narrow the saved work list.'); }
+    expect(carried[0]).toEqual(ids.slice(0, 100));
+    expect(carried[1]).toEqual([...ids.slice(60), ...ids.slice(0, 10)]);
+    expect(carried[2][0]).toBe(ids[120]);
+    expect(new Set(carried.flatMap(run => run.slice(0, 60))).size).toBe(150);
+  });
+
+  it('keeps an interrupted window unchecked and clears it only after a confirmed scan', async () => {
+    const f = await fixture();
+    f.scan.mockRejectedValueOnce(new Error('Fictional interruption'));
+    await expect(f.service.collect()).rejects.toThrow('Fictional interruption');
+    expect((await coverage(f)).uncovered).toEqual([{ startAt: initialTime - 7 * day, endAt: initialTime }]);
+    f.advance(day);
+    const confirmed = await f.service.collect();
+    expect(confirmed.latestScan?.status).toBe('partial');
+    expect(confirmed.latestScan?.gaps.join(' ')).toMatch(/was never checked and has left the approved lookback/);
+    const saved = await coverage(f);
+    expect(saved.uncovered).toEqual([]);
+    expect(saved.missed).toEqual([{ startAt: initialTime - 7 * day, endAt: initialTime - 6 * day }]);
+    f.advance(day);
+    // Reported once on the receipt where it left the lookback; still recorded.
+    expect((await f.service.collect()).latestScan).toMatchObject({ status: 'complete', gaps: [] });
+    expect((await coverage(f)).missed).toEqual(saved.missed);
+  });
+
+  it('never turns a partial or empty collection into checked time, and reports time that ages out unchecked', async () => {
+    const f = await fixture();
+    await f.service.collect();
+    f.advance(day);
+    f.data.threads = []; f.data.paginationComplete = false; f.data.gaps = ['A provider page was unavailable.'];
+    expect((await f.service.collect()).latestScan?.status).toBe('partial');
+    expect((await coverage(f)).uncovered).toEqual([{ startAt: initialTime, endAt: initialTime + day }]);
+    // The app is away longer than the lookback: the unchecked day and the gap
+    // before this window are named, not silently dropped.
+    f.advance(10 * day);
+    f.data.threads = [thread()]; f.data.paginationComplete = true; f.data.gaps = [];
+    const later = await f.service.collect();
+    expect(later.latestScan?.status).toBe('partial');
+    expect(later.latestScan?.gaps.some(gap => gap.includes('2026-09-21 to 2026-09-25') && gap.includes('never checked'))).toBe(true);
+    const saved = await coverage(f);
+    expect(saved).toMatchObject({ uncovered: [], horizonAt: initialTime + 11 * day });
+    expect(saved.missed).toEqual([{ startAt: initialTime, endAt: initialTime + 4 * day }]);
+  });
+
+  it('holds collection on a damaged coverage record without reading the provider or replacing the file', async () => {
+    const f = await fixture();
+    await f.service.collect();
+    await writeFile(coverageFile(f), '{damaged fixture', { mode: 0o600 });
+    f.advance();
+    await expect(f.service.collect()).rejects.toMatchObject({ status: 503 });
+    expect(await readFile(coverageFile(f), 'utf8')).toBe('{damaged fixture');
+    expect(f.scan).toHaveBeenCalledTimes(1);
   });
 });

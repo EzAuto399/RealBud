@@ -1,54 +1,87 @@
 # RealBud
 
-Our OpenMausBot fork. Product name is **RealBud**.
+Our OpenMausBot fork. Product name is **RealBud**. Never ship as PropertyMe (PMS trademark), Hermes or OpenMausBot. Every line here should change what you do; if it doesn't, delete it.
 
-Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
+## Product
 
-- Data: `~/.realbud`
-- Goal prompt (paste into a new session): `docs/GOAL-PROMPT.md`
-- Current product direction (owner clarification 2026-09-21): `docs/decisions/2026-09-21-business-os-and-austin-workflows.md`. RealBud is a standalone extensible business work OS; Austin Realty is the first workflow pack. This supersedes earlier PM-only scope and permanently fixed screens. Preserve core permissions, source truth and recovery while integrating the three Austin workflows.
-- Current proof and remaining gates: `docs/BUSINESS-DESKTOP-2026-09-21.md`. `docs/NEXT-WAVE.md` and `docs/PM-DAY.md` are earlier PM-workflow references, not current scope limits. Source-account access and live portal actions still need their applicable customer authority.
-- Native PM design system + approved implementation plan: `DESIGN.md` + `docs/PRODUCT-DESIGN-PLAN.md`
-- Routines design (GUI + Ask, Hermes as hands): `docs/ROUTINES.md`
-- Identity: `docs/IDENTITY.md`
-- Workflow: `docs/WORKFLOW-PLAN.md`
-- Desk (fixture arrears Allow/Deny/Edit, no send): `server/desk.ts` + `/api/desk`. First-run lands on Desk; engines stay out of onboarding. Desk owns the book: add/edit/remove properties (`POST/DELETE /api/desk/properties`), full per-property options, per-property hands facts; `never` rules are locked.
-- RealBud owns the visible window. Pinned Hermes profile `property` is headless only (`pack/property/`, `server/hermes-pack.ts`). Models attach on that profile. Never launch Hermes.app. Never edit Hermes source. Do not register Claude/Codex/Grok as agents.
-- Hermes worker pin and reviewed releases: `server/hermes-pin.ts` and `server/hermes-releases.ts`. Check current source; do not track upstream main or trust an old document's version. Preserve profile isolation; a fallback fixture is never evidence that real sources were checked.
-- OpenMausBot upstream: reuse reviewed harness/safety patterns. Do not import an unrelated agent roster or model shop. Workspace customization uses scoped RealBud APIs and versioned definitions; legacy plugin routes are not an extension sandbox. Vendor credentials must stay outside customer/Hermes-controlled storage before claiming vendor-only custody.
-- Schedule = named loops on the RealBud clock (`server/routines.ts` + `/api/loops`): morning-arrears and owner-letter are built; inbound-triage is declared. No bot prompt-runner, no MAUS roster, no Hermes cron UI (`cron_mode: deny` stays). A loop is never a bot turn, a prompt, or a second agent.
-- Browser work: owner decision `docs/decisions/2026-09-23-browser-task-authority.md` (supersedes the read-and-prefill-only portal rule). Bud completes tasks in the person's selected signed-in session with full browser actions; the fence (`server/portal-fence.ts`, `server/browser-runtime.ts`, `docs/PORTAL-WORK.md`) enforces account scope, task-level permission, explicit per-instance approval for pay/sign/send/notice (actual recipient, amount or content), and Stop on every route. Credentials never pass through Bud. Hermes' own browser and vault tools stay out of the worker because they bypass these controls.
-- QA: `docs/QA-LIVE-DEBUG.md` + `pnpm qa` / `scripts/qa-e2e.mjs` (five HTTP suites from source, no worker).
+- Direction (owner, 2026-09-21): `docs/decisions/2026-09-21-business-os-and-austin-workflows.md`. RealBud is a standalone, extensible business work OS; Austin Realty is the first workflow pack. That supersedes the earlier PM-only scope and fixed screens. Keep core permissions, source truth and recovery while integrating the three Austin workflows.
+- Proof and open gates: `docs/BUSINESS-DESKTOP-2026-09-21.md`. `docs/NEXT-WAVE.md` and `docs/PM-DAY.md` are older PM references, not scope limits. Source-account access and live portal actions still need the customer's authority.
+- UI direction (owner, 2026-10-02): sleek and few options for non-technical office staff, while staying capable. Main nav is Desk / Ask / Schedule; one footer **Workspace** entry replaces You (internal view key stays `you`; every `#you-*` link keeps working); everything rare folds into Settings & help. Customising happens by talking to Bud, with light tuning on Desk. Relocate controls, never drop safety, recovery or permission ones. Don't add a "Change with Bud" button until Ask can actually apply the change.
+- Design: `DESIGN.md` + `docs/PRODUCT-DESIGN-PLAN.md`. Routines: `docs/ROUTINES.md`. Identity: `docs/IDENTITY.md`. Workflow: `docs/WORKFLOW-PLAN.md`. Resume prompt: `docs/GOAL-PROMPT.md`. Data lives in `~/.realbud`; never point a dev or QA run at it.
+- Desk (`server/desk.ts`, `/api/desk`) owns the book: add/edit/remove properties (`POST/DELETE /api/desk/properties`), per-property options and hands facts; `never` rules are locked. First run lands on Desk; engines stay out of onboarding.
+- Schedule = named loops on the RealBud clock (`server/routines.ts`, `/api/loops`): morning-arrears and owner-letter are built; inbound-triage ("Morning priorities") is available but off until an office enables it. A loop is never a bot turn, a prompt or a second agent: no prompt-runner, no MAUS roster, no Hermes cron UI (`cron_mode: deny` stays).
+
+## Hard boundaries
+
+- RealBud owns the visible window. The pinned Hermes profile `property` is headless only (`pack/property/`, `server/hermes-pack.ts`); models attach there. Never launch Hermes.app, never edit Hermes source, never register Claude/Codex/Grok (or dev subagents) as RealBud agents.
+- Hermes pin and reviewed releases: `server/hermes-pin.ts`, `server/hermes-releases.ts`. Read current source; don't track upstream main or trust an old doc's version. Keep profile isolation. A fallback fixture is never evidence that real sources were checked.
+- Upstream OpenMausBot: reuse reviewed harness and safety patterns only, with no agent roster or model shop. Customisation goes through scoped RealBud APIs and versioned definitions; legacy plugin routes are not an extension sandbox. Vendor credentials stay outside customer- and Hermes-controlled storage before anyone claims vendor-only custody.
+- Browser work (`docs/decisions/2026-09-23-browser-task-authority.md`): Bud completes tasks in the person's selected signed-in session. The fence (`server/portal-fence.ts`, `server/browser-runtime.ts`, `docs/PORTAL-WORK.md`) enforces account scope, task permission, per-instance approval for pay/sign/send/notice showing the actual recipient, amount or content, and Stop on every route. Credentials never pass through Bud. Hermes' own browser and vault tools stay out of the worker.
+- Dev work never touches live customer accounts, sends anything, deploys, or puts secrets in fixtures.
 
 ## Working in this tree
 
-- Node 24 + pnpm. `pnpm typecheck` (app + server), `pnpm test` (vitest over `shared/`, `server/`, `electron/`, `src/`), `pnpm exec vitest run <file>` for one file, `pnpm exec tsc -p tsconfig.server.json` for server-only types, `pnpm check:electron` for the plain-JS Electron entrypoints, `pnpm qa` (typecheck + test + two-device gate + `scripts/qa-e2e.mjs`). `website/` and `managed-gateway/` test separately with `node --experimental-strip-types --test`.
-- Integration tests gate on `REALBUD_TEST_POSTGRES=1` (+ `REALBUD_TEST_POSTGRES_BIN`); renderer QA scripts need `PLAYWRIGHT_MODULE`. A skipped or environment-gated test is never counted as passed.
-- Path-scoped conventions live in `.claude/rules/` and load when you open matching files. Read the matching rule before editing that area; it records the idioms a newcomer gets wrong (authority at the boundary, private storage, durable execution, copy rules, packaging).
-- This checkout is shared with a long-running Codex session that edits and builds here. Before editing, list recent changes with `find . -path ./node_modules -prune -o -path ./dist-server -prune -o -type f -mmin -60 -print` and stay off files touched in the last hour unless the task requires them. Never revert, reformat or `git add -A` other people's uncommitted work. Never commit or push unless asked. Do not run package builds or Postgres-backed suites while another build is running here.
-- Evidence tiers stay separate and are named in every report: source → local tests → packaged build → installed device → live integration → customer acceptance. Fixtures, fictional providers and unsigned packages are never customer proof. Receipts go to `outputs/<topic>-<date>/`; checkpoints to `docs/<TOPIC>-<YYYY-MM-DD>.md`, linked from `docs/GOAL-PROMPT.md` and `docs/END-STATE.md`.
+- Node 24 + pnpm (the shell default may be Node 22: use `~/.nvm/versions/node/v24.21.0/bin`). Commands:
+  - `pnpm typecheck`; `pnpm exec tsc -p tsconfig.server.json` for server only
+  - `pnpm test`; `pnpm exec vitest run <file>` for one file
+  - `pnpm check:electron`
+  - `pnpm qa` (typecheck + test + two-device gate + `scripts/qa-e2e.mjs`)
+  - `website/` and `managed-gateway/` run `node --experimental-strip-types --test`
+- The server runs under `--experimental-strip-types`, and tsc/vitest don't catch this: no TS parameter properties, enums, namespaces or `import =`.
+- Renderer QA (`scripts/qa-*.mjs`, see `docs/QA-LIVE-DEBUG.md`) needs `PLAYWRIGHT_MODULE=/Users/yo-da/projects/hermios/node_modules/playwright/index.mjs` and `CHROME_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`. A script that serves the "Built React UI" reads `dist/`: build to scratch with `pnpm exec vite build --outDir <scratch>` and pass `REALBUD_UI_DIR`. Never overwrite the shared `dist/`.
+- Postgres integration tests gate on `REALBUD_TEST_POSTGRES=1` (+ `REALBUD_TEST_POSTGRES_BIN`). A skipped or environment-gated test is never a pass.
+- `.claude/rules/` holds path-scoped idioms (authority at the boundary, private storage, durable execution, copy rules, packaging). Read the matching rule before editing that area.
+- **Shared checkout.** A long-running Codex app session and other Claude sessions edit and build here.
+  - Before editing, run `find . -path ./node_modules -prune -o -path ./dist-server -prune -o -type f -mmin -60 -print` and stay off files touched in the last hour unless the task needs them. When it does, re-read right before writing.
+  - Never revert, reformat, stash or `git add -A` others' work. Never commit or push unless asked.
+  - No package builds or Postgres suites while another build runs.
+  - Coordinate with peer Claude sessions through `SendMessage` and name the files you own.
+- **Evidence tiers**, named in every report: source → local tests → packaged build → installed device → live integration → customer acceptance. Fixtures, fictional providers and unsigned packages are never customer proof. Receipts go to `outputs/<topic>-<date>/`. Checkpoints go to `docs/<TOPIC>-<YYYY-MM-DD>.md`, linked from `docs/GOAL-PROMPT.md` and `docs/END-STATE.md`.
 
-## Models and delegation (Claude Code)
+## How we work
 
-- The interactive session runs Fable; spend it on scope, integration, judgment and final verification. Delegate bounded work to Opus 5 subagents (`model: "opus"` on the Agent tool, or the project agents in `.claude/agents/`: `repo-surveyor`, `implementer`, `test-runner`, `reviewer`): repository surveys, a bounded implementation with an explicit file-ownership list, running suites and summarizing failures, an independent read-only review of a diff. `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=opus` so an unlabelled subagent defaults to Opus; pass `model: "fable"` only when a packet genuinely needs the stronger model.
-- Run independent packets in parallel and in the background. Give each a file-ownership list, an output format and a line budget. Never two writers on one file. A subagent's report is evidence to verify, not a claim to relay: rerun the decisive test before reporting.
-- Subagents inherit every boundary in this file and the working agreement: no live customer accounts, no sending, no deployment, no Hermes.app, no secrets in fixtures. They are development tooling; never register them as RealBud runtime agents.
+1. **Plan first, then move.** For multi-step work, state in 2–3 sentences what you think the owner is after and the plan, then proceed. The owner prefers momentum. Stop and ask only when scope is genuinely ambiguous or a step is irreversible or outward-facing. Each step gets the check that will prove it. Two failed tries on one step: stop, write down what failed, re-plan. If pausing mid-task, leave a checkpoint a fresh session can resume from.
+2. **Smallest change that works.** Understand first: read the code the change touches and trace the real flow. Then stop at the first rung that holds:
+   1. Does this need to exist?
+   2. Does it already exist in this repo?
+   3. Does the stdlib do it?
+   4. Does a platform feature do it?
+   5. Does an installed dependency do it?
+   6. Can it be one line?
+   7. Only then, write the minimum.
 
-## Skill routing
+   No unrequested dependencies, renames, refactors or abstractions. Deletion over addition, boring over clever. Never cut trust-boundary validation, authority checks, data-loss handling, recovery paths or accessibility. Weigh UX (users), DX (the next dev) and AX (the next agent). Look at a target before deleting or overwriting it.
+3. **Own the bug.** Reproduce it first; if you can't, say what you need. Fix the root cause: grep every caller and fix the shared function once. Then rerun the same reproduction. Never silence an error to make it go away.
+4. **Verify before saying done.**
+   - Run the tests and read the output yourself.
+   - For UI, open it and try to break it: empty input, double submit, refresh, keyboard only, 390px width.
+   - A check you didn't run is not a pass. Say so.
+   - Report in a few lines: what you picked, what you gave up and why, plus the evidence tier.
+5. **Lessons.** When the owner corrects you, add one line under Lessons: "When X, do Y". If the same mistake happens twice, the lesson is unclear: rewrite it. Ask before changing anything above Lessons unless the owner asked for the edit.
 
-When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+## Models and delegation (Claude 5.5 series)
 
-Key routing rules:
-- Product ideas/brainstorming → invoke /gstack-office-hours
-- Strategy/scope → invoke /gstack-plan-ceo-review
-- Architecture → invoke /gstack-plan-eng-review
-- Design system/plan review → invoke /gstack-design-consultation or /gstack-plan-design-review
-- Full review pipeline → invoke /gstack-autoplan
-- Bugs/errors → invoke /gstack-investigate
-- QA/testing site behavior → invoke /gstack-qa or /gstack-qa-only
-- Code review/diff check → invoke /gstack-review
-- Visual polish → invoke /gstack-design-review
-- Ship/deploy/PR → invoke /gstack-ship or /gstack-land-and-deploy
-- Save progress → invoke /gstack-context-save
-- Resume context → invoke /gstack-context-restore
-- Author a backlog-ready spec/issue → invoke /gstack-spec
+- The interactive session (Opus 5.5 or Fable 5.1) spends itself on scope, integration, judgment and final verification. Bounded work is delegated.
+- **Opus 5.5 subagents** (`model: "opus"`, also the default via `CLAUDE_CODE_SUBAGENT_MODEL=opus` in `.claude/settings.json`) do surveys, implementations and reviews. Project agents in `.claude/agents/`: `repo-surveyor` (reads), `implementer` (edits an explicit file list), `test-runner` (runs and reports, never edits), `reviewer` (reports, never edits).
+- **Sonnet 5.5** (`model: "sonnet"`) handles mechanical sweeps. Pass `model: "fable"` only when a packet truly needs it.
+- **Astra 6 Ultra** = Codex `gpt-6-astra` at `ultra` effort. The owner wants it used to save Claude usage on independent design or code review and on grunt work (QA selector updates, copy sweeps): `codex exec -m gpt-6-astra -c model_reasoning_effort=ultra -s read-only|workspace-write --skip-git-repo-check -o <out.md> - < prompt.md` (`-i` attaches screenshots). Its sandbox can't bind ports or launch a browser, so run the QA scripts yourself.
+- **Every packet** gets one job, a file-ownership list, a done condition and a short report format. Run independent packets in parallel and in the background, and never poll. Never put two writers on one file. A report is evidence to verify, not a claim to relay: rerun the decisive check before telling the owner.
+- Subagents inherit every boundary here. They are dev tooling only.
+
+## Skills
+
+Use a skill when it fits the request:
+- `code-review` / `simplify`: diff review / cleanup
+- `security-review`: auth, input, secrets, payments
+- `run`: launch the app and look
+- `gsd:debug`: stubborn bugs with persistent state
+- `claude-code-setup:claude-automation-recommender`: hooks, skills and agents worth adding
+- `windows-release`: Windows builds
+- `ponytail`: the minimal-diff ladder above (plugin)
+
+## Lessons
+- When scripting build → install, gate the install on the build's success and on the new app's version string; never swap /Applications from a stale release/ folder.
+<!-- Newest on top. "When X, do Y". Delete what no longer applies. -->
+- When moving UI controls, check 390px: below 600px only `.rb-sidebar-navigation` shows, so footer-only entries vanish on phones.
+- When a QA script fails on copy or server behaviour another session changed, report it to that session; don't rewrite their fixture expectations.
+- When the owner says "simpler", relocate rarely-used controls into one collapsed place; remove duplicate surfaces, not capabilities.

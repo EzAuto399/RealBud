@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
+import { ASK_CSV_REPORT_SUFFIX } from "./ask-csv-inspect.ts";
 import { privateDir, privateTempRoot, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
 
@@ -87,6 +88,29 @@ describe("selected document copies", () => {
     expect(readFileSync(saved.path)).toEqual(selected);
     expect(readFileSync(sourcePath, "utf8")).toBe("source changed after selection");
     expect(readdirSync(sourceDir)).toEqual(["statement.csv"]);
+    expect(JSON.parse(readFileSync(saved.path + ASK_CSV_REPORT_SUFFIX, "utf8"))).toMatchObject({
+      status: "complete", coverageComplete: true, counts: { dataRows: 1, columns: 2 }, propertyBookChanged: false,
+    });
+    expect(readdirSync(dir)).toEqual(["vault"]); // inspection never creates/changes a property book
+  });
+
+  it("keeps originals byte-identical and the deterministic CSV inspection private", () => {
+    const dir = fresh(), selected = input("fictional.CSV", 'id,address\n001,"1 Fictional St, Unit 2"\n002,2 Fictional St\n');
+    const first = saveAskAttachment(dir, selected), second = saveAskAttachment(dir, selected);
+    const reportPath = first.path + ASK_CSV_REPORT_SUFFIX;
+    expect(readFileSync(first.path).toString("base64")).toBe(selected.contentBase64);
+    expect(readFileSync(reportPath)).toEqual(readFileSync(second.path + ASK_CSV_REPORT_SUFFIX));
+    expect(JSON.parse(readFileSync(reportPath, "utf8"))).toMatchObject({ status: "complete", counts: { dataRows: 2 } });
+    if (process.platform !== "win32") expect(lstatSync(reportPath).mode & 0o777).toBe(0o600);
+    const pdf = saveAskAttachment(dir, input("fictional.pdf", "%PDF-1.4"));
+    expect(existsSync(pdf.path + ASK_CSV_REPORT_SUFFIX)).toBe(false);
+  });
+
+  it("preserves malformed CSVs with an explicit failed inspection instead of a guessed count", () => {
+    const selected = input("fictional.csv", 'id,note\n1,"unfinished');
+    const saved = saveAskAttachment(fresh(), selected);
+    expect(readFileSync(saved.path).toString("base64")).toBe(selected.contentBase64);
+    expect(JSON.parse(readFileSync(saved.path + ASK_CSV_REPORT_SUFFIX, "utf8"))).toMatchObject({ status: "invalid", coverageComplete: false, counts: null });
   });
 
   it.skipIf(process.platform === "win32")("supports older application roots while keeping the copied bytes private", () => {
@@ -119,6 +143,7 @@ describe.skipIf(process.platform !== "win32")("native Windows attachment privacy
     }
     for (const saved of [first, second]) {
       expect(() => windowsFilePrivacySync(saved.path, "file")).not.toThrow();
+      expect(() => windowsFilePrivacySync(saved.path + ASK_CSV_REPORT_SUFFIX, "file")).not.toThrow();
       expect(readFileSync(saved.path).toString("base64")).toBe(input.contentBase64);
     }
   });

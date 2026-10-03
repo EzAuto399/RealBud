@@ -13,6 +13,7 @@ import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
 import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { startAskModelRelay } from "./ask-model-relay.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 
 const fixture: LedgerFacts[] = [
@@ -42,7 +43,7 @@ describe("workerMissReason", () => {
       "⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only\n" +
       "API call failed after 3 retries: An error occurred (UnrecognizedClientException) when calling the Converse operation\n";
     const reason = workerMissReason("session_id: abc\n", stderr);
-    expect(reason).toBe("the model provider refused Bud's key; check the model connection on You");
+    expect(reason).toBe("the model provider refused Bud's key; check the model connection in Workspace → Settings & help");
     expect(reason).not.toMatch(/tirith|UnrecognizedClient/);
   });
 
@@ -54,7 +55,7 @@ describe("workerMissReason", () => {
 
   it("names a pack skill the profile does not have instead of echoing the worker's error", () => {
     expect(workerMissReason("", "ValueError: Unknown skill(s): morning-arrears")).toBe(
-      "Bud's pack skill is missing; re-apply Bud's safeguards on You",
+      "Bud's pack skill is missing; re-apply Bud's safeguards in Workspace → Settings & help",
     );
   });
 
@@ -173,7 +174,7 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toContain("Billing or credits exhausted");
-    expect(attempt.detail).toMatch(/held/);
+    expect(attempt.detail).toMatch(/Saved facts are unchanged/);
   });
 
   it("finds the real error on stdout even when stderr is only warnings", async () => {
@@ -359,7 +360,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   it("fails cleanly when the pack is missing", async () => {
     const ping = await tryHermesPing({ cli: "/bin/false", root: "/tmp/realbud-no-such-home" });
     expect(ping.ok).toBe(false);
-    expect(ping.detail).toMatch(/Bud is not set up/);
+    expect(ping.detail).toMatch(/Bud isn't set up yet/);
   });
 
   it("refuses to spawn when the pack's approvals are not manual", async () => {
@@ -393,9 +394,9 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
       // record argv without word-splitting (absolute paths: the child's cwd
       // is the caller's, not this directory)
       `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-        `printf "%s\\n" "$1|$2|$3|$4|$5|$6|$7" > "${head}"\n` +
-        `printf "%s" "$8" > "${promptFile}"\n` +
-        `printf "%s|%s\\n" "$9" "\${10}" > "${tail}"\n` +
+        `printf "%s\\n" "$1|$2|$3|$4|$5|$6|$7|$8|$9" > "${head}"\n` +
+        `printf "%s" "\${10}" > "${promptFile}"\n` +
+        `printf "%s|%s\\n" "\${11}" "\${12}" > "${tail}"\n` +
         `printf '%s' '[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]'\n`,
     );
     chmodSync(script, 0o755);
@@ -406,7 +407,8 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
     // the contract: any change to these flags breaks the worker seam and
     // must be deliberate (pin bump), never accidental
     // -s preloads the shipped pack skill; the prompt naming it does not load it.
-    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-s|morning-arrears|-q`);
+    // The check reads the book and answers: file and todo tools only, no terminal.
+    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|--toolsets|todo,file|-s|morning-arrears|-q`);
     expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|6");
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");
@@ -461,7 +463,7 @@ it("holds an interrupted installation before pinging or reading property facts",
 it("does not borrow a configured base pack for an unconfigured member", async () => {
   const { dir, script, argsFile } = stubHermes("OK");
   const result = await tryHermesPing({ cli: script, root: dir, memberKey: "new-member" });
-  expect(result).toMatchObject({ ok: false, detail: expect.stringContaining("not set up") });
+  expect(result).toMatchObject({ ok: false, detail: expect.stringContaining("isn't set up yet") });
   expect(() => readFileSync(argsFile, "utf8")).toThrow();
 });
 
@@ -480,6 +482,7 @@ describe("one-shot managed model access", () => {
       `writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({`,
       `  keyMatchesGrant: process.env.REALBUD_MODEL_API_KEY === ${JSON.stringify(grantKey)},`,
       '  keyPresent: Boolean(process.env.REALBUD_MODEL_API_KEY),',
+      '  managedDir: process.env.HERMES_MANAGED_DIR ?? null,',
       '  ambientKeyPresent: Boolean(process.env.OPENAI_API_KEY),',
       '  baseUrl: process.env.OPENAI_BASE_URL ?? null,',
       '  unrelatedCredentialPresent: Boolean(process.env.OPENROUTER_API_KEY || process.env.COMPOSIO_KEY),',
@@ -494,8 +497,10 @@ describe("one-shot managed model access", () => {
     ? tryHermesPing({ cli: test.script, root: test.dir })
     : tryHermesLedger(["prop-oak"], { cli: test.script, root: test.dir });
 
-  it.each(["ping", "ledger"] as const)("gives the %s child only its managed key after stripping ambient credentials", async kind => {
+  it.each(["ping", "ledger"] as const)("gives the %s child only the Ask relay's token after stripping ambient credentials, never the office key", async kind => {
     const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    const relay = await startAskModelRelay({ root: test.dir, overlayDir: join(test.dir, "relay-overlay") });
+    try {
     vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
     vi.stubEnv("OPENAI_BASE_URL", "https://ambient.invalid/v1");
     vi.stubEnv("REALBUD_MODEL_API_KEY", "fictional-ambient-grant");
@@ -507,17 +512,19 @@ describe("one-shot managed model access", () => {
     setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: grantKey });
     const result = await run(kind, test);
     const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
-    // The endpoint lives in the profile; no ambient endpoint or key survives.
-    expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent: true, ambientKeyPresent: false, baseUrl: null, unrelatedCredentialPresent: false });
+    // The worker reasons through the loopback relay (its overlay, its token);
+    // the office key stays in this process and no ambient endpoint or key survives.
+    expect(evidence).toMatchObject({ keyMatchesGrant: false, keyPresent: true, managedDir: relay.overlayDir, ambientKeyPresent: false, baseUrl: null, unrelatedCredentialPresent: false });
     expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
     expect(JSON.stringify(result)).not.toContain(grantKey);
     expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
     expect(kind === "ping" ? "ok" in result && result.ok : "rows" in result && result.rows).toBeTruthy();
-    // A tampered profile endpoint never receives the key.
+    // A tampered profile endpoint gets neither the relay nor a key.
     const config = join(test.dir, "profiles", "property", "config.yaml");
     writeFileSync(config, readFileSync(config, "utf8").replace(baseUrl, "https://attacker.invalid/v1"));
     await run(kind, test);
-    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false });
+    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false, managedDir: null });
+    } finally { await relay.close(); }
   });
 
   it.each(["ping", "ledger"] as const)("does not retain the managed key for a %s child after disconnect", async kind => {

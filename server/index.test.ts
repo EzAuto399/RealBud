@@ -412,6 +412,8 @@ describe("harness HTTP API", () => {
       "morning-arrears",
       "owner-letter",
       "inbound-triage",
+      "bank-references",
+      "weekly-bills",
     ]);
     const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");
     expect(morning).toMatchObject({ available: true, enabled: true });
@@ -552,7 +554,7 @@ describe("harness HTTP API", () => {
     expect(noJson.status).toBe(415);
   });
 
-  it("gates worker repair and remove like the other hermes actions", async () => {
+  it("gates worker repair and refuses removal while keeping private setup unchanged", async () => {
     const noCancel = await api("POST", "/api/hermes/install/cancel");
     expect(noCancel.status).toBe(415);
     expect((await api("POST", "/api/hermes/install/cancel", {})).status).toBe(202);
@@ -560,17 +562,33 @@ describe("harness HTTP API", () => {
     expect(noRepair.status).toBe(415);
     const noRemove = await api("POST", "/api/hermes/uninstall");
     expect(noRemove.status).toBe(415);
+    expect((await fetch(BASE + "/api/hermes/uninstall", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
 
     const repaired = await api("POST", "/api/hermes/repair", {});
     expect(repaired.status).toBe(200);
     expect(repaired.body.install.state).toBe("done");
     expect(repaired.body.hermes.cli).toMatchObject({ compatible: true, matchesPin: false });
 
-    const removed = await api("POST", "/api/hermes/uninstall", {});
-    expect(removed.status).toBe(200);
-    expect(removed.body.pack.installed).toBe(false);
-    expect(removed.body.ready).toBe(false);
-    expect(removed.body.lastPing).toBeNull();
+    const profile = repaired.body.hermes.profileDir;
+    expect(profile).toBe(join(home, ".realbud", "hermes", "profiles", "property"));
+    const retained = join(profile, "fictional-retain-on-removal.txt");
+    writeFileSync(retained, "Fictional private setup must stay intact.\n", { mode: 0o600 });
+    const profileFiles = [join(profile, "config.yaml"), join(profile, "SOUL.md"), retained];
+    const profileBytes = profileFiles.map(path => readFileSync(path));
+    const before = await api("GET", "/api/hermes");
+    expect(before.status).toBe(200);
+    expect(before.body.pack).toMatchObject({ installed: true, approvalsManual: true, workroomReady: true });
+
+    const refused = await api("POST", "/api/hermes/uninstall", {});
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: "worker_cleanup_unproven", error: expect.stringMatching(/setup has been kept.*Use Repair/) });
+    expect(profileFiles.map(path => readFileSync(path))).toEqual(profileBytes);
+    const after = await api("GET", "/api/hermes");
+    expect(after.status).toBe(200);
+    expect(after.body.pack).toEqual(before.body.pack);
+    expect(after.body.ready).toBe(before.body.ready);
+    expect(after.body.lastPing).toEqual(before.body.lastPing);
+    expect(after.body.lastTest).toEqual(before.body.lastTest);
 
     const restored = await api("POST", "/api/hermes/apply-pack", {});
     expect(restored.status).toBe(200);
@@ -651,11 +669,24 @@ describe("harness HTTP API", () => {
     expect(String(send.body.error)).toMatch(/never sends/i);
   });
 
-  it("refuses rooms, connectors, and raw computer screenshots in product mode", async () => {
+  it("refuses rooms, legacy connector routes, and raw computer screenshots in product mode", async () => {
     expect((await api("POST", "/api/groups", { memberIds: ["bud"] })).status).toBe(403);
-    expect((await api("GET", "/api/connectors")).status).toBe(403);
     expect((await api("POST", "/api/local-computer/screenshot", {})).status).toBe(403);
     expect((await api("POST", "/api/bots/bud/computer", {})).status).toBe(403);
+    // Legacy connector shop and plugin routes stay refused.
+    expect((await api("GET", "/api/connectors/catalog")).status).toBe(403);
+    expect((await api("GET", "/api/plugins")).status).toBe(403);
+    expect((await api("POST", "/api/connectors/fictional/authorize", {})).status).toBe(403);
+    expect((await api("DELETE", "/api/connectors/fictional")).status).toBe(403);
+  });
+
+  it("allows the office's connector routes in product mode, behind the session token", async () => {
+    for (const path of ["/api/connectors", "/api/connectors/redbark/connection", "/api/redbark/connection"]) {
+      expect((await fetch(`${BASE}${path}`)).status, path).toBe(401);
+      expect((await api("GET", path)).status, path).not.toBe(403);
+    }
+    expect((await fetch(`${BASE}/api/connectors/redbark/review`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await api("POST", "/api/connectors/redbark/review", {})).status).not.toBe(403);
   });
 
   it("round-trips standing rules and rejects bad writes", async () => {
@@ -1191,7 +1222,7 @@ describe("harness HTTP API", () => {
     } while (Date.now() < deadline);
 
     expect(bot.busy).toBe(false);
-    expect(bot.messages.at(-1).text).toMatch(/I opened Gmail sign-in/i);
+    expect(bot.messages.at(-1).text).toMatch(/Gmail sign-in is ready.*asked your browser to open it/i);
     expect(bot.messages.at(-1).text).toContain("https://auth.example/connect/gmail");
     expect(composioCalls.some((body) => body.includes("COMPOSIO_MANAGE_CONNECTIONS") && body.includes("gmail"))).toBe(true);
     expect(JSON.stringify(bot.messages)).not.toContain("brokersecret");

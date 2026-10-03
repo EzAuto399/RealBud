@@ -7,10 +7,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serviceSmokeEnv } from "./service-smoke-env.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = join(root, "pack/workflows/austin-phase-1");
@@ -23,7 +24,7 @@ if (existsSync(out)) throw new Error("Choose a new output directory; previous QA
 const engineHome = process.env.REALBUD_HERMES_HOME || join(homedir(), ".realbud/hermes");
 if (live && !existsSync(join(engineHome, "profiles/property/config.yaml"))) throw new Error("Connect a model in RealBud first, or set REALBUD_HERMES_HOME to its owned profile root.");
 mkdirSync(out, { recursive: true });
-const fixtureRoot = mkdtempSync(join(tmpdir(), "realbud-austin-roundtrip-"));
+const fixtureRoot = mkdtempSync(join(realpathSync(tmpdir()), "realbud-austin-roundtrip-"));
 const pack = JSON.parse(readFileSync(join(source, "workflows.json"), "utf8"));
 const billFixture = JSON.parse(readFileSync(join(source, "fixtures/expected-bills.json"), "utf8"));
 const bankSettings = JSON.parse(readFileSync(join(source, "fixtures/bank-settings.json"), "utf8"));
@@ -51,16 +52,19 @@ const offices = [];
 
 async function boot(name, existing) {
   const data = existing?.data ?? join(fixtureRoot, name);
-  mkdirSync(data, { recursive: true });
+  mkdirSync(data, { recursive: true, mode: 0o700 });
   const socket = createServer();
   await new Promise((resolve, reject) => { socket.once("error", reject); socket.listen(0, "127.0.0.1", resolve); });
   const port = socket.address().port;
   await new Promise(resolve => socket.close(resolve));
   const office = { name, data, base: `http://127.0.0.1:${port}`, token: "", logs: "", child: null };
-  const env = { PATH: `${dirname(process.execPath)}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+  const env = live ? { PATH: `${dirname(process.execPath)}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
     HOME: process.env.HOME || homedir(), USERPROFILE: process.env.USERPROFILE || homedir(),
     REALBUD_DATA_DIR: data, OMB_PORT: String(port), OMB_STATIC_DIR: join(root, "dist"),
-    ...(live ? { REALBUD_HERMES_HOME: engineHome, HERMES_HOME: engineHome, HERMES_SAFE_MODE: "1" } : {}) };
+    REALBUD_HERMES_HOME: engineHome, HERMES_HOME: engineHome, HERMES_SAFE_MODE: "1" } : {
+      ...serviceSmokeEnv({ executable: process.execPath, home: fixtureRoot, data, scratch: fixtureRoot, port }),
+      REALBUD_MANAGED_SERVICE: "0", OMB_STATIC_DIR: join(root, "dist"),
+    };
   office.child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   offices.push(office);
   office.child.on("error", error => { office.logs += error.message; });

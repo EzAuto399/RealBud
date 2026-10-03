@@ -8,6 +8,8 @@ import { privateDirectory, readPrivateJson, writePrivateJson } from "./private-j
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import type { BrowserStatus, BrowserConnection } from "../shared/browser.ts";
 import { browserTaskUploadName, type BrowserTaskUpload } from "../shared/browser-task.ts";
+import type { BrowserSessionRuntime, BrowserSessionAction, BrowserSessionTab, BrowserSessionObservation } from "./browser-session.ts";
+import { NativeBrowserRuntime } from "./native-browser-runtime.ts";
 
 export const BROWSER_VERSION = "0.3.1";
 /** Wire protocol shared by the pinned helper and extension (BrowserSkill `PROTOCOL_VERSION`). */
@@ -58,7 +60,11 @@ export async function browserExecutable(): Promise<string | null> {
   return null;
 }
 
-export class BrowserRuntime {
+/** Legacy helper adapter retained for deterministic fixtures and migration.
+ * Production uses NativeBrowserRuntime below. */
+export class BrowserRuntime implements BrowserSessionRuntime {
+  readonly supportedActions = ["read", "navigate", "fill", "click", "keys", "submit", "download", "upload"] as const;
+  readonly readOnly = false;
   readonly root: string;
   readonly command: BrowserCommand;
   private state?: Saved;
@@ -165,7 +171,7 @@ export class BrowserRuntime {
     return this.exclusive(async () => {
       if (!id(owner) || this.revoked.has(owner)) throw fail("This browser request has stopped.");
       const saved = await this.saved(); if (saved.lease) throw fail("Another browser session is active or needs recovery. Stop it before starting more work.");
-      if ((await this.status()).state !== "ready" || !saved.browserId) throw fail("Connect your browser in You → Browser before running this job.");
+      if ((await this.status()).state !== "ready" || !saved.browserId) throw fail("The work browser is not open yet. Bud opens it for you when this job needs it.");
       const lease: Lease = { owner, browserId: saved.browserId, sessionId: null, phase: "starting" };
       await this.save({ ...saved, lease });
       try {
@@ -193,6 +199,34 @@ export class BrowserRuntime {
     const session = (Array.isArray(status.sessions) ? status.sessions : []).find(s => record(s) && s.session_id === this.state?.lease?.sessionId);
     if (!record(session) || session.browser_instance_id !== this.state?.lease?.browserId || !record(session.interaction) ||
       session.interaction.borrow_confirmation !== "always" || session.interaction.request_help !== "enabled" || !this.isOwner(owner)) throw fail("The browser session or its confirmation settings changed. Stop and check the connection before continuing.");
+  }
+  async listTabs(owner: string, signal?: AbortSignal): Promise<BrowserSessionTab[]> {
+    if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
+    const result = await this.command(["tab", "list", "--scope", "all", "--session", this.state!.lease!.sessionId!], signal);
+    return (Array.isArray(result.tabs) ? result.tabs : []).filter(record).filter(tab => Number.isSafeInteger(tab.tab_id)).map(tab => ({
+      id: Number(tab.tab_id), url: String(tab.url), title: String(tab.title ?? ""), browserId: String(tab.browser_instance_id ?? this.state!.browserId), claimed: tab.scope === "agent",
+    }));
+  }
+  async claimTab(owner: string, tabId: number, signal?: AbortSignal): Promise<void> {
+    if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
+    await this.command(["tab", "borrow", String(tabId), "--session", this.state!.lease!.sessionId!, "--timeout", "60s"], signal);
+  }
+  async observeTab(owner: string, tabId: number, signal?: AbortSignal): Promise<BrowserSessionObservation> {
+    if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
+    const data = await this.command(["observe", "--session", this.state!.lease!.sessionId!, "--tab-id", String(tabId), "--max-tokens", "6000"], signal);
+    if (data.tab_id !== tabId || typeof data.text !== "string") throw fail("The browser did not confirm its page observation.");
+    return { tabId, text: data.text, truncated: data.truncated === true || Boolean(data.next_cursor) };
+  }
+  async perform(owner: string, action: BrowserSessionAction, signal?: AbortSignal): Promise<BrowserJson> {
+    if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
+    const on = ["--session", this.state!.lease!.sessionId!, "--tab-id", String(action.tabId)];
+    const args = action.kind === "navigate" ? ["navigate", action.url, ...on, "--timeout", "30s"]
+      : action.kind === "fill" ? ["fill", "--ref", action.ref, "--value", action.value, ...on]
+      : action.kind === "click" ? ["click", "--ref", action.ref, ...on]
+      : action.kind === "press" ? ["press", action.key, "--ref", action.ref, ...on]
+      : action.kind === "select" ? ["select", "--ref", action.ref, ...action.values.map(value => `--value=${value}`), ...on]
+      : [action.kind, "--ref", action.ref, action.kind === "download" ? "--out" : "--file", action.path, ...on, "--timeout", "60s"];
+    return this.command(args, signal);
   }
   /** Ask the person to finish an in-page step (sign-in, verification) in the
    * borrowed tab. They act in their own browser; nothing they type comes back.
@@ -285,7 +319,7 @@ export class BrowserRuntime {
   }
   async shutdown(): Promise<void> { try { await this.stop(); } finally { this.daemon?.kill(); this.daemon = null; } }
 }
-export const browserRuntime = new BrowserRuntime();
+export const browserRuntime = new NativeBrowserRuntime();
 
 // ── task files ───────────────────────────────────────────────────────────
 // Downloads land in the task's private folder at a path RealBud chooses;
@@ -321,6 +355,26 @@ export function sniffContentType(bytes: Buffer): string {
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: true }); } catch { return "application/octet-stream"; }
   const start = text.trimStart().slice(0, 20).toLowerCase();
   return start.startsWith("<!doctype html") || start.startsWith("<html") ? "text/html" : "text/plain";
+}
+/** Programs, scripts, installers and disk images, by name. Archives are kept but never opened. */
+const EXECUTABLE_NAME = /\.(?:exe|dll|sys|com|scr|pif|cpl|msi|msix|msp|msu|appx|appxbundle|bat|cmd|ps1|psm1|psd1|vbs|vbe|js|jse|mjs|cjs|wsf|wsh|hta|lnk|url|reg|inf|jar|class|app|dmg|pkg|mpkg|command|tool|sh|bash|zsh|csh|ksh|fish|py|pyc|pl|rb|php|apk|deb|rpm|run|bin|so|dylib|scpt|applescript|workflow|terminal|desktop|appimage|iso|img|vhd|vhdx)$/i;
+const EXECUTABLE_MAGIC: ReadonlyArray<number[]> = [
+  [0x7f, 0x45, 0x4c, 0x46], // ELF
+  [0xfe, 0xed, 0xfa, 0xce], [0xfe, 0xed, 0xfa, 0xcf], [0xce, 0xfa, 0xed, 0xfe], [0xcf, 0xfa, 0xed, 0xfe], // Mach-O
+  [0xca, 0xfe, 0xba, 0xbe], // universal Mach-O or Java class
+  [0x23, 0x21], // script with an interpreter line ("#!")
+  [0x78, 0x61, 0x72, 0x21], // macOS installer package ("xar!")
+  [0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00], // Windows shortcut
+];
+/** A download is refused when its name or its bytes say it is a program. The site's claimed type never decides. */
+export function executableDownload(name: unknown, bytes: Buffer): boolean {
+  const named = typeof name === "string" ? basename(name.replace(/\\/g, "/")).trim().replace(/[. ]+$/, "") : "";
+  if (EXECUTABLE_NAME.test(named)) return true;
+  if (EXECUTABLE_MAGIC.some(magic => magic.every((byte, index) => bytes[index] === byte))) return true;
+  // A Windows program starts "MZ" with a binary header; a text file that merely starts "MZ" is not one.
+  if (bytes[0] === 0x4d && bytes[1] === 0x5a && (bytes.length < 64 || bytes.subarray(0, 64).includes(0))) return true;
+  // A disk image carries its "koly" trailer 512 bytes from the end.
+  return bytes.length >= 512 && bytes.subarray(bytes.length - 512, bytes.length - 508).toString("latin1") === "koly";
 }
 function downloadName(suggested: unknown, contentType: string): string {
   const name = typeof suggested === "string" ? basename(suggested.replace(/\\/g, "/")) : "";
@@ -360,6 +414,9 @@ export async function saveBrowserDownload(workroom: string, staged: string, sugg
     if (!stat) throw fail("The browser did not deliver a file. Check the page before trying again.");
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES) throw fail("The download was not one file within 50 MB. Nothing was kept.");
     const bytes = await readFile(staged);
+    if (bytes.length > MAX_BROWSER_FILE_BYTES) throw fail("The download was not one file within 50 MB. Nothing was kept.");
+    // Never kept, so never opened or run: the staged capture is removed below.
+    if (executableDownload(suggestedName, bytes)) throw fail("This download is a program, script or installer. RealBud does not keep files that can run. Nothing was kept.");
     const contentType = sniffContentType(bytes);
     const folder = join(workroom, "downloads"); await privateDirectory(folder);
     const name = await writeNewPrivateBytes(folder, downloadName(suggestedName, contentType), bytes);

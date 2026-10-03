@@ -1,0 +1,5 @@
+{
+  "caseId": "00000000-0000-4000-8000-000000000006",
+  "title": "Fictional maintenance: not-marked-synthetic",
+  "description": "{\"version\":1,\"synthetic\":false,\"sourceReference\":\"fictional-maintenance-unmarked\",\"asOfDate\":\"2026-10-01\",\"targetEvidenceId\":\"E1\",\"coverage\":{\"complete\":true,\"missingSources\":[]},\"window\":{\"from\":\"2026-07-01\",\"toExclusive\":\"2026-10-01\",\"timeZone\":\"Australia/Brisbane\",\"boundary\":\"half-open\"},\"invoices\":[{\"evidenceId\":\"E1\",\"sourceId\":\"source-E1\",\"supplierId\":\"fictional-supplier-A\",\"propertyId\":\"fictional-property-A\",\"invoiceNumber\":\"INV-E1\",\"version\":\"1\",\"invoiceDate\":\"2026-09-30\",\"amount\":\"120.00\",\"currency\":\"AUD\",\"description\":\"Fictional repair evidence.\",\"documentAvailable\":true}]}"
+}

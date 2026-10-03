@@ -1,14 +1,14 @@
 // Ask Bud to name ledger-export columns. The model proposes; the server
 // keeps only header names that are actually in the file.
 import { managedServiceFailure } from "./managed-service.ts";
-import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
-import { applyManagedModelLaunchEnv } from "./hermes-runtime-env.ts";
+import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
+import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
-import { writeFileAtomic } from "./atomic.ts";
+import { writeBookFile } from "./vault.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
@@ -105,11 +105,9 @@ function mappingFromReply(parsed: unknown, headers: string[]): CsvColumnMapping 
 
 function writeExportSample(csv: string): string | null {
   try {
-    const vault = seedVault();
-    const dir = join(vault, "uploads");
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const path = join(vault, EXPORT_REL);
-    writeFileAtomic(path, sampleLedgerExport(csv), 0o600);
+    // `uploads` is seeded with the book; the write refuses any planted link.
+    const path = join(seedVault(), EXPORT_REL);
+    writeBookFile(path, sampleLedgerExport(csv));
     return path;
   } catch {
     return null;
@@ -154,11 +152,11 @@ export async function inspectLedgerColumns(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    // Strip first, then place only the grant RealBud resolved for this
-    // installation, and only while the checked profile names the granted
-    // endpoint. The selected worker is refused without usable access; a
-    // caller-supplied (development) CLI just gets no key.
-    const refusal = applyManagedModelLaunchEnv(env, opts?.root);
+    // Strip first, then reason through Ask's loopback relay (the office key
+    // stays in this process), and only while the checked profile names the
+    // granted endpoint. The selected worker is refused without usable access;
+    // a caller-supplied (development) CLI just gets no access.
+    const refusal = applyAskModelRelayEnv(env, opts?.root);
     if (refusal && !opts?.cli) return resolve(miss(refusal));
     const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? INSPECT_TIMEOUT_MS,
@@ -166,11 +164,17 @@ export async function inspectLedgerColumns(
       env,
       encoding: "utf8",
     };
-    execFileCli(
-      cli,
-      ["--profile", profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+    // Reading one uploaded text file needs the file tools, never a terminal.
+    const args = ["--profile", profile, "chat", "-Q", "--toolsets", "todo,file", "-q", prompt, "--max-turns", "6"];
+    let launch: ReturnType<typeof hermesWorkerSandbox>;
+    try { launch = hermesWorkerSandbox("cli", cli, args, env, []); }
+    catch (error) { return resolve(miss(error instanceof Error ? error.message : String(error))); }
+    trackSandboxedChild(execFileCli(
+      launch.command,
+      launch.args,
       execOpts,
       (err, stdout, stderr) => {
+        launch.release();
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
           if (timedOut) return resolve(miss("Bud took too long to read the columns."));
@@ -198,6 +202,6 @@ export async function inspectLedgerColumns(
         if (!mapping) return resolve(miss("Bud named columns that are not in the file."));
         resolve({ mapping, detail: "Bud read the columns." });
       },
-    );
+    ));
   });
 }

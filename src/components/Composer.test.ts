@@ -1,10 +1,20 @@
-import { createElement } from "react";
+import { createElement, type ComponentProps, type ReactElement, type ReactNode, type SetStateAction } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot } from "@/state/store";
 import { Composer } from "./Composer";
 
-const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn() }));
+const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null }));
+vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
+// Keep React's real hooks while observing state requests from event handlers.
+// A server render lets the tests inspect the control wiring without a DOM.
+vi.mock("react", async importOriginal => {
+  const react = await importOriginal<typeof import("react")>();
+  return { ...react, useState: <T,>(initial: T | (() => T)) => {
+    const [value, set] = react.useState(initial);
+    return [value, (next: SetStateAction<T>) => { fixture.stateUpdates.push(next); set(next); }];
+  } };
+});
 vi.mock("@/state/store", () => ({
   api: fixture.api,
   useStore: () => ({ state: { bots: [], askWorkContext: null }, dispatch: fixture.dispatch }),
@@ -20,6 +30,9 @@ function render(heldReason?: NonNullable<Bot["queuedMessage"]>["heldReason"], bu
   };
   return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true }));
 }
+
+beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.stateUpdates.length = 0; caps.dictation.available = false; });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("held connected-app follow-up", () => {
   it.each([false, true])("shows review recovery instead of automatic dispatch language when busy=%s", busy => {
@@ -73,5 +86,194 @@ describe("Ask while Bud is re-checking", () => {
     expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
     expect(html).toContain("You can draft while we connect.");
     expect(html).not.toContain("Bud is re-checking");
+  });
+});
+
+// Capture the returned control tree inside a genuine React hook render. Child
+// components need not mount to exercise this composer's own event handlers.
+function composerControls(extra: Partial<ComponentProps<typeof Composer>> = {}) {
+  let tree: ReactNode;
+  const bot: Bot = { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+    color: "green", unread: false, busy: false, messages: [], modelSelection: { instanceId: "fixture", model: "fixture" } };
+  function Capture() { tree = Composer({ bot, productAsk: true, ...extra }); return null; }
+  renderToStaticMarkup(createElement(Capture));
+  const elements: ReactElement<Record<string, unknown>>[] = [];
+  function visit(node: ReactNode) {
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if (!node || typeof node !== "object" || !("props" in node)) return;
+    const element = node as ReactElement<Record<string, unknown>>;
+    elements.push(element);
+    visit(element.props.children as ReactNode);
+  }
+  visit(tree);
+  return elements;
+}
+function controls(extra: Partial<ComponentProps<typeof Composer>> = {}) {
+  const elements = composerControls(extra);
+  const mic = elements.find(element => element.type === "button" && element.props["aria-label"] === "Hold to speak into the message");
+  if (!mic) throw new Error("Dictation control missing");
+  return mic.props as ComponentProps<"button">;
+}
+
+describe('design preview Ask controls', () => {
+  it.each([false, true])('keeps a draft while preventing click and Enter submission when busy=%s', async busy => {
+    fixture.preview = 'This design preview uses example data.';
+    const savedDraft = JSON.stringify({ 'bot:bud': 'connect Google Sheets' });
+    const storage = { getItem: vi.fn((key: string) => key === 'omb-drafts' ? savedDraft : null), setItem: vi.fn() };
+    vi.stubGlobal('localStorage', storage);
+    const bot: Bot = { id: 'bud', threadId: 'task-1', name: 'Bud', title: 'Assistant', description: '', notifications: false,
+      color: 'green', unread: false, busy, messages: [], modelSelection: { instanceId: 'fixture', model: 'fixture' } };
+    const elements = composerControls({ bot });
+    const textarea = elements.find(element => element.type === 'textarea')!.props as ComponentProps<'textarea'>;
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe('connect Google Sheets');
+    const labels = busy ? ['Update current work', 'Do this next'] : ['Start this work'];
+    for (const label of labels) {
+      const button = elements.find(element => element.props['aria-label'] === label)!.props as ComponentProps<'button'>;
+      expect(button.disabled).toBe(true);
+      button.onClick!({} as Parameters<NonNullable<typeof button.onClick>>[0]);
+    }
+    textarea.onKeyDown!(keyEvent('Enter') as unknown as Parameters<NonNullable<typeof textarea.onKeyDown>>[0]);
+    await Promise.resolve();
+    expect(fixture.api).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+});
+
+function keyEvent(key: string, extra: Record<string, unknown> = {}) {
+  return { key, repeat: false, nativeEvent: { isComposing: false, keyCode: 0 }, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...extra } as unknown as Parameters<NonNullable<ComponentProps<"button">["onKeyDown"]>>[0];
+}
+
+function dictationBridge() {
+  const requests: Array<(granted: boolean) => void> = [];
+  const permRequestMic = vi.fn(() => new Promise<boolean>(resolve => requests.push(resolve)));
+  const bridge = { permRequestMic, speechStart: vi.fn(), speechFinish: vi.fn() };
+  caps.dictation.available = true;
+  vi.stubGlobal("window", { ogb: bridge });
+  return { bridge, requests };
+}
+
+async function settlePermission(request: (granted: boolean) => void, granted = true) {
+  request(granted);
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("Ask keyboard dictation", () => {
+  it.each([" ", "Enter"])("holds %j without submitting, and release cancels a pending permission request", async key => {
+    const { bridge, requests } = dictationBridge();
+    const mic = controls();
+    const down = keyEvent(key);
+    mic.onKeyDown!(down);
+    await Promise.resolve();
+    expect(down.preventDefault).toHaveBeenCalledOnce();
+    expect(down.stopPropagation).toHaveBeenCalledOnce();
+    expect(bridge.permRequestMic).toHaveBeenCalledOnce();
+    mic.onKeyDown!(keyEvent(key, { repeat: true }));
+    mic.onKeyDown!(keyEvent(key));
+    expect(bridge.permRequestMic).toHaveBeenCalledOnce();
+    const up = keyEvent(key);
+    mic.onKeyUp!(up);
+    expect(up.preventDefault).toHaveBeenCalledOnce();
+    expect(up.stopPropagation).toHaveBeenCalledOnce();
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).not.toContain(true);
+    expect(fixture.api).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps pointer hold and release with capture", async () => {
+    const { requests } = dictationBridge();
+    const mic = controls();
+    const pointer = { button: 0, pointerId: 7, preventDefault: vi.fn(), currentTarget: { setPointerCapture: vi.fn() } };
+    mic.onPointerDown!(pointer as unknown as Parameters<NonNullable<typeof mic.onPointerDown>>[0]);
+    await Promise.resolve();
+    expect(pointer.currentTarget.setPointerCapture).toHaveBeenCalledWith(7);
+    mic.onPointerUp!(pointer as unknown as Parameters<NonNullable<typeof mic.onPointerUp>>[0]);
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).not.toContain(true);
+  });
+
+  it("starts recording after permission only while the same key is still held", async () => {
+    const { requests } = dictationBridge();
+    const mic = controls();
+    mic.onKeyDown!(keyEvent(" "));
+    await Promise.resolve();
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).toContain(true);
+    expect(fixture.api).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("ignores composition, repeats and modifier shortcuts", async () => {
+    const { bridge } = dictationBridge();
+    const mic = controls();
+    for (const extra of [{ repeat: true }, { nativeEvent: { isComposing: true } }, { nativeEvent: { keyCode: 229 } }, { ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      mic.onKeyDown!(keyEvent("Enter", extra));
+    }
+    await Promise.resolve();
+    expect(bridge.permRequestMic).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+
+  it.each(["blur", "escape"])("cancels a hold on %s without allowing its permission reply to restart it", async cancel => {
+    const { requests } = dictationBridge();
+    const mic = controls();
+    mic.onKeyDown!(keyEvent("Enter"));
+    await Promise.resolve();
+    if (cancel === "blur") mic.onBlur!({} as Parameters<NonNullable<typeof mic.onBlur>>[0]);
+    else mic.onKeyDown!(keyEvent("Escape"));
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).not.toContain(true);
+  });
+
+  it("ignores an older permission reply after a new hold begins", async () => {
+    const { requests } = dictationBridge();
+    const mic = controls();
+    mic.onKeyDown!(keyEvent(" "));
+    await Promise.resolve();
+    mic.onKeyUp!(keyEvent(" "));
+    mic.onKeyDown!(keyEvent("Enter"));
+    await Promise.resolve();
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).not.toContain(true);
+    await settlePermission(requests[1]);
+    expect(fixture.stateUpdates).toContain(true);
+  });
+
+  it("does not release a keyboard hold when unrelated pointer capture ends", async () => {
+    const { requests } = dictationBridge();
+    const mic = controls();
+    mic.onKeyDown!(keyEvent("Enter"));
+    await Promise.resolve();
+    mic.onLostPointerCapture!({} as Parameters<NonNullable<typeof mic.onLostPointerCapture>>[0]);
+    mic.onKeyUp!(keyEvent(" "));
+    await settlePermission(requests[0]);
+    expect(fixture.stateUpdates).toContain(true);
+  });
+
+  it("blocks dictation while an approval owns the composer", async () => {
+    const { bridge } = dictationBridge();
+    const mic = controls({ bot: { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+      color: "green", unread: false, busy: false, modelSelection: { instanceId: "fixture", model: "fixture" }, messages: [{ id: "approval", at: 1, role: "bot", kind: "options", text: "", card: { title: "Review", subtitle: "Review first", requestId: "request-1", tool: "read_file", options: [] } }] } });
+    expect(mic.disabled).toBe(true);
+    mic.onKeyDown!(keyEvent("Enter"));
+    await Promise.resolve();
+    expect(bridge.permRequestMic).not.toHaveBeenCalled();
+  });
+});
+
+describe("Ask work action labels", () => {
+  it("names the current-work action and keeps the Enter hint consistent", () => {
+    vi.stubGlobal("localStorage", { getItem: (key: string) => key === "omb-drafts" ? JSON.stringify({ "bot:bud": "Use the updated address" }) : null });
+    const html = render(undefined, true);
+    expect(html).toContain('class="flex items-center gap-2 ask-busy-actions"');
+    expect(html).toContain('aria-label="Update current work"');
+    expect(html).toContain(">Update current work</span>");
+    expect(html).toContain(">Do next</span>");
+    expect(html).toContain("Enter to update current work");
+    expect(html).not.toContain("Enter to start");
+    expect(html).not.toContain("Steer now");
   });
 });

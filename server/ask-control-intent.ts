@@ -1,7 +1,10 @@
-import { parseAskControlIntent } from "../shared/ask-controls.ts";
+import { BANK_FEED_CONNECT_HREF, parseAskControlIntent } from "../shared/ask-controls.ts";
 export { parseAskControlIntent } from "../shared/ask-controls.ts";
 
+export const BANK_FEED_REPLY = "Redbark is RealBud's bank feed. Once connected, Bud can read accounts and transactions, never move money.";
+
 export function askControlReply(intent: NonNullable<ReturnType<typeof parseAskControlIntent>>, loops: Array<{ name: string; enabled: boolean; schedule: { time: string; weekdays: number[] } }> = []): string {
+  if (intent === "bank-feed") return `${BANK_FEED_REPLY}\n\n[Connect bank feed](${BANK_FEED_CONNECT_HREF})`;
   if (intent === "connections") return "Open **Add** here to connect an office app. Sign-in and access checks happen there; your draft stays saved.";
   if (intent === "setup") return "Open **Set up Bud** here to finish the connection. Your draft stays saved.";
   if (intent === "schedule-edit") return "Open **Schedule work** here to review the job and timing before saving. Nothing has changed yet.";

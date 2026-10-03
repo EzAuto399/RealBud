@@ -255,5 +255,5 @@ export function useBrowserTasks({ threadId, messages, busy, enabled, onInterrupt
     }
   }, [acting, onInterrupt, refresh, threadId]);
   const byMessage = useMemo(() => Object.fromEntries((state?.tasks ?? []).map(task => [task.messageId, task])), [state]);
-  return { byMessage, browser: state?.browser ?? NO_BROWSER, acting, error, act };
+  return { byMessage, browser: state?.browser ?? NO_BROWSER, acting, error, act, refresh };
 }

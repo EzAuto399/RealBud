@@ -28,6 +28,7 @@ import { composeModelviaClientBilling } from './modelvia-client-billing.ts';
 import { customerTermsPolicy } from './modelvia-keys.ts';
 import { officeMargins } from './office-ai-billing.ts';
 import { SquareHostedPaymentAdapter } from './square-payment.ts';
+import { composeHermiosSubscriptions } from './office-subscriptions.ts';
 
 export type GatewayServerOptions = Parameters<typeof createGatewayServer>[0];
 
@@ -48,7 +49,8 @@ export interface GatewayComposition {
 export type CareCollectionMode = 'off' | 'sandbox' | 'live';
 export interface CareCollection { billing: BillingService; careCollection: CareCollectionMode; squareWebhooks: boolean }
 const SQUARE_ENV = ['SQUARE_ACCESS_TOKEN', 'SQUARE_MERCHANT_ID', 'SQUARE_LOCATION_ID', 'SQUARE_NOTIFICATION_URL', 'SQUARE_WEBHOOK_SIGNATURE_KEY', 'REALBUD_INTERNAL_COMPANY_ID'] as const;
-const LIVE_APPROVAL_ENV = ['REALBUD_SELLER_BASIS_APPROVAL_REF', 'REALBUD_PRODUCTION_INVOICE_APPROVAL_REF', 'REALBUD_MANAGED_PROJECT_VERIFIED_REF'] as const;
+/** Operator attestations live collection needs; also gates a live Hermios catalog write (`hermios-square-catalog.ts`). */
+export const LIVE_APPROVAL_ENV = ['REALBUD_SELLER_BASIS_APPROVAL_REF', 'REALBUD_PRODUCTION_INVOICE_APPROVAL_REF', 'REALBUD_MANAGED_PROJECT_VERIFIED_REF'] as const;
 
 /**
  * Care-fee billing from the environment. `REALBUD_PAYMENT_MODE` is `local`
@@ -160,6 +162,8 @@ export function composeGateway(options: {
   // Billing plans: the seller basis and reference ids from the deployment, the
   // resale default from the Modelvia terms policy. Plan routes answer 503 naming
   // the missing variable until every one is set.
+  // Hermios subscriptions: off unless asked for; Square only in a collection mode.
+  const hermios = composeHermiosSubscriptions({ env, ledger, fetch: options.fetch });
   const planConfig = composeBillingPlanConfig(env);
   const billingPlans = new BillingPlans({ billing: care.billing, config: planConfig, clientFundedCompanies,
     ...('unavailable' in policy ? { resaleUnavailable: policy.unavailable } : policy.resale ? { resale: policy.resale } : {}) });
@@ -181,6 +185,7 @@ export function composeGateway(options: {
         ...('unavailable' in policy ? { policyUnavailable: policy.unavailable } : {}) }),
       billingPlans,
       paymentInstructions: composePaymentInstructions(env),
+      ...('subscriptions' in hermios ? { hermios: hermios.subscriptions } : { hermiosUnavailable: hermios.unavailable }),
       ...('provisioning' in provisioning ? { provisioning: provisioning.provisioning } : { provisioningUnavailable: provisioning.unavailable }),
       ...(registry ? { connectors: new ManagedConnectors({ ledger,
         devices: () => connectorRegistry(registry),

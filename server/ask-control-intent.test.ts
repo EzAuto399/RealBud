@@ -23,8 +23,19 @@ describe("product intent routing and PM copy", () => {
     const text = askControlReply("schedule-status", [{ name: "Morning money", enabled: true, schedule: { weekdays: [3], time: "09:00" } }]);
     expect(text).toContain("Wed at 09:00");
   });
+  it("answers the bank feed before connected apps, with an inline Connect action", () => {
+    for (const text of ["connect to redbark", "Connect Redbark.", "redbark", "connect my bank", "How do I connect my bank?", "set up the bank feed", "bank feed", "link our bank account"]) {
+      expect(parseAskControlIntent(text)).toBe("bank-feed");
+    }
+    for (const text of ["bank", "my bank account", "check the bank for rent from 4 Sample St", "connect the tenant's bank details to the ledger", "how do I connect Xero?"]) {
+      expect(parseAskControlIntent(text)).not.toBe("bank-feed");
+    }
+    const reply = askControlReply("bank-feed");
+    expect(reply).toBe("Redbark is RealBud's bank feed. Once connected, Bud can read accounts and transactions, never move money.\n\n[Connect bank feed](#connect-bank-feed)");
+    expect(reply).not.toMatch(/\bAPI\b|\bkey\b|sign-in did not start/i);
+  });
   it("keeps deterministic replies free of settings redirects and engineering language", () => {
-    const replies = [askControlReply("setup"), askControlReply("connections"), askControlReply("schedule-edit"), askControlReply("schedule-status"),
+    const replies = [askControlReply("bank-feed"), askControlReply("setup"), askControlReply("connections"), askControlReply("schedule-edit"), askControlReply("schedule-status"),
       scheduleIntentReply("Schedule a payment check every Wednesday"), productAskFailure("unexpected worker failure"),
       formatConnectedAppsReply({ configured: false, services: {}, tools: { available: false, names: [] } }),
       formatConnectedAppsReply({ configured: true, error: "private diagnostic", services: {}, tools: { available: false, names: [] } })];

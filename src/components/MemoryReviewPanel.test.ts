@@ -2,8 +2,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import * as store from '@/state/store';
-import { MemoryReviewPanel, MemoryReviewSession, MemoryReviewText } from './MemoryReviewPanel';
-import { MEMORY_REVIEW_API, MEMORY_REVIEW_ERRORS, type MemoryReviewItem, type MemoryReviewPreview } from '@shared/hermes-memory-review';
+import { MemoryLearningControls, MemoryLearningSession, MemoryReviewPanel, MemoryReviewRow, MemoryReviewSession, MemoryReviewText } from './MemoryReviewPanel';
+import { MEMORY_LEARNING_API, MEMORY_REVIEW_API, MEMORY_REVIEW_ERRORS, type MemoryReviewItem, type MemoryReviewPreview } from '@shared/hermes-memory-review';
 
 const first = '00000010', second = '00000020', digest = 'a'.repeat(64);
 const row = (id = first, state: MemoryReviewItem['state'] = 'pending'): MemoryReviewItem => ({ id, state, action: 'replace', target: 'user', origin: 'foreground', createdAt: 1700000000000, decision: null, reviewDigest: null });
@@ -219,5 +219,73 @@ describe('memory review rendering boundaries', () => {
     expect(html).toContain('do not update business records or grant permission to do work');
     expect(html).toContain('may require a new conversation'); expect(html).toContain('Refresh memory reviews');
     expect(html).not.toContain('Always approve'); expect(html).not.toContain('Apply reviewed change');
+  });
+});
+
+describe('automatic learnings', () => {
+  const keptDigest = 'd'.repeat(64);
+  const learningState = (autoKeep = true, kept = [{ reviewId: first, reviewDigest: keptDigest, target: 'user' as const, text: 'Prefers a friendly sign-off', keptAt: 1700000000000, decidedBy: 'policy' as const, policyVersion: 1 as const, undoStarted: false }]) =>
+    ({ version: 1, autoKeep, policyVersion: 1, kept });
+  function learningTransport() {
+    const calls: { path: string; init?: RequestInit; response: ReturnType<typeof deferred> }[] = [];
+    const learning = new MemoryLearningSession((path, init) => { const response = deferred(); calls.push({ path, init, response }); return response.promise; });
+    return { learning, calls };
+  }
+  async function loaded(state = learningState()) {
+    const t = learningTransport(); const loading = t.learning.refresh(); t.calls[0].response.resolve(state); await loading; return t;
+  }
+
+  it('renders an accessible 44px switch, its explanation, and the kept list with undo', async () => {
+    const { learning } = await loaded();
+    const html = renderToStaticMarkup(createElement(MemoryLearningControls, { learning, blocked: false }));
+    expect(html).toContain('role="switch"'); expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-labelledby="memory-auto-keep-label"'); expect(html).toContain('Bud keeps short notes about how it writes');
+    expect(html).toContain('Only short notes about how Bud writes are kept automatically. Everything else waits for you.'); expect(html).toContain('min-h-11');
+    expect(html).not.toMatch(/low-risk|safe|money|approvals/i);
+    expect(html).toContain('Kept automatically'); expect(html).toContain('Prefers a friendly sign-off');
+    expect(html).toContain('aria-label="Undo: Prefers a friendly sign-off"');
+    expect(html).not.toMatch(/Hermes|MCP|#[0-9a-f]{6}/i);
+  });
+  it('renders the switch off and disabled until the saved setting is read', () => {
+    const html = renderToStaticMarkup(createElement(MemoryLearningControls, { learning: new MemoryLearningSession(async () => learningState()), blocked: false }));
+    expect(html).toContain('aria-checked="false"'); expect(html).toMatch(/role="switch"[^>]*disabled=""/); expect(html).not.toContain('Kept automatically');
+  });
+  it('shows a held item reason in the review list', () => {
+    const item = { ...row(first), action: 'add' as const, hold: { code: 'money' as const, reason: 'Mentions money, so it waits for you.' } };
+    const html = renderToStaticMarkup(createElement(MemoryReviewRow, { item, selected: false, needsCheck: false, disabled: false, onSelect: () => {} }));
+    expect(html).toContain('Mentions money, so it waits for you.'); expect(html).toContain('Ready for review');
+  });
+  it('sends only the boolean setting and reconciles an uncertain reply from saved state', async () => {
+    const { learning, calls } = await loaded(learningState(false, []));
+    const turning = learning.setAutoKeep(true);
+    expect(calls[1].path).toBe(MEMORY_LEARNING_API); expect(calls[1].init).toEqual({ method: 'POST', body: JSON.stringify({ autoKeep: true }) });
+    calls[1].response.reject(new Error('fictional lost reply')); await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2].path).toBe(MEMORY_LEARNING_API); calls[2].response.resolve(learningState(true, [])); await turning;
+    expect(learning.getSnapshot().saved?.autoKeep).toBe(true); expect(learning.getSnapshot().error).toContain('could not be confirmed');
+    expect(JSON.stringify(learning.getSnapshot())).not.toContain('fictional lost reply');
+  });
+  it('treats the administrator gate as a definite refusal, not an unconfirmed result', async () => {
+    const { learning, calls } = await loaded(learningState(false, []));
+    const turning = learning.setAutoKeep(true);
+    calls[1].response.reject(Object.assign(new Error('Service administrator sign-in required.'), { status: 403, code: 'service_admin_required' })); await turning;
+    expect(calls).toHaveLength(2);
+    expect(learning.getSnapshot()).toMatchObject({ busy: null, error: 'Only an administrator can change this.' });
+    expect(learning.getSnapshot().saved?.autoKeep).toBe(false);
+    const html = renderToStaticMarkup(createElement(MemoryLearningControls, { learning, blocked: false }));
+    expect(html).toContain('Only an administrator can change this.'); expect(html).not.toContain('could not be confirmed');
+  });
+  it('undoes one kept learning and never assumes an unconfirmed undo', async () => {
+    const { learning, calls } = await loaded();
+    const undoing = learning.undo(keptDigest);
+    expect(calls[1].path).toBe(`${MEMORY_LEARNING_API}/${keptDigest}/undo`); expect(calls[1].init).toEqual({ method: 'POST', body: '{}' });
+    calls[1].response.resolve({ version: 1, reviewDigest: 'e'.repeat(64), result: 'undone' }); await vi.waitFor(() => expect(calls).toHaveLength(3));
+    calls[2].response.resolve(learningState()); await undoing;
+    expect(learning.getSnapshot().unconfirmed).toBe(keptDigest); expect(learning.getSnapshot().notice).toBe('');
+    const html = renderToStaticMarkup(createElement(MemoryLearningControls, { learning, blocked: false }));
+    expect(html).toContain('undo not yet confirmed'); expect(html).toContain('Finish undo');
+    const again = learning.undo(keptDigest); calls[3].response.resolve({ version: 1, reviewDigest: keptDigest, result: 'already-changed' });
+    await vi.waitFor(() => expect(calls).toHaveLength(5)); calls[4].response.resolve(learningState(true, [])); await again;
+    expect(learning.getSnapshot()).toMatchObject({ unconfirmed: null, error: '' }); expect(learning.getSnapshot().notice).toContain('already changed');
+    await learning.undo(keptDigest); expect(calls).toHaveLength(5);
   });
 });

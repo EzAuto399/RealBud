@@ -48,7 +48,7 @@ afterEach(async () => {
   selected.runtime = null;
 });
 
-async function fixture(options: { checkedAccount?: boolean } = {}) {
+async function fixture(options: { checkedAccount?: boolean; reference?: string } = {}) {
   ensureDirs(); chmodSync(FAKE_CLI, 0o755);
   // A real persisted standing read permission avoids routine read cards; it
   // must never authorize a payment. This is separate from the task grant.
@@ -57,7 +57,10 @@ async function fixture(options: { checkedAccount?: boolean } = {}) {
   cleanup.push(() => removeFixture(root));
   const threadId = `thread-${randomUUID()}`;
   const runId = `ask-${randomUUID()}`;
-  const reference = `INV-FICTIONAL-${randomUUID().slice(0, 8)}`;
+  // The R prefix makes the random suffix one identifier token. A bare
+  // `cad12345` suffix also looks like a second currency amount to the current
+  // conservative facts parser, which must correctly hold such ambiguity.
+  const reference = options.reference ?? `INV-FICTIONAL-R${randomUUID().slice(0, 8)}`;
   const userRequest = "Read this invoice email and prepare its details for review. Ask before any payment.";
   const emailPage = `${OFFICE}\nInbox — fictional email\nFrom: billing@fictional-supplier.example\nSubject: Invoice ${reference}\n${INJECTION}\n@e1 link "Review invoice"`;
   const paymentPage = (recipient = "Fictional Plumbing Pty Ltd", amount = "480.00") => `${OFFICE}\nPay invoice\nPayee: ${recipient}\nAmount: AUD ${amount}\nReference: ${reference}\n@e1 button "Pay now"\n@e2 textbox "Amount" value="${amount}"`;
@@ -168,11 +171,19 @@ async function fixture(options: { checkedAccount?: boolean } = {}) {
 }
 
 describe("hostile email with actual browser tools and authoritative approval", () => {
+  it("holds ambiguous currency-like reference text instead of presenting a payment approval", async () => {
+    const f = await fixture({ reference: "INV-FICTIONAL-cad12345" }); await f.payment();
+    const result = await f.call("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("could not confirm the amount, currency");
+    expect(f.cards()).toHaveLength(0); expect(f.effects()).toHaveLength(0);
+    expect(await f.approvals()).toMatchObject([{ decision: "unconfirmed", outcome: "not-dispatched" }]);
+  });
   it.each([
     ["browser_click_semantic", { tab_id: 1, ref: "@e1" }],
     ["browser_press", { tab_id: 1, ref: "@e2", key: "Enter" }],
   ])("%s cannot turn email instructions or fullAuto into payment approval", async (tool, args) => {
-    const f = await fixture(); await f.payment();
+    const f = await fixture({ reference: "INV-FICTIONAL-Rcad12345" }); await f.payment();
     const pending = f.call(tool, args);
     const card = await f.cardAfter();
     expect(f.effects()).toHaveLength(0);
@@ -282,11 +293,14 @@ describe("hostile email with actual browser tools and authoritative approval", (
     expect(await f.rpc("tools/list", {}, undefined, "Bearer fictional-other-office")).toMatchObject({ isError: true, content: [{ text: "HTTP 403" }] });
     const tabs = await f.call("browser_tabs");
     expect(JSON.stringify(tabs)).not.toContain("other-office.example");
-    expect((await f.call("browser_borrow", { tab_id: 2 })).isError).toBe(true);
-    expect((await f.call("browser_borrow", { tab_id: 3 })).isError).toBe(true);
     await f.readEmail();
     expect((await f.call("browser_navigate", { tab_id: 1, url: "https://other-office.example/bills" })).isError).toBe(true);
     expect((await f.call("browser_navigate", { tab_id: 1, url: `https://${SITE}/pay?amount=480` })).isError).toBe(true);
+    expect((await f.call("browser_borrow", { tab_id: 2 })).isError).toBe(true);
+    expect((await f.call("browser_borrow", { tab_id: 3 })).isError).toBe(true);
+    // A same-site tab in another browser revokes this task. Further requests
+    // cannot continue through that now-closed broker after the denial.
+    await expect(f.call('browser_tabs')).rejects.toThrow(/fetch failed/);
     expect(f.calls.filter(call => call.args[0] === "navigate")).toHaveLength(0);
     expect(f.effects()).toHaveLength(0);
   });

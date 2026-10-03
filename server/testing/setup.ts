@@ -2,10 +2,15 @@
 // DATA_DIR (~/.realbud) never touches the real one. os.homedir()
 // reads HOME (POSIX) / USERPROFILE (Windows) at call time, and this file
 // runs before any test module imports server/config.ts.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
+import { SANDBOX_TEST_WRITABLE } from "../worker-network-sandbox.ts";
+
+// Test fakes (fake CLIs, FAKE_ACP_DUMP) leave their evidence under the temp
+// folder; the worker sandbox grants it only through this explicit hook.
+SANDBOX_TEST_WRITABLE.push(realpathSync(tmpdir()));
 
 const home = mkdtempSync(join(tmpdir(), "omb-test-home-"));
 process.env.HOME = home;

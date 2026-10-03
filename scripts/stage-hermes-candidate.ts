@@ -1,8 +1,8 @@
 /**
- * Stage the Hermes 0.21.3 candidate runtime, without promoting it.
+ * Stage a Hermes candidate runtime (TARGET below), without promoting it.
  *
  * This is step 1 of the promotion procedure recorded in
- * docs/HERMES-0.21.3-EVIDENCE.md. It exists because `startRuntimeUpdate` was
+ * docs/HERMES-0.21.5-EVIDENCE.md. It exists because `startRuntimeUpdate` was
  * once hardcoded to HERMES_RECOMMENDED, which made the procedure circular: the
  * smoke test had to run before promotion, but staging required promotion first.
  *
@@ -22,7 +22,7 @@ import { readRuntimeSelection } from '../server/hermes-runtime-selection.ts';
 import { HERMES_RELEASES } from '../server/hermes-releases.ts';
 import { hermesHome } from '../server/hermes-paths.ts';
 
-const TARGET = '0.21.3';
+const TARGET = '0.21.5';
 
 const release = HERMES_RELEASES.find((entry) => entry.product === TARGET);
 if (!release) throw new Error(`Hermes ${TARGET} is not in the install catalog. Admit it there first.`);

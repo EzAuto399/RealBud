@@ -141,12 +141,12 @@ export function workdayGuide(input: {
         phase: "worker-miss",
         tone: "hold",
         eyebrow: "Live check missed",
-        title: "Facts stay held",
+        title: "Check didn't run",
         // The button replays labelled training facts, so it must not be called
         // Recheck: a live Recheck would miss again until the model is fixed.
         detail: input.workerReady
           ? "The last check did not return live facts. Bud is connected now; you can recheck from Desk or practise with the sample."
-          : "Bud did not return live facts. Set up Bud on You, or practise with the sample morning.",
+          : "Bud did not return live facts. Set up Bud in Workspace, or practise with the sample morning.",
         action: "practice",
         actionLabel: "Run the sample morning",
         ...meta,
@@ -157,7 +157,7 @@ export function workdayGuide(input: {
       tone: "hold",
       eyebrow: "Check incomplete",
       title: "Bud needs attention",
-      detail: "Recheck missed — facts stay held. Open You → Bud to fix the connection, then Recheck again.",
+      detail: "Recheck missed — facts stay held. Check Bud's connection in Workspace, then Recheck again.",
       action: "you",
       actionLabel: "Check Bud",
       ...meta,
@@ -213,4 +213,15 @@ export function workdayGuide(input: {
     actionLabel: "View Desk",
     ...meta,
   };
+}
+
+/** One plain sentence for a Desk check that did not run or finish. The raw
+ *  worker detail names the cause; this says what it means for the morning. */
+export function missedCheckLine(detail: string | null | undefined): string {
+  const text = (detail ?? "").toLowerCase();
+  if (/needs an update|supported build/.test(text)) return "Bud needs an update, so this morning's check didn't run. Saved results are shown.";
+  if (/not installed|isn't installed|cli not found|not set up|isn't set up|setup did not finish|safeguards|pack|workroom/.test(text)) return "Bud isn't set up yet, so this morning's check didn't run. Saved results are shown.";
+  if (/key|model connection|billing|credits|no model/.test(text)) return "Bud's model connection needs attention, so this morning's check didn't finish. Saved results are shown.";
+  if (/too long/.test(text)) return "Bud took too long, so this morning's check didn't finish. Saved results are shown.";
+  return "The check didn't finish. The last saved results are shown.";
 }

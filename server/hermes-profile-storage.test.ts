@@ -376,9 +376,14 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     // costing two more cold launches. The admission counts are unchanged:
     // the same paths, kinds and actions, in the same order, in fewer
     // processes.
+    //
+    // 2026-10-01: admissions fresh 24 -> 68 and reapply 30 -> 52. The pack
+    // now ships five more skills (14 files in 8 directories): two admissions
+    // per new path on a fresh apply, one on reapply. Launch counts are
+    // unchanged because the skill tree still rides the profile's processes.
     expect({ fresh, reapply, startup }).toEqual({
-      fresh: { launches: 5, admissions: 24 },
-      reapply: { launches: 7, admissions: 30 },
+      fresh: { launches: 5, admissions: 68 },
+      reapply: { launches: 7, admissions: 52 },
       startup: { launches: 3, admissions: 8 },
     });
   });

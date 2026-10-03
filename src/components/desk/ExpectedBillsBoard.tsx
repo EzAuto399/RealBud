@@ -31,7 +31,8 @@ const GROUP_LABEL: Record<keyof Groups, string> = {
   settled: "Closed",
 };
 
-export function ExpectedBillsBoard({ className, compact = false }: { className?: string; compact?: boolean }) {
+/** `bare` drops the card chrome when the page already names the view (saved Bills view). */
+export function ExpectedBillsBoard({ className, compact = false, bare = false }: { className?: string; compact?: boolean; bare?: boolean }) {
   const [page, setPage] = useState<ExpectedBillsPage<BillRow> | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -70,9 +71,9 @@ export function ExpectedBillsBoard({ className, compact = false }: { className?:
   return (
     <section
       aria-label="Expected bills"
-      className={cn("rounded-xl border border-line bg-sheet p-4", className)}
+      className={cn(!bare && "rounded-xl border border-line bg-sheet p-4", className)}
     >
-      <div className="flex items-start gap-2.5">
+      {!bare && <div className="flex items-start gap-2.5">
         <CalendarClock size={18} className="mt-0.5 shrink-0 text-agency" aria-hidden />
         <div>
           <h2 className="text-[14px] font-medium text-ink">Bills board</h2>
@@ -80,7 +81,7 @@ export function ExpectedBillsBoard({ className, compact = false }: { className?:
             Saved bills by property, with source review and a calendar for confirmed due dates and expected arrivals.
           </p>
         </div>
-      </div>
+      </div>}
       {compact ? <div className="mt-3 space-y-2"><p className="text-sm text-ink-secondary">{loading ? 'Checking saved bills…' : error ? 'Saved bill count could not be refreshed. Open the full view to try again.' : groups ? `${total} saved bill records. Open the full view to review source messages, due dates and expected arrivals.` : 'Saved bills are unavailable. Open the full view to review recovery details.'}</p><OpenBillsView /></div> : <>
       {error ? <div role="alert" className="mt-2 text-[12.5px] text-danger">
         <p>{error}</p>
@@ -93,7 +94,7 @@ export function ExpectedBillsBoard({ className, compact = false }: { className?:
           <Loader2 size={14} className="animate-spin" aria-hidden /> Loading…
         </p>
       ) : error || groups == null ? null : total === 0 ? (
-        <p className="mt-3 text-[13px] text-ink-secondary">No earlier bill-register records. Source-reviewed bills and calendar appear below.</p>
+        bare ? null : <p className="mt-3 text-[13px] text-ink-secondary">No earlier bill-register records. Source-reviewed bills and calendar appear below.</p>
       ) : (
         <div className="mt-3 space-y-3"><p className="text-sm text-ink-secondary">Earlier bill register · {page?.bills.length} of {total} records loaded.</p><div className="grid gap-3 sm:grid-cols-2">
           {(Object.keys(GROUP_LABEL) as (keyof Groups)[]).map((key) => {
@@ -119,7 +120,7 @@ export function ExpectedBillsBoard({ className, compact = false }: { className?:
           })}
         </div>{page?.nextCursor && <button className="min-h-11 rounded border border-line px-3 text-sm" disabled={loading} onClick={() => void more()}>Load more earlier bills</button>}</div>
       )}
-      <SourceBillsPanel onSaved={() => void load()} />
+      <div className={cn("mt-4", !bare && "border-t border-line pt-4")}><SourceBillsPanel onSaved={() => void load()} /></div>
       </>}
     </section>
   );

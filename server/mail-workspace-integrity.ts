@@ -25,6 +25,7 @@ export function validMailWorkItem(i: unknown, workspaceId: string): i is MailWor
       ['open','done','snoozed'].includes(i.status) && (i.snoozedUntil === null || at(i.snoozedUntil)) && (i.status !== 'snoozed' || i.snoozedUntil !== null) && text(i.note, 2000) &&
       typeof i.reviewed === 'boolean' && typeof i.newEvidence === 'boolean' &&
       (!Object.hasOwn(i, 'followUpReviewedKey') || typeof i.followUpReviewedKey === 'string' && HEX.test(i.followUpReviewedKey)) &&
+      (!Object.hasOwn(i, 'preparedDigest') || typeof i.preparedDigest === 'string' && HEX.test(i.preparedDigest)) &&
       at(i.firstSeenAt) && at(i.updatedAt) && at(i.lastMessageAt);
   }
 export function validMailWorkspace(value: unknown, workspaceId: string): value is StoredMailWorkspace {

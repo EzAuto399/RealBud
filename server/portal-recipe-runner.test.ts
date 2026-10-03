@@ -5,7 +5,7 @@
 // RealBud's authority path, never that REI Cloud behaves this way.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
@@ -33,9 +33,10 @@ async function fixture(portal: FictionalReiOptions = {}, task: { actions?: Brows
   const pack = fictionalReiPack();
   const operations = task.operations ?? new ConnectedAppOperationStore({ file: join(root, "operations.json") });
   const person = vi.fn<PersonApprove>(async () => false);
+  let lastWorkroom = "";
   const start = async (runs: PortalRunRequest[], extra: Partial<PortalRunOptions> = {}) => {
     const grantId = `grant-${randomUUID()}`; const runId = `run-${randomUUID()}`;
-    const workroom = browserTaskWorkroom(root, grantId);
+    const workroom = browserTaskWorkroom(root, grantId); lastWorkroom = workroom;
     const uploads = task.upload ? [await addBrowserTaskUpload(workroom, "fictional-bank.csv", task.upload)] : [];
     const needs = portalRecipeGrantNeeds(pack, runs);
     const text = `Fictional task: ${runs.map(run => run.recipe).join(", ")}`;
@@ -46,7 +47,7 @@ async function fixture(portal: FictionalReiOptions = {}, task: { actions?: Brows
       rules: () => [], assertCapability: () => {}, pollMs: 0, ...extra });
   };
   const dispatched = () => mock.calls.filter(args => DISPATCH.has(args[0]));
-  return { mock, runtime, pack, person, operations, start, dispatched };
+  return { mock, runtime, pack, person, operations, start, dispatched, workroomOf: () => lastWorkroom };
 }
 const withOpen = (recipe: string, inputs: Record<string, string> = {}): PortalRunRequest[] => [{ recipe: "open-session" }, { recipe, inputs }];
 
@@ -89,6 +90,31 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
       expect((await f.runtime.status()).active).toBe(false);
     });
   }
+  it("scopes by the top-bar business code alone when no reicid was saved: addresses carry none, a different code stops", async () => {
+    const f = await fixture();
+    const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } });
+    expect(run.outcome, run.detail).toBe("completed");
+    expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Tenant Delta"]);
+    expect(f.mock.calls.filter(args => args[0] === "navigate").every(args => !new URL(args[1]).searchParams.has("reicid"))).toBe(true);
+    expect(run.receipt.accountChecks).toBeGreaterThanOrEqual(f.dispatched().length);
+    const other = await fixture({ business: "FICT2" });
+    expect(await other.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } })).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
+    expect(other.dispatched()).toEqual([]);
+  });
+  it("waits for the tenants grid to fill: \"No records to display\" before its record count is not an empty result", async () => {
+    const f = await fixture();
+    const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Fictional" }));
+    expect(run.outcome, run.detail).toBe("completed");
+    expect(run.results[1].rows.length).toBeGreaterThan(5);
+    expect(run.results[1].pages).toBe(1);
+    // Each load showed the empty grid first and was read again.
+    const texts = f.mock.calls.filter(args => args[0] === "observe").length;
+    expect(texts).toBeGreaterThan(f.dispatched().length + 2);
+    // A filter with no match settles as empty once the footer says 0 records.
+    const none = await f.start(withOpen("find-record", { list: "Tenants", query: "Nobody" }));
+    expect(none.outcome, none.detail).toBe("completed");
+    expect(none.results[1]).toMatchObject({ table: "empty", rows: [] });
+  });
   it("open-session and unknown-screen-study (menu labels, no route) complete", async () => {
     const f = await fixture();
     const run = await f.start(withOpen("unknown-screen-study", { top_label: "Communities" }));
@@ -215,10 +241,10 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
   });
   it("holds an upload with an unknown result and never uploads again", async () => {
     const operations = new ConnectedAppOperationStore({ file: join(privateTempRoot(join(tmpdir(), "rb-recipe-ops-")), "operations.json") });
-    const f = await fixture({ unknownUpload: true }, { upload: Buffer.from("date,reference,amount\n2026-09-25,FT-BRAVO,540.00\n"), operations });
+    const f = await fixture({ unknownUpload: true }, { upload: Buffer.from('25/09/2026,"540.00",FICTIONAL PAYMENT,,,,,FT-BRAVO\n'), operations });
     // The person approves each step the recipe cannot answer for (the file format on a banking page, the upload).
     f.person.mockImplementation(async () => true);
-    const inputs = { bank_format: "Fictional Bank CSV", approved_file: "fictional-bank.csv", expected_rows: "1", expected_total: "540.00" };
+    const inputs = { bank_format: "ANZ(csv file)", approved_file: "fictional-bank.csv", approved_sha256: sha256('25/09/2026,"540.00",FICTIONAL PAYMENT,,,,,FT-BRAVO\n'), expected_rows: "1", expected_total: "540.00" };
     const first = await f.start(withOpen("bulk-receipting-preview", inputs));
     expect(first).toMatchObject({ outcome: "hold", reason: "unknown-result" });
     expect(f.person.mock.calls.map(call => call[0])).toContain("browser_upload");
@@ -230,10 +256,40 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.mock.effects).toEqual(["upload"]);
   });
   it("refuses an upload the person does not approve, and never on its own authority", async () => {
-    const f = await fixture({}, { upload: Buffer.from("date,reference,amount\n") });
-    const run = await f.start(withOpen("bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: "fictional-bank.csv", expected_rows: "1", expected_total: "0" }));
+    const f = await fixture({}, { upload: Buffer.from('25/09/2026,"0.00",FICTIONAL EMPTY,,,,,\n') });
+    const run = await f.start(withOpen("bulk-receipting-preview", { bank_format: "ANZ(csv file)", approved_file: "fictional-bank.csv", approved_sha256: sha256('25/09/2026,"0.00",FICTIONAL EMPTY,,,,,\n'), expected_rows: "1", expected_total: "0" }));
     expect(run).toMatchObject({ outcome: "handover", reason: "not-approved" });
     expect(f.mock.calls.filter(args => args[0] === "upload")).toEqual([]);
+  });
+  it("uploads only the file whose hash the run names, and only while the private copy still has it", async () => {
+    const bytes = Buffer.from('25/09/2026,"540.00",FICTIONAL PAYMENT,,,,,FT-BRAVO\n');
+    const inputs = { bank_format: "ANZ(csv file)", approved_file: "fictional-bank.csv", expected_rows: "1", expected_total: "540.00" };
+    // No hash, or another file's hash: refused before the person is asked about the upload.
+    for (const approved of [{}, { approved_sha256: sha256("other reviewed bytes") }] as Array<Record<string, string>>) {
+      const f = await fixture({}, { upload: bytes });
+      f.person.mockImplementation(async () => true);
+      expect(await f.start(withOpen("bulk-receipting-preview", { ...inputs, ...approved }))).toMatchObject({ outcome: "handover", reason: "upload-not-bound" });
+      expect(f.person.mock.calls.map(call => call[0])).not.toContain("browser_upload");
+      expect(f.mock.effects).toEqual([]);
+    }
+    // The bound file changed in the task's private folder after the grant: refused, nothing sent.
+    const f = await fixture({}, { upload: bytes });
+    f.person.mockImplementation(async () => true);
+    const run = await f.start(withOpen("bulk-receipting-preview", { ...inputs, approved_sha256: sha256(bytes) }), {
+      approve: async (tool, params, summary, signal, projection) => {
+        if (tool === "browser_select") { const path = join(f.workroomOf(), "uploads", "fictional-bank.csv"); chmodSync(path, 0o600); writeFileSync(path, "changed"); }
+        return f.person(tool, params, summary, signal, projection);
+      },
+    });
+    expect(run).toMatchObject({ outcome: "handover", reason: "upload-changed" });
+    expect(f.mock.calls.filter(args => args[0] === "upload")).toEqual([]);
+    // The bound, unchanged file previews.
+    const ok = await fixture({}, { upload: bytes });
+    ok.person.mockImplementation(async () => true);
+    const done = await ok.start(withOpen("bulk-receipting-preview", { ...inputs, approved_sha256: sha256(bytes) }));
+    expect(done.outcome, done.detail).toBe("completed");
+    expect(done.results[1].stopBefore).toEqual(expect.arrayContaining(["Process Receipts", "Receipt All"]));
+    expect(ok.mock.effects).toEqual(["upload"]);
   });
   it("refuses before opening the browser when the grant is narrower than the recipes", async () => {
     const f = await fixture({}, { actions: ["read", "navigate", "click"] });

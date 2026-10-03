@@ -35,6 +35,10 @@ RUNTIME_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 PENDING_TOP = frozenset({"id", "subsystem", "action", "summary", "origin", "created_at", "payload"})
 PAYLOAD_KEYS = frozenset({"action", "target", "content", "old_text", "new_text", "operations"})
 OP_KEYS = frozenset({"action", "content", "old_text", "new_text"})
+# Hermes 0.21.5 pins each staged replace/remove to the FULL entry it selected
+# when staged ("matched_entry") and refuses to replay a record without it.
+PIN_KEY = "matched_entry"
+DESTRUCTIVE = frozenset({"replace", "remove"})
 ACTIONS = frozenset({"add", "replace", "remove", "batch"})
 TARGETS = frozenset({"memory", "user"})
 ORIGINS = frozenset({"foreground", "background_review"})
@@ -77,7 +81,7 @@ class Ctx:
         "reviews_dir", "pending_dir", "config_path", "config_digest", "config",
         "write_approval", "memory_enabled", "user_profile_enabled",
         "memory_char_limit", "user_char_limit", "MemoryStore", "apply_memory_pending",
-        "ENTRY_DELIMITER", "scan_content", "is_truthy", "DryRun",
+        "ENTRY_DELIMITER", "scan_content", "is_truthy", "DryRun", "pin_entries",
     )
 
 
@@ -691,6 +695,13 @@ def _import_native(ctx: Ctx) -> None:
         raise ReviewError("unsupported")
     if not callable(apply_memory_pending) or not callable(_scan_memory_content):
         raise ReviewError("unavailable")
+    # The host hash-binds the admitted modules per commit; the pinning schema
+    # follows from them. 0.21.5 adds resolve_entry + destructive_ops together.
+    ctx.pin_entries = callable(getattr(MemoryStore, "resolve_entry", None))
+    if ctx.pin_entries != callable(getattr(memory_tool_mod, "destructive_ops", None)) or (
+        ctx.pin_entries and not callable(getattr(MemoryStore, "resolve_batch_entries", None))
+    ):
+        raise ReviewError("unsupported")
     ctx.MemoryStore = MemoryStore
     ctx.apply_memory_pending = apply_memory_pending
     ctx.ENTRY_DELIMITER = ENTRY_DELIMITER
@@ -774,10 +785,22 @@ def _norm_alias(content: Any, new_text: Any) -> Any:
     return content
 
 
+def _norm_pin(ctx: Ctx, obj: Dict[str, Any], action: str) -> Any:
+    """The staged pin, ABSENT when not present; only the pinning runtime accepts it."""
+    if PIN_KEY not in obj:
+        return ABSENT
+    pin = obj[PIN_KEY]
+    if not ctx.pin_entries or action not in DESTRUCTIVE:
+        raise ReviewError("unsupported")
+    if not isinstance(pin, str) or not pin:
+        raise ReviewError("invalid")
+    return pin
+
+
 def _norm_op(ctx: Ctx, op: Any, idx: int) -> Dict[str, Any]:
     if not isinstance(op, dict):
         raise ReviewError("invalid")
-    if set(op.keys()) - OP_KEYS:
+    if set(op.keys()) - OP_KEYS - {PIN_KEY}:
         raise ReviewError("unsupported")
     if "target" in op:
         raise ReviewError("unsupported")
@@ -808,13 +831,16 @@ def _norm_op(ctx: Ctx, op: Any, idx: int) -> Dict[str, Any]:
         if old_text is ABSENT:
             raise ReviewError("invalid")
         out["old_text"] = old_text
+    pin = _norm_pin(ctx, op, action)
+    if pin is not ABSENT:
+        out[PIN_KEY] = pin
     if idx < 0:
         raise ReviewError("invalid")
     return out
 
 
 def _norm_payload(ctx: Ctx, payload: Dict[str, Any]) -> Dict[str, Any]:
-    if set(payload.keys()) - PAYLOAD_KEYS:
+    if set(payload.keys()) - PAYLOAD_KEYS - {PIN_KEY}:
         raise ReviewError("unsupported")
     target = payload.get("target", "memory")
     if target is None:
@@ -838,6 +864,8 @@ def _norm_payload(ctx: Ctx, payload: Dict[str, Any]) -> Dict[str, Any]:
             raise ReviewError("capacity")
         if not operations:
             raise ReviewError("invalid")
+        if PIN_KEY in payload:
+            raise ReviewError("unsupported")
         ops = [_norm_op(ctx, op, i) for i, op in enumerate(operations)]
         return {"action": "batch", "target": target, "operations": ops}
     if action not in ("add", "replace", "remove"):
@@ -866,7 +894,16 @@ def _norm_payload(ctx: Ctx, payload: Dict[str, Any]) -> Dict[str, Any]:
         if old_text is ABSENT:
             raise ReviewError("invalid")
         out["old_text"] = old_text
+    pin = _norm_pin(ctx, payload, action)
+    if pin is not ABSENT:
+        out[PIN_KEY] = pin
     return out
+
+
+def _unpinned(payload: Dict[str, Any]) -> bool:
+    """True when a replace/remove in this normalized payload carries no staged pin."""
+    ops = payload["operations"] if payload["action"] == "batch" else [payload]
+    return any(op["action"] in DESTRUCTIVE and PIN_KEY not in op for op in ops)
 
 
 def _parse_pending(ctx: Ctx, data: bytes, file_id: str) -> Dict[str, Any]:
@@ -954,7 +991,7 @@ def _map_store_error(result: Dict[str, Any]) -> str:
         return "blocked-content"
     if any(x in err for x in ("limit", "exceed", "over the", "chars", "capacity")):
         return "capacity"
-    if "unknown staged action" in err or "unknown action" in err:
+    if "unknown staged action" in err or "unknown action" in err or "predates entry pinning" in err:
         return "unsupported"
     return "conflict"
 
@@ -982,16 +1019,64 @@ def _read_memory(ctx: Ctx, target: str) -> str:
         raise ReviewError("unavailable") from exc
 
 
-def _apply_dry(ctx: Ctx, payload: Dict[str, Any], before: str) -> Tuple[Any, str, bool]:
-    target = payload["target"]
-    _round_trip(ctx, before, _target_limit(ctx, target))
-    store = ctx.DryRun(
+def _dry_store(ctx: Ctx, before: str) -> Any:
+    return ctx.DryRun(
         before,
         memory_char_limit=ctx.memory_char_limit,
         user_char_limit=ctx.user_char_limit,
         memory_enabled=ctx.memory_enabled,
         user_profile_enabled=ctx.user_profile_enabled,
     )
+
+
+def _pin_entries(ctx: Ctx, payload: Dict[str, Any], before: str) -> Dict[str, Any]:
+    """On the pinning runtime, pin each unpinned replace/remove to the full entry its
+    old_text selects in `before`, through the native resolver (same match rules and
+    failures as the native staging path). Other runtimes return the payload unchanged."""
+    if not ctx.pin_entries or not _unpinned(payload):
+        return payload
+    target, store = payload["target"], _dry_store(ctx, before)
+    try:
+        if payload["action"] == "batch":
+            result = store.resolve_batch_entries(target, payload["operations"])
+        else:
+            result = store.resolve_entry(target, payload["old_text"], payload["action"])
+    except ReviewError:
+        raise
+    except Exception as exc:
+        raise ReviewError("unavailable") from exc
+    if not isinstance(result, dict):
+        raise ReviewError("unavailable")
+    if not result.get("success"):
+        raise ReviewError(_map_store_error(result))
+    out = dict(payload)
+    if payload["action"] == "batch":
+        entries = result.get("matched_entries")
+        if not isinstance(entries, list) or len(entries) != len(payload["operations"]):
+            raise ReviewError("unavailable")
+        ops = []
+        for op, entry in zip(payload["operations"], entries):
+            if op["action"] in DESTRUCTIVE and PIN_KEY not in op:
+                if not isinstance(entry, str) or not entry:
+                    raise ReviewError("unavailable")
+                op = {**op, PIN_KEY: entry}
+            ops.append(op)
+        out["operations"] = ops
+    else:
+        entry = result.get(PIN_KEY)
+        if not isinstance(entry, str) or not entry:
+            raise ReviewError("unavailable")
+        out[PIN_KEY] = entry
+    return out
+
+
+def _apply_dry(ctx: Ctx, payload: Dict[str, Any], before: str) -> Tuple[Any, str, bool]:
+    target = payload["target"]
+    _round_trip(ctx, before, _target_limit(ctx, target))
+    # A record staged before pinning is previewed against what its old_text
+    # selects now so a person can reject it; approval refuses it (_cmd_decide).
+    payload = _pin_entries(ctx, payload, before)
+    store = _dry_store(ctx, before)
     try:
         result = ctx.apply_memory_pending(payload, store)
     except ReviewError:
@@ -1546,6 +1631,10 @@ def _cmd_decide(ctx: Ctx) -> Dict[str, Any]:
             )
             _finish_remove_pending(ctx, pending, missing_ok=False)
             return _decide_result(signed)
+        if ctx.pin_entries and _unpinned(pending["payload"]):
+            # Staged by an older runtime without its pin: this runtime refuses to
+            # replay it by old_text. Reject it and ask Bud for a fresh proposal.
+            raise ReviewError("unsupported")
         intent = _write_receipt(
             ctx,
             _build_receipt(ctx, pending, preview, decision="approve", phase="intent", state="applied"),

@@ -1,0 +1,6 @@
+anz-export-fictional.csv is FICTIONAL test data.
+
+Every name, code, address, amount and agency spelling in it is invented. It copies only the
+shape of an ANZ transaction export (no header row, 8 columns, quoted signed amount in column 2,
+reference in column 8, a trailing blank line). It is not a customer file, not a bank file and
+not evidence that any real export was checked. Used by server/bank-reference-match.test.ts.

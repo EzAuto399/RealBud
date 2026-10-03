@@ -65,6 +65,7 @@ export interface CompanyManagement {
 }
 
 export type DepartmentAccess = 'none' | 'read' | 'write';
+export type { DepartmentConfiguration, DepartmentConfigurationPlan, DepartmentConfigurationRead, SaveDepartmentConfigurationInput, DepartmentConfigurationSaved, DepartmentConfigurationHistory, DepartmentConfigurationHistoryItem, DepartmentConfigurationCandidates } from './department-configuration.ts';
 export interface CompanyDepartment {
   id: string; name: string; revision: string; access: DepartmentAccess;
   retiredAt: string | null; retiredBy: string | null; retirementNote: string;

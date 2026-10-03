@@ -1,15 +1,20 @@
 // The PM's book: markdown files Hermes may read. Not a second brain UI.
 // Worker SOUL stays in the Hermes pack. Evaluate never reads these files.
-import { chmodSync, existsSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, rmdirSync, unlinkSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 
-import { createEmptyFileSync, mkdirNewSync, restrictNewSync, writeFileAtomic, writeFilePrivateSync, type NewPrivateObject } from "./atomic.ts";
+import { assertOwnPrivate, createEmptyFileSync, keepPrivateDirSync, keepPrivateFileSync, mkdirNewSync, readPrivateFileSync, restrictNewSync, writeFileAtomic, type NewPrivateObject } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN, refreshBundledLawReference } from "./law-reference.ts";
 
 const SAFE_ID = /^[\w-]+$/;
 const hardenedDirs = new Set<string>();
 const hardenedFiles = new Set<string>();
+
+/** The one folder of the book a worker may write: Bud's own working files.
+ * Everything else in the book (notes, decisions, uploads, inputs, reference
+ * sheets) is read-only to the worker and maintained by RealBud. */
+export const BUD_WORK_FOLDER = "bud-work";
 
 /** `dataDir` is `~/.realbud` (or the test data dir). The book is `<dataDir>/vault`. */
 export function vaultDir(dataDir?: string): string {
@@ -30,6 +35,41 @@ function propertyPath(id: string, book?: string): string {
   return join(bookDir(book), "properties", `${safeId(id)}.md`);
 }
 
+/**
+ * The worker writes the whole workroom, so a folder or file inside it may
+ * be a link the worker planted. Before the host touches `path`, every
+ * component below the book folder must be a real folder (or absent): a
+ * planted link refuses the operation instead of carrying it elsewhere. The
+ * final file itself is opened without following links (server/atomic.ts).
+ */
+function assertInsideBook(path: string, book?: string): string {
+  const root = bookDir(book);
+  const inside = relative(root, path);
+  if (!inside || inside.startsWith("..") || inside.includes(`..${sep}`)) throw Object.assign(new Error("no such property"), { status: 400 });
+  let current = root;
+  for (const part of inside.split(sep).slice(0, -1)) {
+    current = join(current, part);
+    let stat;
+    try { stat = lstatSync(current); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return path; throw error; }
+    assertOwnPrivate(stat, "directory");
+  }
+  return path;
+}
+
+/** The text of a book file through a checked descriptor, or "" when absent. */
+function readBookFile(path: string, book?: string): string {
+  return readPrivateFileSync(assertInsideBook(path, book)) ?? "";
+}
+
+/** Replace a book file atomically; every folder below the book must be a real
+ * folder of ours, and the target a plain file of ours or absent. */
+export function writeBookFile(path: string, text: string, book?: string): void {
+  assertInsideBook(path, book);
+  ensurePrivateDir(dirname(path));
+  writeFileAtomic(path, text, 0o600);
+  keepPrivateFile(path);
+}
+
 /** Folders this call creates get their own protected Windows descriptor: at
  * once, or in the caller's single batch when it passes `created`. */
 function ensurePrivateDir(path: string, created?: NewPrivateObject[]): void {
@@ -37,22 +77,14 @@ function ensurePrivateDir(path: string, created?: NewPrivateObject[]): void {
   const made = mkdirNewSync(path, 0o700).map((folder) => ({ path: folder, kind: "directory" as const }));
   if (created) created.push(...made);
   else restrictNewSync(made);
-  try {
-    chmodSync(path, 0o700);
-  } catch {
-    // Windows does not expose POSIX directory modes. The user-scoped app data
-    // ACL remains authoritative there.
-  }
+  // The folder itself, never a link's target (a worker could plant one).
+  keepPrivateDirSync(path);
   hardenedDirs.add(path);
 }
 
 function keepPrivateFile(path: string): void {
   if (hardenedFiles.has(path)) return;
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // Best effort on platforms without POSIX modes.
-  }
+  keepPrivateFileSync(path);
   hardenedFiles.add(path);
 }
 
@@ -66,7 +98,7 @@ export const DEFAULT_VAULT_DOCUMENTS: Readonly<Record<string,string>> = {
 
 export function seedVault(book?: string): string {
   const dir = bookDir(book);
-  const folders = [dir, join(dir, "properties"), join(dir, "owners"), join(dir, "decisions")];
+  const folders = [dir, join(dir, "properties"), join(dir, "owners"), join(dir, "decisions"), join(dir, "uploads"), join(dir, BUD_WORK_FOLDER)];
   // Everything a first run creates here is restricted in one PowerShell
   // process on Windows, while the new documents are still empty.
   const created: NewPrivateObject[] = [];
@@ -94,7 +126,7 @@ export function seedVault(book?: string): string {
     for (const folder of folders) hardenedDirs.delete(folder);
     throw error;
   }
-  for (const [path, content] of fresh) writeFileSync(path, content, { mode: 0o600 });
+  for (const [path, content] of fresh) writeFileAtomic(path, content, 0o600);
   const user = join(dir, "USER.md");
   keepPrivateFile(user);
   const readme = join(dir, "README.md");
@@ -102,9 +134,9 @@ export function seedVault(book?: string): string {
   // Upgrade the known bundled reference atomically; office additions survive.
   const law = join(dir, LAW_REFERENCE_FILE);
   if (!fresh.some(([path]) => path === law)) {
-    const existing = readFileSync(law, "utf8");
+    const existing = readBookFile(law, book);
     const refreshed = refreshBundledLawReference(existing);
-    if (refreshed !== existing) writeFileAtomic(law, refreshed, 0o600);
+    if (refreshed !== existing) writeBookFile(law, refreshed, book);
   }
   keepPrivateFile(law);
   return dir;
@@ -123,9 +155,7 @@ function splitFrontmatter(raw: string): { matter: string; body: string } {
 
 export function readPropertyNote(id: string, book?: string): string {
   seedVault(book);
-  const path = propertyPath(id, book);
-  if (!existsSync(path)) return "";
-  const { body } = splitFrontmatter(readFileSync(path, "utf8"));
+  const { body } = splitFrontmatter(readBookFile(propertyPath(id, book), book));
   return body.replace(/^\n+/, "").trimEnd();
 }
 
@@ -136,24 +166,20 @@ export function writePropertyNote(id: string, body: string, meta: { address?: st
   if (text.length > 20_000) throw Object.assign(new Error("note is too long"), { status: 400 });
   const address = meta.address ? `\naddress: ${meta.address.replace(/\n/g, " ")}` : "";
   const file = `---\nid: ${safeId(id)}${address}\n---\n\n${text.trimEnd()}\n`;
-  ensurePrivateDir(dirname(path));
-  writeFileAtomic(path, file, 0o600);
-  keepPrivateFile(path);
+  writeBookFile(path, file, book);
   return text.trimEnd();
 }
 
 export function archivePropertyNote(id: string, book?: string): void {
   seedVault(book);
   const path = propertyPath(id, book);
-  if (!existsSync(path)) return;
-  const raw = readFileSync(path, "utf8");
-  if (/^archived:\s*true/m.test(raw)) return;
+  const raw = readPrivateFileSync(assertInsideBook(path, book));
+  if (raw === null || /^archived:\s*true/m.test(raw)) return;
   const { matter, body } = splitFrontmatter(raw);
   const nextMatter = matter.includes("archived:")
     ? matter.replace(/archived:\s*\w+/g, "archived: true")
     : `${matter.trim()}\narchived: true`;
-  writeFileSync(path, `---\n${nextMatter.trim()}\n---\n\n${body.replace(/^\n+/, "")}`, { mode: 0o600 });
-  keepPrivateFile(path);
+  writeBookFile(path, `---\n${nextMatter.trim()}\n---\n\n${body.replace(/^\n+/, "")}`, book);
 }
 
 export function appendAllowedLine(id: string, line: string, book?: string, address?: string): void {
@@ -169,10 +195,8 @@ export function appendAllowedLine(id: string, line: string, book?: string, addre
   writePropertyNote(id, next.trim(), { address }, book);
   const day = new Date().toISOString().slice(0, 10);
   const log = join(bookDir(book), "decisions", `${day}.md`);
-  ensurePrivateDir(dirname(log));
-  const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFilePrivateSync(log, `${prev.trimEnd()}\n${bullet}\n`, 0o600);
-  keepPrivateFile(log);
+  const prev = readPrivateFileSync(assertInsideBook(log, book)) ?? `# ${day}\n\n`;
+  writeBookFile(log, `${prev.trimEnd()}\n${bullet}\n`, book);
 }
 
 /** Bulk intake writes one decisions log append instead of repeatedly reading
@@ -192,8 +216,6 @@ export function appendAllowedLines(
   }
   const day = new Date().toISOString().slice(0, 10);
   const log = join(bookDir(book), "decisions", `${day}.md`);
-  ensurePrivateDir(dirname(log));
-  const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFilePrivateSync(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`, 0o600);
-  keepPrivateFile(log);
+  const prev = readPrivateFileSync(assertInsideBook(log, book)) ?? `# ${day}\n\n`;
+  writeBookFile(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`, book);
 }

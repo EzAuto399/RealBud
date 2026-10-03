@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import type { ScheduleFilter } from "./schedule-presentation";
 
 type TimingDraft = { base: string; time: string; days: number[] };
-interface ViewState { scheduleSelected: string | null; scheduleResults: boolean; deskResults: boolean; expandedActivities: string[]; scheduleTiming: ReadonlySet<string>; timingDrafts: Record<string, TimingDraft> }
-const view: ViewState = { scheduleSelected: null, scheduleResults: false, deskResults: false, expandedActivities: [], scheduleTiming: new Set(), timingDrafts: {} };
+interface ViewState { scheduleSelected: string | null; scheduleSearch: string; scheduleFilter: ScheduleFilter; scheduleResults: boolean; deskResults: boolean; expandedActivities: string[]; scheduleTiming: ReadonlySet<string>; timingDrafts: Record<string, TimingDraft> }
+const view: ViewState = { scheduleSelected: null, scheduleSearch: "", scheduleFilter: "all", scheduleResults: false, deskResults: false, expandedActivities: [], scheduleTiming: new Set(), timingDrafts: {} };
 const listeners = new Set<() => void>();
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export function useWorkspaceViewState<K extends keyof ViewState>(key: K): [ViewState[K], (next: SetStateAction<ViewState[K]>) => void] {

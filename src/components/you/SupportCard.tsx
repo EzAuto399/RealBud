@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Card } from "../SettingsPrimitives";
+import { SettingsCard } from "./SettingsCard";
 
 export const SUPPORT_CONTENTS =
   "The support file contains RealBud’s version, this computer’s system type, how long the office service has run and its recent logs with keys and passwords masked; it never contains your documents, mail or saved credentials.";
@@ -35,7 +35,7 @@ function supportBridge(): (() => Promise<unknown>) | null {
 
 export function SupportCardView({ available, state, onSave }: { available: boolean; state: SupportSaveState; onSave: () => void }) {
   const saving = state.kind === "saving";
-  return <Card title="Help and support" subtitle={SUPPORT_CONTENTS}>
+  return <SettingsCard title="Help and support" details={<p>{SUPPORT_CONTENTS}</p>}>
     {available ? (
       <button type="button" disabled={saving} aria-busy={saving} onClick={onSave}
         className="pm-control rounded border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-50">
@@ -51,7 +51,7 @@ export function SupportCardView({ available, state, onSave }: { available: boole
       </> : null}
     </div>
     {state.kind === "failed" ? <p role="alert" className="mt-3 text-[13px] text-danger">{state.message}</p> : null}
-  </Card>;
+  </SettingsCard>;
 }
 
 export function SupportCard() {

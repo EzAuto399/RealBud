@@ -107,7 +107,12 @@ export type OfficeLinkCredentials = { installationId: string; token: string; com
 export interface OfficeLinkProvisioning {
   apply: (provisioning: InstallationProvisioning, installationId: string) => Promise<void>;
   withdraw: () => Promise<boolean>;
-  withdrawn: () => Promise<boolean>;
+  /** A previous installation's withdrawal must not label a fresh office link.
+   * With no link id, the retained marker still explains an unlinked computer. */
+  withdrawn: (installationId?: string) => Promise<boolean>;
+  /** Local configuration/storage admission before asking the website to issue
+   * or rotate credentials. Throws a safe local-recovery explanation. */
+  preflight?: (installationId: string) => Promise<void>;
   /** Notices a service administrator removing the installation binding, so the
    * grant is released on the ordinary status tick rather than at next use. */
   reconcile: () => Promise<boolean>;
@@ -115,7 +120,7 @@ export interface OfficeLinkProvisioning {
   clear: () => Promise<void>;
   /** Optional authority on whether a grant is already in force. Absent, the
    * link's own durable marker is used, and `apply` remains idempotent anyway. */
-  active?: () => Promise<boolean>;
+  active?: (installationId: string) => Promise<boolean>;
   /** A grant was applied and the link that carries it is now saved. Runs after
    * the durable save, never before, so a failed save changes nothing else. */
   onLinked?: () => void;
@@ -169,37 +174,51 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
    */
   const usageOwner = (saved: Saved) => `${saved.id}:${saved.token}:${saved.companyId ?? ""}`;
   let usageCache: { owner: string; period: string; at: number; value: InstallationUsageState } | undefined;
-  const usageBusy = new Set<string>();
+  const usagePending = new Map<string, Promise<InstallationUsageState>>();
+  let lastUsageRefresh: { key: string; at: number } | undefined;
   const USAGE_TTL = 30_000;
-  async function usage(period = currentUsagePeriod()): Promise<InstallationUsageState> {
+  async function usage(period = currentUsagePeriod(), options?: { refresh?: boolean }): Promise<InstallationUsageState> {
     if (!USAGE_PERIOD.test(period)) throw Object.assign(new Error("Ask for a month as YYYY-MM."), { status: 400 });
     const saved = await read().catch(() => null);
     if (!saved?.companyId || saved.revoked) { usageCache = undefined; return { state: "not-linked" }; }
-    const owner = usageOwner(saved);
-    if (usageCache?.owner === owner && usageCache.period === period && Date.now() - usageCache.at < USAGE_TTL) return usageCache.value;
-    if (usageBusy.has(owner)) return usageCache?.owner === owner && usageCache.period === period ? usageCache.value : { state: "checking" };
-    usageBusy.add(owner);
-    let value: InstallationUsageState;
-    try {
-      const response = await readWithRetry(`usage?period=${period}`, { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
-      if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error("usage unavailable"); }
-      // 401/403 is not treated as revocation here: the report loop is the
-      // authority for that, and a usage read must not tear down an install.
-      value = { state: "ready", usage: parseInstallationUsage(await response.json(), period) };
-    } catch { value = { state: "unavailable" }; }
-    finally { usageBusy.delete(owner); }
-    const current = await read().catch(() => null);
-    if (!current?.companyId || current.revoked) return { state: "not-linked" };
-    if (usageOwner(current) !== owner) return { state: "checking" };
-    usageCache = { owner, period, at: Date.now(), value };
-    return value;
+    const owner = usageOwner(saved), key = `${owner}:${period}`;
+    const cached = usageCache?.owner === owner && usageCache.period === period ? usageCache : undefined;
+    const pending = usagePending.get(key);
+    if (pending) return pending;
+    if (cached && Date.now() - cached.at < USAGE_TTL && (!options?.refresh ||
+      (lastUsageRefresh?.key === key && Date.now() - lastUsageRefresh.at < 2_000))) return cached.value;
+    if (options?.refresh) lastUsageRefresh = { key, at: Date.now() };
+    // Keep the flight owned until its installation recheck and publication finish.
+    // Manual checks join passive reads; neither can overwrite a newer office.
+    const work = (async (): Promise<InstallationUsageState> => {
+      let value: InstallationUsageState;
+      try {
+        const response = await readWithRetry(`usage?period=${period}`, { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
+        if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error("usage unavailable"); }
+        // Report owns revocation; a usage read must not tear down an install.
+        value = { state: "ready", usage: parseInstallationUsage(await response.json(), period) };
+      } catch { value = { state: "unavailable" }; }
+      const current = await read().catch(() => null);
+      if (!current?.companyId || current.revoked) return { state: "not-linked" };
+      if (usageOwner(current) !== owner) return { state: "checking" };
+      usageCache = { owner, period, at: Date.now(), value };
+      return value;
+    })();
+    usagePending.set(key, work);
+    try { return await work; }
+    finally { if (usagePending.get(key) === work) usagePending.delete(key); }
+  }
+
+  async function refreshUsage(): Promise<OfficeLinkStatus> {
+    await usage(currentUsagePeriod(), { refresh: true });
+    return status();
   }
 
   async function status(): Promise<OfficeLinkStatus> {
     const saved = await read();
     // The withdrawn marker outlives the link record: a computer whose service
     // access was taken away must still say so after the link is discarded.
-    const serviceWithdrawn = await options.provisioning?.withdrawn().catch(() => false);
+    const serviceWithdrawn = await options.provisioning?.withdrawn(saved?.id).catch(() => false);
     const withdrawn = serviceWithdrawn ? { serviceWithdrawn: true as const } : {};
     // Status stays a local read: a due refresh runs in the background and the
     // next status carries it, so the card never waits on the website.
@@ -212,7 +231,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     // The grant's own authority when there is one: a grant already in force is
     // not re-applied, so the link's marker alone can read false.
     const provisioned = saved?.companyId && !saved.revoked
-      ? { provisioned: saved.provisioned === true || ((await options.provisioning?.active?.().catch(() => false)) ?? false) } : {};
+      ? { provisioned: await provisioningActive(saved) } : {};
     // A stated reason is only news while no grant is in force.
     const skipped = provisioned.provisioned === false && saved?.provisioningSkipped ? { provisioningSkipped: saved.provisioningSkipped } : {};
     return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...skipped, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
@@ -259,6 +278,21 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     await options.provisioning.apply(provisioning, saved.id);
   }
 
+  async function provisioningActive(saved: Saved): Promise<boolean> {
+    return options.provisioning?.active
+      ? options.provisioning.active(saved.id).catch(() => false)
+      : saved.provisioned === true;
+  }
+  async function preflightProvisioning(installationId: string) {
+    try { await options.provisioning?.preflight?.(installationId); }
+    catch {
+      // Local recovery errors may contain paths or credential-bearing parser
+      // text. Keep one actionable message rather than echoing the cause.
+      throw Object.assign(new Error("This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup."),
+        { status: 503, code: "service_provisioning_local_recovery" });
+    }
+  }
+
   async function link(input: { code?: unknown; label?: unknown }) {
     await exclusive(async () => {
       input = input && typeof input === "object" ? input : {};
@@ -269,12 +303,16 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
       if (saved?.browser && !saved.revoked) throw Object.assign(new Error("Cancel the browser approval before using a link code."), { status: 409 });
       if (saved?.code && saved.code !== code && !saved.revoked) throw Object.assign(new Error("Retry the original code, or cancel the pending link before using a new code."), { status: 409 });
+      // The revoked link is the durable cleanup signal. Keep it until the old
+      // grant is released, including after a restart or a failed withdrawal.
+      if (saved?.revoked) await options.provisioning?.withdraw();
       // Persist the token before making a request. Repeating this code after a
       // lost response redeems the identical id/token, never a second device.
       if (!saved || saved.revoked || saved.code !== code) {
         saved = { version: 1, id: randomUUID(), token: randomBytes(32).toString("hex"), label, code };
+        await preflightProvisioning(saved.id);
         await save(saved);
-      }
+      } else await preflightProvisioning(saved.id);
       const response = await request("redeem", { method: "POST", body: JSON.stringify({ code, id: saved.id, token: saved.token, label: saved.label, platform: options.platform ?? process.platform, appVersion: options.appVersion }) }, PROVISIONING_TIMEOUT_MS);
       if (!response.ok) throw new Error(response.status === 409 ? "This code is expired or already used. Get a new code from your account owner." : "The website could not finish linking this computer. Try again shortly.");
       const result = await response.json().catch(() => null) as { companyId?: unknown; agencyLabel?: unknown; installationId?: unknown; provisioning?: unknown } | null;
@@ -297,7 +335,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   async function grantInForce(): Promise<boolean> {
     const saved = await read().catch(() => null);
     if (!saved?.companyId || saved.revoked) return false;
-    return saved.provisioned === true || ((await options.provisioning?.active?.().catch(() => false)) ?? false);
+    return provisioningActive(saved);
   }
   function serviceGrant(force: boolean) {
     try { void options.provisioning?.serviceGrant?.({ force })?.catch(() => {}); } catch { /* held inside the hook */ }
@@ -333,6 +371,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       const saved = await read();
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
       if (saved?.code && !saved.revoked) throw Object.assign(new Error("Retry the pending link code, or cancel it before linking in the browser."), { status: 409 });
+      if (saved?.revoked) await options.provisioning?.withdraw();
       if (saved?.browser && !saved.revoked) {
         // One pending request at a time: an unexpired one is resumed, never duplicated.
         if (Date.parse(saved.browser.expiresAt) > Date.now()) return saved.browser;
@@ -341,6 +380,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       const body: LinkRequestInput = { version: 1, purpose: "installation-link-request", id: randomUUID(), token: randomBytes(32).toString("hex"),
         label, platform: (options.platform ?? process.platform) as LinkRequestInput["platform"], appVersion: options.appVersion };
       if (!isLinkRequestInput(body)) throw Object.assign(new Error("This computer cannot be linked in the browser. Use a link code instead."), { status: 400 });
+      await preflightProvisioning(body.id);
       const response = await request("link-requests", { method: "POST", body: JSON.stringify(body) }).catch(() => { throw unreachable(); });
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
@@ -455,8 +495,13 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // one, its secret-bearing reply was lost on the way here; the website then
       // has this installation's own credentials replaced and sends them back.
       // Never asked while a grant is in force: that would rotate a working key.
-      const needsProvisioning = options.provisioning !== undefined && saved.provisioned !== true &&
-        !((await options.provisioning.active?.().catch(() => false)) ?? false);
+      const active = await provisioningActive(saved);
+      const needsProvisioning = options.provisioning !== undefined && !active;
+      // A report for a never-provisioned row can mint credentials even without
+      // needsProvisioning. Hold the whole request on a known local failure;
+      // the ordinary timer retries this local check without rotating keys.
+      // Already-active installations still report and observe revocation.
+      if (needsProvisioning) await preflightProvisioning(saved.id);
       const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` },
         body: JSON.stringify(needsProvisioning ? { ...report, needsProvisioning: true } : report) }, PROVISIONING_TIMEOUT_MS);
       // 401/403 is the website saying this installation's access is gone. Stop
@@ -473,7 +518,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // that it redelivers only when asked above. A grant
       // already in force is left alone: re-applying would replace a live
       // revocable key with whatever this reply happened to carry.
-      let provisioned = saved.provisioned === true;
+      let provisioned = active;
       let newlyApplied = false;
       const { provisioningSkipped: previous, ...rest } = saved;
       let skipped = previous;
@@ -484,11 +529,11 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
         else if (outcome) {
           // A grant has arrived: whatever the website said before no longer holds.
           skipped = undefined;
-          const already = (await options.provisioning?.active?.().catch(() => false)) ?? false;
+          const already = await provisioningActive(saved);
           if (!already) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; newlyApplied = true; }
         }
       }
-      await save({ ...rest, lastReportedAt: new Date().toISOString(), ...(provisioned ? { provisioned: true } : {}), ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
+      await save({ ...rest, lastReportedAt: new Date().toISOString(), provisioned, ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
       if (newlyApplied) linked();
       accepted = true; fresh = newlyApplied;
     });
@@ -510,15 +555,17 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       unlinkSync(path);
     });
   }
-  return { status, link, report, disconnect, usage, beginBrowserLink, browserLinkStatus, cancelBrowserLink,
+  return { status, link, report, disconnect, usage, refreshUsage, beginBrowserLink, browserLinkStatus, cancelBrowserLink,
     /** Internal launch gate, including a grant applied during pending linking.
      * A stale async vault read cannot republish access after revoke/relink. */
     async modelAccessEnv(resolve: () => Promise<Record<string, string>>): Promise<Record<string, string>> {
       const saved = await read();
       if (!saved || saved.revoked) return {};
+      if (options.provisioning?.active && !(await provisioningActive(saved))) return {};
       const access = await resolve();
       const current = await read();
-      return current && !current.revoked && current.id === saved.id && current.token === saved.token ? access : {};
+      return current && !current.revoked && current.id === saved.id && current.token === saved.token &&
+        (!options.provisioning?.active || await provisioningActive(current)) ? access : {};
     },
     async credentials(): Promise<OfficeLinkCredentials | null> {
       const saved = await read();

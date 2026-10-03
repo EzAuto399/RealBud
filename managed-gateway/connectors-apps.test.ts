@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ManagedConnectors, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import { composioAuthConfigClient, managedAuthConfigName, oauthAppsFromEnv, type ComposioAuthConfigClient } from './composio-auth-config.ts';
-import type { AppBinding, ComposioAppAdapter } from './composio-apps.ts';
+import { composioAppAdapter, type AppBinding, type ComposioAppAdapter } from './composio-apps.ts';
 import { fixture } from './testing.ts';
 import { GatewayError } from './contracts.ts';
+import { classifyAppTool } from '../shared/app-tool-policy.ts';
 
 /** Two offices, one installation each. Office B's project key and config must
  * never appear in anything office A does. */
@@ -173,6 +174,69 @@ test('status reports every admitted app; a connected app exposes only its read a
     assert.equal((foreign.body as { result: { isError?: boolean } }).result.isError, true);
     assert.equal(s.bindings.filter(b => b.op.startsWith('execute:')).length, 1);
   } finally { s.f.close(); }
+});
+
+test('Ask runs the full Gmail toolkit under the mailbox policy, only on a verified account, and never lists or runs a blocked tool', async () => {
+  const s = setup(); try {
+    s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, accountId: 'acct_gmail_a' } : d));
+    let connected = true; const executed: { tool: string; accountId?: string; apiKey: string; args: unknown }[] = [];
+    const names = ['GMAIL_LIST_THREADS', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_SEND_EMAIL', 'GMAIL_SEND_DRAFT', 'GMAIL_MOVE_TO_TRASH', 'GMAIL_DELETE_MESSAGE', 'GMAIL_CREATE_FILTER', 'GMAIL_UPDATE_VACATION_SETTINGS'];
+    const apps: ComposioAppAdapter = {
+      async listAccounts() { return []; }, async authorize() { throw new Error('unused'); },
+      // As the real adapter does: every toolkit tool, classified by the shared policy (Composio's own hints included).
+      async listTools(_binding, slug) { return names.map(name => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, policy: classifyAppTool(name, { app: slug, annotations: name === 'GMAIL_SEND_DRAFT' ? { destructiveHint: true } : undefined }) })); },
+      async execute(binding, slug, tool, args) { assert.equal(slug, 'gmail'); executed.push({ tool, accountId: binding.accountId, apiKey: binding.apiKey, args }); return { content: [{ type: 'text', text: '{}' }] }; },
+    };
+    const broker = s.make({ apps, access: async binding => ({ checkedAt: new Date(s.f.now()).toISOString(), services: { gmail: { connected, status: connected ? 'ACTIVE' : 'NOT_CONNECTED',
+      accounts: connected ? [{ id: binding.accountId!, status: 'ACTIVE' }] : [], accountSelectionRequired: false } }, tools: { available: connected, names: [] } }) });
+    const rpc = (id: number, method: string, params?: unknown, session?: string) => broker.handle(s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }, session));
+    const opened = await rpc(1, 'initialize');
+    const listed = (await rpc(2, 'tools/list', undefined, opened.session)).body as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } };
+    assert.deepEqual(listed.result.tools.map(t => [t.name, t.annotations.readOnlyHint]), [['GMAIL_LIST_THREADS', true], ['GMAIL_CREATE_EMAIL_DRAFT', true], ['GMAIL_SEND_EMAIL', false], ['GMAIL_SEND_DRAFT', false], ['GMAIL_MOVE_TO_TRASH', false]]);
+    const send = await rpc(3, 'tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Hi' } }, opened.session);
+    assert.equal((send.body as { result: { isError?: boolean } }).result.isError, undefined);
+    assert.deepEqual(executed, [{ tool: 'GMAIL_SEND_EMAIL', accountId: 'acct_gmail_a', apiKey: 'ak_fictional_office_a', args: { recipient_email: 'tenant@example.test', body: 'Hi' } }]);
+    for (const name of ['GMAIL_DELETE_MESSAGE', 'GMAIL_CREATE_FILTER', 'GMAIL_UPDATE_VACATION_SETTINGS', 'GMAIL_NOT_A_TOOL']) {
+      const refused = await rpc(4, 'tools/call', { name, arguments: {} }, opened.session);
+      assert.equal((refused.body as { result: { isError?: boolean } }).result.isError, true, name);
+    }
+    assert.equal(executed.length, 1);
+    // A fresh session whose account no longer verifies runs nothing.
+    connected = false;
+    const later = await rpc(5, 'initialize');
+    await assert.rejects(() => rpc(6, 'tools/call', { name: 'GMAIL_LIST_THREADS', arguments: {} }, later.session), /connector_account_not_connected/);
+    assert.equal(executed.length, 1);
+  } finally { s.f.close(); }
+});
+
+test('an office shared mailbox keeps the three bounded reads it was granted; the gateway blocks by arguments too', async () => {
+  const s = setup(); const realFetch = globalThis.fetch; const upstream: string[] = [];
+  globalThis.fetch = (async (url: string | URL) => { upstream.push(String(url)); throw new Error('no network in tests'); }) as typeof fetch;
+  try {
+    const executed: string[] = [];
+    const apps: ComposioAppAdapter = { async listAccounts() { return []; }, async authorize() { throw new Error('unused'); },
+      async listTools() { return []; }, async execute(_b, _s, tool) { executed.push(tool); return { content: [] }; } };
+    const broker = s.make({ apps });
+    // The office granted this desktop its shared mailbox before the 2026-10-02 decision.
+    const policy = { mode: 'shared' as const, revision: 4, grants: [] as string[] };
+    Object.assign(broker.officeMailbox, { policy: () => policy, binding: () => ({ apiKey: 'ak_fictional_office_a', authConfigId: 'ac_gmail_company-a', userId: 'office-owner', accountId: 'acct_shared' }) });
+    const rpc = (id: number, method: string, params?: unknown, session?: string) => broker.handle({ ...s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }, session), policyRevision: 4 });
+    const opened = await rpc(1, 'initialize');
+    for (const name of ['GMAIL_SEND_EMAIL', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_ADD_LABEL_TO_EMAIL']) {
+      const reply = await rpc(2, 'tools/call', { name, arguments: {} }, opened.session);
+      const result = (reply.body as { result: { isError?: boolean; content: { text: string }[] } }).result;
+      assert.equal(result.isError, true, name); assert.match(result.content[0]!.text, /three fixed Gmail read tools/);
+    }
+    assert.deepEqual(upstream, []); assert.deepEqual(executed, []);
+  } finally { globalThis.fetch = realFetch; s.f.close(); }
+});
+
+test('the generic adapter refuses a call whose arguments cancel or decline an event', async () => {
+  const adapter = composioAppAdapter({ fetch: async () => { throw new Error('must not be reached'); } });
+  const binding = { apiKey: 'ak_fictional_office_a', authConfigId: 'ac_cal', userId: 'installation-a', accountId: 'acct_cal' };
+  await assert.rejects(() => adapter.execute(binding, 'googlecalendar', 'GOOGLECALENDAR_PATCH_EVENT', { event_id: 'e1', status: 'cancelled' }, new AbortController().signal), /outside the connected-app boundary/);
+  await assert.rejects(() => adapter.execute(binding, 'outlook', 'OUTLOOK_DECLINE_EVENT', { event_id: 'e1' }, new AbortController().signal), /outside the connected-app boundary/);
+  await assert.rejects(() => adapter.execute(binding, 'googlecalendar', 'GOOGLECALENDAR_PATCH_EVENT', { event_id: 'e1', summary: 'Moved' }, new AbortController().signal), /must not be reached|interrupted/);
 });
 
 test('a registry written before on-demand admission reads as Gmail-only and its Gmail binding is unchanged', () => {

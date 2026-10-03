@@ -2,16 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '@/state/store';
 import type { InvoiceReview } from '@shared/accounts-review';
 import type { AgencySetupView } from '@shared/agency-setup';
-import type { MailThread, MailWorkItem, MailWorkspaceMetadata, MailTaskPage } from '@shared/mail-ingestion';
-import type { BillRecurrenceSeries, BillSourceEvidence, SourceBillOccurrence, SourceBillState, SourceBillsWorkspace, SourceBillPage, BillCalendarEntry } from '@shared/source-bills';
+import type { MailThread, MailWorkItem, MailWorkspaceMetadata, MailTaskPage, MailScanReceipt } from '@shared/mail-ingestion';
+import type { BillRecurrenceSeries, BillSourceEvidence, SourceBillOccurrence, SourceBillState, SourceBillsWorkspace, SourceBillPage, BillCalendarEntry, BillDuplicateCheck } from '@shared/source-bills';
+import { sameBillFacts } from '@shared/source-bills';
 import type { SourceBillOccurrenceResult, SourceBillSeriesResult, SourceBillCurrentSourceResult } from '@shared/source-bills-api';
 import { appendBillPage, billPageUrl, mergeBillRows } from '@/lib/source-bill-pages';
 import { appendMailPage, mailPageUrl, readMailTaskPage, retainSelectedMailItem } from '@/lib/mail-pages';
-import { addBillDays, billDateInZone } from '@shared/bill-dates';
+import { billDateInZone } from '@shared/bill-dates';
 import { displayBillDate, draftBillFacts, emptyBillFacts, savedBillFacts, type BillFactsDraft } from '@/lib/source-bill-form';
 import type { BillReviewDraft, BillReviewDraftPage, BillReviewDraftValue } from '@shared/bill-review-drafts';
 import { billAttachmentReads, type BillAttachmentRead, type BillProposalHistory } from '@shared/bill-proposals';
 import { billReviewDrafts } from '@/lib/bill-review-drafts';
+import { BillRoutineStatus } from './BillRoutineStatus';
+import { billDuplicateCheckRequired, confirmedBillDuplicateReview, readBillDuplicateCheck, type BillDuplicateConfirmation, type BillDuplicateRequest } from '@/lib/source-bill-duplicates';
+import { BillFinancialReview } from './BillFinancialReview';
+import { BillMonthCalendar, billMonthRange, shiftBillMonth } from './BillMonthCalendar';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const input = 'min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-sm text-ink';
@@ -21,6 +26,57 @@ billReviewDrafts.configure((path, init) => api(path, init, { timeoutMs: 20_000 }
 type Proposal = { run: { id: string; status: string; summary?: string }; proposal: InvoiceReview['documents'][number] | null; sourceDigest: string; attachmentReads?: BillAttachmentRead[] };
 type PatternEdit = { original: BillRecurrenceSeries | null; bill: SourceBillOccurrence; intervalMonths: 1 | 3 | 12; anchorDate: string; windowBeforeDays: number; windowAfterDays: number; timeZone: string; active: boolean; reason: string };
 
+export function billCollectionNotice(receipt: MailScanReceipt | null): string {
+  switch (receipt?.status) {
+    case 'complete': return 'The reviewed Gmail scope was collected. Select a saved message to review its bill facts.';
+    case 'partial': return 'Bill mail collection is partial. Review the source gaps before relying on the results; saved conversations remain available.';
+    case 'failed': return 'Bill mail collection failed. Check Gmail access and the source gaps, then retry. Previous saved work is kept.';
+    case 'interrupted': return 'Bill mail collection was interrupted. Check the selected account and setup, then retry. Previous saved work is kept.';
+    case 'running': return 'Bill mail collection is still running. Wait for its saved receipt before relying on the results.';
+    default: return 'No bill mail collection receipt is available. Refresh saved sources before relying on the results.';
+  }
+}
+
+export function BillCollectionReceipt({ receipt, timeZone }: { receipt: MailScanReceipt; timeZone: string }) {
+  const incomplete = receipt.status !== 'complete';
+  const date = (at: number) => new Intl.DateTimeFormat(undefined, { timeZone, year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(at);
+  return <aside aria-label="Latest bill mail collection" className="rounded border border-line p-3 space-y-2 text-sm">
+    <div className="flex flex-wrap justify-between gap-2"><strong className="font-medium">Latest mail collection: {receipt.status}</strong><span>{date(receipt.completedAt ?? receipt.startedAt)}</span></div>
+    <p role={incomplete ? 'status' : undefined} className={incomplete ? 'text-hold' : undefined}>{billCollectionNotice(receipt)}</p>
+    <p>{receipt.messageCount} messages · {receipt.threadCount} conversations · {receipt.pages} pages</p>
+    <p className="text-ink-secondary">Requested source window: {date(receipt.windowStartAt)} to {date(receipt.windowEndAt)} · {timeZone}.</p>
+    {incomplete && <p className="text-hold">Coverage is not confirmed complete. An empty list does not establish that no bills arrived or that an expected bill is missing.</p>}
+    <p className="text-ink-secondary">A saved collection does not confirm that bill facts or attachment contents were reviewed.</p>
+    <details><summary className="min-h-11 cursor-pointer">Collection account and source gaps ({receipt.gaps.length})</summary><p className="break-words">Account {receipt.accountId}</p>{receipt.gaps.length > 0 && <ul className="list-disc pl-5">{receipt.gaps.map((gap, index) => <li key={index} className="break-words text-hold">{gap}</li>)}</ul>}</details>
+  </aside>;
+}
+
+export function BillDuplicateReview({ check, loading, error, checked, disabled, label, onConfirm, onOpen, onRetry }: {
+  check: BillDuplicateCheck | null; loading: boolean; error: string; checked: boolean; disabled: boolean;
+  label: (id: string) => string; onConfirm: (confirmed: boolean) => void; onOpen: (billId: string) => void; onRetry: () => void;
+}) {
+  const hasConflict = check?.candidates.some(candidate => candidate.match === 'invoice-conflict') ?? false;
+  const hasIdentity = check?.candidates.some(candidate => candidate.match === 'invoice-identity') ?? false;
+  return <aside aria-label="Matching saved bills" className="rounded border border-line p-3 space-y-2 text-sm">
+    <h5 className="font-medium">Matching saved bills</h5>
+    {loading ? <p role="status">Checking saved bills against this source and the entered facts…</p> : error ? <p role="alert" className="text-hold">{error}</p> : !check ? <p role="status">A current check is needed before saving.</p> : <>
+      {check.candidates.length ? <><p>{hasConflict ? 'This invoice number has conflicting facts in another saved bill. Open that bill and reconcile the correction before saving.' : hasIdentity ? 'This invoice number already appears for the same property and vendor. Check the originals before accepting a separate invoice.' : 'The same message text and invoice facts appear in another saved bill. Check the matching records before accepting a separate invoice.'}</p>
+        <ul className="space-y-2">{check.candidates.map(candidate => <li key={`${candidate.billId}:${candidate.matchedRevision}`} className="rounded border border-line p-2 space-y-1">
+          <p className="break-words font-medium">{label(candidate.facts.propertyId)} · {candidate.facts.kind} · {candidate.facts.vendor}</p>
+          <p>{candidate.facts.amountCents === null ? 'Amount not confirmed' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'AUD' }).format(candidate.facts.amountCents / 100)} · Invoice {displayBillDate(candidate.facts.invoiceDate)} · Due {displayBillDate(candidate.facts.dueDate)}</p>
+          <p className="text-ink-secondary">{candidate.match === 'invoice-conflict' ? 'Conflicting invoice version or facts' : candidate.match === 'invoice-identity' ? 'Matching invoice number' : 'Matching source text and facts'}{candidate.facts.invoiceNumber ? ` · ${candidate.facts.invoiceNumber}` : ''}{candidate.facts.invoiceVersion ? ` · version ${candidate.facts.invoiceVersion}` : ''}</p>
+          <p className="break-words">{candidate.subject || 'Untitled message'} · received {new Date(candidate.receivedAt).toLocaleString()}</p>
+          <p className="text-ink-secondary">Matching revision {candidate.matchedRevision} · current revision {candidate.revision}</p>
+          <button type="button" className={button} disabled={disabled} onClick={() => onOpen(candidate.billId)}>Save draft and open matching bill</button>
+        </li>)}</ul><p className="text-ink-secondary">Opening a match saves this draft for later. Return to it through Saved bill reviews.</p></> : check.complete && <p>No exact match found in saved bills. Check the original invoice before accepting.</p>}
+      {!check.complete && <p role="alert" className="text-hold">The matching-bill check is incomplete. Saving is held; retry the check before continuing.</p>}
+      {hasConflict && <p role="alert" className="text-hold">Saving a separate bill is held until the conflicting invoice is reconciled. Your draft is kept.</p>}
+      {check.complete && check.candidates.length > 0 && !hasConflict && <label className="flex min-h-11 items-start gap-2"><input type="checkbox" className="mt-1" checked={checked} disabled={disabled} onChange={event => onConfirm(event.target.checked)} />I checked the matching bills and confirm this is a separate invoice. Explain why in the review reason below.</label>}
+    </>}
+    {!loading && <button type="button" className={button} disabled={disabled} onClick={onRetry}>Recheck matching bills</button>}
+  </aside>;
+}
+
 export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => void; initialBillId?: string }) {
   const [snapshot, setSnapshot] = useState<SourceBillsWorkspace | null>(null);
   const [agency, setAgency] = useState<AgencySetupView | null>(null), [mail, setMail] = useState<MailWorkspaceMetadata | null>(null);
@@ -29,7 +85,8 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   mailQueryRef.current = mailQuery.trim();
   const [discard, setDiscard] = useState<{ kind: 'cancel' } | { kind: 'open'; id: string } | null>(null);
   const [error, setError] = useState(''), [dependencyError, setDependencyError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
-  const [range, setRange] = useState(() => { const from = billDateInZone(Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone); return { from, to: addBillDays(from, 180) }; });
+  const [range, setRange] = useState(() => billMonthRange(billDateInZone(Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone).slice(0, 7)));
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
   const [property, setProperty] = useState('');
   const [stale, setStale] = useState(false), [existingSource, setExistingSource] = useState<SourceBillOccurrence | null>(null), [sourceChecked, setSourceChecked] = useState(false);
   const [matchedPatterns, setMatchedPatterns] = useState<BillRecurrenceSeries[]>([]), [matching, setMatching] = useState(false), [matchingError, setMatchingError] = useState(''), [matchRefresh, setMatchRefresh] = useState(0);
@@ -43,6 +100,9 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   const [draftId, setDraftId] = useState<string | null>(null), [reviewState, setReviewState] = useState<BillReviewDraftValue['state']>('editing');
   const [, redrawDraft] = useState(0), [requestHistory, setRequestHistory] = useState<BillProposalHistory | null>(null);
   const [acceptedReceipt, setAcceptedReceipt] = useState<SourceBillOccurrence | null>(null);
+  const [duplicateRead, setDuplicateRead] = useState<{ key: string; check: BillDuplicateCheck | null; loading: boolean; error: string } | null>(null);
+  const [duplicateConfirmation, setDuplicateConfirmation] = useState<BillDuplicateConfirmation | null>(null), [duplicateRefresh, setDuplicateRefresh] = useState(0);
+  const duplicateGeneration = useRef(0), duplicateKeyRef = useRef('');
   const draftWorkspace = useRef(''), editorGeneration = useRef(0), initializationGeneration = useRef(0), reviewGeneration = useRef(0);
   const sourceSelection = useRef<Pick<BillReviewDraftValue, 'itemId' | 'messageId' | 'sourceDigest'>>({ itemId: null, messageId: null, sourceDigest: null });
   const billBinding = useRef<Pick<BillReviewDraftValue, 'billId' | 'billRevision'>>({ billId: null, billRevision: null });
@@ -55,9 +115,40 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   const timeZone = agency?.state.settings.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const properties = agency?.properties ?? [];
   const label = (id: string) => properties.find(property => property.id === id)?.label ?? id;
+  let duplicateRequest: BillDuplicateRequest | null = null;
+  if (editorOpen && !closed && !acceptedReceipt && evidence && sourceChecked && draft.propertyId && draft.kind.trim() && draft.vendor.trim()) {
+    try {
+      const facts = savedBillFacts(draft);
+      if (billDuplicateCheckRequired(editing, evidence, facts, billState)) duplicateRequest = { itemId, messageId: evidence.message.id, expectedSourceDigest: evidence.digest, facts, ...(editing ? { billId: editing.id } : {}) };
+    } catch { /* Invalid amounts or dates are explained when the form is submitted. */ }
+  }
+  const duplicateKey = duplicateRequest ? JSON.stringify([draftId, editing?.revision, duplicateRequest]) : '';
+  duplicateKeyRef.current = duplicateKey;
+  const duplicateCheck = duplicateRead?.key === duplicateKey ? duplicateRead.check : null;
+  const duplicateLoading = !!duplicateKey && (!duplicateRead || duplicateRead.key !== duplicateKey || duplicateRead.loading);
+  const duplicateError = duplicateRead?.key === duplicateKey ? duplicateRead.error : '';
+  const duplicateReview = duplicateCheck && confirmedBillDuplicateReview(duplicateCheck, duplicateKey, duplicateConfirmation, reason);
+  const duplicateHeld = !!duplicateKey && (!duplicateCheck?.complete || duplicateLoading || !!duplicateError || (!!duplicateCheck.candidates.length && !duplicateReview));
+  useEffect(() => {
+    const generation = ++duplicateGeneration.current, operation = editorGeneration.current;
+    setDuplicateConfirmation(null);
+    if (!duplicateRequest) { setDuplicateRead(null); return; }
+    const request = duplicateRequest;
+    setDuplicateRead({ key: duplicateKey, check: null, loading: true, error: '' });
+    const current = () => mounted.current && operation === editorGeneration.current && generation === duplicateGeneration.current && duplicateKey === duplicateKeyRef.current;
+    const timer = setTimeout(() => {
+      void write('/api/bill-occurrences/duplicate-candidates', 'POST', request).then(result => {
+        const check = readBillDuplicateCheck(result, request.expectedSourceDigest);
+        if (current()) setDuplicateRead({ key: duplicateKey, check, loading: false, error: '' });
+      }).catch(() => {
+        if (current()) setDuplicateRead({ key: duplicateKey, check: null, loading: false, error: 'Matching bills could not be checked. Your draft is kept; retry before saving.' });
+      });
+    }, 250);
+    return () => { clearTimeout(timer); duplicateGeneration.current++; };
+  }, [duplicateKey, duplicateRefresh]);
   const currentDraftValue = (state = reviewState): BillReviewDraftValue => ({
     workspaceId: draftWorkspace.current, state, ...billBinding.current, ...sourceSelection.current,
-    fields: { propertyId: draft.propertyId, kind: draft.kind, vendor: draft.vendor, amount: draft.amount, invoiceDate: draft.invoiceDate, dueDate: draft.dueDate, note: draft.note },
+    fields: { propertyId: draft.propertyId, kind: draft.kind, vendor: draft.vendor, amount: draft.amount, invoiceNumber: draft.invoiceNumber ?? '', invoiceVersion: draft.invoiceVersion ?? '', invoiceDate: draft.invoiceDate, dueDate: draft.dueDate, note: draft.note },
     billState, reason, seriesId, arrivalDate, proposalRequest: proposalRequest.current,
   });
   const loadReviews = async (all = reviewHistory, append = false) => {
@@ -95,11 +186,12 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     }
     const value = retained.value;
     if (!current()) return;
+    if (value.financialReview) throw new Error('Continue this financial review from its saved bill. Your financial entries are kept.');
     draftWorkspace.current = scope;
     setDraftId(id); setReviewState(value.state); billReviewDrafts.setActive(scope, id);
     billBinding.current = { billId: value.billId, billRevision: value.billRevision };
     sourceSelection.current = { itemId: value.itemId, messageId: value.messageId, sourceDigest: value.sourceDigest };
-    setDraft({ ...value.fields }); setBillState(value.billState); setReason(value.reason); setSeriesId(value.seriesId); setArrivalDate(value.arrivalDate);
+    setDraft({ ...emptyBillFacts(), ...value.fields }); setBillState(value.billState); setReason(value.reason); setSeriesId(value.seriesId); setArrivalDate(value.arrivalDate);
     setAcceptedReceipt(null); setConfirmed(false); setLimited(false); setProposal(null); setRequestHistory(null); proposalRequest.current = value.proposalRequest;
     setProposalPending(!!value.proposalRequest); setEditing(null); setItemId(value.itemId ?? ''); setSelectedMailItem(null); setThread(null); setEvidence(null); setExistingSource(null); setSourceChecked(false); setStale(false); setPattern(null); setEditorOpen(true);
     try {
@@ -120,12 +212,12 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
       }
     } catch (cause) { if (current()) setNotice(`Your draft is restored, but its source must be checked again. ${cause instanceof Error ? cause.message : 'Source unavailable.'}`); }
   };
-  const refresh = async (nextProperty = property) => {
+  const refresh = async (nextProperty = property, nextRange = range) => {
     const current = ++generation.current;
-    const result: SourceBillsWorkspace = await api(billPageUrl('/api/bill-register', { ...range, propertyId: nextProperty, limit: 20 }));
+    const result: SourceBillsWorkspace = await api(billPageUrl('/api/bill-register', { ...nextRange, propertyId: nextProperty, limit: 20 }));
     if (result.version !== 2 || result.propertyId !== (nextProperty || null)) throw new Error('The bill view changed. Refresh to check its current pages.');
     if (!mounted.current || current !== generation.current) return;
-    setSnapshot(result); setProperty(nextProperty);
+    setSnapshot(result); setProperty(nextProperty); setRange(nextRange);
     if (editing) {
       const currentBill: SourceBillOccurrenceResult = await api(`/api/bill-occurrences/${editing.id}`);
       if (mounted.current && current === generation.current) setStale(currentBill.occurrence?.revision !== editing.revision);
@@ -158,6 +250,15 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     if (agencyResult.status === 'fulfilled') setAgency(agencyResult.value);
     if (mailResult.status === 'fulfilled' && mailResult.value.version === 2) setMail(mailResult.value);
     setDependencyError(agencyResult.status === 'rejected' || mailResult.status === 'rejected' || pageResult.status === 'rejected' ? 'The current property or saved-mail list could not be refreshed. Previously loaded records and your open bill review are kept.' : '');
+  };
+  const collectBills = async () => {
+    try {
+      const result: MailWorkspaceMetadata = await api('/api/bill-scan', { method: 'POST', body: '{}' }, { timeoutMs: 270_000 });
+      if (mounted.current) { setMail(result); setNotice(billCollectionNotice(result.latestScan)); }
+    } finally {
+      // A failed request can still have a durable failed/interrupted receipt.
+      await dependencies();
+    }
   };
   useEffect(() => {
     mounted.current = true;
@@ -257,11 +358,36 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   };
   const acceptBill = async () => {
     if (closed || !evidence || !sourceChecked) throw new Error('Choose and review the current saved source message.');
+    const operation = editorGeneration.current, key = duplicateKey;
+    const current = () => mounted.current && operation === editorGeneration.current && key === duplicateKeyRef.current;
     let received = acceptedReceipt;
     if (!received) {
       await persistDraft();
+      if (!current()) return;
       const facts = savedBillFacts(draft);
+      let reviewedDuplicate: { reviewDigest: string } | null = null;
+      if (billDuplicateCheckRequired(editing, evidence, facts, billState)) {
+        if (!duplicateRequest) throw new Error('Complete the bill facts and check matching bills before saving.');
+        // Recheck immediately before saving. A checkbox only covers the exact
+        // source, submitted facts and candidate revisions the person inspected.
+        const generation = ++duplicateGeneration.current;
+        let check: BillDuplicateCheck;
+        try { check = readBillDuplicateCheck(await write('/api/bill-occurrences/duplicate-candidates', 'POST', duplicateRequest), evidence.digest); }
+        catch {
+          if (current() && generation === duplicateGeneration.current) { setDuplicateConfirmation(null); setDuplicateRead({ key, check: null, loading: false, error: 'Matching bills could not be checked. Your draft is kept; retry before saving.' }); }
+          throw new Error('Matching bills could not be checked. Your draft is kept; retry before saving.');
+        }
+        if (!current() || generation !== duplicateGeneration.current) return;
+        if (check.reviewDigest !== duplicateCheck?.reviewDigest) setDuplicateConfirmation(null);
+        setDuplicateRead({ key, check, loading: false, error: '' });
+        reviewedDuplicate = confirmedBillDuplicateReview(check, key, duplicateConfirmation, reason);
+        if (!check.complete || (check.candidates.length && !reviewedDuplicate)) {
+          setDuplicateConfirmation(null);
+          throw new Error(check.candidates.some(candidate => candidate.match === 'invoice-conflict') ? 'This invoice number has conflicting facts. Open the matching bill and reconcile the correction; your draft is kept.' : check.complete ? 'Check the matching bills and explain why this is a separate invoice before saving. The matching records may have changed.' : 'The matching-bill check is incomplete. Your draft is kept; retry before saving.');
+        }
+      }
       const body = { itemId, messageId: evidence.message.id, expectedSourceDigest: evidence.digest, sourceReviewed: confirmed, limitedSourceAcknowledged: limited, facts, reviewReason: reason, seriesId: seriesId || null, expectedArrivalDate: arrivalDate || null,
+        ...(reviewedDuplicate ? { duplicateReview: reviewedDuplicate } : {}),
         ...(editing ? { expectedRevision: billBinding.current.billRevision, state: billState } : {}) };
       try { received = await write(editing ? `/api/bill-occurrences/${editing.id}` : '/api/bill-occurrences', editing ? 'PUT' : 'POST', body); }
       catch (cause) {
@@ -269,8 +395,13 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
         // readback before offering another mutation; never throw notes away.
         let found: SourceBillOccurrence | null = null;
         try { found = (await api(`/api/bill-occurrences/by-source/${evidence.identity}`)).occurrence; } catch { /* Keep the open encrypted draft. */ }
-        const matches = found && found.source.digest === evidence.digest && Object.entries(facts).every(([key, value]) => found!.facts[key as keyof typeof facts] === value) && found.reviewReason === reason.trim() && found.seriesId === (seriesId || null) && found.expectedArrivalDate === (arrivalDate || null) && found.state === (editing ? billState : 'received') && (!editing || (found.id === editing.id && found.revision === (billBinding.current.billRevision ?? 0) + 1));
-        if (!matches) { if (editing && (cause as { status?: number })?.status === 409) setStale(true); if (found && !editing) setExistingSource(found); throw cause; }
+        const matches = found && found.source.digest === evidence.digest && sameBillFacts(found.facts, facts) && found.reviewReason === reason.trim() && found.seriesId === (seriesId || null) && found.expectedArrivalDate === (arrivalDate || null) && found.state === (editing ? billState : 'received') && (!editing || (found.id === editing.id && found.revision === (billBinding.current.billRevision ?? 0) + 1));
+        if (!matches) {
+          if ((cause as { code?: string })?.code === 'bill_duplicate_review_required') { setDuplicateConfirmation(null); setDuplicateRefresh(value => value + 1); }
+          else if (editing && (cause as { status?: number })?.status === 409) setStale(true);
+          if (found && !editing) setExistingSource(found);
+          throw cause;
+        }
         received = found;
       }
       if (!received?.id) throw new Error('The saved bill receipt is unavailable. Your draft is kept; check the bill records before retrying.');
@@ -279,6 +410,14 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     billBinding.current = { billId: received.id, billRevision: received.revision };
     await persistDraft('accepted');
     closeReview(); await Promise.all([refresh(), loadReviews()]); setNotice('The reviewed bill, source evidence and review record were saved.'); onSaved?.();
+  };
+  const openDuplicateBill = async (billId: string) => {
+    const operation = editorGeneration.current;
+    await persistDraft('saved');
+    if (!mounted.current || operation !== editorGeneration.current) return;
+    await openBill(billId);
+    await loadReviews();
+    if (mounted.current) setNotice('Your previous review is saved for later. Continue it from Saved bill reviews after checking this bill.');
   };
   useEffect(() => {
     if (!editorOpen) return;
@@ -314,21 +453,26 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     return () => { window.clearTimeout(timer); matchGeneration.current++; };
   }, [editorOpen, evidence?.accountId, draft.propertyId, draft.kind, draft.vendor, editing?.seriesId, matchRefresh]);
   const records = snapshot?.occurrences.items ?? [];
+  const invoiceReviews = reviews?.items.filter(row => !row.hasFinancialReview) ?? [];
+  const pendingInvoiceReviews = billReviewDrafts.list(workspaceId).filter(row => row.dirty && !row.value.financialReview);
   const calendar = snapshot?.calendar.items ?? [];
+  const today = billDateInZone(Date.now(), timeZone), calendarMonth = (snapshot?.range.from ?? range.from).slice(0, 7);
   const needsLimited = Boolean(evidence?.message.bodyTruncated || evidence?.message.attachments.length);
-  return <section aria-label="Source-linked bills and calendar" className="mt-4 border-t border-line pt-4 space-y-4" aria-busy={busy}>
-    <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-medium">Received bills and expected arrivals</h3><p className="mt-1 text-sm text-ink-secondary">Review facts from saved Gmail messages. Confirm recurring arrival patterns separately; an expected arrival is not an invoice or payment.</p></div><button className={button} disabled={busy} onClick={() => void run(async () => { await Promise.all([refresh(), dependencies()]); setNotice('Saved bills and available sources refreshed.'); })}>Refresh bills and sources</button></div>
-    <div className="flex flex-wrap gap-3 items-end"><label className="block text-sm">Property filter<select aria-label="Property filter" className={`${input} mt-1`} value={property} disabled={busy || editorOpen || !!pattern} onChange={e => void run(() => refresh(e.target.value))}><option value="">All available properties</option>{[...new Set([...properties.map(p => p.id), ...(property ? [property] : []), ...(snapshot?.occurrences.items.map(b => b.facts.propertyId) ?? [])])].map(id => <option value={id} key={id}>{label(id)}</option>)}</select></label><button className={button} disabled={busy || editorOpen || !!pattern || !snapshot || !mail || !agency} onClick={() => void run(() => openBill(null))}>Review a bill from saved mail</button><button className={button} disabled={busy || editorOpen || !!pattern || !agency?.workflows.find(w => w.id === 'bills-calendar')?.readyForRun} onClick={() => void run(async () => { await api('/api/bill-scan', { method: 'POST', body: '{}' }, { timeoutMs: 270_000 }); await dependencies(); setNotice('The reviewed bill mail scope was collected. Select a saved message to review its facts.'); })}>Check inbox for bills</button></div><p className="text-sm text-ink-secondary">This checks the Gmail account, date range and message limit reviewed in Agency setup. It saves available conversations for bill review; attachment contents need separate checking.</p>
-    {mail?.latestScan && <details className="rounded border border-line p-3 text-sm"><summary className="min-h-11 cursor-pointer">Latest mail collection: {mail.latestScan.status} · {mail.latestScan.threadCount} conversations</summary><p className="break-words">Account {mail.latestScan.accountId} · {new Date(mail.latestScan.startedAt).toLocaleString()}</p><p className="text-ink-secondary">A saved collection is not proof that all bills or attachments were reviewed.</p>{mail.latestScan.gaps.length > 0 && <ul className="list-disc pl-5">{mail.latestScan.gaps.map((gap, index) => <li key={index} className="break-words text-hold">{gap}</li>)}</ul>}</details>}
+  return <section aria-label="Source-linked bills and calendar" className="space-y-4" aria-busy={busy}>
+    <BillRoutineStatus />
+    <div className={`grid items-start gap-4 ${mail?.latestScan ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]' : ''}`}><div className="space-y-3"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1 basis-72"><h3 className="font-medium">Received bills and expected arrivals</h3><p className="mt-1 text-sm text-ink-secondary">Review facts from saved Gmail messages. Confirm recurring arrival patterns separately; an expected arrival or expected payment is a forecast, not an invoice, due date or payment.</p></div><button className={button} disabled={busy} onClick={() => void run(async () => { await Promise.all([refresh(), dependencies()]); setNotice('Saved bills and available sources refreshed.'); })}>Refresh bills and sources</button></div>
+    <div className="flex flex-wrap gap-3 items-end"><label className="block text-sm">Property filter<select aria-label="Property filter" className={`${input} mt-1`} value={property} disabled={busy || editorOpen || !!pattern} onChange={e => void run(() => refresh(e.target.value))}><option value="">All available properties</option>{[...new Set([...properties.map(p => p.id), ...(property ? [property] : []), ...(snapshot?.occurrences.items.map(b => b.facts.propertyId) ?? [])])].map(id => <option value={id} key={id}>{label(id)}</option>)}</select></label><button className={button} disabled={busy || editorOpen || !!pattern || !snapshot || !mail || !agency} onClick={() => void run(() => openBill(null))}>Review a bill from saved mail</button><button className={button} disabled={busy || editorOpen || !!pattern || !agency?.workflows.find(w => w.id === 'bills-calendar')?.readyForRun} onClick={() => void run(collectBills)}>Check inbox for bills</button></div><p className="text-[13px] text-ink-secondary">Check inbox uses the Gmail account, date range and message limit reviewed in Agency setup. It saves available conversations for bill review; attachment contents need separate checking.</p></div>
+    {mail?.latestScan && <BillCollectionReceipt receipt={mail.latestScan} timeZone={timeZone} />}</div>
     {dependencyError && <p role="alert" className="text-sm text-hold">{dependencyError}</p>}
-    <details className="rounded-lg border border-line p-3" open={!editorOpen && (!!reviews?.items.length || billReviewDrafts.list(workspaceId).some(row => row.dirty))}>
-      <summary className="min-h-11 cursor-pointer font-medium">Saved bill reviews{reviews ? ` (${reviews.items.length} of ${reviews.total})` : ''}</summary>
+    <details className="rounded-lg border border-line p-3" open={!editorOpen && (!!invoiceReviews.length || !!pendingInvoiceReviews.length)}>
+      <summary className="min-h-11 cursor-pointer font-medium">Saved bill reviews{reviews ? ` (${invoiceReviews.length} loaded)` : ''}</summary>
+      <p className="text-sm text-ink-secondary">Financial review drafts are continued from their saved bill below. This list shows invoice-fact reviews.</p>
       <p className="text-sm text-ink-secondary">Drafts are encrypted in this workspace. Reopening a review requires checking its source again; saving a draft does not accept a bill.</p>
       <div className="flex flex-wrap gap-2 my-2"><button className={button} disabled={busy} onClick={() => void run(async () => { await loadReviews(); })}>Refresh saved reviews</button><label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={reviewHistory} disabled={busy} onChange={event => { const all = event.target.checked; setReviewHistory(all); void run(async () => { try { await loadReviews(all); } catch (cause) { if (mounted.current) setReviewHistory(!all); throw cause; } }); }} />Include closed reviews</label></div>
-      {!editorOpen && billReviewDrafts.list(workspaceId).filter(row => row.dirty && !reviews?.items.some(saved => saved.id === row.id)).map(row => <p key={row.id} className="text-sm text-hold">Unconfirmed save · {row.value.fields.vendor || 'Bill review'} <button className={button} disabled={busy} onClick={() => void run(() => resumeDraft(row.id))}>Recover local entries</button></p>)}
-      <ul className="space-y-2">{reviews?.items.map(row => <li className="rounded border border-line p-2 text-sm" data-review-id={row.id} key={row.id}><p className="break-words">{row.vendor || 'Bill review'}{row.kind ? ` · ${row.kind}` : ''} · {row.state === 'editing' ? 'Draft' : row.state === 'saved' ? 'Saved for later' : row.state === 'accepted' ? 'Accepted' : 'Discarded'} · {new Date(row.updatedAt).toLocaleString()}</p><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => resumeDraft(row.id))}>{['accepted', 'discarded'].includes(row.state) ? 'View saved review' : 'Continue saved review'}</button></li>)}</ul>
+      {!editorOpen && pendingInvoiceReviews.filter(row => !reviews?.items.some(saved => saved.id === row.id)).map(row => <p key={row.id} className="text-sm text-hold">Unconfirmed save · {row.value.fields.vendor || 'Bill review'} <button className={button} disabled={busy} onClick={() => void run(() => resumeDraft(row.id))}>Recover local entries</button></p>)}
+      <ul className="space-y-2">{invoiceReviews.map(row => <li className="rounded border border-line p-2 text-sm" data-review-id={row.id} key={row.id}><p className="break-words">{row.vendor || 'Bill review'}{row.kind ? ` · ${row.kind}` : ''} · {row.state === 'editing' ? 'Draft' : row.state === 'saved' ? 'Saved for later' : row.state === 'accepted' ? 'Accepted' : 'Discarded'} · {new Date(row.updatedAt).toLocaleString()}</p><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => resumeDraft(row.id))}>{['accepted', 'discarded'].includes(row.state) ? 'View saved review' : 'Continue saved review'}</button></li>)}</ul>
       {reviews?.nextCursor && <button className={`${button} mt-2`} disabled={busy} onClick={() => void run(async () => { await loadReviews(reviewHistory, true); })}>Load more saved reviews</button>}
-      {reviews && !reviews.items.length && <p className="text-sm text-ink-secondary">No saved reviews in this list.</p>}
+      {reviews && !invoiceReviews.length && <p className="text-sm text-ink-secondary">No invoice reviews on the loaded pages. Check any remaining pages below.</p>}
     </details>
     {discard && <div ref={discardElement} tabIndex={-1} role="alertdialog" aria-label="Discard unsaved bill review" className="rounded-lg border border-hold p-3 space-y-2"><p className="text-sm">Keep this review for later, or close it as discarded. Either choice keeps the encrypted review record and any proposal request; it does not cancel running work.</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void run(async () => { const intent = discard; await persistDraft('discarded'); closeReview(); if (intent.kind === 'open') await openBill(intent.id); await loadReviews(); })}>Discard unsaved bill review</button><button className={button} disabled={busy} onClick={() => void run(async () => { const intent = discard; await persistDraft('saved'); closeReview(); if (intent.kind === 'open') await openBill(intent.id); await loadReviews(); setNotice('Review saved for later. Source confirmations must be checked again when reopened.'); })}>Save review and close</button><button className={button} disabled={busy} onClick={() => { setDiscard(null); editor.current?.focus({ preventScroll: true }); editor.current?.scrollIntoView({ block: 'nearest' }); }}>Keep editing this bill</button></div></div>}
     {editorOpen && <form ref={editor} tabIndex={-1} aria-label="Review source bill" className="rounded-lg border border-agency p-3 space-y-3" onSubmit={e => { e.preventDefault(); void run(acceptBill); }}>
@@ -371,24 +515,30 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
         {proposal && <aside aria-label="Bill field proposal" className="space-y-2"><p className="font-medium">Preparation result · {proposal.run.status}</p>{proposal.attachmentReads?.map(pdf => <details key={pdf.attachmentId} className="rounded border border-line p-3"><summary className="min-h-11 cursor-pointer break-words">PDF text read · {pdf.fileName} · {pdf.pages} page{pdf.pages === 1 ? '' : 's'}</summary><p className="text-ink-secondary">Extracted text is source evidence, not instructions or confirmation of bill facts. Images and handwritten details may be missing; check the original.</p><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-sans">{pdf.text}</pre></details>)}{proposal.proposal ? <><p className="break-words">{proposal.proposal.reason}</p><p>Recommendation: {proposal.proposal.decision}. This does not accept the bill.</p><dl className="grid gap-1 sm:grid-cols-2">{Object.entries(proposal.proposal.proposedEntry).map(([key, value]) => <div key={key} className="break-words"><dt className="text-ink-secondary">{{ supplierId: 'Supplier reference', invoiceId: 'Invoice reference', propertyId: 'Property reference', amount: 'Amount', currency: 'Currency', dueDate: 'Due date', costType: 'Bill kind' }[key] || key}</dt><dd>{value ?? 'Not established'}</dd></div>)}</dl><p className="text-ink-secondary">Copy only fields you confirm against the source into the review below. A supplier reference is not necessarily the vendor name. Invoice dates and attachment contents may be missing.</p></> : <p>No field proposal is available. Manual source review remains available.</p>}<details><summary className="min-h-11 cursor-pointer">Proposal receipt</summary><p className="break-all">Run {proposal.run.id} · source {proposal.sourceDigest}</p></details></aside>}
       </div>}
       {existingSource && <p role="alert" className="text-sm text-hold">This message already has a saved bill. <button type="button" className={button} disabled={fieldsLocked} onClick={() => leaveReview({ kind: 'open', id: existingSource.id })}>Open its saved review</button></p>}
-      <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Bill property<select aria-label="Bill property" className={`${input} mt-1`} value={draft.propertyId} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, propertyId: e.target.value })}><option value="">Choose a property…</option>{properties.map(p => <option value={p.id} key={p.id}>{p.label}</option>)}</select></label><label className="block text-sm">Bill kind<input className={`${input} mt-1`} maxLength={80} value={draft.kind} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="Water, council or levy" /></label><label className="block text-sm">Vendor<input className={`${input} mt-1`} maxLength={160} value={draft.vendor} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, vendor: e.target.value })} /></label><label className="block text-sm">Amount (AUD)<input className={`${input} mt-1`} inputMode="decimal" value={draft.amount} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, amount: e.target.value })} placeholder="Unknown — leave blank" /></label><label className="block text-sm">Invoice date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.invoiceDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceDate: e.target.value })} /></label><label className="block text-sm">Actual due date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.dueDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, dueDate: e.target.value })} /></label></div>
+      <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Bill property<select aria-label="Bill property" className={`${input} mt-1`} value={draft.propertyId} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, propertyId: e.target.value })}><option value="">Choose a property…</option>{properties.map(p => <option value={p.id} key={p.id}>{p.label}</option>)}</select></label><label className="block text-sm">Bill kind<input className={`${input} mt-1`} maxLength={80} value={draft.kind} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="Water, council or levy" /></label><label className="block text-sm">Vendor<input className={`${input} mt-1`} maxLength={160} value={draft.vendor} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, vendor: e.target.value })} /></label><label className="block text-sm">Invoice number, if confirmed<input className={`${input} mt-1`} maxLength={120} value={draft.invoiceNumber ?? ''} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceNumber: e.target.value })} placeholder="From the invoice, not the property or payment reference" /></label><label className="block text-sm">Invoice version, if shown<input className={`${input} mt-1`} maxLength={80} value={draft.invoiceVersion ?? ''} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceVersion: e.target.value })} placeholder="Leave blank when not shown" /></label><label className="block text-sm">Amount (AUD)<input className={`${input} mt-1`} inputMode="decimal" value={draft.amount} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, amount: e.target.value })} placeholder="Unknown — leave blank" /></label><label className="block text-sm">Invoice date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.invoiceDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceDate: e.target.value })} /></label><label className="block text-sm">Actual due date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.dueDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, dueDate: e.target.value })} /></label></div>
       {editing && <label className="block text-sm">Bill review status<select aria-label="Bill review status" className={`${input} mt-1`} value={billState} disabled={fieldsLocked} onChange={e => setBillState(e.target.value as SourceBillState)}>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       {(matchedPatterns.length > 0 || seriesId) && <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Match an approved arrival pattern<select aria-label="Match an approved arrival pattern" className={`${input} mt-1`} value={seriesId} disabled={fieldsLocked} onChange={e => { setSeriesId(e.target.value); setArrivalDate(''); }}><option value="">No pattern link</option>{seriesId && !matchedPatterns.some(series => series.id === seriesId) && <option value={seriesId} disabled>Existing pattern · check matching facts</option>}{matchedPatterns.map(series => <option key={series.id} value={series.id}>{series.kind} · {series.vendor}{series.active ? '' : ' · paused (existing link)'}</option>)}</select></label>{seriesId && <label className="block text-sm">Which expected arrival date?<input type="date" className={`${input} mt-1`} value={arrivalDate} disabled={fieldsLocked} onChange={e => setArrivalDate(e.target.value)} /></label>}</div>}
       <label className="block text-sm">Bill note<textarea aria-label="Bill note" className={`${input} mt-1`} maxLength={1000} value={draft.note} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, note: e.target.value })} /></label>
-      <label className="block text-sm">Reason for this bill review<input className={`${input} mt-1`} maxLength={1000} value={reason} disabled={fieldsLocked} onChange={e => setReason(e.target.value)} placeholder="How were the property, currency and dates confirmed?" /></label>
+      {!!duplicateKey && <BillDuplicateReview check={duplicateCheck} loading={duplicateLoading} error={duplicateError} checked={!!duplicateCheck?.reviewDigest && duplicateConfirmation?.key === duplicateKey && duplicateConfirmation.reviewDigest === duplicateCheck.reviewDigest} disabled={fieldsLocked} label={label}
+        onConfirm={checked => setDuplicateConfirmation(checked && duplicateCheck?.complete && duplicateCheck.reviewDigest ? { key: duplicateKey, reviewDigest: duplicateCheck.reviewDigest } : null)}
+        onOpen={billId => void run(() => openDuplicateBill(billId))} onRetry={() => { setDuplicateConfirmation(null); setDuplicateRefresh(value => value + 1); }} />}
+      <label className="block text-sm">Reason for this bill review<input className={`${input} mt-1`} maxLength={1000} value={reason} disabled={fieldsLocked} onChange={e => setReason(e.target.value)} placeholder={duplicateCheck?.candidates.length ? 'Explain why this is a separate invoice and how you checked it.' : 'How were the property, currency and dates confirmed?'} /></label>
       <label className="flex min-h-11 gap-2 items-start text-sm"><input type="checkbox" className="mt-1" checked={confirmed} disabled={fieldsLocked || !evidence} onChange={e => setConfirmed(e.target.checked)} />I reviewed this source and confirmed the entered property, AUD amount and dates.</label>
       {needsLimited && <label className="flex min-h-11 gap-2 items-start text-sm"><input type="checkbox" className="mt-1" checked={limited} disabled={fieldsLocked} onChange={e => setLimited(e.target.checked)} />I understand attachment contents and any truncated text need checking against the original.</label>}
       {matching && <p role="status" className="text-sm text-ink-secondary">Checking approved arrival patterns…</p>}{matchingError && <div role="alert" className="text-sm text-hold"><p>{matchingError}</p><button type="button" className={button} disabled={fieldsLocked} onClick={() => setMatchRefresh(value => value + 1)}>Recheck arrival patterns</button></div>}{evidence && !sourceChecked && <button type="button" className={button} disabled={fieldsLocked} onClick={() => void run(() => loadMessage(itemId, evidence.message.id))}>Recheck saved source</button>}
       {stale && <p role="alert" className="text-sm text-hold">This bill changed elsewhere. Your draft is kept. Reload the saved bill before applying a correction.</p>}
-      <div className="flex flex-wrap gap-2"><button type="submit" className={button} disabled={busy || closed || !!localDraft?.conflict || matching || !!matchingError || (!!seriesId && !matchedPatterns.some(series => series.id === seriesId)) || !sourceChecked || !evidence || !!existingSource || stale || !confirmed || (needsLimited && !limited) || !properties.some(p => p.id === draft.propertyId) || !draft.kind.trim() || !draft.vendor.trim() || !reason.trim()}>{acceptedReceipt ? 'Finish saving review record' : editing ? 'Save bill correction' : 'Accept reviewed bill'}</button>{stale && editing && <button type="button" className={button} disabled={fieldsLocked || !!proposalRequest.current} onClick={() => leaveReview({ kind: 'open', id: editing.id })}>Reload saved bill and discard edits</button>}<button type="button" className={button} disabled={busy || !!acceptedReceipt} onClick={() => leaveReview({ kind: 'cancel' })}>{closed ? 'Close review history' : 'Cancel bill review'}</button>{!closed && !acceptedReceipt && <button type="button" className={button} disabled={busy || !!localDraft?.conflict} onClick={() => void run(async () => { await persistDraft('saved'); closeReview(); await loadReviews(); setNotice('Review saved for later. Source confirmations must be checked again when reopened.'); })}>Save for later</button>}</div>
+      <div className="flex flex-wrap gap-2"><button type="submit" className={button} disabled={busy || closed || duplicateHeld || !!localDraft?.conflict || matching || !!matchingError || (!!seriesId && !matchedPatterns.some(series => series.id === seriesId)) || !sourceChecked || !evidence || !!existingSource || stale || !confirmed || (needsLimited && !limited) || !properties.some(p => p.id === draft.propertyId) || !draft.kind.trim() || !draft.vendor.trim() || !reason.trim()}>{acceptedReceipt ? 'Finish saving review record' : editing ? 'Save bill correction' : 'Accept reviewed bill'}</button>{stale && editing && <button type="button" className={button} disabled={fieldsLocked || !!proposalRequest.current} onClick={() => leaveReview({ kind: 'open', id: editing.id })}>Reload saved bill and discard edits</button>}<button type="button" className={button} disabled={busy || !!acceptedReceipt} onClick={() => leaveReview({ kind: 'cancel' })}>{closed ? 'Close review history' : 'Cancel bill review'}</button>{!closed && !acceptedReceipt && <button type="button" className={button} disabled={busy || !!localDraft?.conflict} onClick={() => void run(async () => { await persistDraft('saved'); closeReview(); await loadReviews(); setNotice('Review saved for later. Source confirmations must be checked again when reopened.'); })}>Save for later</button>}</div>
     </form>}
     {pattern && <form aria-label="Approve bill arrival pattern" className="rounded-lg border border-agency p-3 space-y-3" onSubmit={e => { e.preventDefault(); void run(async () => {
       const fields = { intervalMonths: pattern.intervalMonths, anchorDate: pattern.anchorDate, windowBeforeDays: pattern.windowBeforeDays, windowAfterDays: pattern.windowAfterDays, timeZone: pattern.timeZone, reviewReason: pattern.reason };
       await write(pattern.original ? `/api/bill-series/${pattern.original.id}` : '/api/bill-series', pattern.original ? 'PUT' : 'POST', pattern.original ? { ...fields, expectedRevision: pattern.original.revision, active: pattern.active } : { ...fields, occurrenceId: pattern.bill.id, expectedOccurrenceRevision: pattern.bill.revision });
       await refresh(); setPattern(null); setNotice('The arrival pattern was saved with your review. Invoice due dates remain separate.'); onSaved?.();
     }); }}><h4 className="font-medium">{pattern.original ? 'Review arrival pattern' : 'Approve recurring arrivals'} · {label(pattern.bill.facts.propertyId)} · {pattern.bill.facts.kind}</h4><p className="text-sm text-ink-secondary">Confirm the pattern you expect from this received bill. The anchor window must include its actual source arrival. An end-of-month anchor stays at month end. These dates predict arrivals, not invoice due dates.</p><div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Arrival frequency<select aria-label="Arrival frequency" className={`${input} mt-1`} disabled={busy} value={pattern.intervalMonths} onChange={e => setPattern({ ...pattern, intervalMonths: Number(e.target.value) as 1 | 3 | 12 })}><option value={1}>Monthly</option><option value={3}>Quarterly</option><option value={12}>Yearly</option></select></label><label className="block text-sm">Observed anchor date<input type="date" className={`${input} mt-1`} disabled={busy} value={pattern.anchorDate} onChange={e => setPattern({ ...pattern, anchorDate: e.target.value })} /></label><label className="block text-sm">Days before anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowBeforeDays} onChange={e => setPattern({ ...pattern, windowBeforeDays: Number(e.target.value) })} /></label><label className="block text-sm">Days after anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowAfterDays} onChange={e => setPattern({ ...pattern, windowAfterDays: Number(e.target.value) })} /></label></div><label className="block text-sm">Arrival timezone<input className={`${input} mt-1`} disabled={busy} value={pattern.timeZone} onChange={e => setPattern({ ...pattern, timeZone: e.target.value })} placeholder="Australia/Brisbane" /></label><label className="block text-sm">Reason for this arrival pattern<input className={`${input} mt-1`} maxLength={1000} disabled={busy} value={pattern.reason} onChange={e => setPattern({ ...pattern, reason: e.target.value })} /></label>{pattern.original && <label className="flex min-h-11 gap-2 items-center text-sm"><input type="checkbox" checked={pattern.active} disabled={busy} onChange={e => setPattern({ ...pattern, active: e.target.checked })} />Pattern is active</label>}<div className="flex flex-wrap gap-2"><button type="submit" className={button} disabled={busy || !pattern.reason.trim()}>{pattern.original ? 'Save arrival pattern revision' : 'Approve arrival pattern'}</button><button type="button" className={button} disabled={busy} onClick={() => setPattern(null)}>Cancel pattern review</button></div></form>}
-    <div className="space-y-3"><h4 className="font-medium">Bill calendar</h4>{snapshot && <p className="text-sm text-ink-secondary">Showing {calendar.length} entries from {displayBillDate(snapshot.range.from)} to {displayBillDate(snapshot.range.to)}{snapshot.calendar.nextCursor ? ' · more entries available' : ' · all pages loaded'}. Predictions remain separate from actual due dates.</p>}<div className="flex flex-wrap gap-3 items-end"><label className="block text-sm">Calendar from<input type="date" className={`${input} mt-1`} value={range.from} onChange={e => setRange({ ...range, from: e.target.value })} /></label><label className="block text-sm">Calendar to<input type="date" className={`${input} mt-1`} value={range.to} onChange={e => setRange({ ...range, to: e.target.value })} /></label><button className={button} disabled={busy} onClick={() => void run(async () => { await refresh(); })}>Show calendar range</button></div>{snapshot && !calendar.length && <p className="text-sm text-ink-secondary">No entries on this loaded calendar page. Check any remaining pages below.</p>}<ul className="grid gap-2 sm:grid-cols-2">{calendar.map(entry => <li key={entry.id} className="rounded-lg border border-line p-3 space-y-1 text-sm"><p className={`font-medium ${entry.type === 'expected-arrival' ? 'text-ink-secondary' : 'text-ink'}`}>{entry.type === 'expected-arrival' ? 'Expected arrival' : 'Actual due date'} · {displayBillDate(entry.date)}{entry.endDate !== entry.date ? ` – ${displayBillDate(entry.endDate)}` : ''}</p><p className="break-words">{label(entry.propertyId)} · {entry.kind} · {entry.vendor}</p><p className="text-xs text-ink-secondary">{entry.type === 'expected-arrival' ? 'Prediction from your approved arrival pattern. No invoice due date is implied.' : 'Date entered in the received bill’s source review.'}</p><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => entry.billId ? openBill(entry.billId) : openPattern(entry.seriesId!))}>{entry.billId ? 'Open received bill' : 'Review arrival pattern'}</button></li>)}</ul>{snapshot?.calendar.nextCursor && <button className={button} disabled={busy} onClick={() => void run(() => loadMore('calendar'))}>Load more calendar entries</button>}</div>
-    <div className="space-y-3"><h4 className="font-medium">Received bill records {snapshot ? `(${records.length} of ${snapshot.occurrences.total})` : ''}</h4>{snapshot && !records.length && <p className="text-sm text-ink-secondary">No bill records on this loaded page. Check any remaining pages below.</p>}<ul className="space-y-3">{records.map(row => <li key={row.id} id={row.id} className="rounded-lg border border-line p-3 space-y-2 text-sm"><div className="flex flex-wrap justify-between gap-2"><h5 className="font-medium break-words">{label(row.facts.propertyId)} · {row.facts.kind}</h5><span>{states[row.state]} · revision {row.revision}</span></div><p className="break-words">{row.facts.vendor} · {row.facts.amountCents === null ? 'Amount not confirmed' : new Intl.NumberFormat(undefined, { style: 'currency', currency: row.facts.currency }).format(row.facts.amountCents / 100)}</p><p>Invoice date: {displayBillDate(row.facts.invoiceDate)} · Actual due: {displayBillDate(row.facts.dueDate)}</p>{row.facts.note && <p className="whitespace-pre-wrap break-words">{row.facts.note}</p>}<p className="text-ink-secondary break-words">Review reason: {row.reviewReason}</p><details><summary className="min-h-11 cursor-pointer">Source and correction history ({row.history.length})</summary><p className="break-words">Current source: {row.source.message.subject} · {row.source.message.from}</p><p className="break-all text-xs">Message {row.source.message.id} · receipt {row.source.receiptId} · digest {row.source.digest}</p><p className="whitespace-pre-wrap break-words mt-2">{row.source.message.body}</p><ul className="mt-2 space-y-2">{row.history.map(version => <li key={version.revision} className="rounded border border-line p-2"><p>Revision {version.revision} · {states[version.state]} · due {displayBillDate(version.facts.dueDate)}</p><p className="break-words">{version.reviewReason} · reviewed by {version.reviewedBy}</p><p className="break-words">{version.facts.vendor} · {version.facts.kind} · {label(version.facts.propertyId)}</p><p className="break-all text-xs">Source {version.source.message.id} · {version.source.digest}</p><details><summary className="min-h-11 cursor-pointer">Earlier saved source text</summary><p className="whitespace-pre-wrap break-words">{version.source.message.body}</p></details></li>)}</ul></details><div className="flex flex-wrap gap-2"><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => openBill(row))}>Review or correct bill</button>{row.state !== 'cancelled' && <button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => openPatternForBill(row.id))}>Review recurring arrivals</button>}</div></li>)}</ul>{snapshot?.occurrences.nextCursor && <button className={button} disabled={busy} onClick={() => void run(() => loadMore('occurrences'))}>Load more bill records</button>}</div>
+    {snapshot && <BillMonthCalendar entries={calendar} month={calendarMonth} today={today} busy={busy} actionsDisabled={busy || editorOpen || !!pattern} label={label}
+      selectedDay={calendarDay} onSelectDay={setCalendarDay} onOpenBill={billId => void run(() => openBill(billId))} onOpenPattern={seriesId => void run(() => openPattern(seriesId))}
+      onMonth={step => void run(async () => { await refresh(property, billMonthRange(step === 'current' ? today.slice(0, 7) : shiftBillMonth(calendarMonth, step === 'next' ? 1 : -1))); setCalendarDay(null); })}
+      hasMore={!!snapshot.calendar.nextCursor} onLoadMore={() => void run(() => loadMore('calendar'))} />}
+    <div className="space-y-3"><h4 className="font-medium">Received bill records {snapshot ? `(${records.length} of ${snapshot.occurrences.total})` : ''}</h4>{snapshot && !records.length && <p className="text-sm text-ink-secondary">No bill records on this loaded page. Check any remaining pages below.</p>}<ul className="space-y-3">{records.map(row => <li key={row.id} id={row.id} className="rounded-lg border border-line p-3 space-y-2 text-sm"><div className="flex flex-wrap justify-between gap-2"><h5 className="font-medium break-words">{label(row.facts.propertyId)} · {row.facts.kind}</h5><span>{states[row.state]} · revision {row.revision}</span></div><p className="break-words">{row.facts.vendor} · {row.facts.amountCents === null ? 'Amount not confirmed' : new Intl.NumberFormat(undefined, { style: 'currency', currency: row.facts.currency }).format(row.facts.amountCents / 100)}</p>{row.facts.invoiceNumber && <p className="break-words">Invoice {row.facts.invoiceNumber}{row.facts.invoiceVersion ? ` · version ${row.facts.invoiceVersion}` : ''}</p>}<p>Invoice date: {displayBillDate(row.facts.invoiceDate)} · Actual due: {displayBillDate(row.facts.dueDate)}</p>{row.facts.note && <p className="whitespace-pre-wrap break-words">{row.facts.note}</p>}<p className="text-ink-secondary break-words">Review reason: {row.reviewReason}</p><details><summary className="min-h-11 cursor-pointer">Source and correction history ({row.history.length})</summary><p className="break-words">Current source: {row.source.message.subject} · {row.source.message.from}</p><p className="break-all text-xs">Message {row.source.message.id} · receipt {row.source.receiptId} · digest {row.source.digest}</p><p className="whitespace-pre-wrap break-words mt-2">{row.source.message.body}</p><ul className="mt-2 space-y-2">{row.history.map(version => <li key={version.revision} className="rounded border border-line p-2"><p>Revision {version.revision} · {states[version.state]} · due {displayBillDate(version.facts.dueDate)}</p>{version.facts.invoiceNumber && <p className="break-words">Invoice {version.facts.invoiceNumber}{version.facts.invoiceVersion ? ` · version ${version.facts.invoiceVersion}` : ''}</p>}<p className="break-words">{version.reviewReason} · reviewed by {version.reviewedBy}</p><p className="break-words">{version.facts.vendor} · {version.facts.kind} · {label(version.facts.propertyId)}</p><p className="break-all text-xs">Source {version.source.message.id} · {version.source.digest}</p><details><summary className="min-h-11 cursor-pointer">Earlier saved source text</summary><p className="whitespace-pre-wrap break-words">{version.source.message.body}</p></details></li>)}</ul></details><div className="flex flex-wrap gap-2"><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => openBill(row))}>Review or correct bill</button>{row.state !== 'cancelled' && <button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => openPatternForBill(row.id))}>Review recurring arrivals</button>}</div><BillFinancialReview key={`${workspaceId}:${row.id}`} bill={row} workspaceId={workspaceId} disabled={busy || editorOpen || !!pattern} onSaved={async () => { await Promise.all([refresh(), loadReviews()]); onSaved?.(); }} /></li>)}</ul>{snapshot?.occurrences.nextCursor && <button className={button} disabled={busy} onClick={() => void run(() => loadMore('occurrences'))}>Load more bill records</button>}</div>
     {!!snapshot?.series.total && <details><summary className="min-h-11 cursor-pointer font-medium">Saved arrival patterns ({snapshot.series.items.length} of {snapshot.series.total})</summary><ul className="space-y-2">{snapshot.series.items.map(series => <li key={series.id} className="rounded border border-line p-3 text-sm space-y-2"><p className="break-words">{label(series.propertyId)} · {series.kind} · {series.vendor} · {series.active ? 'Active' : 'Paused'}</p><p>Every {series.intervalMonths} month{series.intervalMonths === 1 ? '' : 's'} · anchor {displayBillDate(series.anchorDate)} · {series.timeZone}</p><p className="break-words">{series.reviewReason}</p><button className={button} disabled={busy || editorOpen || !!pattern} onClick={() => void run(() => openPattern(series.id))}>Edit or pause arrival pattern</button><details><summary className="min-h-11 cursor-pointer">Pattern history ({series.history.length})</summary>{series.history.map(version => <p key={version.revision} className="break-words">Revision {version.revision} · {version.active ? 'Active' : 'Paused'} · every {version.intervalMonths} months from {displayBillDate(version.anchorDate)} · {version.reviewReason}</p>)}</details></li>)}</ul>{snapshot.series.nextCursor && <button className={button} disabled={busy} onClick={() => void run(() => loadMore('series'))}>Load more arrival patterns</button>}</details>}
     {!snapshot && !error && <p role="status" className="text-sm text-ink-secondary">Loading saved bill records…</p>}
     {error && <p role="alert" className="text-sm text-danger">{error}{snapshot ? ' Previously loaded records are retained; refresh before another change.' : ''}</p>}

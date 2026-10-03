@@ -12,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud bill source QA '));
@@ -46,15 +47,24 @@ const connector = createServer(async (req, res) => {
 try {
   connector.listen(0, '127.0.0.1'); await once(connector, 'listening'); const endpoint = `http://127.0.0.1:${connector.address().port}`;
   const reserve = createServer(); reserve.listen(0, '127.0.0.1'); await once(reserve, 'listening'); const port = reserve.address().port; await new Promise(r => reserve.close(r)); const base = `http://127.0.0.1:${port}`;
-  const worker = join(temp, 'fictional-worker.mjs'), workerCalls = join(temp, 'worker-calls.json');
+  // Fixture call evidence stays inside the real worker's writable work folder.
+  const worker = join(temp, 'fictional-worker.mjs'), workerCalls = join(data, 'vault', 'bud-work', 'worker-calls.json');
   writeFileSync(worker, `#!${process.execPath}\nimport {readFileSync,writeFileSync,existsSync} from 'node:fs';
 if(process.argv.includes('--version')){console.log('Hermes Agent v0.21.3 (2026.9.14)');process.exit(0);}
+// The provider key stays with the host; this worker receives only the loopback relay token.
+if(process.env.REALBUD_MODEL_API_KEY===${JSON.stringify(fictionalWorkerModelKey)}||!/^[a-f0-9]{64}$/.test(process.env.REALBUD_MODEL_API_KEY??''))throw new Error('Fictional worker did not receive an isolated relay token');
+const relayOverlay=JSON.parse(readFileSync(process.env.HERMES_MANAGED_DIR+'/config.yaml','utf8'));
+const relayProviders=Object.values(relayOverlay.providers??{});
+if(relayProviders.length!==1||!['api','url','base_url'].every(key=>{const url=new URL(relayProviders[0][key]);return url.protocol==='http:'&&url.hostname==='127.0.0.1'&&url.port;}))throw new Error('Fictional worker relay must use loopback only');
 const path=${JSON.stringify(join(data, 'vault/workflow-inputs/accounts-invoices.json'))};if(!existsSync(path)){console.log('{}');process.exit(0);}
 const input=JSON.parse(readFileSync(path,'utf8')), doc=input.documents[0];
 const result={version:1,kind:'accounts-invoice-entry-review',sourceReference:input.sourceReference,status:'partial',coverageComplete:false,holds:[{itemId:'coverage',reason:'Only the selected fictional message is available; the text layer needs human review.'}],actionsPerformed:[],documents:[{documentId:doc.documentId,decision:'hold',duplicateOf:null,conflictGroup:null,proposedEntry:{supplierId:'Fictional Water',invoiceId:'FICTION-001',propertyId:input.propertyMap[0]?.propertyId??null,amount:'123.45',currency:'AUD',dueDate:${JSON.stringify(dueDate)},costType:'Water'},sourceIds:[doc.sourceId],reason:'Fictional source text supplies candidate facts; staff approval remains required.'}]};
 const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readFileSync(log,'utf8'));}catch{}calls.push(input.sourceReference);writeFileSync(log,JSON.stringify(calls));console.log(JSON.stringify({summary:'Fictional invoice preparation',evidence:[],outputs:[JSON.stringify(result)],needsApproval:[]}));\n`, { mode: 0o700 });
   writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } }, composio: { managed: { endpoint, credential, profile: 'property' } } }), { mode: 0o600 });
-  child = spawn(process.execPath, [join(root, 'server/index.ts')], { cwd: root, env: { ...serviceSmokeEnv({ executable: process.execPath, home: temp, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '0', REALBUD_HERMES_CLI: worker, REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: resolve(process.env.REALBUD_UI_DIR || join(root, 'dist')) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  provisionMockWorkerGrant({ home: temp, data, endpoint, credential, companyId: 'fictional-bills-office', hostInstallationId: 'fictional-bills-host' });
+  const networkGuard = join(temp, 'network-guard.mjs');
+  writeFileSync(networkGuard, `const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(url.origin!==${JSON.stringify(endpoint)})throw new Error('QA denied non-connector fetch');return realFetch(input,init);};`, { mode: 0o600 });
+  child = spawn(process.execPath, ['--import', networkGuard, join(root, 'server/index.ts')], { cwd: root, env: { ...serviceSmokeEnv({ executable: process.execPath, home: temp, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '0', REALBUD_HERMES_CLI: worker, REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: resolve(process.env.REALBUD_UI_DIR || join(root, 'dist')) }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-24000); });
   let ready = false; for (let i = 0; i < 100; i++) { if (child.exitCode !== null) break; try { if ((await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === child.pid) { ready = true; break; } } catch {} await wait(100); } assert.ok(ready, logs);
   assert.equal((await fetch(base + '/api/bill-register')).status, 401);
@@ -82,17 +92,39 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.on('request', request => { if (request.method() === 'GET') readPaths.push(new URL(request.url()).pathname); }); page.on('pageerror', error => errors.push(error.message));
-  await page.goto(base + '/#/desk'); await page.getByRole('button', { name: 'Open bills and calendar', exact: true }).click();
+  await page.goto(base + '/#/desk');
+  // New private workspaces use Simple desk. Show this workflow through the
+  // normal layout controls before expecting its Other work entry to be present.
+  await page.locator('.desk-more > summary').filter({ hasText: /^More$/ }).click();
+  await page.locator('.desk-options > summary').click();
+  await page.getByRole('button', { name: 'Customize desk', exact: true }).click();
+  const showBills = page.getByLabel('Show Bills and calendar', { exact: true });
+  if (!await showBills.isChecked()) { await showBills.check(); await page.getByRole('button', { name: 'Save layout', exact: true }).click(); await page.getByText('Desk layout saved.', { exact: true }).waitFor(); }
+  await page.getByRole('button', { name: 'Close Customize desk', exact: true }).click();
+  await page.locator('.desk-other-work > summary').click();
+  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
   const preManualScanCalls = scanCalls;
   await panel.getByRole('button', { name: 'Check inbox for bills', exact: true }).click();
-  await panel.getByText('The reviewed bill mail scope was collected.', { exact: false }).waitFor();
-  assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace'); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
-  pass('Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule');
+  // The fixture invoice arrives as a PDF attachment that collection does not
+  // read, so the honest receipt is partial with exactly that one source gap.
+  const collection = panel.getByRole('complementary', { name: 'Latest bill mail collection', exact: true });
+  await collection.getByText('Latest mail collection: partial', { exact: true }).waitFor();
+  await collection.getByText('Bill mail collection is partial.', { exact: false }).waitFor();
+  await collection.getByText('Collection account and source gaps (1)', { exact: true }).waitFor();
+  assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace');
+  assert.equal(mail.latestScan.status, 'partial'); assert.deepEqual(mail.latestScan.gaps, ['Attachment contents were not read. Any decision needing an attachment must stay held.']); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
+  pass('Other work opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
+  await page.getByRole('region', { name: 'Bills and calendar', exact: true }).getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  // Saved views are managed by Bud. Seed the route through the revisioned API
+  // so reload, two-window and unmount/hydration checks still use a durable view.
+  const allBillsViews = (await request('/api/workspace-tabs')).state, allBillsViewId = `view-${randomUUID()}`;
+  await request('/api/workspace-tabs', 'PUT', { version: 1, expectedRevision: allBillsViews.revision, tabs: [...allBillsViews.tabs, { id: allBillsViewId, label: 'Fictional bills and calendar', visible: true, view: { kind: 'bills', filter: 'all' } }] });
+  const billsUrl = base + `/#/views/${allBillsViewId}`;
+  await page.goto(billsUrl); await page.reload(); await panel.waitFor();
   await panel.getByRole('button', { name: 'Review a bill from saved mail', exact: true }).click();
   let editor = panel.getByRole('form', { name: 'Review source bill' }); await editor.getByLabel('Saved conversation', { exact: true }).selectOption(itemId); await editor.getByLabel('Source message', { exact: false }).selectOption('def');
   await editor.getByRole('complementary', { name: 'Bill source evidence' }).waitFor();
-  const billsUrl = page.url();
   const waitForDraft = async (id, note) => { for (let attempt = 0; attempt < 100; attempt++) { const result = (await request(`/api/bill-review-drafts/${id}`)).draft; if (result.fields.note === note) return result; await wait(100); } throw new Error('Draft save did not reach expected note'); };
   await editor.getByLabel('Amount (AUD)', { exact: true }).fill('12.');
   await editor.getByLabel('Bill note', { exact: true }).fill('Raw draft survives reload');
@@ -248,16 +280,63 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   pass('Real host API deduplicates a rescan while rejecting stale source digest and unknown workspace property');
   await panel.getByRole('button', { name: 'Review recurring arrivals', exact: true }).click();
   const pattern = panel.getByRole('form', { name: 'Approve bill arrival pattern' }); await pattern.getByLabel('Observed anchor date', { exact: false }).fill(sourceDate); await pattern.getByLabel('Days before anchor', { exact: false }).fill('0'); await pattern.getByLabel('Days after anchor', { exact: false }).fill('0'); await pattern.getByLabel('Arrival timezone', { exact: false }).fill('UTC'); await pattern.getByLabel('Reason for this arrival pattern', { exact: false }).fill('Fictional monthly arrival agreed by staff'); await pattern.getByRole('button', { name: 'Approve arrival pattern', exact: true }).click(); await pattern.waitFor({ state: 'hidden' });
-  await panel.getByLabel('Calendar from', { exact: false }).fill(sourceDate); await panel.getByLabel('Calendar to', { exact: false }).fill(rangeEnd); await panel.getByRole('button', { name: 'Show calendar range', exact: true }).click();
+  const calendar = panel.getByRole('region', { name: 'Bill calendar', exact: true });
+  const waitForBills = () => page.waitForFunction(() => document.querySelector('section[aria-label="Source-linked bills and calendar"]')?.getAttribute('aria-busy') === 'false');
+  const monthNames = Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat('en-AU', { month: 'long', timeZone: 'UTC' }).format(Date.UTC(2026, month, 1)));
+  const calendarDate = date => page.evaluate(value => new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`)), date);
+  const selectCalendarDay = async date => {
+    await waitForBills();
+    const [year, month, day] = date.split('-').map(Number);
+    const [shownMonth, shownYear] = (await calendar.getByRole('heading', { level: 4 }).innerText()).split(' ');
+    assert.ok(monthNames.includes(shownMonth));
+    let current = Number(shownYear) * 12 + monthNames.indexOf(shownMonth);
+    const target = year * 12 + month - 1, step = target > current ? 1 : -1;
+    while (current !== target) {
+      await calendar.getByRole('button', { name: step > 0 ? 'Next month' : 'Previous month', exact: true }).click();
+      current += step;
+      await calendar.getByRole('heading', { name: `${monthNames[current % 12]} ${Math.floor(current / 12)}`, exact: true }).waitFor();
+      await waitForBills();
+    }
+    const dayButton = calendar.getByRole('button', { name: new RegExp(`^${day} ${monthNames[month - 1]}:`) });
+    if (await dayButton.getAttribute('aria-pressed') !== 'true') await dayButton.click();
+    const dayPanel = calendar.getByRole('region', { name: `Bills on ${await calendarDate(date)}`, exact: true });
+    await dayPanel.waitFor();
+    return dayPanel;
+  };
   saved = await request(`/api/bill-register?from=${sourceDate}&to=${rangeEnd}`); assert.equal(saved.series.items.length, 1); assert.equal(saved.calendar.items.filter(e => e.type === 'invoice-due').length, 1); assert.ok(saved.calendar.items.some(e => e.type === 'expected-arrival' && e.state === 'predicted' && e.billId === null)); assert.equal(saved.occurrences.items.length, 1);
-  await panel.getByText(/^Actual due date ·/).waitFor(); await panel.getByText(/^Expected arrival ·/).first().waitFor();
+  const firstDueDay = await selectCalendarDay(dueDate);
+  await firstDueDay.getByText(`Due · ${await calendarDate(dueDate)}`, { exact: true }).waitFor();
+  await firstDueDay.getByText('Due date entered in the received bill’s source review.', { exact: true }).waitFor();
+  // The unpaid received bill also yields an expected payment on its due date; count each entry separately.
+  assert.equal(await firstDueDay.locator('li:not([data-entry="payment"])').getByRole('button', { name: 'Open received bill', exact: true }).count(), 1);
+  const expectedPayment = firstDueDay.locator('li[data-entry="payment"]');
+  assert.equal(await expectedPayment.count(), 1);
+  await expectedPayment.getByText(/^Expected payment · /).first().waitFor();
+  assert.equal(await firstDueDay.getByRole('button', { name: 'Review arrival pattern', exact: true }).count(), 0);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await calendar.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'bill-calendar-1440.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await calendar.scrollIntoViewIfNeeded();
+  assert.ok(await firstDueDay.isVisible());
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: join(output, 'bill-calendar-390.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const firstPrediction = saved.calendar.items.find(entry => entry.type === 'expected-arrival');
+  const firstArrivalDay = await selectCalendarDay(firstPrediction.date);
+  await firstArrivalDay.getByText(`Expected · ${await calendarDate(firstPrediction.date)}`, { exact: true }).waitFor();
+  await firstArrivalDay.getByText('Predicted from your approved arrival pattern. Not an invoice or due date.', { exact: true }).waitFor();
+  assert.equal(await firstArrivalDay.getByRole('button', { name: 'Review arrival pattern', exact: true }).count(), 1);
+  assert.equal(await firstArrivalDay.getByRole('button', { name: 'Open received bill', exact: true }).count(), 0);
+  await firstArrivalDay.getByRole('button', { name: 'Close day', exact: true }).click();
+  await firstArrivalDay.waitFor({ state: 'hidden' });
   pass('Separate explicit recurring approval produces arrival predictions while preserving the single reviewed invoice due date');
   await panel.getByRole('button', { name: 'Review or correct bill', exact: true }).click(); editor = panel.getByRole('form', { name: 'Review source bill' }); await editor.getByRole('complementary', { name: 'Bill source evidence' }).waitFor(); await editor.getByLabel('Actual due date, if confirmed', { exact: false }).fill(laterDate); await editor.getByLabel('Bill review status', { exact: false }).selectOption('hold'); await editor.getByLabel('Reason for this bill review', { exact: false }).fill('Fictional staff correction with earlier date retained'); await editor.getByLabel('I reviewed this source', { exact: false }).check(); await editor.getByLabel('I understand attachment contents', { exact: false }).check(); await editor.getByRole('button', { name: 'Save bill correction', exact: true }).click(); await editor.waitFor({ state: 'hidden' });
   saved = await request('/api/bill-register'); bill = saved.occurrences.items[0]; assert.equal(bill.revision, 2); assert.equal(bill.history[0].facts.dueDate, dueDate); assert.equal(bill.facts.dueDate, laterDate);
   await request(`/api/bill-occurrences/${bill.id}`, 'PUT', { ...accepted, expectedRevision: 1, state: 'received' }, 409); await request(`/api/bill-occurrences/${bill.id}`, 'PUT', { ...accepted, expectedRevision: 2, state: 'paid' }, 400);
   await page.reload(); await panel.waitFor(); await panel.getByText('On hold · revision 2', { exact: true }).waitFor();
   pass('UI correction and reload retain earlier evidence; real API rejects stale corrections and payment-state mutation');
-  await page.screenshot({ path: join(output, 'bills-desktop.png') }); const savedCard = panel.locator(`[id="${bill.id}"]`); await savedCard.getByText('Source and correction history (1)', { exact: true }).click(); await savedCard.screenshot({ path: join(output, 'bills-history-desktop.png') }); await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('heading', { name: 'Bills and calendar', exact: true }).scrollIntoViewIfNeeded(); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await page.screenshot({ path: join(output, 'bills-mobile.png') });
+  await page.screenshot({ path: join(output, 'bills-desktop.png') }); const savedCard = panel.locator(`[id="${bill.id}"]`); await savedCard.getByText('Source and correction history (1)', { exact: true }).click(); await savedCard.screenshot({ path: join(output, 'bills-history-desktop.png') }); await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('heading', { name: /bills and calendar$/i }).first().scrollIntoViewIfNeeded(); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await page.screenshot({ path: join(output, 'bills-mobile.png') });
   await panel.getByRole('button', { name: 'Review or correct bill', exact: true }).click(); editor = panel.getByRole('form', { name: 'Review source bill' }); await editor.getByRole('complementary', { name: 'Bill source evidence' }).waitFor(); await editor.getByRole('complementary', { name: 'Bill source evidence' }).screenshot({ path: join(output, 'bills-source-mobile.png') }); await editor.getByLabel('Bill note', { exact: true }).focus(); await page.keyboard.press('Tab'); assert.ok(await editor.getByLabel('Reason for this bill review', { exact: false }).evaluate(element => element === document.activeElement)); await editor.getByRole('button', { name: 'Save for later', exact: true }).scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'draft-actions-mobile.png') }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); assert.deepEqual(errors, []);
   pass('Built full-page UI, source form and saved history render at desktop and390px with no page errors or horizontal overflow');
   await editor.getByRole('button', { name: 'Cancel bill review', exact: true }).click(); if (await panel.getByRole('alertdialog', { name: 'Discard unsaved bill review', exact: true }).count()) await panel.getByRole('button', { name: 'Discard unsaved bill review', exact: true }).click();
@@ -265,7 +344,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   const originPattern = (await request(`/api/bill-occurrences/${bill.id}`)).originSeries;
   const originalPrediction = (await request(`/api/bill-register?from=${sourceDate}&to=${rangeEnd}`)).calendar.items.find(entry => entry.type === 'expected-arrival');
   // Add real source-reviewed records through HTTP. Only the connector content
-  // is fictional; no register/page response is mocked in this rehearsal.
+  // is fictional, apart from the explicit calendar cursor-conflict response below.
   extraThreads = Array.from({ length: 24 }, (_, index) => ({ id: (4096 + index).toString(16), historyComplete: true, messages: [{
     id: (8192 + index).toString(16), threadId: (4096 + index).toString(16), at: sourceAt,
     direction: 'incoming', from: 'fixture@example.test', to: 'office@example.test', subject: `Retained fixture bill ${index + 1}`,
@@ -344,26 +423,52 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   assert.equal(await editor.getByText('This bill changed elsewhere.', { exact: false }).count(), 0);
   await editor.getByRole('button', { name: 'Cancel bill review', exact: true }).click(); if (await panel.getByRole('alertdialog', { name: 'Discard unsaved bill review', exact: true }).count()) await panel.getByRole('button', { name: 'Discard unsaved bill review', exact: true }).click();
   pass('Direct source identity finds an accepted bill outside the firstpage; direct current-mail source opens it and refresh preserves its unsaved draft');
-  await panel.getByLabel('Calendar from', { exact: false }).fill(laterDate); await panel.getByLabel('Calendar to', { exact: false }).fill(laterDate);
-  await panel.getByRole('button', { name: 'Show calendar range', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('section[aria-label="Source-linked bills and calendar"]')?.getAttribute('aria-busy') === 'false');
-  const originalDue = panel.locator('li').filter({ has: page.getByRole('button', { name: 'Open received bill', exact: true }) }).filter({ hasText: 'Fictional Water' });
+  const correctedDueDay = await selectCalendarDay(laterDate);
+  const moreCalendar = calendar.getByRole('button', { name: 'Load more for this month', exact: true });
+  const originalDue = correctedDueDay.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Open received bill', exact: true }) }).filter({ hasText: 'Fictional Water' });
   for (let count = 0; count < 10 && !await originalDue.count(); count++) {
-    await panel.getByRole('button', { name: 'Load more calendar entries', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('section[aria-label="Source-linked bills and calendar"]')?.getAttribute('aria-busy') === 'false');
+    await moreCalendar.click();
+    await waitForBills();
   }
+  await originalDue.getByText(`Due · ${await calendarDate(laterDate)}`, { exact: true }).waitFor();
   await originalDue.getByRole('button', { name: 'Open received bill', exact: true }).click();
   await editor.getByRole('heading', { name: 'Correct a saved bill', exact: true }).waitFor();
   assert.equal(await editor.getByLabel('Vendor', { exact: true }).inputValue(), 'Fictional Water');
   await editor.getByRole('button', { name: 'Cancel bill review', exact: true }).click(); if (await panel.getByRole('alertdialog', { name: 'Discard unsaved bill review', exact: true }).count()) await panel.getByRole('button', { name: 'Discard unsaved bill review', exact: true }).click();
-  await panel.getByLabel('Calendar from', { exact: false }).fill(originalPrediction.date); await panel.getByLabel('Calendar to', { exact: false }).fill(originalPrediction.date);
-  await panel.getByRole('button', { name: 'Show calendar range', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('section[aria-label="Source-linked bills and calendar"]')?.getAttribute('aria-busy') === 'false');
-  const originalArrival = panel.locator('li').filter({ has: page.getByRole('button', { name: 'Review arrival pattern', exact: true }) }).filter({ hasText: 'Fictional Water' });
-  for (let count = 0; count < 10 && !await originalArrival.count(); count++) {
-    await panel.getByRole('button', { name: 'Load more calendar entries', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('section[aria-label="Source-linked bills and calendar"]')?.getAttribute('aria-busy') === 'false');
+  const predictionDay = await selectCalendarDay(originalPrediction.date);
+  // Refresh even when both fixture dates share a month, resetting all cursors.
+  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
+  await waitForBills();
+  await moreCalendar.waitFor();
+  const calendarBeforeConflict = await calendar.innerText();
+  const calendarPageRoute = url => url.pathname === '/api/bill-register/calendar';
+  await page.route(calendarPageRoute, async route => {
+    const actual = await route.fetch(); assert.equal(actual.status(), 200);
+    const cursor = new URL(route.request().url()).searchParams.get('cursor'); assert.ok(cursor);
+    await route.fulfill({ response: actual, json: { ...await actual.json(), nextCursor: cursor } });
+  });
+  await moreCalendar.click();
+  await panel.getByRole('alert').filter({ hasText: 'The calendar page changed. Refresh before loading more.' }).waitFor();
+  await waitForBills();
+  assert.equal(await calendar.innerText(), calendarBeforeConflict);
+  await page.unroute(calendarPageRoute);
+  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
+  await waitForBills();
+  assert.equal(await panel.getByRole('alert').filter({ hasText: 'The calendar page changed. Refresh before loading more.' }).count(), 0);
+  pass('A repeated calendar cursor shows the refresh-required conflict, retains the selected day and loaded entries, and clears after refresh');
+  const originalArrival = predictionDay.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Review arrival pattern', exact: true }) }).filter({ hasText: 'Fictional Water' });
+  let calendarPagesLoaded = 0;
+  while (calendarPagesLoaded < 10 && await moreCalendar.count()) {
+    await moreCalendar.click();
+    await waitForBills();
+    calendarPagesLoaded++;
   }
+  assert.ok(calendarPagesLoaded > 0); assert.equal(await moreCalendar.count(), 0);
+  assert.equal(await predictionDay.getByRole('button', { name: 'Review arrival pattern', exact: true }).count(), 25);
+  await originalArrival.getByText(`Expected · ${await calendarDate(originalPrediction.date)}`, { exact: true }).waitFor();
+  await originalArrival.getByText('Predicted from your approved arrival pattern. Not an invoice or due date.', { exact: true }).waitFor();
   await originalArrival.getByRole('button', { name: 'Review arrival pattern', exact: true }).click();
   await pattern.getByRole('button', { name: 'Save arrival pattern revision', exact: true }).waitFor();
   assert.ok(readPaths.includes(`/api/bill-series/${originPattern.id}`));
@@ -401,6 +506,90 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   pass('Explicit saved-bill B opens B after closing A; A remains a retained draft instead of replacing the requested editor');
   pass('Filtered saved bill shortcut queries all matching retained records and opens the selected off-page source bill directly');
   pass('A selected-bill draft survives search changes and remains retained when its selected review is closed');
+
+  // Same exact fictional invoice evidence arriving in a new message must hold
+  // until staff review it. All reads and writes below use the real host routes.
+  const originalMail = expandedMail.items.find(item => item.threadId === extraThreads[0].id);
+  const originalEvidence = await request(`/api/bill-evidence/${originalMail.id}?messageId=${extraThreads[0].messages[0].id}`);
+  let duplicateOriginal = (await request(`/api/bill-occurrences/by-source/${originalEvidence.identity}`)).occurrence;
+  assert.ok(duplicateOriginal);
+  extraThreads.push({ id: 'abc999', historyComplete: true, messages: [{ ...extraThreads[0].messages[0], id: 'def999', threadId: 'abc999', subject: 'Fictional resend requiring duplicate review' }] });
+  await request('/api/bill-scan', 'POST', {});
+  const resendMail = (await request('/api/mail-workspace/items?group=all&limit=100')).items.find(item => item.threadId === 'abc999');
+  const resendEvidence = await request(`/api/bill-evidence/${resendMail.id}?messageId=def999`);
+  const separateReason = 'Fictional staff checked both originals and explicitly confirmed separate invoices.';
+  const resendFacts = { ...duplicateOriginal.facts, note: 'Fictional duplicate candidate draft preserved' };
+  const resendReview = { itemId: resendMail.id, messageId: 'def999', expectedSourceDigest: resendEvidence.digest, sourceReviewed: true, facts: resendFacts, reviewReason: separateReason };
+  assert.equal((await request('/api/bill-occurrences', 'POST', resendReview, 409)).code, 'bill_duplicate_review_required');
+  await page.goto(billsUrl); await page.reload(); await panel.waitFor();
+  await panel.getByRole('button', { name: 'Review a bill from saved mail', exact: true }).click();
+  editor = panel.getByRole('form', { name: 'Review source bill' });
+  await editor.getByLabel('Find a saved conversation', { exact: true }).fill('Fictional resend requiring duplicate review');
+  await editor.getByText('Showing 1 of 1 conversations', { exact: false }).waitFor();
+  await editor.getByLabel('Saved conversation', { exact: true }).selectOption(resendMail.id);
+  await editor.getByLabel('Source message', { exact: true }).selectOption('def999');
+  await editor.getByRole('complementary', { name: 'Bill source evidence' }).waitFor();
+  await editor.getByLabel('Bill property', { exact: true }).selectOption(resendFacts.propertyId);
+  await editor.getByLabel('Bill kind', { exact: true }).fill(resendFacts.kind);
+  await editor.getByLabel('Vendor', { exact: true }).fill(resendFacts.vendor);
+  await editor.getByLabel('Amount (AUD)', { exact: true }).fill(String(resendFacts.amountCents / 100));
+  await editor.getByLabel('Invoice date, if confirmed', { exact: true }).fill(resendFacts.invoiceDate);
+  await editor.getByLabel('Actual due date, if confirmed', { exact: true }).fill(resendFacts.dueDate);
+  await editor.getByLabel('Bill note', { exact: true }).fill(resendFacts.note);
+  await editor.getByLabel('Reason for this bill review', { exact: true }).fill(separateReason);
+  await editor.getByLabel('I reviewed this source', { exact: false }).check();
+  const distinct = editor.getByLabel('I checked the matching bills and confirm this is a separate invoice.', { exact: false });
+  await distinct.waitFor(); assert.ok(!await distinct.isChecked());
+  assert.ok(await editor.getByRole('button', { name: 'Accept reviewed bill', exact: true }).isDisabled());
+  assert.equal((await request('/api/bill-register')).occurrences.total, 25);
+  await page.screenshot({ path: join(output, 'duplicate-candidate-hold-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await distinct.scrollIntoViewIfNeeded(); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: join(output, 'duplicate-candidate-hold-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  pass('Exact invoice evidence under a new message is held by both API and actual desktop/mobile UI; no second bill is silently saved');
+
+  await distinct.check();
+  await editor.getByRole('button', { name: 'Save draft and open matching bill', exact: true }).click();
+  await editor.getByRole('heading', { name: 'Correct a saved bill', exact: true }).waitFor();
+  assert.equal(await editor.getByLabel('Vendor', { exact: true }).inputValue(), duplicateOriginal.facts.vendor);
+  let resendDraft;
+  for (const summary of (await request('/api/bill-review-drafts?filter=active&limit=100')).items) {
+    const draft = (await request(`/api/bill-review-drafts/${summary.id}`)).draft;
+    if (draft.fields.note === resendFacts.note) resendDraft = draft;
+  }
+  assert.ok(resendDraft); assert.equal(resendDraft.state, 'saved');
+  await editor.getByRole('button', { name: 'Cancel bill review', exact: true }).click();
+  if (await panel.getByRole('alertdialog', { name: 'Discard unsaved bill review', exact: true }).count()) await panel.getByRole('button', { name: 'Discard unsaved bill review', exact: true }).click();
+  await page.reload(); await panel.waitFor();
+  await panel.locator(`[data-review-id="${resendDraft.id}"]`).getByRole('button', { name: 'Continue saved review', exact: true }).click();
+  await editor.getByRole('complementary', { name: 'Bill source evidence' }).waitFor();
+  assert.equal(await editor.getByLabel('Bill note', { exact: true }).inputValue(), resendFacts.note);
+  assert.ok(!await editor.getByLabel('I reviewed this source', { exact: false }).isChecked());
+  await editor.getByLabel('I reviewed this source', { exact: false }).check();
+  await distinct.waitFor(); assert.ok(!await distinct.isChecked());
+  pass('Opening a matching bill saves the original draft; reloading restores its fields while requiring fresh source and distinct-invoice confirmation');
+
+  await distinct.check();
+  duplicateOriginal = await request(`/api/bill-occurrences/${duplicateOriginal.id}`, 'PUT', { itemId: originalMail.id, messageId: originalEvidence.message.id, expectedSourceDigest: originalEvidence.digest,
+    expectedRevision: duplicateOriginal.revision, sourceReviewed: true, facts: duplicateOriginal.facts, state: 'hold', reviewReason: 'Fictional concurrent status review invalidates an older duplicate confirmation.' });
+  await editor.getByRole('button', { name: 'Accept reviewed bill', exact: true }).click();
+  await panel.getByRole('alert').filter({ hasText: 'The matching records may have changed.' }).waitFor();
+  assert.ok(!await distinct.isChecked()); assert.ok(await editor.getByRole('button', { name: 'Accept reviewed bill', exact: true }).isDisabled());
+  assert.equal((await request('/api/bill-register')).occurrences.total, 25);
+  pass('A candidate revision changed in another session invalidates the UI confirmation at submit and leaves the second invoice unsaved');
+  await distinct.check();
+  await editor.getByRole('button', { name: 'Accept reviewed bill', exact: true }).click(); await editor.waitFor({ state: 'hidden' });
+  const separateBill = (await request(`/api/bill-occurrences/by-source/${resendEvidence.identity}`)).occurrence;
+  assert.ok(separateBill); assert.equal(separateBill.duplicateReview.candidates[0].revision, duplicateOriginal.revision);
+  assert.equal(separateBill.duplicateReview.reason, separateReason);
+  assert.equal((await request('/api/bill-occurrences', 'POST', resendReview)).id, separateBill.id);
+  assert.equal((await request('/api/bill-register')).occurrences.total, 26);
+  await page.reload(); await panel.waitFor();
+  const reopened = (await request(`/api/bill-occurrences/${separateBill.id}`)).occurrence;
+  assert.deepEqual(reopened.duplicateReview, separateBill.duplicateReview);
+  assert.equal((await request(`/api/bill-review-drafts/${resendDraft.id}`)).draft.state, 'accepted');
+  pass('Fresh explicit separate-invoice review saves one auditable second bill; reload and same-message replay preserve its decision without another record');
   assert.deepEqual(errors, []);
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); if (page) writeFileSync(join(output, 'failure.txt'), await page.locator('body').innerText().catch(() => 'No page')); await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {

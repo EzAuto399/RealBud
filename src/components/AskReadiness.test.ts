@@ -75,4 +75,18 @@ describe("Ask readiness permission and status", () => {
     expect(render()).toContain("Status unavailable");
     expect(render()).toContain("Check again");
   });
+  it("shows the actual download phase while keeping preparation available and staff checks gated", async () => {
+    fakes.state.hermes = { ...ready, modelAccess: { managed: true, withdrawn: false, attached: true, detail: "managed" },
+      autoSetup: { state: "installing", code: "installing", step: 1, total: 4, detail: "Downloading Bud" } };
+    const html = render();
+    for (const effect of fakes.effects) effect();
+    await Promise.resolve();
+    expect(html).toContain("Downloading Bud");
+    expect(html).toContain("You can draft a request or prepare plans");
+    expect(html).toContain("Work starts only when you choose");
+    expect(html).not.toMatch(/Run readiness check|Try check again|Finish Bud setup/);
+    expect(fakes.run).not.toHaveBeenCalled();
+    expect(fakes.readiness).not.toHaveBeenCalled();
+    expect(fakes.restore).not.toHaveBeenCalled();
+  });
 });

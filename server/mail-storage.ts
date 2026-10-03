@@ -6,7 +6,7 @@ import { privateDirectory, readPrivateJson } from './private-json.ts';
 import { WorkflowDatabase, type WorkflowRecord } from './workflow-database.ts';
 import { MAIL_RECORD_KINDS, mailRecordId, mailRecovery, validateMailGraph, validateMailRecord, validateLegacyMail, type MailRecordKind, type MailRecord, type MailRegister, type MailOrigin, type MailPrepared, type MailSourceBundle } from './mail-records.ts';
 import { mailEvidenceHash as hash, type StoredMailWorkspace } from './mail-workspace-integrity.ts';
-import { mailWorkGroup, type MailScanReceipt, type MailWorkItem, type MailWorkspaceMetadata, type MailWorkspaceCounts } from '../shared/mail-ingestion.ts';
+import { mailWorkGroup, mailNeedsPreparation, type MailScanReceipt, type MailWorkItem, type MailWorkspaceMetadata, type MailWorkspaceCounts } from '../shared/mail-ingestion.ts';
 type MailStorageOptions = {
     directory: string;
     workspaceId: string;
@@ -166,7 +166,7 @@ export class MailStorage {
             counts[mailWorkGroup(item)]++;
             if (item.status === 'open' && item.priority === 'high')
                 counts.highPriority++;
-            if (item.newEvidence && !item.reviewed)
+            if (mailNeedsPreparation(item))
                 counts.needsReview++;
             if (item.status === 'snoozed' && (nextSnoozeAt === null || item.snoozedUntil! < nextSnoozeAt))
                 nextSnoozeAt = item.snoozedUntil;

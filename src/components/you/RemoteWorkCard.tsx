@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {api} from '@/state/store';
-import {Card} from '../SettingsPrimitives';
+import {SettingsCard} from './SettingsCard';
 import type {RemoteWorkStatus, RemoteWorkList, RemoteWorkView} from '../../../server/website-remote-work';
 import type {RemoteApproversStatus} from '../../../server/website-remote-approvers';
 import type {WebsiteCommandPhase} from '@shared/website-commands';
@@ -80,16 +80,21 @@ export function RemoteWorkCard(){
       {!row.restored&&!terminal(row.phase)&&!row.cancellationPending&&!row.cancellationRequested&&(confirm?<div className="space-y-3 rounded border border-line p-3"><p>Cancel this exact request? Preparation already running may still finish; RealBud requests a stop where supported and keeps the saved result.</p><div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={localWorking} onClick={()=>void perform('cancel',()=>post('cancel',{id:row.id,expectedRevision:row.revision}),'Cancellation was requested. Follow its confirmed status below.')}>Confirm cancellation</button><button type="button" className={button} disabled={localWorking} onClick={()=>setCancel(null)}>Keep request</button></div></div>:<button type="button" className={button} disabled={localWorking} onClick={()=>setCancel({id:row.id,revision:row.revision})}>Cancel this request</button>)}
     </li>;
   }
-  return <Card title="Shared reviews and remote preparation" subtitle="Off until you enable it here. Workspace enrollment alone does not share a review or start work.">
+  const pill=!status?null:status.enabled?status.ready?{tone:'agency' as const,label:'On'}:{tone:'hold' as const,label:'On hold'}:{tone:'muted' as const,label:'Off'};
+  return <SettingsCard title="Shared reviews and remote preparation" status={pill} details={<>
+    <p>Off until you enable it here. Workspace enrollment alone does not share a review or start work.</p>
+    <p>When enabled, this computer may share the complete templates you already reviewed with their confirmed audience. An invited person can request a preparation and approve or reject its exact review on the website. RealBud rechecks the plan, sources and permissions before preparing work.</p>
+    <p>Results and private execution details stay on this computer. The website receives the reviewed plan, addressed people, decisions and progress.</p>
+    <p>Turning on sharing does not authorize outgoing messages, payments, bank posting or new schedules. Those actions keep their own approval controls.</p>
+  </>}>
     <div className="space-y-4 text-sm">
-      <p className="text-ink-secondary">When enabled, this computer may share the complete templates you already reviewed with their confirmed audience. An invited person can request a preparation and approve or reject its exact review on the website. RealBud rechecks the plan, sources and permissions before preparing work.</p>
       {!snapshot?<p role="status">Loading saved sharing settings…</p>:<>
-        <div className="space-y-2 rounded-lg bg-raised p-3"><p className="font-medium">{status?.workspaceLabel??enrollment?.workspaceLabel??'This workspace'}</p><p role="status">{status?.enabled?status.ready?'Sharing enabled · approved preparation may run':'Sharing enabled · work is on hold':'Sharing and remote preparation are off'}</p><p className="text-xs text-ink-muted">Results and private execution details stay on this computer. The website receives the reviewed plan, addressed people, decisions and progress.</p></div>
+        <p className="break-words"><span className="font-medium">{status?.workspaceLabel??enrollment?.workspaceLabel??'This workspace'}</span> · <span role="status">{status?.enabled?status.ready?'Sharing enabled · approved preparation may run':'Sharing enabled · work is on hold':'Sharing and remote preparation are off'}</span></p>
         {!!status?.error&&<p role="status" className="rounded-lg border border-line p-3 text-hold">{status.error}</p>}
         {!!status?.pendingCancellations&&<p role="status" className="text-hold">{status.pendingCancellations} {status.pendingCancellations===1?'cancellation is':'cancellations are'} waiting for website confirmation. Keep the original workspace link and check again when the website is available.</p>}
         {descriptors.length>0&&<section className="space-y-2" aria-label="Reviewed work eligible for sharing"><h4 className="font-medium">Reviewed preparations</h4><ul className="list-disc space-y-1 pl-5">{descriptors.map(descriptor=><li key={descriptor.id} className="break-words">{descriptor.label}</li>)}</ul></section>}
         {!status?.enabled&&<div className="space-y-3">
-          {!canEnable?<p className="text-hold">Confirm an invited person and the intended reviewed work in Workspace access above, resolve any source or permission hold, and finish pending cancellations before enabling sharing.</p>:<>
+          {!canEnable?<p className="text-hold">Confirm an invited person and their reviewed work above, and clear any holds or pending cancellations, before enabling sharing.</p>:<>
             <p className="break-words">Confirmed people: {people.map(row=>row.candidate?.email??'Verified person').join(', ')}. Each shared review is limited to its exact eligible audience.</p>
             <label className="flex min-h-11 items-start gap-2"><input type="checkbox" className="mt-1" disabled={working} checked={consent===key} onChange={event=>setConsent(event.target.checked?key:'')}/><span>I allow sharing the already reviewed templates for the preparations above with their confirmed audience, and allow the computer to prepare work after an eligible person approves its exact review.</span></label>
             <button type="button" className={`${button} border-agency`} disabled={working||consent!==key} onClick={()=>void perform('enable',async()=>{const fresh:RemoteApproversStatus=await api('/api/website-requests/remote');if(enrollmentKey(fresh)!==consent)throw new Error('Workspace access changed. Refresh and review the current people and preparations.');await post('enable');},'Sharing is enabled. Each preparation still requires an eligible person’s exact review decision.')}>Enable shared reviews and approved preparation</button>
@@ -97,13 +102,12 @@ export function RemoteWorkCard(){
         </div>}
         <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={working} onClick={()=>void perform('sync',()=>post('sync'),'Website work and saved outcomes were checked.')}>{busy==='sync'?'Checking…':'Check website work'}</button>{status?.enabled&&<button type="button" className={button} disabled={localWorking} onClick={()=>setDisableConfirm(true)}>Turn off sharing and remote preparation</button>}</div>
         {disableConfirm&&<div className="space-y-3 rounded-lg border border-line p-3"><p>Turn this off for the workspace? New sharing and starts are blocked locally, even if the website is offline. RealBud will request cancellation for pending work. Preparation already running may still finish; saved history and results remain.</p><div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={localWorking} onClick={()=>void perform('disable',()=>post('disable'),'Sharing is off locally. Check any outstanding cancellation confirmations below.')}>Confirm turn off</button><button type="button" className={button} disabled={localWorking} onClick={()=>setDisableConfirm(false)}>Keep current setting</button></div></div>}
-        <section className="space-y-3" aria-label="Remote work in progress"><h4 className="font-medium">Requests and preparation</h4>{activeRows.length?<ul className="space-y-3">{activeRows.map(requestRow)}</ul>:<p className="text-ink-secondary">No active requests in the loaded history.</p>}</section>
-        <section className="space-y-3" aria-label="Remote preparation history"><button type="button" className={button} aria-expanded={history} onClick={()=>setHistory(value=>!value)}>{history?'Hide':'Show'} completed and restored history ({historyRows.length})</button>{history&&(historyRows.length?<ul className="space-y-3">{historyRows.map(requestRow)}</ul>:<p className="text-ink-secondary">No completed or restored requests in the loaded history.</p>)}{snapshot.next!=null&&<button type="button" className={button} disabled={working} onClick={()=>void perform('history',async()=>{},'Older history loaded.',true)}>Load older work</button>}</section>
+        {activeRows.length>0&&<section className="space-y-3" aria-label="Remote work in progress"><h4 className="font-medium">Requests and preparation</h4><ul className="space-y-3">{activeRows.map(requestRow)}</ul></section>}
+        {(historyRows.length>0||snapshot.next!=null)&&<section className="space-y-3" aria-label="Remote preparation history">{historyRows.length>0&&<button type="button" className={button} aria-expanded={history} onClick={()=>setHistory(value=>!value)}>{history?'Hide':'Show'} completed and restored history ({historyRows.length})</button>}{history&&historyRows.length>0&&<ul className="space-y-3">{historyRows.map(requestRow)}</ul>}{snapshot.next!=null&&<button type="button" className={button} disabled={working} onClick={()=>void perform('history',async()=>{},'Older history loaded.',true)}>Load older work</button>}</section>}
       </>}
       {error&&<p role="alert" className="break-words text-hold">{error}</p>}
       {notice&&<p role="status" aria-live="polite" className="text-ink-secondary">{notice}</p>}
       <button type="button" className={button} disabled={working} onClick={()=>void perform('refresh',async()=>{},'Saved remote work status refreshed.')}>Refresh saved sharing status</button>
-      <p className="text-xs text-ink-muted">Turning on sharing does not authorize outgoing messages, payments, bank posting or new schedules. Those actions keep their own approval controls.</p>
     </div>
-  </Card>;
+  </SettingsCard>;
 }

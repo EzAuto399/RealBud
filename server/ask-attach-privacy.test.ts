@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { saveAskAttachment } from "./ask-attach.ts";
 import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
+import { ASK_CSV_REPORT_SUFFIX } from "./ask-csv-inspect.ts";
 
 // Inject only the admission boundary. File creation, contents and cleanup stay
 // real; native Windows ACL behavior is covered in ask-attach.test.ts.
@@ -33,6 +34,7 @@ it("protects each new directory while empty, then protects the new file before s
   expect(windowsFilePrivacySync).toHaveBeenNthCalledWith(2, join(root, "vault"), "directory", true);
   expect(windowsFilePrivacySync).toHaveBeenNthCalledWith(3, join(root, "vault", "ask-uploads"), "directory", true);
   expect(windowsFilePrivacySync).toHaveBeenNthCalledWith(4, saved.path, "file", true);
+  expect(windowsFilePrivacySync).toHaveBeenNthCalledWith(5, saved.path + ASK_CSV_REPORT_SUFFIX, "file", true);
   expect(readFileSync(saved.path).toString("base64")).toBe(input.contentBase64);
 });
 
@@ -43,7 +45,7 @@ it("verifies existing directories without changing them or an earlier selected c
   const saved = saveAskAttachment(root, input);
   expect(vi.mocked(windowsFilePrivacySync).mock.calls).toEqual([
     [root, "directory", false], [vault, "directory", false], [uploads, "directory", false],
-    [saved.path, "file", true],
+    [saved.path, "file", true], [saved.path + ASK_CSV_REPORT_SUFFIX, "file", true],
   ]);
   expect([root, vault, uploads].map(path => lstatSync(path).ino)).toEqual(identities);
   expect(readFileSync(earlier, "utf8")).toBe("preserved earlier bytes");
@@ -100,4 +102,21 @@ it("closes and removes only its new empty copy when file privacy is refused", ()
   expect(rejected).not.toBe(""); expect(existsSync(rejected)).toBe(false);
   expect(readdirSync(uploads)).toEqual(["earlier.csv"]);
   expect(readFileSync(earlier, "utf8")).toBe("earlier selected bytes");
+});
+
+it("does not accept an orphaned CSV upload when its inspection report cannot be made private", () => {
+  const { root, uploads } = existing(), earlier = join(uploads, "earlier.csv");
+  writeFileSync(earlier, "preserve earlier selected bytes", { mode: 0o600 });
+  let rejected = "";
+  vi.mocked(windowsFilePrivacySync).mockImplementation((path, kind) => {
+    if (kind === "file" && path.endsWith(ASK_CSV_REPORT_SUFFIX)) {
+      rejected = path;
+      expect(readFileSync(path)).toEqual(Buffer.alloc(0));
+      throw new Error("fictional Windows report ACL failure");
+    }
+  });
+  expect(() => saveAskAttachment(root, input)).toThrow(/file copy could not be saved/);
+  expect(rejected).not.toBe("");
+  expect(readdirSync(uploads)).toEqual(["earlier.csv"]);
+  expect(readFileSync(earlier, "utf8")).toBe("preserve earlier selected bytes");
 });

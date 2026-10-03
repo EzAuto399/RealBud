@@ -1,0 +1,67 @@
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { authorizeBrowserAction, type BrowserAuthorityOptions, type BrowserObservation } from "./browser-authority.ts";
+import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+
+const request = "Search the fictional portal for invoice FICT-7";
+const grant = (): BrowserTaskGrant => parseBrowserTaskGrant({
+  version: 1, purpose: "browser-task-grant", id: "fictional-task", runId: "fictional-run", route: "ask",
+  request: { text: request, sha256: createHash("sha256").update(request).digest("hex") },
+  sites: ["https://portal.example", "https://other.example"], browser: { id: "fictional-browser", accountMarker: null },
+  actions: ["read", "navigate", "click", "fill", "keys", "download", "upload", "submit"], consequential: "ask-each", uploads: [], expiresAt: 50_000, budget: 20,
+});
+const page: BrowserObservation = { url: "https://portal.example/work", text: '@vom 1\nL1 page\n  main\n    form "Invoice search"\n      @e1 searchbox "Search"\n      @e2 button "Search"\n    @e3 button "Mystery action"\n    @e4 button "Save"\n    @e5 link "Download report"\n    @e6 textbox "Reference"\n    @e7 button "Log out"' };
+const proof = (g = grant()): NonNullable<BrowserAuthorityOptions["taskScope"]> => ({ grantId: g.id, runId: g.runId, requestHash: g.request.sha256, browserId: "fictional-browser", tabId: 1, origin: "https://portal.example", accountMarker: g.browser.accountMarker, readOnly: true });
+const decide = (tool: string, args: Record<string, unknown> = {}, options: BrowserAuthorityOptions = {}, g = grant(), observation = page) =>
+  authorizeBrowserAction(g, observation, tool, { tab_id: 1, ...args }, { now: 1_000, taskScope: proof(g), ...options });
+
+describe("bounded task-local routine authority", () => {
+  it.each([
+    ["browser_borrow", {}], ["browser_read", {}], ["browser_navigate", { url: "https://portal.example/invoices" }],
+    ["browser_fill", { ref: "@e1", value: "FICT-7" }], ["browser_click_semantic", { ref: "@e2" }],
+  ])("uses the live native task scope for %s without creating a standing rule", (tool, args) => {
+    expect(decide(tool as string, args as Record<string, unknown>)).toMatchObject({ decision: "allow", note: "allowed for this browser task", fence: { ruleOffer: null } });
+  });
+
+  it("does not treat the parsed task, a legacy job or an indefinite scope as live authority", () => {
+    expect(decide("browser_read", {}, { taskScope: undefined }).decision).toBe("ask");
+    for (const changed of [{ route: "job", origin: "legacy-job" }, { browser: { id: null, accountMarker: null } }, { expiresAt: null }, { budget: null }]) {
+      const g = parseBrowserTaskGrant({ ...grant(), ...changed });
+      expect(decide("browser_read", {}, {}, g).decision).not.toBe("allow");
+    }
+  });
+
+  it.each(["grantId", "runId", "requestHash", "browserId", "tabId", "origin"] as const)("rejects proof for another %s", key => {
+    const taskScope = { ...proof(), [key]: key === "tabId" ? 2 : "other" };
+    expect(decide("browser_read", {}, { taskScope }).decision).not.toBe("allow");
+  });
+
+  it("preserves expiry, step limits, missing classes and denied standing preferences", () => {
+    expect(decide("browser_read", {}, { now: 50_000 }).decision).toBe("deny");
+    expect(decide("browser_read", {}, { used: 20 }).decision).toBe("deny");
+    expect(decide("browser_read", {}, {}, { ...grant(), actions: ["navigate"] }).decision).toBe("deny");
+    expect(decide("browser_read", {}, { rules: [{ key: "portal:read:portal.example", decision: "deny" }] }).decision).toBe("ask");
+  });
+
+  it("does not use this allowance to change sites, write, transfer files, or use arbitrary controls", () => {
+    for (const [tool, args] of [
+      ["browser_navigate", { url: "https://other.example/invoices" }],
+      ["browser_navigate", { url: "https://portal.example/api/delete?id=7" }],
+      ["browser_click_semantic", { ref: "@e3" }], ["browser_click_semantic", { ref: "@e4" }],
+      ["browser_click_semantic", { ref: "@e7" }], ["browser_download", { ref: "@e5" }],
+      ["browser_upload", { ref: "@e6", file: "unknown.csv" }],
+      ["browser_fill", { ref: "@e6", value: "arbitrary" }], ["browser_press", { ref: "@e1", key: "Enter" }],
+      ["browser_select", { ref: "@e6", values: ["other"] }],
+    ] as const) expect(decide(tool, args).decision, `${tool} ${JSON.stringify(args)}`).not.toBe("allow");
+  });
+
+  it("retains bound account proof and rejects a search button inside a save form", () => {
+    const g = { ...grant(), browser: { id: "fictional-browser", accountMarker: "Fictional office" } };
+    expect(decide("browser_fill", { ref: "@e1", value: "FICT-7" }, {}, g).decision).not.toBe("allow");
+    const withAccount = { ...page, text: page.text + '\n    paragraph "Fictional office"' };
+    expect(decide("browser_fill", { ref: "@e1", value: "FICT-7" }, {}, g, withAccount).decision).toBe("allow");
+    expect(decide("browser_fill", { ref: "@e1", value: "FICT-7" }, { taskScope: { ...proof(g), accountMarker: "Other office" } }, g, withAccount).decision).not.toBe("allow");
+    const unsafe = { ...page, text: '@vom 1\nL1 page\n  main\n    form "Edit invoice"\n      @e1 searchbox "Search"\n      @e2 button "Search"\n      @e3 button "Save"' };
+    expect(decide("browser_click_semantic", { ref: "@e2" }, {}, grant(), unsafe).decision).not.toBe("allow");
+  });
+});

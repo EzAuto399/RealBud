@@ -98,7 +98,7 @@ try {
   observe(page);
   const open = async () => {
     await page.goto(base + '/#/you');
-    const office = page.locator('details').filter({ has: page.getByText('This office', { exact: true }) }).first();
+    const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
     await office.waitFor(); await office.evaluate(node => { node.open = true; });
     const summary = page.locator('summary').filter({ hasText: /^Company member website identity$/ }); await summary.waitFor();
     await summary.evaluate(node => { node.parentElement.open = true; });

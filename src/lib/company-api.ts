@@ -14,6 +14,7 @@ import { isDepartmentWorkPrepare, type DepartmentWorkPrepare, type DepartmentWor
 import { remoteExact } from '@shared/website-remote-approvers';
 import { JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS } from '@shared/job-output';
 import { canonicalWebsiteCommand } from '@shared/website-commands';
+import { normalizeDepartmentConfiguration, normalizeDepartmentConfigurationPlan, normalizeSaveDepartmentConfiguration, departmentConfigurationRevision, type DepartmentConfigurationRead, type DepartmentConfigurationSaved, type DepartmentConfigurationHistory, type DepartmentConfigurationCandidates, type SaveDepartmentConfigurationInput } from '@shared/department-configuration';
 
 const STORAGE_KEY = "realbud.company-member-session";
 type Request = (path: string, init?: RequestInit, opts?: { timeoutMs?: number }) => Promise<unknown>;
@@ -29,6 +30,15 @@ const department = (value: unknown): value is CompanyDepartment => object(value)
   (value.retiredAt === null || dateString(value.retiredAt)) && (value.retiredBy === null || typeof value.retiredBy === 'string') && typeof value.retirementNote === 'string' && Number.isSafeInteger(value.unresolvedCases) && Number(value.unresolvedCases) >= 0;
 const departmentPagination = (value: Record<string, unknown>, size: number) => Number.isSafeInteger(value.offset) && Number(value.offset) >= 0 && Number(value.offset) % size === 0 && typeof value.hasMore === 'boolean';
 const dateString = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value));
+const configurationRead = (value: unknown, departmentId: string): DepartmentConfigurationRead => {
+  if (!object(value) || !department(value.department) || value.department.id !== departmentId || typeof value.canManage !== 'boolean') throw incomplete();
+  departmentConfigurationRevision(value.department.revision);
+  return { department: value.department, canManage: value.canManage, configuration: value.configuration === null ? null : normalizeDepartmentConfiguration(value.configuration) };
+};
+const unavailablePlans = (value: unknown): { id: string; reason: string }[] => {
+  if (!Array.isArray(value) || value.length > 100 || !value.every(item => remoteExact(item, ['id', 'reason']) && preparationText(item.id,128) && preparationText(item.reason,4000) && !!item.reason) || new Set(value.map(item => item.id)).size !== value.length) throw incomplete();
+  return value;
+};
 const departmentCase = (value: unknown): value is DepartmentCase => object(value) && typeof value.id === 'string' && !!value.id && typeof value.title === 'string' && typeof value.description === 'string' &&
   typeof value.canAssign === 'boolean' && typeof value.canClose === 'boolean' && typeof value.needsAssignment === 'boolean' &&
   (value.assignee === null || (object(value.assignee) && typeof value.assignee.id === 'string' && typeof value.assignee.displayName === 'string' && typeof value.assignee.active === 'boolean' && typeof value.assignee.canWrite === 'boolean')) &&
@@ -143,16 +153,19 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
     try { const result = await call('/api/company/department-outbox/ack', 'department', { requestId }); if (!object(result) || result.ok !== true) throw incomplete(); }
     finally { if (notify) notifyDepartmentChange(); }
   };
-  const departmentMutation = async (operation: DepartmentOutboxOperation): Promise<DepartmentCaseMutation | DepartmentLifecycleResult> => {
+  const departmentMutation = async (operation: DepartmentOutboxOperation): Promise<DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved> => {
     try {
       const result = await call(operation.path, 'department', operation.input);
       if (!object(result) || result.receiptId !== operation.input.requestId || typeof result.replayed !== 'boolean') throw incomplete();
-      if (operation.path === '/api/company/departments/lifecycle') {
+      if (operation.path === '/api/company/departments/configuration/save') {
+        if (!remoteExact(result, ['department','configuration','receiptId','replayed']) || !department(result.department) || result.department.id !== operation.input.departmentId ||
+          canonicalWebsiteCommand(normalizeDepartmentConfiguration(result.configuration)) !== canonicalWebsiteCommand(operation.input.configuration) || BigInt(departmentConfigurationRevision(result.department.revision)) !== BigInt(operation.input.expectedRevision) + 1n) throw incomplete();
+      } else if (operation.path === '/api/company/departments/lifecycle') {
         if (!department(result.department) || result.department.id !== operation.input.departmentId) throw incomplete();
       } else if (!departmentCase(result.item) || result.item.id !== ('caseId' in operation.input ? operation.input.caseId : operation.input.requestId)) throw incomplete();
       // Retire the local request only after the exact host receipt is validated.
       await acknowledgeDepartmentOperation(operation.input.requestId, false);
-      return result as unknown as DepartmentCaseMutation | DepartmentLifecycleResult;
+      return result as unknown as DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved;
     } finally { notifyDepartmentChange(); }
   };
   const establish = async (path: string, operation: "create" | "join" | "recover" | "signin", body: unknown): Promise<CompanySessionResponse> => {
@@ -173,12 +186,48 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
+    async departmentConfiguration(departmentId: string): Promise<DepartmentConfigurationRead> {
+      if (!companyExecutionUuid(departmentId)) throw incomplete();
+      const result = await call('/api/company/departments/configuration', 'department', { departmentId });
+      if (!remoteExact(result, ['department','configuration','canManage'])) throw incomplete();
+      return configurationRead(result, departmentId);
+    },
+    async departmentConfigurationCandidates(departmentId: string): Promise<DepartmentConfigurationCandidates> {
+      if (!companyExecutionUuid(departmentId)) throw incomplete();
+      const result = await call('/api/company/department-work/configuration-candidates', 'department-work', { departmentId });
+      if (!remoteExact(result, ['department','configuration','canManage','candidates','unavailable','omitted']) || !Array.isArray(result.candidates) || result.candidates.length > 100 || !Number.isSafeInteger(result.omitted) || Number(result.omitted) < 0) throw incomplete();
+      const candidates = result.candidates.map(normalizeDepartmentConfigurationPlan);
+      if (new Set(candidates.map(plan => plan.recipe.id)).size !== candidates.length) throw incomplete();
+      return { ...configurationRead(result, departmentId), candidates, unavailable: unavailablePlans(result.unavailable), omitted: Number(result.omitted) };
+    },
+    async departmentConfigurationHistory(departmentId: string, beforeRevision: string | null = null): Promise<DepartmentConfigurationHistory> {
+      if (!companyExecutionUuid(departmentId)) throw incomplete();
+      if (beforeRevision !== null) departmentConfigurationRevision(beforeRevision);
+      const result = await call('/api/company/departments/configuration/history', 'department', { departmentId, beforeRevision, limit: 10 });
+      if (!remoteExact(result, ['department','entries','nextBeforeRevision']) || !department(result.department) || result.department.id !== departmentId || !Array.isArray(result.entries) || result.entries.length > 10) throw incomplete();
+      const head = BigInt(departmentConfigurationRevision(result.department.revision));
+      let previous = beforeRevision === null ? head + 1n : BigInt(beforeRevision);
+      for (const item of result.entries) {
+        if (!remoteExact(item,['receiptId','revision','previousRevision','savedAt','savedBy','note','sourceReceiptId','configuration']) || !companyExecutionUuid(item.receiptId) || !dateString(item.savedAt) || !remoteExact(item.savedBy,['id','displayName']) || !companyExecutionUuid(item.savedBy.id) || !preparationText(item.savedBy.displayName,240) || !preparationText(item.note,2048) || (item.sourceReceiptId !== null && !companyExecutionUuid(item.sourceReceiptId))) throw incomplete();
+        const revision = BigInt(departmentConfigurationRevision(item.revision));
+        if (revision > head || revision >= previous || revision !== BigInt(departmentConfigurationRevision(item.previousRevision)) + 1n) throw incomplete();
+        previous = revision; normalizeDepartmentConfiguration(item.configuration);
+      }
+      if (new Set(result.entries.map(item => item.receiptId)).size !== result.entries.length || (result.nextBeforeRevision !== null && (result.entries.length !== 10 || departmentConfigurationRevision(result.nextBeforeRevision) !== result.entries.at(-1)?.revision))) throw incomplete();
+      return result as unknown as DepartmentConfigurationHistory;
+    },
+    async saveDepartmentConfiguration(input: SaveDepartmentConfigurationInput): Promise<DepartmentConfigurationSaved> {
+      return await departmentMutation({ path: '/api/company/departments/configuration/save', input: normalizeSaveDepartmentConfiguration(input) }) as DepartmentConfigurationSaved;
+    },
     async departmentPreparationCatalog(departmentId: string): Promise<DepartmentWorkCatalog> {
       if (!companyExecutionUuid(departmentId)) throw incomplete();
       const result = await call('/api/company/department-work/catalog', 'department-work', { departmentId });
-      if (!remoteExact(result,['recipes']) || !Array.isArray(result.recipes) || result.recipes.length > 100 || !result.recipes.every(r =>
+      if (!remoteExact(result,['departmentRevision','configured','workflowDefaults','unavailable','recipes']) || typeof result.configured !== 'boolean' || !Array.isArray(result.recipes) || result.recipes.length > 8 || !result.recipes.every(r =>
         remoteExact(r,['id','revision','title','review']) && preparationText(r.id,128) && !!r.id && Number.isSafeInteger(r.revision) && Number(r.revision) >= 1 &&
         preparationText(r.title,240) && !!r.title && isCompanyExecutionReview(r.review)) || new Set(result.recipes.map(r => r.id)).size !== result.recipes.length) throw incomplete();
+      departmentConfigurationRevision(result.departmentRevision); unavailablePlans(result.unavailable);
+      // Defaults may point to a configured plan that is unavailable on this instance.
+      if (!Array.isArray(result.workflowDefaults) || result.workflowDefaults.length > 8 || !result.workflowDefaults.every(item => remoteExact(item,['id','label','defaultRecipeId']) && typeof item.id === 'string' && /^[a-z][a-z0-9-]{1,79}$/.test(item.id) && preparationText(item.label,120) && !!item.label && (item.defaultRecipeId === null || typeof item.defaultRecipeId === 'string' && [...result.recipes as {id:string}[], ...result.unavailable as {id:string}[]].some(plan => plan.id === item.defaultRecipeId))) || new Set(result.workflowDefaults.map(item => item.id)).size !== result.workflowDefaults.length || !result.configured && (result.recipes.length > 0 || result.workflowDefaults.length > 0)) throw incomplete();
       return result as unknown as DepartmentWorkCatalog;
     },
     async departmentPreparations(departmentId: string, offset = 0): Promise<DepartmentWorkPage> {

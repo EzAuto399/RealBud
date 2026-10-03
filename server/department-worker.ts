@@ -20,22 +20,43 @@ import { modelServiceFailure } from './model-service-failure.ts';
 import { modelviaRefusal } from '../shared/modelvia-receipt.ts';
 import { applyManagedModelLaunchEnv, managedModelLaunchRefusal, normalizedGatewayUrl } from './hermes-runtime-env.ts';
 import { workerModelGrant } from './worker-model-access.ts';
+import { DATA_DIR } from './config.ts';
+import { sandboxedLaunch, trackSandboxedChild, type SandboxedLaunch } from './worker-network-sandbox.ts';
+import { ensureProfileSkeleton } from './drivers/acp/hermes.ts';
 
-export const DEPARTMENT_WORKER_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
 // Runtime changes require a new isolation capture, rather than admitting a
-// version label alone. These are the adapter's routing/context/tool seams.
-const nativeFiles: Record<string, string> = {
-  'run_agent.py': 'dc125031d13e2a341eec473bcfcafce16c7356505dcbc560bec562b1ecaddc04',
-  'agent/agent_init.py': 'd1a1df8dc03a1381a9fd7591d4293e912fb1cb0fa2c1370f8c72a7500acb824a',
-  'agent/system_prompt.py': '20a6b326816fc6924ed0b5f4407281b38b9254f7b43465acff10fae09be3114f',
-  'agent/prompt_builder.py': '586ea363fa1e70bb0fdd5426af40758976a16c54f07efeb7a1b4f3fe0ad99309',
-  'hermes_cli/runtime_provider.py': '013831a166ff862fbc4284d43556f9bd124ecd8beaadce3b4adc9d9fc0032f17',
-  'hermes_cli/config.py': 'd76471ce54d40e68165e2cce7c2ade9c2164ed5ce4dbcf673b1b289cb89c7d84',
-  'hermes_cli/env_loader.py': '4bdeccecea814299627f0e1a4fb54f9e93ba48a01f35b966337f7ad9a826f798',
-  'model_tools.py': 'c99620c824ab59f341ac7d0e22cde016b0c469d0643e7a5a5a82e0d63176e4b5',
-  'toolsets.py': '7d743a132c00417604313c9832286825771c3da79a82a9c6c0308c82d77236fa',
-  'tools/todo_tool.py': 'cd86aad0d6545d2085824049085e5e65a9fd51022d2af254a7679a9cb3525c66',
-  'tools/registry.py': '310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922',
+// version label alone. Each admitted upstream commit maps to the sha256 of the
+// adapter's routing/context/tool seams in that tree.
+export const DEPARTMENT_WORKER_RUNTIMES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  // 0.21.3, tag v2026.9.14.
+  '345cd2b057a452236de401d3534b8502a7465e8d': {
+    'run_agent.py': 'dc125031d13e2a341eec473bcfcafce16c7356505dcbc560bec562b1ecaddc04',
+    'agent/agent_init.py': 'd1a1df8dc03a1381a9fd7591d4293e912fb1cb0fa2c1370f8c72a7500acb824a',
+    'agent/system_prompt.py': '20a6b326816fc6924ed0b5f4407281b38b9254f7b43465acff10fae09be3114f',
+    'agent/prompt_builder.py': '586ea363fa1e70bb0fdd5426af40758976a16c54f07efeb7a1b4f3fe0ad99309',
+    'hermes_cli/runtime_provider.py': '013831a166ff862fbc4284d43556f9bd124ecd8beaadce3b4adc9d9fc0032f17',
+    'hermes_cli/config.py': 'd76471ce54d40e68165e2cce7c2ade9c2164ed5ce4dbcf673b1b289cb89c7d84',
+    'hermes_cli/env_loader.py': '4bdeccecea814299627f0e1a4fb54f9e93ba48a01f35b966337f7ad9a826f798',
+    'model_tools.py': 'c99620c824ab59f341ac7d0e22cde016b0c469d0643e7a5a5a82e0d63176e4b5',
+    'toolsets.py': '7d743a132c00417604313c9832286825771c3da79a82a9c6c0308c82d77236fa',
+    'tools/todo_tool.py': 'cd86aad0d6545d2085824049085e5e65a9fd51022d2af254a7679a9cb3525c66',
+    'tools/registry.py': '310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922',
+  },
+  // 0.21.5, tag v2026.9.24 (the peeled commit; the annotated tag object is
+  // e3dd27ee). Hashes taken from the tag tree.
+  'f97608f178d1ffeca59860195ab7da295f7c8e5f': {
+    'run_agent.py': '244da863d3c21591a3b5326dc14c2962d4e31131dda52df628502cd9fcbfea33',
+    'agent/agent_init.py': 'ce93f1d5acd4727d0005b46d7054d8892a55c820be40ebc7f594695f576b4d81',
+    'agent/system_prompt.py': '650ad693a2b8b163886fc4d15a4921ded391f938bda07d1f7f406219b9c0b75f',
+    'agent/prompt_builder.py': '64bc77a26641754b8c5ca76fc876687d3c9e81aad7816c2e76ce251a41121526',
+    'hermes_cli/runtime_provider.py': '8013320d5b8b393f1a21d7b7858b638772b9aaf1fe15718e9c85bc4a1c785d64',
+    'hermes_cli/config.py': '398bee1c8ab2f8647b7967f0ae3ca57477ed4dc29e67023f858db4c5656aaace',
+    'hermes_cli/env_loader.py': 'f33feafb58da3bd1e19eb3c97fdfc461c570ed3823fb56dd84f8e95357d2e7b9',
+    'model_tools.py': '5d5a947d84f31f1ba4ef5267e28154b819e8f957a0b378739696f1ac305e1509',
+    'toolsets.py': '48ba8bea0b9bcd5821747f480055a224639fd83565d9b14d6134bbe7d433aa43',
+    'tools/todo_tool.py': 'cd86aad0d6545d2085824049085e5e65a9fd51022d2af254a7679a9cb3525c66',
+    'tools/registry.py': '1dd185b85dee4e578905273668369efc3abd8ce6d55abf8fa3d133393cb9dedc',
+  },
 };
 const helper = fileURLToPath(new URL('./helpers/department-worker.py', import.meta.url));
 
@@ -85,7 +106,9 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     const failure = managedServiceFailure('reasoning'); if (failure) return { ok: false, detail: failure };
     const home = hermesHome(opts.root), selection = readRuntimeSelection(home).selected;
     const profile = currentWorkerProfile().profile, profileDirectory = propertyProfileDir(home);
-    if (!selection || runtimeCommit(selection) !== DEPARTMENT_WORKER_RUNTIME || !packInstalled(home) || !approvalsAreManual(home)) return { ok: false, detail: unavailable };
+    const commit = selection ? runtimeCommit(selection) : null;
+    const nativeFiles = commit && Object.hasOwn(DEPARTMENT_WORKER_RUNTIMES, commit) ? DEPARTMENT_WORKER_RUNTIMES[commit]! : null;
+    if (!selection || !nativeFiles || !packInstalled(home) || !approvalsAreManual(home)) return { ok: false, detail: unavailable };
     if (typeof opts.beforeLaunch !== 'function' || typeof opts.beforeRequest !== 'function') return { ok: false, detail: unavailable };
     // No usable managed access, or a profile that no longer names the granted
     // endpoint: refuse with office copy before any process or relay starts.
@@ -163,8 +186,15 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     const launchRefusal = applyManagedModelLaunchEnv(env, home); if (launchRefusal) return { ok: false, detail: launchRefusal };
     // Provider OAuth/CLI discovery must not reach the OS user's home either.
     Object.assign(env, { HOME: scratch, USERPROFILE: scratch, TMPDIR: scratch, TMP: scratch, TEMP: scratch });
+    // The OS boundary under the helper's own socket audit: only this run's
+    // relay port, writes only to the scratch folder, reads of RealBud's data
+    // only for the admitted runtime and the selected profile.
+    let launch: SandboxedLaunch;
+    ensureProfileSkeleton(profileDirectory);
+    try { launch = sandboxedLaunch(python, ['-I', '-B', helper], env, { loopbackPorts: [address.port], writable: [scratch], reads: [['deny', DATA_DIR], ['allow', runtimeHome], ['allow', profileDirectory]] }); }
+    catch { return { ok: false, detail: unavailable }; }
     return await new Promise<Result>(accept => {
-      const child = spawnCli(python, ['-I', '-B', helper], { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'], privateFiles: true });
+      const child = trackSandboxedChild(spawnCli(launch.command, launch.args, { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'], privateFiles: true }));
       let size = 0, killed = false, failed = false;
       const chunks: Buffer[] = [];
       let force: ReturnType<typeof setTimeout> | undefined;
@@ -178,6 +208,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
       child.once('close', code => {
         clearTimeout(timer); opts.signal?.removeEventListener('abort', stop);
         if (force) clearTimeout(force);
+        launch.release();
         const bytes = Buffer.concat(chunks); chunks.forEach(chunk => chunk.fill(0));
         try {
           if (opts.signal?.aborted) return accept({ ok: false, detail: cancelled });

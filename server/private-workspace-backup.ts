@@ -17,12 +17,15 @@ import { restoreWorkBatches, validStoredWorkBatches } from './batch-persistence.
 import { PRIVATE_BACKUP_COMPLETION_FILE } from './private-backup-completion.ts';
 import { validateCustomerPack, validateCustomerPackUpgradeJournal, isPackArchivePath, validateCustomerPackHistoryArchive, validateCustomerPackArchiveSet } from './customer-packs.ts';
 import { parseWorkspaceTabs } from '../shared/workspace-tabs.ts';
+import { validate as validateBillFollowUps } from './bill-followups.ts';
+import { validateCoverage } from './bank-reference-store.ts';
 import { JOB_CAPABILITIES } from '../shared/contracts.ts';
 import { SOURCE_BILL_RECORD_KINDS, validateSourceBillRecord, validateSourceBillRecords } from './source-bill-graph.ts';
 import { BILL_STATUSES } from './expected-bills.ts';
 import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
 import { validateSavedBillProposal } from './bill-proposal-validation.ts';
 import { validateSavedBillReviewDraft, validateBillReviewDraftProposalLink } from './bill-review-drafts.ts';
+import { ROUTINE_RESULT_KIND, validateRoutineResultRecord } from './routine-results.ts';
 import { validateBackupMail } from './private-backup-mail-validation.ts';
 import { MAIL_RECORD_KINDS, interruptMailRecordsForRestore } from './mail-records.ts';
 import { EXECUTION_RECORD_KINDS } from '../shared/execution-history.ts';
@@ -41,8 +44,8 @@ export const PRIVATE_RESTORE_RECEIPT_FILE = 'private-workspace-restore-receipt.j
 const MAX_FILE = 8 * 1024 * 1024, MAX_PLAIN = PRIVATE_BACKUP_MAX_CONTENT_BYTES, MAX_PAYLOAD = 64 * 1024 * 1024, MAX_FILES = PRIVATE_BACKUP_MAX_FILES;
 const WORKSPACE = 'company-installation/workspace.json';
 const DATABASE = 'workflow-state.sqlite';
-const STATIC = new Set(['desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'work-batches.json', 'loops.json', 'expected-bills.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
-const KINDS = new Set(['bank', 'handoff', 'bill-proposal', 'bill-review-draft', DEPARTMENT_WORK_KIND, WEBSITE_REQUEST_KIND, WEBSITE_REMOTE_WORK_KIND, REMOTE_TEMPLATE_KIND, REMOTE_EVIDENCE_KIND, ...SOURCE_BILL_RECORD_KINDS, ...MAIL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
+const STATIC = new Set(['desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'work-batches.json', 'loops.json', 'expected-bills.json', 'bill-followups.json', 'bank-source/redbark-coverage.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
+const KINDS = new Set(['bank', 'handoff', 'bill-proposal', 'bill-review-draft', ROUTINE_RESULT_KIND, DEPARTMENT_WORK_KIND, WEBSITE_REQUEST_KIND, WEBSITE_REMOTE_WORK_KIND, REMOTE_TEMPLATE_KIND, REMOTE_EVIDENCE_KIND, ...SOURCE_BILL_RECORD_KINDS, ...MAIL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
 const BILL_KINDS: ReadonlySet<string> = new Set(SOURCE_BILL_RECORD_KINDS);
 const GUARDED = ['config.json', 'company-installation/host.json', 'company-installation/peer.json', 'company-installation/seat.json', 'company-installation/enrollment.json'];
 const COMPANY_DIRECTORY_GUARD = '$company-directory';
@@ -168,6 +171,13 @@ function validateBusinessFile(path: string, value: unknown) {
       if (!object(b) || !['id','propertyId','kind','note'].every(k => typeof b[k] === 'string') || ids.has(b.id) || !(BILL_STATUSES as readonly unknown[]).includes(b.status) || !(b.sourceRef === null || typeof b.sourceRef === 'string') || !['windowStartAt','windowEndAt','amountCents'].every(k => b[k] === null || typeof b[k] === 'number' && Number.isFinite(b[k])) || !['createdAt','updatedAt'].every(k => typeof b[k] === 'number' && Number.isFinite(b[k]))) fail('Saved bill facts need recovery.', 400);
       ids.add(b.id);
     }
+  } else if (path === 'bill-followups.json') {
+    // The store's own validator; absent means an empty store.
+    try { validateBillFollowUps(value); } catch { fail('Saved bill follow-ups need recovery.', 400); }
+  } else if (path === 'bank-source/redbark-coverage.json') {
+    // The coverage cursor's own validator; absent means no confirmed coverage. A restored
+    // cursor cannot confirm a batch from a different bank connection.
+    try { validateCoverage(value); } catch { fail('Saved bank coverage needs recovery.', 400); }
   } else if (path === 'customer-packs.json') {
     validateSkillJournalRoot(value);
     for (const [id, entry] of Object.entries(value.installs as Record<string, unknown>)) {
@@ -255,6 +265,7 @@ export function validatePrivateLogicalRecord(value: unknown): { id: string; kind
   if (BILL_KINDS.has(r.kind)) validateSourceBillRecord(r.kind, r.id, Number(r.revision), plain);
   if (r.kind === 'bank') validateSavedBankBatch(r.id, plain);
   if (r.kind === 'bill-proposal') validateSavedBillProposal(r.id, plain);
+  if (r.kind === ROUTINE_RESULT_KIND) validateRoutineResultRecord(r.id, plain);
   if (r.kind === REMOTE_EVIDENCE_KIND) validateRemoteEvidence(r.id, plain);
   if (r.kind === REMOTE_TEMPLATE_KIND) validateRemoteTemplate(r.id, plain);
   if (r.kind === WEBSITE_REMOTE_WORK_KIND) validateSavedWebsiteRemoteWork(r.id, plain);

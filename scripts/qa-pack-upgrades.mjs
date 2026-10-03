@@ -22,7 +22,8 @@ const resources = process.env.REALBUD_QA_RESOURCES;
 if (!!resources !== !!process.env.REALBUD_QA_EXECUTABLE) throw new Error('Specify both compiled resources and executable.');
 const entry = resources ? join(resources, 'server/bootstrap.js') : join(root, 'server/bootstrap.ts');
 let child, childClosed, browser, context, page, origin, token, lockedDirectory, failure, logs = '', lostBody;
-const checks = [], errors = [], denied = [];
+const checks = [], errors = [], denied = [], stoppedSessionReads = [];
+const fixtureOrigins = new Set();
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function stop() {
   if (!child || child.exitCode !== null || child.signalCode) return;
@@ -36,6 +37,7 @@ async function request(path, method = 'GET', body, expected = 200) {
 }
 async function start({ holdArchiveWrite = false } = {}) {
   const reserve = createServer(); reserve.listen(0, '127.0.0.1'); await once(reserve, 'listening'); const port = reserve.address().port; await new Promise(r => reserve.close(r)); origin = `http://127.0.0.1:${port}`;
+  fixtureOrigins.add(origin);
   child = spawn(executable, [...(holdArchiveWrite ? ['--import', join(temp, 'hold-archive.mjs')] : []), entry], { cwd: resources || root,
     env: { ...serviceSmokeEnv({ executable, home: temp, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '0', REALBUD_TEST_LAB: '1', REALBUD_HERMES_CLI: join(temp, 'worker.mjs'), OMB_STATIC_DIR: resources ? join(resources, 'ui') : join(root, 'dist') }, stdio: ['ignore', 'pipe', 'pipe'] });
   childClosed = new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
@@ -49,7 +51,13 @@ const installation = async () => (await request('/api/customer-packs')).installa
 const recipes = async () => (await request('/api/recipes')).recipes;
 const card = () => page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
 const change = () => page.getByRole('region', { name: 'Review pack version change', exact: true });
-async function open() { await page.goto(origin + '/#/schedule'); await card().waitFor(); }
+async function open({ reload = false } = {}) {
+  await page.goto(origin + '/#/schedule');
+  if (reload) await page.reload();
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-packs'; });
+  await card().waitFor();
+}
 async function preview(pack) {
   await card().getByLabel('Preview a pack file', { exact: true }).setInputFiles({ name: 'fictional-pack.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(pack)) });
   await change().waitFor();
@@ -84,8 +92,24 @@ syncBuiltinESMExports();
   assert.equal((await fetch(origin + '/api/customer-packs/upgrade', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  await context.route('**/*', route => { if (new URL(route.request().url()).origin === origin) return route.continue(); denied.push(route.request().url()); return route.abort(); });
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
+  await context.route('**/*', route => {
+    const request = route.request(), url = new URL(request.url());
+    if (url.origin === origin) return route.continue();
+    // A tab still polling while its owned service restarts may retry session
+    // discovery at the old port. Abort it; never allow old-port writes or any
+    // request to a host this fixture did not create.
+    if (fixtureOrigins.has(url.origin) && url.pathname === '/api/session' && request.method() === 'GET') stoppedSessionReads.push(request.url());
+    else denied.push(request.url());
+    return route.abort();
+  });
+  // Complete only this fictional workspace's welcome through its revisioned
+  // API. Browser flags no longer establish server-owned onboarding state.
+  let onboarding = await request('/api/onboarding');
+  for (const stage of ['office-rules', 'complete']) {
+    if (onboarding.stage === 'complete') break;
+    onboarding = await request('/api/onboarding', 'PUT', { expectedScope: onboarding.scope, expectedRevision: onboarding.revision, stage });
+    assert.equal(onboarding.stage, stage);
+  }
   page = await context.newPage(); page.setDefaultTimeout(20000); page.on('pageerror', e => errors.push(e.message)); await open();
   await card().getByRole('button', { name: 'Preview real estate office core pack', exact: true }).click();
   await card().getByRole('button', { name: 'Import reviewed pack', exact: true }).click(); await settled();
@@ -115,7 +139,7 @@ syncBuiltinESMExports();
   await request('/api/customer-packs/upgrade', 'POST', lostBody); assert.equal((await installation()).installationRevision, 2);
   assert.deepEqual(readFileSync(join(data, 'desk.json')), book);
   checks.push('Rendered upload preview is read-only and requires confirmation; real upgrade merges publisher change with staff title, adds optional plan, pauses approvals/schedules, and reconciles lost response without another generation.');
-  await page.reload(); await card().waitFor();
+  await open({ reload: true });
   const conflict = structuredClone(pack); conflict.revision = 3; conflict.recipes[0].title = 'Conflicting publisher title';
   await preview(conflict); await change().getByRole('alert').waitFor(); assert.equal(await change().getByRole('button', { name: 'Apply reviewed upgrade', exact: true }).isEnabled(), false);
   assert.equal((await installation()).revision, 2); await change().getByRole('button', { name: 'Cancel version change', exact: true }).click();
@@ -166,7 +190,7 @@ syncBuiltinESMExports();
   await request('/api/recipes', 'POST', { draft: { ...selected, schedule: { time: '23:59', weekdays: [(new Date().getDay() + 1) % 7] }, expectedRevision: selected.revision } }, 201);
   await request(`/api/recipes/${first.id}`, 'PATCH', { expectedRevision: (await recipes()).find(r => r.id === first.id).revision, planApproved: true, status: 'active' });
   const recipesBeforeArchive = readFileSync(join(data, 'recipes.json'));
-  await page.setViewportSize({ width: 1440, height: 1000 }); await page.reload(); await card().waitFor();
+  await page.setViewportSize({ width: 1440, height: 1000 }); await open({ reload: true });
   await card().getByText('Previous configurations and rollback', { exact: true }).click();
   await card().getByRole('button', { name: 'Review history archival', exact: true }).click();
   const archiveReview = () => page.getByRole('region', { name: 'Review pack history archival', exact: true });
@@ -199,7 +223,7 @@ syncBuiltinESMExports();
   const journalAfterUpgrade = readFileSync(join(data, 'customer-packs.json'));
   await request('/api/customer-packs/office-core/archive', 'POST', lostArchive);
   assert.deepEqual(readFileSync(join(data, 'customer-packs.json')), journalAfterUpgrade);
-  await page.reload(); await card().waitFor(); await card().getByText('Previous configurations and rollback', { exact: true }).click();
+  await open({ reload: true }); await card().getByText('Previous configurations and rollback', { exact: true }).click();
   await card().getByRole('button', { name: 'Browse archived configurations', exact: true }).click(); await settled();
   await card().getByRole('button', { name: 'Preview rollback to configuration 1', exact: true }).click(); await change().waitFor();
   await confirm('rollback'); await settled();
@@ -242,7 +266,7 @@ syncBuiltinESMExports();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)); await page.screenshot({ path: join(output, 'archived-history-mobile.png') });
   assert.deepEqual(readFileSync(join(data, 'desk.json')), book);
   checks.push('Actual service SIGKILL after a partial archive write leaves durable intent and original history; mobile cold-resume repairs that staging file and removes it. A second archive retains the first batch; bounded older-page browsing still reaches configuration one. Desktop and mobile archival screens remain usable.');
-  assert.deepEqual(errors, []); assert.deepEqual(denied, []); checks.push('Desktop and390px screens render without horizontal overflow, browser errors or off-origin requests; private business book bytes remain unchanged.');
+  assert.deepEqual(errors, []); assert.deepEqual(denied, []); checks.push('Desktop and390px screens render without horizontal overflow, browser errors or requests outside owned fixture services; stale session reads are blocked and private business book bytes remain unchanged.');
 } catch (error) { failure = error; }
 finally {
   if (lockedDirectory) chmodSync(lockedDirectory, 0o700);
@@ -250,7 +274,7 @@ finally {
   if (failure) writeFileSync(join(output, 'failure.log'), logs, { mode: 0o600 });
   rmSync(temp, { recursive: true, force: true });
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, layer: resources ? 'Compiled local service and built renderer' : 'Source local service and built renderer',
-    limits: 'Disposable fictional pack and POSIX file-permission failure; no live worker/provider or native Windows proof', checks, errors, denied, cleaned: !existsSync(temp), ...(failure ? { error: failure.message } : {}) }, null, 2));
+    limits: 'Disposable fictional pack and POSIX file-permission failure; no live worker/provider or native Windows proof', checks, errors, denied, stoppedSessionReads, cleaned: !existsSync(temp), ...(failure ? { error: failure.message } : {}) }, null, 2));
 }
 if (failure) throw failure;
 console.log(JSON.stringify({ output, checks, cleaned: true }, null, 2));

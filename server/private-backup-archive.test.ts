@@ -83,6 +83,7 @@ describe('authenticated portable business catalog archives', () => {
     try {
       const bank = new BankReferenceStore(db), first = bank.create({ source: { filename: 'fictional.csv', bytesBase64: csv.toString('base64') }, columns: { date: 'Date', amount: 'Amount', narrative: 'Description', reference: 'Reference' }, dateFormat: 'DD/MM/YYYY', rules: [{ propertyId: 'fictional-property', reference: '00012', aliases: ['Fictional'] }] });
       saved = bank.review(first.id, first.revision, [{ rowId: first.value.batch.rows[0].id, action: 'assign', propertyId: 'fictional-property', reason: 'Fictional checked reference' }]);
+      const { firstPass: _derived, ...stored } = saved; saved = stored; // firstPass is a read-time view, never stored
       f.catalog.addRecord({ ...saved, kind: 'bank' });
     } finally { db.close(); }
     f.catalog.addFile({ path: 'vault/workflow-inputs/bank.csv', encoding: 'bytes', data: csv });
@@ -135,5 +136,36 @@ describe('authenticated portable business catalog archives', () => {
     const bytes = await collect(encodePrivateBackupV2(entries.map(e => ({ name: e.name, size: e.bytes.length, data: input(e.bytes) })), { passphrase: phrase }));
     await expect(decode(bytes)).rejects.toThrow();
     expect(existsSync(join(f.directory, 'private-workspace-restore.json'))).toBe(false);
+  });
+  it('round-trips W1 bank records (dispositions, enriched rules, Redbark provenance) and still rejects unknown fields', async () => {
+    const f = await fixture(), db = new WorkflowDatabase({ dir: join(f.directory, 'source'), key: f.key });
+    const columns = { date: 'Date', amount: 'Amount', narrative: 'Description', reference: 'Reference' };
+    const rules = [{ propertyId: 'fictional-property', reference: '00012', aliases: ['Fictional'], tenant: 'Fictional Tenant Ledger', invoiceCodes: ['FICT-INV'], expectedRent: 52000, rentPeriod: 'fortnight' as const }];
+    const csv = 'Date,Amount,Description,Reference\r\n21/09/2026,520.00,Fictional rent,old\r\n21/09/2026,-1.00,Fictional fee,\r\n22/09/2026,3.00,Fictional unknown,\r\n';
+    const provenance = { kind: 'redbark-api' as const, version: 1 as const, originalBankExport: false as const, livemode: true as const, apiVersion: '2026-09-01.fictional',
+      connection: 'conn_fictional1', account: 'acct_fictional1', requestedFrom: '2026-09-20', requestedTo: '2026-09-22', runDate: '2026-09-22',
+      retrievedAt: '2026-09-22T00:00:00.000Z', responseDigest: '0'.repeat(64), transactionIds: ['txn_fictional_1', 'txn_fictional_2', 'txn_fictional_3'] };
+    let stored;
+    try {
+      const bank = new BankReferenceStore(db);
+      const first = bank.createFromRedbark({ source: { filename: 'fictional-redbark.csv', bytesBase64: Buffer.from(csv).toString('base64'), provenance }, columns, dateFormat: 'DD/MM/YYYY', rules });
+      const [rent, fee, unknown] = first.value.batch.rows;
+      const reviewed = bank.review(first.id, first.revision, [
+        { rowId: rent!.id, action: 'import', propertyId: 'fictional-property', reason: 'Fictional rent receipt' },
+        { rowId: fee!.id, action: 'exclude', reason: 'Fictional bank fee' },
+        { rowId: unknown!.id, action: 'hold', reason: 'Fictional payer unknown' },
+      ]);
+      stored = db.get('bank', reviewed.id)!;
+    } finally { db.close(); }
+    const record = { id: stored.id, kind: 'bank', revision: stored.revision, value: stored.value as Record<string, unknown> };
+    expect(record.value).not.toHaveProperty('firstPass');
+    expect(record.value).toMatchObject({ batch: { source: { provenance }, input: { rules } }, decisions: [{ action: 'assign', propertyId: 'fictional-property' }, { action: 'exclude' }, { action: 'hold' }] });
+    expect(() => f.catalog.addRecord({ ...record, firstPass: null } as typeof record)).toThrow(/unsupported fields/);
+    expect(() => f.catalog.addRecord({ ...record, value: { ...record.value, firstPass: null } })).toThrow(/integrity check/);
+    const rule = { ...rules[0], rentPeriod: 'year' }, batch = record.value.batch as { input: Record<string, unknown> };
+    expect(() => f.catalog.addRecord({ ...record, value: { ...record.value, batch: { ...batch, input: { ...batch.input, rules: [rule] } } } })).toThrow(/integrity check/);
+    f.catalog.addRecord(record);
+    const result = await decode((await encode(f.catalog, true)).bytes);
+    expect(result.catalog.getRecord('bank', record.id)).toEqual(record);
   });
 });

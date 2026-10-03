@@ -1,5 +1,9 @@
 /** Pending worker preferences are separate from business facts and approvals. */
+import { isLearningHold, type LearningHold } from './learning-policy.ts';
+
 export const MEMORY_REVIEW_API = '/api/hermes/memory-reviews';
+/** Office auto-keep setting, automatically kept learnings and their undo. */
+export const MEMORY_LEARNING_API = `${MEMORY_REVIEW_API}/learning`;
 export const MEMORY_REVIEW_ERRORS = {
   invalid: 'This memory review request is not supported.',
   unavailable: 'Memory review is unavailable. Check Bud setup and try again.',
@@ -23,6 +27,8 @@ export interface MemoryReviewItem {
   id: string; state: 'pending' | 'applied' | 'rejected' | 'recovery-required' | 'unavailable';
   action: MemoryReviewAction | null; target: MemoryReviewTarget | null; origin: MemoryReviewOrigin | null; createdAt: number | null;
   decision: 'approve' | 'reject' | null; reviewDigest: string | null;
+  /** Present only on a pending item that auto-keep held for a person. */
+  hold?: LearningHold;
 }
 export interface MemoryReviewPage { version: 1; items: MemoryReviewItem[]; nextCursor: string | null; total: number; held: number }
 export interface MemoryReviewPreview {
@@ -44,7 +50,9 @@ export function parseMemoryReviewPage(v: unknown): MemoryReviewPage | null {
     !integer(v.total) || Number(v.total) > 2000 || !integer(v.held) || Number(v.held) > Number(v.total) || v.items.length > Number(v.total) || v.nextCursor !== null && !memoryReviewId(v.nextCursor)) return null;
   const ids = new Set<string>();
   for (const row of v.items) {
-    if (!object(row) || !fields(row, ['id', 'state', 'action', 'target', 'origin', 'createdAt', 'decision', 'reviewDigest']) || !memoryReviewId(row.id) || ids.has(row.id) ||
+    const rowFields = ['id', 'state', 'action', 'target', 'origin', 'createdAt', 'decision', 'reviewDigest'];
+    if (!object(row) || !fields(row, Object.hasOwn(row, 'hold') ? [...rowFields, 'hold'] : rowFields) || !memoryReviewId(row.id) || ids.has(row.id) ||
+      Object.hasOwn(row, 'hold') && (row.state !== 'pending' || !isLearningHold(row.hold)) ||
       typeof row.state !== 'string' || !['pending', 'applied', 'rejected', 'recovery-required', 'unavailable'].includes(row.state) || row.action !== null && !action(row.action) ||
       row.target !== null && !target(row.target) || row.origin !== null && !origin(row.origin) || row.createdAt !== null && !timestamp(row.createdAt) ||
       row.decision !== null && row.decision !== 'approve' && row.decision !== 'reject' || row.reviewDigest !== null && !memoryReviewDigest(row.reviewDigest) ||
@@ -69,4 +77,30 @@ export function parseMemoryReviewDecision(v: unknown): MemoryReviewDecision | nu
     typeof v.state !== 'string' || !['applied', 'rejected'].includes(v.state) || !memoryReviewDigest(v.reviewDigest) || typeof v.changed !== 'boolean' ||
     v.state === 'rejected' && v.changed || !timestamp(v.at)) return null;
   return { ...v } as unknown as MemoryReviewDecision;
+}
+
+export interface MemoryLearningKept {
+  reviewId: string; reviewDigest: string; target: MemoryReviewTarget; text: string; keptAt: number;
+  decidedBy: 'policy'; policyVersion: 1; undoStarted: boolean;
+}
+export interface MemoryLearningState { version: 1; autoKeep: boolean; policyVersion: 1; kept: MemoryLearningKept[] }
+export interface MemoryLearningUndo { version: 1; reviewDigest: string; result: 'undone' | 'already-changed' }
+export const MEMORY_LEARNING_KEPT_LIMIT = 200;
+export const MEMORY_LEARNING_TEXT_LIMIT = 280;
+export function parseMemoryLearningState(v: unknown): MemoryLearningState | null {
+  if (!object(v) || !fields(v, ['version', 'autoKeep', 'policyVersion', 'kept']) || v.version !== 1 || typeof v.autoKeep !== 'boolean' || v.policyVersion !== 1 ||
+    !Array.isArray(v.kept) || v.kept.length > MEMORY_LEARNING_KEPT_LIMIT) return null;
+  const digests = new Set<string>();
+  for (const row of v.kept) {
+    if (!object(row) || !fields(row, ['reviewId', 'reviewDigest', 'target', 'text', 'keptAt', 'decidedBy', 'policyVersion', 'undoStarted']) || !memoryReviewId(row.reviewId) ||
+      !memoryReviewDigest(row.reviewDigest) || digests.has(row.reviewDigest) || !target(row.target) || typeof row.text !== 'string' || !row.text ||
+      [...row.text].length > MEMORY_LEARNING_TEXT_LIMIT || !timestamp(row.keptAt) || row.decidedBy !== 'policy' || row.policyVersion !== 1 || typeof row.undoStarted !== 'boolean') return null;
+    digests.add(row.reviewDigest);
+  }
+  return structuredClone(v) as unknown as MemoryLearningState;
+}
+export function parseMemoryLearningUndo(v: unknown): MemoryLearningUndo | null {
+  if (!object(v) || !fields(v, ['version', 'reviewDigest', 'result']) || v.version !== 1 || !memoryReviewDigest(v.reviewDigest) ||
+    v.result !== 'undone' && v.result !== 'already-changed') return null;
+  return { ...v } as unknown as MemoryLearningUndo;
 }

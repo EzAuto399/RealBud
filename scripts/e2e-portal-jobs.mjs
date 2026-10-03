@@ -39,7 +39,11 @@ import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server
 browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
 browserRuntime.resumeConnection = async () => {};
 `);
-const dumpPath = join(HOME, "fake-acp-dump.json");
+// The fake worker obeys the same write boundary as a real Bud worker. Its
+// test receipt belongs in bud-work, not alongside the private fixture home.
+const evidenceDir = join(HOME, ".realbud", "vault", "bud-work");
+mkdirSync(evidenceDir, { recursive: true });
+const dumpPath = join(evidenceDir, "fake-acp-dump.json");
 
 let failures = 0;
 let skips = 0;
@@ -1044,7 +1048,7 @@ try {
         (m) =>
           m.role === "bot" &&
           m.kind === "text" &&
-          (/I opened Notion sign-in/i.test(m.text ?? "") || /couldn't open/i.test(m.text ?? "")) &&
+          (/Notion sign-in is ready/i.test(m.text ?? "") || /couldn't open/i.test(m.text ?? "")) &&
           !/private connection key once/i.test(m.text ?? ""),
       ),
     "connect Notion with key",
@@ -1053,7 +1057,7 @@ try {
   const connectKeyedText = lastBotText(connectKeyed, beforeConnect);
   check(
     "connect Notion with key opens stub sign-in",
-    /I opened Notion sign-in/i.test(connectKeyedText) && /https:\/\/auth\.example\/connect\/notion/i.test(connectKeyedText),
+    /Notion sign-in is ready/i.test(connectKeyedText) && /https:\/\/auth\.example\/connect\/notion/i.test(connectKeyedText),
     connectKeyedText.slice(0, 120),
   );
 

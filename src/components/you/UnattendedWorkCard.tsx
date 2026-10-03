@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useStore } from "@/state/store";
-import { Card } from "../SettingsPrimitives";
+import { SettingsCard } from "./SettingsCard";
 
 /**
  * Whether the office has anything scheduled at all.
@@ -35,53 +35,55 @@ export function UnattendedWorkCardView({
 }) {
   const settings = state?.settings ?? { startOfficeServiceAtLogin: false, keepAwakeForSchedules: false };
   const startupSupported = state ? state.startup.supported : false;
+  const on = settings.startOfficeServiceAtLogin || settings.keepAwakeForSchedules;
   return (
-    <Card title="Scheduled work on this computer" subtitle="What happens when nobody is at this computer.">
-      <label className="flex min-h-11 items-start gap-2 py-1 text-[13px] text-ink">
+    <SettingsCard
+      title="Scheduled work on this computer"
+      status={state ? (on ? { tone: "agency", label: "On" } : { tone: "muted", label: "Off" }) : null}
+      details={<>
+        <p>What happens when nobody is at this computer.</p>
+        <p>
+          The office service starts on its own after you sign in to this computer, so scheduled work can run without anyone
+          remembering to open RealBud.
+        </p>
+        {/* What that looks like differs by computer, and the main process is
+            the only thing that knows which one this is. */}
+        {state ? <p className="text-ink-muted">{state.startup.explanation}</p> : null}
+        <p>
+          While this computer is plugged in and something is scheduled, RealBud stops it going to sleep; the screen still
+          turns off as usual.
+        </p>
+        {state ? <p className="text-ink-muted">{state.keepAwake.explanation}</p> : null}
+        <p>
+          A closed lid, a computer that is switched off, and one waiting at its sign-in screen all still mean scheduled work does
+          not run. A scan that did not happen is shown as missed or late, never as done, and every scheduled job shows when it was
+          last checked.
+        </p>
+      </>}
+    >
+      <label className="flex min-h-11 items-center gap-2 text-[13px] text-ink">
         <input
           type="checkbox"
-          className="mt-1 size-4 shrink-0"
+          className="size-4 shrink-0"
           aria-label={START_AT_LOGIN}
           checked={settings.startOfficeServiceAtLogin}
           disabled={busy || !state || !startupSupported}
           onChange={(event) => onChange({ startOfficeServiceAtLogin: event.target.checked })}
         />
-        <span>
-          <span className="font-medium">{START_AT_LOGIN}</span>
-          <span className="mt-1 block text-ink-secondary">
-            The office service starts on its own after you sign in to this computer, so scheduled work can run without anyone
-            remembering to open RealBud.
-          </span>
-          {/* What that looks like differs by computer, and the main process is
-              the only thing that knows which one this is. */}
-          {state ? <span className="mt-1 block text-ink-muted">{state.startup.explanation}</span> : null}
-        </span>
+        <span className="font-medium">{START_AT_LOGIN}</span>
       </label>
 
-      <label className="flex min-h-11 items-start gap-2 py-1 text-[13px] text-ink">
+      <label className="flex min-h-11 items-center gap-2 text-[13px] text-ink">
         <input
           type="checkbox"
-          className="mt-1 size-4 shrink-0"
+          className="size-4 shrink-0"
           aria-label={KEEP_AWAKE}
           checked={settings.keepAwakeForSchedules}
           disabled={busy || !state}
           onChange={(event) => onChange({ keepAwakeForSchedules: event.target.checked })}
         />
-        <span>
-          <span className="font-medium">{KEEP_AWAKE}</span>
-          <span className="mt-1 block text-ink-secondary">
-            While this computer is plugged in and something is scheduled, RealBud stops it going to sleep; the screen still
-            turns off as usual.
-          </span>
-          {state ? <span className="mt-1 block text-ink-muted">{state.keepAwake.explanation}</span> : null}
-        </span>
+        <span className="font-medium">{KEEP_AWAKE}</span>
       </label>
-
-      <p className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
-        A closed lid, a computer that is switched off, and one waiting at its sign-in screen all still mean scheduled work does
-        not run. A scan that did not happen is shown as missed or late, never as done, and every scheduled job shows when it was
-        last checked.
-      </p>
 
       {state?.saved === false ? (
         <p role="alert" className="mt-2 text-[13px] text-danger">
@@ -98,7 +100,7 @@ export function UnattendedWorkCardView({
           Checking what this computer is set to do…
         </p>
       ) : null}
-    </Card>
+    </SettingsCard>
   );
 }
 

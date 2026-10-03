@@ -1,4 +1,5 @@
 import type { Loop, LoopId, LoopRun } from "@shared/contracts";
+import { cadenceIncludesDay, type CalendarCadence } from '@shared/routine-clock';
 
 import { fmtTimeOfDay } from "./au";
 import { isDemoWorkerMiss } from "./morning-brief";
@@ -61,7 +62,7 @@ export interface CalendarLoop {
   name: string;
   available: boolean;
   enabled: boolean;
-  schedule: Pick<Loop["schedule"], "weekdays" | "time">;
+  schedule: Pick<Loop["schedule"], "weekdays" | "time" | "intervalDays" | "anchorDate" | "timezone">;
   nextRunAt?: number | null;
   waitingForPlan?: boolean;
 }
@@ -85,7 +86,7 @@ export function plannedLoopFootnote(loop: { name: string }): string {
 }
 
 /** Card-face / disclosure clock, e.g. "Weekdays 7:30 am". */
-export function scheduleSummary(schedule: { time: string; weekdays: number[] }): string {
+export function scheduleSummary(schedule: { time: string; weekdays: number[] } & CalendarCadence): string {
   const [hour, minute] = schedule.time.split(":").map(Number);
   const time = fmtTimeOfDay(new Date(2000, 0, 1, hour || 0, minute || 0).getTime());
   const days = [...schedule.weekdays].sort((a, b) => a - b);
@@ -95,7 +96,7 @@ export function scheduleSummary(schedule: { time: string; weekdays: number[] }):
       : days.join(",") === "1,2,3,4,5"
         ? "Weekdays"
         : days.map((day) => DAY_NAMES[day]).join(", ");
-  return `${dayLabel} ${time}`;
+  return schedule.intervalDays ? `Every ${schedule.intervalDays} days ${time} · from ${schedule.anchorDate}${days.length < 7 ? ` · ${dayLabel}` : ''}` : `${dayLabel} ${time}`;
 }
 
 export function weekOutcomeTone(outcome: WeekOutcome): WeekChipTone | null {
@@ -316,7 +317,10 @@ function slotsForDay(
   timeZone?: string,
 ): WeekSlot[] {
   return scheduled
-    .filter((loop) => loop.schedule.weekdays.includes(weekday))
+    .filter((loop) => {
+      const day = zonedYmd(dateMs, loop.schedule.timezone ?? timeZone);
+      return loop.schedule.weekdays.includes(day.weekday ?? weekday) && cadenceIncludesDay(loop.schedule, day.year, day.month, day.day);
+    })
     .map((loop) => {
       const next = Boolean(
         loop.available && loop.enabled && loop.nextRunAt && sameCalendarDay(loop.nextRunAt, dateMs, timeZone),

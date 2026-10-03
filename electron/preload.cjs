@@ -69,6 +69,25 @@ contextBridge.exposeInMainWorld("ogb", {
     set: (settings) => ipcRenderer.invoke("service:persistence:set", settings),
   },
 
+  /** Hermios, the office CRM, in its own view inside this window. The person
+   * signs in to Hermios themselves; nothing here carries a credential, cookie
+   * or page content back. `show` takes the placeholder's rectangle in CSS
+   * pixels; every call resolves true when the view did what was asked. */
+  hermiosView: {
+    show: (bounds) =>
+      ipcRenderer.invoke("hermios-view:show", {
+        x: bounds?.x,
+        y: bounds?.y,
+        width: bounds?.width,
+        height: bounds?.height,
+      }),
+    hide: () => ipcRenderer.invoke("hermios-view:hide"),
+    back: () => ipcRenderer.invoke("hermios-view:back"),
+    reload: () => ipcRenderer.invoke("hermios-view:reload"),
+    signOut: () => ipcRenderer.invoke("hermios-view:sign-out"),
+    openExternal: () => ipcRenderer.invoke("hermios-view:open-external"),
+  },
+
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",
    *    version?, percent?, message? }. onState fires immediately with the

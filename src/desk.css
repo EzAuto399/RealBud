@@ -1,8 +1,77 @@
-/* Desk: task list, review canvas, and contextual assistant. */
-.desk-workspace .pm-desk-header { padding: 18px 22px 0; max-height: 48%; overflow-y: auto; }
-.desk-workspace-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; }
+/* Desk: a shallow toolbar that never scrolls, then one scroll region (.desk-content)
+   holding the task queue beside the case in normal flow. No nested scrollers. */
+.desk-workspace { min-height: 0; background: var(--color-sheet); }
+.desk-workspace .pm-desk-header { padding: 20px 24px 0; }
+.desk-workspace-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 8px; }
+.desk-other-work > summary { min-height: 40px; }
+.desk-content { display: flex; flex-direction: column; overscroll-behavior: contain; background: var(--color-sheet); }
+.desk-content[data-drawer-open="true"] { overflow: hidden; }
+/* Properties and batch work flow inside the same scroll owner. */
+.desk-content .batch-workspace, .desk-content .desk-property-book { overflow: visible; }
+.desk-notices { display: flex; flex-direction: column; flex-shrink: 0; gap: 8px; padding: 12px 24px 0; }
+.desk-notices:empty { display: none; }
+.desk-status-row { flex-shrink: 0; padding: 14px 24px; border-bottom: 1px solid var(--color-line); }
+.desk-check-details { margin-top: 6px; padding-bottom: 4px; }
+.desk-work-tasks:not([hidden]), .desk-other-work-surface:not([hidden]) { flex: 1 0 auto; }
+.desk-work-tasks:not([hidden]):has(> .desk-task-split),
+.desk-work-tasks:not([hidden]):has(> .desk-empty-workspace) { display: flex; flex-direction: column; }
+.desk-task-split { display: flex; flex: 1 0 auto; align-items: stretch; min-width: 0; }
+.desk-queue-column { flex: 0 0 var(--desk-queue-width, 280px); width: var(--desk-queue-width, 280px); min-width: 0; border-right: 1px solid var(--color-line); background: var(--color-sheet); }
+.desk-case-column { flex: 1 1 auto; min-width: 0; background: var(--color-sheet); scroll-margin-top: 8px; }
+.desk-case-column[data-empty="true"] { background: var(--color-sheet); }
+/* Drawer-only controls; the extra class beats .pm-control on wide screens. */
+/* Doubled classes outrank `.workspace-surface .pm-control`, which loads later. */
+.desk-workspace .desk-queue-backdrop, .desk-workspace .desk-queue-close.desk-queue-close, .desk-workspace .desk-queue-toggle.desk-queue-toggle { display: none; }
+.desk-queue-status { display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--color-ink-muted); }
+.desk-queue-status select { min-height: 44px; padding: 8px 12px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-sheet); font-size: 14px; color: var(--color-ink); }
+.desk-queue-filters > summary { display: flex; align-items: center; min-height: 40px; cursor: pointer; font-size: 14px; color: var(--color-agency); }
+.desk-queue-filters .desk-case-kind { padding: 0 0 6px; border-bottom: 0; }
+.desk-empty-canvas { padding: 24px; }
+/* An empty book has setup and reminders, not a queue of zero-count filters. */
+.desk-empty-workspace { display: grid; flex: 1 0 auto; grid-template-columns: minmax(0, 1fr) minmax(320px, 384px); align-items: start; align-content: start; gap: 48px; padding: 32px 24px; background: var(--color-sheet); }
+.desk-empty-workspace .desk-office-book-empty { max-width: 560px; border: 0; padding: 0; background: transparent; }
+.desk-empty-workspace .desk-office-book-empty > h2 { display: flex; align-items: center; min-height: 44px; }
+.desk-empty-reminders { min-width: 0; padding-left: 24px; border-left: 1px solid var(--color-line); }
+.desk-empty-reminders .desk-reminders { margin-top: 0; padding: 0; border: 0; background: transparent; }
+.desk-office-book-help { display: inline-flex; align-items: center; min-height: 44px; padding: 8px; color: var(--color-agency); font-size: 14px; font-weight: 500; }
+.desk-office-book-help:hover { text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 1099px) {
+  .desk-empty-workspace { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .desk-empty-reminders { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--color-line); }
+}
+.desk-queue-pane > :first-child { padding: 14px 16px; }
+.desk-queue-controls { padding: 16px 16px 8px; }
+.desk-queue-reminders { padding: 16px; }
+.desk-queue-reminders .desk-reminders { border: 0; padding: 0; border-radius: 0; }
+.desk-reminder-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-line); }
+.desk-reminder-item { padding-top: 14px; padding-bottom: 14px; }
+.desk-reminder-item[data-due="true"] { margin-inline: 0; padding-inline: 12px; border-left-width: 3px; }
+.desk-reminder-snooze-toggle { display: flex; align-items: center; gap: 8px; }
+.desk-reminder-snooze-toggle > svg { flex-shrink: 0; }
+.desk-reminder-snooze[open] > summary > svg { transform: rotate(180deg); }
+.desk-reminder-snooze-toggle::-webkit-details-marker { display: none; }
+.desk-reminder-snooze-options { padding-bottom: 8px; }
+@media (min-width: 1280px) {
+  .desk-workspace[data-density="comfortable"] .desk-queue-column { flex-basis: max(320px, var(--desk-queue-width, 280px)); width: max(320px, var(--desk-queue-width, 280px)); }
+}
+.desk-evidence { font-size: 14px; color: var(--color-ink); }
+/* Review actions stay in view at the bottom of the one scroll region. */
+.desk-case-column .desk-decision { position: sticky; bottom: 0; z-index: 1; background: var(--color-sheet); }
+.desk-other-work-surface { padding: 24px; }
+.desk-other-work-surface > .desk-back-to-tasks { display: inline-flex; align-items: center; margin-bottom: 10px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-sheet); font-size: 13px; font-weight: 500; color: var(--color-agency); }
+/* Reminders: collapsed shows only the heading (with its due count) and alerts. */
+.desk-reminders-disclosure .desk-reminders { margin-top: 0; }
+.desk-reminders-toggle { flex: 0 0 auto; min-height: 44px; padding: 0 6px; font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--color-agency); }
+.desk-reminders-toggle:hover { text-decoration: underline; }
+.desk-reminders-disclosure[data-open="false"] .desk-reminders > :not(:first-child):not([role="alert"]) { display: none; }
+.desk-reminders-disclosure[data-open="false"] .desk-reminders > :first-child > p { display: none; }
+/* The layout check for a Bud side panel is obsolete: Desk no longer has one. */
+.desk-options .workspace-layout-check { display: none; }
+.desk-options > summary { display: flex; align-items: center; cursor: pointer; list-style: none; }
+.desk-options > summary::-webkit-details-marker { display: none; }
+.desk-options-body { display: flex; flex-direction: column; gap: 2px; padding-left: 8px; }
 .desk-workspace-tabs { display: flex; gap: 22px; }
-.desk-workspace-tabs > button { display: flex; align-items: center; gap: 8px; min-height: 46px; border-bottom: 3px solid transparent; font-size: 13px; color: var(--color-ink-muted); font-weight: 500; white-space: nowrap; }
+.desk-workspace-tabs > button { display: flex; align-items: center; gap: 8px; min-height: 48px; border-bottom: 3px solid transparent; font-size: 14px; color: var(--color-ink-muted); font-weight: 500; white-space: nowrap; }
 .desk-workspace-tabs > button[aria-pressed="true"] { border-color: var(--color-agency); color: var(--color-agency); }
 .desk-workspace-tabs > button > span { padding: 1px 7px; border-radius: 5px; background: var(--color-selected); font-size: 11px; }
 .desk-workspace-tabs > button.desk-workspace-back { border-bottom-color: transparent; color: var(--color-agency); font-weight: 600; }
@@ -32,8 +101,8 @@
   font-size: 13px;
   color: var(--color-ink);
 }
-.desk-more-item:hover,
-.desk-more-item[aria-pressed="true"] { background: var(--color-raised); }
+.desk-more-item:hover { background: var(--color-raised); }
+.desk-more-item[aria-pressed="true"] { background: var(--color-selected); color: var(--color-agency); font-weight: 600; box-shadow: inset 3px 0 0 var(--color-agency); }
 .desk-more-layout { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-line); }
 .desk-more-layout .workspace-layout-options {
   position: static;
@@ -41,8 +110,7 @@
   max-width: none;
   grid-template-columns: 1fr;
 }
-.desk-workspace-help { font-size: 12px; color: var(--color-ink-muted); }
-.desk-primary-button, .desk-secondary-button { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--color-line); border-radius: 6px; font-size: 13px; font-weight: 500; }
+.desk-primary-button, .desk-secondary-button { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--color-line); border-radius: 6px; font-size: 14px; font-weight: 500; }
 .desk-primary-button { background: var(--color-agency); color: white; border-color: var(--color-agency); }
 .desk-primary-button:hover { background: var(--color-agency-hover); }
 .desk-primary-button:disabled, .desk-secondary-button:disabled { opacity: .45; cursor: default; }
@@ -53,16 +121,11 @@
    draft as the headline action. This note carries the reason. */
 .desk-bud-hold { margin: 2px 0 4px; font-size: 12.5px; line-height: 1.45; color: var(--color-hold); }
 .desk-chat-button { color: var(--color-agency); }
-.desk-activity-feed { max-height: 220px; overflow-y: auto; padding-bottom: 12px; }
+.desk-activity-feed { padding-bottom: 4px; }
 /* Customize desk opens above the Desk so the saved layout underneath stays put. */
 .desk-customize-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px 16px; background: color-mix(in srgb, var(--color-ink) 22%, transparent); overflow-y: auto; }
 .desk-customize-dialog { width: min(560px, 100%); box-shadow: 0 12px 32px color-mix(in srgb, var(--color-ink) 18%, transparent); border-radius: 8px; }
 @media (max-width: 719px) { .desk-customize-overlay { padding-top: 16px; } }
-.desk-task-split .pm-split-queue { width: 280px; }
-.desk-task-split .pm-split-rail { width: 290px; }
-.desk-queue-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-bottom: 1px solid var(--color-line); padding: 10px 12px; }
-.desk-queue-filters > button { text-align: left; min-height: 34px; }
-.desk-queue-filters > button:last-child { grid-column: 1 / -1; }
 .desk-case > header { padding: 20px 24px 14px; }
 .desk-case .pm-case-title { font-size: 22px; }
 .desk-case-tools { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 8px 18px; padding: 6px 24px; border-bottom: 1px solid var(--color-line); }
@@ -71,10 +134,6 @@
 .desk-wording { border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-sheet); padding: 14px 18px 18px; box-shadow: 0 2px 5px rgb(37 35 31 / 3%); }
 .desk-wording-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .desk-wording textarea { min-height: 180px; }
-.desk-assistant-rail { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.desk-rail-tabs { display: flex; flex-shrink: 0; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--color-line); }
-.desk-rail-tabs > button:not(.desk-icon-button) { min-height: 34px; border-radius: 5px; padding: 5px 14px; font-size: 12px; color: var(--color-ink-muted); }
-.desk-rail-tabs > button[aria-pressed="true"] { color: var(--color-agency); background: var(--color-selected); font-weight: 600; }
 .desk-bud { display: flex; flex-direction: column; gap: 12px; padding: 22px 18px; overflow-y: auto; }
 .desk-bud-heading { display: flex; align-items: center; gap: 10px; }
 .desk-bud-heading h2 { font-size: 16px; font-weight: 600; }
@@ -89,35 +148,37 @@
 .desk-bud-footer { margin-top: 10px; padding-top: 16px; border-top: 1px solid var(--color-line); font-size: 11px; line-height: 1.5; color: var(--color-ink-muted); }
 .desk-icon-button { display: flex; align-items: center; justify-content: center; min-width: 34px; min-height: 34px; margin-left: auto; border-radius: 5px; }
 .desk-icon-button:hover { background: var(--color-raised); }
-.desk-rail-close, .desk-queue-toggle { display: none; }
-@media (max-width: 1319px) {
-  .desk-task-split .pm-split-queue { display: flex; width: 260px; }
-  .desk-task-split[data-queue-open="true"] .pm-split-queue { position: static; width: 260px; box-shadow: none; }
-  .desk-task-split[data-queue-open="true"] .pm-split-queue-backdrop { display: none; }
-  .desk-task-split .pm-split-rail { display: none; }
-  .desk-task-split[data-rail-open="true"] .pm-split-rail { display: flex; position: absolute; inset: 0 0 0 auto; z-index: 30; width: min(320px, 100%); box-shadow: -8px 0 28px rgb(37 35 31 / 15%); }
-  .desk-rail-close { display: flex; }
-  .desk-workspace-help { display: none; }
-}
-@media (max-width: 979px) {
-  .desk-task-split .pm-split-queue { display: none; }
-  .desk-task-split[data-queue-open="true"] .pm-split-queue { display: flex; position: absolute; inset: 0 auto 0 0; z-index: 20; width: min(280px, 88%); box-shadow: 4px 0 24px rgb(37 35 31 / 14%); }
-  .desk-task-split[data-queue-open="true"] .pm-split-queue-backdrop { display: block; }
-  .desk-queue-toggle { display: inline-flex; }
+/* Below 960px the queue becomes the Tasks drawer. While it is open it is the
+   only active scroll surface: .desk-content stops scrolling and the rest of
+   Desk is inert. */
+@media (max-width: 959px) {
+  .desk-workspace .desk-queue-toggle.desk-queue-toggle { display: inline-flex; }
+  .desk-queue-column { display: none; }
+  .desk-task-split[data-queue-open="true"] .desk-queue-column {
+    display: block;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 45;
+    width: min(320px, 88vw);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    box-shadow: 4px 0 24px color-mix(in srgb, var(--color-ink) 14%, transparent);
+  }
+  .desk-workspace .desk-task-split[data-queue-open="true"] .desk-queue-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 44;
+    border: 0;
+    background: color-mix(in srgb, var(--color-ink) 28%, transparent);
+  }
+  .desk-workspace .desk-task-split[data-queue-open="true"] .desk-queue-close.desk-queue-close { display: inline-flex; }
+  .desk-notices, .desk-status-row, .desk-other-work-surface { padding-left: 16px; padding-right: 16px; }
 }
 @media (max-width: 719px) {
-  .desk-workspace .pm-desk-header { padding: 12px 12px 0; }
-  /* With no case to review, keep setup and the sample action in one scroll
-     flow instead of reserving half the window for the empty canvas. */
-  .desk-workspace[data-empty-canvas="true"] { min-height: 0; overflow-y: auto; }
-  .desk-workspace[data-empty-canvas="true"] .pm-desk-header { max-height: none; overflow: visible; }
-  .desk-workspace[data-empty-canvas="true"] .desk-task-split { flex: 0 0 auto; }
-  .desk-workspace[data-empty-canvas="true"] .pm-split-canvas { overflow: visible; }
-  .desk-workspace[data-empty-canvas="true"] .desk-empty-canvas { height: auto; padding-block: 24px; }
-  /* Queue controls must not consume all of the narrow case pane's height. */
-  .desk-task-split .desk-queue-pane { overflow-y: auto; }
-  .desk-task-split .desk-queue-pane > * { flex-shrink: 0; }
-  .desk-task-split .desk-queue-pane > [role="listbox"] { flex: 0 0 auto; overflow-y: visible; }
+  .desk-empty-canvas { padding: 20px 16px; }
+  .desk-empty-workspace { padding: 24px 16px; }
+  .desk-workspace .pm-desk-header { padding: 12px 16px 0; }
   .desk-workspace-tabs { gap: 16px; }
   .desk-case > header { padding: 14px 16px; }
   .desk-case .pm-case-title { font-size: 19px; }
@@ -157,18 +218,9 @@
 .desk-property-table tbody tr:hover { background: var(--color-paper); }
 .desk-workspace[data-density="compact"] .desk-property-table td,
 .desk-workspace[data-density="compact"] .desk-property-table th { padding: 7px 12px; font-size: 12px; }
-.desk-workspace[data-density="compact"] .pm-split-queue [role="option"] { padding: 7px 12px; }
-.desk-workspace[data-density="compact"] .pm-split-queue [role="option"] > span:nth-child(2) { -webkit-line-clamp: 1; }
+.desk-workspace[data-density="compact"] .desk-queue-column [role="option"] { padding: 7px 12px; }
+.desk-workspace[data-density="compact"] .desk-queue-column .desk-queue-meta { -webkit-line-clamp: 1; }
 .desk-workspace[data-density="compact"] .desk-property-card { padding: 12px; }
-@media (min-width: 980px) {
-  .desk-task-split .pm-split-queue,
-  .desk-task-split[data-queue-open="true"] .pm-split-queue { width: var(--desk-queue-width, 280px); }
-}
-@media (min-width: 1320px) {
-  .desk-workspace[data-bud-pinned="false"] .pm-split-rail { display: none; }
-  .desk-workspace[data-bud-pinned="false"] [data-rail-open="true"] .pm-split-rail { display: flex; }
-  .desk-workspace[data-bud-pinned="false"] .desk-rail-close { display: flex; }
-}
 
 /* Portfolio groups keep the overview compact and drill into existing editors. */
 .property-group-tabs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:0 0 14px; }

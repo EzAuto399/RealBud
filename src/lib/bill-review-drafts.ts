@@ -13,6 +13,7 @@ export const draftValue = (draft: BillReviewDraft): BillReviewDraftValue => ({
   itemId: draft.itemId, messageId: draft.messageId, sourceDigest: draft.sourceDigest, fields: { ...draft.fields },
   billState: draft.billState, reason: draft.reason, seriesId: draft.seriesId, arrivalDate: draft.arrivalDate,
   proposalRequest: draft.proposalRequest ? { ...draft.proposalRequest } : null,
+  ...(draft.financialReview ? { financialReview: { ...draft.financialReview } } : {}),
 });
 
 /** Memory holds unacknowledged edits across view changes. Durable copies go only

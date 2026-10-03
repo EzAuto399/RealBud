@@ -11,6 +11,7 @@ import { createDepartmentExecutionContext, type DepartmentExecutionBinding } fro
 import { assertDepartmentWorkRecipe, departmentWorkRecipe } from './department-work-plan.ts';
 import { manualRecipeRequestKey } from './manual-job-request.ts';
 import type { ExecuteRecipeJobResult, JobExecutorDependencies } from './job-executor.ts';
+import { departmentConfigurationAllows, departmentConfigurationRevision, isDepartmentConfiguration, normalizeDepartmentConfigurationPlan, type DepartmentConfigurationCandidates, type DepartmentConfigurationPlan, type DepartmentConfigurationRead } from '../shared/department-configuration.ts';
 
 export const DEPARTMENT_WORK_KIND = 'department-work';
 type Delivery = { requestId: string; runId: string; outcome: 'prepared'|'interrupted'|'failed'; note: string };
@@ -19,6 +20,8 @@ export type SavedDepartmentWork = {
   recipe: CompanyExecutionRecipe; executionId: string; jobKey: string;
   phase: DepartmentWorkState['phase']; detail: string; runId: string|null; updatedAt: number;
   grant: CompanyExecutionGrant|null; delivery: Delivery|null; restored: boolean;
+  /** Absent only in retained pre-configuration history; never newly runnable. */
+  pack?: DepartmentConfigurationPlan['pack'];
 };
 const key = (id: string) => `${DEPARTMENT_WORK_KIND}:${id}`;
 const object = (v: unknown): v is Record<string,unknown> => !!v && typeof v==='object' && !Array.isArray(v);
@@ -26,9 +29,10 @@ function fail(message='Department preparation changed. Refresh the case and revi
 const operationId=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max&&!v.includes('\0');
 export function validateSavedDepartmentWork(id:string,value:unknown): asserts value is SavedDepartmentWork {
-  if (!object(value) || Object.keys(value).sort().join(',')!=='companyId,delivery,detail,executionId,grant,jobKey,memberId,phase,recipe,request,restored,runId,updatedAt,version' || value.version!==1 || !companyExecutionUuid(value.companyId) || !companyExecutionUuid(value.memberId) || !isDepartmentWorkPrepare(value.request) || id!==key(value.request.requestId) || !operationId(value.executionId) || !object(value.recipe) || !['requesting','waiting-owner','admitting','running','review-required','held'].includes(String(value.phase)) || typeof value.phase!=='string' || !text(value.detail,4000) || (value.runId!==null&&!text(value.runId,128)) || !Number.isSafeInteger(value.updatedAt) || Number(value.updatedAt)<0 || typeof value.restored!=='boolean') fail('The saved department request needs storage recovery.',503);
+  if (!object(value) || Object.keys(value).sort().join(',')!==['companyId','delivery','detail','executionId','grant','jobKey','memberId','phase','recipe','request','restored','runId','updatedAt','version',...('pack' in value?['pack']:[])].sort().join(',') || value.version!==1 || !companyExecutionUuid(value.companyId) || !companyExecutionUuid(value.memberId) || !isDepartmentWorkPrepare(value.request) || id!==key(value.request.requestId) || !operationId(value.executionId) || !object(value.recipe) || !['requesting','waiting-owner','admitting','running','review-required','held'].includes(String(value.phase)) || typeof value.phase!=='string' || !text(value.detail,4000) || (value.runId!==null&&!text(value.runId,128)) || !Number.isSafeInteger(value.updatedAt) || Number(value.updatedAt)<0 || typeof value.restored!=='boolean') fail('The saved department request needs storage recovery.',503);
   const s=value as unknown as SavedDepartmentWork;
   assertDepartmentWorkRecipe(s.recipe);
+  if ('pack' in s) { try { normalizeDepartmentConfigurationPlan({recipe:s.recipe,pack:s.pack}); } catch { fail('The saved department pack identity needs recovery.',503); } }
   if (Object.keys(s.recipe).sort().join(',')!=='digest,id,instructionDigest,review,revision' || s.recipe.id!==s.request.recipeId || s.recipe.revision!==s.request.expectedRecipeRevision || s.jobKey!==manualRecipeRequestKey({id:s.recipe.id,revision:s.recipe.revision},{requestId:s.executionId,expectedRevision:s.recipe.revision},'prepare')) fail('The saved department plan identity needs recovery.',503);
   if (s.grant!==null && (!isCompanyExecutionGrant(s.grant) || s.grant.id!==s.request.requestId || s.grant.spec.companyId!==s.companyId || s.grant.spec.memberId!==s.memberId || s.grant.spec.departmentId!==s.request.departmentId || s.grant.spec.caseId!==s.request.caseId || s.grant.spec.caseFence!==s.request.expectedCaseFence || s.grant.spec.departmentRevision!==s.request.expectedDepartmentRevision || !isDeepStrictEqual(s.grant.spec.recipe,s.recipe))) fail('The saved department grant needs recovery.',503);
   if (s.delivery!==null && (!object(s.delivery) || Object.keys(s.delivery).sort().join(',')!=='note,outcome,requestId,runId' || !operationId(s.delivery.requestId) || !text(s.delivery.runId,128) || !s.delivery.runId || !['prepared','interrupted','failed'].includes(s.delivery.outcome) || !text(s.delivery.note,2048))) fail('The saved department result needs recovery.',503);
@@ -42,6 +46,7 @@ export function createDepartmentWork(options:{
   db: WorkflowDatabase; client: ReturnType<typeof createCompanyExecutionClient>;
   forward(session:string,path:string,body?:unknown):Promise<{status:number;body:unknown}>;
   recipes():Recipe[]; instructions(id:string):Promise<string>; assertRecipeReady(id:string):Promise<unknown>;
+  pack(id:string):Promise<DepartmentConfigurationPlan['pack']>;
   assertAdmission():void; epoch():string; runContext<T>(fn:()=>Promise<T>):Promise<T>;
   findJob(key:string):JobRun|undefined;
   execute(recipe:Recipe,key:string,dependencies:JobExecutorDependencies):Promise<ExecuteRecipeJobResult>;
@@ -97,18 +102,27 @@ export function createDepartmentWork(options:{
     const page=await rpc(session,'/api/company/departments/cases',{departmentId,offset:0,filter:'all'});
     if(!object(page)||!object(page.department)||page.department.id!==departmentId||!['read','write'].includes(String(page.department.access)))fail('Current department access is required to view preparation plans and history.',403);
   }
-  async function resolved(s?:SavedDepartmentWork,id?:string) {
+  async function configured(session:string,departmentId:string):Promise<DepartmentConfigurationRead> {
+    const page=await rpc(session,'/api/company/departments/configuration',{departmentId});
+    if(!object(page)||!object(page.department)||page.department.id!==departmentId||!['read','write'].includes(String(page.department.access))||typeof page.canManage!=='boolean'||(page.configuration!==null&&!isDepartmentConfiguration(page.configuration)))fail('Department workflow configuration could not be verified.',503);
+    try{departmentConfigurationRevision(page.department.revision);}catch{fail('Department workflow revision could not be verified.',503);}
+    return page as unknown as DepartmentConfigurationRead;
+  }
+  async function resolved(s?:SavedDepartmentWork,id?:string,inspect=false) {
     const epoch=options.epoch();
-    options.assertAdmission();
+    if(!inspect)options.assertAdmission();
     const recipe=options.recipes().find(r=>r.id===(s?.recipe.id??id));if(!recipe)fail('The reviewed workflow is no longer installed.');
     await options.assertRecipeReady(recipe.id);
     const instructions=await options.instructions(recipe.id);
-    options.assertAdmission();
+    const pack=await options.pack(recipe.id);
+    if(!inspect)options.assertAdmission();
     if(options.epoch()!==epoch)fail('Workflow settings changed during the permission check.');
     const current=options.recipes().find(r=>r.id===recipe.id);if(!current)fail();
     const plan=departmentWorkRecipe(current,instructions);
+    normalizeDepartmentConfigurationPlan({recipe:plan,pack});
     if(s&&!isDeepStrictEqual(plan,s.recipe))fail('The approved plan or its instructions changed. Request a fresh owner review.');
-    return {recipe:structuredClone(current),plan,instructions};
+    if(s&&(!('pack' in s)||!isDeepStrictEqual(pack,s.pack)))fail('The saved preparation needs fresh department workflow review. Its pack changed or the request predates configuration.');
+    return {recipe:structuredClone(current),plan,instructions,pack};
   }
   async function checked(id:string) {
     const epoch=options.epoch();
@@ -213,13 +227,31 @@ export function createDepartmentWork(options:{
   return {
     async catalog(session:string,departmentId:string):Promise<DepartmentWorkCatalog> {
       if(!companyExecutionUuid(departmentId))fail('Invalid department.',400);await member(session);
-      // Current host access is required even though the catalog is local.
-      await departmentAccess(session,departmentId);
-      const recipes:DepartmentWorkCatalog['recipes']=[];
-      for(const recipe of options.recipes().slice(0,1000)){
-        try{const r=await resolved(undefined,recipe.id);recipes.push({id:r.recipe.id,revision:r.recipe.revision,title:r.recipe.title,review:r.plan.review!});}catch{/* Unsupported private-source plans remain in their own workspace. */}
-        if(recipes.length>=100)break;
-      }await departmentAccess(session,departmentId);return {recipes};
+      const current=await configured(session,departmentId),recipes:DepartmentWorkCatalog['recipes']=[],unavailable:DepartmentWorkCatalog['unavailable']=[];
+      if(!current.configuration)unavailable.push({id:'',reason:'Your office owner must configure department workflows before new preparation.'});
+      else for(const selected of current.configuration.plans){
+        try{if(current.department.retiredAt)fail('This department is retired.');const r=await resolved(undefined,selected.recipe.id,true);
+          if(!departmentConfigurationAllows(current.configuration,r.plan)||!isDeepStrictEqual(r.pack,selected.pack))fail('The installed plan or instructions differ from the department selection. Install the reviewed version or ask the owner to review the change.');
+          recipes.push({id:r.recipe.id,revision:r.recipe.revision,title:r.recipe.title,review:r.plan.review!});
+        }catch(error){unavailable.push({id:selected.recipe.id,reason:error instanceof Error?error.message:'Install and review this workflow on this computer.'});}
+      }
+      const after=await configured(session,departmentId);if(after.department.revision!==current.department.revision||!isDeepStrictEqual(after.configuration,current.configuration))fail('Department workflows changed. Refresh the selection.');
+      return {departmentRevision:current.department.revision,configured:current.configuration!==null,workflowDefaults:current.configuration?.workflowDefaults??[],unavailable,recipes};
+    },
+    async configurationCandidates(session:string,departmentId:string):Promise<DepartmentConfigurationCandidates> {
+      if(!companyExecutionUuid(departmentId))fail('Invalid department.',400);
+      const actor=await member(session);if(actor.role!=='owner')fail('Only the office owner can select department workflows.',403);
+      const current=await configured(session,departmentId);if(!current.canManage)fail('Only the office owner can select department workflows.',403);
+      const candidates:DepartmentConfigurationPlan[]=[],unavailable:{id:string;reason:string}[]=[];
+      const all=options.recipes(),epoch=options.epoch();let omitted=Math.max(0,all.length-1000),bytes=0;
+      for(const recipe of all.slice(0,1000)){
+        try{const r=await resolved(undefined,recipe.id,true),candidate={recipe:r.plan as DepartmentConfigurationPlan['recipe'],pack:r.pack};
+          const size=Buffer.byteLength(JSON.stringify(candidate));
+          if(candidates.length>=100||bytes+size>380*1024){omitted++;continue;}candidates.push(candidate);bytes+=size;
+        }catch(error){if(unavailable.length<100)unavailable.push({id:recipe.id,reason:(error instanceof Error?error.message:'This workflow is not ready.').slice(0,1000)});else omitted++;}
+      }
+      const after=await configured(session,departmentId);if(options.epoch()!==epoch||after.department.revision!==current.department.revision||!isDeepStrictEqual(after.configuration,current.configuration))fail('Department or local workflows changed. Refresh the selection.');
+      return {...current,candidates,unavailable,omitted};
     },
     async prepare(session:string,input:DepartmentWorkPrepare) {
       if(!isDepartmentWorkPrepare(input))fail('Check the case, plan and expiry fields.',400);
@@ -227,8 +259,11 @@ export function createDepartmentWork(options:{
       if(row&&(!isDeepStrictEqual(row.value.request,input)||row.value.companyId!==actor.companyId||row.value.memberId!==actor.memberId||row.value.restored))fail();
       if(!row){
         const plan=await resolved(undefined,input.recipeId);if(plan.recipe.revision!==input.expectedRecipeRevision)fail();
+        const current=await configured(session,input.departmentId),selected=current.configuration?.plans.find(p=>p.recipe.id===plan.recipe.id);
+        if(current.department.revision!==input.expectedDepartmentRevision)fail('Department workflows changed. Refresh the department cases and plans before requesting preparation.');
+        if(!selected||!departmentConfigurationAllows(current.configuration,plan.plan)||!isDeepStrictEqual(selected.pack,plan.pack))fail('The owner must configure and review this exact department workflow before preparation.');
         const executionId=randomUUID();
-        row=options.db.create<SavedDepartmentWork>(DEPARTMENT_WORK_KIND,key(input.requestId),{version:1,companyId:actor.companyId,memberId:actor.memberId,request:structuredClone(input),recipe:plan.plan,executionId,jobKey:manualRecipeRequestKey(plan.recipe,{requestId:executionId,expectedRevision:plan.recipe.revision},'prepare'),phase:'requesting',detail:'Saving this one-time request for owner review.',runId:null,updatedAt:now(),grant:null,delivery:null,restored:false},1000);
+        row=options.db.create<SavedDepartmentWork>(DEPARTMENT_WORK_KIND,key(input.requestId),{version:1,companyId:actor.companyId,memberId:actor.memberId,request:structuredClone(input),recipe:plan.plan,pack:plan.pack,executionId,jobKey:manualRecipeRequestKey(plan.recipe,{requestId:executionId,expectedRevision:plan.recipe.revision},'prepare'),phase:'requesting',detail:'Saving this one-time request for owner review.',runId:null,updatedAt:now(),grant:null,delivery:null,restored:false},1000);
       }
       let grant:CompanyExecutionGrant;
       if(row.value.phase!=='requesting')grant=await options.client.status(input.requestId);

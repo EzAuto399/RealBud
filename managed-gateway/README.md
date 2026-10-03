@@ -30,6 +30,11 @@ Off-device service with four jobs:
 | `GET /v1/portal/invoices/{id}` · `/document` · `/receipt` | portal bearer | one invoice as JSON, as printable HTML, or its settlement receipt (409 `payment_not_settled` until paid) |
 | `POST /v1/portal/invoices/{id}/checkout` | portal bearer, `billing_owner` | one idempotent Square-hosted checkout for a collectible invoice (503 `payment_provider_unselected` in `local` mode) |
 | `POST /v1/webhooks/square` | Square signature | payment and refund notifications; a trigger only, settlement is re-read from Square |
+| `GET /v1/portal/hermios/plans` · `GET /v1/portal/hermios/terms?optionKey=&people=` | portal bearer | the operator's Hermios catalog (`hermios-catalog.json`) and, for one option and number of people, the exact terms and `digest` to accept |
+| `GET /v1/portal/hermios/subscription` | portal bearer | `{optionKey, state, people, cadence, trialEndsAt, currentPeriodEnd, capability, hermiosLinked}`; `state` is `pending_payment`, `trialing`, `active`, `past_due` or `canceled` |
+| `POST /v1/portal/hermios/subscription/start` · `/change` · `/cancel` | portal bearer, `billing_owner` | start `{optionKey, people, termsDigest, cardSourceId, verificationToken?}` (Square-hosted card token; 14-day trial with the card on file; idempotent per office); change `{optionKey, people, termsDigest}` (people now, cadence at period end); cancel `{}` (period end; no charge in the trial). 503 `hermios_subscriptions_unconfigured:REALBUD_HERMIOS_SUBSCRIPTIONS` until enabled |
+| `GET /v1/operator/offices/hermios-subscription?companyId=` | operator bearer | every Hermios subscription record of the office with Square ids and accepted terms digests |
+| `POST /v1/webhooks/square/subscriptions` | Square signature (`HERMIOS_SQUARE_*`) | subscription and invoice notifications; stored once by event id, state re-read from Square; past due is a flag only |
 
 Every other path returns 404: `/v1/portal/usage`, `/v1/portal/rates`, `/v1/portal/rates/accept`, `/v1/portal/limits`, `/v1/model/stream` and the local payment webhooks are gone. The error codes that tell an operator what to fix:
 
@@ -110,6 +115,7 @@ The root `pnpm test` does not include this service. Every fixture here is synthe
 | `billing-plans.ts` | Billing plans (accept once, roll forward): append-only plan versions, terms published from the plan with standing acceptances, absorbed included months, the portal presentation without basis points |
 | `invoice-email.ts`, `commercial-cli.ts` | Digest-bound invoice email outbox, bounded delivery and recovery; operator close, email-list, email-deliver and email-repair-auth commands |
 | `square-payment.ts`, `square-mapping.ts` | Square-hosted checkout, signed webhook verification and refunds; the per-office Square customer mapping |
+| `hermios-plans.ts`, `hermios-catalog.json`, `hermios-square-catalog.ts`, `office-subscriptions.ts`, `square-subscriptions.ts` | Hermios plan catalog (data), the operator command that creates it in Square's Catalog, the office subscription record and its Square adapter (local fake in `local` mode) |
 | `database.ts`, `ledger.ts` | SQLite ledger: entitlements, terms, invoices, payments, audit chain. Older AI-usage tables stay in the schema, readable and unused |
 | `gateway.ts`, `auth.ts`, `direct-provider.ts`, `messages.ts`, `attempts.ts` | Earlier model-forwarding core. Not composed by `server.ts`; kept with its tests ([PHASE2.md](PHASE2.md)) |
 

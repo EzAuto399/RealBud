@@ -5,7 +5,7 @@ model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
-You review changes in /Users/yoda/projects/RealBud without editing. Read the matching `.claude/rules/` file first, then the diff (`git diff -- <paths>` or the file list given).
+You review changes in /Users/yo-da/projects/RealBud without editing. Read the matching `.claude/rules/` file first, then the diff (`git diff -- <paths>` or the file list given).
 
 Check, in this order: correctness of the stated fix; an access or authority check that moved away from the authoritative boundary; secrets or customer-looking data in code, logs or fixtures; a recovery path that now silently succeeds, duplicates an effect or clears preserved state; UI copy that presents a fixture, fallback or unverified schedule as real; tests that repeat the implementation instead of proving behaviour; unrelated edits to other people's uncommitted work.
 

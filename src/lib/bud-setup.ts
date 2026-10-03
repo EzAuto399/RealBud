@@ -101,6 +101,36 @@ function managedIdle(status: HermesStatus): boolean {
   return !status.ready && !status.modelAccess?.withdrawn && Boolean(status.modelAccess?.managed) && (state === "idle" || state === "ready");
 }
 
+// Installer detail is not a log surface. Only these fixed server product
+// phrases may become visible progress; paths and upstream output fall back to
+// the known setup code. Kept aligned with worker-bootstrap's stage labels.
+const INSTALL_PHASES = new Set([
+  "Downloading verified setup", "Preparing this computer", "Downloading Bud",
+  "Installing Bud’s components", "Finishing setup", "Installing Bud", "Checking already downloaded Bud",
+]);
+const SETUP_PHASES: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
+  checking: "Checking Bud on this computer", installing: "Installing Bud",
+  safeguards: "Applying Bud’s safeguards", model: "Connecting Bud’s model",
+  readiness: "Running the private readiness check",
+};
+const SETUP_HOLDS: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
+  held_exhausted: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.",
+  held_failed: "Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.",
+  held_recovery: "Bud’s setup record needs recovery. Your files are kept; contact RealBud support.",
+  held_restart: "Bud’s update is installed. Restart RealBud to use it.",
+  held_unavailable: "Automatic Bud setup is not available on this computer yet.",
+};
+const PREPARE_DURING_SETUP = "Keep RealBud open. You can draft a request or prepare plans while setup continues. Work starts only when you choose.";
+
+function setupPhase(auto: BudAutoSetup): string {
+  if (auto.state === "installing" && INSTALL_PHASES.has(auto.detail)) return auto.detail;
+  if (auto.code && SETUP_PHASES[auto.code]) return SETUP_PHASES[auto.code]!;
+  // Earlier services did not send codes. Their fixed four-step position is a
+  // useful fallback, but arbitrary detail is never treated as product copy.
+  return auto.step === 2 ? SETUP_PHASES.safeguards! : auto.step === 3 ? SETUP_PHASES.model!
+    : auto.step === 4 ? SETUP_PHASES.readiness! : auto.state === "installing" ? SETUP_PHASES.installing! : SETUP_PHASES.checking!;
+}
+
 /**
  * What automatic setup (after this computer was linked and approved) is doing,
  * for everyone — no administrator is needed for it. Null when it is not
@@ -111,17 +141,18 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
   const auto = status?.autoSetup;
   if (!status || !auto || status.ready || status.modelAccess?.withdrawn) return null;
   if (auto.state === "installing" || auto.state === "verifying") {
-    return { label: "Setting up Bud", detail: `Setting up Bud on this computer… step ${Math.max(1, auto.step)} of ${auto.total}. Keep RealBud open.`, working: true };
+    const step = auto.step > 0 && auto.total >= auto.step ? `Step ${auto.step} of ${auto.total}. ` : "";
+    return { label: setupPhase(auto), detail: `${step}${PREPARE_DURING_SETUP}`, working: true };
   }
   if (auto.state === "waiting_retry") {
     const minutes = auto.nextRetryAt ? Math.max(1, Math.round((auto.nextRetryAt - now) / 60_000)) : null;
     return {
       label: "Setting up Bud",
-      detail: `Bud’s setup paused and will try again ${minutes ? `in about ${minutes} minute${minutes === 1 ? "" : "s"}` : "shortly"}. Keep RealBud open; nothing is needed from you.`,
+      detail: `Bud’s setup paused and will try again ${minutes ? `in about ${minutes} minute${minutes === 1 ? "" : "s"}` : "shortly"}. ${PREPARE_DURING_SETUP}`,
       working: true,
     };
   }
-  if (auto.state === "held") return { label: "Bud setup stopped", detail: budFacingCopy(auto.detail, "Bud’s setup could not finish. Contact service support."), working: false };
+  if (auto.state === "held") return { label: "Bud setup stopped", detail: (auto.code && SETUP_HOLDS[auto.code]) || "Bud’s setup could not finish. Contact RealBud support.", working: false };
   // A linked office whose grant is in force, with no setup run in progress:
   // never an administrator dead end. The person can ask the service to run
   // its own check again (the server re-checks the link).
@@ -219,6 +250,13 @@ export function budReadinessFailure(status: HermesStatus | null): string | null 
 
 /** Reject partial or malformed status responses before automatic refresh can
  * replace the last authoritative snapshot. Never echo response contents. */
+export const BUD_DOCUMENT_TOOLS_STATES = ["ready", "needs_repair", "unavailable_here", "unknown"] as const;
+export type BudDocumentToolsState = typeof BUD_DOCUMENT_TOOLS_STATES[number];
+/** Word/Excel/PDF libraries in Bud's runtime; only `needs_repair` is something Repair fixes. */
+export function budDocumentToolsNeedRepair(status: unknown): boolean {
+  return !!status && typeof status === "object" && (status as { documentTools?: unknown }).documentTools === "needs_repair";
+}
+
 export function parseBudStatus(value: unknown): HermesStatus {
   const record = (input: unknown): input is Record<string, unknown> => !!input && typeof input === "object" && !Array.isArray(input);
   const nullableString = (input: unknown) => input === null || typeof input === "string";
@@ -244,6 +282,7 @@ export function parseBudStatus(value: unknown): HermesStatus {
       || typeof value.autoSetup.detail !== "string"
       || (value.autoSetup.code !== undefined && !AUTO_SETUP_CODES.includes(value.autoSetup.code as NonNullable<BudAutoSetup["code"]>))
       || (value.autoSetup.nextRetryAt !== undefined && (typeof value.autoSetup.nextRetryAt !== "number" || !Number.isFinite(value.autoSetup.nextRetryAt)))))
+    || (value.documentTools !== undefined && !BUD_DOCUMENT_TOOLS_STATES.includes(value.documentTools as BudDocumentToolsState))
     || !receipt(value.lastPing) || !receipt(value.lastTest)) {
     throw new Error("Bud's status could not be confirmed. Try checking again.");
   }

@@ -3,13 +3,15 @@
  * demand. Same custody rules as the Gmail adapter it sits beside: the office
  * project key never leaves this process, no caller chooses the upstream URL,
  * user or account, and every provider payload is projected before it is
- * returned. Gmail does not use this file; it keeps `server/composio-gmail.ts`.
+ * returned. Ask's Gmail session uses it too (`ManagedConnectors.gmailToolkit`),
+ * after `server/composio-gmail.ts` has verified the Gmail config and account;
+ * Gmail's saved workflows keep that reviewed read-only reader.
  *
  * API: GET /connected_accounts, POST /connected_accounts/link, GET /tools,
  * POST /tools/execute/{slug} — https://docs.composio.dev/reference/api-reference
  */
 import { COMPOSIO_PLATFORM_API, type HttpTransport } from './composio-org.ts';
-import { classifyAppTool, APP_TOOL_NAME, type AppToolPolicy } from '../shared/app-tool-policy.ts';
+import { classifyAppTool, classifyAppToolCall, APP_TOOL_NAME, type AppToolPolicy } from '../shared/app-tool-policy.ts';
 
 export interface AppBinding {
   apiKey: string; authConfigId: string; userId: string; accountId?: string;
@@ -154,8 +156,11 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
     async execute(input, slug, tool, args, signal) {
       const binding = bindingCopy(input);
       if (!binding.accountId) fail('no connected account is bound for this app.', 403);
-      if (!APP_TOOL_NAME.test(tool) || classifyAppTool(tool, { app: slug }) === 'blocked') fail('this tool is outside the connected-app boundary.', 403);
       if (!record(args)) fail('tool arguments must be an object.');
+      // The gateway holds the `blocked` line with the call's own arguments (a
+      // calendar patch that cancels, say). Read/review cards are desktop-side:
+      // the gateway forwards what the desktop dispatched after its card.
+      if (!APP_TOOL_NAME.test(tool) || classifyAppToolCall(tool, args, { app: slug }) === 'blocked') fail('this tool is outside the connected-app boundary.', 403);
       const value = await rest(binding, `/tools/execute/${tool}`, signal, { connected_account_id: binding.accountId, user_id: binding.userId, arguments: args });
       const failed = value.successful === false || (value.error !== null && value.error !== undefined && value.error !== '');
       const data = value.data === undefined ? {} : value.data;

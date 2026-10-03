@@ -300,6 +300,20 @@ describe("runtime stage contract", () => {
     writeFileSync(join(root, ".realbud-bootstrap.json"), "broken");
     await expect(runWorkerBootstrap(fixture(root))).rejects.toThrow(/record/);
   });
+  it("adds document tools after the stages and before verification, without failing the worker on their absence", async () => {
+    const order: string[] = [];
+    const options = fixture();
+    await runWorkerBootstrap({ ...options, execute: async () => { order.push("stage"); },
+      documentDeps: async (target, opts) => { order.push(`documents:${target === options.home}:${opts.platform}`); },
+      finalize: async () => { order.push("verify"); } });
+    expect(order.slice(-2)).toEqual(["documents:true:darwin", "verify"]);
+    const failing = fixture(); let verified = false;
+    await runWorkerBootstrap({ ...failing, documentDeps: async () => { throw new Error("fictional download failure"); }, finalize: async () => { verified = true; } });
+    expect(verified).toBe(true);
+    expect(failing.progress).toHaveBeenLastCalledWith("Document tools need Repair.", 8, 8);
+    const stopped = new AbortController();
+    await expect(runWorkerBootstrap({ ...fixture(), signal: stopped.signal, documentDeps: async () => { stopped.abort(); throw new Error("fictional stop"); }, finalize: async () => { throw new Error("must not verify"); } })).rejects.toThrow("fictional stop");
+  });
   it("never runs the real installer in the test environment", async () => {
     const options = fixture();
     await expect(runWorkerBootstrap({ ...options, execute: undefined })).rejects.toThrow(/disabled in automated tests/);

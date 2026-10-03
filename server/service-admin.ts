@@ -212,6 +212,9 @@ export function isPrivilegedServiceMutation(path: string, method: string, body?:
   // under service administration, including every other Hermes mutation.
   if (method === 'POST' && /^\/api\/hermes\/memory-reviews\/[a-f0-9]{8}\/decision$/.test(path)) return false;
   if (method === 'POST' && /^\/api\/hermes\/memory-reviews\/interrupted\/[a-f0-9]{64}\/close$/.test(path)) return false;
+  // Undoing one automatically kept preference is the same scoped decision as
+  // rejecting it; turning automatic keeping on or off stays administrative.
+  if (method === 'POST' && /^\/api\/hermes\/memory-reviews\/learning\/[a-f0-9]{64}\/undo$/.test(path)) return false;
   // Try again for automatic setup: it re-runs only the service's own reviewed
   // setup, and that run requires the computer's active office link and grant.
   if (method === 'POST' && path === '/api/hermes/auto-setup/retry') return false;

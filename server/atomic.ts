@@ -5,11 +5,70 @@
 // ones. Without this, an interrupted writeFileSync produces half-written JSON
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmdirSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { windowsFilePrivacyBatchSync } from "./windows-file-privacy.ts";
+
+/** Office copy when a private file turns out to be a link or an alias: the
+ * host never reads through one (a worker could point it at a protected file)
+ * and never replaces one. */
+export const UNSAFE_PRIVATE_FILE = "RealBud found a link where a private file should be and left it alone. Remove the link, then try again.";
+const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const DIRECTORY = constants.O_DIRECTORY ?? 0;
+function unsafe(): never { throw Object.assign(new Error(UNSAFE_PRIVATE_FILE), { code: "EUNSAFE", status: 409 }); }
+/** A plain file (one name, no link) or folder, owned by this process. */
+export function assertOwnPrivate(stat: Stats, kind: "file" | "directory"): void {
+  if (stat.isSymbolicLink()) unsafe();
+  if (kind === "file" ? !stat.isFile() || stat.nlink !== 1 : !stat.isDirectory()) unsafe();
+  if (process.getuid && stat.uid !== process.getuid()) unsafe();
+}
+/** Open without following a final link, then check what was opened: the
+ * descriptor is what the caller reads or writes, so a later swap cannot
+ * redirect it. ENOENT passes through for the caller. */
+export function openPrivateFileSync(path: string, flags: number = constants.O_RDONLY): number {
+  // Non-blocking: a FIFO planted under the name must not hold this process
+  // open; the descriptor's type is checked before anything is read.
+  const fd = openSync(path, flags | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
+  try { assertOwnPrivate(fstatSync(fd), "file"); } catch (error) { closeSync(fd); throw error; }
+  return fd;
+}
+/** Largest private text file the host reads whole (notes, logs, reference sheets). */
+export const PRIVATE_FILE_LIMIT = 16 * 1024 * 1024;
+/** The file's text through a checked descriptor, or null when it does not
+ * exist; a file past `limit` bytes is refused as unsafe. */
+export function readPrivateFileSync(path: string, limit = PRIVATE_FILE_LIMIT): string | null {
+  let fd: number;
+  try { fd = openPrivateFileSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  try {
+    const size = fstatSync(fd).size;
+    if (size > limit) unsafe();
+    const chunks: Buffer[] = []; let total = 0;
+    for (;;) {
+      const chunk = Buffer.alloc(Math.min(1 << 20, limit + 1 - total));
+      const got = readSync(fd, chunk, 0, chunk.length, null);
+      if (!got) break;
+      total += got; chunks.push(chunk.subarray(0, got));
+      if (total > limit) unsafe();
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally { closeSync(fd); }
+}
+/** Owner-only mode on the file itself, never on a link's target. */
+export function keepPrivateFileSync(path: string, mode = 0o600): void {
+  const fd = openPrivateFileSync(path);
+  try { fchmodSync(fd, mode); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EPERM" || process.platform !== "win32") throw error; } finally { closeSync(fd); }
+}
+/** Owner-only mode on the folder itself, which must be a real folder of ours. */
+export function keepPrivateDirSync(path: string, mode = 0o700): void {
+  const fd = openSync(path, constants.O_RDONLY | NOFOLLOW | DIRECTORY);
+  try {
+    assertOwnPrivate(fstatSync(fd), "directory");
+    try { fchmodSync(fd, mode); } catch (error) { if (process.platform !== "win32") throw error; }
+  } finally { closeSync(fd); }
+}
 
 /** A file or folder this process has just created and not yet written into. */
 export type NewPrivateObject = { path: string; kind: "file" | "directory" };
@@ -178,13 +237,18 @@ export function writeFileAtomic(path: string, data: string, mode?: number): void
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    fd = openSync(tmp, "wx", mode);
+    // Exclusive and never through a link; the name must be ours to take.
+    fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, mode);
     // The replacement carries the temp file's descriptor through the rename.
     restrictNewSync([{ path: tmp, kind: "file" }]);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);
     fd = null;
+    // Only a plain private file of ours is replaced: a link or an alias in
+    // the target's place is left as it is (the temp file is removed below).
+    try { assertOwnPrivate(lstatSync(path), "file"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     renameReplacingSync(tmp, path);
     fsyncDir(dirname(path));
   } catch (e) {

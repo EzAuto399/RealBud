@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
-import { Card } from "../SettingsPrimitives";
+import { SettingsCard } from "./SettingsCard";
 import type { BrowserLinkRequest, OfficeLinkStatus } from "../../../server/office-link";
 import { browserLinkMessage, modelAccessMessage, modelAccessState, openApproval, pendingRequest, useBrowserLink, type BrowserLinkPhase } from "./browser-link";
 
@@ -54,10 +54,14 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   // (health, readiness, then the vendor mint): say so rather than sit still.
   const waiting = action === "link" ? "Linking… this can take up to a minute." : action === "report" ? "Updating… this can take up to a minute." : "";
   const nameField = <label className="block">Computer name<input required maxLength={80} autoComplete="off" value={label} onChange={event => props.onLabel(event.target.value)} placeholder="Reception Mac" className={field} /></label>;
-  return <Card title="Website account" subtitle="Link this computer with your RealBud account. Your account can then set up Bud’s model access and account connections here.">
+  const pill = !status ? null : linked ? { tone: "agency" as const, label: "Linked" } : request || status.state === "pending" ? { tone: "hold" as const, label: "Waiting for approval" } : status.state === "revoked" ? { tone: "hold" as const, label: "Link revoked" } : { tone: "muted" as const, label: "Not linked" };
+  return <SettingsCard title="Website account" status={pill} details={<>
+    <p>Link this computer with your RealBud account. Your account can then set up Bud’s model access and account connections here.</p>
+    <p>This link is separate from local office collaboration. Linking a computer does not join an office host or share work with colleagues.</p>
+    <p>The website receives this computer’s name, app and Bud versions, readiness, and last check-in. Your conversations, documents, and connected-app keys stay here.</p>
+    <p>Linking also enables status reporting. Review workspace access settings before accepting selected work requests.</p>
+  </>}>
     <div className="space-y-3 text-sm">
-      <p className="text-ink-secondary">This link is separate from local office collaboration. Linking a computer does not join an office host or share work with colleagues.</p>
-      <p className="text-ink-secondary">The website receives this computer’s name, app and Bud versions, readiness, and last check-in. Your conversations, documents, and connected-app keys stay here.</p>
       {status?.serviceWithdrawn ? <p role="status" className="rounded border border-line p-3">Service access was withdrawn; your records are kept. Everything saved on this computer stays readable and exportable. Ask service support to add this computer again to restore connected accounts and Bud’s model.</p> : null}
       {/* One polite live region, always in the page, announces every approval change. */}
       <p role="status" aria-live="polite" className="sr-only">{[message, accessMessage ?? "", waiting].filter(Boolean).join(" ")}</p>
@@ -108,9 +112,8 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
       </>}
       {confirm ? <div className="rounded border border-line p-3"><p>Disconnect this computer from the website and disable requests for its workspace? Your local work and subscription stay as they are. Preparation already running may still finish; check its saved outcome.</p><div className="mt-2 flex gap-3"><button className={secondary} disabled={busy} onClick={props.onDisconnect}>Disconnect</button><button className={secondary} disabled={busy} onClick={() => props.onConfirm(false)}>Keep linked</button></div></div> : null}
       {failure ? <p role="alert" className="text-danger">{failure} <button className="underline" onClick={props.onRefresh}>Refresh</button></p> : null}
-      <p className="text-xs text-ink-muted">Linking also enables status reporting. To accept selected work requests, review the separate workspace permission below.</p>
     </div>
-  </Card>;
+  </SettingsCard>;
 }
 
 export function WebsiteLinkCard() {

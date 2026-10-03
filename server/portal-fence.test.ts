@@ -202,7 +202,8 @@ describe("standing rules and submit", () => {
       reason: "This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.",
       surface: "portal-submit",
     });
-    for (const label of ["Pay now", "Send notice", "Sign lease", "Delete record", "Terminate", "Evict", "BPAY", "Direct debit", "Authorise", "Approve payment"]) {
+    // Lodging a filing with an authority has no observed document on this route, so it stays with the person.
+    for (const label of ["Pay now", "Send notice", "Sign lease", "Delete record", "Terminate", "Evict", "BPAY", "Direct debit", "Authorise", "Approve payment", "Lodge bond", "Lodge the application"]) {
       expect(
         fenceDecision(submit, {
           tool: "click_semantic",

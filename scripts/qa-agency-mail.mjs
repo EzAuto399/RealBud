@@ -12,11 +12,12 @@ import { createServer } from 'vite';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = join(root, 'outputs/agency-mail-2026-09-21'); await mkdir(output, { recursive: true });
+const output = resolve(process.env.QA_OUTPUT ?? join(root, 'outputs/agency-mail-2026-09-21')); await mkdir(output, { recursive: true });
 const temp = await mkdtemp(join(realpathSync(tmpdir()), 'rb-agency-mail-ui-'));
 process.env.REALBUD_DATA_DIR = temp;
 const { createAgencySetupService } = await import('../server/agency-setup.ts');
 const { createMailIngestionService } = await import('../server/mail-ingestion.ts');
+const { mailWorkspaceQuery } = await import('../server/mail-workspace-query.ts');
 let browser, server, verified = false, uncertainOnce = true, operation = null, sourceVersion = 1;
 const checks = [], errors = [], reviewRequests = [];
 const schedule = { revision: 1, enabled: false, timezone: 'Australia/Brisbane', localTime: '08:00', weekdays: [1, 2, 3, 4, 5], nextRunAt: null, available: true, detail: 'Fictional queue adapter for rendered UI verification.' };
@@ -53,6 +54,8 @@ try {
         if (path === '/api/session') return json(200, { token: 'fictional-session' });
         if (path.startsWith('/api/agency-setup')) { const result = await agency.handle(path, req.method, body); return json(result.status, result.body); }
         if (path === '/api/mail-workspace') return json(200, await getSnapshot());
+        if (path === '/api/mail-workspace/items' && req.method === 'GET') return json(200, await mail.page(mailWorkspaceQuery(new URL(req.url, 'http://127.0.0.1').searchParams, 'tasks')));
+        if (path === '/api/mail-workspace/scans' && req.method === 'GET') return json(200, await mail.scanHistory(mailWorkspaceQuery(new URL(req.url, 'http://127.0.0.1').searchParams, 'scans')));
         if (path === '/api/mail-workspace/scan') return json(200, await mail.collect());
         if (path === '/api/mail-workspace/review') {
           reviewRequests.push(body); assert.equal(body.expectedRevision, schedule.revision); assert.match(body.requestId, /^[a-f0-9-]{36}$/);
@@ -62,7 +65,7 @@ try {
         }
         if (path === '/api/mail-workspace/schedule') { await agency.assertWorkflowReady('morning-priorities'); schedule.enabled = body.enabled; schedule.revision++; return json(200, { schedule }); }
         const item = path.match(/^\/api\/mail-workspace\/items\/([a-f0-9]{64})(\/source)?$/);
-        if (item) return json(200, item[2] ? await mail.source(item[1]) : await mail.update(item[1], body));
+        if (item) return json(200, item[2] ? await mail.source(item[1]) : req.method === 'GET' ? { item: await mail.getItem(item[1]) } : await mail.update(item[1], body));
         return json(404, { error: 'No fixture API.' });
       } catch (cause) { return json(cause.status ?? 500, { error: cause.message }); }
     });
@@ -77,7 +80,7 @@ try {
   await setup.getByRole('combobox', { name: /^Office timezone/ }).selectOption('Australia/Brisbane');
   await setup.getByRole('combobox', { name: /^Workflow pack/ }).selectOption('office-core');
   await setup.getByRole('button', { name: 'Save and continue to Gmail', exact: true }).click();
-  await setup.getByRole('combobox', { name: /^Private Gmail account/ }).selectOption('fictional_mail');
+  await setup.getByRole('combobox', { name: 'Gmail account', exact: true }).selectOption('fictional_mail');
   await setup.getByRole('button', { name: 'Save selected account and scope', exact: true }).click();
   await setup.getByRole('button', { name: 'Check selected Gmail access', exact: true }).click();
   await setup.getByRole('button', { name: '3. Property references', exact: true }).click();
@@ -108,12 +111,16 @@ try {
   await source.locator('summary').click();
   assert.equal(await source.locator('img').count(), 0); await source.getByText(/<img src=/).waitFor();
   await source.getByRole('button', { name: 'Close source conversation', exact: true }).click();
+  const doneResponse = page.waitForResponse(response => new URL(response.url()).pathname.startsWith('/api/mail-workspace/items/') && response.request().method() === 'PATCH');
   await panel.getByRole('button', { name: 'Mark done', exact: true }).click();
-  assert.equal((await mail.get()).items[0].status, 'done');
+  assert.equal((await doneResponse).status(), 200);
+  assert.equal((await mail.page({ group: 'all' })).items[0].status, 'done');
   sourceVersion++;
   await panel.getByRole('button', { name: 'Collect reviewed Gmail scope', exact: true }).click();
-  await panel.getByText('New source evidence — review what changed before closing this item.', { exact: true }).waitFor();
-  assert.equal((await mail.get()).items[0].note, 'Preserve my review through a later scan.');
+  await panel.getByText('New reply since you reviewed', { exact: true }).waitFor();
+  const reopened = (await mail.page({ group: 'all' })).items[0];
+  assert.equal(reopened.status, 'open');
+  assert.equal(reopened.note, 'Preserve my review through a later scan.');
   checks.push('Actual encrypted mail journal collects fixture evidence, preserves human edits, reopens changed evidence, and renders hostile source markup as text');
   await panel.getByRole('button', { name: 'Collect and prepare priorities with Bud', exact: true }).click();
   await panel.getByRole('button', { name: 'Reconcile and retry the same review request', exact: true }).waitFor();
@@ -135,12 +142,19 @@ try {
   await page.setViewportSize({ width: 390, height: 844 }); await panel.evaluate(element => element.scrollIntoView({block:'start'}));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'mail-work-mobile.png') });
-  await setup.getByRole('button', { name: '2. Private Gmail source', exact: true }).click(); await setup.scrollIntoViewIfNeeded();
+  await setup.getByRole('button', { name: '2. Connect your accounts', exact: true }).click(); await setup.scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'agency-source-mobile.png') });
   assert.deepEqual(errors, []); checks.push('Reload preserves saved agency and mail records; both 390px components have no overflow or browser errors');
   const saved = await readFile(join(temp, 'agency-setup.json'), 'utf8'); assert.ok(!saved.includes('fictional-session'));
   await writeFile(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'rendered production React components and actual persisted agency/encrypted mail stores; fictional source and queue adapters; no live account, model or desktop package proof', checks, errors }, null, 2));
   console.log(JSON.stringify({ output, checks, errors }, null, 2));
-} catch (cause) { console.error(JSON.stringify({ errors })); throw cause; }
+} catch (cause) {
+  const failedPage = browser?.contexts()[0]?.pages()[0];
+  if (failedPage) {
+    await failedPage.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {});
+    await writeFile(join(output, 'failure-screen.txt'), await failedPage.locator('body').innerText()).catch(() => {});
+  }
+  console.error(JSON.stringify({ errors })); throw cause;
+}
 finally { await browser?.close(); await server?.close(); await rm(temp, { recursive: true, force: true }); }

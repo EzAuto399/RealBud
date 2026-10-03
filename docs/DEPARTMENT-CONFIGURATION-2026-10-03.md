@@ -1,0 +1,23 @@
+# Department workflow configuration — 3 October 2026
+
+This source/local-test checkpoint does not establish an installed-app update, live integration, actual model quality or customer acceptance. Release remains held by the detached-worker Stop defect. After renewed sign-in, Opus 5.5 completed the source review with xhigh requested, followed by a focused second review. Its findings drove the portability, validation, API and draft-protection fixes below.
+
+The first reusable department configuration slice is implemented: Accounts/general admin and Property Management/maintenance/inspections can select exact reviewed plans and work-type defaults, with owner-only saves, immutable history, reviewed restoration and recoverable request receipts. Five generic case-review starters import without approval or active schedules. Eligible local case-only plans use the same configuration surface; pack wrappers requiring unavailable support files are refused. Membership does not inherit private accounts or authority.
+
+Company migration 0009 makes legacy departments explicitly unconfigured and invalidates prior grants through the existing scope revision trigger. Tests cover migration, historical backup compatibility, rejected foreign-company access, restore holds and configuration changes revoking authority. No migration was applied to an installed customer database.
+
+Before the Opus fixes, the client gate was **155 passed / 0 failed / 0 skipped**. The broad PostgreSQL/company/TLS gate is **228 passed / 0 failed / 0 skipped** across 24 files with owned fixtures cleaned up. Separate starter compatibility tests pass **57 / 0 / 0** and native removal containment tests pass **11 / 0 / 0**. These gates overlap; counts are not unique totals. The actual HTTP rehearsal passes six acceptance groups across two fresh fictional agencies and 87 requests. Twelve CUA observations confirm save/history/draft behavior, filtered PM preparation choices and a 390-pixel mobile layout without page overflow. Renderer/server type checks and scratch renderer build pass.
+
+Automatic reset now refuses before worker/profile mutation when complete cleanup cannot be established. Repair remains available. This preserves data but does not prove all detached descendants have stopped; it is not a release fix.
+
+Read the [full report and limitations](../outputs/qm-productization-2026-10-03/REPORT.md), [architecture decision](decisions/2026-10-03-department-workflow-configuration.md), [pinned QM comparison](../outputs/qm-productization-2026-10-03/qm-comparison.md) and [source manifest](../outputs/qm-productization-2026-10-03/source-manifest.json). The legacy department-worker GUI fixture was updated and syntax-checked; this checkpoint does not claim a fresh runtime pass for that script. The installed application remains unchanged.
+
+Next acceptance gates are proven worker Stop, a selected-evidence Accounts-to-PM handoff, department-specific source bindings, guided agency onboarding and actual staff/model/two-device pilot evidence. The requested review and complete finding dispositions are in [POST-OPUS-REVIEW.md](../outputs/qm-productization-2026-10-03/POST-OPUS-REVIEW.md).
+
+## Post-review verification
+
+The newer gates are 63 API/lifecycle passes (one native skip), 62 workflow passes, 58 additional pack-compatibility passes, 35 validation/outbox passes, 43 PostgreSQL/TLS passes, 18 cold-restore/TLS passes and 129 final client/API/helper passes. Additional case-text validation passes 35 outbox and five PostgreSQL/TLS tests. Counts overlap. Fresh fictional HTTP rehearsal passes six groups/87 requests; ten CUA observations use a rebuilt renderer bound to the [final source/build manifest](../outputs/qm-productization-2026-10-03/post-opus-final-source-manifest.json). Type checks and scratch build pass. See the full report for exact files, limitations and cleanup.
+
+Identical starter content now works across independent workspaces with different edit/revert histories. No-op saves preserve live grants/claimed cases. Invalid Unicode is rejected before storage. History loading requires explicit discard of dirty drafts; stale plan/case revisions require refresh. The removal API returns its typed refusal while preserving setup bytes. Work-impact counts are suppressed when either list has more pages, and publication/retry copy states its actual effects.
+
+Invalid administrator-modified storage remains preserved and held; in-product corrupt-storage repair is not implemented. Pack provenance is checked locally; the host checks configured content and authority, not remote execution attestation. These fixes do not clear the separate Stop release blocker.

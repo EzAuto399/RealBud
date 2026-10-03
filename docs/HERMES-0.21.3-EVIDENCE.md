@@ -1,6 +1,8 @@
 # Hermes 0.21.3 promotion — ACP compatibility evidence
 
 Date: 2026-09-17. Status: **admitted as an installable candidate, not yet recommended.**
+
+Update 2026-10-01: `HERMES_RECOMMENDED_VERSION` was set to 0.21.3 in c9d43db (2026-09-22). No receipt for steps 1–2 under "Remaining" below (staged build + `pnpm qa:acp-smoke`) is recorded in docs/ or outputs/. Treat the promotion as unevidenced until that smoke is run and recorded.
 Release process: `server/hermes-releases.ts` (catalog) and the comment in that file.
 
 ## Why this document exists

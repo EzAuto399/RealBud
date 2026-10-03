@@ -1,14 +1,15 @@
 import { readFileSync, rmSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writePrivateJson } from './private-json.ts';
+import * as privateJson from './private-json.ts';
 import { parseInstallationProvisioning, type InstallationProvisioning } from '../shared/office-link.ts';
 import {
   WORKER_MODEL_ENV_NAMES, createWorkerModelAccess, managedConnectorApps, readServiceProvisioning, setWorkerModelGrant,
-  workerModelEnv, workerModelGrant,
+  workerModelEnv, workerModelGrant, recordManagedModelReceipt,
 } from './worker-model-access.ts';
-import { MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile } from './hermes-pack.ts';
+import { MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, applyManagedModelProfile } from './hermes-pack.ts';
 import { HERMES_PIN } from './hermes-pin.ts';
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 import { applyWorkerModelAccessEnv } from './hermes-runtime-env.ts';
@@ -16,7 +17,7 @@ import { hardenHermesChildEnv } from './drivers/acp/hermes.ts';
 import { serviceSafeChildEnv } from './service-child-env.ts';
 import { redactSecretsInText } from './redact.ts';
 import { spawnSync } from 'node:child_process';
-import { ConfigRecoveryError } from './config.ts';
+import { ConfigRecoveryError, type AppConfig } from './config.ts';
 
 const roots: string[] = [];
 const KEY = Buffer.alloc(32, 7);
@@ -41,11 +42,14 @@ function fixture(profileFiles: Record<string, string> = { 'SOUL.md': '# RealBud\
   privateFixtureDirectory(profileDir);
   for (const [name, body] of Object.entries(profileFiles)) writePrivateFixtureFile(join(profileDir, name), body);
   const saved: Record<string, unknown>[] = [];
-  const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, saveConfig: patch => { saved.push(patch as Record<string, unknown>); } });
-  return { root, hermesRoot, profileDir, access, saved, provisioning: parseInstallationProvisioning(grant()) as InstallationProvisioning };
+  const config: AppConfig = {};
+  const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => config,
+    saveConfig: patch => { Object.assign(config, patch); saved.push(patch as Record<string, unknown>); } });
+  return { root, hermesRoot, profileDir, access, saved, config, provisioning: parseInstallationProvisioning(grant()) as InstallationProvisioning };
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setWorkerModelGrant({ state: 'none' });
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -69,6 +73,173 @@ describe('installation provisioning contract', () => {
 });
 
 describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTIONS, () => {
+  it.each([false, true])('cleans an interrupted final receipt after restart without leaving the connector behind (re-link: %s)', async relink => {
+    const { root, hermesRoot, provisioning, access, config } = fixture();
+    if (relink) { await access.apply(provisioning, 'previous-installation'); await access.withdraw(); }
+    const originalWrite = privateJson.writePrivateJson;
+    vi.spyOn(privateJson, 'writePrivateJson').mockImplementation(async (path, value, ...rest) => {
+      if (path === join(root, 'service-provisioning.json') && (value as { state?: string }).state === 'active') throw new privateJson.DiskFullError({ code: 'ENOSPC' });
+      return originalWrite(path, value, ...rest);
+    });
+    await expect(access.apply(provisioning, 'installation-a')).rejects.toMatchObject({ code: 'disk_full' });
+    expect(await readServiceProvisioning(root)).toMatchObject({ state: 'applying', installationId: 'installation-a' });
+    expect(await access.env()).toEqual({});
+    expect(config.composio?.managed?.credential).toBe(provisioning.connector.credential);
+    const restarted = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot,
+      readConfig: () => config, saveConfig: patch => { Object.assign(config, patch); } });
+    await restarted.clear();
+    expect(config.composio?.managed).toBeUndefined();
+    for (const path of ['service-provisioning.json', 'service-installation.json', 'company-installation/private/worker-model-access.json']) expect(existsSync(join(root, path))).toBe(false);
+    expect(await restarted.env()).toEqual({});
+  });
+
+  it('keeps an unrelated administrator connector when clearing an interrupted delivery', async () => {
+    const { root, provisioning, access, config } = fixture();
+    const originalWrite = privateJson.writePrivateJson;
+    vi.spyOn(privateJson, 'writePrivateJson').mockImplementation(async (path, value, ...rest) => {
+      if (path === join(root, 'service-provisioning.json') && (value as { state?: string }).state === 'active') throw new privateJson.DiskFullError({ code: 'ENOSPC' });
+      return originalWrite(path, value, ...rest);
+    });
+    await expect(access.apply(provisioning, 'installation-a')).rejects.toMatchObject({ code: 'disk_full' });
+    const administratorManaged = { endpoint: 'https://fictional-admin-service.invalid', credential: `rbc_${'c'.repeat(64)}`, profile: 'property' };
+    config.composio = { managed: administratorManaged, selectedAccounts: { gmail: 'fictional-admin-account' } };
+    await access.clear();
+    expect(config.composio).toEqual({ managed: administratorManaged, selectedAccounts: { gmail: 'fictional-admin-account' } });
+    expect(await access.env()).toEqual({});
+  });
+
+  it('preflights the real config reader and private storage before requesting another credential', async () => {
+    const { root, hermesRoot } = fixture();
+    let broken = true;
+    const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => {
+      if (broken) throw new ConfigRecoveryError();
+      return {};
+    }, saveConfig: () => { throw new Error('preflight must not change settings'); } });
+    await expect(access.preflight()).rejects.toMatchObject({ code: 'config_recovery_required' });
+    expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
+    broken = false;
+    await expect(access.preflight()).resolves.toBeUndefined();
+    const originalWrite = privateJson.writePrivateJson;
+    vi.spyOn(privateJson, 'writePrivateJson').mockImplementation(async (path, value, ...rest) => {
+      if (path.includes('.service-provisioning-check-')) throw new privateJson.DiskFullError({ code: 'ENOSPC' });
+      return originalWrite(path, value, ...rest);
+    });
+    await expect(access.preflight()).rejects.toThrow('needs local storage recovery');
+    expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
+  });
+
+  it.each(['profile', 'binding', 'vault'] as const)('refuses persistent %s damage before credential delivery and preserves its bytes', async fault => {
+    const { root, profileDir, access } = fixture();
+    const file = fault === 'profile' ? join(profileDir, 'config.yaml') : fault === 'binding'
+      ? join(root, 'service-installation.json') : join(root, 'company-installation/private/worker-model-access.json');
+    if (fault === 'vault') privateFixtureDirectory(join(root, 'company-installation/private'));
+    const damaged = fault === 'profile' ? 'agent: [broken\n' : '{broken';
+    writePrivateFixtureFile(file, damaged);
+    for (let attempt = 0; attempt < 2; attempt++) await expect(access.preflight('installation-a')).rejects.toThrow('needs local storage recovery');
+    expect(readFileSync(file, 'utf8')).toBe(damaged);
+    expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
+    rmSync(file);
+    await expect(access.preflight('installation-a')).resolves.toBeUndefined();
+  });
+
+  it('preflights the vault key before delivery when an existing vault prevents key creation', async () => {
+    const { root, hermesRoot, access, provisioning, config } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    const restarted = createWorkerModelAccess({ directory: root, hermesRoot, readConfig: () => config, saveConfig: () => {} });
+    await expect(restarted.preflight('installation-a')).rejects.toThrow('needs local storage recovery');
+    expect(await access.env()).toEqual({ REALBUD_MODEL_API_KEY: MODEL_KEY });
+  });
+
+  it('scopes active and preflight to the requested installation and refuses pending withdrawal', async () => {
+    const { root, hermesRoot, access, provisioning, config } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    expect(await access.active('installation-a')).toBe(true);
+    expect(await access.active('installation-b')).toBe(false);
+    await expect(access.preflight('installation-b')).rejects.toThrow('needs local storage recovery');
+    const blocked = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => config,
+      saveConfig: () => { throw new ConfigRecoveryError(); } });
+    await expect(blocked.withdraw()).rejects.toMatchObject({ code: 'config_recovery_required' });
+    expect(await blocked.active('installation-a')).toBe(false);
+    await expect(blocked.preflight('installation-a')).rejects.toThrow('withdrawal needs recovery');
+  });
+
+  it('retains legacy connector ownership if a redelivery fails before the connector changes', async () => {
+    const { root, hermesRoot, access, provisioning, config } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    const record = await readServiceProvisioning(root);
+    if (record?.state !== 'active') throw new Error('fixture must be active');
+    const { connectorHash: _legacyAbsent, ...legacy } = record;
+    await writePrivateJson(join(root, 'service-provisioning.json'), legacy);
+    const originalWrite = privateJson.writePrivateJson;
+    vi.spyOn(privateJson, 'writePrivateJson').mockImplementation(async (path, value, ...rest) => {
+      if (path.endsWith('/worker-model-access.json')) throw new privateJson.DiskFullError({ code: 'ENOSPC' });
+      return originalWrite(path, value, ...rest);
+    });
+    const next = { ...provisioning, connector: { ...provisioning.connector, credential: `rbc_${'c'.repeat(64)}` } };
+    await expect(access.apply(next, 'installation-a')).rejects.toMatchObject({ code: 'disk_full' });
+    const pending = await readServiceProvisioning(root);
+    expect(pending).toMatchObject({ state: 'applying', connectorHashes: expect.arrayContaining([record.connectorHash]) });
+    expect(config.composio?.managed?.credential).toBe(provisioning.connector.credential);
+    const restarted = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => config,
+      saveConfig: patch => { Object.assign(config, patch); } });
+    await restarted.clear();
+    expect(config.composio?.managed).toBeUndefined();
+    expect(await restarted.env()).toEqual({});
+  });
+
+  it('serializes a delayed model receipt before withdrawal so it cannot restore an active grant', async () => {
+    const { root, hermesRoot, provisioning, access } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    const profile = applyManagedModelProfile(provisioning.model.baseUrl, { root: hermesRoot });
+    let entered!: () => void, release!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const originalRead = privateJson.readPrivateJson;
+    let pause = true;
+    vi.spyOn(privateJson, 'readPrivateJson').mockImplementation(async (path, ...rest) => {
+      const value = await originalRead(path, ...rest);
+      if (pause && path === join(root, 'service-provisioning.json')) { pause = false; entered(); await gate; }
+      return value;
+    });
+    const receipt = recordManagedModelReceipt(profile, root);
+    await reading;
+    const withdrawal = access.withdraw();
+    expect(await access.env()).toEqual({});
+    release();
+    await Promise.all([receipt, withdrawal]);
+    expect(await readServiceProvisioning(root)).toMatchObject({ state: 'withdrawn', installationId: 'installation-a' });
+    expect(await recordManagedModelReceipt(profile, root)).toBe(false);
+    expect(await access.env()).toEqual({});
+  });
+
+  it('does not publish a grant when its managed connector could not be saved, and recovers on retry', async () => {
+    const { root, hermesRoot, provisioning } = fixture();
+    const recovery = new ConfigRecoveryError();
+    let configNeedsRecovery = true;
+    const saved: unknown[] = [];
+    const create = () => createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => ({}), saveConfig: patch => {
+      if (configNeedsRecovery) throw recovery;
+      saved.push(patch);
+    } });
+    const access = create();
+    await expect(access.apply(provisioning, 'installation-a')).rejects.toBe(recovery);
+    expect(workerModelGrant()).toEqual({ state: 'none' });
+    expect(await access.state()).toMatchObject({ provisioned: false, withdrawn: false });
+    expect(await access.env()).toEqual({});
+    // A process restart must not mistake the partially written vault and
+    // entitlement binding for a completed installation either.
+    const restarted = create();
+    expect(await restarted.state()).toMatchObject({ provisioned: false, withdrawn: false });
+    expect(await restarted.env()).toEqual({});
+    expect(saved).toEqual([]);
+
+    configNeedsRecovery = false;
+    await restarted.apply(provisioning, 'installation-a');
+    expect(await restarted.state()).toMatchObject({ provisioned: true, installationId: 'installation-a' });
+    expect(await restarted.env()).toEqual({ REALBUD_MODEL_API_KEY: MODEL_KEY });
+    expect(saved).toEqual([{ composio: { managed: { endpoint: provisioning.connector.endpoint, credential: provisioning.connector.credential, profile: 'property' }, key: '', apiKey: '', url: '', selectedAccounts: {} } }]);
+  });
+
   it('keeps the model key out of config and puts it only in the vault and the worker launch env', async () => {
     const { root, access, saved, provisioning } = fixture();
     await access.apply(provisioning, 'installation-a');
@@ -219,8 +390,10 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     const { root, hermesRoot, provisioning } = fixture();
     const recovery = new ConfigRecoveryError();
     let configNeedsRecovery = false;
-    const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, saveConfig: () => {
+    const config: AppConfig = {};
+    const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, readConfig: () => config, saveConfig: patch => {
       if (configNeedsRecovery) throw recovery;
+      Object.assign(config, patch);
     } });
     await access.apply(provisioning, 'installation-a');
     const paths = [
@@ -278,6 +451,35 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     rmSync(join(root, 'service-installation.json'));
     expect(await access.reconcile()).toBe(true);
     expect(await access.withdrawn()).toBe(true);
+  });
+
+  it.each([
+    '{fictional damaged binding',
+    JSON.stringify({ schema: 1, companyId: 'fictional-office' }),
+    JSON.stringify({ schema: 1, companyId: '', hostInstallationId: 'fictional-host-1' }),
+    ' '.repeat(2049),
+  ])('preserves model access records when the installation binding needs recovery (%#)', async damaged => {
+    const { root, access, provisioning, saved } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    const bindingPath = join(root, 'service-installation.json');
+    const binding = readFileSync(bindingPath);
+    const vaultPath = join(root, 'company-installation', 'private', 'worker-model-access.json');
+    const vault = readFileSync(vaultPath);
+    const recordPath = join(root, 'service-provisioning.json');
+    const record = readFileSync(recordPath);
+    writePrivateFixtureFile(bindingPath, damaged);
+
+    await expect(access.reconcile()).rejects.toMatchObject({ code: 'service_installation_recovery_required', status: 503 });
+    expect(readFileSync(bindingPath, 'utf8')).toBe(damaged);
+    expect(readFileSync(vaultPath)).toEqual(vault);
+    expect(readFileSync(recordPath)).toEqual(record);
+    expect(saved).toHaveLength(1);
+
+    // Repairing the same binding restores the existing grant; no re-enrolment
+    // or new provider credential is necessary.
+    writePrivateFixtureFile(bindingPath, binding);
+    expect(await access.reconcile()).toBe(false);
+    expect(await access.env()).toEqual({ REALBUD_MODEL_API_KEY: MODEL_KEY });
   });
 
   it('rotates in place and refuses a vault entry that no longer matches the record', async () => {

@@ -200,7 +200,7 @@ try {
   assert.equal(quarantined.length, 1);
   assert.equal(await readFile(join(recovery, quarantined[0]), 'utf8'), '{fictional-protected-broken-book');
   await page.close(); await start(recovery); page = await open();
-  await page.getByRole('button', { name: 'You', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Workspace', exact: true }).waitFor();
   assert.match(page.url(), /you-recovery/);
   record('Protected book remains unchanged; recovery is saved separately and resumes after restart');
   assert.deepEqual(pageErrors, []); record('Zero renderer page errors throughout welcome, restore-return and restart scenarios');

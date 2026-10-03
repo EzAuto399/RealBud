@@ -9,15 +9,60 @@ export interface BillSourceEvidence extends BillMailSource { digest: string; ide
 export interface BillFacts {
   propertyId: string; kind: string; vendor: string; amountCents: number | null; currency: 'AUD';
   invoiceDate: string | null; dueDate: string | null; note: string;
+  /** Reviewed source labels, never inferred supplier identity or payment proof. */
+  invoiceNumber?: string | null; invoiceVersion?: string | null;
+}
+/** Comparison only: retain stored legacy facts and their original audit hashes. */
+export function sameBillFacts(a: BillFacts, b: BillFacts): boolean {
+  return (['propertyId', 'kind', 'vendor', 'note'] as const).every(key => a[key].trim() === b[key].trim()) &&
+    (['amountCents', 'currency', 'invoiceDate', 'dueDate'] as const).every(key => a[key] === b[key]) &&
+    (['invoiceNumber', 'invoiceVersion'] as const).every(key => (a[key]?.trim() ?? null) === (b[key]?.trim() ?? null));
 }
 export type SourceBillState = 'received' | 'in-process' | 'hold' | 'cancelled';
+/** Human-reviewed claims, never a connector receipt or permission to act. */
+export interface BillFinancialObservation {
+  provenance: 'simulated' | 'actual'; sourceKind: 'external-record' | 'document' | 'csv-status' | 'unknown';
+  sourceIds: string[]; locator: string; accountContext: string; observedAt: number;
+  coverage: 'complete' | 'partial' | 'unknown';
+  entry: 'recorded' | 'not-recorded' | 'unknown';
+  payment: 'confirmed-paid' | 'unpaid' | 'arranged-unconfirmed' | 'unknown';
+  funding: 'sufficient' | 'insufficient' | 'unknown';
+  advance: 'none' | 'outstanding' | 'recovered' | 'unknown';
+  note: string;
+}
+export interface BillFinancialReview extends BillFinancialObservation {
+  version: 1; basisBillRevision: number; sourceDigest: string;
+  reviewedAt: number; reviewedBy: string; reviewReason: string;
+}
+export interface BillDuplicateReference { billId: string; revision: number; matchedRevision: number; sourceDigest: string }
+export type BillDuplicateMatch = 'exact-evidence' | 'invoice-identity' | 'invoice-conflict';
+export interface BillDuplicateCandidate extends BillDuplicateReference { facts: BillFacts; subject: string; receivedAt: number; match?: BillDuplicateMatch }
+/** Review candidates only: matching vendor labels do not establish supplier identity. */
+export interface BillDuplicateCheck {
+  version: 1; sourceDigest: string; reviewDigest: string | null; candidates: BillDuplicateCandidate[]; complete: boolean;
+}
+export interface BillDuplicateReview {
+  version: 1; reviewDigest: string; candidates: BillDuplicateReference[];
+  reviewedAt: number; reviewedBy: string; reason: string;
+}
 export interface BillOccurrenceVersion {
   revision: number; facts: BillFacts; state: SourceBillState; source: BillSourceEvidence;
   seriesId: string | null; expectedArrivalDate: string | null;
   reviewedAt: number; reviewedBy: string; reviewReason: string;
+  duplicateReview?: BillDuplicateReview;
+  financialReview?: BillFinancialReview;
 }
 export interface SourceBillOccurrence extends BillOccurrenceVersion {
   id: string; createdAt: number; history: BillOccurrenceVersion[];
+}
+/** A later return to earlier facts cannot revive an observation made stale by
+ * an intervening correction. Status-only changes retain the original basis. */
+export function isBillFinancialReviewStale(row: SourceBillOccurrence): boolean {
+  const review = row.financialReview;
+  if (!review) return false;
+  const versions = [...row.history, row], basis = versions.find(v => v.revision === review.basisBillRevision);
+  return row.state === 'cancelled' || !basis || basis.source.digest !== review.sourceDigest || versions.some(v =>
+    v.revision > review.basisBillRevision && (v.source.digest !== review.sourceDigest || !sameBillFacts(v.facts, basis.facts)));
 }
 export interface BillSeriesVersion {
   revision: number; intervalMonths: 1 | 3 | 12; anchorDate: string;
@@ -29,11 +74,20 @@ export interface BillRecurrenceSeries extends BillSeriesVersion {
   accountId: string; propertyId: string; kind: string; vendor: string;
   createdAt: number; history: BillSeriesVersion[];
 }
+/** Usual gap from a bill's arrival to its reviewed due date, measured on the
+ * pattern's reviewed bills. A forecast basis, never a payment record. */
+export interface BillPaymentTerms { days: number; reviewedBills: number }
+/** Derived on every read and never stored, so corrections, paid status and
+ * paused patterns remove stale predictions. `expected-payment` is a forecast:
+ * `reviewed-bill-due-date` = a received bill not marked paid;
+ * `approved-pattern-payment-terms` = an approved arrival window plus
+ * `paymentTerms` from at least two reviewed bills. */
 export interface BillCalendarEntry {
-  id: string; type: 'expected-arrival' | 'invoice-due'; date: string; endDate: string;
+  id: string; type: 'expected-arrival' | 'invoice-due' | 'expected-payment'; date: string; endDate: string;
   propertyId: string; kind: string; vendor: string; billId: string | null; seriesId: string | null;
-  basis: 'human-reviewed-invoice-date' | 'approved-arrival-pattern';
+  basis: 'human-reviewed-invoice-date' | 'approved-arrival-pattern' | 'reviewed-bill-due-date' | 'approved-pattern-payment-terms';
   state: SourceBillState | 'predicted';
+  paymentTerms?: BillPaymentTerms;
 }
 export interface SourceBillsSnapshot {
   version: 1; revision: number; occurrences: SourceBillOccurrence[];

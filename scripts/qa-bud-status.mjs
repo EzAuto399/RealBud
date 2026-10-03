@@ -5,20 +5,21 @@ import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 
-assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE to an installed Playwright module.');
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
+const serveOnly = process.argv.includes('--serve-only');
+if (!serveOnly) assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE to an installed Playwright module.');
+const chromium = serveOnly ? null : (await import(process.env.PLAYWRIGHT_MODULE)).chromium;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const baseline = process.argv.includes('--baseline');
 const baselinePaths = ['src/components/ChatView.tsx', 'src/components/AskReadiness.tsx', 'src/components/BudSetupCard.tsx', 'src/components/ManagedBudStatus.tsx', 'src/components/WorkspaceSetup.tsx', 'src/components/AskWorkspaceSheet.tsx', 'src/lib/bud-setup.ts'];
 const sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const testedPaths = [...baselinePaths, 'src/App.tsx', 'src/lib/bud-status-monitor.ts', 'src/state/store.tsx', 'src/lib/boot-heal.ts'];
+const testedPaths = [...baselinePaths, 'src/App.tsx', 'src/lib/bud-status-monitor.ts', 'src/state/store.tsx', 'src/lib/boot-heal.ts', 'src/components/ConnectOffice.tsx', 'src/components/you/browser-link.ts'];
 const sourceHashes = () => Object.fromEntries(testedPaths.filter(p => existsSync(join(root, p))).map(p => [p, createHash('sha256').update(readFileSync(join(root, p))).digest('hex')]));
 const startHashes = sourceHashes();
 const baselineSources = new Map(baseline ? baselinePaths.map(path => [join(root, path), execFileSync('git', ['show', `HEAD:${path}`], { cwd: root, encoding: 'utf8' })]) : []);
@@ -38,18 +39,59 @@ const ready = {
 };
 const safeguards = { ...ready, ready: false, pack: { installed: true, approvalsManual: true, workroomReady: false }, lastPing: null };
 let fixture = structuredClone(safeguards), failRefresh = false, delayRefresh = 0, managed = true;
-const counts = { statusReads: 0, hermesMutations: [], externalRequests: [] };
+let officeFixture = { state: 'unlinked' }, retryFailure = false, retryDelay = 0, officeReadInFlight = 0;
+let qaConnected = true, qaRecovering = false;
+const qaSubscribers = new Set();
+const counts = { statusReads: 0, officeReads: 0, maxConcurrentOfficeReads: 0, hermesMutations: [], externalRequests: [] };
 const checks = [], screenshots = [], errors = [], findings = [], observations = {};
-let child, childClosed, vite, browser, page, logs = '', failure = null;
+let child, childClosed, vite, browser, page, stopFixture, logs = '', failure = null;
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function freePort() { const s = createServer(); s.listen(0, '127.0.0.1'); await once(s, 'listening'); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
 async function until(fn, label, timeout = 20_000) { const end = Date.now() + timeout; while (Date.now() < end) { if (await fn().catch(() => false)) return; await wait(100); } throw new Error(`Timed out: ${label}`); }
 const limits = [
   'Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.',
   'The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.',
-  'All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.',
+  serveOnly
+    ? 'Office-link writes and worker mutations are intercepted by fictional middleware. Browser egress is not independently audited in serve-only mode; no live provider, worker, customer account or installed application is part of this fixture.'
+    : 'All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.',
   'Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed.',
 ];
+const missingWorker = { ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: 'missing' },
+  pack: { installed: false, approvalsManual: false, workroomReady: false }, model: { attached: false, provider: null, model: null },
+  modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' }, lastPing: null,
+  autoSetup: { state: 'idle', step: 0, total: 4, detail: '' } };
+const installing = { ...missingWorker, model: ready.model, modelAccess: ready.modelAccess,
+  autoSetup: { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Installing Bud' } };
+const held = { ...installing, autoSetup: { state: 'held', code: 'held_failed', step: 1, total: 4, detail: 'Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.' } };
+const setupPhases = {
+  'managed-downloading': { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Downloading Bud' },
+  'managed-components': { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Installing Bud’s components' },
+  'managed-reuse': { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Checking already downloaded Bud' },
+  'managed-model': { state: 'verifying', code: 'model', step: 3, total: 4, detail: 'Connecting Bud’s model' },
+  'managed-readiness': { state: 'verifying', code: 'readiness', step: 4, total: 4, detail: 'Running the private readiness check' },
+};
+const scenarioNames = ['unlinked-missing-worker', 'linked-pending', 'linked-local-recovery', 'linked-preflight-recovery', 'relink-pending-old-withdrawal', 'managed-installing', ...Object.keys(setupPhases), 'held-retry-error', 'held-retry-success', 'recovery', 'withdrawn', 'ready'];
+const qaState = () => ({ status: fixture, connected: qaConnected, recovering: qaRecovering });
+function selectScenario(name) {
+  assert.ok(scenarioNames.includes(name), 'Unknown fictional scenario.');
+  qaConnected = true; qaRecovering = false; retryFailure = false; retryDelay = 0;
+  officeFixture = { state: 'linked', agencyLabel: 'Fictional Harbour Agency', provisioned: true };
+  if (name === 'unlinked-missing-worker') { fixture = structuredClone(missingWorker); officeFixture = { state: 'unlinked' }; }
+  if (name === 'linked-pending') { fixture = structuredClone(missingWorker); officeFixture = { state: 'linked', agencyLabel: 'Fictional Harbour Agency', provisioned: false }; }
+  if (name === 'linked-local-recovery') { fixture = structuredClone(missingWorker); officeFixture = { state: 'linked', agencyLabel: 'Fictional Harbour Agency', provisioned: false, error: 'Saved settings need recovery. The original file has been kept; restore or repair it before saving changes.' }; }
+  if (name === 'linked-preflight-recovery') { fixture = structuredClone(missingWorker); officeFixture = { state: 'linked', agencyLabel: 'Fictional Harbour Agency', provisioned: false, error: "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup." }; }
+  if (name === 'relink-pending-old-withdrawal') {
+    fixture = { ...structuredClone(held), modelAccess: { ...ready.modelAccess, withdrawn: true, attached: false, detail: 'The previous installation was withdrawn.' } };
+    officeFixture = { state: 'linked', agencyLabel: 'New Fictional Agency', provisioned: false, error: 'This computer’s service setup needs local storage recovery. Existing settings are kept.' };
+  }
+  if (name === 'managed-installing') fixture = structuredClone(installing);
+  if (setupPhases[name]) fixture = { ...structuredClone(installing), autoSetup: setupPhases[name] };
+  if (name === 'held-retry-error' || name === 'held-retry-success') { fixture = structuredClone(held); retryFailure = name === 'held-retry-error'; retryDelay = 1200; }
+  if (name === 'recovery') { fixture = structuredClone(held); qaRecovering = true; }
+  if (name === 'withdrawn') { fixture = { ...structuredClone(held), modelAccess: { ...ready.modelAccess, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } }; officeFixture.serviceWithdrawn = true; }
+  if (name === 'ready') fixture = structuredClone(ready);
+  for (const response of qaSubscribers) response.write(`data: ${JSON.stringify(qaState())}\n\n`);
+}
 try {
   const port = await freePort(), uiPort = await freePort(), base = `http://127.0.0.1:${port}`, uiBase = `http://127.0.0.1:${uiPort}`;
   process.env.OMB_UI_PORT = String(uiPort);
@@ -57,8 +99,67 @@ try {
   childClosed = new Promise((r, j) => { child.once('close', r); child.once('error', j); });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', b => { logs = (logs + b).slice(-15_000); });
   await until(async () => (await (await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(500) })).json()).pid === child.pid, 'isolated service startup');
-  vite = await createViteServer({ root, configFile: join(root, 'vite.config.ts'), logLevel: 'warn', plugins: [{ name: 'fictional-bud-status-bridge', enforce: 'pre', transform(code, id) { const path = id.split('?')[0]; if (baselineSources.has(path)) return baselineSources.get(path); if (path !== join(root, 'src/App.tsx')) return; return code.replace('const { state, dispatch } = useStore();', 'const { state, dispatch } = useStore(); window.__budQa = { state, dispatch };'); } }], server: { host: '127.0.0.1', port: uiPort, strictPort: true, proxy: { '/api': { target: base, changeOrigin: true, ws: true } } } });
+  vite = await createViteServer({ root, configFile: join(root, 'vite.config.ts'), logLevel: 'warn', plugins: [{ name: 'fictional-bud-status-bridge', enforce: 'pre', transform(code, id) {
+    const path = id.split('?')[0]; if (baselineSources.has(path)) return baselineSources.get(path); if (path !== join(root, 'src/App.tsx')) return;
+    const bridge = `const { state, dispatch } = useStore(); window.__budQa = { state, dispatch };${serveOnly ? `
+      useEffect(() => {
+        const events = new EventSource('/__qa/scenarios');
+        const report = event => { const message = String(event.message || event.reason?.message || event.reason || 'Unknown renderer error').slice(0, 1000); navigator.sendBeacon('/__qa/client-error', JSON.stringify({ message })); };
+        window.addEventListener('error', report);
+        window.addEventListener('unhandledrejection', report);
+        events.onmessage = event => {
+          const next = JSON.parse(event.data), current = window.__budQa;
+          current.dispatch({ type: 'connected', value: next.connected });
+          current.dispatch({ type: 'hermesStatus', status: next.status });
+          if (current.state.desk) current.dispatch({ type: 'deskSnapshot', snapshot: { ...current.state.desk, recovery: { ...(current.state.desk.recovery || {}), active: next.recovering } } });
+          window.dispatchEvent(new Event('realbud-website-link-changed'));
+        };
+        return () => { events.close(); window.removeEventListener('error', report); window.removeEventListener('unhandledrejection', report); };
+      }, []);` : ''}`;
+    return code.replace('const { state, dispatch } = useStore();', bridge);
+  }, configureServer(server) {
+    if (!serveOnly) return;
+    server.middlewares.use(async (request, response, next) => {
+      const url = new URL(request.url, uiBase), method = request.method;
+      const json = (body, status = 200) => { response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end(JSON.stringify(body)); };
+      try {
+        if (url.pathname === '/__qa/scenarios' && method === 'GET') { response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' }); response.write(': fictional scenario control\n\n'); qaSubscribers.add(response); request.on('close', () => qaSubscribers.delete(response)); return; }
+        if (url.pathname === '/__qa/state' && method === 'GET') return json({ scenarioNames, fixture, officeFixture, counts, rendererPageErrors: errors, limits });
+        if (url.pathname === '/__qa/stop' && method === 'POST') { json({ ok: true }); setImmediate(() => stopFixture?.()); return; }
+        if (url.pathname === '/__qa/client-error' && method === 'POST') { let body = ''; for await (const chunk of request) { body += chunk; if (body.length > 2048) return json({ error: 'Error report too large.' }, 413); } const message = JSON.parse(body).message; if (typeof message === 'string') errors.push(message.slice(0, 1000)); return json({ ok: true }); }
+        if (url.pathname === '/__qa/scenario' && method === 'POST') { let body = ''; for await (const chunk of request) { body += chunk; if (body.length > 1024) return json({ error: 'Fixture control too large.' }, 413); } selectScenario(JSON.parse(body).name); return json({ ok: true, ...qaState() }); }
+        if (url.pathname === '/api/onboarding' && method === 'GET') return json({ version: 1, scope: 'a'.repeat(64), revision: 1, stage: 'complete' });
+        if (url.pathname === '/api/config' && method === 'GET') { const body = await (await fetch(`${base}/api/config`, { headers: request.headers })).json(); body.serviceAdmin = { managed, configured: true, authenticated: false, expiresAt: null }; return json(body); }
+        if (url.pathname === '/api/service-admin/status') return json({ managed, configured: true, authenticated: false, expiresAt: null });
+        if (url.pathname === '/api/office-link' && method === 'GET') { counts.officeReads++; officeReadInFlight++; counts.maxConcurrentOfficeReads = Math.max(counts.maxConcurrentOfficeReads, officeReadInFlight); try { return json(officeFixture); } finally { officeReadInFlight--; } }
+        if (url.pathname.startsWith('/api/office-link') && method !== 'GET') return json({ error: 'Fictional QA never links a real office.' }, 403);
+        if (url.pathname === '/api/hermes' && method === 'GET') { counts.statusReads++; if (delayRefresh) await wait(delayRefresh); return json(fixture, failRefresh ? 503 : 200); }
+        if (url.pathname === '/api/hermes/auto-setup/retry' && method === 'POST') {
+          let body = ''; for await (const chunk of request) body += chunk;
+          counts.hermesMutations.push({ path: url.pathname, managed, body });
+          if (body !== '{}') return json({ error: 'The fixture only accepts the reviewed empty request.' }, 400);
+          if (retryDelay) await wait(retryDelay);
+          if (retryFailure) return json({ error: 'Fictional setup response unavailable.' }, 503);
+          fixture = structuredClone(installing); return json({ autoSetup: fixture.autoSetup }, 202);
+        }
+        if (url.pathname === '/api/desk/recovery/auto') return json({ ok: false, error: 'Fictional recovery remains held.' });
+        if (url.pathname.startsWith('/api/hermes') && method !== 'GET') { counts.hermesMutations.push({ path: url.pathname, managed }); return json({ error: 'Fictional QA blocks worker mutations.' }, 403); }
+        if (url.pathname === '/api/hermes/model') return json({ model: { provider: 'custom:realbud', model: 'deepseek-v4.1-flash', choice: 'flash-high', keyPresent: true, keyHint: null, managed: true } });
+        if (url.pathname === '/api/hermes/install/status') return json({ install: { state: 'idle', lines: [], startedAt: null, finishedAt: null, error: null } });
+        return next();
+      } catch (error) { return json({ error: error.message }, 400); }
+    });
+  } }], optimizeDeps: { entries: ['index.html'] }, server: { host: '127.0.0.1', port: uiPort, strictPort: true, proxy: { '/api': { target: base, changeOrigin: true, ws: true } } } });
   await vite.listen();
+  if (serveOnly) {
+    selectScenario('unlinked-missing-worker');
+    const served = { uiBase, url: `${uiBase}/#/ask`, state: `${uiBase}/__qa/state`, scenario: `${uiBase}/__qa/scenario`, stop: `${uiBase}/__qa/stop`, scenarioNames, output, pid: process.pid, servicePid: child.pid, temporaryDirectory: temp };
+    writeFileSync(join(output, 'fixture.json'), JSON.stringify(served, null, 2));
+    console.log(JSON.stringify(served));
+    await new Promise(resolve => { stopFixture = resolve; process.once('SIGTERM', resolve); process.once('SIGINT', resolve); });
+    checks.push('Served isolated fictional renderer for a separately recorded CUA walkthrough; this process performed no browser actions.');
+    for (const response of qaSubscribers) response.end();
+  } else {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   await context.route('**/*', async route => {
@@ -174,12 +275,18 @@ try {
   }
   assert.equal(errors.length, 0, errors.join('\n'));
   if (!baseline) { const finalHashes = sourceHashes(); const changed = testedPaths.filter(path => startHashes[path] !== finalHashes[path]); assert.deepEqual(changed, [], 'source changed during the renderer run; rerun from a stable snapshot'); }
+  }
 } catch (error) { failure = error?.stack ?? String(error); console.error(failure); if (page && !page.isClosed()) { try { await page.screenshot({ path: join(output, 'failure.png'), fullPage: true }); observations.failureState = await page.evaluate(() => ({ visible: document.visibilityState, text: document.querySelector('[role=dialog]')?.textContent, connected: window.__budQa?.state.connected, ready: window.__budQa?.state.hermes?.ready })); } catch {} } }
 finally {
   await browser?.close(); await vite?.close();
   if (child && child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); const force = setTimeout(() => child.kill('SIGKILL'), 5_000); await childClosed; clearTimeout(force); }
+  // The isolated service deliberately makes its relay configuration directory
+  // read-only. Only after that service stops, unlock this fixture-owned path
+  // for deletion; never change permissions on an installed app's workspace.
+  const relayDirectory = join(data, 'ask-model-relay');
+  if (existsSync(relayDirectory)) { const info = lstatSync(relayDirectory); if (info.isDirectory() && !info.isSymbolicLink()) chmodSync(relayDirectory, 0o700); }
   rmSync(temp, { recursive: true, force: true });
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), node: process.version, layer: 'source', baseline, passed: failure === null && findings.length === 0, checks, findings, screenshots, rendererPageErrors: errors, observations, source: { revision: sourceRevision, startHashes, endHashes: sourceHashes(), baselineTransforms: baseline ? baselinePaths : [], fixtureFields: { safeguards, ready } }, network: counts, cleanup: { isolatedServiceStopped: true, temporaryDataRemoved: true }, limits, ...(failure ? { failure } : {}) }, null, 2));
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), node: process.version, layer: 'source', baseline, serveOnly, passed: !serveOnly && failure === null && findings.length === 0, ...(serveOnly ? { uiProof: 'Recorded separately by the CUA operator; fixture serving alone is not UI acceptance.' } : {}), checks, findings, screenshots, rendererPageErrors: errors, observations, source: { revision: sourceRevision, startHashes, endHashes: sourceHashes(), baselineTransforms: baseline ? baselinePaths : [], fixtureFields: { safeguards, ready } }, network: counts, cleanup: { isolatedServiceStopped: true, temporaryDataRemoved: true }, limits, ...(failure ? { failure } : {}) }, null, 2));
 }
 if (failure || findings.length) process.exitCode = 1;
 else console.log(JSON.stringify({ output, checks: checks.length, screenshots: screenshots.length }));

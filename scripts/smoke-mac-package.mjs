@@ -29,6 +29,10 @@ if (!existsSync(executable)) {
 // starting any smoke processes; signing and a launch on this host cannot prove it.
 const contents = path.dirname(path.dirname(realpathSync(executable)));
 const resources = path.join(contents, "Resources");
+// Check the actual post-signing bytes, not merely helper presence/version.
+const { admitHermesEngine } = await import("../server/hermes-browser-transport.ts");
+await admitHermesEngine(path.join(resources, "browser", "hermes-native"));
+if (["bsk", "bsk.exe"].some(name => existsSync(path.join(resources, "browser", name)))) throw new Error("Retired browser extension helper was included in this package.");
 const inspect = (command, args) => execFileSync(command, args, {
   encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024,
 }).trim();
@@ -50,7 +54,7 @@ const binaries = new Set([
   executable,
   path.join(contents, "Frameworks", "Electron Framework.framework", "Versions", "A", "Electron Framework"),
   ...["RealBud Speech.app/Contents/MacOS/speech-helper", "cua-driver", "cua-sdk/native/libcua_driver_sdk.dylib",
-    "cua-sdk/native/cua_driver_node_runtime.node", "browser/bsk", "postgres/bin/postgres", "postgres/bin/initdb", "postgres/bin/pg_ctl"]
+    "cua-sdk/native/cua_driver_node_runtime.node", "browser/hermes-native/agent-browser", "postgres/bin/postgres", "postgres/bin/initdb", "postgres/bin/pg_ctl"]
     .map(name => path.join(resources, name)),
   ...readdirSync(postgresLib).filter(name => name.endsWith(".dylib")).map(name => path.join(postgresLib, name)),
 ].map(file => realpathSync(file)));

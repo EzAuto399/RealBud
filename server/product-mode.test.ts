@@ -12,7 +12,7 @@ describe("product mode denials", () => {
     expect(productDenied("POST", "/api/bots")).toMatch(/Bud thread/);
     expect(productDenied("POST", "/api/groups")).toMatch(/Bud thread|Rooms/);
     expect(productDenied("POST", "/api/groups/x/messages")).toMatch(/Rooms/);
-    expect(productDenied("GET", "/api/connectors")).toMatch(/Bud thread|Connectors/);
+    expect(productDenied("GET", "/api/connectors/catalog")).toMatch(/Bud thread/);
     expect(productDenied("POST", "/api/connectors/x")).toMatch(/Connectors/);
     expect(productDenied("POST", "/api/local-computer/screenshot")).toMatch(/screenshots/);
     expect(productDenied("POST", "/api/bots/bud/computer")).toMatch(/Cloud computers/);
@@ -110,5 +110,18 @@ describe("pilot and source gates", () => {
 
   it("keeps the scheduled evaluator from launching Cua", () => {
     expect(evaluatorForLoop("morning-arrears")).toMatchObject({ mayLaunchCua: false, id: "morning-money" });
+  });
+});
+
+describe("office connector routes in product mode", () => {
+  it("allows the added-connector list, admin, connection and callback routes, and the Redbark aliases only", () => {
+    for (const [method, path] of [["GET", "/api/connectors"], ["POST", "/api/connectors"], ["POST", "/api/connectors/fictional-books/review"],
+      ["POST", "/api/connectors/fictional-books/remove"], ["GET", "/api/connectors/fictional-books/connection"], ["POST", "/api/connectors/fictional-books/connection/start"],
+      ["POST", "/api/connectors/fictional-books/connection/token"], ["GET", "/api/connectors/fictional-books/oauth/callback"],
+      ["GET", "/api/redbark/connection"], ["POST", "/api/redbark/connection/start"], ["GET", "/api/redbark/oauth/callback"]]) expect(productDenied(method!, path!)).toBeNull();
+    // Legacy connector routes stay denied.
+    expect(productDenied("POST", "/api/connectors/gmail/authorize")).toMatch(/Connectors/);
+    expect(productDenied("DELETE", "/api/connectors/gmail")).toMatch(/Connectors/);
+    expect(productDenied("GET", "/api/connectors/catalog")).toMatch(/Bud thread/);
   });
 });

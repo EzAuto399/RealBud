@@ -1,21 +1,27 @@
 // Unmodified Hermes Agent as a verified ACP worker (`hermes -p property acp`).
 // RealBud selects a reviewed release per process, never upstream main.
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { hermesCli, hermesInstallCommand } from "../../hermes-pin.ts";
 import { baseWorkerProfile, currentWorkerProfile } from "../../hermes-profile.ts";
-import { seedVault } from "../../vault.ts";
+import { BUD_WORK_FOLDER, seedVault, vaultDir } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
 import { isolateGithubLogin, stripServiceSecrets } from "../../service-child-env.ts";
 import { hermesHome } from "../../hermes-paths.ts";
-import { applyManagedModelLaunchEnv, selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
+import { selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
+import { applyAskModelRelayEnv, ASK_MODEL_RELAY_OVERLAY_ENV, askModelRelayPort } from "../../ask-model-relay.ts";
+import { DATA_DIR } from "../../config.ts";
+import { ensurePrivateRoot, NETWORK_ISOLATION_UNAVAILABLE, SANDBOX_TEST_WRITABLE, sandboxedLaunch, trustedPath, type SandboxDeps, type SandboxedLaunch } from "../../worker-network-sandbox.ts";
+import { ownedRuntimeHome } from "../../hermes-document-deps.ts";
 
 // Keep ACP's explicit per-session tools separate from configured discovery.
-// The startup skip flag alone does not cover discovery restarted by an agent.
+// The startup skip flag alone does not cover discovery restarted by an agent
+// (0.21.5 starts it again before every agent build:
+// hermes_cli/mcp_startup.py `ensure_mcp_discovery_before_agent_build`).
 export const HERMES_CONFIGURED_MCP_FILTER = `realbud_explicit_${randomUUID().replaceAll("-", "")}`;
 
 /** Model-provider credentials and endpoints, including the managed grant's
@@ -35,6 +41,13 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
       for (const key of Object.keys(env)) if (key.toUpperCase() === "PATH") delete env[key];
       Object.assign(env, prepared);
     }
+  } else {
+    // Bud's terminal resolves `python3` from PATH. Put the selected runtime's
+    // own venv first so scripts use its reviewed document libraries, not the
+    // computer's system Python (Windows does this in windowsHermesRuntimeEnv).
+    const runtime = ownedRuntimeHome(env.HERMES_HOME);
+    const venvBin = runtime ? join(runtime, "hermes-agent", "venv", "bin") : null;
+    if (venvBin && existsSync(venvBin)) env.PATH = [venvBin, env.PATH].filter(Boolean).join(":");
   }
   stripServiceSecrets(env);
   // The property profile owns its model and only RealBud's grant may carry
@@ -42,6 +55,9 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   // the grant (upstream's host-derived fallback reads `<VENDOR>_API_KEY`), so
   // none reaches the worker process; the grant is placed afterwards.
   for (const key of Object.keys(env)) if (AMBIENT_MODEL_ENV.test(key)) delete env[key];
+  // An ambient managed-scope overlay would win over the profile at the leaf
+  // (hermes_cli/managed_scope.py). Only RealBud's Ask relay sets one, per launch.
+  for (const key of Object.keys(env)) if (key.toUpperCase() === "HERMES_MANAGED_DIR") delete env[key];
   // No ambient GitHub/Copilot login reaches upstream's credential pool.
   isolateGithubLogin(env);
   delete env.COMPOSIO_KEY;
@@ -56,14 +72,17 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   for (const key of Object.keys(env)) if (HERMES_BROWSER_ENV.test(key)) delete env[key];
   // RealBud is the capability broker. Globally configured MCP servers must
   // not appear in Ask; only per-turn servers explicitly mounted by RealBud do.
+  // Four independent layers: this startup skip, safe mode below (configured
+  // servers read as none), the `--toolsets` server filter in spawnArgs, and
+  // the profile's `platform_toolsets.acp: [..., no_mcp]` (0.21.5).
   env.HERMES_ACP_SKIP_CONFIGURED_MCP = "1";
   // Upstream safe mode suppresses configured MCP, plugins, shell hooks and
   // outbound webhooks. Native tools/skills/memory and explicit ACP MCP remain
   // available. Use its supported switch; never monkey-patch Hermes modules.
   env.HERMES_SAFE_MODE = "1";
-  // ACP mounts Hermes' native bundle independently of the profile toolsets.
-  // Its execute_code tool can otherwise spawn arbitrary local Python without
-  // asking ACP. Upstream ask-mode routes whole-script approval through ACP's
+  // Ask keeps execute_code (0.21.3's fixed hermes-acp bundle; 0.21.5's
+  // platform_toolsets.acp, server/hermes-pack.ts WORKER_ACP_TOOLSETS), which
+  // can otherwise spawn arbitrary local Python without asking ACP. Upstream ask-mode routes whole-script approval through ACP's
   // existing callback; a missing callback keeps the script blocked.
   env.HERMES_EXEC_ASK = "1";
   // Hermes defaults small Codex requests to a 12-second SSE idle cutoff.
@@ -72,6 +91,113 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   if (!env.HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS?.trim()) {
     env.HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS = "60";
   }
+}
+
+/** What a launch is for. `ask` is the ACP worker, `cli` a one-shot `chat`
+ * job in the workroom, `diagnostic` a `--version` or install check that
+ * writes nothing but its temp folder and reaches no network. */
+export type HermesWorkerJob = "ask" | "cli" | "diagnostic";
+
+/** Inside the worker's profile: the folders Hermes 0.21.3 writes during
+ * ordinary ACP and CLI turns, found by running it under a deny-everything
+ * write rule with denial logging. The policy files (`config.yaml`, `.env`,
+ * `auth.json`, `SOUL.md`), the pack's skills, `bin`, `hooks` and `cron` stay
+ * read-only. */
+const PROFILE_STATE_DIRS = ["sessions", "logs", "cache", "runtime", "pending/memory", "pending/skills", "image_cache", "audio_cache"] as const;
+/** Files at the profile root Hermes writes (with the temp names its atomic
+ * writes use beside them): its SQLite state, locks and model caches. Not the
+ * skills prompt snapshot (below) and not `memories/`. */
+const PROFILE_STATE_FILES = ["state\\.db", "auth\\.lock", "update_check", "provider_models_cache", "context_length_cache", "models_dev_cache", "ollama_cloud_models_cache"] as const;
+
+/** Hermes trusts this cache's skill entries once its mtime manifest matches
+ * (agent/prompt_builder.py `_load_skills_snapshot`), so a worker-written one
+ * could put text into every prompt. It stays read-only, and any copy a
+ * worker left is removed before a launch so Hermes rebuilds from the
+ * read-only skills folder. `memories/` is not writable either: memory
+ * changes reach MEMORY.md/USER.md only through RealBud's review. */
+const SKILLS_PROMPT_SNAPSHOT = ".skills_prompt_snapshot.json";
+
+/** The folders Hermes refuses to start without (hermes_cli/config.py
+ * `_HERMES_HOME_SUBDIRS`). RealBud makes them before a launch so the worker
+ * never needs to create `cron`, `hooks` or `skills`, which stay read-only. */
+const PROFILE_SKELETON = ["cron", "sessions", "logs", "logs/curator", "memories", "pairing", "hooks", "image_cache", "audio_cache", "skills", "pending",
+  // Hermes' terminal backend makes `bin` before every command (its scanner
+  // lives there); made by RealBud, read-only and exec-allowed for the worker.
+  "bin"] as const;
+
+/** Make the skeleton in an existing profile folder: the profile's ancestry is
+ * resolved first (a planted link refuses the launch), each folder is created
+ * one level at a time and verified as a real owner-only folder of ours, and
+ * any other outcome refuses the launch. An absent profile is left absent. */
+export function ensureProfileSkeleton(profile: string): void {
+  const trusted = trustedPath(profile);
+  let stat;
+  try { stat = lstatSync(trusted); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(NETWORK_ISOLATION_UNAVAILABLE);
+  // The profile root itself: ours and owner-only, like every root under it.
+  ensurePrivateRoot(trusted);
+  for (const name of PROFILE_SKELETON) ensurePrivateRoot(join(trusted, name));
+  const snapshot = join(trusted, SKILLS_PROMPT_SNAPSHOT);
+  try { if (!lstatSync(snapshot).isSymbolicLink()) unlinkSync(snapshot); else throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
+}
+
+/** The profile a launch names (`-p` / `--profile`), else the current one. */
+function launchProfile(args: readonly string[]): string {
+  const at = args.findIndex(arg => arg === "-p" || arg === "--profile");
+  return at >= 0 && args[at + 1] ? args[at + 1]! : currentWorkerProfile().profile;
+}
+
+/**
+ * The sandbox for one Hermes worker launch (server/worker-network-sandbox.ts).
+ * Network: the loopback ports given plus, when `applyAskModelRelayEnv` put
+ * the relay into this env, the relay's port from this process's own memory,
+ * never from the overlay file. Writes: the workroom's `bud-work` folder and
+ * the profile's own state (memory and skill staging, read back by RealBud
+ * through no-follow descriptors only) for `ask`
+ * and `cli`, nothing for `diagnostic`; every job also gets a
+ * private temp folder. Reads: the person's credential stores and RealBud's
+ * data folder are hidden, except the workroom, the Hermes home (runtime,
+ * this profile, never another seat's), and the relay overlay. A development
+ * CLI (`REALBUD_HERMES_CLI`, a test's `cli`) may write its own folder; the
+ * owned runtime never is written.
+ */
+export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args: readonly string[], env: Record<string, string | undefined>, loopbackPorts: readonly number[], deps?: SandboxDeps): SandboxedLaunch {
+  const home = hermesHome(undefined, env);
+  const profile = join(home, "profiles", launchProfile(args));
+  // The workroom exists before any worker starts (seeding is idempotent).
+  const workroom = job === "diagnostic" ? vaultDir() : seedVault();
+  // Profile state is granted only when the profile exists as a real folder
+  // of ours; its skeleton is then made and verified before any rule names it.
+  let hasProfile = false;
+  if (job !== "diagnostic") { ensureProfileSkeleton(profile); try { hasProfile = lstatSync(trustedPath(profile)).isDirectory(); } catch { /* absent */ } }
+  // Of the workroom only Bud's own folder is writable; the book, decisions,
+  // uploads, inputs and reference sheets stay read-only to the worker, so
+  // nothing RealBud later reads there can be planted or replaced.
+  const writable = job === "diagnostic" ? [] : [join(workroom, BUD_WORK_FOLDER), ...(hasProfile ? PROFILE_STATE_DIRS.map(name => join(profile, name)) : [])];
+  const writablePatterns = job === "diagnostic" || !hasProfile ? [] : [`^${trustedPath(profile).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.?\\.?(${PROFILE_STATE_FILES.join("|")})[^/]*$`];
+  // Test-only roots come from the explicit hook alone (server/testing/setup.ts
+  // fills it); production never sets it and grants nothing beyond the above.
+  if (job !== "diagnostic") writable.push(...SANDBOX_TEST_WRITABLE);
+  const overlay = env[ASK_MODEL_RELAY_OVERLAY_ENV];
+  const reads: Array<readonly ["allow" | "deny", string]> = [
+    ["deny", DATA_DIR], ["allow", workroom], ["allow", home],
+    ["deny", join(home, "profiles")], ["allow", profile],
+    ["deny", join(home, "auth.json")], ["deny", join(home, ".env")],
+    ...(overlay ? [["allow", overlay] as const] : []),
+  ];
+  const relay = overlay ? askModelRelayPort() : null;
+  return sandboxedLaunch(command, args, env, {
+    loopbackPorts: relay ? [...loopbackPorts, relay] : [...loopbackPorts],
+    writable, writablePatterns, executable: [join(profile, "bin")], reads,
+  }, deps);
+}
+
+/** Ask's worker (and every command it runs) reaches only the broker gateway
+ * and the model relay on loopback; see server/worker-network-sandbox.ts. */
+export function hermesNetworkSandbox(command: string, args: string[], env: Record<string, string | undefined>, loopbackPorts: number[], job: "ask" | "diagnostic" = "ask", deps?: SandboxDeps): SandboxedLaunch {
+  return hermesWorkerSandbox(job, command, args, env, loopbackPorts, deps);
 }
 
 const support: AcpSupport = {
@@ -88,7 +214,9 @@ const support: AcpSupport = {
   // private workroom (and temporary files) proceed without prompts, while
   // .env/.ssh/.git and paths outside the workroom still ask.
   defaultSessionMode: "accept_edits",
-  buildPromptText: turn => [BUD_IDENTITY, turn.system, turn.text].filter(Boolean).join("\n\n"),
+  // Product Ask already starts its complete turn policy with this identity.
+  // Keep that policy byte for byte; only omit the redundant wrapper prefix.
+  buildPromptText: turn => [turn.system?.startsWith(BUD_IDENTITY) ? undefined : BUD_IDENTITY, turn.system, turn.text].filter(Boolean).join("\n\n"),
   // Hermes ACP session ids live inside the current ACP process. Keep that
   // process warm; after a real restart, replay RealBud's durable transcript
   // instead of spending up to two minutes loading an impossible cursor.
@@ -121,13 +249,19 @@ const support: AcpSupport = {
 
   // A leftover provider key can reroute Hermes; globally configured MCP
   // servers would bypass RealBud's explicit connection boundary.
-  // Strip first, then place only the grant RealBud resolved for this
-  // installation, and only while the profile still names the granted
-  // endpoint. A custom (development) CLI never refuses here; it simply gets no key.
+  // Strip first, then point Ask at RealBud's loopback model relay, and only
+  // while the profile still names the granted endpoint. The worker gets the
+  // relay's per-process token, never the office key; the relay holds the key
+  // and applies the office's reasoning effort (server/ask-model-relay.ts).
+  // A custom (development) CLI never refuses here; it simply gets no access.
   transformEnv: (env) => {
     hardenHermesChildEnv(env);
-    applyManagedModelLaunchEnv(env, env.HERMES_HOME);
+    applyAskModelRelayEnv(env, env.HERMES_HOME);
   },
+
+  // Only the Ask/ACP worker; one-shot CLI and department workers call the
+  // gateway directly. Windows and Linux rely on the pack's `approvals.deny`.
+  networkSandbox: process.platform === "darwin" ? hermesNetworkSandbox : undefined,
 
   pickAuthMethod: () => null,
   authFailure: "continue",
@@ -146,7 +280,7 @@ const managed = createAcpDriver({
   ...support,
   transformEnv: (env) => {
     hardenHermesChildEnv(env);
-    const refusal = applyManagedModelLaunchEnv(env, env.HERMES_HOME);
+    const refusal = applyAskModelRelayEnv(env, env.HERMES_HOME);
     if (refusal) throw new Error(refusal);
   },
 });

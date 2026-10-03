@@ -195,6 +195,8 @@ describe('portable customer pack lifecycle', () => {
   });
   it('applies reviewed native text, retains baseline, clears every dependent approval, and reverts as a new revision', async () => {
     const f = await installedFixture(), improved = `${f.baseline}\nList source coverage before priority recommendations.\n`;
+    const originalBinding = await f.service.packRecipeBinding(f.pack.id, f.pack.recipes[0].id);
+    const originalContext = await f.service.instructionContext(f.pack.recipes[0].id);
     f.recipes().forEach(recipe => { recipe.status = 'active'; recipe.planApprovedAt = 4; recipe.approvedRevision = recipe.revision; recipe.schedule = { time: '09:00', weekdays: [1] }; });
     await stage(f.root, improved);
     const proposal = (await f.service.proposals()).proposals[0]; expect(proposal.state).toBe('reviewable'); expect(proposal.origin).toBe('Background review');
@@ -210,6 +212,10 @@ describe('portable customer pack lifecycle', () => {
     await restarted.revertSkill(await revertRequest(restarted,f.pack.id,f.pack.skills[0].id));
     history = await restarted.proposals(); expect(triage().at(-1)?.revision).toBe(3); expect(triage().at(-1)?.active).toBe(true);
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline); expect(f.recipes().every(recipe => recipe.revision === 3 && recipe.approvedRevision === null && recipe.schedule === null)).toBe(true);
+    // Legacy pack identity retains its established revision-bound contract.
+    expect(await restarted.packRecipeBinding(f.pack.id, f.pack.recipes[0].id)).not.toBe(originalBinding);
+    expect(await restarted.instructionContext(f.pack.recipes[0].id)).not.toBe(originalContext);
+    expect(await restarted.instructionContext(f.pack.recipes[0].id)).toContain(', revision 3, SHA-256 ');
     const journal = JSON.parse(await readFile(join(f.root, 'customer-packs.json'), 'utf8')); expect(journal.installs[f.pack.id].pack.skills[0].instructions).toBe(f.pack.skills[0].instructions);
   });
   it('rejects stale pending/base digests and a queued run without applying any text', async () => {
@@ -304,5 +310,35 @@ describe('portable customer pack lifecycle', () => {
     expect((await f.service.proposals()).proposals[0].state).toBe('unsupported');
     await expect(f.service.reviewProposal({ id: '../escape', pendingDigest: '0'.repeat(64), currentDigest: '', decision: 'approve' })).rejects.toThrow(/identifier/);
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline); expect(f.resetRecipeApprovals).not.toHaveBeenCalled();
+  });
+});
+
+describe('planted entries in pending/skills', () => {
+  it('never follows a symlink, alias or FIFO staged under a proposal name, and still reviews a plain proposal', async () => {
+    const { link, mkdir: mkdirAsync } = await import('node:fs/promises');
+    const { execFileSync } = await import('node:child_process');
+    const f = await installedFixture(), improved = `${f.baseline}\nList source coverage before priority recommendations.\n`;
+    const folder = join(f.root, 'profile/pending/skills'); await mkdirAsync(folder, { recursive: true });
+    const protectedFile = join(f.root, 'protected.json');
+    await writeFile(protectedFile, JSON.stringify({ id: 'aaaa1111', subsystem: 'skills', action: 'edit', summary: 'planted', origin: 'background_review', created_at: '2026-09-21T00:00:00Z', payload: {} }));
+    await symlink(protectedFile, join(folder, 'aaaa1111.json'));
+    await link(protectedFile, join(folder, 'bbbb2222.json'));
+    execFileSync('mkfifo', [join(folder, 'cccc3333.json')]);
+    await stage(f.root, improved);
+    const started = Date.now();
+    const review = await f.service.proposals();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(review.proposals.map(item => [item.id, item.state])).toEqual([['1234abcd', 'reviewable'], ['aaaa1111', 'unsupported'], ['bbbb2222', 'unsupported'], ['cccc3333', 'unsupported']]);
+    for (const item of review.proposals.slice(1)) expect(item.proposed).toBeNull();
+    for (const id of ['aaaa1111', 'bbbb2222', 'cccc3333']) await expect(f.service.reviewProposal({ id, pendingDigest: 'x', currentDigest: 'x', decision: 'reject' })).rejects.toThrow();
+    const proposal = review.proposals[0];
+    await f.service.reviewProposal({ id: proposal.id, pendingDigest: proposal.pendingDigest, currentDigest: proposal.currentDigest, decision: 'approve' });
+    expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);
+    // The planted entries and their target are untouched; the reviewed record is gone.
+    expect(await readFile(protectedFile, 'utf8')).toContain('"planted"');
+    const { lstat } = await import('node:fs/promises');
+    expect((await lstat(join(folder, 'aaaa1111.json'))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(folder, 'bbbb2222.json'))).nlink).toBe(2);
+    await expect(lstat(join(folder, '1234abcd.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

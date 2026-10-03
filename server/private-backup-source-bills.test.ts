@@ -10,7 +10,9 @@ import { encryptJson, decryptJson, type EncryptedEnvelope } from './desk-crypto.
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { previewBillSource, SourceBillRegister } from './source-bills.ts';
+import { BillReviewDraftStore } from './bill-review-drafts.ts';
 import { validateSourceBillRecords } from './source-bill-graph.ts';
+import { isBillFinancialReviewStale } from '../shared/source-bills.ts';
 import type { BillMailSource, SourceBillOccurrence } from '../shared/source-bills.ts';
 import type { PrivateWorkspaceBackup } from '../shared/private-workspace-backup.ts';
 import { plantPrivateFiles, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
@@ -38,6 +40,57 @@ function alterBackup(backup: PrivateWorkspaceBackup, change: (snapshot: Snapshot
 }
 
 describe('source-bill retention through private backup', () => {
+  it('restores retained financial claims, stale basis and unfinished encrypted finance drafts under a different key', async () => {
+    const from = await fixture(), to = await fixture(), at = Date.parse('2026-10-01T00:00:00Z');
+    const database = new WorkflowDatabase({ dir: from.directory, key: from.key });
+    const register = new SourceBillRegister(database, { dataDir: from.directory, now: () => at });
+    const mail = source(1), accepted = register.accept(review(mail, 1), mail, from.workspaceId);
+    const observation = { provenance: 'simulated' as const, sourceKind: 'external-record' as const, sourceIds: ['SYN-BACKUP-FINANCE'],
+      locator: 'Fictional finance scope', accountContext: 'Fictional office', observedAt: at - 1000, coverage: 'complete' as const,
+      entry: 'recorded' as const, payment: 'confirmed-paid' as const, funding: 'sufficient' as const, advance: 'outstanding' as const, note: 'Synthetic backup fixture' };
+    register.reviewFinancial(accepted.id, { expectedRevision: 1, expectedSourceDigest: accepted.source.digest, sourceReviewed: true, reviewReason: 'Checked fictional sources', observation }, from.workspaceId);
+    const prior = review(mail, 1), changed = register.correct(accepted.id, { ...prior, facts: { ...prior.facts, amountCents: 999 }, expectedRevision: 2, state: 'hold' }, mail, from.workspaceId);
+    const drafts = new BillReviewDraftStore(database, { workspaceId: from.workspaceId, now: () => at });
+    const draft = drafts.create(randomUUID(), null, { workspaceId: from.workspaceId, state: 'editing', billId: changed.id, billRevision: changed.revision,
+      itemId: null, messageId: null, sourceDigest: changed.source.digest, fields: { propertyId: '', kind: '', vendor: '', amount: '', invoiceDate: '', dueDate: '', note: '' },
+      billState: 'hold', reason: '', seriesId: '', arrivalDate: '', proposalRequest: null,
+      financialReview: { ...observation, sourceIds: 'SYN-BACKUP-FINANCE\nStill typing', observedAt: '2026-10-', reviewReason: '' } });
+    database.close();
+    const exported = await from.service.exportBackup(phrase);
+    expect(JSON.stringify(exported.backup)).not.toContain(observation.locator);
+    await to.service.stageRestore({ backup: exported.backup, passphrase: phrase, expectedDigest: exported.receipt.digest });
+    await applyStagedPrivateRestore({ directory: to.directory, key: to.key });
+    const restoredDatabase = new WorkflowDatabase({ dir: to.directory, key: to.key });
+    try {
+      const restored = new SourceBillRegister(restoredDatabase, { dataDir: to.directory }).getOccurrence(changed.id)!;
+      expect(restored).toEqual(changed); expect(isBillFinancialReviewStale(restored)).toBe(true);
+      const restoredDrafts = new BillReviewDraftStore(restoredDatabase, { workspaceId: from.workspaceId });
+      expect(restoredDrafts.get(draft.id)).toEqual(draft);
+      expect(restoredDrafts.page().items[0]).toMatchObject({ id: draft.id, hasFinancialReview: true });
+    } finally { restoredDatabase.close(); }
+  });
+
+  it('restores distinct-invoice review evidence and its historical candidate after a later cancellation', async () => {
+    const from = await fixture(), to = await fixture();
+    const database = new WorkflowDatabase({ dir: from.directory, key: from.key });
+    const register = new SourceBillRegister(database, { dataDir: from.directory });
+    const originalSource = source(1), first = register.accept(review(originalSource, 1), originalSource, from.workspaceId);
+    const resend = { ...originalSource, threadId: 'fictional-resend', message: { ...originalSource.message, id: 'fictional-resend-message' } };
+    const request = review(resend, 1), check = register.duplicateCandidates({ expectedSourceDigest: request.expectedSourceDigest, facts: request.facts }, resend);
+    const accepted = register.accept({ ...request, duplicateReview: { reviewDigest: check.reviewDigest } }, resend, from.workspaceId);
+    register.correct(first.id, { ...review(originalSource, 1), expectedRevision: 1, state: 'cancelled' }, originalSource, from.workspaceId);
+    database.close();
+    const exported = await from.service.exportBackup(phrase);
+    await to.service.stageRestore({ backup: exported.backup, passphrase: phrase, expectedDigest: exported.receipt.digest });
+    await applyStagedPrivateRestore({ directory: to.directory, key: to.key });
+    const restoredDatabase = new WorkflowDatabase({ dir: to.directory, key: to.key });
+    try {
+      const restored = new SourceBillRegister(restoredDatabase, { dataDir: to.directory });
+      expect(restored.getOccurrence(accepted.id)).toEqual(accepted);
+      expect(restored.getOccurrence(first.id)?.state).toBe('cancelled');
+    } finally { restoredDatabase.close(); }
+  });
+
   it('refuses an otherwise valid imported bill head larger than the live encrypted record ceiling', async () => {
     const from = await fixture(), to = await fixture();
     const database = new WorkflowDatabase({ dir: from.directory, key: from.key });

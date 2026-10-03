@@ -4,10 +4,15 @@
 // HTML: no rehype-raw, so HTML in the text renders as text; Shiki's output is
 // generator-escaped. While a message is still streaming, code blocks render
 // as plain <pre> and nothing is cached — partial fences would poison it.
-import { memo, useEffect, useState, type ReactNode } from "react";
-import Markdown from "react-markdown";
+// Only plain https links are clickable; the desktop window refuses every other
+// scheme, so mailto:, tel:, http: and the rest read as text the person can copy.
+import { isValidElement, memo, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { useCopyText } from "@/lib/use-copy-text";
+import { BANK_FEED_CONNECT_HREF } from "@shared/ask-controls";
+import { BankFeedConnect } from "./ConnectedAppsCard";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed, capped, never written while streaming
@@ -23,20 +28,21 @@ const hash = (s: string) => {
 };
 
 function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
-  const [html, setHtml] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [highlight, setHighlight] = useState<{ code: string; lang: string; html: string } | null>(null);
+  const { state: copyState, copy } = useCopyText(code);
+  const html = !streaming && highlight?.code === code && highlight.lang === lang ? highlight.html : null;
 
   useEffect(() => {
     if (streaming) return;
     const key = `${lang}:${hash(code)}`;
     const cached = highlightCache.get(key);
-    if (cached) return setHtml(cached);
+    if (cached) return setHighlight({ code, lang, html: cached });
     let alive = true;
     import("shiki")
       .then((shiki) =>
         shiki.codeToHtml(code, {
           lang: lang || "text",
-          theme: "github-dark-default",
+          theme: "github-light",
         }),
       )
       .then((out) => {
@@ -46,7 +52,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
           if (first) highlightCache.delete(first);
         }
         highlightCache.set(key, out);
-        setHtml(out);
+        setHighlight({ code, lang, html: out });
       })
       .catch(() => {
         /* unknown language or shiki failed — the plain <pre> stays */
@@ -56,41 +62,78 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
     };
   }, [code, lang, streaming]);
 
-  const copy = () => {
-    void navigator.clipboard?.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
-      <div className="flex items-center justify-between border-b border-hairline/30 px-3 py-1">
-        <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || "code"}</span>
+    <div className="chat-code-block my-2 min-w-0 overflow-hidden rounded-lg border border-line bg-sheet">
+      <div className="chat-code-header flex items-center justify-between border-b border-line px-3">
+        <span className="text-[12px] text-ink-secondary">{lang || "Plain text"}</span>
         <button
-          onClick={copy}
-          className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-          title="Copy code"
+          type="button"
+          onClick={() => void copy()}
+          disabled={copyState === "copying"}
+          className="flex min-h-10 items-center gap-1.5 rounded px-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"
+          aria-label={copyState === "failed" ? "Try copying code again" : "Copy code"}
         >
-          {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+          {copyState === "copied" ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+          {copyState === "copied" ? "Copied" : copyState === "copying" ? "Copying…" : copyState === "failed" ? "Try again" : "Copy"}
         </button>
       </div>
-      {html ? (
+      <div className="chat-code-scroll overflow-x-auto" tabIndex={0} role="region" aria-label={lang ? `${lang} code` : "Code block"}>
+        {html ? (
         <div
-          className="overflow-x-auto text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-3"
+          className="text-[13px] leading-relaxed [&_pre]:!bg-transparent [&_pre]:m-0 [&_pre]:p-4"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (
-        <pre className="overflow-x-auto p-3 text-[13px] leading-relaxed text-ink">{code}</pre>
-      )}
+        <pre className="p-4 text-[13px] leading-relaxed text-ink">{code}</pre>
+      )}</div>
+      <span role="status" className={copyState === "failed" ? "block px-4 pb-3 text-[12px] text-ink-secondary" : "sr-only"}>{copyState === "failed" ? "Couldn’t copy. Try again, or select the code." : copyState === "copied" ? "Code copied to clipboard" : ""}</span>
     </div>
   );
 }
+
+const LINK_CLASS = "break-words text-accent underline decoration-accent/40 hover:decoration-accent";
+
+/** The same rule as the desktop window (electron/external-links.mjs): https,
+ * with no user name or password in the address. */
+function opensFromChat(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+const textOf = (node: ReactNode): string =>
+  typeof node === "string" || typeof node === "number" ? String(node)
+    : Array.isArray(node) ? node.map(textOf).join("")
+      : isValidElement<{ children?: ReactNode }>(node) ? textOf(node.props.children) : "";
+
+/** A link that cannot open from chat, as selectable text. The address follows
+ * the words unless the words already are the address (bare emails, www.). */
+function LinkAsText({ href, children }: { href: string; children?: ReactNode }) {
+  const words = textOf(children).trim();
+  const bare = href.replace(/^(?:mailto:|tel:|https?:\/\/)/i, "");
+  const showAddress = href !== "" && words !== href && words !== bare;
+  return (
+    <span className="break-words">
+      {children}
+      {showAddress && <span className="break-all text-ink-secondary"> ({href})</span>}
+    </span>
+  );
+}
+
+// Links keep their written address so a refused one can be shown as text; it
+// never reaches an href unless it is https or a same-page #fragment. Images
+// keep react-markdown's own sanitising.
+const keepLinkAddress = (url: string, key: string) => (key === "href" ? url : defaultUrlTransform(url));
 
 function ChatMarkdownComponent({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={keepLinkAddress}
         components={{
           pre({ children }: { children?: ReactNode }) {
             // fenced code arrives as <pre><code class="language-x">…</code></pre>
@@ -119,56 +162,57 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
               <code className="rounded bg-inset px-1 py-px text-[13px]">{children}</code>
             );
           },
-          a({ href, children }: { href?: string; children?: ReactNode }) {
+          a({ href = "", children, node: _node, ...rest }: ComponentProps<"a"> & { node?: unknown }) {
+            // footnote references and back-links stay on this page
+            if (href === BANK_FEED_CONNECT_HREF) return <BankFeedConnect />;
+            if (href.startsWith("#")) {
+              return <a {...rest} href={href} className={LINK_CLASS}>{children}</a>;
+            }
+            if (!opensFromChat(href)) return <LinkAsText href={href}>{children}</LinkAsText>;
             return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                className="break-words text-accent underline decoration-accent/40 hover:decoration-accent"
-              >
+              <a href={href} target="_blank" rel="noreferrer" className={LINK_CLASS}>
                 {children}
               </a>
             );
           },
           table({ children }: { children?: ReactNode }) {
             return (
-              <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Response table">
+              <div className="chat-table-scroll overflow-x-auto" tabIndex={0} role="region" aria-label="Response table">
                 <table className="w-full border-collapse text-[13.5px]">{children}</table>
               </div>
             );
           },
-          th({ children }: { children?: ReactNode }) {
+          th({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
             return (
-              <th className="border-b border-hairline/40 px-2 py-1.5 text-left font-semibold">{children}</th>
+              <th scope="col" style={style} className="border-b border-hairline/40 px-2 py-1.5 text-left font-semibold">{children}</th>
             );
           },
-          td({ children }: { children?: ReactNode }) {
-            return <td className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
+          td({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
+            return <td style={style} className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
           },
-          ul({ children }: { children?: ReactNode }) {
-            return <ul className="list-disc space-y-1 pl-5">{children}</ul>;
+          ul({ children, className }: { children?: ReactNode; className?: string }) {
+            return <ul className={`list-disc space-y-1 pl-5${className ? ` ${className}` : ""}`}>{children}</ul>;
           },
-          ol({ children }: { children?: ReactNode }) {
-            return <ol className="list-decimal space-y-1 pl-5">{children}</ol>;
+          ol({ children, start }: { children?: ReactNode; start?: number }) {
+            return <ol start={start} className="list-decimal space-y-1 pl-5">{children}</ol>;
           },
           h1({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[16px] font-semibold">{children}</div>;
+            return <h2 className="chat-md-heading mt-2 text-[18px] font-semibold">{children}</h2>;
           },
           h2({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[15.5px] font-semibold">{children}</div>;
+            return <h3 className="chat-md-heading mt-2 text-[16px] font-semibold">{children}</h3>;
           },
           h3({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <h4 className="chat-md-heading mt-1.5 font-semibold">{children}</h4>;
           },
           h4({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <h5 className="chat-md-heading mt-1.5 font-semibold">{children}</h5>;
           },
           h5({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 text-[14px] font-semibold">{children}</div>;
+            return <h6 className="chat-md-heading mt-1.5 text-[14px] font-semibold">{children}</h6>;
           },
           h6({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 text-[13.5px] font-semibold text-ink-secondary">{children}</div>;
+            return <h6 className="chat-md-heading mt-1.5 text-[13.5px] font-semibold text-ink-secondary">{children}</h6>;
           },
           blockquote({ children }: { children?: ReactNode }) {
             return (

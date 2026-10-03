@@ -14,8 +14,9 @@ const request = { headers: { authorization: 'Bearer fictional-session-never-pers
 const STATE = '/api/company/department-outbox', ACK = `${STATE}/ack`, KEY = 'department-outbox';
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
-function operation(action: 'create' | 'assign' | 'close' | 'recover' | 'lifecycle' = 'create'): DepartmentOutboxOperation {
+function operation(action: 'create' | 'assign' | 'close' | 'recover' | 'lifecycle' | 'configuration' = 'create'): DepartmentOutboxOperation {
   const common = { departmentId: randomUUID(), requestId: randomUUID() };
+  if (action === 'configuration') return normalizeDepartmentOperation('/api/company/departments/configuration/save', {...common,expectedRevision:'2',configuration:{version:1,template:'custom',plans:[],workflowDefaults:[]},reviewDigest:'a'.repeat(64),note:'Reviewed empty selection',sourceReceiptId:null});
   if (action === 'create') return normalizeDepartmentOperation('/api/company/departments/cases/create', { ...common,
     title: 'Fictional private department task', description: 'Private task instructions', assigneeMemberId: null });
   if (action === 'lifecycle') return normalizeDepartmentOperation('/api/company/departments/lifecycle', { ...common, expectedRevision: '2', retired: true, note: 'Retain completed office records' });
@@ -37,8 +38,9 @@ async function fixture() {
       const replayed = committed.has(op.input.requestId);
       if (!replayed) committed.set(op.input.requestId, structuredClone(op));
       const id = op.path === '/api/company/departments/cases/create' ? op.input.requestId
-        : op.path === '/api/company/departments/lifecycle' ? op.input.departmentId : op.input.caseId;
-      return { status: 200, body: { [op.path.endsWith('/lifecycle') ? 'department' : 'item']: { id }, receiptId: op.input.requestId, replayed } };
+        : (op.path === '/api/company/departments/lifecycle' || op.path === '/api/company/departments/configuration/save') ? op.input.departmentId : op.input.caseId;
+      if (op.path === '/api/company/departments/configuration/save') return {status:200,body:{department:{id,name:'Fictional department',revision:String(BigInt(op.input.expectedRevision)+1n),access:'write',retiredAt:null,retiredBy:null,retirementNote:'',unresolvedCases:0},configuration:op.input.configuration,receiptId:op.input.requestId,replayed}};
+      return { status: 200, body: { [(op.path.endsWith('/lifecycle') || op.path.endsWith('/configuration/save')) ? 'department' : 'item']: { id }, receiptId: op.input.requestId, replayed } };
     });
   });
   const open = (overrides: Partial<Options> = {}) => createCompanyDepartmentOutbox({ vault, forward,
@@ -51,6 +53,62 @@ async function fixture() {
 }
 
 describe('durable department mutation journal', () => {
+  it.each([
+    ['create', 'title'], ['create', 'description'], ['close', 'note'], ['recover', 'note'], ['lifecycle', 'note'],
+  ] as const)('refuses malformed Unicode in %s %s before journaling or forwarding, preserving valid Unicode', async (action, field) => {
+    const f = await fixture(), op = operation(action), write = vi.spyOn(f.vault, 'write'), outbox = f.open();
+    for (const value of ['\uD800', '\uDC00', 'Fictional\uD800text', '\uDC00\uD800']) {
+      expect((await outbox.handle(op.path, 'POST', request, { ...op.input, [field]: value })).status).toBe(400);
+    }
+    expect(write).not.toHaveBeenCalled(); expect(f.forward).not.toHaveBeenCalled();
+    expect(await f.vault.read(KEY)).toBeUndefined(); expect(await outbox.localState()).toBeNull();
+    const valid = { ...op.input, [field]: 'Fictional café 🏡' };
+    expect((await outbox.handle(op.path, 'POST', request, valid)).status).toBe(200);
+    expect(f.committed.get(op.input.requestId)?.input).toEqual(valid);
+  });
+  it('clears a first definitive no-op configuration refusal without confirming or blocking future changes', async () => {
+    const f = await fixture(), op = operation('configuration'), outbox = f.open();
+    f.setBehavior(async () => ({ status: 400, body: { code: 'invalid_input' } }));
+    expect(await outbox.handle(op.path, 'POST', request, op.input)).toEqual({ status: 400, body: { code: 'invalid_input' } });
+    expect(await f.vault.read(KEY)).toBeUndefined(); expect(await outbox.departureAllowed()).toBe(true);
+    expect(f.committed.size).toBe(0);
+    f.setBehavior(async (_operation, commit) => commit());
+    expect((await outbox.handle(op.path, 'POST', request, { ...op.input, requestId: randomUUID() })).status).toBe(200);
+  });
+  it('refuses malformed Unicode configuration and review reasons before journaling or forwarding', async () => {
+    const f = await fixture(), op = operation('configuration'), write = vi.spyOn(f.vault, 'write'), outbox = f.open();
+    for (const input of [{ ...op.input, note: 'Reviewed\uD800' }, { ...op.input, configuration: { version: 1, template: 'custom', plans: [], workflowDefaults: [{ id: 'accounts', label: 'Accounts\uDC00', defaultRecipeId: null }] } }]) {
+      expect((await outbox.handle(op.path, 'POST', request, input)).status).toBe(400);
+    }
+    expect(write).not.toHaveBeenCalled(); expect(f.forward).not.toHaveBeenCalled();
+    expect(await outbox.localState()).toBeNull();
+  });
+  it.each(['content','revision','missing-configuration'] as const)('keeps configuration pending and refuses acknowledgment after a malformed %s success',async issue=>{
+    const f=await fixture(),op=operation('configuration');
+    f.setBehavior(async(_operation,commit)=>{const result=commit(),body=result.body as any;
+      if(issue==='content')body.configuration={...body.configuration,template:'property-management'};
+      if(issue==='revision')body.department.revision='98';
+      if(issue==='missing-configuration')delete body.configuration;
+      return result;
+    });
+    const service=f.open();expect((await service.handle(op.path,'POST',request,op.input)).status).toBe(503);
+    expect(await f.vault.read(KEY)).toMatchObject({phase:'pending',input:op.input});
+    expect((await service.handle(ACK,'POST',request,{requestId:op.input.requestId})).status).toBe(409);
+    f.setBehavior(async(_operation,commit)=>commit());
+    expect((await f.open().handle(op.path,'POST',request,op.input)).status).toBe(200);
+    expect(f.committed.size).toBe(1);expect(await f.vault.read(KEY)).toMatchObject({phase:'confirmed'});
+  });
+  it('preserves exact configuration and rollback source through a lost reply, restart and explicit replay',async()=>{
+    const f=await fixture(),op=operation('configuration');let lost=true;
+    f.setBehavior(async(_operation,commit)=>{const result=commit();if(lost){lost=false;throw new Error('Lost configuration save reply');}return result;});
+    expect((await f.open().handle(op.path,'POST',request,op.input)).status).toBe(503);
+    expect((await f.vault.read(KEY) as {input:unknown}).input).toEqual(op.input);
+    const result=await f.open().handle(op.path,'POST',request,op.input);
+    expect(result.status).toBe(200);expect(f.committed.size).toBe(1);
+    expect((await f.vault.read(KEY) as {phase:string}).phase).toBe('confirmed');
+    const different={...op.input,note:'Different reviewed change'};
+    expect((await f.open().handle(op.path,'POST',request,different)).status).toBe(409);
+  });
   it('persists before dispatch, recovers an encrypted uncertain request after restart, and replays once', async () => {
     const f = await fixture(), op = operation(); let lose = true;
     f.setBehavior(async (sent, commit) => {
@@ -73,9 +131,9 @@ describe('durable department mutation journal', () => {
     expect(await f.open().localState()).toBeNull();
   });
 
-  it.each(['create', 'assign', 'close', 'recover', 'lifecycle'] as const)('normalizes and validates the %s operation and its receipt identity', async action => {
+  it.each(['create', 'assign', 'close', 'recover', 'lifecycle', 'configuration'] as const)('normalizes and validates the %s operation and its receipt identity', async action => {
     const f = await fixture(), op = operation(action), outbox = f.open();
-    const input = { ...op.input, departmentId: op.input.departmentId.toUpperCase(), requestId: op.input.requestId.toUpperCase() };
+    const input = { ...op.input, departmentId: action==='configuration'?op.input.departmentId:op.input.departmentId.toUpperCase(), requestId: action==='configuration'?op.input.requestId:op.input.requestId.toUpperCase() };
     if ('title' in input) { input.title = ` ${input.title} `; input.description = ` ${input.description} `; }
     if ('note' in input) input.note = ` ${input.note} `;
     expect((await outbox.handle(op.path, 'POST', request, input)).status).toBe(200);

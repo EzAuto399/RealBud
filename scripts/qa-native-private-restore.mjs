@@ -20,7 +20,10 @@ const reproduceWelcomeBlock = args[0] === '--reproduce-welcome-restore-block', w
 const welcomeRestore = args[0] === '--welcome-restore' || welcomeCancelSetup;
 const mode = reproduceWelcomeBlock ? 'expected-welcome-restore-block' : welcomeCancelSetup ? 'welcome-cancel-normal-setup' : welcomeRestore ? 'welcome-private-restore' : 'native-private-restore';
 const welcomeSourceContact = 'Fictional Imported Office Contact';
-assert.ok(process.env.REALBUD_QA_RESOURCES && process.env.REALBUD_QA_EXECUTABLE && process.env.REALBUD_QA_PACKAGE_RECEIPT && process.env.PLAYWRIGHT_MODULE && process.env.QA_OUTPUT, 'Set REALBUD_QA_RESOURCES, REALBUD_QA_EXECUTABLE, REALBUD_QA_PACKAGE_RECEIPT, PLAYWRIGHT_MODULE and a new QA_OUTPUT.');
+// Environment-gated: this proves a packaged macOS build only. Without one it
+// refuses and exits non-zero; a refusal is "not run", never a pass.
+const missingEnv = ['REALBUD_QA_RESOURCES', 'REALBUD_QA_EXECUTABLE', 'REALBUD_QA_PACKAGE_RECEIPT', 'PLAYWRIGHT_MODULE', 'QA_OUTPUT'].filter(name => !process.env[name]);
+assert.deepEqual(missingEnv, [], `ENVIRONMENT-GATED, NOT RUN (not a pass): qa-native-private-restore needs a packaged RealBud build. Missing: ${missingEnv.join(', ')}. Set REALBUD_QA_RESOURCES=<RealBud.app>/Contents/Resources, REALBUD_QA_EXECUTABLE=<RealBud.app>/Contents/MacOS/RealBud, REALBUD_QA_PACKAGE_RECEIPT=<passing source-bound package-receipt.json beside manifest.json and app-manifest.json>, PLAYWRIGHT_MODULE=<playwright index.mjs> and QA_OUTPUT=<new directory>.`);
 const script = fileURLToPath(import.meta.url), root = resolve(dirname(script), '..');
 const output = resolve(process.env.QA_OUTPUT);
 mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
@@ -82,7 +85,15 @@ async function protocol(url) {
   return {
     send(method, params = {}) { return new Promise((resolve, reject) => { const number = ++id; const timer = setTimeout(() => { pending.delete(number); reject(new Error(`Inspector timed out: ${method}`)); }, 15000); pending.set(number, { resolve, reject, timer }); socket.send(JSON.stringify({ id: number, method, params })); }); },
     event(method) { return new Promise(resolve => events.set(method, [...(events.get(method) ?? []), resolve])); },
-    async evaluate(expression) { const result = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, includeCommandLineAPI: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || 'Native fixture setup failed'); return result.result?.value; },
+    async evaluate(expression) {
+      // These fixture reads and writes are synchronous. awaitPromise would
+      // wrap even their plain results in an inspector-owned Promise that can
+      // be collected while Electron's startup context is changing.
+      const result = await this.send('Runtime.evaluate', { expression, awaitPromise: false, returnByValue: true, includeCommandLineAPI: true });
+      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || 'Native fixture setup failed');
+      assert.notEqual(result.result?.subtype, 'promise', 'Native QA inspector expressions must remain synchronous.');
+      return result.result?.value;
+    },
     close() { socket.close(); for (const p of pending.values()) clearTimeout(p.timer); },
   };
 }
@@ -116,8 +127,8 @@ async function protectedDigest() {
 }
 async function ipc(method) { return page.evaluate(method => window.ogb[method](), method); }
 async function captureBackupContext(panel, name) {
-  // You owns an internal scroller and sticky section navigation. Keep the
-  // actual panel heading below that navigation instead of clipping it with a
+  // Workspace owns an internal scroller. Keep the actual panel heading
+  // comfortably inside it instead of clipping it with a
   // locator screenshot of a panel taller than the native window.
   await panel.evaluate(element => {
     const scroller = element.closest('[data-you-scroll]');
@@ -227,13 +238,14 @@ async function reproduceWelcomeRestoreBlock() {
   assert.equal((await api('/api/private-backup')).canRestore, true, 'Saving the sample profile alone must not be mistaken for the book mutation.');
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
-  await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Workspace', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'complete');
   const after = await api('/api/private-backup'), afterBook = await api('/api/desk');
   const refusal = 'Restore requires a fresh workspace with only its untouched sample book. Existing private work is kept.';
   assert.equal(after.canRestore, false); assert.equal(after.reason, refusal);
   assert.ok(afterBook.revision > beforeBook.revision); assert.equal(afterBook.book.office.pmUser, 'Sample PM');
   await page.goto(origin + '/#/you');
+  await page.locator('details#you-settings > summary').click();
   await page.locator('details#you-advanced > summary').click();
   const panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
   await panel.getByText(refusal, { exact: true }).waitFor();
@@ -396,7 +408,7 @@ async function finishRestoredWelcome() {
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
-  await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Workspace', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'complete');
   const after = await api('/api/desk'); assert.equal(after.book.office.pmUser, welcomeSourceContact); assert.equal(after.revision, before.revision);
   assert.equal(welcomeAgencyWrites, 0); assert.deepEqual(onboardingFixture, []);
@@ -465,7 +477,8 @@ async function runScenario() {
   else {
     await prepareBackupOnboarding('fresh-restore-target');
     assert.equal((await api('/api/private-backup')).canRestore, true, 'Onboarding fixture setup must preserve the fresh restore target.');
-    await page.goto(origin + '/#/you'); await page.reload(); await page.locator('details#you-advanced > summary').click();
+    await page.goto(origin + '/#/you'); await page.reload();
+    await page.locator('details#you-settings > summary').click(); await page.locator('details#you-advanced > summary').click();
     panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
   }
   if (welcomeCancelSetup) { await finishNormalWelcomeAfterCancel(firstDigest); return; }
@@ -555,7 +568,18 @@ try {
   const restoredScans=await api('/api/mail-workspace/scans?limit=1');
   assert.equal(restoredScans.total,2);assert.deepEqual(restoredScans.items[0],billFixture.mail.metadata.latestScan);
   await page.goto(origin+'/#/desk');
-  await page.getByRole('button',{name:'Open mail priorities',exact:true}).click();
+  await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
+  await page.locator('.desk-options > summary').click();
+  await page.getByRole('button',{name:'Customize desk',exact:true}).click();
+  let changedDeskLayout=false;
+  for(const label of ['Show Mail priorities','Show Bills and calendar']){
+    const visible=page.getByLabel(label,{exact:true});
+    if(!await visible.isChecked()){await visible.check();changedDeskLayout=true;}
+  }
+  if(changedDeskLayout){await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Desk layout saved.',{exact:true}).waitFor();}
+  await page.getByRole('button',{name:'Close Customize desk',exact:true}).click();
+  await page.locator('.desk-other-work > summary').click();
+  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const mailPanel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});
   await mailPanel.getByRole('button',{name:'Done (1)',exact:true}).click();
   await mailPanel.getByText('Your note: '+billFixture.mail.item.note,{exact:true}).waitFor();
@@ -569,8 +593,9 @@ try {
   let proposalPosts = 0;
   const countProposalPost = request => { if (new URL(request.url()).pathname === '/api/bill-proposals' && request.method() === 'POST') proposalPosts++; };
   page.on('request', countProposalPost);
-  await page.goto(origin+'/#/desk');
-  await page.getByRole('button', { name: 'Open bills and calendar', exact: true }).click();
+  await page.getByRole('region',{name:'Mail priorities',exact:true}).getByRole('button',{name:'Back to tasks',exact:true}).click();
+  await page.locator('.desk-other-work > summary').click();
+  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
   const billsPanel = page.getByRole('region', { name: 'Source-linked bills and calendar', exact: true });
   await billsPanel.locator(`[data-review-id="${retainedDraft.id}"]`).getByRole('button', { name: 'Continue saved review', exact: true }).click();
   const reviewForm = billsPanel.getByRole('form', { name: 'Review source bill', exact: true });
@@ -592,7 +617,8 @@ try {
   await page.screenshot({path: join(output, 'native-restored-bill-review.png')});
   pass('Encrypted bill draft reopens after native different-key restore while source is unavailable; historical Check makes no proposal POST and manual notes save with the original request ID');
   await page.goto(origin+'/#/you');
-  await page.waitForLoadState(); await page.reload(); await page.locator('details#you-advanced > summary').click(); await panel.waitFor();
+  await page.waitForLoadState(); await page.reload();
+  await page.locator('details#you-settings > summary').click(); await page.locator('details#you-advanced > summary').click(); await panel.waitFor();
   assert.equal(await panel.getByText('Restore staged — restart required', { exact: true }).count(), 0);
   const completedPanel = panel.getByRole('region', { name: 'Completed private restore', exact: true });
   await completedPanel.getByRole('heading', { name: 'Last restore completed', exact: true }).waitFor();

@@ -21,6 +21,19 @@ async function fixture(run?: HermesEngineExec) {
 const command = (args: string[]) => args.slice(6, -1);
 
 describe("Hermes native browser transport lifecycle", () => {
+  it('transfers only host-staged paths with fresh observed controls through the pinned engine', async () => {
+    const f = await fixture(); await f.transport.start();
+    const path = join(f.root, 'fictional invoice.csv');
+    await f.transport.step({ kind: 'download', tab: 1, ref: '@e2', path });
+    await f.transport.step({ kind: 'upload', tab: 1, ref: '@e3', path });
+    expect(f.calls.map(command)).toContainEqual(['download', '@e2', path]);
+    expect(f.calls.map(command)).toContainEqual(['upload', '@e3', path]);
+    for (const bad of ['relative.csv', '--profile', join(f.root, 'folder') + '/../escape.csv', path + '\n']) {
+      await expect(f.transport.step({ kind: 'upload', tab: 1, ref: '@e3', path: bad })).rejects.toThrow(/staged/);
+    }
+    expect(f.calls.map(command).filter(args => args[0] === 'upload')).toHaveLength(1);
+    await f.transport.stop();
+  });
   it("does nothing when stopped before startup and cannot be restarted", async () => {
     const f = await fixture(); await f.transport.stop();
     expect(f.transport.state).toBe("released"); expect(f.calls).toEqual([]);

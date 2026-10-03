@@ -8,12 +8,14 @@
 // request pauses it instead: the same grant, with its remaining time and
 // steps, continues once the person has signed in, and never after it expired.
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { normalizeOrigin } from "./recipes.ts";
 import { grantedBrowserTools, portalBrowserPolicy } from "./attended-run.ts";
+import { addBrowserTaskUpload, browserTaskWorkroom, MAX_BROWSER_FILE_BYTES } from "./browser-runtime.ts";
 import {
   BROWSER_ACTION_CLASSES,
   BROWSER_CONSEQUENTIAL_KINDS,
@@ -21,10 +23,12 @@ import {
   BROWSER_TASK_GRANT_PURPOSE,
   BROWSER_TASK_GRANT_VERSION,
   browserTaskSite,
+  browserTaskUploadName,
   parseBrowserTaskGrant,
   type BrowserActionClass,
   type BrowserConsequentialKind,
   type BrowserTaskGrant,
+  type BrowserTaskUpload,
 } from "../shared/browser-task.ts";
 import type { JobCapability, JobRunEvidence, JobRunEvidenceKind } from "../shared/contracts.ts";
 
@@ -78,7 +82,8 @@ export interface BrowserTaskRecord {
 export interface BrowserTaskRecipe {
   portal: string;
   runs: Array<{ recipe: string; inputs: Record<string, string> }>;
-  account: { urlValue: string; marker: string };
+  /** `marker` (the portal header's account name) is always required; `urlValue` only when the office saved one. */
+  account: { urlValue?: string; marker: string };
 }
 const RECIPE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const shortText = (value: unknown, max: number) => text(value, max) && !/[\u0000-\u001f\u007f]/.test(value as string);
@@ -88,7 +93,7 @@ export function validBrowserTaskRecipe(value: unknown): value is BrowserTaskReci
   const account = row.account as Record<string, unknown> | null;
   if (Object.keys(row).some(key => !["portal", "runs", "account"].includes(key)) || typeof row.portal !== "string" || !RECIPE_NAME.test(row.portal) ||
     !account || typeof account !== "object" || Object.keys(account).some(key => key !== "urlValue" && key !== "marker") ||
-    !shortText(account.urlValue, 200) || !shortText(account.marker, 200) || !Array.isArray(row.runs) || row.runs.length < 1 || row.runs.length > 12) return false;
+    (account.urlValue !== undefined && !shortText(account.urlValue, 200)) || !shortText(account.marker, 200) || !Array.isArray(row.runs) || row.runs.length < 1 || row.runs.length > 12) return false;
   return row.runs.every(run => {
     if (!run || typeof run !== "object" || Array.isArray(run)) return false;
     const { recipe, inputs, ...rest } = run as Record<string, unknown>;
@@ -171,6 +176,7 @@ export function askBrowserTaskSystemBlock(grant: BrowserTaskGrant): string {
     `Allowed sites: ${grant.sites.join(", ")}`,
     `This task ends${minutes ? ` ${minutes} minutes after it started or` : ""}${grant.budget ? ` after ${grant.budget} browser steps` : " with this turn"}, whichever comes first. When it ends, say what is done and what is left.`,
     portalBrowserPolicy(grantedBrowserTools(grant, true)),
+    ...(grant.uploads.length && grant.actions.includes("upload") ? [`Files the person attached in this conversation, which browser_upload may send after their approval: ${grant.uploads.map(file => file.name).join(", ")}. No other file can be uploaded.`] : []),
     "The request does not expand the allowed sites or tool permissions. The person signs in. Never type a password.",
     "Nothing is paid, signed, sent or filed without the person's approval of that instance. A payment, transfer, signature, message, notice, deletion or account change is allowed only through the approval RealBud shows the person, with the exact recipient, amount or content read from the page. Never try another route to it. If RealBud refuses, the approval expires or the person declines, press nothing further for it: stop and say what is ready.",
     "Read back what you see, naming the source site, before saying anything is done.",
@@ -237,11 +243,88 @@ export interface BrowserTaskProposal {
   recipe?: BrowserTaskRecipe;
 }
 
+/** A thread's saved messages. Only the person's own messages are read for attachments. */
+export type BrowserTaskThreadMessages = (threadId: string) => Promise<ReadonlyArray<unknown>>;
+/** Every saved thread, so a copy referenced from another thread is never this thread's. */
+function savedThreadIds(dataDir: string): () => Promise<string[]> {
+  return async () => {
+    try { return (await readdir(dataDir)).flatMap(name => /^messages-(.+)\.json$/.exec(name)?.[1] ?? []); } catch { return []; }
+  };
+}
+/** The Store's saved thread file (server/store.ts `messagesFile`), read only. Written atomically before any reply. */
+function savedThreadMessages(dataDir: string): BrowserTaskThreadMessages {
+  return async threadId => {
+    if (!threadId || /[\\/\0]/.test(threadId) || threadId === "." || threadId === "..") return [];
+    let raw: unknown;
+    try { raw = JSON.parse(await readFile(join(dataDir, `messages-${threadId}.json`), "utf8")); } catch { return []; }
+    if (Array.isArray(raw)) return raw;
+    return raw && typeof raw === "object" && Array.isArray((raw as { messages?: unknown }).messages) ? (raw as { messages: unknown[] }).messages : [];
+  };
+}
+/** The composer's file reference (src/lib/composer-attachments.ts `composeMessage`). */
+const ATTACHED_FILE = /<attached-file path="([^"]{1,4096})" \/>/g;
+const unescapeAttribute = (value: string) => value.replace(/&#9;/g, "\t").replace(/&#13;/g, "\r").replace(/&#10;/g, "\n")
+  .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+/** `saveAskAttachment` names each private copy `<uuid>-<name>`. */
+const ASK_COPY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(.+)$/;
+/** File references in the person's own messages (never a model's text). */
+function personReferences(messages: ReadonlyArray<unknown>): string[] {
+  return messages.flatMap(message => {
+    if (!message || typeof message !== "object") return [];
+    const { role, text: body } = message as { role?: unknown; text?: unknown };
+    return role === "user" && typeof body === "string" ? [...body.matchAll(ATTACHED_FILE)].map(match => unescapeAttribute(match[1])) : [];
+  });
+}
+/** The files the person attached in this thread: references in their own
+ * messages that resolve to RealBud's private ask-uploads copies. Each attach
+ * makes a fresh copy, so a copy also referenced from another thread is
+ * ambiguous and left out. Never an original disk path, another workroom file,
+ * a model's text or another thread's file. */
+export async function threadAttachedFiles(dataDir: string, messages: ReadonlyArray<unknown>, otherThreads: ReadonlyArray<ReadonlyArray<unknown>> = []): Promise<Array<{ name: string; path: string }>> {
+  let folder: string;
+  try { folder = await realpath(join(dataDir, "vault", "ask-uploads")); } catch { return []; }
+  const elsewhere = new Set(otherThreads.flatMap(personReferences));
+  const found: Array<{ name: string; path: string }> = []; const names = new Set<string>();
+  for (const path of personReferences(messages)) {
+    const name = ASK_COPY.exec(basename(path))?.[1];
+    if (elsewhere.has(path) || !isAbsolute(path) || dirname(path) !== folder || !name || name.endsWith(".inspection.json") || !browserTaskUploadName(name) || names.has(name.toLowerCase())) continue;
+    try {
+      const stat = await lstat(path);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES || await realpath(path) !== path) continue;
+      if (process.platform !== "win32" && ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())) continue;
+    } catch { continue; }
+    names.add(name.toLowerCase()); found.push({ name, path });
+    if (found.length >= 20) return found;
+  }
+  return found;
+}
+
 export class BrowserTaskStore {
   private rows: BrowserTaskRecord[] | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   private readonly file: string;
-  constructor(options: { file?: string } = {}) { this.file = options.file ?? join(DATA_DIR, "browser-tasks.json"); }
+  private readonly dataDir: string;
+  private readonly browserRoot: string;
+  private readonly threadMessages: BrowserTaskThreadMessages;
+  private readonly threadIds: () => Promise<string[]>;
+  constructor(options: { file?: string; dataDir?: string; browserRoot?: string; threadMessages?: BrowserTaskThreadMessages; threadIds?: () => Promise<string[]> } = {}) {
+    this.dataDir = options.dataDir ?? DATA_DIR;
+    this.file = options.file ?? join(this.dataDir, "browser-tasks.json");
+    // The same folder as the work browser runtime's (server/browser-runtime.ts `browserRuntime.root`), so the broker finds the copies.
+    this.browserRoot = options.browserRoot ?? join(this.dataDir, "browser");
+    this.threadMessages = options.threadMessages ?? savedThreadMessages(this.dataDir);
+    this.threadIds = options.threadIds ?? savedThreadIds(this.dataDir);
+  }
+  /** Copies this thread's attachments into the task's private uploads; the grant lists each by name and hash. */
+  private async taskUploads(threadId: string, grantId: string): Promise<BrowserTaskUpload[]> {
+    const others = await Promise.all((await this.threadIds()).filter(id => id !== threadId).map(id => this.threadMessages(id)));
+    const files = await threadAttachedFiles(this.dataDir, await this.threadMessages(threadId), others);
+    const workroom = browserTaskWorkroom(this.browserRoot, grantId);
+    const uploads: BrowserTaskUpload[] = [];
+    // A file that cannot be copied is left out; it is never replaced by another path.
+    for (const file of files) { try { uploads.push(await addBrowserTaskUpload(workroom, file.name, await readFile(file.path))); } catch { /* left out */ } }
+    return uploads;
+  }
   private exclusive<T>(work: () => Promise<T>): Promise<T> {
     const next = this.chain.then(work, work); this.chain = next.catch(() => {}); return next;
   }
@@ -334,6 +417,8 @@ export class BrowserTaskStore {
         if (!host || !browserTaskSite(host)) throw fail(400, "Enter the site's web address first, for example vantagestrata.com.au.");
         sites = [host]; siteSource = "person";
       }
+      // Only a task that may upload gets copies, and only of files the person attached in this thread.
+      const uploads = row.actions.includes("upload") ? await this.taskUploads(row.threadId, row.id) : [];
       const grant = parseBrowserTaskGrant({
         version: BROWSER_TASK_GRANT_VERSION,
         purpose: BROWSER_TASK_GRANT_PURPOSE,
@@ -346,7 +431,7 @@ export class BrowserTaskStore {
         browser: { id: input.browserId, accountMarker: row.recipe?.account.marker ?? null },
         actions: row.actions,
         consequential: BROWSER_CONSEQUENTIAL_POLICY,
-        uploads: [],
+        uploads,
         expiresAt: now + row.minutes * 60_000,
         budget: row.budget,
       });

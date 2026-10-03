@@ -11,7 +11,22 @@ import { acquireWorkerSetupLock, bootstrapChildRunning, bootstrapPending, bootst
 import { hermesStatus, type HermesStatus } from "./hermes-status.ts";
 import { repairExistingProfile } from "./hermes-lifecycle.ts";
 import { verifyRuntime } from "./hermes-runtime-check.ts";
-import { ensureProfileDirectory } from "./hermes-profile-storage.ts";
+import { ensureProfileDirectory, verifyProfileDirectory } from "./hermes-profile-storage.ts";
+import { privateDirectory, readPrivateJson, writePrivateJson } from "./private-json.ts";
+
+type CompletedRuntime = { version: 1; candidateId: string; commit: string; product: string; tag: string; installerSha256: string };
+function completedRuntime(value: unknown): CompletedRuntime | undefined {
+  if (value === undefined) return undefined;
+  const row = value as Record<string, unknown> | null;
+  if (!row || typeof row !== "object" || Array.isArray(row) ||
+    Object.keys(row).sort().join(",") !== "candidateId,commit,installerSha256,product,tag,version" || row.version !== 1 ||
+    typeof row.commit !== "string" || !/^[a-f0-9]{40}$/.test(row.commit) || typeof row.candidateId !== "string" ||
+    !new RegExp(`^${row.commit}-[a-f0-9]{12}$`).test(row.candidateId) || typeof row.product !== "string" || typeof row.tag !== "string" ||
+    typeof row.installerSha256 !== "string" || !/^[a-f0-9]{64}$/.test(row.installerSha256)) {
+    throw new BootstrapError("Bud’s saved download needs recovery. Existing files are kept; contact RealBud support.");
+  }
+  return row as CompletedRuntime;
+}
 
 export function runtimeUpdateStatus(home = hermesHome()) {
   const selection = readRuntimeSelection(home);
@@ -69,23 +84,58 @@ export function startRuntimeUpdate(options: {
   if (bootstrapChildRunning(home)) throw Object.assign(new Error("An earlier agent setup is still running. Wait for it to stop before starting a new installation."), { status: 409 });
   // Freeze this process's executable before preparing the next launch.
   hermesCli();
-  const release: HermesRelease = options.release ?? HERMES_RECOMMENDED;
-  if (!HERMES_RELEASES.some(entry => entry.commit === release.commit && entry.product === release.product && entry.tag === release.tag)) {
-    throw new BootstrapError(`Hermes ${release.product} is not in the install catalog. Admit it there before staging it.`);
+  const requested = options.release ?? HERMES_RECOMMENDED;
+  const release = HERMES_RELEASES.find(entry => entry.commit === requested.commit && entry.product === requested.product && entry.tag === requested.tag);
+  if (!release) {
+    throw new BootstrapError(`Hermes ${requested.product} is not in the install catalog. Admit it there before staging it.`);
   }
   if (runtimeCommit(before.selected) === release.commit && !options.repair) throw Object.assign(new Error("The recommended agent is already selected. Restart RealBud if the update is waiting."), { status: 409 });
   // Establish the new owned home before bootstrap can recursively create it
   // with inherited Windows ACLs. Existing homes remain verify-only.
   ensureProfileDirectory(home);
-  // Retry in a new directory. Upstream's repository stage updates existing
-  // checkouts via main; it must never run over a selected or failed candidate.
-  const candidateId = `${release.commit}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  const candidate = releaseHome(home, candidateId);
+  // Installer stages always use a fresh directory. Only a receipt written
+  // after all stages finished may reuse a candidate for full verification.
+  let candidateId = `${release.commit}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  let candidate = releaseHome(home, candidateId);
   const lockHome = join(home, ".runtime-install");
+  const completedPath = join(lockHome, "completed-runtime.json");
+  const installerSha256 = bootstrapPlan(process.platform, release, true)?.sha256;
+  if (!installerSha256) throw new BootstrapError("Automatic Bud setup is not available on this computer yet.");
   return startBootstrapInstall({
     timeoutMs: options.timeoutMs, release,
-    run: opts => (options.run ?? runWorkerBootstrap)({ ...opts, home: candidate, lockHome, release, privateRuntime: true }),
-    verify: () => (options.verify ?? verifyRuntime)(candidate, release),
+    run: async opts => {
+      const unlock = acquireWorkerSetupLock(lockHome);
+      try {
+        opts.signal.throwIfAborted();
+        await privateDirectory(lockHome);
+        if (bootstrapChildRunning(lockHome)) throw new BootstrapError("An earlier agent setup is still running. Wait for it to stop before starting a new installation.");
+        const completed = completedRuntime(await readPrivateJson(completedPath, 2_000));
+        if (completed && completed.commit === release.commit && completed.product === release.product && completed.tag === release.tag &&
+          completed.installerSha256 === installerSha256 && completed.candidateId !== before.selected && completed.candidateId !== before.previous) {
+          candidateId = completed.candidateId;
+          candidate = releaseHome(home, candidateId);
+          // Verify existing ownership/privacy, without following a planted
+          // link or repairing a candidate somebody else changed.
+          verifyProfileDirectory(candidate);
+          await privateDirectory(candidate);
+          if (!existsSync(runtimeCli(candidate))) throw new BootstrapError("Bud’s saved download is incomplete. Existing files are kept; contact RealBud support.");
+          opts.signal.throwIfAborted();
+          opts.progress("Checking already downloaded Bud", 1, 1);
+          await opts.finalize?.();
+          return;
+        }
+      } finally { unlock(); }
+      opts.signal.throwIfAborted();
+      ensureProfileDirectory(candidate);
+      await (options.run ?? runWorkerBootstrap)({ ...opts, home: candidate, lockHome, release, privateRuntime: true });
+    },
+    verify: async () => {
+      await privateDirectory(candidate);
+      // This is proof that installation stages completed, never proof that
+      // executable code is trusted. Every retry repeats verifyRuntime in full.
+      await writePrivateJson(completedPath, { version: 1, candidateId, commit: release.commit, product: release.product, tag: release.tag, installerSha256 });
+      return (options.verify ?? verifyRuntime)(candidate, release);
+    },
     // Updating an existing profile never reapplies defaults or copies skills.
     onSuccess: () => { if (!packInstalled(home)) applyPropertyPack(home); },
     commit: () => {

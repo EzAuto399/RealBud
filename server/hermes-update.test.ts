@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -215,6 +215,101 @@ it("uses a fresh candidate folder when an attempt fails", async () => {
   expect(readRuntimeSelection(home).selected).toBeNull();
 });
 
+it("rechecks a completed private download after verification failed without downloading or installing again", async () => {
+  const runner = vi.fn(run), checked: string[] = [];
+  start({ run: runner, verify: async candidate => { checked.push(candidate); throw new Error("fictional verification refusal"); } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  const receipt = JSON.parse(readFileSync(join(home, ".runtime-install", "completed-runtime.json"), "utf8"));
+  expect(receipt).toMatchObject({ version: 1, candidateId: checked[0]!.split(/[\\/]/).at(-1), commit: HERMES_RECOMMENDED.commit });
+  expect(readRuntimeSelection(home).selected).toBeNull();
+
+  start({ run: runner, verify: async candidate => {
+    checked.push(candidate);
+    expect(() => acquireWorkerSetupLock(join(home, ".runtime-install"))).toThrow(/already running/);
+    expect(installStatus().progress).toEqual({ detail: "Checking already downloaded Bud", step: 1, total: 1 });
+    return version;
+  } });
+  await waitForBootstrapStop();
+  expect(runner).toHaveBeenCalledOnce();
+  expect(checked).toEqual([checked[0], checked[0]]);
+  expect(installStatus().state).toBe("done");
+  expect(readRuntimeSelection(home).selected).toBe(receipt.candidateId);
+});
+
+it("keeps a modified completed candidate unselected when repeated full verification refuses it", async () => {
+  const runner = vi.fn(run);
+  let candidate = "";
+  start({ run: runner, verify: async path => { candidate = path; throw new Error("fictional connection check failure"); } });
+  await waitForBootstrapStop();
+  const changed = join(candidate, "hermes-agent", "fictional-source.py");
+  writeFileSync(changed, "fictional modified source");
+  const verify = vi.fn(async path => {
+    expect(path).toBe(candidate);
+    expect(readFileSync(changed, "utf8")).toBe("fictional modified source");
+    throw new Error("fictional full source verification refusal");
+  });
+  start({ run: runner, verify }); await waitForBootstrapStop();
+  expect(verify).toHaveBeenCalledOnce(); expect(runner).toHaveBeenCalledOnce();
+  expect(readRuntimeSelection(home).selected).toBeNull();
+  expect(installStatus().state).toBe("failed");
+  expect(readFileSync(changed, "utf8")).toBe("fictional modified source");
+});
+
+it("does not reuse an unreceipted candidate or a selected runtime during repair", async () => {
+  const unknown = releaseHome(home, `${HERMES_RECOMMENDED.commit}-123456789abc`);
+  mkdirSync(dirname(runtimeCli(unknown)), { recursive: true }); writeFileSync(runtimeCli(unknown), "fictional unknown runtime");
+  const runner = vi.fn(run);
+  start({ run: runner }); await waitForBootstrapStop();
+  const selected = readRuntimeSelection(home).selected;
+  expect(selected).not.toBe(unknown.split(/[\\/]/).at(-1));
+  start({ run: runner, repair: true }); await waitForBootstrapStop();
+  expect(runner).toHaveBeenCalledTimes(2);
+  expect(readRuntimeSelection(home).selected).not.toBe(selected);
+  expect(readFileSync(runtimeCli(unknown), "utf8")).toBe("fictional unknown runtime");
+});
+
+it("keeps malformed completion receipts and refuses them before any installer or verifier runs", async () => {
+  const runner = vi.fn(run), verify = vi.fn(async () => version);
+  mkdirSync(join(home, ".runtime-install"), { mode: 0o700 });
+  const receipt = join(home, ".runtime-install", "completed-runtime.json");
+  writePrivateFixtureFile(receipt, JSON.stringify({ version: 1, candidateId: "../../fictional-other" }));
+  const before = readFileSync(receipt);
+  start({ run: runner, verify }); await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(runner).not.toHaveBeenCalled(); expect(verify).not.toHaveBeenCalled();
+  expect(readFileSync(receipt)).toEqual(before);
+});
+
+it.skipIf(process.platform === "win32")("refuses a symlink substituted for a completed candidate", async () => {
+  let candidate = "";
+  const runner = vi.fn(run);
+  start({ run: runner, verify: async path => { candidate = path; throw new Error("fictional verification refusal"); } });
+  await waitForBootstrapStop();
+  const moved = join(home, "fictional-moved-runtime"); renameSync(candidate, moved); symlinkSync(moved, candidate);
+  const verify = vi.fn(async () => version);
+  start({ run: runner, verify }); await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(runner).toHaveBeenCalledOnce(); expect(verify).not.toHaveBeenCalled();
+  expect(readRuntimeSelection(home).selected).toBeNull();
+});
+
+it("keeps a completed retry out while another installer child is alive, and honours cancellation on verification", async () => {
+  const runner = vi.fn(run);
+  start({ run: runner, verify: async () => { throw new Error("fictional verification refusal"); } });
+  await waitForBootstrapStop();
+  const marker = join(home, ".runtime-install", ".realbud-bootstrap.json");
+  writePrivateFixtureFile(marker, JSON.stringify({ version: 1, pending: true, childPid: process.pid }));
+  const verify = vi.fn(async () => version);
+  start({ run: runner, verify }); await waitForBootstrapStop();
+  expect(installStatus()).toMatchObject({ state: "failed", error: expect.stringMatching(/earlier agent setup/) });
+  expect(verify).not.toHaveBeenCalled(); expect(runner).toHaveBeenCalledOnce();
+  writePrivateFixtureFile(marker, JSON.stringify({ version: 1, pending: true, childPid: null }));
+  start({ run: runner, verify: async () => { cancelBootstrapInstall(); return version; } }); await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(runner).toHaveBeenCalledOnce(); expect(readRuntimeSelection(home).selected).toBeNull();
+});
+
 it("does not overwrite a selection changed during setup", async () => {
   const another = "a".repeat(40);
   start({ verify: async () => { saveRuntimeSelection(home, { version: 1, selected: another, previous: null }); return version; } });
@@ -247,13 +342,13 @@ it("keeps a custom CLI outside managed installation", () => {
 // used to be hardcoded to HERMES_RECOMMENDED and refused once that was selected — so
 // staging a candidate required promoting it first, which is the thing the smoke gates.
 // These pin that a catalog release can be staged without becoming recommended. The
-// candidate is now the previous release, which keeps the invariant testable after
-// 0.21.3 was promoted.
-const candidateRelease = HERMES_RELEASES.find(release => release.product === "0.21.2")!;
+// candidate is the previous release, which keeps the invariant testable after
+// 0.21.5 was promoted.
+const candidateRelease = HERMES_RELEASES.find(release => release.product === "0.21.3")!;
 
 it("stages a catalog candidate while RECOMMENDED stays on the shipped release", async () => {
   applyPropertyPack(home);
-  expect(HERMES_RECOMMENDED.product).toBe("0.21.3");
+  expect(HERMES_RECOMMENDED.product).toBe("0.21.5");
   start({ release: candidateRelease, verify: async () => `Hermes Agent v${candidateRelease.product} (${candidateRelease.tag.slice(1)})` });
   await waitForBootstrapStop();
   expect(installStatus().state).toBe("done");

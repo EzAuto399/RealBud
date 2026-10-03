@@ -243,7 +243,7 @@ describe("portalJobIntentReply", () => {
     });
     expect(result?.recipeId).toBeUndefined();
     expect(result?.reply).toBe(
-      "I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud on You, then say this again or open Schedule → Teach Bud a job to write the steps yourself.",
+      "I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud setup in Workspace → Settings & help, then say this again or open Schedule → Teach Bud a job to write the steps yourself.",
     );
   });
 

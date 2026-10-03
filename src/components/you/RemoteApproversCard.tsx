@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/state/store';
-import { Card } from '../SettingsPrimitives';
+import { SettingsCard } from './SettingsCard';
 import type { RemoteApproversStatus, RemoteEnrollmentView } from '../../../server/website-remote-approvers';
 import type { RemoteTemplateRecord } from '../../../server/website-remote-disclosure';
 import type { WorkflowRecord } from '../../../server/workflow-database';
@@ -32,9 +32,13 @@ export function RemoteApproversCard(){
   await post('prepare',{descriptorIds:selected,label:label.trim(),scopes});
   const result=await post('begin',{scopes});setChallenge(result.challenge);setReviews([]);
  };
- return <Card title="People who can review from the website" subtitle="Invite a verified person, then confirm them here. Linking a computer or owning the billing account does not give this permission.">
+ const confirmed=status?.enrollments.filter(row=>row.phase==='confirmed').length??0;
+ const pill=!status?null:confirmed>0?{tone:'agency' as const,label:`${confirmed} confirmed`}:status.enrollments.some(row=>row.phase==='candidate')?{tone:'hold' as const,label:'Needs your confirmation'}:{tone:'muted' as const,label:'No one yet'};
+ return <SettingsCard title="People who can review from the website" status={pill} details={<>
+  <p>Invite a verified person, then confirm them here. Linking a computer or owning the billing account does not give this permission.</p>
+  <p>Review the complete plan before creating an invitation. This setup stores permission records on the RealBud website; it sends no plan text, reads no mailbox and starts no work. Remote preparation approval is a separate step.</p>
+ </>}>
   <div className="space-y-4 text-sm">
-   <p className="text-ink-secondary">Review the complete plan below before creating an invitation. This setup stores permission records on the RealBud website; it sends no plan text, reads no mailbox and starts no work. Remote preparation approval is a separate step.</p>
    {error&&<p role="alert" className="text-hold">{error}</p>}
    {status?.error&&status.error!==error&&<p role="status" className="rounded-lg border border-line p-3 text-hold">{status.error}</p>}
    <button className={button} disabled={busy} onClick={()=>void perform(async()=>{await post('sync');})}>Refresh access</button>
@@ -56,5 +60,5 @@ export function RemoteApproversCard(){
    {status?.enrollments.map(row=><div key={row.id} className="space-y-2 border-t border-line pt-4"><p>{row.candidate?.email??'Waiting for the invited person'} · <strong>{phaseLabel[row.phase]??'Refresh this connection'}</strong></p>{row.phase==='candidate'&&<Candidate key={`${row.id}:${row.revision}:${row.candidateDigest}`} row={row} busy={busy} confirm={()=>void perform(async()=>{await post('confirm',{enrollmentId:row.id,expectedRevision:row.revision,candidateDigest:row.candidateDigest});setChallenge(null);})}/>} {!['revoked','disabled','expired'].includes(row.phase)&&<button className={button} disabled={busy} onClick={()=>void perform(async()=>{await post('revoke',{enrollmentId:row.id});setChallenge(null);})}>Revoke invitation or access</button>}</div>)}
    {status?.remoteMode&&(!status.grant?.revokedAt||status.enabled)&&<button className={button} disabled={busy} onClick={()=>void perform(async()=>{await post('disable');setChallenge(null);})}>Disable all remote access here</button>}
   </div>
- </Card>;
+ </SettingsCard>;
 }

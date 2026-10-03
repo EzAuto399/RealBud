@@ -23,7 +23,7 @@ export function briefCountsLine(brief: Pick<MorningBrief, "checkedCount" | "need
 }
 
 export function notifyBody(brief: MorningBrief): string {
-  if (brief.headline.startsWith("Recheck missed")) return "Recheck missed — facts held. Open Desk.";
+  if (brief.headline.startsWith("Recheck missed")) return "This morning's check didn't run. Open Desk.";
   return briefCountsLine(brief);
 }
 

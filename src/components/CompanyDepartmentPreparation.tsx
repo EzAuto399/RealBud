@@ -24,6 +24,9 @@ export function canRequestDepartmentPreparation(data: DepartmentCasePage | null,
     !data.department.retiredAt && data.department.access === 'write' && item.status === 'open' && !item.needsReview && !item.needsAssignment &&
     item.assignee?.id === status.member.id && item.assignee.active && item.assignee.canWrite);
 }
+export function departmentPreparationCatalogCurrent(cases: DepartmentCasePage | null, catalog: DepartmentWorkCatalog | null): boolean {
+  return !!cases && !!catalog && catalog.departmentRevision === cases.department.revision;
+}
 /** Literal reviewed text, never rendered as HTML, links or executable markdown. */
 export function DepartmentPreparationReview({ review }: { review:CompanyExecutionReview }) {
   const p = review.plan;
@@ -33,7 +36,7 @@ export function DepartmentPreparationReview({ review }: { review:CompanyExecutio
     <ol className="list-decimal space-y-2 pl-5">{p.steps.map((step,index)=><li className="whitespace-pre-wrap break-words" key={index}>{step}</li>)}</ol>
     <div><p className="font-medium">Evidence to prepare</p><p className="whitespace-pre-wrap break-words">{p.evidence || 'No additional evidence requested.'}</p></div>
     <p>Allowed work: {p.capabilities.map(c=>c==='analyse'?'analyse this case':'draft a result').join(', ')}. Up to {p.limits.maxRuntimeMinutes} minutes and {p.limits.maxTurns} steps of reasoning.</p>
-    <p className="text-ink-secondary">No connected account or website access is included. Private workflows require explicitly configured department connectors before they can be used for company work.</p>
+    <p className="text-ink-secondary">No connected account or website access is included. Preparation uses only the assigned case title and description. Department connections are not available in this version.</p>
     {p.siteNotes !== null && <div><p className="font-medium">Plan notes</p><p className="whitespace-pre-wrap break-words">{p.siteNotes || 'No additional notes.'}</p></div>}
     <div><p className="font-medium">Complete worker instructions</p><pre tabIndex={0} aria-label="Complete worker instructions" className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line p-3 font-sans text-[13px]">{review.instructions || 'No additional instructions.'}</pre></div>
   </div>;
@@ -87,7 +90,7 @@ export function CompanyDepartmentPreparation({ departmentId, cases, operationBlo
     const timer=setInterval(()=>{setNow(Date.now());refresh();},15000);window.addEventListener('focus',refresh);
     return()=>{active.current=false;generation.current++;stop();clearInterval(timer);window.removeEventListener('focus',refresh);};
   },[load]);
-  async function refresh(){if(pending.current)return;pending.current=true;setBusy(true);setError('');clearReview();try{await load();}catch(cause){if(active.current)setError(cause instanceof Error?cause.message:'Could not refresh preparations.');}finally{pending.current=false;if(active.current)setBusy(false);}}
+  async function refresh(){if(pending.current)return;pending.current=true;setBusy(true);setError('');clearReview();try{await load();onChanged?.();}catch(cause){if(active.current)setError(cause instanceof Error?cause.message:'Could not refresh preparations.');}finally{pending.current=false;if(active.current)setBusy(false);}}
   async function mutate(operation:DepartmentPreparationOperation){
     if(pending.current||!storageReady||!status?.member||!status.company||operation.departmentId!==departmentId)return;
     pending.current=true;setBusy(true);setError('');setNotice('');
@@ -111,8 +114,9 @@ export function CompanyDepartmentPreparation({ departmentId, cases, operationBlo
     }finally{pending.current=false;if(active.current)setBusy(false);}
   }
   const selectedCase=cases?.cases.find(item=>item.id===caseId),selectedRecipe=catalog?.recipes.find(r=>r.id===recipeId);
-  const consentKey=selectedCase&&selectedRecipe&&cases?canonicalWebsiteCommand({case:selectedCase,department:cases.department,recipe:selectedRecipe,hours}):'';
-  const hasConsent=consent&&!!consentKey&&consentSnapshot===consentKey;
+  const consentKey=selectedCase&&selectedRecipe&&cases?canonicalWebsiteCommand({case:selectedCase,department:cases.department,configurationRevision:catalog?.departmentRevision,recipe:selectedRecipe,hours}):'';
+  const catalogCurrent=departmentPreparationCatalogCurrent(cases,catalog);
+  const hasConsent=catalogCurrent&&consent&&!!consentKey&&consentSnapshot===consentKey;
   const blocked=busy||loading||operationBlocked||!!saved||!storageReady||!status?.member||!page;
   const alreadyRequested=(targetCaseId:string)=>!!page?.grants.some(g=>g.spec.caseId===targetCaseId&&g.current&&g.phase!=='revoked')||!!page?.local.some(s=>s.caseId===targetCaseId&&s.phase==='requesting');
   const availableCases=cases?.cases.filter(item=>canRequestDepartmentPreparation(cases,item,status)&&!alreadyRequested(item.id))??[];
@@ -131,17 +135,21 @@ export function CompanyDepartmentPreparation({ departmentId, cases, operationBlo
     <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={()=>void refresh()}>Refresh preparations</button><span role="status" className="self-center text-ink-secondary">{loading?'Loading preparations…':status?.member?`Company member: ${status.member.displayName}`:'Company sign-in required'}</span></div>
     <details onToggle={event=>{if(!approval&&!revoking)editing.current=event.currentTarget.open;}} className="rounded-lg border border-line p-3">
       <summary className="min-h-11 cursor-pointer content-center font-medium">Request preparation for my assigned case</summary>
-      <form className="mt-3 space-y-3" onSubmit={event=>{event.preventDefault();if(blocked||!hasConsent||!selectedRecipe||!selectedCase||alreadyRequested(selectedCase.id)||!canRequestDepartmentPreparation(cases,selectedCase,status)||!cases)return;void mutate({kind:'prepare',departmentId,input:{version:1,requestId:crypto.randomUUID(),departmentId,expectedDepartmentRevision:cases.department.revision,caseId:selectedCase.id,expectedCaseFence:selectedCase.fence,recipeId:selectedRecipe.id,expectedRecipeRevision:selectedRecipe.revision,durationMs:Number(hours)*3600000}});}}>
+      <form className="mt-3 space-y-3" onSubmit={event=>{event.preventDefault();if(blocked||!catalogCurrent||!hasConsent||!selectedRecipe||!selectedCase||alreadyRequested(selectedCase.id)||!canRequestDepartmentPreparation(cases,selectedCase,status)||!cases)return;void mutate({kind:'prepare',departmentId,input:{version:1,requestId:crypto.randomUUID(),departmentId,expectedDepartmentRevision:cases.department.revision,caseId:selectedCase.id,expectedCaseFence:selectedCase.fence,recipeId:selectedRecipe.id,expectedRecipeRevision:selectedRecipe.revision,durationMs:Number(hours)*3600000}});}}>
         <label className="block space-y-1"><span id={`${id}-case-label`}>Open case assigned to me</span><select aria-labelledby={`${id}-case-label`} className={field} disabled={blocked} value={caseId} onChange={event=>{setCaseId(event.target.value);setConsent(false);}}><option value="">Select an assigned case…</option>{availableCases.map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
         {availableCases.length===0&&<p className="text-ink-secondary">No eligible case on the current case page. You need an open case assigned to your signed-in member with current editing access. Use All work or another case page to find it.</p>}
         {selectedCase&&<div className="rounded-lg border border-line p-3"><h5 className="font-medium break-words">{selectedCase.title}</h5><p className="whitespace-pre-wrap break-words">{selectedCase.description||'No additional case description.'}</p></div>}
-        <label className="block space-y-1"><span id={`${id}-plan-label`}>Reviewed preparation plan</span><select aria-labelledby={`${id}-plan-label`} className={field} disabled={blocked||!catalog} value={recipeId} onChange={event=>{setRecipeId(event.target.value);setConsent(false);}}><option value="">Select a plan…</option>{catalog?.recipes.map(recipe=><option key={recipe.id} value={recipe.id}>{recipe.title} · version {recipe.revision}</option>)}</select></label>
-        {catalog?.recipes.length===0&&<p>No eligible analysis or drafting plan is available. Ask your service administrator to prepare one for department use.</p>}
+        <label className="block space-y-1"><span id={`${id}-plan-label`}>Reviewed preparation plan</span><select aria-labelledby={`${id}-plan-label`} className={field} disabled={blocked||!catalogCurrent} value={recipeId} onChange={event=>{setRecipeId(event.target.value);setConsent(false);}}><option value="">Select a plan…</option>{catalog?.recipes.map(recipe=><option key={recipe.id} value={recipe.id}>{recipe.title}</option>)}</select></label>
+        {catalog&&cases&&!catalogCurrent&&<p role="status">Department settings changed since these cases were loaded. Refresh preparations and the case list before requesting work.</p>}
+        {catalog&&!catalog.configured&&<p>This department has no reviewed workflow settings yet. Ask the office owner to open Departments and access, choose Manage, and configure its workflows.</p>}
+        {catalog?.configured&&catalog.recipes.length===0&&<p>No configured plan is ready on this instance. Import the same reviewed pack and check local plan approval before requesting preparation.</p>}
+        {catalog?.workflowDefaults.length ? <div className="space-y-2"><p className="text-ink-secondary">Department defaults</p><div className="flex flex-wrap gap-2">{catalog.workflowDefaults.map(item=><button key={item.id} type="button" className={button} disabled={blocked||!catalogCurrent||!item.defaultRecipeId||!catalog.recipes.some(plan=>plan.id===item.defaultRecipeId)} onClick={()=>{setRecipeId(item.defaultRecipeId!);setConsent(false);}}>{item.label}</button>)}</div></div>:null}
+        {catalog?.unavailable.length ? <details><summary className="min-h-11 cursor-pointer content-center">Workflow readiness details</summary>{catalog.unavailable.map((item,index)=><p className="break-words" key={`${item.id}:${index}`}>{item.reason}</p>)}</details>:null}
         {selectedRecipe&&<DepartmentPreparationReview review={selectedRecipe.review}/>}
         <label className="block space-y-1"><span id={`${id}-expiry-label`}>Permission expiry after request</span><select aria-labelledby={`${id}-expiry-label`} className={field} disabled={blocked} value={hours} onChange={event=>{setHours(event.target.value);setConsent(false);}}><option value="1">1 hour</option><option value="24">1 day</option><option value="168">7 days</option></select></label>
         <p className="text-ink-secondary">This allows one preparation, not recurring work. The owner will see the exact expiry before approving. Keep your assigned RealBud instance available.</p>
-        <label className="flex min-h-11 items-start gap-2 py-2"><input type="checkbox" checked={hasConsent} disabled={blocked} onChange={event=>{setConsentSnapshot(consentKey);setConsent(event.target.checked);}}/><span>I reviewed the complete plan and case. I request one preparation on my assigned instance after the owner approves.</span></label>
-        <button className={button} disabled={blocked||!hasConsent||!selectedRecipe||!!selectedCase&&alreadyRequested(selectedCase.id)||!canRequestDepartmentPreparation(cases,selectedCase,status)}>Request one preparation</button>
+        <label className="flex min-h-11 items-start gap-2 py-2"><input type="checkbox" checked={hasConsent} disabled={blocked||!catalogCurrent} onChange={event=>{setConsentSnapshot(consentKey);setConsent(event.target.checked);}}/><span>I reviewed the complete plan and case. I request one preparation on my assigned instance after the owner approves.</span></label>
+        <button className={button} disabled={blocked||!catalogCurrent||!hasConsent||!selectedRecipe||!!selectedCase&&alreadyRequested(selectedCase.id)||!canRequestDepartmentPreparation(cases,selectedCase,status)}>Request one preparation</button>
       </form>
     </details>
     {page&&page.grants.length===0&&<p>No preparation requests on this page.</p>}

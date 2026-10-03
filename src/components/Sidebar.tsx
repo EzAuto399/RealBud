@@ -1,10 +1,10 @@
-import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, User, Bookmark, SlidersHorizontal } from "lucide-react";
+import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, Bookmark, SlidersHorizontal } from "lucide-react";
 import { useWorkspaceTabs, WORKSPACE_VIEW_LABELS } from '@/lib/workspace-tabs';
 import '@/workspace-tabs.css';
+import '@/sidebar-utilities.css';
 import { useStore } from "@/state/store";
-import { InitialsAvatar, MausAvatar } from "./Avatar";
+import { MausAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 import { buildDeskQueue, queueCounts } from "@/lib/desk-queue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -14,19 +14,6 @@ import { WorkdayPulse } from "./WorkdayPulse";
 function macDoorKeys(): boolean {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
   return /mac/i.test(uaData?.platform ?? navigator.platform);
-}
-
-function profileInitials(profile?: { name?: string; email?: string }): string {
-  const name = profile?.name?.trim();
-  if (name) {
-    const words = name.split(/\s+/);
-    return words
-      .slice(0, 2)
-      .map((w) => w[0]!.toUpperCase())
-      .join("");
-  }
-  const email = profile?.email?.trim();
-  return email ? email[0]!.toUpperCase() : "?";
 }
 
 function UpdateButton() {
@@ -119,7 +106,7 @@ export function Sidebar() {
       )}
     >
       {icon}
-      <span className="rb-sidebar-label flex-1"><span className="block text-[14px] font-medium">{label}</span><span className="mt-0.5 block text-[12px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Work with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation", workspace: 'Saved views' }[view]}</span></span>
+      <span className="rb-sidebar-label flex-1"><span className="block text-[15px] font-medium">{label}</span><span className="mt-0.5 block text-[13px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Today with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation", workspace: 'Saved views' }[view]}</span></span>
       {extra ? <span className="rb-sidebar-extra">{extra}</span> : null}
     </button>
   );
@@ -149,17 +136,17 @@ export function Sidebar() {
         <div className="mt-2.5 flex items-center justify-center gap-2 sm:justify-start" aria-label="RealBud">
           <MausAvatar color="green" state={state.connected ? "idle" : "sleeping"} size={26} label="RealBud" trackPointer={false} />
           <div className="rb-sidebar-brand min-w-0">
-            <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
-            <div className="flex items-center gap-1.5 text-[12px] text-ink-muted" role="status" aria-live="polite">
-              <span className={cn("size-1.5 rounded-full", state.connected ? "bg-agency" : "animate-pulse bg-hold motion-reduce:animate-none")} />
-              {state.connected ? "App connected" : "Reconnecting"}
+            <div className="text-[15px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
+            {/* Connected is the normal state, so only a reconnect is shown; the
+                live region stays mounted so either change is still announced. */}
+            <div className={state.connected ? "sr-only" : "flex items-center gap-1.5 text-[13px] text-ink-muted"} role="status" aria-live="polite">
+              {state.connected ? "App connected" : <><span className="size-1.5 animate-pulse rounded-full bg-hold motion-reduce:animate-none" aria-hidden />Reconnecting</>}
             </div>
           </div>
         </div>
       </div>
 
       <nav className="rb-sidebar-navigation flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-2" aria-label="Main navigation">
-        <p className="rb-sidebar-label rb-sidebar-section-label">Workspace</p>
         {item(
           "desk",
           "Desk",
@@ -170,7 +157,7 @@ export function Sidebar() {
         )}
         {item(
           "ask",
-          "Ask",
+          "Work",
           <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />,
           () => dispatch({ type: "showAsk" }),
           undefined,
@@ -188,26 +175,16 @@ export function Sidebar() {
           ) : null,
           `${doorMod}3`,
         )}
-        {item(
-          "you",
-          "You",
-          profileInitials(state.config?.profile) === "?" ? (
-            <User size={20} className={state.activeView === "you" ? "text-agency" : "text-ink-muted"} aria-hidden />
-          ) : (
-            <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />
-          ),
-          () => dispatch({ type: "showYou" }),
-          undefined,
-          `${doorMod}4`,
-        )}
-        <div className="rb-workspace-saved-navigation mt-3 border-t border-line pt-2">
-          {workspaceTabs.data?.state?.tabs.filter(tab => tab.visible).map(tab => <button key={tab.id} aria-label={tab.label} title={tab.label} aria-current={state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'page' : undefined} className={cn('rb-sidebar-item rb-workspace-custom-tab flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-agency', state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'bg-selected text-ink' : 'text-ink hover:bg-raised/70')} onClick={() => dispatch({ type: 'showWorkspaceTab', id: tab.id })}><Bookmark size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label min-w-0 flex-1"><span className="block break-words text-[14px] font-medium">{tab.label}</span><span className="block text-[12px] text-ink-muted">{WORKSPACE_VIEW_LABELS[tab.view.kind]}</span></span></button>)}
-          <button aria-label="Manage saved views" title="Manage saved views" aria-current={state.activeView === 'workspace' && !state.workspaceTabId ? 'page' : undefined} className="rb-sidebar-item rb-workspace-manage-view flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left text-ink hover:bg-raised/70 focus-visible:outline-2 focus-visible:outline-agency" onClick={() => dispatch({ type: 'showWorkspaceTab' })}><SlidersHorizontal size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label text-[14px]"><span>Manage views</span>{workspaceTabs.error || workspaceTabs.data?.recovery ? <span className="block text-[12px] text-hold">Needs attention</span> : null}</span></button>
-        </div>
+        {/* Views are shortcuts Bud sets up; managing them lives in Workspace → Settings & help.
+            The sidebar only surfaces the manager when saved views need recovery. */}
+        {(workspaceTabs.data?.state?.tabs.some(tab => tab.visible) || workspaceTabs.error || workspaceTabs.data?.recovery) ? <div className="rb-workspace-saved-navigation mt-3 border-t border-line pt-2">
+          <p className="rb-sidebar-label px-3 pb-1 pt-1 text-[13px] text-ink-muted">Pinned</p>
+          {workspaceTabs.data?.state?.tabs.filter(tab => tab.visible).map(tab => <button key={tab.id} aria-label={tab.label} title={tab.label} aria-current={state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'page' : undefined} className={cn('rb-sidebar-item rb-workspace-custom-tab flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-agency', state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'bg-selected text-ink' : 'text-ink hover:bg-raised/70')} onClick={() => dispatch({ type: 'showWorkspaceTab', id: tab.id })}><Bookmark size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label min-w-0 flex-1"><span className="block break-words text-[15px] font-medium">{tab.label}</span><span className="block text-[13px] text-ink-muted">{WORKSPACE_VIEW_LABELS[tab.view.kind]}</span></span></button>)}
+          {workspaceTabs.error || workspaceTabs.data?.recovery ? <button aria-label="Manage saved views" title="Manage saved views" aria-current={state.activeView === 'workspace' && !state.workspaceTabId ? 'page' : undefined} className="rb-sidebar-item rb-workspace-manage-view flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left text-ink hover:bg-raised/70 focus-visible:outline-2 focus-visible:outline-agency" onClick={() => dispatch({ type: 'showWorkspaceTab' })}><SlidersHorizontal size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label text-[14px]"><span>Saved views</span><span className="block text-[13px] text-hold">Needs attention</span></span></button> : null}
+        </div> : null}
       </nav>
-      <div className="rb-sidebar-pulse">
-        <div className="px-3 pb-2"><button type="button" className="pm-control w-full border border-line" onClick={() => openWorkspaceSetup("apps")}>Connections</button></div>
-        <WorkdayPulse />
+      <div className="rb-sidebar-utilities" aria-label="Workspace tools">
+        <WorkdayPulse shortcut={`${doorMod}4`} />
       </div>
     </aside>
   );

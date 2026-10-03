@@ -56,7 +56,10 @@ try{
   browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===base)return route.continue();unexpectedNetwork.push(route.request().url());return route.abort();});
   page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(base+'/#/schedule');await page.getByLabel('Saved reviews',{exact:true}).selectOption(row.id);
+  await page.goto(base+'/#/schedule');
+  await page.getByRole('button',{name:'Open job: Bank reference review',exact:true}).click();
+  await page.getByText('Earlier reviews',{exact:true}).click();
+  await page.getByLabel('Saved reviews',{exact:true}).selectOption(row.id);
   const decide=async()=>{
     await page.getByLabel('Your decision',{exact:true}).nth(0).selectOption('Fictional Unit 1');
     await page.getByLabel('Your decision',{exact:true}).nth(1).selectOption('keep');
@@ -112,7 +115,10 @@ try{
   await page.getByText('Review version 1',{exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:join(out,'03-retained-earlier-review.png')});
   record('Both versions remain reachable with distinct byte-checked downloads and an earlier-version warning');
-  await stop();await start();await page.reload();await page.getByLabel('Saved reviews',{exact:true}).selectOption(secondId);
+  await stop();await start();await page.reload();
+  await page.getByRole('button',{name:'Open job: Bank reference review',exact:true}).click();
+  await page.getByText('Earlier reviews',{exact:true}).click();
+  await page.getByLabel('Saved reviews',{exact:true}).selectOption(secondId);
   await page.getByText('Review version 2',{exact:true}).waitFor();
   assert.deepEqual(await request(`/api/bank-reference/${row.id}/export`,'POST',{}),earlier);assert.deepEqual(await request(`/api/bank-reference/${secondId}/export`,'POST',{}),corrected);
   assert.deepEqual(await request(`/api/bank-reference/${secondId}/original`,'POST',{}),original);

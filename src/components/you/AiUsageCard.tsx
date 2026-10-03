@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
-import { formatNanoAud, formatTokenCount, currentUsagePeriod, parseInstallationUsage, type InstallationUsageState } from "@shared/office-link";
+import { formatNanoAud, formatCustomerCharge, formatTokenCount, currentUsagePeriod, parseInstallationUsage, type InstallationUsageState } from "@shared/office-link";
 
 import { usageBudget, USAGE_BUDGET_NOTE } from "@shared/usage-budget";
 
@@ -57,13 +57,14 @@ export function AiUsageCardView({ usage, busy, onRefresh }: {
   const budget = usageBudget(monthlyCapNanoAud, remainingNanoAud);
   return <Card title="AI usage this month" subtitle={SUBTITLE}>
     <dl aria-label={`AI usage for ${usagePeriodLabel(period)}`} className="divide-y divide-line">
-      <Row label="Cost so far" value={formatNanoAud(money.customerNetNanoAud)} />
+      <Row label="Cost so far" value={formatCustomerCharge(money.customerNetNanoAud)} />
       <Row label="Budget used" value={budget.state === 'ready' ? budget.label : budget.state === 'disabled' ? 'Not enabled' : 'Not reported by your account'} />
       <Row label="Budget remaining" value={budget.state === "disabled" ? "Not enabled" : remainingNanoAud === null ? "Not reported by your account" : formatNanoAud(remainingNanoAud)} />
     </dl>
     {budget.state === 'ready' ? <progress className="mt-3 h-3 w-full accent-agency" aria-label="Monthly spending budget used" aria-valuetext={budget.label} max={100} value={budget.percent} /> : null}
     <p className="mt-2 text-xs text-ink-muted">{USAGE_BUDGET_NOTE}</p>
     <details className="mt-3 text-sm text-ink-secondary"><summary>Request and token details</summary><dl>
+      <Row label="Exact cost so far" value={formatNanoAud(money.customerNetNanoAud, 9)} />
       <Row label="Requests" value={requests.toLocaleString("en-AU")} />
       <Row label="Tokens in / out" value={`${formatTokenCount(tokens.input)} / ${formatTokenCount(tokens.output)}`} />
     </dl><p className="text-xs">Input excludes cache reads and writes.</p></details>
@@ -80,21 +81,28 @@ export function AiUsageCard() {
   const [usage, setUsage] = useState<InstallationUsageState | null>(null);
   const [busy, setBusy] = useState(false);
   const active = useRef(false);
-  const inFlight = useRef(false);
+  const inFlight = useRef<number | null>(null);
   const generation = useRef(0);
-  const load = useCallback(async () => {
-    if (inFlight.current || !active.current) return;
+  const load = useCallback(async (refresh = false) => {
+    if (!active.current || inFlight.current === generation.current) return;
     const requestGeneration = generation.current;
-    inFlight.current = true; setBusy(true);
+    // A changed office can read immediately; the old office still owns only
+    // its own response and must not unlock the new office's pending request.
+    inFlight.current = requestGeneration; setBusy(true);
     try {
-      const status = await api("/api/office-link") as { usage?: InstallationUsageState };
+      const status = await api(refresh ? "/api/office-link/usage/refresh" : "/api/office-link", refresh ? { method: "POST", body: JSON.stringify({}) } : undefined) as { usage?: InstallationUsageState };
       const value = status?.usage;
       let next: InstallationUsageState = { state: "unavailable" };
       if (value?.state === 'ready') next = { state: 'ready', usage: parseInstallationUsage(value.usage, currentUsagePeriod()) };
       else if (value && ['checking', 'not-linked', 'unavailable'].includes(value.state)) next = value;
       if (active.current && requestGeneration === generation.current) setUsage(next);
     } catch { if (active.current && requestGeneration === generation.current) setUsage({ state: "unavailable" }); }
-    finally { inFlight.current = false; if (active.current) setBusy(false); }
+    finally {
+      if (inFlight.current === requestGeneration) {
+        inFlight.current = null;
+        if (active.current && requestGeneration === generation.current) setBusy(false);
+      }
+    }
   }, []);
   useEffect(() => {
     active.current = true;
@@ -109,5 +117,5 @@ export function AiUsageCard() {
     document.addEventListener('visibilitychange', refreshVisible);
     return () => { active.current = false; generation.current++; window.clearInterval(timer); window.removeEventListener("realbud-website-link-changed", onLinkChanged); window.removeEventListener('focus', refreshVisible); document.removeEventListener('visibilitychange', refreshVisible); };
   }, [load]);
-  return <AiUsageCardView usage={usage} busy={busy} onRefresh={() => { void load(); }} />;
+  return <AiUsageCardView usage={usage} busy={busy} onRefresh={() => { void load(true); }} />;
 }

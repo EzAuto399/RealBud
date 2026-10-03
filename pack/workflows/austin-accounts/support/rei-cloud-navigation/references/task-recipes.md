@@ -38,6 +38,10 @@ simulation tier.
 5. Navigate by menu labels. The agency context travels in the query string, so
    a bare route can open with no business selected. Re-check the account marker
    after every load; if it is missing, return through the menu.
+6. Seen read-only on 2 October 2026: after sign-in the address carries no
+   `reicid`. The business is the code in the top bar (`{business}`), so the
+   account check reads that code. A different code always stops the task; a
+   missing `reicid` alone does not.
 
 ## Navigation index
 
@@ -80,7 +84,9 @@ instance.
   All (lists default to Active), type the query, wait for the table to settle,
   read it. One row: report its visible columns. None: report "no match with
   Status=All" and never widen the query silently. Several: list them and ask;
-  never pick by name similarity.
+  never pick by name similarity. The Tenants grid shows "No records to
+  display" before it fills: its footer "N records · 0 row(s) selected" is the
+  load-complete marker. It scrolls; there are no numbered pages.
 - **arrears-review** (`C`), input `min_days`. Tenants › Arrears, set From day,
   Hide vacated tenants = Yes, read every page. Stop before Notice, Email, SMS
   or Send. Days in arrears is REI's figure; Bud never computes a legal clock
@@ -94,7 +100,10 @@ instance.
   use plain Receipt Register unless told. The study notes treat Preview as a
   read, but it is untested on REI: until a read-only study shows it only
   renders on screen, produce the register through the Reports rules in
-  `../SKILL.md` (Export Only, with the fence's download approval).
+  `../SKILL.md` (Export Only, with the fence's download approval). Opening
+  the report (or Receipt Register Range) shows a parameters popup
+  (`#reportParameterOwnerList_popup`) before any output; running and
+  downloading it is an export and needs approval.
 - **bulk-receipting-preview** (`C`, prepare), inputs `bank_format`,
   `approved_file`, `expected_rows`, `expected_total`; needs an upload grant.
   Receipts › Bulk receipting, choose the File Format, load the approved file
@@ -104,7 +113,11 @@ instance.
   mismatch, hold and report; never re-upload to try again. If the page reloads
   or times out after upload, run receipt-register for today before any retry.
   Austin's `bank_format` is unconfirmed; ask before the first live run. An
-  advertised format is not a verified parser.
+  advertised format is not a verified parser. Seen 2 October 2026: the
+  office's default File Format is `ANZ(csv file)`, so REI reads the ANZ export
+  layout; select exactly that label. Load File creates a pending import in
+  REI (a write: approval). A loaded-but-unprocessed import shows on this page,
+  never on Process › Pending transactions.
 - **post-import-readback** (`C`). Run receipt-register, then arrears-review.
   The register total must equal the batch total and no batch tenant may still
   be in arrears for the paid period. Any gap is a hold, not a retry.
@@ -149,6 +162,9 @@ A click, upload, toast or HTTP 200 is not a readback.
 - Hand over even under a broad grant: Settings (except reading Integrations),
   My Profile, Process › Disbursement, End of Month, Journals, Reversals,
   Direct Debit and Payments.
+- Never for Bud: Process, Process Pending and Delete Pending on Pending
+  transactions (`/customers/transaction/pendingtransactions`). That page lists
+  pending payments, levies and invoices, not bank imports.
 
 ## Traps
 
@@ -158,6 +174,8 @@ A click, upload, toast or HTTP 200 is not a readback.
 | Report dialog loads asynchronously | Wait for the dialog; choose radios by visible label |
 | A bare route loses the agency context | Menu first; re-check the marker after every load |
 | Loading, empty and no-match tables look alike | Wait until loading clears; report which state it was |
+| Tenants grid shows "No records to display" before it fills | Wait for the "N records" footer before reading |
+| Pending transactions looks like a pending import | It is pending payments; read pending imports on Bulk receipting only |
 | Lists default to Active; pagination hides rows | Status All when searching; read every page before counting |
 | Idle sign-in journey expires | Hand over; never retry sign-in for the person |
 | Upload result unknown | Read back before any retry; never re-upload blind |

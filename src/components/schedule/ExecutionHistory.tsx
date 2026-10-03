@@ -9,7 +9,7 @@ type Run = JobRun | LoopRun;
 type Page = { runs: Run[]; nextCursor: string | null };
 const isJob = (run: Run): run is JobRun => 'jobId' in run;
 
-function HistoryPages({ kind }: { kind: 'jobs' | 'routines' }) {
+function HistoryPages({ kind, filter }: { kind: 'jobs' | 'routines'; filter?: string }) {
   const [page, setPage] = useState<Page | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [previous, setPrevious] = useState<(string | null)[]>([]);
@@ -19,14 +19,14 @@ function HistoryPages({ kind }: { kind: 'jobs' | 'routines' }) {
   const load = useCallback(async (next: string | null, trail: (string | null)[]) => {
     const request = ++flight.current; setBusy(true); setError('');
     try {
-      const query = new URLSearchParams({ limit: '20', ...(next ? { cursor: next } : {}) });
+      const query = new URLSearchParams({ limit: '20', ...(filter ? { [kind === 'jobs' ? 'jobId' : 'loopId']: filter } : {}), ...(next ? { cursor: next } : {}) });
       const data = await api(`/api/${kind === 'jobs' ? 'job-runs' : 'loops'}/history?${query}`, undefined, { timeoutMs: 15000 });
       if (flight.current !== request) return;
       if (!Array.isArray(data.runs) || !(data.nextCursor === null || typeof data.nextCursor === 'string')) throw new Error('Saved history could not be read. Please refresh it.');
       setPage(data); setCursor(next); setPrevious(trail);
     } catch (cause) { if (flight.current === request) setError(cause instanceof Error ? cause.message : 'Saved history could not load.'); }
     finally { if (flight.current === request) setBusy(false); }
-  }, [kind]);
+  }, [kind, filter]);
   useEffect(() => { void load(null, []); return () => { flight.current++; }; }, [load]);
   return <div className="mt-3 space-y-3" aria-busy={busy}>
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -60,15 +60,20 @@ function HistoryPages({ kind }: { kind: 'jobs' | 'routines' }) {
   </div>;
 }
 
-/** History is read on demand and does not replace the live activity projection. */
-export function ExecutionHistory() {
+/** History is read on demand and does not replace the live activity projection.
+ * With a job or loop it shows only that job's earlier results; without one it
+ * browses every saved result, including jobs that were removed. */
+export function ExecutionHistory({ jobId, loopId, label }: { jobId?: string; loopId?: string; label?: string } = {}) {
+  const scoped = jobId ? { kind: 'jobs' as const, filter: jobId } : loopId ? { kind: 'routines' as const, filter: loopId } : null;
   const [open, setOpen] = useState(false), [kind, setKind] = useState<'jobs' | 'routines'>('jobs');
-  return <details className="rounded-xl border border-line bg-sheet p-3.5" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="cursor-pointer text-[13px] font-medium">Browse saved history</summary>
+  return <details className="border-t border-line pt-2" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="pm-control flex cursor-pointer items-center text-[13px] font-medium">{label ?? (scoped ? 'Earlier results' : 'Browse saved history')}</summary>
     {open && <div>
       <p className="mt-2 text-[13px] text-ink-muted">Read earlier results and their evidence. Opening history does not run work again.</p>
-      <label className="mt-3 flex flex-wrap items-center gap-2 text-[13px]">History to show<select className="rounded border border-line bg-paper px-3 py-2" value={kind} onChange={event => setKind(event.target.value as 'jobs' | 'routines')}><option value="jobs">Jobs</option><option value="routines">Routines</option></select></label>
-      <HistoryPages key={kind} kind={kind} />
+      {scoped ? <HistoryPages key={`${scoped.kind}:${scoped.filter}`} kind={scoped.kind} filter={scoped.filter} /> : <>
+        <label className="mt-3 flex flex-wrap items-center gap-2 text-[13px]">History to show<select className="pm-control rounded border border-line bg-paper px-3" value={kind} onChange={event => setKind(event.target.value as 'jobs' | 'routines')}><option value="jobs">Jobs</option><option value="routines">Routines</option></select></label>
+        <HistoryPages key={kind} kind={kind} />
+      </>}
     </div>}
   </details>;
 }

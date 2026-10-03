@@ -1,6 +1,8 @@
 /** Vendor-hosted connector custody. Desktop clients receive only a revocable
- * device credential; project/org keys never leave this process. Gmail keeps its
- * reviewed read-only adapter; any other Composio toolkit is admitted on demand
+ * device credential; project/org keys never leave this process. Gmail's saved
+ * workflows (mail scan, PDF attachment) keep the reviewed read-only adapter;
+ * Ask's Gmail session runs the full Gmail toolkit under the shared mailbox
+ * policy (`gmailToolkit`). Any other Composio toolkit is admitted on demand
  * into the office's own project (see `admitApp`). Do not turn this into an
  * arbitrary HTTP proxy: every upstream call is one of the bounded adapters'. */
 import { OfficeMailbox } from './office-mailbox.ts';
@@ -13,6 +15,7 @@ import { parseMailScanRequest } from '../shared/mail-ingestion.ts';
 import { parseSourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { composioAppAdapter, type AppAccount, type AppBinding, type AppTool, type ComposioAppAdapter } from './composio-apps.ts';
+import { classifyAppToolCall } from '../shared/app-tool-policy.ts';
 import { serialized } from './serialized.ts';
 
 export interface ConnectorDevice {
@@ -76,7 +79,9 @@ type ServiceStatus = { connected: boolean; status: string; accounts: AppAccount[
 const NOT_CONNECTED: ServiceStatus = { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false };
 export interface ConnectorOptions {
   ledger: UsageLedger; devices: () => ConnectorDevice[]; secret: (name: string) => string | undefined;
-  access?: typeof getGmailReadOnlyAccess; authorize?: typeof authorizeGmailReadOnly; transport?: typeof createGmailReadOnlyTransport;
+  access?: typeof getGmailReadOnlyAccess; authorize?: typeof authorizeGmailReadOnly;
+  /** Ask's Gmail MCP transport; defaults to the full-toolkit `gmailToolkit`. */
+  transport?: typeof createGmailReadOnlyTransport;
   scan?: typeof scanGmailReadOnly;
   attachment?: typeof readGmailPdfAttachment;
   /** On-demand admission of any Composio toolkit. Both are needed; without them
@@ -348,16 +353,58 @@ export class ManagedConnectors {
     current();
     return { service: { connected, status: account?.status ?? (active.length > 1 ? 'AMBIGUOUS' : 'NOT_CONNECTED'), accounts: account ? [account] : [], accountSelectionRequired: false }, binding: bound, tools };
   }
-  /** One MCP transport over every connected app of the device: Gmail's fixed
-   * read-only adapter plus one generic adapter per other connected app. Tool
-   * names route by namespace; a blocked class is refused here as well as on the
-   * desktop, and no tool outside an admitted, connected app is reachable. */
+  /**
+   * Ask's Gmail (owner decision 2026-10-02): the full Gmail toolkit through the
+   * generic adapter, classified by the shared mailbox policy. Before any tool
+   * is listed or run, the office's Gmail auth config and the bound account are
+   * verified by the reviewed Gmail reader's own checks, once per session.
+   * Blocked tools (permanent delete, filters, forwarding, settings) are neither
+   * listed nor executable; reads and reviewed sends are forwarded as the
+   * desktop dispatched them, after its per-message card.
+   */
+  private gmailToolkit(input: GmailReadOnlyBinding): Transport {
+    const binding: AppBinding = { apiKey: input.apiKey, authConfigId: input.authConfigId, userId: input.userId,
+      ...(input.accountId ? { accountId: input.accountId } : {}), ...(input.assertAuthority ? { assertAuthority: input.assertAuthority } : {}) };
+    let ready: Promise<AppTool[]> | undefined;
+    const tools = (signal: AbortSignal): Promise<AppTool[]> => ready ??= (async () => {
+      const access = await (this.options.access ?? getGmailReadOnlyAccess)(input);
+      const gmail = access.services.gmail;
+      requireThat(Boolean(binding.accountId) && gmail?.connected === true && gmail.accounts.some(account => account.id === binding.accountId && account.status === 'ACTIVE'), 'connector_account_not_connected', 409);
+      return this.appTools(binding, 'gmail', signal);
+    })().catch(error => { ready = undefined; throw error; });
+    const adapter = this.apps;
+    return { async request(method, params, signal) {
+      if (method === 'initialize') return { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'Bud Gmail', version: '1.0.0' } };
+      if (method === 'ping') return {};
+      if (method === 'tools/list') return { tools: (await tools(signal)).map(tool => ({ name: tool.name, description: tool.description, inputSchema: structuredClone(tool.inputSchema),
+        annotations: { readOnlyHint: tool.policy === 'read', destructiveHint: false } })) };
+      requireThat(method === 'tools/call', 'connector_method_denied', 403);
+      const call = (params && typeof params === 'object' && !Array.isArray(params) ? params : {}) as { name?: unknown; arguments?: unknown };
+      const outside = { content: [{ type: 'text', text: 'This Gmail operation is outside the connected-app boundary: permanent delete, filters, forwarding rules and settings changes are unavailable.' }], isError: true };
+      const args = call.arguments === undefined ? {} : call.arguments;
+      if (!args || typeof args !== 'object' || Array.isArray(args)) return { content: [{ type: 'text', text: 'Tool arguments must be an object.' }], isError: true };
+      // A blocked or foreign call (name and arguments) is refused before any
+      // provider access, verification included. Cards are desktop-side.
+      if (classifyAppToolCall(call.name, args, { app: 'gmail' }) === 'blocked') return outside;
+      const tool = (await tools(signal)).find(row => row.name === call.name);
+      if (!tool) return outside;
+      return adapter.execute(binding, 'gmail', tool.name, args as Record<string, unknown>, signal);
+    } };
+  }
+
+  /** One MCP transport over every connected app of the device: Gmail's
+   * full-toolkit transport plus one generic adapter per other connected app.
+   * Tool names route by namespace; a blocked class is refused here as well as
+   * on the desktop, and no tool outside an admitted, connected app is reachable. */
   private async compositeTransport(device: ConnectorDevice, assertAuthority: () => void, signal: AbortSignal): Promise<Transport> {
-    // Gmail exactly as before: its binding (shared-mailbox grant included) is
-    // resolved here and refused here, whatever other apps the device carries.
-    // Gmail exactly as before: its binding (shared-mailbox grant included) is
-    // resolved and refused here, and its adapter selects the account as it always did.
-    const gmail = appsOf(device).includes('gmail') ? (this.options.transport ?? createGmailReadOnlyTransport)({ ...this.binding(device), assertAuthority }) : undefined;
+    // Gmail's binding (shared-mailbox grant included) is resolved and refused
+    // here, whatever other apps the device carries. A member's own mailbox gets
+    // the full toolkit (owner decision 2026-10-02). An office's shared mailbox
+    // stays on the three bounded reads it was granted until the owner accepts
+    // the versioned full-access grant (OfficeMailbox.mailboxAccess); the grant
+    // moves the policy revision and so the session fingerprint.
+    const readOnly = this.officeMailbox.mailboxAccess(device.companyId) === 'read_only';
+    const gmail = appsOf(device).includes('gmail') ? (this.options.transport ?? (readOnly ? createGmailReadOnlyTransport : (binding: GmailReadOnlyBinding) => this.gmailToolkit(binding)))({ ...this.binding(device), assertAuthority }) : undefined;
     const others = new Map<string, { binding: AppBinding; tools: AppTool[] }>();
     for (const app of appsOf(device).filter(app => app !== 'gmail')) {
       const status = await this.appStatus(device, app, signal, assertAuthority);
@@ -386,8 +433,8 @@ export class ManagedConnectors {
       }
       requireThat(method === 'tools/call', 'connector_method_denied', 403);
       const call = (params && typeof params === 'object' && !Array.isArray(params) ? params : {}) as { name?: unknown; arguments?: unknown };
-      // Anything that is not another app's tool goes to the Gmail adapter, which
-      // validates the call itself exactly as it always has.
+      // Anything that is not another app's tool goes to the Gmail transport,
+      // which admits only Gmail's own listed, non-blocked tools.
       const app = typeof call.name === 'string' && !call.name.startsWith('GMAIL_') ? appFor(call.name) : undefined;
       if (!app) { if (gmail) return gmail.request(method, params, callSignal); return errorResult('This tool belongs to no connected app of this office. Ask to connect the app first.'); }
       const name = call.name as string;
@@ -465,7 +512,9 @@ export class ManagedConnectors {
         }
         current();
         return { status: 200, body: { checkedAt: new Date(now).toISOString(), services, tools: { available: names.length > 0, names },
-          sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true, apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
+          sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true,
+          // Lets the desktop say "the owner must enable this" instead of showing a send card the gateway would refuse.
+          ...(appsOf(device).includes('gmail') ? { mailboxAccess: this.officeMailbox.mailboxAccess(device.companyId) } : {}), apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
       }
       if (input.path === '/v1/connectors/authorize' && input.method === 'POST') {
         object(input.body); exact(input.body, ['app']);

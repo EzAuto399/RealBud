@@ -1,0 +1,525 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-03",
+  "timezone": "Australia/Brisbane",
+  "assembledAt": "2026-10-03T10:58:38Z",
+  "purpose": "Portable, sanitized index of dated RealBud checkpoints. These records do not certify later source changes or establish release or customer acceptance.",
+  "aggregation": "Gates overlap. Do not sum checkpoint test counts as unique coverage.",
+  "rawEvidence": "All localPath values refer to raw evidence retained only in the originating workspace. Raw reports, logs, screenshots, transcripts and live account state are not distributed by this index.",
+  "checkpoints": [
+    {
+      "id": "runtime-qa",
+      "date": "2026-10-03",
+      "scope": "Local runtime QA, original interrupted scripts and departmental workflow simulations on fictional data; macOS review-package evidence has its separately stated boundaries.",
+      "evidenceTier": "fictional-local-runtime-and-review-package",
+      "sourceReports": [
+        "outputs/runtime-qa-2026-10-03/REPORT.md",
+        "outputs/runtime-qa-2026-10-03/source-regression-summary.json",
+        "outputs/runtime-qa-2026-10-03/original-four-latest.json",
+        "outputs/runtime-qa-2026-10-03/workflow-results.json"
+      ],
+      "regression": {
+        "counts": {
+          "total": 8506,
+          "passed": 8191,
+          "failed": 0,
+          "skipped": 315
+        },
+        "files": {
+          "total": 572,
+          "passed": 542,
+          "failed": 0,
+          "skipped": 30
+        },
+        "success": true,
+        "source": "outputs/runtime-qa-2026-10-03/source-regression-summary.json"
+      },
+      "originalScripts": {
+        "passedScripts": 4,
+        "results": [
+          {
+            "script": "scripts/qa-desk-continuity.mjs",
+            "passed": true,
+            "exitCode": 0
+          },
+          {
+            "script": "scripts/qa-telegram-ask-ux.mjs",
+            "passed": true,
+            "exitCode": 0
+          },
+          {
+            "script": "scripts/qa-workspace-unification.mjs",
+            "passed": true,
+            "exitCode": 0
+          },
+          {
+            "script": "scripts/qa-austin-workflow.mjs",
+            "passed": true,
+            "exitCode": 0
+          }
+        ]
+      },
+      "workflows": {
+        "passedSuites": 16,
+        "failedSuites": 0,
+        "acceptanceChecks": 273,
+        "suites": [
+          {
+            "script": "scripts/qa-workflows-dryrun.mjs",
+            "passed": true,
+            "acceptanceChecks": 17
+          },
+          {
+            "script": "scripts/qa-kevin-day.mjs",
+            "passed": true,
+            "acceptanceChecks": 34
+          },
+          {
+            "script": "scripts/qa-workflow-packs-sim.mjs",
+            "passed": true,
+            "acceptanceChecks": 35
+          },
+          {
+            "script": "scripts/qa-w1-simulated.mjs",
+            "passed": true,
+            "acceptanceChecks": 13
+          },
+          {
+            "script": "scripts/qa-bank-reference.mjs",
+            "passed": true,
+            "acceptanceChecks": 2
+          },
+          {
+            "script": "scripts/qa-bank-bytes.mjs",
+            "passed": true,
+            "acceptanceChecks": 13
+          },
+          {
+            "script": "scripts/qa-bank-amendments.mjs",
+            "passed": true,
+            "acceptanceChecks": 7
+          },
+          {
+            "script": "scripts/qa-morning-mail.mjs",
+            "passed": true,
+            "acceptanceChecks": 5
+          },
+          {
+            "script": "scripts/qa-weekly-bills.mjs",
+            "passed": true,
+            "acceptanceChecks": 6
+          },
+          {
+            "script": "scripts/qa-source-bills.mjs",
+            "passed": true,
+            "acceptanceChecks": 30
+          },
+          {
+            "script": "scripts/qa-managed-mail.mjs",
+            "passed": true,
+            "acceptanceChecks": 8
+          },
+          {
+            "script": "scripts/qa-seat-isolation.mjs",
+            "passed": true,
+            "acceptanceChecks": 10
+          },
+          {
+            "script": "scripts/qa-austin-pack-roundtrip.mjs",
+            "passed": true,
+            "acceptanceChecks": 44
+          },
+          {
+            "script": "scripts/qa-austin-accounts.mjs",
+            "passed": true,
+            "acceptanceChecks": 37
+          },
+          {
+            "script": "scripts/qa-mail-retention.mjs",
+            "passed": true,
+            "acceptanceChecks": 8
+          },
+          {
+            "script": "scripts/qa-skill-history.mjs",
+            "passed": true,
+            "acceptanceChecks": 4
+          }
+        ]
+      },
+      "limits": [
+        "Historical checkpoint, not the result of a later whole-source run.",
+        "The report retained a detached-descendant Stop/removal release hold; this index does not clear or re-evaluate it.",
+        "Fictional local acceptance does not establish live-account, cross-platform or customer certification.",
+        "The original-script record retains a prior parallel browser-start timeout and its passing rerun without changed limits."
+      ]
+    },
+    {
+      "id": "department-productization",
+      "date": "2026-10-03",
+      "scope": "Reusable department configuration, scoped workflow authority, history/recovery and source-rendered interaction after a requested Opus review.",
+      "evidenceTier": "source-tests-isolated-postgres-tls-and-fictional-ui",
+      "sourceReports": [
+        "outputs/qm-productization-2026-10-03/REPORT.md",
+        "outputs/qm-productization-2026-10-03/qm-comparison.md",
+        "outputs/qm-productization-2026-10-03/POST-OPUS-REVIEW.md"
+      ],
+      "comparison": {
+        "repository": "https://github.com/yc-software/qm",
+        "commit": "5dbebac68f671cf456ebd42061ff9578fa4fe138",
+        "method": "Read-only source inspection; repository code and commands were not executed."
+      },
+      "gates": [
+        {
+          "name": "client-and-helper",
+          "source": "outputs/qm-productization-2026-10-03/post-opus-client-final.json",
+          "counts": {
+            "total": 129,
+            "passed": 129,
+            "failed": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "name": "source-api-and-lifecycle",
+          "source": "outputs/qm-productization-2026-10-03/post-opus-api-final-receipt.json",
+          "counts": {
+            "total": 64,
+            "passed": 63,
+            "failed": 0,
+            "skipped": 1
+          }
+        },
+        {
+          "name": "authenticated-cold-restore",
+          "source": "outputs/qm-productization-2026-10-03/opus-cold-restore-review-receipt.json",
+          "counts": {
+            "passed": 18,
+            "failed": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "name": "workflow-and-compatibility-1",
+          "source": "outputs/qm-productization-2026-10-03/post-opus-workflow-receipt.json",
+          "counts": {
+            "passed": 62,
+            "failed": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "exitCode": 0
+        },
+        {
+          "name": "workflow-and-compatibility-2",
+          "source": "outputs/qm-productization-2026-10-03/post-opus-workflow-receipt.json",
+          "counts": {
+            "passed": 58,
+            "failed": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "exitCode": 0
+        }
+      ],
+      "limits": [
+        "No enterprise, installed-app, live connector, real model quality or customer acceptance is established.",
+        "Opus reviewed earlier findings; subsequent final remediation evidence is attributed to Codex, not Opus approval.",
+        "The historical report retained a worker Stop release hold and explicit authority/recovery boundaries.",
+        "Department membership does not confer access to private connected accounts."
+      ]
+    },
+    {
+      "id": "schedule-interaction",
+      "date": "2026-10-03",
+      "scope": "Schedule triage, result navigation, filters, keyboard continuity and a narrow-screen renderer walkthrough.",
+      "evidenceTier": "fictional-source-renderer-and-agent-walkthrough",
+      "sourceReports": [
+        "outputs/schedule-flow-2026-10-03/REPORT.md",
+        "outputs/schedule-flow-2026-10-03/interaction-receipts.json"
+      ],
+      "targetedTests": {
+        "passed": 93,
+        "failed": 0,
+        "skipped": 0,
+        "files": 7,
+        "basis": "Reported in Schedule REPORT.md; not an independent test rerun by this index."
+      },
+      "interactionReceipt": {
+        "recordedEvents": 22,
+        "recordedErrors": 0,
+        "eventTypes": {
+          "api": 9,
+          "dispatch": 12,
+          "fixture-only-resume": 1
+        }
+      },
+      "limits": [
+        "Interaction events are observations, not unique acceptance tests.",
+        "Heuristic evaluation and agent walkthrough; no staff usability study was performed.",
+        "No live model, account, email, payment or portal submission was used; the installed app was not replaced.",
+        "Seen acknowledgements do not establish completion of a held business decision."
+      ]
+    },
+    {
+      "id": "organization-autoconnect",
+      "date": "2026-10-03",
+      "scope": "Linked review-package service readiness plus a fictional four-item department request; separate source UI fixtures prove onboarding and recovery presentation.",
+      "evidenceTier": "live-service-readiness-plus-fictional-task-and-source-ui",
+      "sourceReports": [
+        "outputs/org-autoconnect-2026-10-03/live-readiness.json",
+        "outputs/org-autoconnect-2026-10-03/ui/receipt.json",
+        "outputs/org-autoconnect-2026-10-03/ui-final/receipt.json",
+        "outputs/org-autoconnect-2026-10-03/ui-smooth-setup/receipt.json"
+      ],
+      "liveReadiness": {
+        "at": "2026-10-03T10:45:35.498Z",
+        "ready": true,
+        "autoSetupReady": true,
+        "modelAttached": true,
+        "serviceGrantReady": true,
+        "lastModelPingOk": true,
+        "appsConfigured": true,
+        "connectedAppOperations": 0
+      },
+      "departmentSimulation": {
+        "fictional": true,
+        "items": 4,
+        "observedCompletedResponse": true,
+        "humanDecisionsPreserved": true
+      },
+      "uiReceipts": [
+        {
+          "source": "outputs/org-autoconnect-2026-10-03/ui/receipt.json",
+          "at": "2026-10-03T10:39:15.921Z",
+          "layer": "source-renderer-fictional-fixture",
+          "recordedPassed": true,
+          "recordedObservationCount": 6,
+          "mutatingWorkerRequests": 2,
+          "recordedExternalRequests": 45,
+          "maximumConcurrentOfficeStatusRequests": 1,
+          "cleanup": {
+            "isolatedServiceStopped": true,
+            "temporaryDataRemoved": true
+          }
+        },
+        {
+          "source": "outputs/org-autoconnect-2026-10-03/ui-final/receipt.json",
+          "at": "2026-10-03T10:44:23.172Z",
+          "layer": "source-renderer-fictional-fixture",
+          "recordedPassed": true,
+          "recordedObservationCount": 5,
+          "mutatingWorkerRequests": 1,
+          "recordedExternalRequests": 45,
+          "maximumConcurrentOfficeStatusRequests": 1,
+          "cleanup": {
+            "isolatedServiceStopped": true,
+            "temporaryDataRemoved": true
+          }
+        },
+        {
+          "source": "outputs/org-autoconnect-2026-10-03/ui-smooth-setup/receipt.json",
+          "at": "2026-10-03T10:54:53.632Z",
+          "layer": "source-renderer-fictional-fixture",
+          "recordedPassed": true,
+          "recordedObservationCount": 6,
+          "mutatingWorkerRequests": 0,
+          "recordedExternalRequests": 0,
+          "maximumConcurrentOfficeStatusRequests": 1,
+          "cleanup": {
+            "isolatedServiceStopped": true,
+            "temporaryDataRemoved": true
+          },
+          "fixtureOnlyPassed": false,
+          "proofAttribution": "Six observations were verified in a separate operator CUA walkthrough; the serve-only fixture did not perform browser actions.",
+          "observations": {
+            "viewportWidth": 390,
+            "documentScrollWidth": 390,
+            "draftPreserved": true,
+            "noAutomaticSendObserved": true
+          }
+        }
+      ],
+      "limits": [
+        "No live mailbox, payment, send or portal workflow acceptance was tested.",
+        "Readiness and configured apps do not prove connected-app operations; the live receipt records zero such operations.",
+        "The review package is ad-hoc signed and is not a customer release.",
+        "UI fixtures use fictional status/policy and intercepted mutations; they establish source-rendered behavior, not packaged or installed-device acceptance.",
+        "Recorded empty external-request arrays do not independently attest all browser egress."
+      ]
+    },
+    {
+      "id": "final-macbook-handoff",
+      "date": "2026-10-03",
+      "evidenceTier": "source-regression-and-review-package",
+      "scope": "Integrated shared desktop checkout and related website mailbox consent changes. Historical gates above remain dated and separate.",
+      "commands": {
+        "desktop": "pnpm test",
+        "gateway": "pnpm --dir managed-gateway test",
+        "website": "npm test (website repository)",
+        "typecheck": "pnpm typecheck; gateway and website TypeScript",
+        "electron": "pnpm check:electron"
+      },
+      "desktop": {
+        "passed": 8360,
+        "failed": 0,
+        "skipped": 327,
+        "filesPassed": 547,
+        "filesSkipped": 31,
+        "durationSeconds": 550.24
+      },
+      "gateway": {
+        "passed": 368,
+        "failed": 0,
+        "skipped": 0
+      },
+      "website": {
+        "passed": 359,
+        "failed": 0,
+        "skipped": 2,
+        "commit": "4d0ab11",
+        "repository": "EzAuto399/RealBud-website"
+      },
+      "additionalNodeContracts": {
+        "passed": 55,
+        "failed": 0,
+        "skipped": 4
+      },
+      "releaseGuards": {
+        "passed": 6,
+        "failed": 0
+      },
+      "twoDeviceEvidenceChecker": {
+        "passed": 27,
+        "failed": 0,
+        "actualTwoDeviceAcceptance": false
+      },
+      "electronModules": 31,
+      "package": {
+        "platform": "macOS arm64",
+        "version": "0.1.34",
+        "adHocSignatureVerified": true,
+        "nativeCompatibilityChecks": 69,
+        "rendererServiceShutdownSmoke": true,
+        "freshLinkedLaunch": "waiting for OS Keychain access; main thread observed in Security SecItemCopyMatching",
+        "earlierLinkedReviewReady": true
+      },
+      "limits": [
+        "Skipped tests remain unproven in this default run; counts overlap focused gates.",
+        "Fresh enrolled launch awaits user-controlled Keychain access. No Keychain reset or custody bypass.",
+        "Separately detached worker Stop still blocks customer release.",
+        "No live account business workflows, Windows or physical two-device acceptance."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "localPath": "outputs/runtime-qa-2026-10-03/REPORT.md",
+      "sha256": "fee141f8fb8cdd4b45757fd00adfaf98a173356bffb41fb205b49298c7c66ae5",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/runtime-qa-2026-10-03/source-regression-summary.json",
+      "sha256": "9faae93f029cb134d3627a1230256efd5df27dee65515cf313f26130a3b66918",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/runtime-qa-2026-10-03/original-four-latest.json",
+      "sha256": "a528e7d5dfbbb3a34f04efcb9641468cc0cadeaa801d44835ef43a2b14b56a58",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/runtime-qa-2026-10-03/workflow-results.json",
+      "sha256": "89ff5dd4f1d7152583a643172a91f3793ba4b20237dbd1ea2154a9f1e5cbaedc",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/REPORT.md",
+      "sha256": "9d3e73497dc895376cfa2d86af9cf757c2b930f30764c9118293ab3474a300c5",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/qm-comparison.md",
+      "sha256": "39c7edd25e9811f35849bb4e493b686d9233e27e4105978511a27322214d618a",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/POST-OPUS-REVIEW.md",
+      "sha256": "bf5b020f1740c403517b220f998a1036c3c8077072cebc95058baf43f6c4bf0a",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/post-opus-client-final.json",
+      "sha256": "d3206fd45cec1a49ee0a598911b1ea6ef5901a079ac2456666e1b5576e403942",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/post-opus-api-final-receipt.json",
+      "sha256": "65494f93f1797084a62be281272cff3803acb3a48e9b284b9b90e97e6f8e5539",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/opus-cold-restore-review-receipt.json",
+      "sha256": "44cc0ad13088065a31ffcab1a635315201ed2997aa9ffbce71466f35d361b37d",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/qm-productization-2026-10-03/post-opus-workflow-receipt.json",
+      "sha256": "4932331e64a9388d30df740764b59f8f2caf0e4d8e2888188b043b378f4e2613",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/schedule-flow-2026-10-03/REPORT.md",
+      "sha256": "fba623db37752c778f4d8d779ee83d9c8d8dafb4e4997c7ea757eda6fab9f39d",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/schedule-flow-2026-10-03/interaction-receipts.json",
+      "sha256": "6d3b27fef6c66cde4cce66e872ca615c40a75c96aab9349a3f2a3e538cf3427b",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/live-readiness.json",
+      "sha256": "aff924a07e2f12fdd065764a59be9ea052d2246c7ce467276c190b20b9ca8dde",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/ui/receipt.json",
+      "sha256": "a0a7b42f6b6e13233a1f64cfa1b2e78dccfb0852e6d09de8d8073bcfa008010d",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/ui-final/receipt.json",
+      "sha256": "21cb8b4b3cd810b9906dcf88bfb6742d7fc41b7940f744a4bf14be366d9cc6d3",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/ui-smooth-setup/receipt.json",
+      "sha256": "a62ac6923a5a29074cbfba3ac445f80117a0ea59d43808647c4dc7d1b31478bc",
+      "distribution": "local-only"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/full-vitest-handoff.log",
+      "sha256": "670a67183640353ee1ccb6a00113baf6920a2c4ec6475602a57ba92186498f02"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/gateway-tests-handoff.log",
+      "sha256": "6392a7312803e3b5a86d1c37cb19baaa20acb8c6c3c73c5225d7346b75dbb4bb"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/website-tests-handoff.log",
+      "sha256": "e6a21a2d3ea9156a0eaf5f72692c1a7c0a328d9b0efc66043e519e0b4c7829b6"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/script-tests-handoff.log",
+      "sha256": "9041156cd0eb142c6a859524811c67931de98757d37396a8a726dd0726c02c63"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/typecheck-handoff.log",
+      "sha256": "02e17c10cce9a1d7fcca929d0b72633c51195ccaddedeb7eccdbac95c02d4ae8"
+    },
+    {
+      "localPath": "outputs/org-autoconnect-2026-10-03/package-handoff-smoke.log",
+      "sha256": "66d05ce5d14e6276b4f86d7486e56e9febeeb933b6ac591a2b871dd07414c4af"
+    }
+  ]
+}

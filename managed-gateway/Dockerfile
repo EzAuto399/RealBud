@@ -11,6 +11,8 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
 # Runtime uses Node's experimental TypeScript strip; no build step required.
 # Dockerfile.dockerignore keeps tests, testing.ts and sandbox-smoke.ts out of this copy.
 COPY managed-gateway/*.ts ./
+# The operator's Hermios plan catalog (prices are data; hermios-plans.ts validates it).
+COPY managed-gateway/hermios-catalog.json ./
 # The bounded Gmail adapter, its strict wire contracts and the restricted PDF
 # reader it spawns, shared with the desktop. image-closure.test.ts walks the
 # imports from every entrypoint and fails when this list falls behind.

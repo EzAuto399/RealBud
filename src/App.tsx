@@ -29,6 +29,7 @@ import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
 
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
+import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
@@ -108,7 +109,9 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       if (saved) { guidedByHash.current = true; dispatch({ type: 'showWorkspaceTab', ...(saved.id ? { id: saved.id } : {}) }); return; }
       if (youHashTarget(window.location.hash)) {
         // Keep the deep-link hash; do not let the door mirror rewrite it to `#/you`.
-        guidedByHash.current = true;
+        // A section jump within You does not change activeView, so no mirror
+        // effect will consume a new flag. Do not suppress the next door click.
+        guidedByHash.current = previousView.current !== 'you';
         dispatch({ type: "showYou" });
         return;
       }
@@ -203,6 +206,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
 
   return (
     <div className="workspace-surface flex h-full flex-col">
+      {DESIGN_PREVIEW_REASON && <div role="status" className="relative z-40 shrink-0 border-b border-agency/25 bg-agency-soft px-4 py-2 text-center text-[12px] leading-5 text-ink"><strong>Design preview · example data.</strong> Run real work from the RealBud app.</div>}
       <UpdateBanner />
       <HumanHandoffPanel />
       {/* Store errors surface on every page, not just the view that failed. */}
@@ -236,7 +240,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           </WorkspaceScreen>
         </div>
       </div>
-      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Ask"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
+      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
     </div>
   );
 }

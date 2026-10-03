@@ -27,7 +27,10 @@ export function applyWorkerModelAccessEnv(env: NodeJS.ProcessEnv, access: Record
 export const MANAGED_ACCESS_UNPAIRED = "Bud has no AI access on this computer yet. Connect this computer to your office on realbud.app, then try again.";
 export const MANAGED_ACCESS_WITHDRAWN = "This computer's AI access was withdrawn. Your records are kept. Ask RealBud support to restore access.";
 export const MANAGED_ACCESS_MISMATCH = "Bud's private setup does not match this computer's AI access. Open Bud setup and choose Repair Bud, then try again.";
-export const MANAGED_ACCESS_REFUSALS = [MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, MANAGED_ACCESS_MISMATCH] as const;
+export const MANAGED_ACCESS_RECOVERY = "This computer's saved AI access could not be loaded. Your records are kept. Ask RealBud support to recover access, then try again.";
+/** Ask's loopback model relay (server/ask-model-relay.ts) is not running for this worker's Hermes home. */
+export const MANAGED_ACCESS_RELAY_DOWN = "Bud's AI connection on this computer is not running. Restart RealBud, then try again.";
+export const MANAGED_ACCESS_REFUSALS = [MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_RELAY_DOWN] as const;
 
 /** Gateway URLs compare without trailing slashes or surrounding space. */
 export function normalizedGatewayUrl(value: unknown): string {
@@ -47,6 +50,7 @@ export function managedModelLaunchRefusal(root?: string): string | null {
   const grant = workerModelGrant();
   if (grant.state === "withdrawn") return MANAGED_ACCESS_WITHDRAWN;
   if (grant.state !== "active") return MANAGED_ACCESS_UNPAIRED;
+  if (!workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim()) return MANAGED_ACCESS_RECOVERY;
   const profile = managedModelProfile(root);
   const matches = profile.provider === MANAGED_MODEL_PROVIDER && profile.keyEnv === MANAGED_MODEL_KEY_ENV &&
     profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice !== null && !profile.envKeyPresent &&
@@ -71,7 +75,8 @@ export function applyManagedModelLaunchEnv(env: NodeJS.ProcessEnv, root?: string
  * The adapter's env hook is synchronous, while resolving the grant reads the
  * vault. The composition refreshes this snapshot at boot and whenever a grant
  * is applied, withdrawn or cleared; the hook only copies it. An empty snapshot
- * means no vendor provisioning, so the worker gets no model key.
+ * means unpaired, withdrawn, or access awaiting recovery; it never admits a
+ * model launch solely because a provisioning receipt still says active.
  */
 let workerModelAccessCurrent: Record<string, string> = {};
 export function setWorkerModelAccessSnapshot(access: Record<string, string>): void {

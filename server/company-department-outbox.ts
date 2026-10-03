@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import { isDeepStrictEqual } from 'node:util';
 import { DEPARTMENT_OPERATION_PATHS, departmentOperationTitle, departmentRequestId, normalizeDepartmentOperation, type DepartmentOutboxOperation, type DepartmentOutboxState } from '../shared/company-department-outbox.ts';
 import type { createPrivateVault } from './private-vault.ts';
+import { normalizeDepartmentConfiguration } from '../shared/department-configuration.ts';
 
 type Reply = { status: number; body: unknown };
 type Request = Pick<IncomingMessage, 'headers'>;
@@ -18,7 +19,7 @@ const conflict = (): Reply => ({ status: 409, body: { code: 'department_outbox_c
 const invalid = (): Reply => ({ status: 400, body: { code: 'invalid_input', error: 'Check the department change fields.' } });
 function exact(value: Record<string, unknown>, keys: string[]): boolean { return Object.keys(value).sort().join(',') === keys.sort().join(','); }
 function entityId(operation: DepartmentOutboxOperation): string {
-  return operation.path === '/api/company/departments/lifecycle' ? operation.input.departmentId
+  return operation.path === '/api/company/departments/lifecycle' || operation.path === '/api/company/departments/configuration/save' ? operation.input.departmentId
     : operation.path === '/api/company/departments/cases/create' ? operation.input.requestId : operation.input.caseId;
 }
 function proof(value: unknown, operation: DepartmentOutboxOperation): Proof {
@@ -113,7 +114,18 @@ export function createCompanyDepartmentOutbox(options: {
     if (result.status >= 200 && result.status < 300) {
       const response = result.body;
       if (!record(response)) throw recovery();
-      const entity = operation.path === '/api/company/departments/lifecycle' ? response.department : response.item;
+      if (operation.path === '/api/company/departments/configuration/save') {
+        const department = response.department;
+        if (!exact(response, ['department','configuration','receiptId','replayed']) || !record(department) ||
+          !exact(department, ['id','name','revision','access','retiredAt','retiredBy','retirementNote','unresolvedCases']) ||
+          department.id !== operation.input.departmentId || department.revision !== String(BigInt(operation.input.expectedRevision) + 1n) ||
+          typeof department.name !== 'string' || !department.name.trim() || department.name.length > 120 || department.access !== 'write' ||
+          department.retiredAt !== null || department.retiredBy !== null || department.retirementNote !== '' ||
+          !Number.isSafeInteger(department.unresolvedCases) || Number(department.unresolvedCases) < 0) throw recovery();
+        let configuration; try { configuration = normalizeDepartmentConfiguration(response.configuration); } catch { throw recovery(); }
+        if (!isDeepStrictEqual(configuration, operation.input.configuration)) throw recovery();
+      }
+      const entity = operation.path === '/api/company/departments/lifecycle' || operation.path === '/api/company/departments/configuration/save' ? response.department : response.item;
       const receipt = proof({ receiptId: response.receiptId, entityId: record(entity) ? entity.id : undefined, replayed: response.replayed }, operation);
       await options.vault.write(KEY, { ...next, phase: 'confirmed', receipt });
     } else if (!pending && [400, 401, 403, 404, 405, 409, 422].includes(result.status)) {

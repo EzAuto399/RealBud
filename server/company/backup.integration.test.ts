@@ -42,7 +42,9 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('office backup data in
     try { const snapshot = decryptJson(key, backup.payload); change(snapshot); return { ...backup, payload: encryptJson(key, snapshot) }; }
     finally { key.fill(0); }
   }
+  function beforeConfiguration(snapshot:any){for(const row of snapshot.tables.scopes)delete row.department_configuration;}
   function beforeExecution(snapshot:any){
+    beforeConfiguration(snapshot);
     for(const table of ['department_execution_grants','department_execution_claims','department_execution_events'])delete snapshot.tables[table];
     for(const row of snapshot.tables.members)delete row.execution_epoch;
   }
@@ -142,6 +144,16 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('office backup data in
       await restoreOfficeBackup(fresh.adminPool,clean(),passphrase);
       expect((await fresh.adminPool.query('SELECT execution_epoch FROM realbud_company.members')).rows.every(row=>row.execution_epoch==='0')).toBe(true);
       expect((await fresh.adminPool.query('SELECT count(*)::int AS n FROM realbud_company.department_execution_grants')).rows[0].n).toBe(0);
+    }finally{await fresh.stop();}
+  },60000);
+  it('restores exact 0008 scopes as explicitly unconfigured and rejects a forged configuration column',async()=>{
+    const clean=(change:(snapshot:any)=>void=()=>{})=>edited(snapshot=>{snapshot.migrations=snapshot.migrations.slice(0,8);beforeConfiguration(snapshot);change(snapshot);});
+    const fresh=await startCompanyPostgresFixture({outputDirectory:join(output,'legacy-0008'),postgresBinDirectory:process.env.REALBUD_TEST_POSTGRES_BIN});
+    try{
+      await expect(restoreOfficeBackup(fresh.adminPool,clean(snapshot=>{snapshot.tables.scopes[0].department_configuration={version:1,template:'custom',plans:[],workflowDefaults:[]};}),passphrase)).rejects.toThrow(/unsupported fields/);
+      await restoreOfficeBackup(fresh.adminPool,clean(),passphrase);
+      expect((await fresh.adminPool.query('SELECT department_configuration FROM realbud_company.scopes')).rows.every(row=>row.department_configuration===null)).toBe(true);
+      expect((await fresh.adminPool.query('SELECT description FROM realbud_company.cases WHERE id=$1',[assignedCaseId])).rows[0].description).toBe('Original task instructions');
     }finally{await fresh.stop();}
   },60000);
   it('restores data while fencing in-flight claims and revoking restored credentials for sessions', async () => {

@@ -1,6 +1,6 @@
 // Build-time admission of Hermes's native browser engine. Never npm install,
-// lifecycle scripts, npx at runtime, or a floating version. Wiring this new
-// bundle into the product still requires connection/lifecycle acceptance.
+// lifecycle scripts, npx at runtime, or a floating version. The host supplies
+// the dedicated work browser; this engine never imports a personal profile.
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -49,5 +49,8 @@ try {
   await rename(join(stage, `${name}.tmp`), join(stage, name));
   await writeFile(join(stage, 'LICENSE'), await readFile(join(scratch, 'package/LICENSE')));
   await writeFile(join(stage, 'runtime.json'), JSON.stringify({ engine: 'hermes-agent-browser', version, platform: process.platform, arch: process.arch, sha256, archiveIntegrity: `sha512-${integrity}`, source: `https://registry.npmjs.org/agent-browser/-/agent-browser-${version}.tgz`, license: 'Apache-2.0' }));
+  // Remove only the retired generated helper files. Packaging also selects
+  // hermes-native explicitly, so a failed cleanup cannot ship BrowserSkill.
+  for (const retired of ['bsk', 'bsk.exe', 'runtime.json', 'LICENSE']) await rm(join(root, 'dist-browser', retired), { force: true });
   console.log(JSON.stringify({ staged: true, version, platform: process.platform, arch: process.arch, sha256 }));
 } finally { await rm(scratch, { recursive: true, force: true }); }

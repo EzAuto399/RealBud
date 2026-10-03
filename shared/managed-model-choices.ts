@@ -6,6 +6,10 @@
  * Modelvia answers `xhigh`/`max` on DeepSeek V4.1 Flash with 400
  * `unsupported_parameter:reasoning_effort`, so Flash only ever carries `high`.
  *
+ * `supportsVision` marks a model that takes image input. The server writes it
+ * into the worker profile as `model.supports_vision`, which is what lets Hermes
+ * show its image tool for a custom gateway; Flash is text-only.
+ *
  * Dependency-free: the server writes the worker profile from this table and
  * the renderer draws the three radio options from it.
  */
@@ -15,6 +19,7 @@ export const MANAGED_MODEL_CHOICES = [
     id: "flash-high",
     model: "deepseek-v4.1-flash",
     effort: "high",
+    supportsVision: false,
     label: "DeepSeek V4.1 Flash · High",
     detail: "Fast and economical for everyday office work.",
   },
@@ -22,6 +27,7 @@ export const MANAGED_MODEL_CHOICES = [
     id: "sonnet-high",
     model: "claude-sonnet-5.5",
     effort: "high",
+    supportsVision: true,
     label: "Claude Sonnet 5.5 · High",
     detail: "Stronger reasoning for involved letters, comparisons and plans.",
   },
@@ -29,6 +35,7 @@ export const MANAGED_MODEL_CHOICES = [
     id: "sonnet-xhigh",
     model: "claude-sonnet-5.5",
     effort: "xhigh",
+    supportsVision: true,
     label: "Claude Sonnet 5.5 · Extra high",
     detail: "Most careful reasoning. Slower, and uses more of the office's AI allowance.",
   },

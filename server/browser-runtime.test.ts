@@ -72,7 +72,7 @@ describe("private browser connection", () => {
     const f = await browserFixture(); expect((await f.runtime.status()).state).toBe("ready");
     f.browsers([{ ...f.browser, instance_id: "someone-else" }]);
     expect((await f.runtime.status()).state).toBe("disconnected");
-    await expect(f.runtime.acquire("job-1")).rejects.toThrow(/Connect/);
+    await expect(f.runtime.acquire("job-1")).rejects.toThrow(/work browser is not open yet/);
     expect(f.command.mock.calls.filter(([args]) => args[0] === "session")).toHaveLength(0);
   });
   it("grants one job at a time and returns only its session", async () => {

@@ -29,7 +29,7 @@ export const JOB_ABILITY_LABELS: Record<JobCapability, string> = {
   analyse: "Compare and analyse facts",
   draft: "Prepare drafts for review",
   "portal-read": "Read the named portal",
-  "portal-prefill": "Prefill portal forms",
+  "portal-prefill": "Fill permitted portal fields",
   "portal-submit": "Ask before each permitted Submit",
 };
 

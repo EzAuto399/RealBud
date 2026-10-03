@@ -1,11 +1,12 @@
 import { fictionalPdf } from './testing/pdf-fixture.ts';
 import { attachmentHash } from './source-attachments.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { managedMailBindingRevision, readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, scanManagedMail } from './managed-connectors.ts';
+import { managedMailBindingRevision, readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, managedMailboxAccess, scanManagedMail } from './managed-connectors.ts';
 import { join } from 'node:path';
 import { withWorkerProfile } from './hermes-profile.ts';
 import { connectedAppsConfigured } from './connected-app-access.ts';
 import { resolveConnectedAppsMcp } from './composio.ts';
+import { ConnectionAuthorizationError, connectionFailureReply } from './connection-outcome.ts';
 const cfg={composio:{managed:{endpoint:'https://service.example/',credential:`rbc_${'a'.repeat(64)}`,profile:'property'}}};
 const access = () => ({ checkedAt: '2026-09-21T00:00:00.000Z', managed: true, serviceExpiresAt: 1_800_000_000_000,
   services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: 'account-one', label: 'Practice mailbox', status: 'ACTIVE' }], accountSelectionRequired: false } },
@@ -59,6 +60,23 @@ describe('managed connector client',()=>{
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...value, services: { gmail } }))));
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
   });
+  it('learns from status whether Gmail is a read-only shared mailbox, keeps that out of the projection, and rejects an unknown scope', async () => {
+    const credential = cfg.composio.managed.credential;
+    const answer = (extra: Record<string, unknown>) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...access(), ...extra })));
+    answer({ sourceKind: 'office_shared', policyRevision: 4, mailboxAccess: 'read_only' });
+    expect(await managedConnectorAccess(cfg)).not.toHaveProperty('mailboxAccess');
+    expect(managedMailboxAccess(credential)).toBe('read_only');
+    answer({ sourceKind: 'office_shared', policyRevision: 5, mailboxAccess: 'full' });
+    await managedConnectorAccess(cfg); expect(managedMailboxAccess(credential)).toBe('full');
+    // An older gateway: a shared mailbox without a reported grant is read-only; a personal one is unknown.
+    answer({ sourceKind: 'office_shared', policyRevision: 6 });
+    await managedConnectorAccess(cfg); expect(managedMailboxAccess(credential)).toBe('read_only');
+    answer({ sourceKind: 'personal', policyRevision: 0 });
+    await managedConnectorAccess(cfg); expect(managedMailboxAccess(credential)).toBeUndefined();
+    answer({ sourceKind: 'office_shared', policyRevision: 7, mailboxAccess: 'everything' });
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    expect(managedMailboxAccess('rbc_' + 'b'.repeat(64))).toBeUndefined();
+  });
   it('accepts a bounded disconnected response without tools or accounts', async () => {
     const value = { ...access(), services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
@@ -75,7 +93,52 @@ describe('managed connector client',()=>{
     await expect(authorizeManagedConnection(cfg,'Bank!')).rejects.toThrow(/Name the app/);
     expect(fetcher).toHaveBeenCalledTimes(2);
     fetcher.mockImplementation(async()=>new Response('provider detail',{status:404}));
-    await expect(authorizeManagedConnection(cfg,'nosuchapp')).rejects.toThrow(/not available to connect/);
+    await expect(authorizeManagedConnection(cfg,'nosuchapp')).rejects.toThrow(/result needs review/);
+  });
+  it('keeps an explicit unsupported-app rejection distinct from an opened or uncertain sign-in', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'connector_app_not_admitted' }), { status: 403 })); vi.stubGlobal('fetch', fetcher);
+    const error = await authorizeManagedConnection(cfg, 'googlesheets').catch(error => error);
+    expect(error).toBeInstanceOf(ConnectionAuthorizationError);
+    expect(error).toMatchObject({ outcome: 'not-started', reason: 'not-admitted', status: 403 });
+    expect(connectionFailureReply('Google Sheets', error, true)).toContain('has not enabled sign-in');
+    expect(connectionFailureReply('Google Sheets', error, true)).not.toContain('Finish any');
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it('does not invent an open sign-in window after the design preview returns 404 with an empty envelope', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 404 })); vi.stubGlobal('fetch', fetcher);
+    const error = await authorizeManagedConnection(cfg, 'googlesheets').catch(error => error);
+    expect(error).toBeInstanceOf(ConnectionAuthorizationError);
+    expect(error).toMatchObject({ outcome: 'unknown', status: 404 });
+    expect(error.message).toContain('result needs review');
+    const reply = connectionFailureReply('Google Sheets', error, true);
+    expect(reply).toContain("couldn't confirm whether Google Sheets sign-in was created");
+    expect(reply).toContain('reconcile the existing attempt');
+    expect(reply).not.toMatch(/Finish any|already open|did not start|No sign-in link was opened/);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { body: '{broken', status: 403 },
+    { body: JSON.stringify({ error: 'connector_app_not_admitted', privateKey: 'fictional-private' }), status: 403 },
+    { body: JSON.stringify({ error: 'connector_link_outcome_unknown' }), status: 409 },
+    { body: 'x'.repeat(4097), status: 403 },
+    { body: JSON.stringify({ error: 'connector_app_not_admitted' }), status: 502 },
+    { body: JSON.stringify({ url: 'https://evil.invalid/?token=fictional-private' }), status: 200 },
+    { body: JSON.stringify({}), status: 200 },
+  ])('preserves unknown outcomes without disclosing error bodies or issuing a second request', async ({ body, status }) => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(body, { status })); vi.stubGlobal('fetch', fetcher);
+    const error = await authorizeManagedConnection(cfg, 'googlesheets').catch(error => error);
+    expect(error).toMatchObject({ outcome: 'unknown' });
+    expect(String(error)).not.toMatch(/fictional-private|evil|broken/);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it('distinguishes local setup refusal from a lost transport response and preserves valid links', async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('secret lost response')).mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://connect.composio.dev/link/fictional' }))); vi.stubGlobal('fetch', fetcher);
+    await expect(authorizeManagedConnection({ composio: { managed: { ...cfg.composio.managed, credential: 'invalid' } } }, 'googlesheets')).rejects.toMatchObject({ outcome: 'not-started', reason: 'setup' });
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(authorizeManagedConnection(cfg, 'googlesheets')).rejects.toMatchObject({ outcome: 'unknown' });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(await authorizeManagedConnection(cfg, 'googlesheets')).toEqual({ url: 'https://connect.composio.dev/link/fictional' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });
 

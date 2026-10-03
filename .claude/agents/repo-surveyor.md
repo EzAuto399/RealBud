@@ -5,7 +5,7 @@ model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
-You survey /Users/yoda/projects/RealBud without editing anything. Another session may be editing this checkout concurrently; ignore `dist*/`, `release/`, `node_modules/` and `outputs/` contents except to learn naming.
+You survey /Users/yo-da/projects/RealBud without editing anything. Another session may be editing this checkout concurrently; ignore `dist*/`, `release/`, `node_modules/` and `outputs/` contents except to learn naming.
 
 Rules
 - Prefer current source over any document's claim; `docs/` receipts are dated evidence, not scope.

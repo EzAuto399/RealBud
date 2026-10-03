@@ -38,21 +38,38 @@ try {
   }
   assert.ok(ready, logs);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
-  const createContext = async (welcome = false) => {
+  const createContext = async () => {
     const context = await browser.newContext({ viewport: { width: 1365, height: 1024 }, reducedMotion: 'reduce' });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-    if (!welcome) await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
     return context;
   };
+  // Welcome belongs to the workspace, so exercise it before saving completion.
+  const firstContext = await createContext(), first = await firstContext.newPage();
+  first.on('pageerror', error => errors.push(error.message));
+  await first.goto(origin); await first.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  pass('A fresh private workspace loads the actual welcome screen');
+  await first.getByLabel('Your name', { exact: true }).fill('Fictional Screen Loading Reviewer');
+  await first.getByRole('button', { name: 'Continue', exact: true }).click();
+  await first.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await first.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  await firstContext.close();
   const context = await createContext(); page = await context.newPage();
   const loaded = [];
   page.on('request', request => { if (request.resourceType() === 'script') loaded.push(new URL(request.url()).pathname); });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#/desk'); await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   assert.ok(loaded.some(url => /\/DeskPage-/.test(url)));
-  for (const name of ['YouPage', 'RoutinesPage', 'WorkspaceTabsManager', 'WorkspaceSetup', 'Onboarding']) assert.equal(loaded.some(url => url.includes(`/${name}-`)), false, `${name} should load only when used`);
-  pass('Desk opens without downloading settings, schedule, saved-view manager, setup or onboarding chunks');
-  for (const [hash, heading] of [['#/schedule', 'Schedule'], ['#/you', 'You'], ['#/views', 'Manage saved views'], ['#/desk', 'Desk']]) {
+  for (const name of ['YouPage', 'RoutinesPage', 'WorkspaceTabsManager', 'WorkspaceSetup', 'Onboarding', 'HermiosTab']) assert.equal(loaded.some(url => url.includes(`/${name}-`)), false, `${name} should load only when used`);
+  pass('Desk opens without downloading settings, schedule, saved-view manager, setup, onboarding or Hermios chunks');
+  const deskTabs = page.getByRole('navigation', { name: 'Desk workspace' });
+  await deskTabs.getByRole('button', { name: 'Hermios', exact: true }).click();
+  // Plain Chrome has no desktop bridge, so the tab offers the sign-in link.
+  await page.getByRole('link', { name: 'Open Hermios', exact: true }).waitFor();
+  assert.ok(loaded.some(url => url.includes('/HermiosTab-')), 'HermiosTab should load when its tab opens');
+  await deskTabs.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ }).click();
+  await page.getByRole('link', { name: 'Open Hermios', exact: true }).waitFor({ state: 'detached' });
+  pass('The Hermios tab downloads its own chunk only when opened, then returns to Tasks');
+  for (const [hash, heading] of [['#/schedule', 'Schedule'], ['#/you', 'Workspace'], ['#/views', 'Saved views'], ['#/desk', 'Desk']]) {
     await page.evaluate(hash => { location.hash = hash; }, hash);
     await page.getByRole('heading', { name: heading, exact: true }).waitFor();
     assert.equal(new URL(page.url()).hash, hash);
@@ -71,11 +88,11 @@ try {
   await failed.goto(origin + '/#/you'); await failed.getByRole('heading', { name: 'Could not open You', exact: true }).waitFor();
   await failed.locator('nav').getByRole('button', { name: /^Desk\b/ }).first().click();
   await failed.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
-  await failed.locator('nav').getByRole('button', { name: /^You\b/ }).first().click();
+  await failed.getByRole('button', { name: 'Workspace', exact: true }).click();
   await failed.getByRole('heading', { name: 'Could not open You', exact: true }).waitFor();
   failSettings = false;
   await failed.getByRole('button', { name: 'Reload RealBud', exact: true }).click();
-  await failed.getByRole('heading', { name: 'You', exact: true }).waitFor();
+  await failed.getByRole('heading', { name: 'Workspace', exact: true }).waitFor();
   pass('A failed settings asset shows recovery, leaves Desk navigation usable, and reload succeeds after the asset recovers');
   const setupContext = await createContext();
   await setupContext.route('**/assets/WorkspaceSetup-*.js', route => route.abort('failed'));
@@ -90,9 +107,6 @@ try {
   await setupPage.locator('nav').getByRole('button', { name: /^Schedule\b/ }).first().click();
   await setupPage.getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
   pass('A failed setup asset remains keyboard-dismissable in an accessible dialog and fits390px');
-  const firstContext = await createContext(true), first = await firstContext.newPage(); first.on('pageerror', error => errors.push(error.message));
-  await first.goto(origin); await first.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
-  pass('A new private browser session loads the actual welcome screen');
   assert.deepEqual(errors, []);
   assert.ok(expectedErrors.every(message => /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)), JSON.stringify(expectedErrors));
 } catch (error) { failure = error.stack || String(error); await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }

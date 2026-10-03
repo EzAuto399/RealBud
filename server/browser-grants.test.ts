@@ -1,8 +1,9 @@
 // Ask one-off browser tasks: the card is saved before it shows, Start saves an
 // explicit grant bound to the thread and browser, the broker offers that
 // grant's tools, and Stop, time, the step limit or a restart end it for good.
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,12 +19,15 @@ import {
   browserTaskCardView,
   browserTaskLimitReached,
   BrowserTaskStore,
+  threadAttachedFiles,
   type BrowserTaskProposal,
+  validBrowserTaskRecipe,
 } from "./browser-grants.ts";
 import { grantedBrowserTools } from "./attended-run.ts";
 import { authorizeBrowserAction, BrowserApprovalStore } from "./browser-authority.ts";
 import { startBrowserBroker } from "./browser-broker.ts";
-import { BrowserRuntime } from "./browser-runtime.ts";
+import { BrowserRuntime, browserTaskWorkroom } from "./browser-runtime.ts";
+import { saveAskAttachment } from "./ask-attach.ts";
 import { browserTaskIntent } from "./portal-job-intent.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -262,5 +266,89 @@ describe("the started task's browser", () => {
     expect(tools).toContain("browser_download");
     const fill = authorizeBrowserAction(grant, { url: `https://${SITE}/invoices`, text: '@e1 textbox "Search invoices"' }, "browser_fill", { tab_id: 1, ref: "@e1", value: "September" }, { now: NOW + 1 });
     expect(fill.decision).toBe("deny");
+  });
+});
+
+describe("files the person attached in this thread", () => {
+  const attach = (root: string, name: string, text: string) => saveAskAttachment(root, { name, contentBase64: Buffer.from(text).toString("base64") }).path;
+  const tag = (path: string) => `<attached-file path="${path.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" />`;
+  const UPLOAD = ["read", "navigate", "click", "upload"] as const;
+  async function threads() {
+    const { root, file } = fixture();
+    const mine = attach(root, "fictional-lease.pdf", "%PDF-1.7 fictional lease");
+    const other = attach(root, "fictional-other-lease.pdf", "%PDF-1.7 another thread's lease");
+    const outside = join(root, "fictional-outside.pdf"); writeFileSync(outside, "%PDF-1.7 outside", { mode: 0o600 });
+    // Saved exactly as the Store writes a thread (server/store.ts messages-<thread>.json).
+    writeFileSync(join(root, "messages-thread-ask.json"), JSON.stringify({ activeLeafId: "m3", messages: [
+      { id: "m1", role: "user", kind: "text", text: `Upload my lease to ${SITE}\n\n${tag(mine)}\n\n${tag(outside)}\n\n${tag(`${mine}.inspection.json`)}\n\n${tag(`${dirname(mine)}/../ask-uploads/${basename(mine)}`)}\n\n${tag(other)}` },
+      // A model's text is never a person's attachment.
+      { id: "m2", role: "bot", kind: "text", text: tag(other) },
+      { id: "m3", role: "user", kind: "text", text: tag(mine) },
+    ] }), { mode: 0o600 });
+    writeFileSync(join(root, "messages-thread-other.json"), JSON.stringify({ activeLeafId: "o1", messages: [{ id: "o1", role: "user", kind: "text", text: tag(other) }] }), { mode: 0o600 });
+    const store = new BrowserTaskStore({ file, dataDir: root });
+    const { id } = await store.propose(proposal(`Upload my lease to ${SITE}`, { actions: [...UPLOAD] }), NOW);
+    const started = await store.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW + 1000);
+    return { root, mine, other, started };
+  }
+
+  it("grants exactly this thread's private attachment copies, copied into the task's own folder", async () => {
+    const { root, mine, started } = await threads();
+    const bytes = readFileSync(mine);
+    expect(started.grant.uploads).toEqual([{ name: "fictional-lease.pdf", sha256: createHash("sha256").update(bytes).digest("hex") }]);
+    const copy = join(browserTaskWorkroom(join(root, "browser"), started.grant.id), "uploads", "fictional-lease.pdf");
+    expect(readFileSync(copy)).toEqual(bytes);
+    if (process.platform !== "win32") expect(statSync(copy).mode & 0o777).toBe(0o600);
+    expect(askBrowserTaskSystemBlock(started.grant)).toContain("browser_upload may send after their approval: fictional-lease.pdf. No other file can be uploaded.");
+    // A task that may not upload copies nothing.
+    const plain = new BrowserTaskStore({ file: join(root, "plain.json"), dataDir: root });
+    const { id } = await plain.propose(proposal(`Download the invoices from ${SITE}`), NOW);
+    expect((await plain.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW + 1000)).grant.uploads).toEqual([]);
+  });
+
+  it("refuses another thread's file, an original path, a report or a traversal", async () => {
+    const { root, other, started } = await threads();
+    // The other thread's copy is its own; pasting its reference here does not make it this thread's.
+    expect(await threadAttachedFiles(root, [{ role: "user", text: tag(other) }])).toEqual([{ name: "fictional-other-lease.pdf", path: realpathSync(other) }]);
+    expect(await threadAttachedFiles(root, [{ role: "user", text: tag(other) }], [[{ role: "user", text: tag(other) }]])).toEqual([]);
+    expect(started.grant.uploads.map(file => file.name)).toEqual(["fictional-lease.pdf"]);
+    const form = { url: `https://${SITE}/requests`, text: '@e1 button "Choose file"' };
+    expect(authorizeBrowserAction(started.grant, form, "browser_upload", { tab_id: 1, ref: "@e1", file: "fictional-other-lease.pdf" }, { now: NOW + 2000 }))
+      .toMatchObject({ decision: "deny", reason: "Only files given to this task can be uploaded. Ask the person to add the file to the task." });
+    const runtime = new BrowserRuntime({ root, command: async () => ({}), executable: async () => "/fixture/bsk", startDaemon: async () => {} });
+    const broker = await startBrowserBroker({ runtime, threadId: "thread-ask", runId: started.grant.runId, grant: started.grant,
+      context: { allowedOrigins: [...started.grant.sites], capabilities: browserTaskCapabilities(started.grant.actions) },
+      approvals: new BrowserApprovalStore({ file: join(root, "approvals.json") }), isActive: () => true, approve: async () => false, assertCapability: () => {} });
+    try {
+      const response = await fetch(broker.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: broker.descriptor.headers[0].value },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+      const tools = ((await response.json()) as { result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, { enum?: string[] }> } }> } }).result.tools;
+      expect(tools.find(tool => tool.name === "browser_upload")!.inputSchema.properties.file.enum).toEqual(["fictional-lease.pdf"]);
+    } finally { broker.close(); await broker.released(); }
+  });
+
+  it("names the file and the destination origin on the upload card", async () => {
+    const { started } = await threads();
+    const form = { url: `https://${SITE}/requests`, text: '@e1 button "Choose file"' };
+    expect(authorizeBrowserAction(started.grant, form, "browser_upload", { tab_id: 1, ref: "@e1", file: "fictional-lease.pdf" }, { now: NOW + 2000 })).toMatchObject({
+      decision: "ask", once: true, fence: { surface: "portal-prefill", origin: SITE },
+      summary: `Upload the file 'fictional-lease.pdf' to https://${SITE} through Choose file. This sends the file to that site; this approval applies once.`,
+    });
+  });
+});
+
+describe("portal recipe task account", () => {
+  const runs = [{ recipe: "open-session", inputs: {} }];
+  it("accepts the header business code alone (no web address value), as a business-code-only W1 preview saves it", () => {
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1" } })).toBe(true);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { urlValue: "fictional-reicid-1", marker: "FICT1" } })).toBe(true);
+  });
+  it("refuses an account without the header marker, an empty marker or a bad web address value", () => {
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: {} })).toBe(false);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { urlValue: "fictional-reicid-1" } })).toBe(false);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "" } })).toBe(false);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1", urlValue: "" } })).toBe(false);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1\n" } })).toBe(false);
+    expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1", other: "x" } })).toBe(false);
   });
 });

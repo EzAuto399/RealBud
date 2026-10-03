@@ -176,11 +176,10 @@ try {
   const watch = page => { page.on('pageerror', error => errors.push(`${page.url()} :: ${error.message}`)); return page; };
 
   const openSetupCard = async page => {
-    // The morning overview starts collapsed and the setup card lives under it
-    // (DeskPage.tsx: `mode === "batch" || !briefExpanded ? null : <GoLiveCard …>`).
+    // Desk's status line expands Check details, which contains the setup card.
     const morning = page.getByRole('region', { name: 'This morning', exact: true });
     await morning.waitFor();
-    const show = morning.getByRole('button', { name: 'Show addresses', exact: true });
+    const show = morning.getByRole('button', { name: 'Check details', exact: true });
     if (await show.count()) await show.click();
     const card = page.getByRole('region', { name: 'Workspace setup', exact: true });
     await card.waitFor();
@@ -330,28 +329,28 @@ try {
 
   // ── 1d. Step 2 opens its account-link gate; Connections remains navigable ──
   await accountLink.click();
-  const accountOffice = desk.locator('#you-office');
-  await accountOffice.waitFor();
-  const websiteAccount = accountOffice.getByRole('region', { name: 'Website account', exact: true });
+  const accountSettings = desk.locator('#you-settings');
+  await accountSettings.waitFor();
+  const websiteAccount = accountSettings.getByRole('region', { name: 'Website account', exact: true });
   await websiteAccount.getByRole('button', { name: 'Link with your RealBud account', exact: true }).waitFor();
   observations.hashAfterOpenAccountLink = await desk.evaluate(() => location.hash);
   assert.equal((await request('/api/office-link')).state, 'unlinked');
   await websiteAccount.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await desk.screenshot({ path: join(output, 'you-account-link.png') });
-  checks.push('Step 2 opens the Website account controls in You → Office without starting a link or marking the computer linked');
+  checks.push('Step 2 opens the Website account controls in Workspace → Settings & help without starting a link or marking the computer linked');
 
-  await desk.getByRole('navigation', { name: 'Jump to a settings group', exact: true }).getByRole('button', { name: 'Apps', exact: true }).click();
+  await desk.getByRole('button', { name: 'Workspace', exact: true }).click();
   const connectedApps = desk.locator('#you-connected-apps');
   await connectedApps.waitFor();
-  // The hashchange handler reveals the disclosure on the next animation frame.
+  if (!(await connectedApps.evaluate(el => el.open))) await connectedApps.locator('summary').first().click();
   await desk.locator('#you-connected-apps[open]').waitFor();
   observations.hashAfterOpenConnections = await desk.evaluate(() => location.hash);
   assert.equal(await connectedApps.count(), 1);
-  assert.ok(await connectedApps.isVisible(), 'the Connections section on You is not visible');
+  assert.ok(await connectedApps.isVisible(), 'the Connected apps section in Workspace is not visible');
   assert.ok(await connectedApps.evaluate(el => el.open), 'the Connected apps section is not expanded');
   await connectedApps.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await desk.screenshot({ path: join(output, 'you-connected-apps.png') });
-  checks.push('You → Apps opens the #you-connected-apps Connections section, expanded and visible, without connecting an account');
+  checks.push('Workspace → Connected apps opens #you-connected-apps, expanded and visible, without connecting an account');
 
   // ── 2. Narrow layout keeps the setup card inside 390px ──────────────────────
   const narrow = watch(await context.newPage());
@@ -368,7 +367,7 @@ try {
   await narrow.close();
   checks.push('The Desk workspace setup card renders at 390x844 with no horizontal page scroll');
 
-  // ── 3. This office reports the zone the book actually recorded ─────────────
+  // ── 3. Office details reports the zone the book actually recorded ──────────
   const bookBefore = await request('/api/desk');
   observations.bookTimezone = bookBefore.book?.agency?.timezone ?? null;
   assert.equal(bookBefore.book.agency.timezone, hostZone);
@@ -388,7 +387,7 @@ try {
   await zoneLine.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await you.screenshot({ path: join(output, 'you-office-timezone.png') });
   await you.close();
-  checks.push(`You → This office shows the zone the fresh v3 book recorded (${hostZone}), matching the server process, with no "not recorded yet" fallback`);
+  checks.push(`Workspace → Office details shows the zone the fresh v3 book recorded (${hostZone}), matching the server process, with no "not recorded yet" fallback`);
 
   // ── 4. Completed setup persists in a fresh browser, preserving the contact ─
   const named = await request('/api/desk/agency', 'PATCH', { office: { pmUser: SAVED_PERSON } });

@@ -428,9 +428,18 @@ CREATE TRIGGER execution_department_lifecycle AFTER UPDATE ON realbud_company.sc
 REVOKE ALL ON FUNCTION realbud_company.bump_execution_epoch(),realbud_company.protect_execution_record(),realbud_company.hold_execution_on_lifecycle() FROM PUBLIC;
 `;
 
+const DEPARTMENT_CONFIGURATION_SCHEMA = `
+ALTER TABLE realbud_company.scopes ADD COLUMN department_configuration jsonb;
+ALTER TABLE realbud_company.scopes ADD CONSTRAINT department_configuration_scope CHECK (
+ department_configuration IS NULL OR (purpose='department' AND jsonb_typeof(department_configuration)='object' AND octet_length(department_configuration::text)<=32768));
+-- No implicit inheritance of a machine's private plans. Retain all prior work,
+-- but make its legacy department authority require explicit new owner review.
+UPDATE realbud_company.scopes SET revision=revision+1 WHERE purpose='department';
+`;
+
 /** Trusted migration identities for data-only backup compatibility checks. */
 export function companySchemaManifest(): Array<{ id: string; checksum: string }> {
-  return [INITIAL_SCHEMA, MEMBER_CREDENTIALS_SCHEMA, WORKFLOW_TEMPLATE_SCHEMA, MEMBERSHIP_SCHEMA, DEPARTMENTS_SCHEMA, DEPARTMENT_LIFECYCLE_SCHEMA, PORTAL_BINDINGS_SCHEMA, DEPARTMENT_EXECUTION_SCHEMA]
+  return [INITIAL_SCHEMA, MEMBER_CREDENTIALS_SCHEMA, WORKFLOW_TEMPLATE_SCHEMA, MEMBERSHIP_SCHEMA, DEPARTMENTS_SCHEMA, DEPARTMENT_LIFECYCLE_SCHEMA, PORTAL_BINDINGS_SCHEMA, DEPARTMENT_EXECUTION_SCHEMA, DEPARTMENT_CONFIGURATION_SCHEMA]
     .map((sql, index) => ({ id: String(index + 1).padStart(4, '0'), checksum: createHash('sha256').update(sql).digest('hex') }));
 }
 
@@ -504,6 +513,13 @@ export async function migrateCompanySchema(pool: Pool, options: { applicationRol
     if (!executionApplied.rows[0]) {
       await client.query(DEPARTMENT_EXECUTION_SCHEMA);
       await client.query('INSERT INTO realbud_company.schema_migrations(id,checksum) VALUES($1,$2)', ['0008', executionChecksum]);
+    }
+    const configurationChecksum = createHash('sha256').update(DEPARTMENT_CONFIGURATION_SCHEMA).digest('hex');
+    const configurationApplied = await client.query('SELECT checksum FROM realbud_company.schema_migrations WHERE id=$1', ['0009']);
+    if (configurationApplied.rows[0] && configurationApplied.rows[0].checksum !== configurationChecksum) throw new Error('Company migration checksum mismatch');
+    if (!configurationApplied.rows[0]) {
+      await client.query(DEPARTMENT_CONFIGURATION_SCHEMA);
+      await client.query('INSERT INTO realbud_company.schema_migrations(id,checksum) VALUES($1,$2)', ['0009', configurationChecksum]);
     }
     // Role spelling is validated above. It cannot be supplied by a product user.
     await client.query(`GRANT USAGE ON SCHEMA realbud_company TO "${role}"`);

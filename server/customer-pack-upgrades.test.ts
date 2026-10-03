@@ -2,9 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
+import { austinCustomerPack } from './customer-pack-definition.ts';
 const recipeRoot=vi.hoisted(()=>{const value=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-upgrade-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=value;return value;});
 const {createCustomerPackService,validateCustomerPackUpgradeJournal}=await import('./customer-packs.ts');
 const {saveRecipe,saveRecipesAtomically,resetRecipeApprovalsAtomically,loadRecipes,getRecipe,patchRecipe}=await import('./recipes.ts');
@@ -32,6 +33,60 @@ const request=(preview:CustomerPackChangePreview)=>({pack:preview.pack,expectedI
 const resume=(id:string,installed:any)=>({route:`/api/customer-packs/${id}/resume-change`,body:{expectedInstalledDigest:installed.digest,expectedInstalledRevision:installed.installationRevision,expectedPreviewDigest:installed.pendingChange.previewDigest}});
 
 describe('reviewed customer pack version changes with real recipe writes',()=>{
+  it('holds Auston revision-3 approvals unchanged until its source-provenance upgrade is reviewed', async () => {
+    const next = austinCustomerPack(), previous = structuredClone(next);
+    const source = JSON.parse(readFileSync(new URL('../pack/workflows/austin-accounts/workflows.json', import.meta.url), 'utf8')) as { recipes: CustomerPack['recipes'] };
+    previous.revision = 3;
+    previous.recipes = previous.recipes.map(recipe => ({ ...recipe, steps: recipe.steps.slice(1),
+      description: source.recipes.find(row => row.id === recipe.id)!.description.replace(
+        'No skill_view, connectors, scripts or provider mutations. JSON import does not install support; the host supplies it.',
+        'No connectors, scripts or provider mutations. Use host-bound skill context and included support as instructions.') }));
+    const f = await fixture(previous), id = previous.recipes[0].id;
+    saveRecipe({ ...getRecipe(id)!, title: 'Fictional locally named morning review', status: 'active',
+      schedule: { time: '08:00', weekdays: [1] }, expectedRevision: getRecipe(id)!.revision });
+    patchRecipe(id, { planApproved: true, expectedRevision: getRecipe(id)!.revision });
+    const before = loadRecipes(true);
+    const preview = await f.service.previewUpgrade(next);
+    expect(next.revision).toBe(5);
+    expect(preview.canApply).toBe(true);
+    expect(loadRecipes(true)).toEqual(before);
+    expect(getRecipe(id)).toMatchObject({ status: 'active', approvedRevision: getRecipe(id)!.revision });
+    expect(getRecipe(id)!.description).toContain('PROPOSED SYNTHETIC OFFICE ROUTING POLICY');
+    expect(preview.recipes.find(row => row.id === id)!.after.title).toBe('Fictional locally named morning review');
+
+    const done = await f.service.upgrade(request(preview));
+    expect(done).toMatchObject({ revision: 5, installationRevision: 2, localReady: true });
+    expect(done.history).toHaveLength(1);
+    for (const recipe of next.recipes) {
+      expect(getRecipe(recipe.id)).toMatchObject({ description: recipe.description, steps: recipe.steps,
+        status: 'shadow', schedule: null, approvedRevision: null, planApprovedAt: null });
+    }
+    expect(getRecipe(id)!.title).toBe('Fictional locally named morning review');
+  });
+
+  it('reviews the Auston revision-4 to revision-5 cadence guidance as proposals and leaves every local clock disabled', async () => {
+    const next = austinCustomerPack(), previous = structuredClone(next);
+    previous.revision = 4;
+    // Prior source-neutral revision, before the user's Gmail/cadence clarification.
+    const operatingStep = /^(W2 target:|Use emailed or supplied Property\.csv|Propose new bills|Weekly W2 orchestration|W3 runs daily|Prepare priorities:)/;
+    previous.recipes = previous.recipes.map(recipe => ({ ...recipe, steps: recipe.steps.filter(step => !operatingStep.test(step)) }));
+    const f = await fixture(previous), id = 'wf-austin-accounts-bill-exceptions';
+    saveRecipe({ ...getRecipe(id)!, title: 'Fictional locally named weekly bills', status: 'active',
+      schedule: { time: '08:00', weekdays: [1] }, expectedRevision: getRecipe(id)!.revision });
+    patchRecipe(id, { planApproved: true, expectedRevision: getRecipe(id)!.revision });
+    const before = loadRecipes(true), preview = await f.service.previewUpgrade(next);
+    expect(preview.canApply).toBe(true);
+    expect(loadRecipes(true)).toEqual(before);
+    const done = await f.service.upgrade(request(preview));
+    expect(done).toMatchObject({ revision: 5, installationRevision: 2, localReady: true });
+    expect(getRecipe(id)!.title).toBe('Fictional locally named weekly bills');
+    expect(getRecipe(id)!.steps.join('\n')).toContain('Weekly W2 orchestration is not implemented');
+    expect(getRecipe(id)!.steps.join('\n')).toContain('only host receipts prove calendar writes or in-app notification');
+    for (const recipe of next.recipes) expect(getRecipe(recipe.id)).toMatchObject({
+      steps: recipe.steps, status: 'shadow', schedule: null, approvedRevision: null, planApprovedAt: null,
+    });
+  });
+
   it('three-way merges publisher changes with unrelated local edits, clears siteNotes, approvals and schedules, and reconciles exact retry',async()=>{
     const f=await fixture(),id=f.initial.recipes[0].id;
     saveRecipe({...getRecipe(id)!,description:'Keep my local operating note.',schedule:{time:'08:00',weekdays:[1]},status:'active',expectedRevision:getRecipe(id)!.revision});

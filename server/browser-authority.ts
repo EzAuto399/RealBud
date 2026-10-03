@@ -24,6 +24,7 @@ import {
   type BrowserTaskGrant,
 } from "../shared/browser-task.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
+import { isNativeBrowserObservation } from "./native-browser-observation.ts";
 
 // ── one table for every route ────────────────────────────────────────────
 /** Words that make a control, link or field consequential, checked in order.
@@ -31,7 +32,9 @@ import type { BrowserCheckpoint } from "../shared/browser.ts";
 export const CONSEQUENTIAL_ACTIONS: ReadonlyArray<{ kind: BrowserConsequentialKind; pattern: RegExp }> = [
   { kind: "pay", pattern: /\b(pay|payment|transfer|remit|bpay|direct debit|purchase|buy|trade|execute|authori[sz]e|approve)\b|(?<!\bin )\border\b/i },
   { kind: "sign", pattern: /\b(?:e-?sign|signature|sign(?![ -]?(?:in|on|up|out)\b))\b/i },
-  { kind: "notice", pattern: /\b(notice|terminate|evict)\b/i },
+  // Lodging a filing with an authority (a bond, claim or application) is asked once with its document, like a notice.
+  // An ordinary "Lodge request" (a maintenance request) stays a task-authorised submit.
+  { kind: "notice", pattern: /\b(notice|terminate|evict)\b|\blodge\s+(?:the\s+|this\s+|a\s+|an\s+)?(?:bond|claim|application|dispute|appeal|return)\b/i },
   { kind: "send", pattern: /\bsend\b/i },
   { kind: "delete", pattern: /\b(delete|remove)\b/i },
   { kind: "account-change", pattern: /\b(close account|beneficiary|payee|cancel|unsubscribe|log.?out|sign.?out|sign.?up)\b/i },
@@ -50,11 +53,13 @@ const READ_AFFORDANCE = /\b(view|show|statement|transaction|history|download|exp
 const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
 const TEXT_ROLE = /^(textbox|searchbox|textarea|editable|textfield)$/;
 const CHOICE_ROLE = /^(combobox|listbox|option|radio|radiogroup|slider|spinbutton|menuitemradio)$/;
+/** An amount field on a form, even before it shows a currency. */
+const AMOUNT_FIELD = /\b(?:textbox|spinbutton|textfield|editable)\s+"(?:payment |transfer |total )?amount(?: to pay)?"/i;
 /** Page evidence that an affirmative control completes a consequential action. */
 const PAGE_KINDS: ReadonlyArray<{ kind: BrowserConsequentialKind; test: (text: string) => boolean }> = [
-  { kind: "pay", test: text => moneyIn(text).length > 0 && /\b(payee|pay to|biller|beneficiary|recipient|transfer to|payment method)\b/i.test(text) },
+  { kind: "pay", test: text => (moneyIn(text).length > 0 || AMOUNT_FIELD.test(text)) && /\b(payee|pay to|biller|beneficiary|recipient|transfer to|payment method)\b/i.test(text) },
   { kind: "sign", test: text => /\b(sign here|signature|e-?sign|docusign|sign (?:the|this) (?:document|agreement|lease|contract|form))\b/i.test(text) },
-  { kind: "notice", test: text => /\b(notice to (?:vacate|leave|remedy)|breach notice|termination notice|notice of (?:termination|breach|eviction|rent increase)|terminate (?:the|this) (?:lease|tenancy|agreement))\b/i.test(text) },
+  { kind: "notice", test: text => /\b(notice to (?:vacate|leave|remedy)|breach notice|termination notice|notice of (?:termination|breach|eviction|rent increase)|terminate (?:the|this) (?:lease|tenancy|agreement)|bond lodgement|lodge (?:a |the )?bond|lodge (?:an |the |this )?(?:application|claim|dispute|appeal)|(?:tribunal|ncat|vcat|qcat|sat|ntcat|act ?cat) application)\b/i.test(text) },
   { kind: "send", test: text => /\btextbox\s+"(?:to|recipients?)"/i.test(text) && /\btextbox\s+"(?:subject|message|body)"/i.test(text) },
   { kind: "delete", test: text => /\b(are you sure you want to (?:delete|remove)|permanently (?:delete|remove))\b/i.test(text) },
   { kind: "account-change", test: text => /\b(close (?:your|this) account|change (?:your )?password|update (?:your )?(?:bank|payment) details|add (?:a )?(?:new )?payee)\b/i.test(text) },
@@ -217,7 +222,7 @@ function portalControlsFor(grant: BrowserTaskGrant, portal: BrowserPortalControl
 export function accountMarkerShown(text: string, marker: string): boolean {
   const wanted = marker.trim();
   if (!wanted) return false;
-  if (isVomObservation(text)) {
+  if (isStructuredBrowserObservation(text)) {
     return parseVom(text).nodes.some(node => !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode) && (node.name?.trim() === wanted || node.value?.trim() === wanted));
   }
   return text.split("\n").some(line => line.trim() === wanted ||
@@ -227,9 +232,14 @@ export function accountMarkerShown(text: string, marker: string): boolean {
  * the first node of its role in the page's first such landmark (the business switcher in the banner). */
 function portalMarkerShown(text: string, where: { landmark: string; role: string }, marker: string): boolean {
   const { nodes } = parseVom(text);
-  const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node));
-  const shown = landmark ? descendants(landmark).find(node => node.role === where.role.toLowerCase() && !hiddenNode(node)) : undefined;
+  const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode));
+  const shown = landmark ? descendants(landmark).find(node => node.role === where.role.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode)) : undefined;
   return shown?.name?.trim() === marker.trim() && marker.trim() !== "";
+}
+/** Portal account labels only count at their declared location. Plain text
+ * can never weaken that check just because structured data is unavailable. */
+export function browserAccountMarkerShown(text: string, marker: string, portal?: BrowserPortalControls): boolean {
+  return portal?.accountMarker ? isStructuredBrowserObservation(text) && portalMarkerShown(text, portal.accountMarker, marker) : accountMarkerShown(text, marker);
 }
 const FORM_ROLE = new Set(["form", "dialog", "alertdialog"]);
 /** Groups that hold their own controls: a filter or search bar, a pager, a menu. */
@@ -248,7 +258,7 @@ const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.
  *   generic node), the whole page shows none of those either. */
 function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
   const name = controlName(label);
-  if (portal.consequential.includes(name) || consequentialKind(label) || !isVomObservation(text)) return false;
+  if (portal.consequential.includes(name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
   const { nodes } = parseVom(text);
   const targets = nodes.filter(node => node.ref === ref);
   if (targets.length !== 1 || targets[0].name !== name) return false;
@@ -289,6 +299,37 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
   const root = ancestors.at(-1) ?? target;
   const landmark = ancestors.find(node => REGION_ROLE.has(node.role) || (menuLink && node === group)) ?? root;
   return !(group && changes(group)) && !changes(landmark) && pageConsequentialKind(nodeLines(nodes)) === null;
+}
+/** Native adoption starts with business read-only work. The existing action
+ * classifier still decides every call; this extra check refuses all writes,
+ * unknown controls and form submissions even if a broader grant exists. */
+export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: BrowserObservation, tool: string, args: Args, portal?: BrowserPortalControls): boolean {
+  const classified = classifyBrowserAction(grant, observation, tool, args, portal);
+  if (classified.class !== "routine") return false;
+  if (classified.action === "read") return true;
+  if (classified.action === "navigate") {
+    const target = jobBrowserUrl(args.url, grant.sites); if (!target) return false;
+    let route: string; try { route = decodeURIComponent(target.pathname + target.search); } catch { return false; }
+    // Native adoption cannot follow a write disguised as same-site GET.
+    return !/(?:^|[^a-z])(?:api|graphql|save|submit|create|update|delete|remove|archive|process|finali[sz]e|reconcile|dismiss|toggle|enable|disable|cancel|confirm|accept|approve|reject|send|pay|execute)(?:[^a-z]|$)/i.test(route);
+  }
+  if (!classified.label || !observation.text || !isStructuredBrowserObservation(observation.text) || typeof args.ref !== "string") return false;
+  const current = jobBrowserUrl(observation.url, grant.sites); if (!current) return false;
+  const declared = portalControlsFor(grant, portal, current);
+  if (declared) return readSafeControl(declared, observation.text, args.ref, classified.label);
+  // A site without a reviewed map gets only a plainly named search/filter
+  // control in a tree with no saving or consequential form in its scope.
+  const label = controlName(classified.label);
+  if (!/^(?:search|search:|filter|filter:|filter results|search results|show results|view details|show details|previous page|next page)$/i.test(label)) return false;
+  const generic: BrowserPortalControls = { origin: current.origin, readSafe: [label], menu: [], pagination: [], signInHosts: [], consequential: ["Save", "Submit", "Create", "Update", "Confirm", "Continue", "Finish", "Done", "Delete", "Archive"] };
+  if (!readSafeControl(generic, observation.text, args.ref, classified.label)) return false;
+  if (classified.step === "press") {
+    const key = browserKey(args.key);
+    // Enter on a search field can submit an arbitrary form. Let the explicit
+    // Search button do the operation until form-specific proof is available.
+    if (!key || key.spec === "Enter" && TEXT_ROLE.test(roleOf(classified.label))) return false;
+  }
+  return classified.action === "fill" || classified.action === "click" || classified.action === "keys";
 }
 /** A pack or global consequential label, as a whole phrase anywhere in the name ("Finalise period?"). */
 function consequentialName(portal: BrowserPortalControls, name: string): boolean {
@@ -340,7 +381,7 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   const ref = typeof args.ref === "string" ? args.ref : "";
   const label = /^@e\d+$/.test(ref) ? observationRefs(text).get(ref) : undefined;
   if (!label) return { class: "out-of-scope", step, reason: STALE_CONTROL };
-  const markerShown = (marker: string) => portal?.accountMarker && isVomObservation(text) ? portalMarkerShown(text, portal.accountMarker, marker) : accountMarkerShown(text, marker);
+  const markerShown = (marker: string) => browserAccountMarkerShown(text, marker, portal ?? undefined);
   if (grant.browser.accountMarker && !markerShown(grant.browser.accountMarker)) {
     return { class: "out-of-scope", step, reason: "The verified account label is no longer visible. Check the account and page before continuing." };
   }
@@ -537,6 +578,7 @@ function headings(text: string): string[] {
 // nodes never confirm a fact; another form, dialog or row never supplies one.
 interface VomNode { indent: number; ref: string | null; role: string; name: string | null; value: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
 export const isVomObservation = (text: string): boolean => /^\s*@vom\s+\d+[^\S\n]*(?:\n|$)/.test(text);
+export const isStructuredBrowserObservation = (text: string): boolean => isVomObservation(text) || isNativeBrowserObservation(text);
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
 const VOM_NODE = new RegExp(String.raw`^(?:(@e\d+)\s+)?([A-Za-z][\w-]*)(?:\s+${QUOTED})?(.*)$`);
 const VOM_VALUE = new RegExp(String.raw`(?:^|\s)value=${QUOTED}`);
@@ -547,7 +589,7 @@ function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
     const line = raw.replace(/\s+$/, "");
     const body = line.trimStart(); const indent = line.length - body.length;
     if (!body) continue;
-    if (indent === 0 && /^@(?:vom|view|layers)\b/.test(body)) { focus = body.match(/^@layers\b.*\bfocus=(L\d+)\b/)?.[1] ?? focus; continue; }
+    if (indent === 0 && /^@(?:vom|native-ax|view|layers)\b/.test(body)) { focus = body.match(/^@layers\b.*\bfocus=(L\d+)\b/)?.[1] ?? focus; continue; }
     const layer = indent === 0 ? body.match(/^(L\d+)\s+\S/) : null;
     const match = layer ? null : body.match(VOM_NODE);
     if (!layer && !match) continue;
@@ -687,7 +729,7 @@ function vomFactSource(text: string, ref: string, kind: BrowserConsequentialKind
 }
 /** Plain `Label: value` text reads the whole observation; the helper's VOM reads only the pressed control's form or region. */
 function factSource(text: string, ref: string, kind: BrowserConsequentialKind): FactSource {
-  if (!isVomObservation(text)) return { text, pairs: observedPairs(text), headings: headings(text) };
+  if (!isStructuredBrowserObservation(text)) return { text, pairs: observedPairs(text), headings: headings(text) };
   return vomFactSource(text, ref, kind) ?? { text: "", pairs: [], headings: [] };
 }
 
@@ -762,7 +804,7 @@ export function browserApprovalDraft(kind: BrowserConsequentialKind, observation
   const has = (name: BrowserFactName) => facts.some(item => item.name === name);
   const what = kind === "pay" ? `Pay ${value("currency")} ${value("amount")} to ${value("recipient")}${has("reference") ? ` (reference ${value("reference")})` : ""}`
     : kind === "sign" ? `Sign '${value("document")}'`
-      : kind === "notice" ? `Issue the notice '${value("document")}'`
+      : kind === "notice" ? (/\blodge\b/i.test(control) ? `Lodge '${value("document")}'` : `Issue the notice '${value("document")}'`)
         : kind === "send" ? `Send the message${has("subject") ? ` '${value("subject")}'` : ""} to ${value("to")}`
           : kind === "delete" ? `Delete ${value("target")}` : `Change the account: ${value("target")}`;
   const confirmed = facts.filter(item => item.confirmed).map(item => [item.name, item.value]).sort();
@@ -804,6 +846,14 @@ export interface BrowserAuthorityOptions {
   used?: number;
   /** The task's portal pack controls, from the host. */
   portal?: BrowserPortalControls;
+  /** Fresh host proof for this dispatch, never accepted from a page/model or
+   * persisted as a standing rule. The broker checks live ownership before and
+   * after every await and still verifies any bound account before returning a
+   * read or performing a control. */
+  taskScope?: {
+    grantId: string; runId: string; requestHash: string; browserId: string;
+    tabId: number; origin: string; accountMarker: string | null; readOnly: true;
+  };
 }
 
 function ruleAllows(rules: BrowserAuthorityOptions["rules"], surface: PortalRuleSurface, site: string, url: URL): boolean {
@@ -848,14 +898,34 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     const what = classification.step === "press" ? `Press ${key} in ${label} on ${host}.`
       : classification.step === "select" ? `Choose ${shownChoices(args.values)} in ${label} on ${host}.`
         : classification.step === "download" ? `Download the file from ${label} on ${host}.`
-          : classification.step === "upload" ? `Upload the task's file '${String(args.file)}' into ${label} on ${host}.` : `Use ${label} on ${host}.`;
+          : classification.step === "upload" ? `Upload the file '${String(args.file)}' to ${url.origin} through ${label}. This sends the file to that site.` : `Use ${label} on ${host}.`;
     return { decision: "ask", classification, once: true, draft: null, fence: { surface: classification.step === "upload" ? "portal-prefill" : "portal-read", origin: site, ruleOffer: null },
       summary: `${what} ${classification.reason} This approval applies once.` };
   }
   const { action, step } = classification;
   if (!grant.actions.includes(action)) return deny(missingAction(action));
   const surface: PortalRuleSurface | "portal-submit" = action === "fill" || action === "upload" ? "portal-prefill" : action === "submit" ? "portal-submit" : "portal-read";
-  // Downloading is reading; keys, dropdowns and uploads always ask.
+  const scope = options.taskScope;
+  const ruleKeys = new Set(surface === "portal-submit" ? [] : [portalRuleKey(surface, site), portalRuleKey(surface, hostOf(url))]);
+  const deniedRule = (options.rules ?? []).some(rule => rule.decision === "deny" && ruleKeys.has(rule.key));
+  // Start authorizes a bounded Ask task, not a new standing site permission.
+  // Legacy jobs and unbound/indefinite grants retain their existing prompts.
+  if (scope?.readOnly === true && grant.route === "ask" && !grant.origin &&
+      grant.expiresAt !== null && grant.budget !== null &&
+      scope.grantId === grant.id && scope.runId === grant.runId && scope.requestHash === grant.request.sha256 &&
+      !!grant.browser.id && scope.browserId === grant.browser.id && scope.tabId === args.tab_id && scope.origin === url.origin &&
+      (!grant.browser.accountMarker || scope.accountMarker === grant.browser.accountMarker) && !deniedRule) {
+    const sameSiteNavigation = step === "navigate" && jobBrowserUrl(args.url, grant.sites)?.origin === scope.origin;
+    const control = ["fill", "click", "press", "select"].includes(step);
+    const accountShown = !scope.accountMarker || !!observation?.text && browserAccountMarkerShown(observation.text, scope.accountMarker, options.portal);
+    if (surface !== "portal-submit" && (step === "borrow" || step === "read" ||
+        ((sameSiteNavigation || control) && accountShown && browserReadOnlyAction(grant, observation!, tool, args, options.portal)))) {
+      return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: "allowed for this browser task" };
+    }
+    // This task scope is read-only by design: any submit, however ordinary,
+    // falls through to the once-only prompt below rather than running here.
+  }
+  // Standing rules retain their earlier scope: keys, dropdowns and uploads ask.
   const rulable = step === "borrow" || step === "read" || step === "navigate" || step === "fill" || step === "download";
   if (rulable && surface !== "portal-submit" && ruleAllows(options.rules, surface, site, url)) {
     return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by rule · ${portalRuleLabel(surface, site)}` };
@@ -868,10 +938,11 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
           : step === "press" ? (action === "submit" ? `Bud wants to press ${key} in '${label}' on ${site}. Check the form in the browser first.` : `Press ${key} in ${classification.label} on ${url.hostname}.`)
             : step === "select" ? `Choose ${shownChoices(args.values)} in ${classification.label} on ${url.hostname}.`
               : step === "download" ? `Download the file from ${classification.label} on ${url.hostname} into this task's private folder.`
-                : step === "upload" ? `Upload the task's file '${String(args.file)}' into ${classification.label} on ${url.hostname}.`
+                : step === "upload" ? `Upload the file '${String(args.file)}' to ${url.origin} through ${label}. This sends the file to that site; this approval applies once.`
                   : action === "submit" ? submitPressSummary(label, site) : `Use ${classification.label} on ${url.hostname}.`;
   return {
-    decision: "ask", classification, once: false, draft: null, summary,
+    // An upload sends a file out: each instance is its own approval.
+    decision: "ask", classification, once: step === "upload", draft: null, summary,
     fence: { surface, origin: site, ruleOffer: rulable && surface !== "portal-submit" ? { surface, origin: site, label: portalRuleLabel(surface, site) } : null },
   };
 }

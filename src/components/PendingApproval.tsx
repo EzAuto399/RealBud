@@ -259,7 +259,7 @@ export function PendingApprovalActions({
             {alwaysAllowOfferLabel(ruleOffer.label)}
           </button>
           <p className="text-[12px] text-ink-muted">
-            Saved as a standing rule. Revoke it any time on You → Bud's rules.
+            Saved as a standing rule. Revoke it any time in Workspace → Settings & help → Advanced.
           </p>
         </div>
       ) : null}

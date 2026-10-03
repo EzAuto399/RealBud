@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readdirSync, readFi
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIME, relayIdempotencyKey, relayRefusalDetail, type DepartmentWorkerOptions } from './department-worker.ts';
+import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIMES, relayIdempotencyKey, relayRefusalDetail, type DepartmentWorkerOptions } from './department-worker.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
 import { resetRuntimeSelectionForTests } from './hermes-runtime-selection.ts';
 import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_UNPAIRED, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
@@ -52,7 +52,25 @@ it('holds unsupported or absent runtime without falling back to private askWorke
   expect(beforeLaunch).not.toHaveBeenCalled();
 });
 
+it('admits exactly the reviewed 0.21.3 and 0.21.5 commits, each pinned on the same seams', () => {
+  expect(Object.keys(DEPARTMENT_WORKER_RUNTIMES).sort()).toEqual([
+    '345cd2b057a452236de401d3534b8502a7465e8d', // 0.21.3, v2026.9.14
+    'f97608f178d1ffeca59860195ab7da295f7c8e5f', // 0.21.5, v2026.9.24 peeled
+  ]);
+  const [older, newer] = Object.values(DEPARTMENT_WORKER_RUNTIMES);
+  expect(Object.keys(newer!)).toEqual(Object.keys(older!));
+  for (const files of [older!, newer!]) for (const digest of Object.values(files)) expect(digest).toMatch(/^[0-9a-f]{64}$/);
+});
+it('holds a selected runtime outside the admitted commits before any launch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'department-unadmitted-')); dirs.push(root);
+  writeFileSync(join(root, 'realbud-runtime.json'), JSON.stringify({ version: 1, selected: '29112bef099274229cadff79cdff7bf7b99c4b77', previous: null }));
+  const beforeLaunch = vi.fn(); expect(await askDepartmentWorker('case', { root, beforeLaunch })).toMatchObject({ ok: false });
+  expect(beforeLaunch).not.toHaveBeenCalled();
+});
+
 const nativeRuntime = process.env.REALBUD_DEPARTMENT_TEST_RUNTIME;
+// Which admitted commit the native tree is staged as (default 0.21.3).
+const nativeCommit = process.env.REALBUD_DEPARTMENT_TEST_COMMIT ?? '345cd2b057a452236de401d3534b8502a7465e8d';
 describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/python')))('admitted Hermes with fictional provider', () => {
   async function fixture(answer: (request: any, index: number) => unknown | Promise<unknown>) {
     const captures: any[] = [];
@@ -72,10 +90,10 @@ describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/pyth
     await new Promise<void>(done => provider.listen(0, '127.0.0.1', done));
     const address = provider.address(); if (!address || typeof address === 'string') throw new Error();
     const root = mkdtempSync(join(tmpdir(), 'department-native-')); dirs.push(root);
-    const runtime = join(root, 'runtimes', DEPARTMENT_WORKER_RUNTIME, 'hermes-agent'); mkdirSync(runtime, { recursive: true });
+    const runtime = join(root, 'runtimes', nativeCommit, 'hermes-agent'); mkdirSync(runtime, { recursive: true });
     for (const name of readdirSync(nativeRuntime!)) if (name !== '.env' && name !== '.git') symlinkSync(join(nativeRuntime!, name), join(runtime, name));
     writeFileSync(join(runtime, '.env'), 'HERMES_EPHEMERAL_SYSTEM_PROMPT=RUNTIME_DOTENV_CANARY\n');
-    writeFileSync(join(root, 'realbud-runtime.json'), JSON.stringify({ version: 1, selected: DEPARTMENT_WORKER_RUNTIME, previous: null }));
+    writeFileSync(join(root, 'realbud-runtime.json'), JSON.stringify({ version: 1, selected: nativeCommit, previous: null }));
     const profile = join(root, 'profiles', currentWorkerProfile().profile); mkdirSync(join(profile, 'memories'), { recursive: true });
     for (const name of ['SOUL.md', 'USER.md', 'MEMORY.md', 'AGENTS.md', 'CLAUDE.md']) writeFileSync(join(profile, name), `PRIVATE_${name}_CANARY`);
     writeFileSync(join(profile, 'memories/MEMORY.md'), 'PROFILE_MEMORY_CANARY'); writeFileSync(join(profile, 'memories/USER.md'), 'PROFILE_USER_CANARY');

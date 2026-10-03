@@ -54,6 +54,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { pendingApprovals } from "./PendingApproval";
 import { BrowserTaskCard, useBrowserTasks, type BrowserTaskAction, type BrowserTaskBrowser, type BrowserTaskCardView } from "./BrowserTaskCard";
+import { BrowserSignInStrip, useBrowserSignIns } from "./BrowserSignInStrip";
 import { ModelPicker } from "./ModelPicker";
 import { TaskPicker } from "./TaskPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -65,9 +66,11 @@ import { useStreamPreview } from "@/lib/use-stream-preview";
 import { budAutoSetupView, budAvailability } from "@/lib/bud-setup";
 import { PmTaskStarters } from "./PmTaskStarters";
 import { AskMessage } from "./AskMessage";
+import { MailPriorityCard } from "./work/MailPriorityCard";
 import { channelMessage } from "@/lib/channel-message";
 import { AskReadiness } from "./AskReadiness";
 import { AskContext } from "./AskContext";
+import { AskAppContextPanel, AskAppContextToggle, useAskAppContext } from "./AskAppContext";
 import { hasUnfinishedJobDraft, repeatableJobDescription } from "@/lib/work-continuation";
 import { EMPTY_JOB_DRAFT } from "@/lib/job-plan";
 import { CHAT_HISTORY_PAGE, chatHistoryWindow, indexChatMessageVersions, pageChatHistory, type ChatHistoryWindow, type ChatMessageVersions } from '@/lib/chat-history';
@@ -1028,6 +1031,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+  const appContext = useAskAppContext({ threadId: bot.threadId, messages, enabled: productAsk });
   const makeRepeatable = (messageId: string) => {
     if (state.jobDraftBusy || hasUnfinishedJobDraft(state.jobDraft)) {
       setAskActionNotice({ ok: false, text: "Your unfinished job plan is kept. Save or close it on Schedule before making another." });
@@ -1153,7 +1157,13 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const stopTurn = useCallback(() => dispatch({ type: "interrupt", botId: bot.id }), [bot.id, dispatch]);
   const browserTasks = useBrowserTasks({ threadId: bot.threadId, messages, busy: Boolean(bot.busy), enabled: productAsk, onInterrupt: stopTurn });
   const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => { void browserTasks.act(id, action, site); }, [browserTasks.act]);
-  const connectTaskBrowser = useCallback(() => { location.hash = "you-browser"; dispatch({ type: "showYou" }); }, [dispatch]);
+  const browserSignIns = useBrowserSignIns({ threadId: bot.threadId, busy: Boolean(bot.busy), enabled: productAsk });
+  // Opens RealBud's work browser here (the same route the browser card uses); never a trip to settings.
+  const connectTaskBrowser = useCallback(() => {
+    void api("/api/browser/connect", { method: "POST", body: "{}" }, { timeoutMs: 90_000 }).then(
+      () => { setAskActionNotice({ ok: true, text: "The work browser is open. Sign in there if the site asks, then start the task." }); void browserTasks.refresh(); },
+      () => setAskActionNotice({ ok: false, text: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then try again." }));
+  }, [browserTasks.refresh]);
   const goYouSetup = useCallback(() => {
     if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
     setScheduleContinueOpen(false);
@@ -1407,14 +1417,14 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         {productAsk ? (
           <div className="ask-header-title" style={noDrag}>
             <div className="flex items-center gap-2.5">
-              <h1 className="pm-screen-title text-ink">Ask Bud</h1>
+              <h1 className="pm-screen-title text-ink">Work</h1>
               <span className={cn("ask-status", askStatus.className)}>
                 <span className="ask-status-dot" aria-hidden />
                 {askStatus.label}
               </span>
               {bot.busy && !askWaitingForYou && <Loader2 size={14} className="animate-spin text-ink-muted" />}
             </div>
-            <p className="ask-header-description">Your work, a few steps ahead.</p>
+            <p className="ask-header-description">Your work with Bud.</p>
           </div>
         ) : (
         <button
@@ -1439,8 +1449,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>
         )}
-        <div className="flex items-center gap-2" style={noDrag}>
+        <div className={cn("flex items-center gap-2", productAsk && "ask-header-actions")} style={noDrag}>
           {productAsk && <AskContext desk={state.desk} missed={askMiss} onDesk={goDesk} />}
+          {productAsk && <AskAppContextToggle context={appContext} />}
           {bot.busy && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
@@ -1469,6 +1480,8 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
+      <div className={productAsk ? "ask-context-layout" : "contents"} data-context-open={productAsk && appContext.open || undefined}>
+      <div className={productAsk ? "ask-conversation-main" : "contents"}>
       {!productAsk && askMiss ? (
         <p className="border-b border-line px-5 py-2 text-[12.5px] text-hold">{askBrief?.headline}</p>
       ) : null}
@@ -1495,6 +1508,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           if (!follow && atEnd()) setFollow(true);
         }}
       >
+        {productAsk && <MailPriorityCard className="mx-auto mt-4 max-w-[900px]" />}
         <div
           className={cn("mx-auto flex max-w-[900px] flex-col gap-3 pb-4", productAsk && "ask-thread-content")}
           role="log"
@@ -1543,6 +1557,11 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onBrowserTask={runBrowserTask}
             onBrowserTaskConnect={connectTaskBrowser}
           />
+          {browserSignIns.handovers.map(handover => (
+            <BrowserSignInStrip key={handover.id} handover={handover} busy={browserSignIns.acting === handover.id}
+              error={browserSignIns.error?.id === handover.id ? browserSignIns.error.text : null}
+              onDone={() => void browserSignIns.act(handover.id, "done")} onStop={() => void browserSignIns.act(handover.id, "stop")} />
+          ))}
           {provisioning && !productAsk && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
@@ -1707,6 +1726,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
         onBackToDesk={productAsk ? goDesk : undefined}
       />
+      </div>
+      {productAsk && <AskAppContextPanel context={appContext} onManage={() => openAskConnectSetup()} />}
+      </div>
 
       {productAsk ? (
         <>

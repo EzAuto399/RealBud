@@ -21,15 +21,17 @@ import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
-import { HERMES_BROWSER_REFUSED, hermesNativeBrowserTool } from "./core.ts";
+import { HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, WORKER_APPROVAL_CARD_MS } from "./core.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
 import * as gmail from "../../composio-gmail.ts";
 import { ServiceEntitlementError } from "../../service-entitlement.ts";
 import { HERMES_MEMORY_APPROVAL } from "./hermes-memory-approval.ts";
-import { browserRuntime, type BrowserJson } from "../../browser-runtime.ts";
+import { browserRuntime } from "../../browser-runtime.ts";
 import { legacyBrowserGrant } from "../../browser-authority.ts";
+import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
+import { productBudSystemPrompt } from "../../ask-book.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability } }));
@@ -115,6 +117,7 @@ describe("ACP turns (fake CLI)", () => {
   afterEach(async () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
+    delete process.env.FAKE_ACP_USAGE_META;
     delete process.env.FAKE_ACP_TOOL;
     delete process.env.FAKE_ACP_TOOL_INPUT;
     delete process.env.FAKE_ACP_SCRIPT;
@@ -162,12 +165,20 @@ describe("ACP turns (fake CLI)", () => {
       toolFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated")!;
-    expect(usage).toMatchObject({ input: 10, output: 5 });
+    expect(usage).toMatchObject({ input: 10, output: 5, cachedRead: 3 });
     const text = recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")!;
     expect((text as any).text).toBe("hello from fake acp");
     const done = recorder.events.at(-1)!;
     expect(done).toMatchObject({ type: "turn.completed", ok: true });
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
+  });
+
+  it("still reads token usage from a legacy _meta prompt result", async () => {
+    process.env.FAKE_ACP_USAGE_META = "1";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-meta", text: "hi", model: "grok-4.5" });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject({ input: 10, output: 5 });
   });
 
   it.each(["reasoning", "computer-use"] as const)("settles without a model prompt when %s expires during initialization", async capability => {
@@ -212,6 +223,38 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
   });
 
+  it("sends the product identity once on every Hermes turn without changing its policy or request", async () => {
+    await create(HermesAgentDriver);
+    const threadId = "t-hermes-product-identity";
+    const system = productBudSystemPrompt({ modelChoice: "sonnet-high" });
+    const texts = ["Prepare a fictional office note.", "Keep that fictional note concise."];
+    for (const text of texts) {
+      const turn = await instance.adapter.sendTurn({ threadId, system, text, cwd: scratch });
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
+    }
+    const prompts = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").trim().split("\n")
+      .map(line => JSON.parse(line)).filter(row => row.dir === "out" && row.msg.method === "session/prompt")
+      .map(row => row.msg.params.prompt[0].text as string);
+    expect(prompts).toEqual(texts.map(text => `${system}\n\n${text}`));
+    for (const [index, prompt] of prompts.entries()) {
+      expect(prompt.split(BUD_IDENTITY)).toHaveLength(2);
+      const previous = `${BUD_IDENTITY}\n\n${system}\n\n${texts[index]}`;
+      expect(Buffer.byteLength(previous) - Buffer.byteLength(prompt)).toBe(Buffer.byteLength(BUD_IDENTITY) + 2);
+    }
+    expect(recorder.events.filter(event => event.type === "session.started")).toHaveLength(1);
+  });
+
+  it.each([undefined, "Keep the fictional office names exactly as supplied."])("preserves the wrapper identity for generic Hermes turns with system %s", async system => {
+    await create(HermesAgentDriver);
+    const threadId = `t-hermes-generic-identity-${system ? "with-system" : "without-system"}`, text = "Prepare a fictional office note.";
+    const turn = await instance.adapter.sendTurn({ threadId, system, text, cwd: scratch });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
+    const prompt = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").trim().split("\n")
+      .map(line => JSON.parse(line)).find(row => row.dir === "out" && row.msg.method === "session/prompt").msg.params.prompt[0].text as string;
+    expect(prompt).toBe([BUD_IDENTITY, system, text].filter(Boolean).join("\n\n"));
+    expect(prompt.split(BUD_IDENTITY)).toHaveLength(2);
+  });
+
   it("mounts a private browser capability for one job and revokes it on interruption", async () => {
     const dump = join(scratch, "browser-job.json"); process.env.FAKE_ACP_DUMP = dump;
     await create(HermesAgentDriver, "hang");
@@ -248,11 +291,8 @@ describe("ACP turns (fake CLI)", () => {
       vi.spyOn(browserRuntime, "checkSession").mockResolvedValue(undefined),
       vi.spyOn(browserRuntime, "isOwner").mockReturnValue(true),
       vi.spyOn(browserRuntime, "release").mockResolvedValue(undefined),
-      vi.spyOn(browserRuntime, "command").mockImplementation(async (args: string[]): Promise<BrowserJson> => {
-        if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url: "https://portal.example/levies", title: "Fictional levies", scope }] };
-        if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
-        return { ok: true };
-      }),
+      vi.spyOn(browserRuntime, "listTabs").mockImplementation(async () => [{ id: 1, url: "https://portal.example/levies", title: "Fictional levies", browserId: "fictional-work", claimed: scope === "agent" }]),
+      vi.spyOn(browserRuntime, "claimTab").mockImplementation(async () => { scope = "agent"; }),
     ];
     try {
       await create(HermesAgentDriver, "hang");
@@ -277,7 +317,7 @@ describe("ACP turns (fake CLI)", () => {
       await instance.adapter.respondToRequest("t-browser-child", opened.requestId!, { behavior: "deny" });
       const refused = await borrow;
       expect(refused.isError).toBe(true); expect(refused.content![0].text).toMatch(/not approved/);
-      expect(spies[4].mock.calls.some(([args]) => args[0] === "tab" && args[1] === "borrow")).toBe(false);
+      expect(spies[5]).not.toHaveBeenCalled();
       // Same Stop: the parent's interrupt closes the broker, so the child's next call fails.
       await instance.adapter.interruptTurn("t-browser-child");
       await expect(child("tools/call", { name: "browser_tabs", arguments: {} })).rejects.toThrow();
@@ -491,6 +531,30 @@ describe("ACP turns (fake CLI)", () => {
     expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
+  });
+
+  it("closes an unanswered card as a deny before the worker stops waiting, and refuses a late answer", async () => {
+    // Hermes waits 300 s (0.21.5 approvals.timeout; MCP tool calls in both releases).
+    const pack = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "pack", "property", "config.yaml"), "utf8");
+    expect(Number(pack.match(/^approvals:[\s\S]*?^\s+timeout:\s*(\d+)\s*$/m)?.[1])).toBe(300);
+    expect(WORKER_APPROVAL_CARD_MS).toBeLessThan(300_000);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      await create(GrokAgentDriver, "permission");
+      await instance.adapter.sendTurn({ threadId: "t-late", text: "go" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      vi.advanceTimersByTime(WORKER_APPROVAL_CARD_MS - 1_000);
+      expect(recorder.events.some((e) => e.type === "request.resolved")).toBe(false);
+      vi.advanceTimersByTime(1_000);
+      expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ requestId: (opened as any).requestId, behavior: "deny" });
+      expect(recorder.events.some((e) => e.type === "runtime.error" && /nobody answered/.test((e as any).message))).toBe(true);
+      // The worker already has its deny; a late allow reaches nothing.
+      await expect(instance.adapter.respondToRequest("t-late", (opened as any).requestId, { behavior: "allow" })).rejects.toThrow(/no such pending request/);
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(recorder.events.filter((e) => e.type === "request.resolved")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses the provider's expiring session grant when the user allows similar steps for the task", async () => {

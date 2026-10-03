@@ -18,12 +18,26 @@ describe('Austin office pack definition', () => {
 
   it('carries REI Cloud navigation in the Austin add-on pack only, never in office core', () => {
     const austin = validateCustomerPack(austinCustomerPack()), core = validateCustomerPack(officeCoreCustomerPack());
-    expect(austin.revision).toBe(3);
+    expect(austin.revision).toBe(5);
     expect(austin.title).toBe('Auston office workflows');
     expect(austin.skills.map(skill => skill.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation']);
     expect(`realbud-${austin.id}-rei-cloud-navigation`.length).toBeLessThanOrEqual(64);
     expect(core.skills.map(skill => skill.id)).not.toContain('rei-cloud-navigation');
     expect(JSON.stringify(core)).not.toMatch(/rei-cloud-navigation|reimasterapps|reicid/i);
+  });
+
+  it('publishes source-neutral plans without widening capabilities or erasing routing review', () => {
+    const pack = validateCustomerPack(austinCustomerPack());
+    const source = JSON.parse(readFileSync(join(root, 'pack/workflows/austin-accounts/workflows.json'), 'utf8'));
+    for (const recipe of pack.recipes) {
+      const original = source.recipes.find((row: { id: string }) => row.id === recipe.id);
+      expect(recipe.description).not.toMatch(/all QA data is synthetic|PROPOSED SYNTHETIC OFFICE ROUTING POLICY/);
+      expect(recipe.steps[0]).toContain('only when input.synthetic=true');
+      expect(recipe.steps[0]).toContain('otherwise call it saved-source evidence');
+      expect(recipe.steps[0]).toContain('does not verify live freshness or complete coverage');
+      for (const key of ['capabilities', 'limits', 'schedule', 'allowedOrigins', 'siteNotes'] as const) expect(recipe[key]).toEqual(original[key]);
+    }
+    expect(pack.recipes[0].description).toContain("PROPOSED INTERNAL REVIEW ROUTING POLICY, awaiting Kevin's validation");
   });
 
   it('keeps the skill instruction-only: fence is the authority and account values are placeholders', () => {
@@ -44,6 +58,7 @@ describe('Austin office pack definition', () => {
   it('records first-party provenance whose digest matches the installed text', () => {
     const provenance = JSON.parse(readFileSync(join(support, 'provenance.json'), 'utf8'));
     const digest = (file: string) => createHash('sha256').update(readFileSync(join(support, file))).digest('hex');
+    // This is the skill's original publication provenance, not the current pack version.
     expect(provenance).toMatchObject({ name: 'rei-cloud-navigation', pack: 'austin-office', packRevision: 3, firstParty: true, sha256: digest('SKILL.md'), siteMapSha256: digest('site-map.json') });
     const map = JSON.parse(readFileSync(join(support, 'site-map.json'), 'utf8'));
     expect(map).toMatchObject({ portal: 'rei-cloud', pack: 'austin-office', skill: 'rei-cloud-navigation' });

@@ -6,6 +6,7 @@ import type { InstallJob } from "./hermes-bridge.ts";
 import type { HermesStatus } from "./hermes-status.ts";
 import type { WorkerInstallOutcome } from "./hermes-update.ts";
 import { AUTO_SETUP_BACKOFF_MS, AUTO_SETUP_COPY, AUTO_SETUP_FILE, AUTO_SETUP_MAX_ATTEMPTS, createWorkerAutoSetup, type WorkerAutoSetupDeps } from "./worker-auto-setup.ts";
+import * as privateJson from "./private-json.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "realbud-auto-setup-")); });
@@ -61,6 +62,12 @@ function harness(options: { active?: boolean; job?: Partial<InstallJob>; ping?: 
   };
 }
 const installCalled = (deps: WorkerAutoSetupDeps, times = 1) => vi.waitFor(() => expect(deps.installOrRepair).toHaveBeenCalledTimes(times));
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
 
 describe("automatic Bud setup after an approved office link", () => {
   it("does nothing on a computer that is not provisioned", async () => {
@@ -211,6 +218,121 @@ describe("automatic Bud setup after an approved office link", () => {
   });
 });
 
+describe("automatic setup authority across asynchronous boundaries", () => {
+  it.each([false, true])("does not install or report ready after authority is withdrawn during a status probe (ready=%s)", async ready => {
+    const h = harness();
+    vi.mocked(h.deps.status).mockImplementation(async () => {
+      h.setActive(false);
+      return status({ compatible: ready, ready });
+    });
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("boot");
+    expect(h.deps.installOrRepair).not.toHaveBeenCalled();
+    expect(h.deps.ensurePack).not.toHaveBeenCalled();
+    expect(setup.status().state).toBe("idle");
+    expect(h.timers).toHaveLength(0);
+  });
+
+  it.each(["started", "running"] as const)("halts during installer admission without cancelling someone else's install (%s)", async kind => {
+    const h = harness();
+    const admission = deferred<WorkerInstallOutcome>();
+    let inFlight = false;
+    h.deps.installInFlight = () => inFlight;
+    vi.mocked(h.deps.installOrRepair).mockImplementation(() => admission.promise);
+    const setup = createWorkerAutoSetup(h.deps);
+    const run = setup.ensure("provisioned");
+    await installCalled(h.deps);
+    h.setActive(false);
+    setup.halt();
+    inFlight = true;
+    admission.resolve({ kind, install: { state: "running" } as InstallJob });
+    await run;
+    expect(h.deps.cancelInstall).toHaveBeenCalledTimes(kind === "started" ? 1 : 0);
+    expect(h.deps.ensurePack).not.toHaveBeenCalled();
+    expect(setup.status().state).toBe("idle");
+  });
+
+  it("does not revive an old run when the office relinks before its status reply", async () => {
+    const h = harness();
+    const probe = deferred<HermesStatus>();
+    vi.mocked(h.deps.status).mockImplementationOnce(() => probe.promise)
+      .mockImplementation(async () => status({ ready: true }));
+    const setup = createWorkerAutoSetup(h.deps);
+    const run = setup.ensure("boot");
+    await vi.waitFor(() => expect(h.deps.status).toHaveBeenCalledTimes(1));
+    h.setActive(false);
+    setup.halt();
+    h.setActive(true);
+    const fresh = setup.ensure("provisioned");
+    expect(fresh).toBe(run);
+    probe.resolve(status({ compatible: false }));
+    await run;
+    await vi.waitFor(() => expect(setup.status().state).toBe("ready"));
+    expect(h.deps.status).toHaveBeenCalledTimes(2);
+    expect(h.deps.installOrRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(["ping", "final-status"])("does not publish readiness or a retry after withdrawal during %s", async boundary => {
+    const h = harness();
+    let probes = 0;
+    vi.mocked(h.deps.status).mockImplementation(async () => {
+      probes++;
+      if (probes === 3) h.setActive(false);
+      return status({ ready: probes === 3 });
+    });
+    vi.mocked(h.deps.readinessPing).mockImplementation(async () => {
+      if (boundary === "ping") h.setActive(false);
+      return { ok: boundary !== "ping", detail: "fictional late result" };
+    });
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("boot");
+    expect(h.deps.readinessPing).toHaveBeenCalledTimes(1);
+    expect(setup.status().state).toBe("idle");
+    expect(h.timers).toHaveLength(0);
+  });
+
+  it("does not publish a late failure or retry after halt", async () => {
+    const h = harness();
+    const probe = deferred<HermesStatus>();
+    vi.mocked(h.deps.status).mockImplementationOnce(() => probe.promise);
+    const setup = createWorkerAutoSetup(h.deps);
+    const run = setup.ensure("boot");
+    await vi.waitFor(() => expect(h.deps.status).toHaveBeenCalledTimes(1));
+    setup.halt();
+    probe.reject(new Error("fictional late probe failure"));
+    await run;
+    expect(setup.status().state).toBe("idle");
+    expect(h.timers).toHaveLength(0);
+  });
+
+  it.each(["ready", "held", "retry"])("does not publish stale %s state after its private save finishes", async outcome => {
+    const h = harness();
+    writeFileSync(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: 1, nextRetryAt: null, held: null, stageRetried: false }), { mode: 0o600 });
+    vi.mocked(h.deps.status).mockImplementation(async () => status({ ready: outcome === "ready" }));
+    vi.mocked(h.deps.readinessPing).mockImplementation(async () => {
+      if (outcome === "held") throw new Error("fictional readiness failure");
+      return { ok: false, detail: "fictional transient failure" };
+    });
+    const saving = deferred<void>(), finish = deferred<void>();
+    const write = privateJson.writePrivateJson;
+    const save = vi.spyOn(privateJson, "writePrivateJson").mockImplementation(async (...args) => {
+      saving.resolve();
+      await finish.promise;
+      return write(...args);
+    });
+    try {
+      const setup = createWorkerAutoSetup(h.deps);
+      const run = setup.ensure("boot");
+      await saving.promise;
+      setup.halt();
+      finish.resolve();
+      await run;
+      expect(setup.status().state).toBe("idle");
+      expect(h.timers).toHaveLength(0);
+    } finally { save.mockRestore(); }
+  });
+});
+
 describe("a readiness proof that went stale on a linked office", () => {
   it("re-runs the service's own check once per changed setup, throttled, with no administrator", async () => {
     const h = harness();
@@ -219,7 +341,12 @@ describe("a readiness proof that went stale on a linked office", () => {
     (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: true }));
     await setup.ensure("boot");
     expect(setup.status().state).toBe("ready");
-    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: false }));
+    // Like the real service, a passing readiness ping writes the receipt that makes status ready.
+    let proven = false;
+    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: proven }));
+    (h.deps.readinessPing as ReturnType<typeof vi.fn>).mockImplementation(async () => { proven = true; return { ok: true, detail: "ok" }; });
+    const noteStatus = setup.noteStatus;
+    setup.noteStatus = (observed: Parameters<typeof noteStatus>[0]) => { proven = false; noteStatus(observed); };
     const stale = { ready: false, workerFingerprint: "fingerprint-b" };
     setup.noteStatus(stale);
     // Reported at once, so the very next status answer shows progress.
@@ -254,5 +381,130 @@ describe("a readiness proof that went stale on a linked office", () => {
     expect(setup.status().state).toBe("idle");
     await setup.ensure("boot");
     expect(h.deps.readinessPing).not.toHaveBeenCalled();
+  });
+});
+
+describe("automatic Bud setup after an upgrade changes the pack", () => {
+  /** An installed, compatible worker whose profile predates the new pack. */
+  function upgraded(options: { repairFixes?: boolean; pingOk?: boolean; readyAfterPing?: boolean; documentTools?: HermesStatus["documentTools"] } = {}) {
+    let workroomReady = false, ready = false, pinged = false;
+    const calls: string[] = [];
+    const current = (): HermesStatus => ({
+      ...status({ ready }),
+      pack: { installed: true, approvalsManual: true, workroomReady },
+      documentTools: options.documentTools,
+    } as HermesStatus);
+    const deps: WorkerAutoSetupDeps = {
+      directory: dir,
+      active: vi.fn(async () => true),
+      cancelInstall: vi.fn(),
+      status: vi.fn(async () => current()),
+      installOrRepair: vi.fn(async (): Promise<WorkerInstallOutcome> => {
+        calls.push("repair");
+        if (options.repairFixes ?? true) workroomReady = true;
+        return { kind: "repaired", hermes: current() };
+      }),
+      installInFlight: () => false,
+      installStatus: () => ({ state: "done", lines: [], startedAt: 1, finishedAt: 2, error: null }) as InstallJob,
+      waitForInstall: async () => {},
+      ensurePack: vi.fn(() => { calls.push("pack"); }),
+      reconcileProfile: vi.fn(async () => { calls.push("profile"); return true; }),
+      syncBud: vi.fn(() => { calls.push("rebind"); }),
+      readinessPing: vi.fn(async () => {
+        calls.push("ping"); pinged = true;
+        const ok = options.pingOk ?? true;
+        if (ok && (options.readyAfterPing ?? true) && workroomReady) ready = true;
+        return { ok, detail: ok ? "ok" : "no answer" };
+      }),
+      now: () => 1_000_000,
+      setTimer: () => ({ cancel: () => {} }),
+    };
+    return { deps, calls, pinged: () => pinged };
+  }
+
+  it("re-applies a stale pack policy through the reviewed repair on boot, then proves readiness", async () => {
+    const h = upgraded();
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("boot");
+    expect(h.calls).toEqual(["repair", "pack", "profile", "rebind", "ping"]);
+    expect(setup.status()).toMatchObject({ state: "ready" });
+  });
+
+  it("Try again re-applies a stale policy instead of doing nothing", async () => {
+    const h = upgraded();
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.retry();
+    expect(h.calls[0]).toBe("repair");
+    expect(setup.status()).toMatchObject({ state: "ready" });
+  });
+
+  it("never reports ready when the policy could not be updated", async () => {
+    const h = upgraded({ repairFixes: false });
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("boot");
+    expect(h.pinged()).toBe(false);
+    expect(setup.status().state).not.toBe("ready");
+  });
+
+  it("a passing ping alone is not readiness", async () => {
+    const h = upgraded({ readyAfterPing: false });
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("boot");
+    expect(h.pinged()).toBe(true);
+    expect(setup.status().state).not.toBe("ready");
+  });
+
+  it("missing document tools trigger the repair on boot but not on the periodic tick", async () => {
+    const boot = upgraded({ documentTools: "needs_repair" });
+    await createWorkerAutoSetup(boot.deps).ensure("boot");
+    expect(boot.calls).toContain("repair");
+
+    const tick = upgraded({ documentTools: "needs_repair" });
+    const setup = createWorkerAutoSetup(tick.deps);
+    await setup.ensure("boot");
+    const repairsAfterBoot = tick.calls.filter(call => call === "repair").length;
+    await setup.ensure("periodic");
+    expect(tick.calls.filter(call => call === "repair").length).toBe(repairsAfterBoot);
+  });
+});
+
+describe("a newly locked document library after an upgrade", () => {
+  it("boot reads documents as unknown and is ready; the later needs_repair status runs the reviewed repair once an hour", async () => {
+    let time = 1_000_000, documentTools: HermesStatus["documentTools"] = "unknown";
+    const calls: string[] = [];
+    const current = (): HermesStatus => ({ ...status({ ready: true }), documentTools } as HermesStatus);
+    const deps: WorkerAutoSetupDeps = {
+      directory: dir,
+      active: vi.fn(async () => true),
+      cancelInstall: vi.fn(),
+      status: vi.fn(async () => current()),
+      installOrRepair: vi.fn(async (): Promise<WorkerInstallOutcome> => { calls.push("repair"); documentTools = "ready"; return { kind: "repaired", hermes: current() }; }),
+      installInFlight: () => false,
+      installStatus: () => ({ state: "done", lines: [], startedAt: 1, finishedAt: 2, error: null }) as InstallJob,
+      waitForInstall: async () => {},
+      ensurePack: vi.fn(() => { calls.push("pack"); }),
+      reconcileProfile: vi.fn(async () => true),
+      syncBud: vi.fn(),
+      readinessPing: vi.fn(async () => ({ ok: true, detail: "ok" })),
+      now: () => time,
+      setTimer: () => ({ cancel: () => {} }),
+    };
+    const setup = createWorkerAutoSetup(deps);
+    // Boot: the background document check has not finished yet.
+    await setup.ensure("boot");
+    expect(setup.status().state).toBe("ready");
+    expect(calls).not.toContain("repair");
+    // The check finishes: a library the new release locks is missing.
+    documentTools = "needs_repair";
+    setup.noteStatus({ ready: true, workerFingerprint: "fp", documentTools: "needs_repair" });
+    await vi.waitFor(() => expect(calls.filter(c => c === "repair")).toHaveLength(1));
+    await vi.waitFor(() => expect(setup.status().state).toBe("ready"));
+    // A failing install never loops: no second repair inside the hour.
+    documentTools = "needs_repair";
+    setup.noteStatus({ ready: true, workerFingerprint: "fp", documentTools: "needs_repair" });
+    expect(calls.filter(c => c === "repair")).toHaveLength(1);
+    time += 61 * 60_000;
+    setup.noteStatus({ ready: true, workerFingerprint: "fp", documentTools: "needs_repair" });
+    await vi.waitFor(() => expect(calls.filter(c => c === "repair")).toHaveLength(2));
   });
 });

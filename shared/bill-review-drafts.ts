@@ -1,13 +1,18 @@
-import type { SourceBillState } from './source-bills.ts';
+import type { SourceBillState, BillFinancialObservation } from './source-bills.ts';
 
 /** Untrusted editor recovery only. A draft never approves a source or a bill. */
 export type BillReviewDraftState = 'editing' | 'saved' | 'accepted' | 'discarded';
 export interface BillReviewDraftFields {
   propertyId: string; kind: string; vendor: string; amount: string;
   invoiceDate: string; dueDate: string; note: string;
+  invoiceNumber?: string; invoiceVersion?: string;
 }
 export interface BillReviewDraftProposalRequest {
   requestId: string; itemId: string; messageId: string; expectedSourceDigest: string;
+}
+/** Raw editor recovery; source review confirmation is deliberately not saved. */
+export interface BillFinancialReviewDraft extends Omit<BillFinancialObservation, 'sourceIds' | 'observedAt'> {
+  sourceIds: string; observedAt: string; reviewReason: string;
 }
 export interface BillReviewDraftValue {
   workspaceId: string;
@@ -21,6 +26,7 @@ export interface BillReviewDraftValue {
   arrivalDate: string;
   /** Once saved, this exact tuple and its selected source cannot be changed. */
   proposalRequest: BillReviewDraftProposalRequest | null;
+  financialReview?: BillFinancialReviewDraft;
 }
 export interface BillReviewDraft extends BillReviewDraftValue {
   version: 1; id: string; revision: number; createdAt: number; updatedAt: number;
@@ -30,6 +36,7 @@ export interface BillReviewDraftSummary {
   createdAt: number; updatedAt: number;
   billId: string | null; itemId: string | null; messageId: string | null;
   propertyId: string; kind: string; vendor: string; hasProposalRequest: boolean;
+  hasFinancialReview?: boolean;
 }
 export type BillReviewDraftFilter = 'active' | 'all';
 export interface BillReviewDraftPageQuery { filter?: BillReviewDraftFilter; limit?: number; cursor?: string }
@@ -42,6 +49,7 @@ export interface BillReviewDraftPage {
 export const BILL_REVIEW_DRAFT_LIMITS = {
   propertyId: 200, kind: 80, vendor: 160, amount: 80,
   invoiceDate: 32, dueDate: 32, note: 8000,
+  invoiceNumber: 120, invoiceVersion: 80,
   reason: 4000, seriesId: 180, arrivalDate: 32,
 } as const;
 /** Both UTF-8 plaintext and its encrypted stored envelope obey this ceiling. */

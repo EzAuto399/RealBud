@@ -9,6 +9,7 @@ import type { Invoice } from './billing.ts';
 import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 import type { OperatorBillingRoutes } from './operator-billing.ts';
 import { presentCommercialTerms, type BillingPlans } from './billing-plans.ts';
+import type { OfficeHermiosSubscriptions } from './office-subscriptions.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -43,7 +44,11 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * operator-billing.ts, billing-plans.ts), the monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
  * /v1/portal/invoices[/{id}[/document|/receipt|/ai-usage]], POST
- * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
+ * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square;
+ * Hermios subscriptions (office-subscriptions.ts): GET /v1/portal/hermios/plans,
+ * GET /v1/portal/hermios/terms, GET|POST /v1/portal/hermios/subscription[/start|change|cancel],
+ * GET /v1/operator/offices/hermios-subscription and the signed POST
+ * /v1/webhooks/square/subscriptions.
  * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a resale
  * office's monthly invoice carries its finalized Modelvia invoices as AI usage
  * lines at their exact totals (office-ai-billing.ts). */
@@ -75,11 +80,15 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
    * plan months lazily before answering. Absent, terms are read as published. */
   billingPlans?:Pick<BillingPlans,'rollForward'>;
   /** Shown to the office with its invoices and on the invoice document. */
-  paymentInstructions?:PaymentInstructions}) {
+  paymentInstructions?:PaymentInstructions;
+  /** Hermios subscriptions; absent, those routes answer 503 with `hermiosUnavailable`. */
+  hermios?:OfficeHermiosSubscriptions;
+  hermiosUnavailable?:string}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
   const billing=()=>{ requireThat(options.billing,'billing_unavailable',503); return options.billing; };
   const paymentInstructions:PaymentInstructions=options.paymentInstructions??{payId:null,bank:null};
+  const hermios=()=>{ requireThat(options.hermios,options.hermiosUnavailable||'hermios_subscriptions_unconfigured',503); return options.hermios; };
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -100,6 +109,13 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       // Square's signed notification. The event type only chooses the verifier;
       // neither path trusts the body until the adapter has checked the URL-bound
       // HMAC over these exact raw bytes and re-read the payment from Square.
+      // Square's signed Hermios subscription and invoice notifications: their own
+      // URL and signature key; verified, stored once by event id, re-read from Square.
+      if(req.method==='POST' && url.pathname==='/v1/webhooks/square/subscriptions') {
+        const service=hermios();
+        const signature=req.headers['x-square-hmacsha256-signature']; requireThat(typeof signature==='string','invalid_square_signature',401);
+        reply(res,200,await service.webhook(await body(req,256_000),signature)); return;
+      }
       if(req.method==='POST' && url.pathname==='/v1/webhooks/square') {
         requireThat(options.squareWebhooks,'square_webhook_unavailable',503);
         const signature=req.headers['x-square-hmacsha256-signature']; requireThat(typeof signature==='string','invalid_square_signature',401);
@@ -197,6 +213,13 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         requireThat(!url.search,'invalid_query');
         reply(res,200,routes!.setBillingPlan(operator,json(await body(req,4096)))); return;
       }
+      // RealBud operator: one office's Hermios subscriptions, acceptances and Square ids.
+      if(req.method==='GET' && url.pathname==='/v1/operator/offices/hermios-subscription') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        try { await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        requireThat([...url.searchParams.keys()].every(key=>key==='companyId'),'invalid_query');
+        reply(res,200,hermios().operatorView(url.searchParams.get('companyId'))); return;
+      }
       // RealBud operator: the owner's per-office margin for one month, JSON or CSV.
       // Read only; the period defaults to the last closed Brisbane month.
       if(req.method==='GET' && url.pathname==='/v1/operator/billing/margins') {
@@ -261,6 +284,23 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
           const current=await options.portal.authenticate(ownerToken);
           requireThat(current.role==='billing_owner'&&current.companyId===actor.companyId&&current.subject===actor.subject,'forbidden',403);
         }));return;
+      }
+      // Hermios subscription: the principal is the office; a body names an option,
+      // people and the accepted terms digest, never a price or a company.
+      const hermiosRoute=/^\/v1\/portal\/hermios\/(plans|terms|subscription)(?:\/(start|change|cancel))?$/.exec(url.pathname);
+      if(hermiosRoute) {
+        const service=hermios();
+        if(req.method==='GET' && !hermiosRoute[2]) {
+          if(hermiosRoute[1]==='plans') { requireThat(!url.search,'invalid_query'); reply(res,200,service.plans(actor)); return; }
+          if(hermiosRoute[1]==='terms') {
+            requireThat([...url.searchParams.keys()].every(key=>key==='optionKey'||key==='people'),'invalid_query');
+            reply(res,200,service.terms(actor,{optionKey:url.searchParams.get('optionKey'),people:url.searchParams.get('people')})); return;
+          }
+          requireThat(!url.search,'invalid_query'); reply(res,200,await service.summary(actor)); return;
+        }
+        requireThat(req.method==='POST' && hermiosRoute[1]==='subscription' && hermiosRoute[2] && !url.search,'not_found',404);
+        const value=json(await body(req,4096));
+        reply(res,200,hermiosRoute[2]==='start'?await service.start(actor,value):hermiosRoute[2]==='change'?await service.change(actor,value):await service.cancel(actor,value)); return;
       }
       // Vendor-side installation provisioning and revocation. The authenticated
       // principal is the authority, so a body's companyId is only a confirmation,

@@ -6,7 +6,7 @@ export type MemoryProposalOperation =
 export type MemoryProposalPayload = ({ target: 'memory' | 'user' } & MemoryProposalOperation)
   | { target: 'memory' | 'user'; action: 'batch'; operations: MemoryProposalOperation[] };
 export interface MemoryProposalInput { requestId: string; payload: MemoryProposalPayload }
-export const MEMORY_PROPOSAL_REVIEW_LOCATION = 'You → Bud → Bud’s memory' as const;
+export const MEMORY_PROPOSAL_REVIEW_LOCATION = 'Workspace → What Bud learned' as const;
 export interface MemoryProposalResult { version: 1; id: string; reviewLocation: typeof MEMORY_PROPOSAL_REVIEW_LOCATION }
 export const MEMORY_PROPOSAL_INPUT_BYTES = 64 * 1024;
 const textBytes = 128 * 1024;

@@ -3,16 +3,22 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, symlink, link, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { createHermesMemoryReviewService, runMemoryReviewHelper, type MemoryReviewContext } from './hermes-memory-review.ts';
-import { MEMORY_REVIEW_API as api, type MemoryReviewPreview } from '../shared/hermes-memory-review.ts';
+import { createHermesMemoryReviewService, runMemoryReviewHelper, MEMORY_REVIEW_CANDIDATE_RUNTIME, type MemoryReviewContext } from './hermes-memory-review.ts';
+import { runtimeCommit } from './hermes-runtime-selection.ts';
+import { MEMORY_REVIEW_API as api, MEMORY_LEARNING_API, type MemoryReviewPreview, type MemoryLearningState } from '../shared/hermes-memory-review.ts';
 import type { MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
 
 const runtime = process.env.REALBUD_TEST_HERMES_RUNTIME;
+/** 0.21.5 pins each staged replace/remove to its full entry; 0.21.3 selects by old_text at apply time. */
+const pinning = !!runtime && runtimeCommit(basename(dirname(runtime))) === MEMORY_REVIEW_CANDIDATE_RUNTIME;
 const roots: string[] = [], services: ReturnType<typeof createHermesMemoryReviewService>[] = [];
 afterEach(async () => { await Promise.all(services.splice(0).map(service => service.close())); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const config = (extra = '') => `memory:\n  write_approval: true\n  memory_enabled: true\n  user_profile_enabled: true\n  memory_char_limit: 2200\n  user_char_limit: 1375\n${extra}`;
+/** What the 0.21.5 worker itself stages for a replace/remove: the full entry it selected. */
+const pin = (entry: string) => pinning ? { matched_entry: entry } : {};
 const pending = (payload: Record<string, unknown>, id = '1234abcd') => ({ id, subsystem: 'memory', action: payload.action, summary: 'Fictional review', origin: 'background_review', created_at: 1_790_000_000, payload });
-async function fixture(before = 'Prefers concise updates.\n§\nUse Australian English.') {
+type Options = Parameters<typeof createHermesMemoryReviewService>[0];
+async function fixture(before = 'Prefers concise updates.\n§\nUse Australian English.', options: Partial<Options> = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'realbud-memory-test-'))); roots.push(directory);
   const profile = join(directory, 'property'); await mkdir(join(profile, 'pending', 'memory'), { recursive: true, mode: 0o700 });
   await mkdir(join(profile, 'memories'), { mode: 0o700 });
@@ -20,7 +26,7 @@ async function fixture(before = 'Prefers concise updates.\n§\nUse Australian En
   await writeFile(cfg, config(), { mode: 0o600 }); await writeFile(file, before, { mode: 0o600 });
   const context: MemoryReviewContext = { profileDirectory: profile, runtimeDirectory: runtime!, runtimeId: basename(dirname(runtime!)),
     profileId: 'property', workspaceId: '55555555-5555-4555-8555-555555555555', python: join(runtime!, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python') };
-  const service = createHermesMemoryReviewService({ context: () => context, key: () => Buffer.alloc(32, 27) }); services.push(service);
+  const service = createHermesMemoryReviewService({ context: () => context, key: () => Buffer.alloc(32, 27), ...options }); services.push(service);
   return { directory, profile, file, proposal, cfg, context, service,
     async stage(payload: Record<string, unknown>) { await writeFile(proposal, JSON.stringify(pending(payload)), { mode: 0o600 }); },
     async preview() { return service.handle(`${api}/1234abcd`, 'GET'); },
@@ -29,8 +35,17 @@ async function fixture(before = 'Prefers concise updates.\n§\nUse Australian En
 }
 
 describe.skipIf(!runtime)('native Hermes memory reviews in isolated fictional profiles', () => {
+  it('lists a fresh profile before any worker has created its pending folders', async () => {
+    const f = await fixture(); await rm(join(f.profile, 'pending'), { recursive: true });
+    const before = await readFile(f.file);
+    expect(await f.service.handle(api, 'GET')).toMatchObject({ status: 200, body: { items: [], total: 0 } });
+    expect(await readFile(f.file)).toEqual(before);
+    expect((await stat(join(f.profile, 'pending'))).mode & 0o777).toBe(0o700);
+    expect(await readdir(join(f.profile, 'pending'))).toEqual(['memory']);
+  });
+
   it('shows the whole replaced entry and untouched entries; applies once and returns the recorded result', async () => {
-    const f = await fixture(); await f.stage({ action: 'replace', target: 'memory', old_text: 'concise', content: 'Prefers detailed updates.' });
+    const f = await fixture(); await f.stage({ action: 'replace', target: 'memory', old_text: 'concise', content: 'Prefers detailed updates.', ...pin('Prefers concise updates.') });
     const preview = await f.preview(); expect(preview?.status).toBe(200);
     const review = preview!.body as MemoryReviewPreview;
     expect(review.before).toBe(await readFile(f.file, 'utf8'));
@@ -68,8 +83,8 @@ describe.skipIf(!runtime)('native Hermes memory reviews in isolated fictional pr
   it('reuses native batch semantics with final-state budget and normalized replacement alias', async () => {
     const f = await fixture('Old preference.'); await writeFile(f.cfg, config().replace('2200', '20'));
     await f.stage({ action: 'batch', target: 'memory', operations: [
-      { action: 'add', content: 'New preference.' }, { action: 'remove', old_text: 'Old preference.' },
-      { action: 'replace', old_text: 'New preference.', new_text: '新的偏好🙂' },
+      { action: 'add', content: 'New preference.' }, { action: 'remove', old_text: 'Old preference.', ...pin('Old preference.') },
+      { action: 'replace', old_text: 'New preference.', new_text: '新的偏好🙂', ...pin('New preference.') },
     ] });
     const preview = await f.preview(); expect(preview?.status).toBe(200);
     const review = preview!.body as MemoryReviewPreview; expect(review.operationCount).toBe(3); expect(review.after).toBe('新的偏好🙂');
@@ -78,7 +93,7 @@ describe.skipIf(!runtime)('native Hermes memory reviews in isolated fictional pr
 
   it('allows native removal to reduce an already oversized file', async () => {
     const f = await fixture('Keep one.\n§\nKeep two.\n§\nRemove me.'); await writeFile(f.cfg, config().replace('2200', '10'));
-    await f.stage({ action: 'remove', target: 'memory', old_text: 'Remove me.', content: '' });
+    await f.stage({ action: 'remove', target: 'memory', old_text: 'Remove me.', content: '', ...pin('Remove me.') });
     const preview = await f.preview(); expect(preview?.status).toBe(200);
     const review = preview!.body as MemoryReviewPreview; expect(review.after).toBe('Keep one.\n§\nKeep two.');
     expect((await f.decide(review.reviewDigest))?.status).toBe(200);
@@ -124,12 +139,45 @@ describe.skipIf(!runtime)('native Hermes memory reviews in isolated fictional pr
     expect((await f.decide(review.reviewDigest))?.status).not.toBe(200); expect(await readFile(f.proposal)).toBeDefined();
   }, 60_000);
 
+  it.runIf(pinning)('previews a record staged before pinning for rejection only and never replays it by old_text', async () => {
+    const f = await fixture(), before = await readFile(f.file, 'utf8'); await f.stage({ action: 'remove', target: 'memory', old_text: 'concise' });
+    const preview = await f.preview(); expect(preview?.status).toBe(200);
+    const review = preview!.body as MemoryReviewPreview; expect(review.after).toBe('Use Australian English.');
+    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 409, body: { code: 'unsupported' } });
+    expect(await readFile(f.file, 'utf8')).toBe(before); expect(await readdir(dirname(f.proposal))).toContain('1234abcd.json');
+    expect(await f.decide(review.reviewDigest, 'reject')).toMatchObject({ status: 200, body: { state: 'rejected', changed: false } });
+    expect(await readFile(f.file, 'utf8')).toBe(before); expect(await readdir(dirname(f.proposal))).not.toContain('1234abcd.json');
+  }, 60_000);
+
+  it('applies a staged pin exactly on the pinning runtime and refuses the field on the old_text runtime', async () => {
+    // The pin, not old_text, selects the entry: upstream approval semantics shown to the person as-is.
+    const f = await fixture(), before = await readFile(f.file, 'utf8');
+    await f.stage({ action: 'remove', target: 'memory', old_text: 'concise', matched_entry: 'Use Australian English.' });
+    const preview = await f.preview();
+    if (!pinning) { expect(preview).toMatchObject({ status: 409, body: { code: 'unsupported' } }); expect(await readdir(dirname(f.proposal))).toContain('1234abcd.json'); return; }
+    expect(preview?.status).toBe(200); const review = preview!.body as MemoryReviewPreview; expect(review.after).toBe('Prefers concise updates.');
+    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 200, body: { state: 'applied', changed: true } });
+    expect(await readFile(f.file, 'utf8')).toBe('Prefers concise updates.'); expect(before).not.toBe(review.after);
+  }, 60_000);
+
+  it('undoes an automatically kept learning through a staged exact removal on this runtime', async () => {
+    const f = await fixture('Prefers concise updates.', { autoReviewIntervalMs: 0, learningDirectory: () => join(f.directory, 'learning') });
+    await f.stage({ action: 'add', target: 'memory', content: 'Prefers a friendly sign-off' });
+    expect((await f.service.handle(MEMORY_LEARNING_API, 'POST', { autoKeep: true }))?.status).toBe(200);
+    expect((await f.service.handle(api, 'GET'))?.status).toBe(200);
+    expect(await readFile(f.file, 'utf8')).toBe('Prefers concise updates.\n§\nPrefers a friendly sign-off');
+    const kept = ((await f.service.handle(MEMORY_LEARNING_API, 'GET'))!.body as MemoryLearningState).kept; expect(kept).toHaveLength(1);
+    expect(await f.service.handle(`${MEMORY_LEARNING_API}/${kept[0].reviewDigest}/undo`, 'POST', {})).toMatchObject({ status: 200, body: { result: 'undone' } });
+    expect(await readFile(f.file, 'utf8')).toBe('Prefers concise updates.'); expect(await readdir(dirname(f.proposal))).toEqual([]);
+  }, 60_000);
+
   it.skipIf(process.platform === 'win32')('waits for an unresponsive owned process to exit after its decision deadline', async () => {
     const f = await fixture(), shim = join(f.directory, 'slow-helper');
-    await writeFile(shim, `#!${f.context.python}\nimport json,os,signal,sys,time\nrequest=json.load(sys.stdin)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nwith open(os.path.join(request['profileDirectory'],'fixture-child.pid'),'w') as out: out.write(str(os.getpid()))\ntime.sleep(60)\n`, { mode: 0o700 });
+    await writeFile(shim, `#!${f.context.python}\nimport json,os,signal,sys,time\nrequest=json.load(sys.stdin)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nwith open(os.path.join(request['profileDirectory'],'memories','fixture-child.pid'),'w') as out: out.write(str(os.getpid()))\ntime.sleep(60)\n`, { mode: 0o700 });
     const context = { ...f.context, python: shim }, { python: _python, ...binding } = context;
     await expect(runMemoryReviewHelper(context, { ...binding, version: 1, command: 'decide', id: '1234abcd', expectedDigest: 'a'.repeat(64), decision: 'approve', key: Buffer.alloc(32).toString('base64') }, { timeoutMs: 1500 })).rejects.toMatchObject({ code: 'recovery-required' });
-    const pid = Number(await readFile(join(f.profile, 'fixture-child.pid'), 'utf8'));
+    // The helper's sandbox lets it write only memories/, pending/memory and the review state.
+    const pid = Number(await readFile(join(f.profile, 'memories', 'fixture-child.pid'), 'utf8'));
     expect(pid).toBeGreaterThan(0); expect(() => process.kill(pid, 0)).toThrow();
   }, 10_000);
 });
@@ -147,7 +195,9 @@ describe.skipIf(!runtime || process.platform === 'win32')('native typed proposal
     const result = await propose(f, value);
     expect(await readFile(f.file, 'utf8')).toBe(before);
     const path = join(dirname(f.proposal), result.id + '.json'), staged = JSON.parse(await readFile(path, 'utf8'));
-    expect(staged.payload).toEqual(value.payload); expect(staged.origin).toBe('foreground');
+    // The pinning runtime stages the full entry the remove selected; the add stays as proposed.
+    const [remove, add] = (value.payload as { operations: Record<string, unknown>[] }).operations;
+    expect(staged.payload).toEqual({ ...value.payload, operations: [pinning ? { ...remove, matched_entry: 'Old preference.' } : remove, add] }); expect(staged.origin).toBe('foreground');
     const preview = await f.service.handle(`${api}/${result.id}`, 'GET'); expect(preview?.status).toBe(200);
     // Hermes trims outer entry whitespace; the exact preview must reflect the
     // resulting native bytes while keeping interior indentation and tabs.
@@ -161,6 +211,21 @@ describe.skipIf(!runtime || process.platform === 'win32')('native typed proposal
       expect(bytes).not.toContain('fictional-preference'); expect(bytes).not.toContain('每週'); expect(bytes).not.toContain('Preserve indentation');
       expect((await stat(join(directory, name))).mode & 0o077).toBe(0);
     }
+  }, 60_000);
+
+  it('pins a proposed removal to the entry it selects now and holds it once that entry changes', async () => {
+    const f = await fixture(), value = input({ target: 'memory', action: 'remove', old_text: 'concise' });
+    const result = await propose(f, value), staged = JSON.parse(await readFile(join(dirname(f.proposal), result.id + '.json'), 'utf8'));
+    if (pinning) expect(staged.payload).toEqual({ ...value.payload, matched_entry: 'Prefers concise updates.' }); else expect(staged.payload).toEqual(value.payload);
+    const edited = 'Prefers concise notes.\n§\nUse Australian English.'; await writeFile(f.file, edited);
+    // 0.21.5: the pinned entry is gone. 0.21.3: shown against the current match, bound by its digest.
+    const held = await f.service.handle(`${api}/${result.id}`, 'GET');
+    if (pinning) expect(held).toMatchObject({ status: 409, body: { code: 'conflict' } }); else expect((held!.body as MemoryReviewPreview).after).toBe('Use Australian English.');
+    expect(await readFile(f.file, 'utf8')).toBe(edited); expect(await readdir(dirname(f.proposal))).toEqual([result.id + '.json']);
+    await writeFile(f.file, 'Prefers concise updates.\n§\nUse Australian English.');
+    const review = (await f.service.handle(`${api}/${result.id}`, 'GET'))!.body as MemoryReviewPreview; expect(review.after).toBe('Use Australian English.');
+    expect(await f.service.handle(`${api}/${result.id}/decision`, 'POST', { expectedDigest: review.reviewDigest, decision: 'approve' })).toMatchObject({ status: 200, body: { state: 'applied', changed: true } });
+    expect(await readFile(f.file, 'utf8')).toBe('Use Australian English.');
   }, 60_000);
 
   it('keeps conversation scopes separate and replays a rejected proposal without recreating it', async () => {

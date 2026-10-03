@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID, scrypt } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { encryptJson, decryptJson, isEncryptedEnvelope, type EncryptedEnvelope } from '../desk-crypto.ts';
 import { companySchemaManifest } from './schema.ts';
+import { normalizeDepartmentConfiguration } from '../../shared/department-configuration.ts';
+import { canonicalWebsiteCommand } from '../../shared/website-commands.ts';
 
 // Data only, in foreign-key order. Restoring never executes uploaded SQL.
 const TABLES = ['companies', 'members', 'sessions', 'invitations', 'scopes', 'scope_grants', 'knowledge_revisions', 'cases', 'claim_receipts', 'audit_events', 'member_credentials', 'workflow_templates', 'ownership_transfers', 'departure_receipts', 'portal_member_bindings', 'department_execution_grants', 'department_execution_claims', 'department_execution_events'] as const;
@@ -94,11 +96,12 @@ export async function restoreOfficeBackup(pool: Pool, backup: unknown, passphras
     const trusted = companySchemaManifest();
     const targetMatches = JSON.stringify(await migrations(client)) === JSON.stringify(trusted);
     const current = JSON.stringify(snapshot.migrations) === JSON.stringify(trusted);
-    const knownLatest = trusted.map(migration => migration.id).join(',') === '0001,0002,0003,0004,0005,0006,0007,0008';
+    const knownLatest = trusted.map(migration => migration.id).join(',') === '0001,0002,0003,0004,0005,0006,0007,0008,0009';
     const legacy0005 = knownLatest && JSON.stringify(snapshot.migrations) === JSON.stringify(trusted.slice(0, 5));
     const legacy0006 = knownLatest && JSON.stringify(snapshot.migrations) === JSON.stringify(trusted.slice(0, 6));
     const legacy0007 = knownLatest && JSON.stringify(snapshot.migrations) === JSON.stringify(trusted.slice(0, 7));
-    if (!targetMatches || (!current && !legacy0005 && !legacy0006 && !legacy0007)) throw new OfficeBackupError('Use a matching RealBud schema version to restore this backup before upgrading.');
+    const legacy0008 = knownLatest && JSON.stringify(snapshot.migrations) === JSON.stringify(trusted.slice(0, 8));
+    if (!targetMatches || (!current && !legacy0005 && !legacy0006 && !legacy0007 && !legacy0008)) throw new OfficeBackupError('Use a matching RealBud schema version to restore this backup before upgrading.');
     const older = legacy0005 || legacy0006;
     const beforeExecution = older || legacy0007;
     const executionTable = (name: string) => name.startsWith('department_execution_');
@@ -116,6 +119,21 @@ export async function restoreOfficeBackup(pool: Pool, backup: unknown, passphras
         rows = rows.map(row => ({ ...row, execution_epoch: 0 }));
       }
       if (legacy0005) rows = upgrade0005Rows(name, rows);
+      if (!current && name === 'scopes') {
+        const legacyColumns = columns.filter(column => column !== 'department_configuration').join(',');
+        if (rows.some(row => !object(row) || Object.keys(row).sort().join(',') !== legacyColumns)) throw new OfficeBackupError('The backup contains unsupported fields or another office’s data.');
+        rows = rows.map(row => ({ ...row, department_configuration: null }));
+      }
+      if (name === 'scopes') {
+        for (const row of rows) if (row.department_configuration !== null) {
+          try {
+            if (row.purpose !== 'department') throw new Error();
+            const config = normalizeDepartmentConfiguration(row.department_configuration);
+            const hash = (value: unknown) => createHash('sha256').update(canonicalWebsiteCommand(value)).digest('hex');
+            if (config.plans.some(({ recipe }) => hash(recipe.review.plan) !== recipe.digest || hash(recipe.review.instructions) !== recipe.instructionDigest)) throw new Error();
+          } catch { throw new OfficeBackupError('The backup contains unsupported fields or an invalid department configuration.'); }
+        }
+      }
       if (older && name === 'companies') {
         if (rows.some(row => !object(row) || Object.keys(row).sort().join(',') !== 'created_at,id,name')) throw new OfficeBackupError('The backup contains unsupported fields or another office’s data.');
         rows = rows.map(row => ({ ...row, remote_authority_incarnation: restoredAuthority, portal_issuer: null, portal_company_id: null }));

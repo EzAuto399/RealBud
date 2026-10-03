@@ -1,9 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { insertCaseRecord } from './case-records.ts';
 import type { PoolClient } from 'pg';
 import type { CompanyDepartment, DepartmentAccess, DepartmentAccessPage, DepartmentPage, DepartmentCase, DepartmentCasePage, RecoverDepartmentCaseInput, CreateDepartmentCaseInput, AssignDepartmentCaseInput, CloseDepartmentCaseInput, DepartmentCaseMutation, DepartmentAssigneePage, DepartmentLifecycleInput, DepartmentLifecycleResult } from '../../shared/company-api.ts';
 import { CompanyError, type CompanyActor } from './types.ts';
+import { departmentConfigurationReviewMaterial, normalizeDepartmentConfiguration, normalizeSaveDepartmentConfiguration, type DepartmentConfiguration, type DepartmentConfigurationRead, type DepartmentConfigurationSaved, type DepartmentConfigurationHistory, type SaveDepartmentConfigurationInput } from '../../shared/department-configuration.ts';
+import { canonicalWebsiteCommand } from '../../shared/website-commands.ts';
 
 type Environment = { authenticated: <T>(token: string, work: (client: PoolClient, actor: CompanyActor) => Promise<T>, lifecycle?: boolean) => Promise<T> };
 type CaseRow = {
@@ -26,7 +28,7 @@ function revision(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(value) || BigInt(value) > 9_223_372_036_854_775_807n) throw new CompanyError('invalid_input');
 }
 function boundedText(value: unknown, max: number, empty = false): string {
-  if (typeof value !== 'string' || value.length > max || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) || (!empty && !value.trim())) throw new CompanyError('invalid_input');
+  if (typeof value !== 'string' || value.length > max || /[\uD800-\uDFFF]/u.test(value) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) || (!empty && !value.trim())) throw new CompanyError('invalid_input');
   return value.trim();
 }
 function writable(found: CompanyDepartment) {
@@ -43,6 +45,31 @@ async function audit(client: PoolClient, actor: CompanyActor, kind: string, deta
 
 /** Departments share selected records, never an instance's private Bud or accounts. */
 export function createDepartmentApi({ authenticated }: Environment) {
+  const configurationKind = 'department.configuration';
+  const hash = (value: unknown) => createHash('sha256').update(canonicalWebsiteCommand(value)).digest('hex');
+  function verifiedConfiguration(value: unknown): DepartmentConfiguration {
+    const config = normalizeDepartmentConfiguration(value);
+    for (const { recipe } of config.plans) if (hash(recipe.review.plan) !== recipe.digest || hash(recipe.review.instructions) !== recipe.instructionDigest) throw new CompanyError('invalid_input');
+    return config;
+  }
+  async function configuration(client: PoolClient, actor: CompanyActor, id: string): Promise<DepartmentConfiguration | null> {
+    const row = (await client.query(`SELECT department_configuration FROM ${S}.scopes WHERE company_id=$1 AND id=$2 AND purpose='department'`, [actor.companyId, id])).rows[0];
+    if (!row) throw new CompanyError('not_found');
+    if (row.department_configuration === null) return null;
+    try { return verifiedConfiguration(row.department_configuration); } catch { throw new CompanyError('recovery_required'); }
+  }
+  function savedConfiguration(details: unknown): { input: SaveDepartmentConfigurationInput; department: CompanyDepartment; beforeConfiguration: DepartmentConfiguration | null; afterConfiguration: DepartmentConfiguration; previousRevision: string; revision: string } {
+    try {
+      if (!details || typeof details !== 'object' || Array.isArray(details) || Object.keys(details).sort().join(',') !== 'afterConfiguration,beforeConfiguration,department,input,previousRevision,revision') throw new Error();
+      const d = details as Record<string, unknown>, input = normalizeSaveDepartmentConfiguration(d.input);
+      const afterConfiguration = verifiedConfiguration(d.afterConfiguration), beforeConfiguration = d.beforeConfiguration === null ? null : verifiedConfiguration(d.beforeConfiguration);
+      revision(d.previousRevision); revision(d.revision);
+      if (d.previousRevision !== input.expectedRevision || BigInt(d.revision) !== BigInt(d.previousRevision) + 1n || !isDeepStrictEqual(afterConfiguration, input.configuration)) throw new Error();
+      const snapshot = d.department as CompanyDepartment;
+      if (!snapshot || Object.keys(snapshot).sort().join(',') !== 'access,id,name,retiredAt,retiredBy,retirementNote,revision,unresolvedCases' || snapshot.id !== input.departmentId || snapshot.revision !== d.revision || snapshot.access !== 'write' || snapshot.retiredAt !== null || snapshot.retiredBy !== null || snapshot.retirementNote !== '' || typeof snapshot.name !== 'string' || !snapshot.name.trim() || snapshot.name.length > 120 || !Number.isSafeInteger(snapshot.unresolvedCases) || snapshot.unresolvedCases < 0) throw new Error();
+      return { input, department: snapshot, beforeConfiguration, afterConfiguration, previousRevision: d.previousRevision, revision: d.revision };
+    } catch { throw new CompanyError('recovery_required'); }
+  }
   // List only safe record fields. Claim tokens/hashes and arbitrary outcome
   // payloads are never a department read response.
   const caseColumns = `c.id,c.title,c.description,c.status,c.fence,c.created_at,c.lease_expires_at,
@@ -121,6 +148,65 @@ export function createDepartmentApi({ authenticated }: Environment) {
     return row;
   }
   return {
+    departmentConfiguration(token: string, input: { departmentId: string }): Promise<DepartmentConfigurationRead> {
+      const id = uuid(input.departmentId);
+      return authenticated(token, async (client, actor) => {
+        await scopeLock(client, actor, id);
+        return { department: await selected(client, actor, id), configuration: await configuration(client, actor, id), canManage: actor.role === 'owner' };
+      });
+    },
+    departmentConfigurationHistory(token: string, input: { departmentId: string; beforeRevision: string | null; limit: number }): Promise<DepartmentConfigurationHistory> {
+      const id = uuid(input.departmentId); if (input.beforeRevision !== null) revision(input.beforeRevision);
+      if (input.limit !== 10) throw new CompanyError('invalid_input');
+      return authenticated(token, async (client, actor) => {
+        await scopeLock(client, actor, id); const found = await selected(client, actor, id);
+        const rows = (await client.query(`SELECT a.id,a.details,a.created_at,m.id AS author_id,m.display_name FROM ${S}.audit_events a
+          JOIN ${S}.members m ON m.company_id=a.company_id AND m.id=a.actor_member_id
+          WHERE a.company_id=$1 AND a.kind=$2 AND a.details->'input'->>'departmentId'=$3
+          AND ($4::bigint IS NULL OR (a.details->>'revision')::bigint<$4::bigint)
+          ORDER BY (a.details->>'revision')::bigint DESC LIMIT 11`, [actor.companyId, configurationKind, id, input.beforeRevision])).rows;
+        const entries = rows.slice(0, 10).map(row => {
+          const saved = savedConfiguration(row.details);
+          return { receiptId: String(row.id), revision: saved.revision, previousRevision: saved.previousRevision, savedAt: row.created_at.toISOString(),
+            savedBy: { id: String(row.author_id), displayName: String(row.display_name) }, note: saved.input.note, sourceReceiptId: saved.input.sourceReceiptId, configuration: saved.afterConfiguration };
+        });
+        return { department: found, entries, nextBeforeRevision: rows.length > 10 ? entries.at(-1)!.revision : null };
+      });
+    },
+    saveDepartmentConfiguration(token: string, value: SaveDepartmentConfigurationInput): Promise<DepartmentConfigurationSaved> {
+      let input: SaveDepartmentConfigurationInput;
+      try { input = normalizeSaveDepartmentConfiguration(value); verifiedConfiguration(input.configuration); } catch { throw new CompanyError('invalid_input'); }
+      return authenticated(token, async (client, actor) => {
+        owner(actor); await requestLock(client, actor, input.requestId); await scopeLock(client, actor, input.departmentId);
+        const found = await selected(client, actor, input.departmentId);
+        const reviewDigest = createHash('sha256').update(departmentConfigurationReviewMaterial(actor.companyId, input)).digest('hex');
+        if (reviewDigest !== input.reviewDigest) throw new CompanyError('invalid_input');
+        const previous = await client.query(`SELECT actor_member_id,kind,details FROM ${S}.audit_events WHERE company_id=$1 AND id=$2
+          UNION ALL SELECT actor_member_id,kind,details FROM ${S}.claim_receipts WHERE company_id=$1 AND id=$2`, [actor.companyId, input.requestId]);
+        if (previous.rowCount) {
+          if (previous.rowCount !== 1 || previous.rows[0].actor_member_id !== actor.memberId || previous.rows[0].kind !== configurationKind) throw new CompanyError('conflict');
+          const prior = savedConfiguration(previous.rows[0].details);
+          if (!isDeepStrictEqual(prior.input, input)) throw new CompanyError('conflict');
+          return { department: prior.department, configuration: prior.afterConfiguration, receiptId: input.requestId, replayed: true };
+        }
+        writable(found); if (found.revision !== input.expectedRevision) throw new CompanyError('conflict');
+        if (input.sourceReceiptId !== null) {
+          const source = (await client.query(`SELECT details FROM ${S}.audit_events WHERE company_id=$1 AND id=$2 AND kind=$3 AND details->'input'->>'departmentId'=$4`, [actor.companyId, input.sourceReceiptId, configurationKind, input.departmentId])).rows[0];
+          if (!source) throw new CompanyError('not_found');
+          if (!isDeepStrictEqual(savedConfiguration(source.details).afterConfiguration, input.configuration)) throw new CompanyError('conflict');
+        }
+        const beforeConfiguration = await configuration(client, actor, input.departmentId);
+        // Re-saving the same definition must not revoke live preparation grants.
+        // Original request replay was handled above and keeps its immutable receipt.
+        if (isDeepStrictEqual(beforeConfiguration, input.configuration)) throw new CompanyError('invalid_input');
+        const saved = (await client.query(`UPDATE ${S}.scopes SET department_configuration=$3,revision=revision+1 WHERE company_id=$1 AND id=$2 RETURNING revision`, [actor.companyId, input.departmentId, JSON.stringify(input.configuration)])).rows[0];
+        const appliedDepartment = await selected(client, actor, input.departmentId);
+        const details = { input, department: appliedDepartment, beforeConfiguration, afterConfiguration: input.configuration, previousRevision: found.revision, revision: String(saved.revision) };
+        try { await client.query(`INSERT INTO ${S}.audit_events(id,company_id,actor_member_id,kind,details) VALUES($1,$2,$3,$4,$5)`, [input.requestId, actor.companyId, actor.memberId, configurationKind, JSON.stringify(details)]); }
+        catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === '23505') throw new CompanyError('conflict'); throw error; }
+        return { department: appliedDepartment, configuration: input.configuration, receiptId: input.requestId, replayed: false };
+      }, true);
+    },
     createDepartmentCase(token: string, input: CreateDepartmentCaseInput): Promise<DepartmentCaseMutation> {
       const departmentId = uuid(input.departmentId), requestId = uuid(input.requestId);
       const title = boundedText(input.title, 240), description = boundedText(input.description, 4000, true);
@@ -220,8 +306,8 @@ export function createDepartmentApi({ authenticated }: Environment) {
     recoverDepartmentCase(token: string, input: RecoverDepartmentCaseInput): Promise<{ item: DepartmentCase; receiptId: string; replayed: boolean }> {
       const id = uuid(input.departmentId), caseId = uuid(input.caseId), requestId = uuid(input.requestId);
       revision(input.expectedFence);
-      if (!['done', 'released'].includes(input.resolution) || typeof input.note !== 'string' || !input.note.trim() || input.note.length > 2048 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.note)) throw new CompanyError('invalid_input');
-      const note = input.note.trim();
+      if (!['done', 'released'].includes(input.resolution)) throw new CompanyError('invalid_input');
+      const note = boundedText(input.note, 2048);
       return authenticated(token, async (client, actor) => {
         owner(actor);
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`department-operation:${actor.companyId}:${requestId}`]);
@@ -261,8 +347,8 @@ export function createDepartmentApi({ authenticated }: Environment) {
     },
     createDepartment(token: string, input: { requestId: string; name: string }): Promise<CompanyDepartment> {
       const id = uuid(input.requestId);
-      if (typeof input.name !== 'string' || input.name.length > 120 || /[\x00-\x1f\x7f]/.test(input.name) || !input.name.trim()) throw new CompanyError('invalid_input');
-      const name = input.name.trim();
+      const name = boundedText(input.name, 120);
+      if (/[\x00-\x1f\x7f]/.test(input.name)) throw new CompanyError('invalid_input');
       return authenticated(token, async (client, actor) => {
         owner(actor);
         const existing = await client.query(`SELECT * FROM ${S}.scopes WHERE company_id=$1 AND id=$2`, [actor.companyId, id]);

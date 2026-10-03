@@ -6,8 +6,12 @@ import { fmtDate, fmtDateTime, fmtTimeOfDay } from "@/lib/au";
 import type { DeskQueueItem, DeskRecoveryPlan } from "@/lib/desk-queue";
 import { holdMeta, recoveryPlanFor } from "@/lib/desk-queue";
 import { draftViaLine } from "@/lib/phone-label";
-import { CaseHeader, DecisionBar, FactSummary, SafeguardStatus, StatusLabel } from "../pm";
+import { CaseHeader, FactSummary, SafeguardStatus, StatusLabel } from "../pm";
 import { CASE_KIND_LABELS, CONTACT_ROLE_LABELS } from "./labels";
+import { LICENSEE_EXPLANATION, LicenseeBadge } from "./DeskSections";
+
+export const APPROVAL_EXPLANATION = "Approving saves your decision. It does not send the message.";
+export const AFTER_APPROVAL = "Wording approved. Copy it, then send it from your property management system.";
 
 export type CaseEdit = { body: string; revision: number };
 
@@ -24,6 +28,8 @@ export function DeskCase({
   onRecover,
   onAsk,
   onEvidence,
+  evidence,
+  evidenceOpen = false,
   edits,
 }: {
   snap: DeskSnapshot;
@@ -35,6 +41,9 @@ export function DeskCase({
   onEdit: (draft: Draft, body: string, expectedRevision: number) => Promise<boolean>;
   onAsk: () => void;
   onEvidence: () => void;
+  /** Evidence for this case, expanded in place under the case actions. */
+  evidence?: ReactNode;
+  evidenceOpen?: boolean;
   edits: Map<string, CaseEdit>;
   onCopy: (body: string) => void;
   onPrepare: (draft: Draft) => void;
@@ -104,7 +113,8 @@ export function DeskCase({
   const decisions = snap.book?.decisions.filter((row) => row.caseId === item.workItemId || row.proposalId === item.draftId) ?? [];
   const kindLabel = CASE_KIND_LABELS[item.kind] ?? item.kind;
   const stale = isObservedStale(work?.observedAt);
-  const recovery = !draft && item.bucket !== "done" ? recoveryPlanFor(item) : null;
+  // A licensee hold is explained once, by the red hold box; no second steps box.
+  const recovery = !draft && item.bucket !== "done" && item.kind !== "licensee-required" ? recoveryPlanFor(item) : null;
   const safeguards: Array<[string, boolean]> = [
     ["Hardship", Boolean(work?.recipient.hardship)],
     ["Dispute", Boolean(work?.recipient.dispute)],
@@ -113,24 +123,22 @@ export function DeskCase({
   ];
 
   return (
-    <div className="desk-case flex h-full min-h-0 flex-col">
+    <div className="desk-case flex flex-col">
       <CaseHeader
         title={item.address}
         status={
           <div className="flex flex-wrap items-center justify-end gap-1.5">
-            <StatusLabel
+            {item.kind === "licensee-required" ? <LicenseeBadge /> : <StatusLabel
               tone={
-                item.kind === "licensee-required"
-                  ? "danger"
-                  : item.bucket === "now"
-                    ? "agency"
-                    : item.bucket === "waiting"
-                      ? "hold"
-                      : "muted"
+                item.bucket === "now"
+                  ? "agency"
+                  : item.bucket === "waiting"
+                    ? "hold"
+                    : "muted"
               }
             >
               {kindLabel} · {item.state}
-            </StatusLabel>
+            </StatusLabel>}
             {stale && work ? (
               <StatusLabel tone="hold">Stale · last observed {fmtTimeOfDay(work.observedAt)}</StatusLabel>
             ) : null}
@@ -151,28 +159,30 @@ export function DeskCase({
 
       <div className="desk-case-tools" role="toolbar" aria-label="Case actions">
         <button type="button" onClick={onAsk}><MessageSquare size={15} aria-hidden />Ask Bud about this</button>
-        <button type="button" onClick={onEvidence}><FileSearch size={15} aria-hidden />View evidence</button>
+        <button type="button" onClick={onEvidence} aria-expanded={evidenceOpen} aria-controls="desk-case-evidence"><FileSearch size={15} aria-hidden />{evidenceOpen ? "Hide evidence" : "View evidence"}</button>
       </div>
-      <div className="@container min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      {evidenceOpen && evidence ? <div className="desk-case-evidence border-b border-line px-5 py-4">{evidence}</div> : null}
+      <div className="desk-case-body @container px-5 py-4">
         {item.kind === "import-issue" ? (
           <p className="text-[14px] text-ink">
             Held as an import issue ({item.holdReason}). Link or reject it in the book after the source is matched. RealBud did not invent a property.
           </p>
         ) : item.kind === "licensee-required" ? (
-          <p className="text-[14px] text-ink">
-            For the licensee. RealBud will not draft a notice or start a statutory clock. {item.meta}
-          </p>
+          <div className="desk-licensee-hold rounded border border-danger/30 bg-danger/10 px-3 py-2.5 text-[14px] text-ink">
+            <p className="font-medium text-danger">{LICENSEE_EXPLANATION}</p>
+            {item.meta ? <p className="mt-1 text-[13px] text-ink-secondary">{item.meta}</p> : null}
+          </div>
         ) : item.kind === "maintenance-intake" ? (
           <p className="text-[14px] text-ink">
             Maintenance intake. Classify and attach evidence. RealBud does not dispatch a tradie. {item.holdReason ?? item.meta}
           </p>
         ) : item.kind === "lease-review" ? (
           <p className="text-[14px] text-ink">
-            Lease review. Dates and checklists only. No statutory action. {item.holdReason ?? item.meta}
+            Lease review. Dates and checklists only. RealBud takes no legal step. {item.holdReason ?? item.meta}
           </p>
         ) : item.kind === "inspection-prep" ? (
           <p className="text-[14px] text-ink">
-            Inspection prep. Checklist and draft wording. No statutory action. {item.holdReason ?? item.meta}
+            Inspection prep. Checklist and draft wording. RealBud takes no legal step. {item.holdReason ?? item.meta}
           </p>
         ) : item.kind === "inbound-triage" ? (
           <p className="text-[14px] text-ink">
@@ -202,7 +212,7 @@ export function DeskCase({
                       className="mt-2 w-full resize-y rounded border border-line bg-paper px-3 py-2.5 text-[14px] leading-relaxed text-ink"
                     />
                     <p className="mt-2 text-[12px] text-ink-muted">
-                      Keep the disclaimer in the wording. Allow still only records a decision — RealBud does not send.
+                      Keep the disclaimer in the wording. {APPROVAL_EXPLANATION}
                     </p>
                     {saveError ? <p role="alert" className="mt-2 text-[13px] text-danger">Wording was not saved. Your edit is still here. Review the error above before retrying.</p> : null}
                     {snap.revision !== editRevision && !waiting ? <p className="mt-2 text-[13px] text-hold">The book changed while you were editing. Copy your changes before cancelling to review the latest version.</p> : null}
@@ -348,7 +358,7 @@ export function DeskCase({
 
       {draft && draft.status === "pending" && !editing && denying ? (
         <div
-          className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3"
+          className="desk-decision flex flex-wrap items-center gap-2 border-t border-line px-4 py-3"
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.stopPropagation();
@@ -375,23 +385,32 @@ export function DeskCase({
             onClick={() => onDeny(draft, denyReason.trim() || undefined)}
             className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
           >
-            Deny wording
+            Decline wording
           </button>
           <button type="button" onClick={cancelDeny} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised">
             Cancel
           </button>
         </div>
       ) : draft && draft.status === "pending" && !editing ? (
-        <DecisionBar
-          busy={busy !== null}
-          denyRef={denyButtonRef}
-          onAllow={() => onAllow(draft)}
-          onEdit={beginEdit}
-          onDeny={() => setDenying(true)}
-          onCopy={() => onCopy(draft.body)}
-        />
+        <div className="desk-decision border-t border-line px-4 py-3" aria-busy={busy !== null ? true : undefined}>
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Review wording">
+            <button type="button" disabled={busy !== null} onClick={() => onAllow(draft)} className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
+              {busy !== null ? "Saving…" : "Approve wording"}
+            </button>
+            <button type="button" disabled={busy !== null} onClick={beginEdit} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+              Edit wording
+            </button>
+            <button ref={denyButtonRef} type="button" disabled={busy !== null} onClick={() => setDenying(true)} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+              Decline wording
+            </button>
+            <button type="button" disabled={busy !== null} onClick={() => onCopy(draft.body)} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+              Copy
+            </button>
+          </div>
+          <p className="mt-2 text-[12px] text-ink-muted">{APPROVAL_EXPLANATION}</p>
+        </div>
       ) : draft && (draft.status === "allowed" || draft.status === "denied") ? (
-        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+        <div className="desk-decision flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
           {draft.status === "allowed" ? (
             <button
               type="button"
@@ -409,8 +428,8 @@ export function DeskCase({
           <span className="text-[12px] text-ink-muted">
             {draftViaLine(draft) ??
               (draft.status === "allowed"
-                ? "Copy, then send from the PMS. RealBud did not send it."
-                : "Wording denied. RealBud did not send it.")}
+                ? AFTER_APPROVAL
+                : "Wording declined. RealBud did not send it.")}
           </span>
         </div>
       ) : null}

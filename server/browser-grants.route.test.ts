@@ -66,7 +66,8 @@ describe.skipIf(process.platform === "win32")("Ask browser task routes (fake wor
     mkdirSync(join(home, ".realbud"), { recursive: true, mode: 0o700 });
     browserReady = join(home, "browser-ready");
     writeFileSync(browserReady, "1");
-    dump = join(home, "fake-acp-dump.json");
+    // The fake obeys the production worker write fence just like Ask does.
+    dump = join(home, ".realbud", "vault", "bud-work", "fake-acp-dump.json");
     writeFileSync(join(home, ".realbud", "config.json"), JSON.stringify({
       instances: { hermes: { driver: "hermesAgent", config: { cli: FAKE_CLI }, environment: { FAKE_ACP_MODE: "hang", FAKE_ACP_DUMP: dump } } },
     }));
@@ -166,7 +167,7 @@ browserRuntime.resumeConnection = async () => {};
     try {
       expect((await tasks()).browser).toEqual({ ready: false, name: null });
       const refused = await api("POST", `/api/browser/tasks/${card.id}/start`, { threadId });
-      expect(refused).toMatchObject({ status: 409, body: { error: "Connect your browser before starting this task.", code: "browser_not_connected" } });
+      expect(refused).toMatchObject({ status: 409, body: { error: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then press Start again.", code: "browser_not_connected" } });
       expect((await tasks()).tasks[1].status).toBe("proposed");
     } finally { writeFileSync(browserReady, "1"); }
     expect((await api("POST", `/api/browser/tasks/${card.id}/decline`, { threadId })).body.task.status).toBe("declined");

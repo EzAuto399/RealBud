@@ -31,7 +31,8 @@ import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server
 browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
 browserRuntime.resumeConnection = async () => {};
 `);
-const dumpPath = join(HOME, "fake-acp-dump.json");
+// Fixture evidence obeys the same write boundary as the real worker.
+const dumpPath = join(HOME, ".realbud", "vault", "bud-work", "fake-acp-dump.json");
 const receiptPath = join(HOME, "kevin-day-receipt.json");
 chmodSync(FAKE_CLI, 0o755);
 writeFileSync(
@@ -406,7 +407,7 @@ try {
   const beforeCal = (await getBud())?.messages?.length ?? 0;
   await api("POST", "/api/bots/bud/messages", { text: "sync google calendar with the bills reminders" });
   const calBud = await waitForBot(
-    (b) => (b.messages?.length ?? 0) > beforeCal && b.messages.slice(beforeCal).some((m) => m.role === "bot"),
+    (b) => Boolean(lastBotText(b, beforeCal)),
     "calendar sync ask reply",
     30_000,
   );
@@ -498,7 +499,7 @@ try {
     text: "what's on the bills board this morning? anything missing or company advance?",
   });
   const askBud = await waitForBot(
-    (b) => (b.messages?.length ?? 0) > beforeAsk && b.messages.slice(beforeAsk).some((m) => m.role === "bot"),
+    (b) => Boolean(lastBotText(b, beforeAsk)),
     "morning ask reply",
     45_000,
   );

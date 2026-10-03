@@ -11,7 +11,7 @@ import { ChannelMark } from "./ChannelMark";
 import { CopyButton } from "./CopyButton";
 import { scrollYouTarget, youHashTarget } from "@/lib/you-navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Loader2, User } from "lucide-react";
+import { LayoutGrid, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { fmtDateTime, relativeAgo } from "@/lib/au";
@@ -50,11 +50,13 @@ import { api, useStore, type HermesStatus } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice, StatusLabel, type StatusTone } from "./pm";
 import { BudSetupCard } from "./BudSetupCard";
 import { MemoryReviewPanel } from './MemoryReviewPanel';
+import { DESIGN_PREVIEW_REASON } from '@/lib/design-preview';
 import { ConnectedAppsCard } from "./ConnectedAppsCard";
 import { ServiceAdministration } from "./ServiceAdministration";
 import { ServiceStatusCard } from "./ServiceStatusCard";
 import { CompanySetupCard } from "./CompanySetupCard";
 import { Card } from "./SettingsPrimitives";
+import { SettingsCard } from "./you/SettingsCard";
 import { ProfileFields } from "./SettingsModal";
 import { GoLiveCard } from "./desk/GoLiveCard";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
@@ -66,6 +68,7 @@ import { OfficeCard } from "./you/OfficeCard";
 import { UnattendedWorkCard } from "./you/UnattendedWorkCard";
 import { SupportCard } from "./you/SupportCard";
 import { PrivateWorkspaceBackup } from "./PrivateWorkspaceBackup";
+import { WorkspaceNextStep } from "./you/WorkspaceNextStep";
 
 function YouLoadLines({ label }: { label: string }) {
   return (
@@ -76,50 +79,16 @@ function YouLoadLines({ label }: { label: string }) {
   );
 }
 
-const YOU_JUMP_LINKS = [
-  { id: "you-worker", label: "Bud" },
-  { id: "you-office", label: "Office" },
-  { id: "you-browser", label: "Browser" },
-  { id: "you-connected-apps", label: "Apps" },
-  { id: "you-phone", label: "Phone" },
-  { id: "you-profile", label: "Profile" },
-  { id: "you-advanced", label: "Advanced" },
-  { id: "you-service-admin", label: "Service" },
-] as const;
+/** Workspace rows read as a calm divided list, not a stack of bordered cards. */
+const WORKSPACE_ROW = "settings-section !rounded-none !border-x-0 !border-t-0 !bg-transparent";
 
-function YouJumpNav() {
+/** One Settings & help group: a disclosure so deep links can reveal it. */
+function SettingsGroup({ id, label, hint, open, children }: { id?: string; label: string; hint: string; open?: boolean; children: ReactNode }) {
   return (
-    <nav
-      aria-label="Jump to a settings group"
-      className="sticky top-0 z-20 -mx-5 mb-1 border-b border-line bg-paper/95 px-5 py-2 backdrop-blur-sm"
-    >
-      <ul className="flex flex-wrap gap-1.5">
-        {YOU_JUMP_LINKS.map((link) => (
-          <li key={link.id}>
-            <button
-              type="button"
-              className="pm-control rounded border border-transparent px-2.5 py-1 text-[12.5px] font-medium text-ink-secondary hover:border-line hover:bg-sheet hover:text-ink"
-              onClick={() => {
-                const hash = link.id === "you-worker" ? "you-worker" : link.id;
-                if (location.hash.replace(/^#/, "") === hash) scrollYouTarget(link.id);
-                else location.hash = hash;
-              }}
-            >
-              {link.label}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-function YouGroup({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3" aria-label={label}>
-      <h2 className="px-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">{label}</h2>
-      {children}
-    </section>
+    <details id={id} className="settings-section min-w-0" open={open || undefined}>
+      <summary><span>{label}</span><span className="settings-section-hint">{hint}</span></summary>
+      <div className="settings-section-body flex flex-col gap-3">{children}</div>
+    </details>
   );
 }
 
@@ -172,6 +141,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const { channels, error: channelsError, update: setChannels, refresh: loadChannels } = usePhoneConnections(section !== "office" && state.connected);
   const [lawWatch, setLawWatch] = useState<LawWatch | null>(null);
   const [lawWatchError, setLawWatchError] = useState("");
+  const [officeGroup, setOfficeGroup] = useState("basics");
   const [announce, setAnnounce] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const announceTimer = useRef<number | null>(null);
@@ -270,19 +240,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
     );
   };
 
-  const officeSection = (
-    <details open={section === "office" || undefined} id={section ? undefined : "you-office"} className="settings-section">
-      <summary>
-        <span>This office</span>
-        <span className="settings-section-hint">
-          {deskError
-            ? "Could not load · open to retry"
-            : desk?.demo
-              ? "Agency basics · optional setup details"
-              : agency?.name || "Agency and property settings"}
-        </span>
-      </summary>
-      <div className="settings-section-body">
+  const officeBasics = <>
         {desk ? (
           <OfficeCard
             agencyName={agency?.name ?? ""}
@@ -317,15 +275,23 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         ) : (
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
-        <CompanySetupCard />
-        <section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account">
-          <WebsiteLinkCard />
-        </section>
-        <AiUsageCard />
-        <WebsiteRequestsCard />
-        <RemoteApproversCard />
-        <RemoteWorkCard />
-      </div>
+      </>;
+  const officeGroups = [
+    { id: "basics", label: "Office basics", content: officeBasics },
+    { id: "people", label: "People & departments", content: <><CompanySetupCard /><div className="px-1 text-[13px] leading-relaxed text-ink-muted"><p className="font-medium text-ink">Hermios CRM workspace</p><p className="mt-1">Each person connects their own Hermios account from Desk → Hermios or Connected apps. Bud uses only that person's verified workspace and access; office membership never connects a CRM account for anyone else. Department access to CRM records is coming next.</p></div></> },
+    { id: "account", label: "Account & usage", content: <><section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account"><WebsiteLinkCard /></section><AiUsageCard /></> },
+    { id: "remote", label: "Remote access", content: <><WebsiteRequestsCard /><RemoteApproversCard /><RemoteWorkCard /></> },
+  ];
+  const officeSection = section === "office" ? <section aria-label="Office settings">
+    <nav className="office-settings-nav" aria-label="Office settings sections">
+      {officeGroups.map(group => <button type="button" key={group.id} className="pm-control" aria-pressed={officeGroup === group.id} onClick={() => setOfficeGroup(group.id)}>{group.label}</button>)}
+    </nav>
+    {officeGroups.map(group => <div key={group.id} className="office-settings-group" hidden={officeGroup !== group.id} inert={officeGroup !== group.id}>{group.content}</div>)}
+  </section> : (
+    <details id="you-office" className={WORKSPACE_ROW}>
+      <summary><span>Office details</span><span className="settings-section-hint">{deskError ? "Could not load · open to retry" : desk?.demo ? "Agency basics · optional setup details" : agency?.name || "Agency and property settings"}</span></summary>
+      {/* People & departments (company setup and the CRM note) is shared with the office setup sheet. */}
+      <div className="settings-section-body">{officeBasics}{officeGroups.find(group => group.id === "people")?.content}</div>
     </details>
   );
 
@@ -356,21 +322,22 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   // Opening it starts nothing: sign-in begins only when the person presses Connect.
   const appsToConnect = officeAppsToConnect(officeSnapshot, state.config?.composio?.managed === true).map(officeAppLabel);
   const appsSection = (
-    <details id="you-connected-apps" className="settings-section" open={appsToConnect.length ? true : undefined}>
+    <details id="you-connected-apps" className={WORKSPACE_ROW} open={appsToConnect.length ? true : undefined}>
       <summary>
         <span>Connected apps</span>
         <span className="settings-section-hint">
           {appsToConnect.length ? `${appsToConnect.join(", ")} not connected yet · connect ${appsToConnect.length === 1 ? "it" : "them"} here` : "Optional · connect any app your office uses"}
         </span>
       </summary>
-      <div className="settings-section-body">
+      <div className="settings-section-body flex flex-col gap-4">
         <ConnectedAppsCard />
+        <BrowserCard />
       </div>
     </details>
   );
 
   const phoneSection = (
-    <details id="you-phone" className="settings-section">
+    <details id="you-phone" className="settings-section min-w-0">
       <summary>
         <span>Bud on your phone</span>
         <span className="settings-section-hint">
@@ -384,13 +351,13 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   );
 
   const profileSection = (
-    <details id="you-profile" className="settings-section">
+    <details id="you-profile" className="settings-section min-w-0">
       <summary>
-        <span>Your profile</span>
+        <span>Your details</span>
         <span className="settings-section-hint">Name and office email</span>
       </summary>
       <div className="settings-section-body">
-        <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
+        <Card title="Profile" subtitle="Your name and office email. Saved as you go.">
           <ProfileFields />
         </Card>
       </div>
@@ -398,12 +365,23 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   );
 
   const advancedSection = (
-    <details id="you-advanced" className="settings-section">
-      <summary>
-        <span>Advanced</span>
-        <span className="settings-section-hint">Jobs, rules, recovery, and diagnostics</span>
-      </summary>
-      <div className="settings-section-body flex flex-col gap-4">
+    <SettingsGroup id="you-advanced" label="Data & recovery" hint="Recovery key, backups, restore · advanced jobs and diagnostics">
+        <div id="you-recovery">
+          <RecoveryKeyCard recoveryActive={Boolean(recovery)} />
+        </div>
+        <SettingsCard title="Keeping your records" details={<>
+          <p>Saved jobs, shared office records and your private workspace have different recovery needs.</p>
+          <p>Export saved jobs to keep a copy of their plans. An office backup covers shared office records; neither includes your private book, files or conversations.</p>
+          <p>Automatic deletion after a set number of days is not enabled. Use the private business backup below for the included records, and retain source documents separately.</p>
+        </>}>
+          <button type="button" className="pm-control rounded border border-line px-3 text-[13px] text-ink hover:bg-selected" onClick={() => scrollYouTarget("you-packs")}>Open saved-job import and export</button>
+        </SettingsCard>
+        <div id="you-private-backup" tabIndex={-1}>
+          <PrivateWorkspaceBackup />
+        </div>
+        <details className="settings-section">
+          <summary><span>Advanced</span><span className="settings-section-hint">Jobs, rules, sources and diagnostics</span></summary>
+          <div className="settings-section-body flex flex-col gap-4">
         <Card title="Bud's rules" subtitle="Previously saved standing permissions. New approvals can stay scoped to one task.">
           {rulesError ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -467,9 +445,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
             onError={setJobsError}
           />
         </div>
-        <div id="you-recovery">
-          <RecoveryKeyCard recoveryActive={Boolean(recovery)} />
-        </div>
         <Card
           title="Sources"
           subtitle={
@@ -492,14 +467,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
             {!desk?.sources?.length && <li>No sources yet.</li>}
           </ul>
         </Card>
-        <Card title="Keeping your records" subtitle="Saved jobs, shared office records and your private workspace have different recovery needs.">
-          <p className="text-sm text-ink-secondary">Export saved jobs to keep a copy of their plans. An office backup covers shared office records; neither includes your private book, files or conversations.</p>
-          <p className="mt-2 text-sm text-ink-secondary">Automatic deletion after a set number of days is not enabled. Use the private business backup below for the included records, and retain source documents separately.</p>
-          <button type="button" className="mt-3 min-h-11 rounded border border-line px-3 py-2 text-sm hover:bg-selected" onClick={() => scrollYouTarget("you-packs")}>Open saved-job import and export</button>
-        </Card>
-        <div id="you-private-backup" tabIndex={-1}>
-          <PrivateWorkspaceBackup />
-        </div>
         <AdvancedDiagnostics>
           {hermes ? (
             <>
@@ -523,8 +490,9 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
             {diagnosticsCopied ? <span className="text-[12px] text-agency">Copied</span> : null}
           </div>
         </AdvancedDiagnostics>
-      </div>
-    </details>
+          </div>
+        </details>
+    </SettingsGroup>
   );
 
   if (section === "phone") return <ChannelsCard channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />;
@@ -534,70 +502,87 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
     <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
       <header className="px-5 pb-3 pt-4">
         <div className="flex items-center gap-2.5">
-          <User size={21} className="text-agency" />
-          <h1 className="pm-screen-title text-ink">You</h1>
+          <LayoutGrid size={21} className="text-agency" aria-hidden />
+          <h1 className="pm-screen-title text-ink">Workspace</h1>
         </div>
-        <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
-          Jump to a group below, or scroll. Set up only what you need for the work ahead.
-        </p>
       </header>
-      <div ref={scrollRef} data-you-scroll className="flex flex-1 flex-col gap-5 overflow-y-auto px-5 pb-6">
-        <YouJumpNav />
-        {session?.nonProduction && (
-          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
-            Source-run key. This is not a production distribution. Agency data stays local.
-          </div>
-        )}
-        <div className="sr-only" aria-live="polite">
-          {announce}
-        </div>
-        {recovery && (
-          <RecoveryNotice>
-            Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
-          </RecoveryNotice>
-        )}
-
-        <YouGroup label={budReady ? "Office" : "Bud setup"}>
-          {budReady ? (
-            <>
-              {officeSection}
-              {goLiveSection}
-              {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
-              <BudSetupCard />
-            </>
-          ) : (
-            <>
-              <BudSetupCard />
-              {officeSection}
-              {goLiveSection}
-              {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
-            </>
+      <div ref={scrollRef} data-you-scroll className="flex-1 overflow-y-auto px-5 pb-6">
+        <div className="flex w-full max-w-[69rem] flex-col gap-4">
+          <div className="flex w-full max-w-[44rem] flex-col gap-4">
+          {session?.nonProduction && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
+              Source-run key. This is not a production distribution. Agency data stays local.
+            </div>
           )}
-        </YouGroup>
+          <div className="sr-only" aria-live="polite">
+            {announce}
+          </div>
+          {recovery && (
+            <RecoveryNotice>
+              Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
+            </RecoveryNotice>
+          )}
 
-        <YouGroup label="Bud memory">
-          <MemoryReviewPanel />
-        </YouGroup>
+          <WorkspaceNextStep />
+          {goLiveSection}
+          {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
 
-        <YouGroup label="Connections">
-          <BrowserCard />
-          {appsSection}
-          {phoneSection}
-        </YouGroup>
-
-        <YouGroup label="Account">
-          {profileSection}
-          <ServiceStatusCard />
-          <SupportCard />
-          <UnattendedWorkCard />
-        </YouGroup>
-
-        <YouGroup label="More">
-          {advancedSection}
-          <ServiceAdministration>
-            <ChannelsCard administration channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
-          </ServiceAdministration>
-        </YouGroup>
+          <div className="flex flex-col">
+            {officeSection}
+            {appsSection}
+            <details id="you-memory" className={WORKSPACE_ROW}>
+              <summary>
+                <span>What Bud learned</span>
+                <span className="settings-section-hint">Notes Bud keeps about how your office works</span>
+              </summary>
+              <div className="settings-section-body">
+                {DESIGN_PREVIEW_REASON ? <p className="text-[13px] text-ink-secondary">Memory review is available in the RealBud app. This preview has example data.</p> : <MemoryReviewPanel />}
+              </div>
+            </details>
+          </div>
+          </div>
+            <details id="you-settings" className={WORKSPACE_ROW}>
+              <summary>
+                <span>Settings & help</span>
+                <span className="settings-section-hint">Bud and service, sharing, backups, your details and help</span>
+              </summary>
+              {/* Two columns once the content is 1024px wide (container query), one below. */}
+              <div className="settings-section-body @container">
+                <div className="grid items-start gap-3 @5xl:grid-cols-2">
+                  <div className="flex min-w-0 flex-col gap-3">
+                    <SettingsGroup label="Bud & service" hint="Office service, Bud's setup and updates, usage" open>
+                      <ServiceStatusCard />
+                      <BudSetupCard />
+                      <UnattendedWorkCard />
+                      <AiUsageCard />
+                    </SettingsGroup>
+                    {advancedSection}
+                    {profileSection}
+                    {phoneSection}
+                    <SettingsGroup label="Help" hint="Support file and service administration" open>
+                      <SupportCard />
+                      <ServiceAdministration>
+                        <ChannelsCard administration channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
+                      </ServiceAdministration>
+                    </SettingsGroup>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-3">
+                    <Card title="Saved views" subtitle="Shortcuts in the sidebar. Ask Bud to add or change one.">
+                      <button type="button" className="pm-control mt-1 self-start rounded-lg border border-line px-3 text-[13px] text-ink hover:bg-raised" onClick={() => dispatch({ type: "showWorkspaceTab" })}>See saved views</button>
+                    </Card>
+                    <SettingsGroup label="Sharing & website" hint="Website account, requests and remote review" open>
+                      <section id="you-website" tabIndex={-1} aria-label="Website account">
+                        <WebsiteLinkCard />
+                      </section>
+                      <WebsiteRequestsCard />
+                      <RemoteApproversCard />
+                      <RemoteWorkCard />
+                    </SettingsGroup>
+                  </div>
+                </div>
+              </div>
+            </details>
+        </div>
       </div>
     </main>
   );
@@ -884,9 +869,11 @@ function ChannelsCard({
 
   return (
     <Card title="Continue on your phone" subtitle="The same Bud conversation, wherever you pick it up.">
-      <p className="mb-2 text-[12px] text-ink-muted">
-        Send a task from your messaging app and pick it up in Ask. Keep this computer awake with RealBud open.
-      </p>
+      <ol className="connection-steps" aria-label="Phone connection steps">
+        <li><strong>1. Choose a messaging app</strong><span>Connect one of the supported apps below.</span></li>
+        <li><strong>2. Pair your account</strong><span>Use the private pairing instructions for your own account.</span></li>
+        <li><strong>3. Continue with Bud</strong><span>Send tasks from your phone. Keep RealBud open on this computer.</span></li>
+      </ol>
       <details className="mb-3 text-[12px] text-ink-muted"><summary className="pm-control cursor-pointer">Using Bud from your phone</summary><p>Send /continue for the latest saved reply or /status for progress. Files and full review controls are available on this computer.</p></details>
       {error ? (
         <div className="flex flex-wrap items-center gap-2">

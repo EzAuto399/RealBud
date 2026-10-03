@@ -30,7 +30,7 @@ export const ATTEND_ERRORS = {
   plan: "Approve the plan first.",
   attach: "Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.",
   origins: "Add the portal site to this job before running it beside you.",
-  cua: "Connect your browser in You → Browser before running this website job.",
+  cua: "The work browser is not open yet. Ask Bud to open this job's site for sign-in, sign in there, then run it beside you again.",
   overlap: "This job already has work waiting or running.",
   busy: "Bud is busy with another turn. Stop it or wait, then run again.",
   gone: "That run is no longer waiting.",
@@ -114,14 +114,14 @@ export function grantedBrowserTools(grant: Pick<BrowserTaskGrant, "actions" | "u
 const SAVED_JOB_TOOLS = grantedBrowserTools({ actions: legacyBrowserActions(["portal-read", "portal-prefill", "portal-submit"]), uploads: [] }, false);
 const spoken = (names: readonly string[]) => names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "";
 
-/** RealBud-owned portal browser policy — never Hermes source. Prefer the
- * person's already-open Chrome/Brave tab; do not spawn a throwaway browser.
+/** RealBud-owned portal browser policy — never Hermes source. Use the
+ * persistent work profile opened by RealBud, never a personal profile.
  * `tools` are the ones this run's grant allows. */
 export function portalBrowserPolicy(tools: readonly string[] = SAVED_JOB_TOOLS): string {
   return [
     tools.length ? `Use only RealBud's browser tools for this saved job: ${spoken(tools)}.` : "This job has no browser tools. Do not use a browser.",
-    "Start by finding the already-open job-site tab. Borrow only that tab with the person's confirmation. RealBud uses their selected Chrome or Edge profile and returns the tab when work stops.",
-    "Never launch another browser, run bsk from a shell, use native browser/computer tools, JavaScript, recording or another connection to work around a denial or missing browser connection.",
+    "Start by finding the already-open job-site tab in RealBud's work browser. Claim only that tab for this job. The person signs in themselves; their browser retains its session. Release control when work stops. Never use or copy a personal browser profile or its cookies.",
+    "Never launch another browser, run a browser CLI from a shell, use unbrokered browser/computer tools, JavaScript, recording or another connection to work around a denial or missing browser connection.",
     "If sign-in or a verification code is needed, release the browser first and hand that step back to the person; resume only after they say it is done. Never enter credentials: passwords and verification codes never belong in chat or in a form you fill. Stop/restart does not authorize replaying previous steps.",
     "Read back the current site and result before saying anything is done. A click acknowledgement, download request or successful tool call is not proof that a task completed.",
   ].join(" ");

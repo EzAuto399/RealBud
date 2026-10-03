@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 if (process.platform === 'win32' || process.getuid?.() === 0) throw new Error('This filesystem fault fixture needs a non-root POSIX account.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -47,13 +48,19 @@ async function request(path, method = 'GET', body, expected = 200) {
   const value = await response.json(); if (expected !== null) assert.equal(response.status, expected, `${path}: ${JSON.stringify(value)}`);
   return expected === null ? { status: response.status, body: value } : value;
 }
-async function open() { await page.goto(origin + '/#/schedule'); await card().waitFor(); }
+async function open() {
+  await page.goto(origin + '/#/schedule');
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-packs'; });
+  await card().waitFor();
+}
 async function settled() { await page.waitForFunction(() => document.querySelector('[aria-label="Customer workflow pack setup"]')?.getAttribute('aria-busy') === 'false'); }
 try {
   writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
   writeFileSync(join(temp, 'worker.mjs'), `#!${process.execPath}\nif(process.argv.includes('--version'))console.log('Hermes Agent v0.21.3 (2026.9.14)');else{console.error('Fixture does not admit reasoning');process.exitCode=1;}\n`, { mode: 0o700 });
   writeFileSync(join(temp, 'hold-archive.mjs'), `import {createRequire,syncBuiltinESMExports} from 'node:module';const fs=createRequire(import.meta.url)('node:fs/promises'),open=fs.open;fs.open=async function(path,...args){const h=await open.call(this,path,...args);if(String(path).includes('customer-skill-history/')&&String(path).endsWith('.tmp')){const write=h.writeFile.bind(h);h.writeFile=async function(value,...options){const bytes=Buffer.from(value);await write(bytes.subarray(0,Math.max(1,Math.floor(bytes.length/2))),...options);process.stdout.write('REALBUD_QA_SKILL_PARTIAL_WRITE_HELD\\n');await new Promise(()=>{});};}return h;};syncBuiltinESMExports();`, { mode: 0o600 });
   await start(); assert.equal((await fetch(origin + '/api/customer-packs')).status, 401);
+  await completeFictionalOnboarding(request);
   const pack = await request('/api/customer-packs/office-core/export'), preview = await request('/api/customer-packs/preview', 'POST', { pack });
   await request('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
   const skillId = pack.skills[0].id, profile = join(data, 'hermes/profiles/property');
@@ -64,9 +71,8 @@ try {
   saved.installs['office-core'].overrides = { [skillId]: { activeRevision: 100, versions } };
   writeFileSync(journalPath, JSON.stringify(saved), { mode: 0o600 }); writeFileSync(native, versions.at(-1).content, { mode: 0o600 });
   await start();
-  browser = await chromium.launch({ headless: true }); context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) }); context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.route('**/*', r => { if (new URL(r.request().url()).origin === origin) return r.continue(); denied.push(r.request().url()); return r.abort(); });
-  await context.addInitScript(() => { if (location.protocol === 'http:') localStorage.setItem('realbud.first-run-done', '1'); });
   page = await context.newPage(); page.setDefaultTimeout(20000); page.on('pageerror', e => errors.push(e.message)); await open();
   const historyCard = () => card().getByRole('article', { name: `${pack.skills[0].name} instruction history`, exact: true });
   const archiveRegion = () => card().getByRole('region', { name: 'Review instruction history archival', exact: true });

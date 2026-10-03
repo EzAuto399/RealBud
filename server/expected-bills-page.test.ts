@@ -17,7 +17,7 @@ function fixture() {
   const store = new SourceBillRegister(db,{dataDir:dir,now:()=>now});
   const add = (propertyId = 'one', note = '', kind = 'Water') => {
     const source: BillMailSource = {accountId:'mail',receiptId:'synthetic',threadId:(++ordinal).toString(16),message:{id:ordinal.toString(16),at:now-1,
-      from:'billing@example.test',subject:'Fictional invoice',body:'Private body excluded from summary.',attachments:[]}};
+      from:'billing@example.test',subject:'Fictional invoice',body:`Private body excluded from summary. Fictional invoice ${ordinal}.`,attachments:[]}};
     return store.accept({sourceReviewed:true,expectedSourceDigest:previewBillSource(source).digest,facts:{propertyId,kind,vendor:'Fictional utility',amountCents:null,currency:'AUD',invoiceDate:null,dueDate:null,note},reviewReason:'Reviewed synthetic source.'},source,'local');
   };
   const legacy: ExpectedBill[] = [{id:'legacy-one',propertyId:'one',kind:'Council',status:'hold',windowStartAt:null,windowEndAt:null,amountCents:null,note:'Check reference',sourceRef:null,createdAt:now-100,updatedAt:now-100}];

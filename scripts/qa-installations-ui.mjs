@@ -19,6 +19,9 @@ import { join, dirname, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+// Environment-gated: needs a local PostgreSQL toolchain (initdb/pg_ctl/psql).
+// Without the opt-in it refuses and exits non-zero; a refusal is "not run", never a pass.
+if (process.env.REALBUD_TEST_POSTGRES !== '1') throw new Error('ENVIRONMENT-GATED, NOT RUN (not a pass): qa-installations-ui needs local PostgreSQL. Set REALBUD_TEST_POSTGRES=1 and REALBUD_TEST_POSTGRES_BIN=<directory with initdb, pg_ctl and psql> (default /opt/homebrew/opt/postgresql@16/bin), build website/ first, and set PLAYWRIGHT_MODULE.');
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to the installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -269,15 +272,15 @@ try {
     const appContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     await appContext.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
     const app = await appContext.newPage(); app.on('pageerror', e => errors.push(e.message));
-    await app.goto(desk + '/#you-office');
-    await app.getByRole('button', { name: /^You\b/ }).first().click();
-    const officeSection = app.locator('details').filter({ has: app.getByText('This office', { exact: true }) }).first();
-    if (await officeSection.count()) await officeSection.evaluate(node => { node.open = true; });
-    await app.getByText('Website account', { exact: true }).waitFor();
-    await app.getByText('Website account', { exact: true }).scrollIntoViewIfNeeded();
+    await app.goto(desk + '/#/desk');
+    await app.getByRole('button', { name: 'Workspace', exact: true }).click();
+    await app.locator('#you-settings > summary').click();
+    const websiteAccount = app.locator('#you-settings #you-website').getByText('Website account', { exact: true });
+    await websiteAccount.waitFor();
+    await websiteAccount.scrollIntoViewIfNeeded();
     await app.screenshot({ path: join(output, 'desktop-website-account.png') });
     desktop = 'rendered (no link performed)';
-    checks.push('the desktop half of the pairing sentence (You → This office → Website account) is present');
+    checks.push('the desktop pairing screen (Workspace → Settings & help → Website account) is present');
   } else limits.push('Desktop pairing screen not rendered: dist/ was not built for this run.');
 
   assert.deepEqual(errors, []);

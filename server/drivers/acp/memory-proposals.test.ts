@@ -20,11 +20,11 @@ vi.mock('../../managed-service.ts', () => ({ managedService: { assertCapability 
 const peer = `#!/usr/bin/env node
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import readline from 'node:readline';
-let servers = [], discovery = [], count = 0, prompt = null, prePromptCall = null;
+let servers = [], discovery = [], count = 0, prompt = null, promptText = null, prePromptCall = null;
 const out = (id, result) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');
 function dump() {
   const path=process.env.MEMORY_PEER_DUMP, tmp=path+'.'+process.pid;
-  writeFileSync(tmp, JSON.stringify({pid:process.pid,servers,discovery,prePromptCall,count,active:prompt!==null}));
+  writeFileSync(tmp, JSON.stringify({pid:process.pid,servers,discovery,prePromptCall,count,promptText,active:prompt!==null}));
   renameSync(tmp,path);
 }
 dump();
@@ -44,7 +44,7 @@ async function handle(msg) {
     }
     dump(); return out(msg.id,{sessionId:'fictional-memory-session'});
   }
-  if(msg.method==='session/prompt') { count++; prompt=msg.id; dump(); return; }
+  if(msg.method==='session/prompt') { count++; prompt=msg.id; promptText=msg.params.prompt[0].text; dump(); return; }
   if(msg.method==='session/cancel') { if(prompt!==null) { const id=prompt;prompt=null;out(id,{stopReason:'cancelled'});dump(); } return; }
 }
 setInterval(()=>{
@@ -57,7 +57,7 @@ rl.on('close',()=>process.exit(0));
 `;
 
 type Descriptor = { name: string; type: string; url: string; headers: { name: string; value: string }[] };
-type PeerState = { pid: number; servers: Descriptor[]; discovery: any[]; prePromptCall: any; count: number; active: boolean };
+type PeerState = { pid: number; servers: Descriptor[]; discovery: any[]; prePromptCall: any; count: number; promptText: string | null; active: boolean };
 type Integration = NonNullable<SendTurnInput['integrations']>['memoryProposals'];
 const proposal = (requestId: string): MemoryProposalInput => ({ requestId, payload: { action: 'add', target: 'memory', content: 'Fictional office prefers weekly summaries.' } });
 const saved = (id = '1234abcd'): MemoryProposalResult => ({ version: 1, id, reviewLocation: MEMORY_PROPOSAL_REVIEW_LOCATION });
@@ -65,11 +65,12 @@ const saved = (id = '1234abcd'): MemoryProposalResult => ({ version: 1, id, revi
 describe('Hermes typed memory proposal ACP capability', () => {
   let scratch: string, dump: string, control: string, script: string;
   let instance: ProviderInstance | undefined, recorder: EventRecorder | undefined;
+  let promptSequence = 0;
   const pids = new Set<number>();
   const threadId = 'fictional-memory-proposals';
 
   beforeEach(() => {
-    assertCapability.mockReset(); ensureDirs(); pids.clear();
+    assertCapability.mockReset(); ensureDirs(); pids.clear(); promptSequence = 0;
     scratch = mkdtempSync(join(tmpdir(), 'realbud-memory-acp-'));
     dump = join(scratch, 'peer.json'); control = join(scratch, 'control.json'); script = join(scratch, 'peer.mjs');
     writeFileSync(script, peer, { mode: 0o700 }); writeFileSync(control, JSON.stringify({ finish: 0 }), { mode: 0o600 });
@@ -96,9 +97,17 @@ describe('Hermes typed memory proposal ACP capability', () => {
     const value = JSON.parse(readFileSync(dump, 'utf8')) as PeerState; pids.add(value.pid); return value;
   }
   async function start(integration?: Integration, expectedCount = 1) {
-    const turn = await instance!.adapter.sendTurn({ threadId, text: 'Prepare the fictional memory proposal.',
+    const text = `Prepare the fictional memory proposal for turn ${++promptSequence}.`;
+    const turn = await instance!.adapter.sendTurn({ threadId, text,
       ...(integration ? { integrations: { memoryProposals: integration } } : {}) });
-    await vi.waitFor(() => { expect(state().count).toBe(expectedCount); expect(state().active).toBe(true); });
+    // A replaced process starts counting from one while its predecessor's last
+    // dump can still say active. Wait for evidence of this exact prompt first.
+    await vi.waitFor(() => {
+      const observed = state();
+      // Hermes prepends its identity instructions to the user prompt.
+      expect(observed.promptText?.split('\n').at(-1)).toBe(text);
+      expect(observed.count).toBe(expectedCount); expect(observed.active).toBe(true);
+    });
     return turn;
   }
   async function finish(turnId: string) {

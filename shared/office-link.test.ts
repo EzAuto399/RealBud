@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { currentUsagePeriod, isProvisioningSkipped, parseInstallationProvisioning, PROVISIONING_SKIP_REASONS, type InstallationProvisioning } from "./office-link.ts";
+import { currentUsagePeriod, formatCustomerCharge, formatNanoAud, isProvisioningSkipped, parseInstallationProvisioning, PROVISIONING_SKIP_REASONS, type InstallationProvisioning } from "./office-link.ts";
+
+describe("customer charge precision", () => {
+  it.each(["1", "1000000", "4999999", "5000000", "9999999"])("keeps %s nano-AUD distinct from free", value => {
+    expect(formatCustomerCharge(value)).toBe("<A$0.01");
+    expect(formatCustomerCharge(value, 9)).toBe(formatNanoAud(value, 9));
+  });
+  it("keeps zero, credits, exact cents, large integers and unavailable amounts intact", () => {
+    expect(formatCustomerCharge("0")).toBe("A$0.00");
+    expect(formatCustomerCharge("10000000")).toBe("A$0.01");
+    expect(formatCustomerCharge("-10000000")).toBe("-A$0.01");
+    expect(formatCustomerCharge("12345678901234567890123456789", 9)).toBe("A$12,345,678,901,234,567,890.123456789");
+    expect(formatCustomerCharge(null)).toBe("Not priced");
+    expect(formatCustomerCharge("invalid")).toBe("Unavailable");
+    expect(formatCustomerCharge("1", 10)).toBe("Unavailable");
+  });
+});
 
 // The first-response wire descriptor emitted by managed-gateway/provisioning.ts,
 // with the label a gateway from before 25 September 2026 wrote (82 characters,

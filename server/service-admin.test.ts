@@ -200,6 +200,8 @@ describe("service mutation route contract", () => {
     ["POST", "/api/channels/slack", { botToken: "replacement", appToken: "replacement" }],
     ["DELETE", "/api/channels/telegram", undefined],
     ["POST", "/api/local-computer/pull", {}],
+    ["POST", "/api/hermes/memory-reviews/learning", { autoKeep: true }],
+    ["POST", `/api/hermes/memory-reviews/learning/${'b'.repeat(64)}/undo/extra`, {}],
   ])("requires administrator authority for %s %s", (method, path, body) => {
     expect(isPrivilegedServiceMutation(path as string, method as string, body)).toBe(true);
   });
@@ -208,6 +210,7 @@ describe("service mutation route contract", () => {
     ["GET", "/api/hermes/model", undefined],
     ["POST", "/api/hermes/auto-setup/retry", {}],
     ["POST", "/api/hermes/memory-reviews/1234abcd/decision", { expectedDigest: 'a'.repeat(64), decision: 'approve' }],
+    ["POST", `/api/hermes/memory-reviews/learning/${'b'.repeat(64)}/undo`, {}],
     ["POST", "/api/care/unlock", { secret: PASSWORD }],
     ["POST", "/api/care/lock", {}],
     ["PATCH", "/api/config", { profile: { name: "Member", email: "member@example.test" }, tts: { voice: "voice-id" } }],

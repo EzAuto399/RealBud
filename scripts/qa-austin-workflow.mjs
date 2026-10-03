@@ -1,16 +1,14 @@
 #!/usr/bin/env node
-// Real built UI + real server/persistence; scripted ACP and Cua availability.
-// No actual bank, REI, credentials, model, computer-control driver or Windows VM.
+// Real built UI, server/persistence and owned work browser; scripted ACP worker.
+// All browser content and bank data are fictional; no credentials, model or Windows VM.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const { startCuaControl } = await import("../electron/cua-control.mjs");
-const fixtureControl = await startCuaControl({ release: async () => {}, verify: async () => true, restore: async () => {} });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/austin-validation-2026-09-10/austin-browser"));
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module.");
@@ -20,10 +18,21 @@ const data = join(fixtureRoot, "data");
 mkdirSync(data); mkdirSync(out, { recursive: true });
 const fakeCli = join(root, "server/testing/fake-acp-cli.ts");
 const scriptPath = join(fixtureRoot, "worker-script.json");
-const dumpPath = join(fixtureRoot, "worker-dump.json");
-const cuaPath = join(fixtureRoot, "cua.json");
+const dumpPath = join(data, "vault/bud-work/worker-dump.json");
+mkdirSync(dirname(dumpPath), { recursive: true, mode: 0o700 });
+// Test-launch dependency only: keep Chrome out of the person's macOS keychain.
+// Host ownership, bundle admission and CDP identity checks remain authentic.
+const browserFixture = join(fixtureRoot, "owned-browser-fixture.mjs");
+writeFileSync(browserFixture, `
+import { spawn } from "node:child_process";
+import { WorkBrowserHost } from ${JSON.stringify(pathToFileURL(join(root, "server/work-browser-host.ts")).href)};
+import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(root, "server/browser-runtime.ts")).href)};
+browserRuntime.host = new WorkBrowserHost({
+  root: ${JSON.stringify(join(data, "browser/work-browser"))},
+  bundleRoot: ${JSON.stringify(join(root, "dist-browser/hermes-native"))}
+}, { launch: (executable, args, env) => spawn(executable, [...args, "--use-mock-keychain", "--password-store=basic"], { env, stdio: ["ignore", "ignore", "pipe"] }) });
+`);
 chmodSync(fakeCli, 0o755);
-writeFileSync(cuaPath, JSON.stringify({ mode: "embedded", mcpCommand: "/tmp/fictional-cua", mcpArgs: ["mcp"], mcpEnv: { CUA_DRIVER_EMBEDDED: "1" } }));
 writeFileSync(join(data, "config.json"), JSON.stringify({ instances: { hermes: {
   driver: "hermesAgent", config: { cli: fakeCli }, environment: { FAKE_ACP_SCRIPT: scriptPath, FAKE_ACP_DUMP: dumpPath },
 } } }));
@@ -32,7 +41,7 @@ await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${reservation.address().port}`;
 const port = reservation.address().port;
 await new Promise(resolve => reservation.close(resolve));
-let child, browser, page, mobile, session = "", logs = "";
+let child, browser, page, mobile, workBrowser, session = "", logs = "";
 const checks = [], gaps = [], runReceipts = [];
 const record = (label, details = {}) => { checks.push({ label, ...details }); console.log(`PASS ${label}`); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -57,10 +66,9 @@ const stopServer = async () => {
   });
 };
 const boot = async () => {
-  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root,
+  child = spawn(process.execPath, ["--import", browserFixture, join(root, "server/index.ts")], { cwd: root,
     env: { PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ""}`, HOME: fixtureRoot, USERPROFILE: fixtureRoot,
-      REALBUD_DATA_DIR: data, REALBUD_CUA_DESCRIPTOR_PATH: cuaPath, REALBUD_CUA_TEST_READY: "1",
-      ...fixtureControl.env, VITEST: "true", OMB_PORT: String(port), OMB_STATIC_DIR: join(root, "dist") },
+      REALBUD_DATA_DIR: data, VITEST: "true", OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR ?? join(root, "dist") },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", chunk => { logs += chunk; }); child.stderr.on("data", chunk => { logs += chunk; });
@@ -69,6 +77,30 @@ const boot = async () => {
     return fetch(`${base}/api/health`).then(res => res.ok, () => false);
   }, "server startup");
   session = (await api("GET", "/api/session")).body.token;
+};
+const finishFirstRun = async () => {
+  let state = (await api("GET", "/api/onboarding")).body;
+  for (const stage of ["office-rules", "complete"]) {
+    const saved = await api("PUT", "/api/onboarding", { expectedScope: state.scope, expectedRevision: state.revision, stage });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    state = saved.body;
+  }
+};
+const openWorkBrowser = async () => {
+  const connected = await api("POST", "/api/browser/connect", {});
+  assert.equal(connected.status, 200, JSON.stringify(connected.body));
+  assert.equal(connected.body.state, "ready");
+  const owner = JSON.parse(readFileSync(join(data, "browser/work-browser/owner.json"), "utf8"));
+  workBrowser = await chromium.connectOverCDP(owner.endpoint);
+  const context = workBrowser.contexts()[0];
+  // No request can reach a real bank/portal. Only this locally supplied fixture
+  // is shown inside the actual product-owned work browser and native engine.
+  await context.route("**/*", route => new URL(route.request().url()).origin === "https://fictional-receipts.example"
+    ? route.fulfill({ contentType: "text/html", body: "<!doctype html><html><head><title>Fictional receipt review</title></head><body><h1>Fictional office</h1><h2>Transaction history</h2><p>Fictional review ready. No payment or import controls.</p></body></html>" })
+    : route.abort());
+  const workPage = context.pages()[0] ?? await context.newPage();
+  await workPage.goto("https://fictional-receipts.example/receipts");
+  return connected.body;
 };
 const bud = async () => (await api("GET", "/api/bots")).body.bots.find(bot => bot.id === "bud");
 const pending = async () => {
@@ -85,15 +117,15 @@ const settled = async id => {
 };
 const prepare = async (id, worker = {}) => {
   writeFileSync(scriptPath, JSON.stringify({ permission: true, tool: "navigate", title: "Open REI review (simulation)",
-    rawInput: { url: "https://app.reimasterapps.com.au/receipts" }, reply: "Fictional review stopped before any import.", ...worker }));
+    rawInput: { url: "https://fictional-receipts.example/receipts" }, reply: "Fictional review stopped before any import.", ...worker }));
   assert.equal((await api("POST", "/api/recipes", { draft: {
     id, title: `Austin rehearsal: ${id}`, steps: ["Open the approved receipting site", "Read only; leave import and processing to Kevin"],
-    allowedOrigins: ["app.reimasterapps.com.au"], capabilities: ["portal-read", "portal-prefill"], evidence: "Fictional review receipt", status: "active",
+    allowedOrigins: ["fictional-receipts.example"], capabilities: ["portal-read", "portal-prefill"], evidence: "Fictional review receipt", status: "active",
   } })).status, 201);
   assert.equal((await api("PATCH", `/api/recipes/${id}`, { planApproved: true })).status, 200);
   assert.equal((await api("PATCH", `/api/recipes/${id}`, { attach: true })).status, 200);
 };
-const start = async id => assert.equal((await api("POST", `/api/recipes/${id}/attend`, {})).status, 202);
+const start = async id => { const res = await api("POST", `/api/recipes/${id}/attend`, {}); assert.equal(res.status, 202, JSON.stringify(res.body)); };
 const screenshot = async name => page.screenshot({ path: join(out, `${name}.png`) });
 try {
   await boot();
@@ -102,15 +134,21 @@ try {
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   const errors = [];
   page = await context.newPage(); page.on("pageerror", e => errors.push(e.message));
+  await finishFirstRun();
   await page.goto(base);
-  await page.getByRole("button", { name: "Explore the sample desk", exact: true }).click();
-  await page.getByRole("button", { name: "Open the sample desk first", exact: true }).click();
-  await page.getByRole("button", { name: /^Ask\b/ }).first().click();
-  record("Fresh fictional office completes the current sample-desk welcome");
+  await page.getByRole("button", { name: /^Work\b/ }).first().click();
+  record("Fresh fictional office completes server first-run stages without selecting sample onboarding");
   assert.equal((await api("POST", "/api/recipes/missing/attend", {}, "")).status, 401);
   record("Mutations without a local session are refused");
 
-  await prepare("approval-wait"); await start("approval-wait");
+  await prepare("approval-wait");
+  const unopened = await api("POST", "/api/recipes/approval-wait/attend", {});
+  assert.equal(unopened.status, 409);
+  assert.match(unopened.body.error, /work browser is not open/i);
+  assert.equal((await runs("approval-wait")).length, 0);
+  await openWorkBrowser();
+  record("Closed work browser refuses a run; authentic owned browser connection makes it ready");
+  await start("approval-wait");
   await until(async () => Boolean(await pending()), "approval request");
   const first = await pending();
   await page.getByRole("button", { name: "Allow once", exact: true }).waitFor();
@@ -124,7 +162,7 @@ try {
   record("Actual UI waits two seconds without granting or advancing");
 
   mobile = await context.newPage(); await mobile.setViewportSize({ width: 390, height: 844 });
-  await mobile.goto(base); await mobile.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await mobile.goto(base); await mobile.getByRole("button", { name: /^Work\b/ }).first().click();
   await mobile.getByRole("button", { name: "Allow once", exact: true }).waitFor();
   await mobile.screenshot({ path: join(out, "02-second-client-approval.png") });
   await page.getByRole("button", { name: "Allow once", exact: true }).click();
@@ -136,7 +174,7 @@ try {
   assert.equal((await api("POST", "/api/bots/bud/respond", { requestId: first.requestId, behavior: "allow" })).status, 409);
   const rulesBeforeReplay = (await api("GET", "/api/rules")).body;
   assert.equal((await api("POST", `/api/threads/${first.threadId}/respond`, {
-    requestId: first.requestId, behavior: "allow", rule: { surface: "portal-read", origin: "app.reimasterapps.com.au" },
+    requestId: first.requestId, behavior: "allow", rule: { surface: "portal-read", origin: "fictional-receipts.example" },
   })).status, 409);
   assert.deepEqual((await api("GET", "/api/rules")).body, rulesBeforeReplay, "stale request cannot save a standing rule");
   assert.equal((await runs("approval-wait")).length, 1);
@@ -161,6 +199,7 @@ try {
 
   await prepare("approval-stop"); await start("approval-stop");
   await page.getByRole("button", { name: "Stop this turn", exact: true }).first().waitFor();
+  await until(async () => Boolean(await pending()), "approval to cancel");
   const stoppedRequest = await pending();
   await page.getByRole("button", { name: "Stop this turn", exact: true }).first().click();
   const stopped = await settled("approval-stop");
@@ -169,7 +208,7 @@ try {
   assert.equal(stoppedReplay.status, 409);
   await screenshot("03-stopped"); record("Stop cancels the turn and prevents stale approval");
 
-  await prepare("password-handover", { tool: "fill", title: "Password", rawInput: { label: "Password", url: "https://app.reimasterapps.com.au/login" }, reply: "Waiting at sign-in (scripted observation)." });
+  await prepare("password-handover", { tool: "fill", title: "Password", rawInput: { label: "Password", url: "https://fictional-receipts.example/login" }, reply: "Waiting at sign-in (scripted observation)." });
   await start("password-handover");
   await until(async () => (await runs("password-handover"))[0]?.status === "running", "password-handover run starts");
   const authRun = (await runs("password-handover"))[0];
@@ -183,19 +222,24 @@ try {
   record("Password-fill request is denied while its task pauses for human sign-in");
   await screenshot("04-signin-gap");
   assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/continue`, {revision:hold.revision})).status,409);
-  record("An in-page sign-in wait cannot assert authentication through Continue");
-  await stopServer(); await boot(); await page.reload(); await mobile.reload();
+  record("Continue cannot assert authentication without a verified sign-in binding");
+  await stopServer(); await boot(); await openWorkBrowser(); await page.reload(); await mobile.reload();
   hold = await handoffFor(authRun.id);
   assert.equal(hold.value.state,"awaiting_login");
-  assert.equal(hold.value.inPage, false);
+  assert.notEqual(hold.value.inPage, true, "Restart must not leave an in-page worker wait active");
   assert.equal((await runs("password-handover")).find(run => run.id === authRun.id)?.status, "interrupted");
   await screenshot("04-durable-signin");
-  assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/binding`, {revision:hold.revision,binding:{version:1,pid:123,windowId:456,origin:"https://other.example",accountMarker:"Fictional office",readyMarker:"Transaction history"}})).status,403);
-  const bound = await api("POST", `/api/human-handoffs/${hold.id}/binding`, {revision:hold.revision,binding:{version:1,pid:123,windowId:456,origin:"https://app.reimasterapps.com.au",accountMarker:"Fictional office",readyMarker:"Transaction history"}});
-  assert.equal(bound.status,200); hold=bound.body;
+  const tabs = await api("POST", `/api/human-handoffs/${hold.id}/tabs`, { revision: hold.revision });
+  assert.equal(tabs.status, 200, JSON.stringify(tabs.body));
+  const target = tabs.body.tabs.find(tab => tab.origin === "https://fictional-receipts.example");
+  assert.ok(target, "Native browser finds the fictional signed-in page");
+  const binding = { version: 1, browser: { browserId: target.browserId, tabId: target.tabId }, origin: target.origin, accountMarker: "Fictional office", readyMarker: "Transaction history" };
+  assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/binding`, { revision: hold.revision, binding: { ...binding, origin: "https://other.example" } })).status, 403);
+  const bound = await api("POST", `/api/human-handoffs/${hold.id}/binding`, { revision: hold.revision, binding });
+  assert.equal(bound.status, 200, JSON.stringify(bound.body)); hold = bound.body;
   // The resumed worker is deliberately read-only; it must request no password,
   // payment or submission tool after the person's sign-in check.
-  writeFileSync(scriptPath, JSON.stringify({permission:false, reply:"app.reimasterapps.com.au shows the fictional review ready for Kevin. No import, payment or submission performed."}));
+  writeFileSync(scriptPath, JSON.stringify({permission:false, reply:"fictional-receipts.example shows the fictional review ready for Kevin. No import, payment or submission performed."}));
   await page.locator(`[data-handoff-revision="${hold.revision}"]`).waitFor();
   await page.getByRole("button", {name:"Continue — check sign-in",exact:true}).waitFor();
   await page.getByRole("button", {name:"Continue — check sign-in",exact:true}).click();
@@ -214,7 +258,7 @@ try {
   assert.equal(JSON.parse(readFileSync(dumpPath, "utf8")).selectedPermissionOption, null);
   assert.equal((await api("POST",`/api/human-handoffs/${hold.id}/resume-step`,{revision:hold.revision,step:1})).status,409);
   record("Saved sign-in survives restart; Continue links one read-only attempt and refuses stale replay");
-  gaps.push({id:"U03",expected:"Customer login and task continuation",observed:"Durable handover and one automatic continuation passed with a scripted host and read-only worker. Customer account calibration and real Hermes/Cua workflow execution remain open."});
+  gaps.push({id:"U03",expected:"Customer login and task continuation",observed:"Durable handover and one automatic continuation passed with an authentic owned work browser, fictional page and scripted read-only worker. Customer account calibration and real Hermes/Cua workflow execution remain open."});
 
   await prepare("polite-signin", {permission:false, reply:"Please sign in to continue reading the bank export."});
   await start("polite-signin");
@@ -225,13 +269,13 @@ try {
   assert.equal((await api("POST",`/api/human-handoffs/${politeHold.id}/close`,{revision:politeStopped.body.revision})).status,200);
   record("A worker asking the person to sign in opens a saved handover without attempting a password tool");
 
-  await prepare("pay-fence", { tool: "click_semantic", title: "Pay now", rawInput: { label: "Pay now", url: "https://app.reimasterapps.com.au/pay" }, reply: "Stopped before payment." });
+  await prepare("pay-fence", { tool: "click_semantic", title: "Pay now", rawInput: { label: "Pay now", url: "https://fictional-receipts.example/pay" }, reply: "Stopped before payment." });
   await start("pay-fence"); const pay = await settled("pay-fence");
   assert.ok(pay.evidence.some(e => e.kind === "denied" && /Submit, Pay and Send stay with you/.test(e.note)));
   record("Payment click is refused without a permitted financial action");
 
   await prepare("restart-pending"); await start("restart-pending");
-  await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.getByRole("button", { name: /^Work\b/ }).first().click();
   await page.getByRole("button", { name: "Allow once", exact: true }).waitFor();
   const old = await pending();
   await stopServer(); await boot(); await page.reload();
@@ -246,6 +290,7 @@ try {
   const bankCsv = "Date,Amount,Narrative,Reference\n2026-09-10,500.00,FICTIONAL RENT,P101\n2026-09-10,500.00,FICTIONAL TRANSFER,\n";
   assert.equal((await api("GET", "/api/bank-reference", undefined, "")).status, 401);
   await page.getByRole("button", { name: /^Schedule\b/ }).first().click();
+  await page.getByRole("button", { name: "Open job: Bank reference review", exact: true }).click();
   await page.getByText("Prepare a new export", { exact: true }).click();
   await page.getByLabel("Bank CSV", { exact: true }).setInputFiles({ name: "fictional-bank.csv", mimeType: "text/csv", buffer: Buffer.from(bankCsv) });
   for (const [key, value] of Object.entries({ date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" })) await page.getByLabel(`${key} column`, { exact: true }).fill(value);
@@ -278,14 +323,16 @@ try {
   assert.deepEqual(errors, []);
   record("No browser JavaScript exceptions during the rehearsal");
   const result = { passed: true, generatedAt: new Date().toISOString(), checks, gaps, runReceipts,
-    scope: { actual: ["built React UI", "local HTTP API", "server permissions", "persistent run history", "two browser clients"], simulated: ["ACP worker", "Cua availability", "bank-shaped CSV"], notTested: ["Hermes live tool use", "Cua screen control", "real bank or REI login/MFA", "Windows installer", "native Windows apps", "mobile push delivery"] } };
+    scope: { actual: ["built React UI", "local HTTP API", "server permissions", "persistent run history", "two browser clients", "owned native work browser and sign-in marker verification"], simulated: ["ACP worker", "fictional signed-in portal page", "bank-shaped CSV"], notTested: ["Hermes live tool use", "Cua screen control", "real bank or REI login/MFA", "Windows installer", "native Windows apps", "mobile push delivery"] } };
   writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ passed: true, checks: checks.length, openGaps: gaps.length }));
 } catch (error) {
   await page?.screenshot({ path: join(out, "failure.png") }).catch(() => {});
+  const failureState = await api("GET", "/api/bots").catch(() => null);
+  writeFileSync(join(out, "failure-state.json"), JSON.stringify(failureState, null, 2));
   writeFileSync(join(out, "failure.log"), `${error.stack}\n${logs}`);
   writeFileSync(join(out, "result.json"), JSON.stringify({ passed: false, checks, gaps, error: error.message }, null, 2));
   throw error;
 } finally {
-  await browser?.close(); await stopServer(); await fixtureControl.close(); rmSync(fixtureRoot, { recursive: true, force: true });
+  await browser?.close(); await stopServer(); rmSync(fixtureRoot, { recursive: true, force: true });
 }

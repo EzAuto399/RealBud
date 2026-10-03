@@ -27,7 +27,7 @@ export type WorkerAutoSetupCode =
   | "checking" | "installing" | "safeguards" | "model" | "readiness" | "ready" | "retry"
   | "held_exhausted" | "held_failed" | "held_recovery" | "held_restart" | "held_unavailable";
 export interface WorkerAutoSetupStatus { state: WorkerAutoSetupState; code?: WorkerAutoSetupCode; step: number; total: number; nextRetryAt?: number; detail: string }
-export type WorkerAutoSetupReason = "provisioned" | "boot" | "periodic" | "retry" | "manual" | "stale";
+export type WorkerAutoSetupReason = "provisioned" | "boot" | "periodic" | "retry" | "manual" | "stale" | "documents";
 
 export interface WorkerAutoSetupDeps {
   directory: string;
@@ -99,6 +99,13 @@ function validAttempts(value: unknown): Attempts {
 }
 
 const usable = (status: HermesStatus) => status.cli.installed && (status.cli.compatible ?? status.cli.matchesPin) && !status.bootstrapPending;
+/** An installed worker whose RealBud-owned policy predates this release (an
+ * upgrade changed the pack): the reviewed Repair path re-applies it. Missing
+ * document libraries join only on boot, a fresh approval, Try again or a
+ * changed setup, never on the periodic tick, and never hold readiness. */
+const policyStale = (status: HermesStatus) => status.pack.installed && (!status.pack.workroomReady || !status.pack.approvalsManual);
+const needsReviewedRepair = (status: HermesStatus, reason: WorkerAutoSetupReason) =>
+  policyStale(status) || (reason !== "periodic" && status.documentTools === "needs_repair");
 const busyElsewhere = (error: unknown) => (error as { status?: number } | null)?.status === 409 && /already running|still running/i.test(error instanceof Error ? error.message : "");
 
 export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
@@ -108,9 +115,13 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   const path = join(deps.directory, AUTO_SETUP_FILE);
   let current: WorkerAutoSetupStatus = { state: "idle", step: 0, total: TOTAL, detail: "" };
   let running: Promise<void> | null = null;
+  /** Withdrawal permanently invalidates the old run, even if a new office
+   * becomes active before its pending probe or installer admission returns. */
+  let epoch = 0;
   let rerun: WorkerAutoSetupReason | null = null;
   let retryTimer: { cancel: () => void } | null = null;
   let periodic: ReturnType<typeof setInterval> | null = null;
+  let lastDocumentsRepair: number | null = null;
   /** Holds only a restart or another platform can clear: not re-probed on the tick. */
   let parked = false;
   /** The install in flight was started by this module, so it may stop it. */
@@ -124,13 +135,15 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   const read = async (): Promise<Attempts> => { const raw = await readPrivateJson(path, 4_000); return raw === undefined ? { ...FRESH } : validAttempts(raw); };
   const save = async (next: Attempts, saved: Attempts) => { if (JSON.stringify(next) !== JSON.stringify(saved)) await writePrivateJson(path, next); };
   const cancelRetry = () => { retryTimer?.cancel(); retryTimer = null; };
-  const scheduleRetry = (at: number) => {
+  const scheduleRetry = (at: number, runEpoch: number) => {
     cancelRetry();
-    retryTimer = setTimer(() => { retryTimer = null; void ensure("retry"); }, Math.max(0, at - now()));
+    retryTimer = setTimer(() => { retryTimer = null; if (epoch === runEpoch) void ensure("retry"); }, Math.max(0, at - now()));
   };
   const note = (message: string) => deps.log?.(redactSecretsInText(message).slice(0, 300));
 
   function halt() {
+    epoch++;
+    rerun = null;
     cancelRetry();
     parked = false;
     if (ownInstall && deps.installInFlight()) deps.cancelInstall?.();
@@ -138,54 +151,77 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     set("idle", 0);
   }
   /** Authority again, after an await that may have outlived it. */
-  async function stillActive(): Promise<boolean> {
-    if (await deps.active()) return true;
+  async function stillActive(runEpoch: number): Promise<boolean> {
+    if (runEpoch !== epoch) return false;
+    let active: boolean;
+    try { active = await deps.active(); }
+    catch {
+      // An unreadable authority must stop our install just like a withdrawal.
+      if (runEpoch === epoch) halt();
+      return false;
+    }
+    if (runEpoch !== epoch) return false;
+    if (active) return true;
     halt();
     return false;
   }
 
-  async function ready(saved: Attempts) {
+  async function ready(saved: Attempts, runEpoch: number) {
+    if (!(await stillActive(runEpoch))) return;
     cancelRetry();
     await save({ ...FRESH }, saved);
+    if (!(await stillActive(runEpoch))) return;
     set("ready", TOTAL, "ready");
   }
-  async function hold(saved: Attempts, code: HeldCode, reason: string) {
+  async function hold(saved: Attempts, code: HeldCode, reason: string, runEpoch: number) {
+    if (!(await stillActive(runEpoch))) return;
     await save({ ...saved, nextRetryAt: null, held: code }, saved);
+    if (!(await stillActive(runEpoch))) return;
     cancelRetry();
     set("held", current.step, code);
     note(`automatic Bud setup is held (${code}): ${reason}`);
   }
-  async function fail(saved: Attempts, kind: "retry" | "once" | "final", reason: string) {
-    if (kind === "final" || (kind === "once" && saved.stageRetried)) return hold(saved, "held_failed", reason);
+  async function fail(saved: Attempts, kind: "retry" | "once" | "final", reason: string, runEpoch: number) {
+    if (!(await stillActive(runEpoch))) return;
+    if (kind === "final" || (kind === "once" && saved.stageRetried)) return hold(saved, "held_failed", reason, runEpoch);
     const attempts = saved.attempts + 1;
-    if (attempts >= AUTO_SETUP_MAX_ATTEMPTS) return hold({ ...saved, attempts }, "held_exhausted", reason);
+    if (attempts >= AUTO_SETUP_MAX_ATTEMPTS) return hold({ ...saved, attempts }, "held_exhausted", reason, runEpoch);
     const nextRetryAt = now() + AUTO_SETUP_BACKOFF_MS[Math.min(attempts - 1, AUTO_SETUP_BACKOFF_MS.length - 1)]!;
     await save({ ...saved, attempts, nextRetryAt, held: null, stageRetried: saved.stageRetried || kind === "once" }, saved);
+    if (!(await stillActive(runEpoch))) return;
     set("waiting_retry", current.step, "retry", nextRetryAt);
-    scheduleRetry(nextRetryAt);
+    scheduleRetry(nextRetryAt, runEpoch);
     note(`automatic Bud setup will retry (attempt ${attempts}): ${reason}`);
   }
 
-  async function run(reason: WorkerAutoSetupReason): Promise<void> {
-    if (!(await deps.active()) || deps.customRuntime?.()) { halt(); return; }
+  async function run(reason: WorkerAutoSetupReason, runEpoch: number): Promise<void> {
+    if (!(await stillActive(runEpoch))) return;
+    if (deps.customRuntime?.()) { halt(); return; }
     if (reason === "periodic" && parked) return;
     parked = false;
     // Visible at once: the first status probe can take a while.
     if (current.state === "idle" || current.state === "ready") set("verifying", 0, "checking");
     let saved: Attempts;
     try { saved = await read(); }
-    catch { cancelRetry(); set("held", 0, "held_recovery"); return; }
+    catch { if (await stillActive(runEpoch)) { cancelRetry(); set("held", 0, "held_recovery"); } return; }
+    if (!(await stillActive(runEpoch))) return;
     // A fresh approval or an explicit Try again starts from the top.
-    if ((reason === "provisioned" || reason === "manual") && (saved.held || saved.attempts || saved.stageRetried)) { await save({ ...FRESH }, saved); saved = { ...FRESH }; }
+    if ((reason === "provisioned" || reason === "manual") && (saved.held || saved.attempts || saved.stageRetried)) {
+      await save({ ...FRESH }, saved);
+      if (!(await stillActive(runEpoch))) return;
+      saved = { ...FRESH };
+    }
     if (saved.held) {
       // Held until someone repairs it; a repaired, ready worker clears the hold.
-      if ((await deps.status()).ready) return ready(saved);
+      const status = await deps.status();
+      if (!(await stillActive(runEpoch))) return;
+      if (status.ready) return ready(saved, runEpoch);
       set("held", current.step, saved.held);
       return;
     }
     if (saved.nextRetryAt !== null && now() < saved.nextRetryAt) {
       set("waiting_retry", current.step, "retry", saved.nextRetryAt);
-      if (!retryTimer) scheduleRetry(saved.nextRetryAt);
+      if (!retryTimer) scheduleRetry(saved.nextRetryAt, runEpoch);
       return;
     }
     cancelRetry();
@@ -194,42 +230,57 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
       if (deps.installInFlight()) {
         set("installing", 1, "installing");
         await deps.waitForInstall();
-        if (!(await stillActive())) return;
+        if (!(await stillActive(runEpoch))) return;
       }
       let status = await deps.status();
-      if (status.ready) return ready(saved);
-      if (!usable(status)) {
+      if (!(await stillActive(runEpoch))) return;
+      if (status.ready && !needsReviewedRepair(status, reason)) return ready(saved, runEpoch);
+      if (!usable(status) || needsReviewedRepair(status, reason)) {
         set("installing", 1, "installing");
         const outcome = await deps.installOrRepair();
+        // Admission itself can await a probe. A halt in that interval cannot
+        // know that this run will own an install until the outcome arrives.
+        ownInstall = outcome.kind === "started";
+        if (!(await stillActive(runEpoch))) {
+          if (ownInstall && deps.installInFlight()) deps.cancelInstall?.();
+          ownInstall = false;
+          return;
+        }
         if (outcome.kind === "awaiting_restart" || outcome.kind === "unavailable") {
           parked = true;
           set("held", 1, outcome.kind === "awaiting_restart" ? "held_restart" : "held_unavailable");
           return;
         }
         if (outcome.kind === "running" || outcome.kind === "started") {
-          ownInstall = outcome.kind === "started";
           try { await deps.waitForInstall(); } finally { ownInstall = false; }
-          if (!(await stillActive())) return;
+          if (!(await stillActive(runEpoch))) return;
           const job = deps.installStatus();
-          if (job.state !== "done") return fail(saved, job.failureKind ?? "final", job.error ?? "install failed");
-        } else if (!(await stillActive())) return;
+          if (job.state !== "done") return fail(saved, job.failureKind ?? "final", job.error ?? "install failed", runEpoch);
+        }
       }
+      if (!(await stillActive(runEpoch))) return;
       set("verifying", 2, "safeguards");
       deps.ensurePack();
       set("verifying", 3, "model");
       await deps.reconcileProfile();
-      if (!(await stillActive())) return;
+      if (!(await stillActive(runEpoch))) return;
       deps.syncBud();
       status = await deps.status();
-      if (status.ready) return ready(saved);
-      if (!usable(status)) return fail(saved, "once", "worker still unusable after setup");
+      if (!(await stillActive(runEpoch))) return;
+      if (status.ready) return ready(saved, runEpoch);
+      if (!usable(status)) return fail(saved, "once", "worker still unusable after setup", runEpoch);
+      if (policyStale(status)) return fail(saved, "once", "Bud's private policy could not be updated", runEpoch);
       set("verifying", 4, "readiness");
-      if (!(await stillActive())) return;
+      if (!(await stillActive(runEpoch))) return;
       const ping = await deps.readinessPing();
-      if (ping.ok) return ready(saved);
-      return fail(saved, "retry", ping.detail);
+      if (!(await stillActive(runEpoch))) return;
+      if (!ping.ok) return fail(saved, "retry", ping.detail, runEpoch);
+      // A passing ping is not readiness: report ready only when the full status agrees.
+      status = await deps.status();
+      if (!(await stillActive(runEpoch))) return;
+      return status.ready ? ready(saved, runEpoch) : fail(saved, "once", status.detail, runEpoch);
     } catch (error) {
-      return fail(saved, busyElsewhere(error) ? "retry" : "final", error instanceof Error ? error.message : "setup error");
+      return fail(saved, busyElsewhere(error) ? "retry" : "final", error instanceof Error ? error.message : "setup error", runEpoch);
     }
   }
 
@@ -240,8 +291,9 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
       if (reason === "provisioned" || reason === "manual") rerun = reason;
       return running;
     }
-    running = inContext(() => run(reason))
-      .catch(() => { set("held", current.step, "held_failed"); })
+    const runEpoch = epoch;
+    running = inContext(() => run(reason, runEpoch))
+      .catch(async () => { if (await stillActive(runEpoch)) set("held", current.step, "held_failed"); })
       .finally(() => {
         running = null;
         const next = rerun; rerun = null;
@@ -266,7 +318,15 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
    * at most `AUTO_SETUP_STALE_RECHECKS_PER_HOUR` times an hour. The run
    * re-checks authority and persists its own backoff on failure.
    */
-  function noteStatus(observed: { ready: boolean; workerFingerprint?: string | null }): void {
+  function noteStatus(observed: { ready: boolean; workerFingerprint?: string | null; documentTools?: HermesStatus["documentTools"] }): void {
+    // The document check finishes after boot's first status read ("unknown"),
+    // so a newly locked library is only seen here: run the reviewed Repair once,
+    // then at most hourly so a failing install never loops.
+    if (current.state === "ready" && observed.documentTools === "needs_repair" && !running) {
+      const at = now();
+      if (lastDocumentsRepair === null || at - lastDocumentsRepair >= 60 * 60_000) { lastDocumentsRepair = at; void ensure("documents"); }
+      return;
+    }
     if (observed.ready || current.state !== "ready" || !observed.workerFingerprint) return;
     const at = now();
     staleRechecks = staleRechecks.filter(entry => at - entry.at < 60 * 60_000);
@@ -291,7 +351,8 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
       periodic = setInterval(() => {
         if (current.state !== "ready") { void ensure("periodic"); return; }
         // A proof that went stale while nobody looked is found here too.
-        void deps.status().then(status => noteStatus(status)).catch(() => {});
+        const observedEpoch = epoch;
+        void deps.status().then(status => { if (observedEpoch === epoch) noteStatus(status); }).catch(() => {});
       }, AUTO_SETUP_PERIOD_MS);
       periodic.unref?.();
     },

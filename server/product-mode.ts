@@ -1,3 +1,4 @@
+import { connectorAdminRoute, connectorRoute, CONNECTORS_API } from "../shared/mcp-connector.ts";
 // Server-enforced RealBud product mode. Hidden UI is not enough.
 
 export const PRODUCT_MODE = process.env.OMB_TEST_FLEET === "1" ? false : true;
@@ -13,11 +14,40 @@ export const PRODUCT_TURN_DEFAULTS = Object.freeze({
   maxRepeatedTool: 5,
 });
 
+/** Share of the call or time ceiling at which Bud is asked to wrap up with
+ * what it has. A notice only; the ceilings above stay the hard stop. */
+export const PRODUCT_TURN_WRAP_UP_FRACTION = 0.75;
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** The product turn ceilings with the same env overrides the server's
+ * watchdog applies (`OMB_PRODUCT_TURN_MAX_*`), or null outside product mode. */
+export function productTurnLimits(env: Record<string, string | undefined> = process.env) {
+  if (!PRODUCT_MODE) return null;
+  return {
+    maxMs: positiveInt(env.OMB_PRODUCT_TURN_MAX_MS, PRODUCT_TURN_DEFAULTS.maxMs),
+    maxTools: positiveInt(env.OMB_PRODUCT_TURN_MAX_TOOLS, PRODUCT_TURN_DEFAULTS.maxTools),
+    maxRepeatedTool: positiveInt(env.OMB_PRODUCT_TURN_MAX_REPEATED_TOOL, PRODUCT_TURN_DEFAULTS.maxRepeatedTool),
+  };
+}
+
+/** When to ask Bud to wrap up: after this many tool calls or milliseconds. */
+export function productTurnWrapUp(env: Record<string, string | undefined> = process.env) {
+  const limits = productTurnLimits(env);
+  if (!limits) return null;
+  return {
+    afterTools: Math.max(1, Math.floor(limits.maxTools * PRODUCT_TURN_WRAP_UP_FRACTION)),
+    afterMs: Math.max(1, Math.floor(limits.maxMs * PRODUCT_TURN_WRAP_UP_FRACTION)),
+  };
+}
+
 const DENIED = new Set([
   "POST /api/bots",
   "POST /api/groups",
   "GET /api/connectors/catalog",
-  "GET /api/connectors",
   "GET /api/plugins",
 ]);
 
@@ -28,6 +58,9 @@ export function productDenied(method: string, path: string): string | null {
   if (method === "POST" && /^\/api\/groups(\/|$)/.test(path)) {
     return "Rooms are not part of RealBud.";
   }
+  // The office's added connectors (list, add, review, remove, connection and
+  // OAuth callback, plus the /api/redbark aliases) are RealBud product routes.
+  if (path === CONNECTORS_API || connectorRoute(path) || connectorAdminRoute(path)) return null;
   if (method === "POST" && /^\/api\/connectors\//.test(path)) {
     return "Connectors are not part of RealBud.";
   }

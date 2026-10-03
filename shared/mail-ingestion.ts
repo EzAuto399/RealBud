@@ -46,6 +46,9 @@ export interface MailWorkItem {
   /** Last validated review of this unanswered outgoing message and calendar rule.
    * Absent on older records; elapsed time alone never creates send authority. */
   followUpReviewedKey?: string;
+  /** Source digest Bud last prepared for a reply that arrived after a person's
+   * review. Absent on older records; it only stops repeat preparation. */
+  preparedDigest?: string;
   firstSeenAt: number; updatedAt: number; lastMessageAt: number;
 }
 export interface MailWorkspaceSnapshot {
@@ -77,6 +80,45 @@ export const mailScanCoverageComplete = (data: Pick<MailScanResult, 'paginationC
  * full text, and no attachment whose contents were not read. */
 export const mailConversationComplete = (thread: MailThread): boolean =>
   thread.historyComplete && thread.messages.every(m => m.direction !== 'unknown' && !m.bodyTruncated && !m.attachments.length);
+/** Scan-coverage gaps with a fixed meaning for interval bookkeeping. */
+export const MAIL_SCAN_GAPS = {
+  carryHeld: 'Some saved unresolved conversations were held by the 100-conversation limit; a later scan reads them in turn.',
+} as const;
+/** True when every conversation in the scan's time window was listed and read
+ * through its window messages. Held carried conversations do not leave the
+ * window unchecked; any other coverage gap (or an interrupted conversation)
+ * does. This is interval bookkeeping only, never a decision completeness claim. */
+export const mailScanWindowCovered = (data: Pick<MailScanResult, 'paginationComplete' | 'gaps'>): boolean =>
+  data.paginationComplete && data.gaps.every(gap => gap === MAIL_SCAN_GAPS.carryHeld ||
+    (conversationGaps.has(gap) && gap !== MAIL_CONVERSATION_GAPS.conversationInterrupted));
+/** Half-open [startAt, endAt) instants. */
+export interface MailInterval { startAt: number; endAt: number }
+export const MAIL_INTERVALS_MAX = 64;
+/** Sorted, merged and bounded. Over the bound the closest neighbours are joined,
+ * which can only widen what is reported as unchecked, never narrow it. */
+export function mergeMailIntervals(list: MailInterval[], max = MAIL_INTERVALS_MAX): MailInterval[] {
+  const sorted = list.filter(i => i.endAt > i.startAt).map(i => ({ startAt: i.startAt, endAt: i.endAt })).sort((a, b) => a.startAt - b.startAt);
+  const out: MailInterval[] = [];
+  for (const i of sorted) {
+    const last = out.at(-1);
+    if (last && i.startAt <= last.endAt) last.endAt = Math.max(last.endAt, i.endAt); else out.push(i);
+  }
+  while (out.length > max) {
+    let at = 0;
+    for (let n = 1; n < out.length - 1; n++) if (out[n + 1].startAt - out[n].endAt < out[at + 1].startAt - out[at].endAt) at = n;
+    out.splice(at, 2, { startAt: out[at].startAt, endAt: out[at + 1].endAt });
+  }
+  return out;
+}
+export function subtractMailInterval(list: MailInterval[], cut: MailInterval): MailInterval[] {
+  return mergeMailIntervals(list.flatMap(i => i.endAt <= cut.startAt || i.startAt >= cut.endAt ? [i]
+    : [{ startAt: i.startAt, endAt: cut.startAt }, { startAt: cut.endAt, endAt: i.endAt }]));
+}
+export function validMailIntervals(value: unknown): value is MailInterval[] {
+  return Array.isArray(value) && value.length <= MAIL_INTERVALS_MAX && value.every((i, at) => record(i) && Object.keys(i).sort().join(',') === 'endAt,startAt' &&
+    Number.isSafeInteger(i.startAt) && Number.isSafeInteger(i.endAt) && Number(i.startAt) >= 0 && Number(i.endAt) > Number(i.startAt) &&
+    (at === 0 || Number(i.startAt) > Number((value[at - 1] as MailInterval).endAt)));
+}
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const bounded = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v);
 export const gmailThreadId = (v: unknown): v is string => typeof v === 'string' && /^[a-fA-F0-9]{1,64}$/.test(v);
@@ -357,8 +399,16 @@ export interface MailTaskPage {
 export interface MailScanPageQuery { limit?: number; cursor?: string }
 export interface MailScanPage { version: 2; revision: number; items: MailScanReceipt[]; total: number; nextCursor: string | null }
 export interface MailTaskUpdateResult { workspace: MailWorkspaceMetadata; item: MailWorkItem }
+/** A reply arrived after a person saved their review. Their fields stay as saved;
+ * the item returns to attention until they review it again. */
+export const mailChangedSinceReview = (item: MailWorkItem): boolean => item.reviewed && item.newEvidence;
+/** Waiting for Bud: new unreviewed evidence, or a reply since a person's review
+ * that Bud has not prepared for this exact source yet. */
+export const mailNeedsPreparation = (item: MailWorkItem): boolean =>
+  item.newEvidence && (!item.reviewed || item.preparedDigest !== item.sourceDigest);
 export function mailWorkGroup(item: MailWorkItem): Exclude<MailWorkGroup, 'all'> {
   if (item.status !== 'open') return item.status;
+  if (mailChangedSinceReview(item)) return 'open';
   if (item.disposition === 'waiting') return 'waiting';
   if (item.disposition === 'reference' || item.disposition === 'noise') return 'reference';
   return 'open';

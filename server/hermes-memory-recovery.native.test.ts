@@ -5,9 +5,11 @@ import { mkdtemp, realpath, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHermesMemoryReviewService, MEMORY_REVIEW_RUNTIME, type MemoryReviewContext } from './hermes-memory-review.ts';
+import { createHermesMemoryReviewService, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { MEMORY_RECOVERY_API as api, type MemoryRecoveryPage } from '../shared/hermes-memory-recovery.ts';
-import { MEMORY_REVIEW_API } from '../shared/hermes-memory-review.ts';
+import { MEMORY_REVIEW_API, type MemoryReviewPreview } from '../shared/hermes-memory-review.ts';
+import type { MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
+import { MEMORY_REVIEW_CANDIDATE_RUNTIME } from './hermes-memory-review.ts';
 import { prepareNativeMemoryFixture } from './testing/native-memory-fixture.ts';
 import { prepareInterruptedMemoryFixture } from './testing/memory-prepared-fixture.mjs';
 
@@ -16,15 +18,15 @@ const helperPath = fileURLToPath(new URL('./helpers/hermes-memory-review.py', im
 const roots: string[] = [], services: ReturnType<typeof createHermesMemoryReviewService>[] = [];
 afterEach(async () => { await Promise.all(services.splice(0).map(service => service.close())); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-async function fixture() {
+const addInput = { requestId: 'fictional-interrupted-preference', payload: { action: 'add' as const, target: 'memory' as const, content: 'Fictional preference for weekly summaries.' } };
+async function fixture(input: MemoryProposalInput = addInput) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'realbud-interrupted-test-'))); roots.push(directory);
   const f = await prepareNativeMemoryFixture(directory, runtime!);
-  const context: MemoryReviewContext = { profileDirectory: f.profile, runtimeDirectory: f.runtime, runtimeId: MEMORY_REVIEW_RUNTIME,
+  const context: MemoryReviewContext = { profileDirectory: f.profile, runtimeDirectory: f.runtime, runtimeId: f.runtimeId,
     workspaceId: '77777777-7777-4777-8777-777777777777', profileId: 'property', python: join(f.runtime, 'venv/bin/python') };
   const rootKey = Buffer.alloc(32, 41);
   const open = () => { const service = createHermesMemoryReviewService({ context: () => context, key: () => rootKey }); services.push(service); return service; };
   const service = open(), capability = service.proposalIntegration('fictional-interrupted-chat', () => true)!;
-  const input = { requestId: 'fictional-interrupted-preference', payload: { action: 'add' as const, target: 'memory' as const, content: 'Fictional preference for weekly summaries.' } };
   const key = createHmac('sha256', rootKey).update(`realbud-memory-review-v1\0${context.workspaceId}\0${context.profileId}`).digest();
   const { python, ...binding } = context;
   let proposalKey: string;
@@ -63,6 +65,26 @@ describe.skipIf(!runtime || process.platform === 'win32')('interrupted closure t
     const row = (response!.body as MemoryRecoveryPage).items[0];
     expect(await f.service.handle(`${api}/${row.key}/close`, 'POST', { expectedDigest: row.recoveryDigest })).toMatchObject({ status: 200, body: { state: 'closed' } });
     expect(await readFile(f.memoryFile)).toEqual(before);
+  }, 60000);
+
+  it('republishes an interrupted removal only from bytes matching its journal, pinned on the pinning runtime', async () => {
+    const removal: MemoryProposalInput = { requestId: 'fictional-interrupted-removal', payload: { action: 'remove', target: 'memory', old_text: 'concise' } };
+    const f = await fixture(removal), original = await readFile(f.memoryFile, 'utf8'), journal = await readFile(f.journal);
+    // The entry moved after preparation: the journaled proposal cannot be reproduced, nothing is published.
+    await f.privateWrite(f.memoryFile, 'Prefers brief updates.\n§\nUse Australian English.');
+    await expect(f.capability.propose(removal, new AbortController().signal)).rejects.toMatchObject({ code: 'conflict' });
+    expect(await readFile(f.journal)).toEqual(journal); expect(await readdir(f.pendingDirectory)).toEqual([]);
+    expect(await f.service.handle(api, 'GET')).toMatchObject({ status: 200, body: { items: [{ key: f.proposalKey, state: 'interrupted' }] } });
+    // Restored memory reproduces the exact bytes; the same request completes publication once.
+    await f.privateWrite(f.memoryFile, original);
+    const result = await f.capability.propose(removal, new AbortController().signal);
+    const staged = JSON.parse(await readFile(join(f.pendingDirectory, result.id + '.json'), 'utf8'));
+    expect(staged.payload).toEqual(f.commit === MEMORY_REVIEW_CANDIDATE_RUNTIME ? { ...removal.payload, matched_entry: 'Prefers concise updates.' } : removal.payload);
+    expect(await f.capability.propose(removal, new AbortController().signal)).toEqual(result);
+    expect(await f.service.handle(api, 'GET')).toMatchObject({ status: 200, body: { items: [] } });
+    const review = (await f.service.handle(`${MEMORY_REVIEW_API}/${result.id}`, 'GET'))!.body as MemoryReviewPreview; expect(review.after).toBe('Use Australian English.');
+    expect(await f.service.handle(`${MEMORY_REVIEW_API}/${result.id}/decision`, 'POST', { expectedDigest: review.reviewDigest, decision: 'approve' })).toMatchObject({ status: 200, body: { state: 'applied' } });
+    expect(await readFile(f.memoryFile, 'utf8')).toBe('Use Australian English.');
   }, 60000);
 
   it('holds closure if an artifact appears after the displayed inventory', async () => {

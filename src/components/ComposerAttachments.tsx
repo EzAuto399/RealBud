@@ -103,7 +103,7 @@ export function ComposerAttachments({
       )}
 
       {notice && (
-        <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+        <div role="alert" className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <span className="min-w-0 flex-1">{notice}</span>
           <button
             onClick={() => setNotice(null)}
@@ -150,15 +150,16 @@ export function ComposerAttachments({
                 <div className="mt-1 text-[12px] text-ink-secondary/70">{pasteSummary(a)}</div>
               </Chip>
             ) : (
-              <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
-                <div className="flex h-[76px] items-center gap-2">
-                  <FileIcon size={16} className="shrink-0 text-ink-secondary" />
-                  <div className="min-w-0">
-                    <div className="truncate text-[12px] text-ink">{a.name}</div>
-                    <div className="text-[12px] text-ink-secondary/70">{formatSize(a.size)}</div>
-                  </div>
+              <div key={a.id} title={a.path} className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-hairline/40 bg-raised px-2.5 py-1">
+                <FileIcon size={16} className="shrink-0 text-ink-secondary" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] text-ink">{a.name}</div>
+                  <div className="text-[12px] text-ink-secondary/70">{formatSize(a.size)}</div>
                 </div>
-              </Chip>
+                <button type="button" onClick={() => onRemove(a.id)} aria-label="Remove file" className="flex size-11 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-selected hover:text-ink focus-visible:outline-agency">
+                  <X size={16} aria-hidden />
+                </button>
+              </div>
             ),
           )}
         </div>
@@ -193,16 +194,15 @@ function Chip({
         <span className="rounded border border-hairline/60 px-1 py-px text-[9.5px] font-medium tracking-wide text-ink-secondary">
           {label}
         </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${label === "PASTED" ? "pasted text" : "file"}`}
+          className="ml-auto flex size-11 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-selected hover:text-ink focus-visible:outline-agency"
+        >
+          <X size={16} aria-hidden />
+        </button>
       </div>
-      {/* hover reveals it, but so must focus: `hidden` would take the only
-          way to drop a chip out of reach of the keyboard */}
-      <button
-        onClick={onRemove}
-        aria-label={`Remove ${label === "PASTED" ? "pasted text" : "file"}`}
-        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-hairline/60 bg-panel text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <X size={11} />
-      </button>
     </div>
   );
 }

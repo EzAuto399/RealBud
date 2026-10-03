@@ -34,7 +34,7 @@ try {
   assert.ok(ready, logs);
   for (const path of ['/api/job-runs/history', '/api/loops/history']) assert.equal((await fetch(origin + path)).status, 401);
   const token = (await (await fetch(origin + '/api/session')).json()).token;
-  const request = path => fetch(origin + path, { headers: { 'x-realbud-session': token } });
+  const request = (path, init = {}) => fetch(origin + path, { ...init, headers: { ...init.headers, 'x-realbud-session': token } });
   assert.equal((await request('/api/job-runs/history?cursor=invalid')).status, 400);
   assert.equal((await request('/api/job-runs/history?limit=10000')).status, 400);
   const ids = [], cursors = []; let cursor = null;
@@ -44,12 +44,23 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
+  // Welcome completion belongs to this workspace. A browser-local flag no
+  // longer skips it; advance this fictional fixture through the scoped API.
+  let onboarding = await (await request('/api/onboarding')).json();
+  for (const stage of ['office-rules', 'complete']) {
+    if (onboarding.stage === 'complete') break;
+    const response = await request('/api/onboarding', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedScope: onboarding.scope, expectedRevision: onboarding.revision, stage }) });
+    assert.equal(response.status, 200);
+    onboarding = await response.json();
+    assert.equal(onboarding.stage, stage);
+  }
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   let historyRequests = 0, failOlder = false;
   await page.route('**/api/job-runs/history?*', async route => { historyRequests++; if (failOlder && new URL(route.request().url()).searchParams.has('cursor')) { failOlder = false; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional storage temporarily unavailable.' }) }); } return route.continue(); });
   await page.goto(origin + '/#/schedule'); await page.getByRole('heading', { name: 'Schedule', exact: true }).waitFor(); assert.equal(historyRequests, 0);
-  const panel = page.locator('details').filter({ has: page.locator(':scope > summary', { hasText: 'Browse saved history' }) }).first();
+  await page.getByRole('button', { name: 'Past results', exact: true }).click();
+  const archive = page.getByRole('dialog', { name: 'Past results', exact: true });
+  const panel = archive.locator('details').filter({ has: page.locator(':scope > summary', { hasText: 'Older saved results' }) }).first();
   await panel.locator(':scope > summary').click(); await panel.getByText('Page 1 · 20 results', { exact: true }).waitFor();
   const attended = panel.locator('li').filter({ has: page.locator('summary', { hasText: /^Fictional job 53/ }) });
   await attended.getByText('Result unverified — check the site', { exact: true }).waitFor();

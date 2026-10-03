@@ -2,6 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { api } from '@/state/store';
 import { parseWorkspaceTabsResponse, type DeskSection, type WorkspaceTab, type WorkspaceTabsResponse } from '@shared/workspace-tabs';
 
+/** Fired after Bud (or anything outside this hook) changes saved views. */
+export const WORKSPACE_TABS_CHANGED = 'realbud:workspace-tabs-changed';
+
 type TabsContext = {
   data: WorkspaceTabsResponse | null; loading: boolean; saving: boolean; error: string;
   refresh(): Promise<void>; save(tabs: WorkspaceTab[], expectedRevision: number): Promise<void>; reset(): Promise<void>;
@@ -28,7 +31,9 @@ export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
     alive.current = true; void refresh();
     const focus = () => { void refresh(); };
     window.addEventListener('focus', focus);
-    return () => { alive.current = false; generation.current++; window.removeEventListener('focus', focus); };
+    // Bud changes views from Ask in this same window, so focus never fires.
+    window.addEventListener(WORKSPACE_TABS_CHANGED, focus);
+    return () => { alive.current = false; generation.current++; window.removeEventListener('focus', focus); window.removeEventListener(WORKSPACE_TABS_CHANGED, focus); };
   }, [refresh]);
   const mutate = async (path: string, body: unknown, method: string, desk = false) => {
     if (pending.current) throw new Error('Wait for the current saved view change.');

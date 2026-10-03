@@ -11,7 +11,7 @@ import { createCompanyKernel } from '../server/company/index.ts';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
-const root = process.cwd(), output = resolve('outputs/department-recovery-2026-09-21');
+const root = process.cwd(), output = resolve(process.env.QA_OUTPUT || 'outputs/department-recovery-2026-09-21');
 mkdirSync(output, { recursive: true });
 const temp = mkdtempSync('/tmp/rbdq-'), data = join(temp, 'data');
 mkdirSync(data);
@@ -33,7 +33,7 @@ try {
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, ['--experimental-strip-types', 'server/index.ts'], { cwd: root, env: { PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, REALBUD_DATA_DIR: data,
+  child = spawn(process.execPath, ['--experimental-strip-types', 'server/bootstrap.ts'], { cwd: root, env: { PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, REALBUD_DATA_DIR: data,
     REALBUD_HERMES_HOME: join(data, 'hermes'), HERMES_HOME: join(data, 'hermes'), REALBUD_DESK_KEY: randomBytes(32).toString('hex'),
     REALBUD_COMPANY_DATABASE_URL: fixture.applicationUrl, OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR || join(output, 'ui'),
     REALBUD_MANAGED_SERVICE: '1', REALBUD_SERVICE_ENTITLEMENT_REQUIRED: '1', VITEST: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -45,15 +45,22 @@ try {
   const signIn = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': bootToken }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(signIn.status, 200);
   const memberToken = (await signIn.json()).memberToken;
+  // Welcome completion is a scoped server receipt; do not seed sample data.
+  const setupHeaders = { 'content-type': 'application/json', 'x-realbud-session': bootToken };
+  let setup = await (await fetch(origin + '/api/onboarding', { headers: setupHeaders })).json();
+  for (const stage of ['office-rules', 'complete']) {
+    const saved = await fetch(origin + '/api/onboarding', { method: 'PUT', headers: setupHeaders, body: JSON.stringify({ expectedScope: setup.scope, expectedRevision: setup.revision, stage }) });
+    setup = await saved.json();
+    assert.equal(saved.status, 200, `Onboarding ${stage}: ${JSON.stringify(setup)}`);
+  }
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
-  await context.addInitScript(token => { localStorage.setItem('realbud.first-run-done', '1'); sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
+  await context.addInitScript(token => { sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
   page = await context.newPage(); page.setDefaultTimeout(12_000); page.on('pageerror', error => errors.push(error.message));
   const open = async () => {
     await page.goto(origin + '/#/you');
-    await page.getByRole('button', { name: /^You\b/ }).first().click();
-    const section = page.locator('details').filter({ has: page.getByText('This office', { exact: true }) }).first();
-    if (await section.count()) await section.evaluate(node => { node.open = true; });
+    const section = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+    await section.waitFor(); await section.evaluate(node => { node.open = true; });
     await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
     await page.locator('summary').filter({ hasText: /^Departments and access$/ }).evaluate(node => { node.parentElement.open = true; });
     await page.getByRole('button', { name: 'View work in Operations', exact: true }).click();

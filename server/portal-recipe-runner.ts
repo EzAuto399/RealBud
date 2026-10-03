@@ -13,7 +13,15 @@
 // policy) for exactly the step the recipe is dispatching is answered by the
 // recipe the person started; everything else (consequential or unclassified
 // steps, uploads, downloads, anything unexpected) goes to the person's own
-// approval channel, and without one it is refused.
+// approval channel, and without one it is refused. An upload also needs the
+// run's `approved_sha256` input to equal the grant's hash for that file name,
+// and the private copy to still hash the same, before the person is asked.
+//
+// Account scope: the page marker (REI's top-bar business code) must equal the
+// selected account on every read; a mismatch always ends the run. The URL
+// parameter is checked only when the task names a value and the page shows
+// one: REI's addresses carry no reicid after sign-in (seen 2 Oct 2026), so a
+// missing parameter is never out of scope by itself.
 //
 // Portal names never live here: origin, account marker, sign-in hosts,
 // routes and labels come from the pack's recipes document.
@@ -22,7 +30,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
 import { jobBrowserUrl, type BrowserPortalControls } from "./browser-authority.ts";
-import { browserTaskWorkroom, type BrowserCommand, type BrowserJson, type BrowserRuntime } from "./browser-runtime.ts";
+import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
+import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import type { BrowserApprovalStore } from "./browser-authority.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -76,12 +85,12 @@ export interface PortalRunRequest { recipe: string; inputs?: Record<string, stri
 export interface PortalRunOptions {
   pack: PortalRecipePack;
   runs: PortalRunRequest[];
-  /** The account the person selected for this task: the URL parameter's value and the page marker. */
-  account: { urlValue: string; marker: string };
+  /** The account the person selected for this task: the page marker, and the URL parameter's value when one was saved. */
+  account: { urlValue?: string; marker: string };
   /** The task's explicit grant (host-issued). The runner never creates or widens one. */
   grant: BrowserTaskGrant;
   threadId: string;
-  runtime: BrowserRuntime;
+  runtime: BrowserSessionRuntime;
   /** The person's approval channel. Without it, anything the recipe does not cover is refused. */
   approve?: PersonApprove;
   signal?: AbortSignal;
@@ -166,20 +175,15 @@ const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
  * The account check needs the borrowed tab's query parameter, so the runner
  * keeps the URL from the broker's own tab listings: it issues no command and
  * sees only tabs on the grant's sites. */
-function tappedRuntime(runtime: BrowserRuntime, sites: string[]) {
+function tappedRuntime(runtime: BrowserSessionRuntime, sites: string[]) {
   const urls = new Map<number, string>();
-  const command: BrowserCommand = async (args, signal) => {
-    const result = await runtime.command(args, signal);
-    if (args[0] === "tab" && args[1] === "list" && Array.isArray(result.tabs)) {
-      for (const row of result.tabs) {
-        const tab = row && typeof row === "object" ? row as BrowserJson : {};
-        if (Number.isSafeInteger(tab.tab_id) && jobBrowserUrl(tab.url, sites)) urls.set(Number(tab.tab_id), String(tab.url));
-      }
-    }
+  const listTabs: BrowserSessionRuntime["listTabs"] = async (owner, signal) => {
+    const result = await runtime.listTabs(owner, signal);
+    for (const tab of result) if (jobBrowserUrl(tab.url, sites)) urls.set(tab.id, tab.url);
     return result;
   };
   const proxy = new Proxy(runtime, { get(target, key) {
-    if (key === "command") return command;
+    if (key === "listTabs") return listTabs;
     const value = Reflect.get(target, key, target) as unknown;
     return typeof value === "function" ? value.bind(target) : value;
   } });
@@ -259,6 +263,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     if (stopped()) throw new RunEnd("stopped", "stop", text);
     if ([...unknownOps()].some(id => !before.has(id))) throw new RunEnd("hold", "unknown-result", text);
     if (/sign-in or security fields/i.test(text)) throw handover("sign-in", text);
+    if (/Choose and verify the intended account/i.test(text)) throw handover("sign-in", text);
+    if (/verified account label is no longer visible/i.test(text)) throw handover("account-marker-changed", text);
     if (/was not approved/i.test(text)) throw handover("not-approved", text);
     throw blocked("broker-refused", text);
   };
@@ -270,9 +276,9 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     if (!page.url) throw handover("account-url-unavailable");
     const at = new URL(page.url);
     if (at.origin !== pack.origin) throw handover("origin-changed");
+    // A parameter shown on the page must be the saved one; its absence proves nothing either way.
     const value = at.searchParams.get(pack.account.urlParam);
-    if (!value) throw handover("account-url-missing");
-    if (value !== account.urlValue) throw handover("account-url-changed");
+    if (value !== null && account.urlValue && value !== account.urlValue) throw handover("account-url-changed");
     const landmark = first(page.root, node => node.role === pack.account.pageMarker.landmark);
     const marker = landmark ? first(landmark, node => node.role === pack.account.pageMarker.role)?.name?.trim() : undefined;
     if (!marker) throw handover("account-marker-missing");
@@ -316,13 +322,20 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const loading = data.length === 1 && data[0].length === 1 && /^loading/i.test(data[0][0]);
     const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0]);
     const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cols[index] ?? String(index), cell])));
-    return { loading, empty, records };
+    // A grid footer such as "N records · 0 row(s) selected" is the load-complete marker.
+    const footer = all(table.parent ?? scope(page), node => /^\d[\d,]* records?\b/i.test(node.name ?? ""))[0];
+    const count = footer ? Number(footer.name!.match(/^[\d,]+/)![0].replaceAll(",", "")) : null;
+    return { loading, empty, records, count };
   };
   const waitTable = async () => {
     for (let attempt = 0; attempt <= maxWaitReads; attempt++) {
       const page = await current(); const table = tableOf(page);
-      if (table && !table.loading) return table;
+      // A grid can show "No records to display" before it fills: an empty grid is settled once its
+      // footer counts it, and one without a footer is re-read until the wait runs out.
+      const settled = table && !table.loading && (table.count === null ? table.records.length > 0 || attempt === maxWaitReads : table.count === 0 || table.records.length > 0);
+      if (settled) return table;
       if (!table && attempt === maxWaitReads) break;
+      if (table && !table.loading && attempt === maxWaitReads) break;
       await sleep(pollMs); stale = true;
     }
     throw blocked("table-did-not-settle");
@@ -360,8 +373,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           for (let i = 1; i <= path.length; i++) if (pack.labels.forbiddenAreas.includes(path.slice(0, i).join(" › "))) throw handover("forbidden-area", path.slice(0, i).join(" › "));
           const route = pack.routes[path.join(" › ")];
           if (route && !options.menuOnly) {
-            // Direct route with the account parameter; the read after it re-checks both markers.
-            const target = new URL(route, pack.origin); target.searchParams.set(pack.account.urlParam, account.urlValue);
+            // Direct route (with the saved account parameter, if any); the read after it re-checks the account.
+            const target = new URL(route, pack.origin); if (account.urlValue) target.searchParams.set(pack.account.urlParam, account.urlValue);
             await act("browser_navigate", { url: target.href });
           } else {
             for (const label of path) {
@@ -453,7 +466,13 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           if (drift) throw handover("map-drift-blocks-upload");
           if (operations.list(options.threadId).some(op => op.toolName === "browser_upload" && op.status === "unknown")) throw new RunEnd("hold", "earlier-upload-unknown", recipe.onUnknown ?? "");
           if (uploads >= 1) throw new RunEnd("hold", "second-upload-refused");
-          if (!grant.uploads.some(upload => upload.name === file)) throw handover("upload-not-granted");
+          const granted = grant.uploads.find(upload => upload.name === file);
+          if (!granted) throw handover("upload-not-granted");
+          // Exact artifact binding: the run names the reviewed file's hash, the grant lists the same
+          // name and hash, and the private copy still has it now (the broker checks again at dispatch).
+          if (inputs.approved_sha256 !== granted.sha256) throw handover("upload-not-bound", `The file '${file}' given to this task is not the reviewed file this upload names.`);
+          try { await grantedUploadPath(workroom, granted); }
+          catch (error) { throw handover("upload-changed", error instanceof Error ? error.message : ""); }
           const input = control(await current(), ["button", "textbox"], field);
           if (!input) throw blocked("field-missing", `No ${field} control on the page.`);
           uploads += 1;

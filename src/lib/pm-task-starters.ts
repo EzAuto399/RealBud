@@ -35,13 +35,13 @@ export const PM_TASK_STARTERS = [
     id: "prepare-day",
     title: "Prepare my day",
     detail: "Bring priorities, waiting items and decisions into view.",
-    text: "Use the current property book and available notes to prepare my day. Separate work needing my decision, items waiting on someone, and the next preparation steps. Show source dates and flag missing facts. Do not assume access to my inbox or calendar.",
+    text: "Use the current property book and available notes to prepare my day. If my calendar is connected, check today's events and fit them in; if it is not connected, say so plainly and work without it. Separate work needing my decision, items waiting on someone, and the next preparation steps. Show source dates and flag missing facts. Do not assume access to my inbox, and do not create or change calendar events.",
   },
   {
     id: "research",
     title: "Research a question",
-    detail: "Check public sources and prepare a cited comparison.",
-    text: "Help me research a property-management question using current public sources. Ask for the question and comparison criteria first. Link each finding to its source, distinguish facts from assumptions, and flag anything that needs a qualified person's judgment.",
+    detail: "Work from your files, connected apps and pages you open.",
+    text: "Help me research a property-management question using the documents I attach, the apps I have connected and pages I open in the work browser. Ask for the question and comparison criteria first. Cite the file, record or page behind each finding, distinguish facts from assumptions, say plainly when an answer needs a source you cannot reach, and flag anything that needs a qualified person's judgment.",
   },
 ] as const;
 

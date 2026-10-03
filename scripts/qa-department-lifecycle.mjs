@@ -52,15 +52,23 @@ try {
   const bootToken = (await (await fetch(origin + '/api/session')).json()).token;
   const response = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': bootToken }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(response.status, 200); const memberToken = (await response.json()).memberToken;
+  // Welcome completion is a scoped server receipt; do not seed sample data.
+  const setupHeaders = { 'content-type': 'application/json', 'x-realbud-session': bootToken };
+  let setup = await (await fetch(origin + '/api/onboarding', { headers: setupHeaders })).json();
+  for (const stage of ['office-rules', 'complete']) {
+    const saved = await fetch(origin + '/api/onboarding', { method: 'PUT', headers: setupHeaders, body: JSON.stringify({ expectedScope: setup.scope, expectedRevision: setup.revision, stage }) });
+    setup = await saved.json();
+    assert.equal(saved.status, 200, `Onboarding ${stage}: ${JSON.stringify(setup)}`);
+  }
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
-  await context.addInitScript(token => { localStorage.setItem('realbud.first-run-done', '1'); sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
+  await context.addInitScript(token => { sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (request.url().includes('/api/company/departments/cases/') && request.method() === 'POST') writes.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() }); });
   const open = async () => {
     if (page.url() === origin + '/#/you') await page.reload();
     else await page.goto(origin + '/#/you');
-    const office = page.locator('details').filter({ has: page.getByText('This office', { exact: true }) }).first();
+    const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
     await office.waitFor(); await office.evaluate(node => { node.open = true; });
     await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
     await page.locator('summary').filter({ hasText: /^Departments and access$/ }).evaluate(node => { node.parentElement.open = true; });

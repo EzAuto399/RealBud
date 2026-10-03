@@ -1,6 +1,7 @@
+import { openPrivateFileSync, readPrivateFileSync } from "./atomic.ts";
 // Review-only workflow boundary. Model prose never creates execution authority.
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AccountsReview } from "../shared/accounts-review.ts";
 import type { Recipe } from "../shared/contracts.ts";
@@ -38,7 +39,9 @@ export function captureAccountsReview(recipe: Recipe, workroom = vaultDir()): Ac
       const stat = lstatSync(path);
       if (stat.isSymbolicLink() || (part === contract[1] ? !stat.isFile() || stat.size > 1_000_000 : !stat.isDirectory())) return fail("unsafe-input");
     }
-    return readFileSync(path, "utf8");
+    const text = readPrivateFileSync(path);
+    if (text === null) return fail("input-unavailable");
+    return text;
   };
   let raw: string; let input: ObjectValue | null;
   try { raw = read(); input = object(JSON.parse(raw)); } catch { return fail("input-unavailable"); }
@@ -51,7 +54,8 @@ export function captureAccountsReview(recipe: Recipe, workroom = vaultDir()): Ac
       if (lstatSync(join(workroom, "workflow-inputs/attachments")).isSymbolicLink()) return "unavailable";
       const target = join(workroom, path), stat = lstatSync(target);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 5_000_000) return "unavailable";
-      return digest(readFileSync(target));
+      const fd = openPrivateFileSync(target);
+      try { return digest(readFileSync(fd)); } finally { closeSync(fd); }
     } catch { return "unavailable"; }
   };
   const attachmentHashes = new Map<string, string>(paths.map(path => [path, attachmentHash(path)]));

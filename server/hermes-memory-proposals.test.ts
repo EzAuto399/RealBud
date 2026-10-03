@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHermesMemoryReviewService, MEMORY_REVIEW_RUNTIME, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
 import { MEMORY_REVIEW_API } from '../shared/hermes-memory-review.ts';
-import { MEMORY_PROPOSAL_REVIEW_LOCATION, type MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
+import { MEMORY_PROPOSAL_REVIEW_LOCATION, parseMemoryProposalInput, type MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
 
 const input: MemoryProposalInput = { requestId: 'preference-1', payload: { target: 'memory', action: 'replace', old_text: 'Concise updates.', content: 'Detailed updates.' } };
 const result = { version: 1, id: '1234abcd', reviewLocation: MEMORY_PROPOSAL_REVIEW_LOCATION };
@@ -52,6 +52,16 @@ describe.skipIf(process.platform === 'win32')('host-owned typed memory proposal 
     const f = fixture(); const integration = f.service.proposalIntegration('chat', () => true)!;
     await expect(integration.propose(raw as MemoryProposalInput, signal())).rejects.toMatchObject({ code: Object.hasOwn(raw.payload, 'content') && String((raw.payload as { content?: string }).content).startsWith('ak_') ? 'blocked-content' : 'invalid' });
     expect(f.validateRuntime).not.toHaveBeenCalled(); expect(f.invoke).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { target: 'memory', action: 'remove', old_text: 'Concise updates.', matched_entry: 'Concise updates.' },
+    { target: 'memory', action: 'batch', operations: [{ action: 'replace', old_text: 'a', content: 'b', matched_entry: 'a' }] },
+  ])('never accepts a caller-supplied entry pin; the helper derives it from saved memory %#', async payload => {
+    expect(parseMemoryProposalInput({ requestId: 'pinned', payload })).toBeNull();
+    const f = fixture();
+    await expect(f.service.proposalIntegration('chat', () => true)!.propose({ requestId: 'pinned', payload } as unknown as MemoryProposalInput, signal())).rejects.toMatchObject({ code: 'invalid' });
+    expect(f.invoke).not.toHaveBeenCalled();
   });
 
   it('does not expose proposal creation through the renderer memory API', async () => {

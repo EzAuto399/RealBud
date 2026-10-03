@@ -113,6 +113,17 @@ export function needsSession(path: string, method?: string): boolean {
     path === "/api/config" ||
     /^\/api\/onboarding(?:\/|$)/.test(path) ||
     path.startsWith("/api/hermes") ||
+    // A member's own Hermios connection. The OAuth callback
+    // (/api/hermios/oauth/callback) is reached by the browser and is
+    // authenticated only by its single-use state, so it stays outside.
+    path === "/api/hermios/connection" || path.startsWith("/api/hermios/connection/") ||
+    // Office connectors (Redbark first) and the earlier /api/redbark alias.
+    // Their OAuth callbacks (/api/connectors/<id>/oauth/callback,
+    // /api/redbark/oauth/callback) are authenticated by single-use state.
+    /^\/api\/connectors\/[^/]+\/connection(?:\/|$)/.test(path) ||
+    // The added-connector list, add, review and remove.
+    path === "/api/connectors" || /^\/api\/connectors\/[^/]+\/(?:review|remove)$/.test(path) ||
+    path === "/api/redbark/connection" || path.startsWith("/api/redbark/connection/") ||
     path.startsWith("/api/care") ||
     path.startsWith("/api/service-admin") ||
     path.startsWith("/api/service/") ||
@@ -122,6 +133,10 @@ export function needsSession(path: string, method?: string): boolean {
     path.startsWith("/api/connected-apps") ||
     path === "/api/browser" || path.startsWith("/api/browser/") ||
     path.startsWith("/api/desk") ||
+    // The office's own bank-source key and pulls (W1).
+    path === "/api/bank-source" || path.startsWith("/api/bank-source/") ||
+    // The W1 bank-to-REI run: start, continue, posting report, approvals.
+    path === "/api/w1" || path.startsWith("/api/w1/") ||
     path.startsWith("/api/channels") ||
     path.startsWith("/api/rules") ||
     path.startsWith("/api/law-watch") ||
@@ -139,6 +154,7 @@ export function needsSession(path: string, method?: string): boolean {
     path.startsWith("/api/computer-history") ||
     path.startsWith("/api/worker-issues") ||
     path.startsWith("/api/loops") ||
+    path === "/api/reminders" || path.startsWith("/api/reminders/") ||
     path.startsWith("/api/loop-runs") ||
     path.startsWith("/api/artifacts") ||
     path.startsWith("/api/portal") ||

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scanGmailReadOnly, type GmailReadOnlyBinding } from './composio-gmail.ts';
-import { mailConversationComplete, mailScanCoverageComplete, parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult } from '../shared/mail-ingestion.ts';
+import { MAIL_SCAN_GAPS, mailConversationComplete, mailScanCoverageComplete, mailScanWindowCovered, parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult } from '../shared/mail-ingestion.ts';
 
 const readonly = 'https://www.googleapis.com/auth/gmail.readonly';
 const binding: GmailReadOnlyBinding = { apiKey: 'ak_fictional_scan_secret', authConfigId: 'auth-fixture', userId: 'fictional-user', accountId: 'account-fixture' };
@@ -36,13 +36,16 @@ function fixture(options: { list?: (args: Value, index: number) => Value; thread
     if (call.url.pathname.includes('/auth_configs/')) body = { id: binding.authConfigId, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', status: 'ENABLED', credentials: { scopes: [readonly] } };
     else if (call.url.pathname.endsWith('/connected_accounts')) body = { items: [account] };
     else if (call.url.pathname.includes('/connected_accounts/')) body = account;
-    else if (call.url.pathname.includes('/tools/execute/')) {
+    else if (call.url.pathname.endsWith('/tools/execute/proxy')) {
+      const endpoint = new URL(call.body!.endpoint), id = endpoint.pathname.split('/').at(-1)!;
+      expect(call.body).toEqual({ connected_account_id: binding.accountId, endpoint: `https://gmail.googleapis.com/gmail/v1/users/me/threads/${id}?format=full`, method: 'GET' });
+      body = { status: 200, data: options.thread?.(id) ?? { id, messages: [message('aa', id)] } };
+    } else if (call.url.pathname.includes('/tools/execute/')) {
       expect(call.body).toMatchObject({ connected_account_id: binding.accountId, user_id: binding.userId, version: '20260920_00' });
       const slug = call.url.pathname.split('/').at(-1);
-      expect([listSlug, threadSlug]).toContain(slug);
+      expect(slug).toBe(listSlug);
       const args = call.body!.arguments;
-      body = { successful: true, data: slug === listSlug ? options.list?.(args, page++) ?? { threads: [{ id: 'abc' }] } :
-        options.thread?.(args.thread_id) ?? { id: args.thread_id, messages: [message('aa', args.thread_id)] } };
+      body = { successful: true, data: options.list?.(args, page++) ?? { threads: [{ id: 'abc' }] } };
     } else if (call.url.pathname.includes('/tools/')) {
       const slug = call.url.pathname.split('/').at(-1)!;
       body = options.metadata?.(slug) ?? metadata(slug);
@@ -72,7 +75,7 @@ describe('host-owned Gmail source acquisition', () => {
   it('accepts a provider-confirmed empty terminal page without inventing work', async () => {
     const calls = fixture({ list: () => ({ resultSizeEstimate: 0 }) });
     expect(await scan()).toMatchObject({ paginationComplete: true, threads: [], pages: 1, gaps: [] });
-    expect(executions(calls, threadSlug)).toHaveLength(0);
+    expect(executions(calls, 'proxy')).toHaveLength(0);
   });
 
   it('holds a terminal page when the provider still estimates unread conversations', async () => {
@@ -92,14 +95,14 @@ describe('host-owned Gmail source acquisition', () => {
     const result = await scan();
     expect(result.threads).toHaveLength(1);
     expect(result.gaps.join(' ')).toMatch(/changed during pagination/);
-    expect(executions(calls, threadSlug)).toHaveLength(1);
+    expect(executions(calls, 'proxy')).toHaveLength(1);
   });
 
   it('rejects repeated cursors and does not retry or start unconfirmed thread reads', async () => {
     const calls = fixture({ list: () => ({ threads: [], nextPageToken: 'repeat' }) });
     await expect(scan()).rejects.toThrow(/cursor/);
     expect(executions(calls, listSlug)).toHaveLength(2);
-    expect(executions(calls, threadSlug)).toHaveLength(0);
+    expect(executions(calls, 'proxy')).toHaveLength(0);
   });
 
   it('holds coverage at the page limit even when all pages contain no messages', async () => {
@@ -132,7 +135,7 @@ describe('host-owned Gmail source acquisition', () => {
     expect(result.gaps.join(' ')).toMatch(/message limit/);
     // An unread listed conversation is a coverage gap, not one conversation's.
     expect(mailScanCoverageComplete(result)).toBe(false);
-    expect(executions(calls, threadSlug)).toHaveLength(1);
+    expect(executions(calls, 'proxy')).toHaveLength(1);
   });
 
   it('caps selected conversations at 100 and keeps unread coverage explicit', async () => {
@@ -142,7 +145,32 @@ describe('host-owned Gmail source acquisition', () => {
     expect(result).toMatchObject({ paginationComplete: false, pages: 2 });
     expect(result.threads).toHaveLength(100);
     expect(result.gaps.join(' ')).toMatch(/100-conversation/);
-    expect(executions(calls, threadSlug)).toHaveLength(100);
+    expect(executions(calls, 'proxy')).toHaveLength(100);
+  });
+
+  it('alternates a full carried backlog with new arrivals so neither is starved', async () => {
+    const carry = Array.from({ length: 100 }, (_, n) => (0x1000 + n).toString(16));
+    const calls = fixture({ list: (_args, index) => ({ threads: Array.from({ length: 50 }, (_, n) => ({ id: (0x2000 + index * 50 + n).toString(16) })), ...(index === 0 ? { nextPageToken: 'page-two' } : {}) }),
+      thread: id => ({ id, messages: [message(id, id)] }) });
+    const result = await scan({ ...scope, carryThreadIds: carry });
+    const ids = result.threads.map(thread => thread.id);
+    expect(ids).toHaveLength(100);
+    expect(ids.filter(id => carry.includes(id))).toHaveLength(50);
+    expect(ids.slice(0, 4)).toEqual([carry[0], '2000', carry[1], '2001']);
+    // Unread listed arrivals keep the window unchecked; follow-ups stay held.
+    expect(result.gaps).toContain('Some conversations were held by the 100-conversation limit.');
+    expect(mailScanWindowCovered(result)).toBe(false);
+    expect(executions(calls, 'proxy')).toHaveLength(100);
+  });
+
+  it('reads every listed arrival and marks only the carried remainder as held', async () => {
+    const carry = Array.from({ length: 100 }, (_, n) => (0x1000 + n).toString(16));
+    fixture({ list: () => ({ threads: [{ id: 'abc' }] }), thread: id => ({ id, messages: [message(id, id)] }) });
+    const result = await scan({ ...scope, carryThreadIds: carry });
+    expect(result.threads.map(thread => thread.id)).toContain('abc');
+    expect(result.gaps).toEqual([MAIL_SCAN_GAPS.carryHeld]);
+    expect(mailScanWindowCovered(result)).toBe(true);
+    expect(mailScanCoverageComplete(result)).toBe(false);
   });
 
   it.each([
@@ -227,7 +255,7 @@ describe('host-owned Gmail source acquisition', () => {
     const calls = fixture({ list: () => { revoked = true; return { threads: [{ id: 'abc' }] }; } });
     await expect(scan(scope, { ...binding, assertAuthority: () => { if (revoked) throw new Error('Revoked synthetic authority'); } })).rejects.toThrow();
     expect(executions(calls, listSlug)).toHaveLength(1);
-    expect(executions(calls, threadSlug)).toHaveLength(0);
+    expect(executions(calls, 'proxy')).toHaveLength(0);
   });
 
   it('denies pre-aborted or already-revoked work without reading upstream', async () => {

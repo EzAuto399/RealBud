@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/state/store',()=>({api:vi.fn()}));
 import { createCompanyApi, isDepartmentPreparationState } from './company-api';
-import { canRequestDepartmentPreparation, DepartmentPreparationReview, DepartmentPreparationResult, isDepartmentPreparationOperation } from '../components/CompanyDepartmentPreparation';
+import { canRequestDepartmentPreparation, departmentPreparationCatalogCurrent, DepartmentPreparationReview, DepartmentPreparationResult, isDepartmentPreparationOperation } from '../components/CompanyDepartmentPreparation';
 import type { CompanyStatus, DepartmentCasePage, DepartmentCase } from '@shared/company-api';
 import type { CompanyExecutionReview, CompanyExecutionGrant } from '@shared/company-execution';
 import type { DepartmentWorkPrepare, DepartmentWorkState } from '@shared/department-work';
@@ -49,9 +49,10 @@ describe('department preparation UI and API boundary',()=>{
   request.mockResolvedValue({grant,local:{...local,request:{...prepare,expectedCaseFence:'8'}}});await expect(client.prepareDepartmentWork(prepare)).rejects.toThrow('incomplete response');
  });
  it('requires complete bounded reviews and outputs, with strict state rather than coercion',async()=>{
-  const {client,request}=await signed({recipes:[{id:'case-draft',revision:2,title:'Case draft',review}]});
+  const catalog = {departmentRevision:'2',configured:true,workflowDefaults:[],unavailable:[],recipes:[{id:'case-draft',revision:2,title:'Case draft',review}]};
+  const {client,request}=await signed(catalog);
   expect((await client.departmentPreparationCatalog(prepare.departmentId)).recipes).toHaveLength(1);
-  request.mockResolvedValue({recipes:[{id:'case-draft',revision:2,title:'Case draft',review:{...review,plan:{...review.plan,capabilities:['send']}}}]});
+  request.mockResolvedValue({...catalog,recipes:[{id:'case-draft',revision:2,title:'Case draft',review:{...review,plan:{...review.plan,capabilities:['send']}}}]});
   await expect(client.departmentPreparationCatalog(prepare.departmentId)).rejects.toThrow('incomplete response');
   expect(isDepartmentPreparationState({...local,phase:['running']})).toBe(false);
   const result={status:'prepared',detail:'Draft only',outputs:['x'.repeat(JOB_OUTPUT_MAX_CHARS)]};expect(isDepartmentPreparationState({...local,result})).toBe(true);
@@ -87,5 +88,16 @@ describe('department preparation UI and API boundary',()=>{
   expect(html).toContain('No connected account or website access is included');expect(html).toContain('Complete worker instructions');
   const result=renderToStaticMarkup(createElement(DepartmentPreparationResult,{state:{...local,phase:'review-required',result:{status:'prepared',detail:'A factual result',outputs:['Draft line\n'.repeat(200)+'<img src=x onerror=alert(1)>\nFINAL OUTPUT']}}}));
   expect(result).toContain('FINAL OUTPUT');expect(result).toContain('&lt;img');expect(result).not.toContain('<img');expect(result).toContain('The case stays under human review');
+ });
+});
+
+
+describe('preparation catalog revision review', () => {
+ it('requires catalog and case list to describe the same department revision before a new request', () => {
+  const catalog = { departmentRevision: cases.department.revision, configured: true, workflowDefaults: [], unavailable: [], recipes: [] };
+  expect(departmentPreparationCatalogCurrent(cases, catalog)).toBe(true);
+  expect(departmentPreparationCatalogCurrent(cases, { ...catalog, departmentRevision: '5' })).toBe(false);
+  expect(departmentPreparationCatalogCurrent(null, catalog)).toBe(false);
+  expect(departmentPreparationCatalogCurrent(cases, null)).toBe(false);
  });
 });

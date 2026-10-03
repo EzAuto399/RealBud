@@ -46,7 +46,7 @@ describe('actual filesystem v2 backup and restore pipeline', () => {
     const drafts: { id: string; value: BillReviewDraft }[] = [];
     try {
       const bank = new BankReferenceStore(db), first = bank.create({ source: { filename: 'fictional.csv', bytesBase64: csv.toString('base64') }, columns: { date: 'Date', amount: 'Amount', narrative: 'Description', reference: 'Reference' }, dateFormat: 'DD/MM/YYYY', rules: [{ propertyId: 'fictional-property', reference: '00012', aliases: ['Fictional'] }] });
-      bankRecord = bank.review(first.id, first.revision, [{ rowId: first.value.batch.rows[0].id, action: 'assign', propertyId: 'fictional-property', reason: 'Fictional reviewed rule' }]);
+      bankRecord = bank.review(first.id, first.revision, [{ rowId: first.value.batch.rows[0].id, action: 'assign', propertyId: 'fictional-property', reason: 'Fictional reviewed rule' }]); delete (bankRecord as { firstPass?: unknown }).firstPass; // stored record; firstPass is a read-time view
       for (let index = 0; index < 5001; index++) {
         const id = randomUUID(), value: BillReviewDraft = { version: 1, id, revision: 1, createdAt: 1, updatedAt: 1, workspaceId, state: index % 2 ? 'saved' : 'discarded', billId: null, billRevision: null, itemId: null, messageId: null, sourceDigest: null,
           fields: { propertyId: '', kind: 'Water', vendor: 'Fictional', amount: '12.', invoiceDate: '2026-', dueDate: '', note: `Unfinished 私人 ${index}\n  ` }, billState: 'hold', reason: '', seriesId: '', arrivalDate: '', proposalRequest: null };

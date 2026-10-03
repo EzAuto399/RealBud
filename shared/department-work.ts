@@ -1,7 +1,8 @@
 import type { CompanyExecutionGrant, CompanyExecutionGrantPage, CompanyExecutionReview } from './company-execution.ts';
+import type { DepartmentConfiguration } from './department-configuration.ts';
 
 export type DepartmentWorkPrepare = { version: 1; requestId: string; departmentId: string; expectedDepartmentRevision: string; caseId: string; expectedCaseFence: string; recipeId: string; expectedRecipeRevision: number; durationMs: number };
-export type DepartmentWorkCatalog = { recipes: { id: string; revision: number; title: string; review: CompanyExecutionReview }[] };
+export type DepartmentWorkCatalog = { departmentRevision: string; configured: boolean; workflowDefaults: DepartmentConfiguration['workflowDefaults']; unavailable: { id: string; reason: string }[]; recipes: { id: string; revision: number; title: string; review: CompanyExecutionReview }[] };
 export type DepartmentWorkState = {
   grantId: string; executionId: string; caseId: string; request: DepartmentWorkPrepare;
   phase: 'requesting'|'waiting-owner'|'admitting'|'running'|'review-required'|'held';

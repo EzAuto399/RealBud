@@ -8,8 +8,10 @@ import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
 import * as atomic from "./atomic.ts";
 
-const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
+const { assertCapability, mailboxAccess } = vi.hoisted(() => ({ assertCapability: vi.fn(), mailboxAccess: vi.fn() }));
 vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } }));
+// The connector status the desktop last read (shared mailbox, full access or not).
+vi.mock("./managed-connectors.ts", () => ({ managedMailboxAccess: mailboxAccess }));
 
 describe("connected app policy", () => {
   it("allows discovery and explicit connection reads only", () => {
@@ -32,9 +34,20 @@ describe("connected app policy", () => {
     expect(connectedAppPolicy({ name: "SLACK_POST_MESSAGE" }, managed)).toBe("review");
     expect(connectedAppPolicy({ name: "XERO_FROBNICATE" }, managed)).toBe("review");
     for (const name of ["XERO_DELETE_INVOICE", "SLACK_ADMIN_USERS_SET_OWNER", "NOTION_BULK_ARCHIVE_PAGES", "GITHUB_REVOKE_TOKEN"]) expect(connectedAppPolicy({ name }, managed)).toBe("blocked");
-    // Gmail never takes this route: its fixed triple reviews, anything else of Gmail's is blocked.
-    expect(connectedAppPolicy({ name: "GMAIL_LIST_THREADS" }, managed)).toBe("review");
-    expect(connectedAppPolicy({ name: "GMAIL_SEND_EMAIL" }, managed)).toBe("blocked");
+    // Mailbox tools follow the owner's exact lists: reads, drafts and labels run; sends and Trash
+    // are reviewed; permanent delete, filters and settings are blocked; an unknown mail tool is reviewed.
+    expect(connectedAppPolicy({ name: "GMAIL_LIST_THREADS", arguments: { query: "from:fictional@example.test" } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test" } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "GMAIL_ADD_LABEL_TO_EMAIL", arguments: { message_id: "abc", remove_label_ids: ["INBOX"] } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "GMAIL_ADD_LABEL_TO_EMAIL", arguments: { message_id: "abc", add_label_ids: ["TRASH"] } }, managed)).toBe("review");
+    for (const name of ["GMAIL_SEND_EMAIL", "GMAIL_REPLY_TO_THREAD", "GMAIL_FORWARD_MESSAGE", "GMAIL_SEND_DRAFT", "GMAIL_MOVE_TO_TRASH", "OUTLOOK_SEND_EMAIL", "OUTLOOK_SEND_DRAFT", "GMAIL_FROBNICATE"]) expect(connectedAppPolicy({ name }, managed)).toBe("review");
+    for (const name of ["GMAIL_DELETE_MESSAGE", "GMAIL_BATCH_DELETE_MESSAGES", "GMAIL_CREATE_FILTER", "GMAIL_UPDATE_VACATION_SETTINGS", "OUTLOOK_CREATE_EMAIL_RULE", "OUTLOOK_PERMANENT_DELETE_MESSAGE"]) expect(connectedAppPolicy({ name }, managed)).toBe("blocked");
+    expect(connectedAppPolicy({ name: "OUTLOOK_MOVE_MESSAGE", arguments: { message_id: "m", destination_id: "archive" } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "OUTLOOK_MOVE_MESSAGE", arguments: { message_id: "m", destination_id: "deleteditems" } }, managed)).toBe("review");
+    // A message is sent only on its own card, never inside a batch; batch members are classified with their arguments.
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_LIST_THREADS", arguments: {} }, { tool_slug: "GMAIL_SEND_EMAIL", arguments: {} }] } }, managed)).toBe("blocked");
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_LIST_THREADS", arguments: {} }, { tool_slug: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r1" } }] } }, managed)).toBe("read");
+    expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_LIST_THREADS", arguments: {} }, { tool_slug: "GMAIL_MODIFY_THREAD_LABELS", arguments: { add_label_ids: ["TRASH"] } }] } }, managed)).toBe("review");
     // A batch is as strict as its strictest member.
     expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "XERO_LIST_INVOICES", arguments: {} }, { tool_slug: "XERO_GET_CONTACT", arguments: {} }] } }, managed)).toBe("read");
     expect(connectedAppPolicy({ name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "XERO_LIST_INVOICES", arguments: {} }, { tool_slug: "XERO_DELETE_INVOICE", arguments: {} }] } }, managed)).toBe("blocked");
@@ -98,7 +111,7 @@ describe("connected app authoritative broker", () => {
     return { status: response.status, body: await response.json().catch(() => null) as any };
   };
   beforeEach(async () => {
-    assertCapability.mockReset();
+    assertCapability.mockReset(); mailboxAccess.mockReset();
     received = []; active = true; requestId = 0; upstreamStatus = 200; echoKey = false; resultOverride = undefined; holdResponse = false; holdBody = false; dispatchStatuses = []; approve = vi.fn().mockResolvedValue(false);
     scratch = mkdtempSync(join(tmpdir(), "realbud-app-broker-"));
     operations = new ConnectedAppOperationStore({ file: join(scratch, "operations.json") });
@@ -307,24 +320,29 @@ describe("connected app authoritative broker", () => {
   describe("managed gateway session refresh", () => {
     let gateway: Server;
     let live: Set<string>;
-    let calls: { method: string; session?: string; status: number }[];
+    let calls: { method: string; params?: unknown; session?: string; status: number }[];
     let refusals: string[];
     let alwaysExpire: boolean;
     let sessions: number;
-    const startManaged = async (managed: boolean) => {
-      broker.close();
+    /** Per-tool fixture answers for mailbox reads made while preparing a card. */
+    let toolAnswers: Record<string, (args: any) => unknown | Promise<unknown>>;
+    const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number } = {}) => {
       const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
-      broker = await startConnectedAppsBroker({ threadId: "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
-        isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+      return startConnectedAppsBroker({ threadId: extra.threadId ?? "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
+        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+    };
+    const startManaged = async (managed: boolean, extra: { mailDrainMs?: number } = {}) => {
+      broker.close();
+      broker = await managedBroker(managed, extra);
     };
     beforeEach(async () => {
-      live = new Set(); calls = []; refusals = []; alwaysExpire = false; sessions = 0;
+      live = new Set(); calls = []; refusals = []; alwaysExpire = false; sessions = 0; toolAnswers = {};
       // Mirrors managed-gateway/connectors.ts: an unknown or re-fingerprinted
       // session is refused with `{ error }` before anything is dispatched.
       gateway = createServer(async (req, res) => {
         let body = ""; for await (const chunk of req) body += chunk;
         const msg = JSON.parse(body); const session = req.headers["mcp-session-id"] as string | undefined;
-        const refuse = (error: string) => { calls.push({ method: msg.method, session, status: 409 }); res.writeHead(409, { "content-type": "application/json" }).end(JSON.stringify({ error })); };
+        const refuse = (error: string) => { calls.push({ method: msg.method, params: msg.params, session, status: 409 }); res.writeHead(409, { "content-type": "application/json" }).end(JSON.stringify({ error })); };
         if (msg.method === "initialize") {
           if (session) { res.writeHead(429).end(); return; }
           const fresh = `fixture-session-${++sessions}`; live.add(fresh); calls.push({ method: msg.method, status: 200 });
@@ -337,9 +355,15 @@ describe("connected app authoritative broker", () => {
         }
         if (refusals.length) { refuse(refusals.shift()!); return; }
         if (alwaysExpire || !session || !live.has(session)) { refuse("connector_session_expired"); return; }
-        calls.push({ method: msg.method, session, status: 200 });
-        if (msg.method === "tools/call") dispatchStatuses.push(operations.list()[0].status);
-        const result = msg.method === "tools/list" ? { tools: [{ name: "GMAIL_GET_PROFILE" }] } : { content: [{ type: "text", text: "Fixture profile" }] };
+        calls.push({ method: msg.method, params: msg.params, session, status: 200 });
+        const reviewRead = String(msg.id).startsWith("bud-mail-review-");
+        if (msg.method === "tools/call" && !reviewRead) dispatchStatuses.push(operations.list()[0].status);
+        // The gateway's adapters read only name/arguments; Hermes' protocol
+        // metadata belongs to the desktop broker.
+        const invalidEnvelope = msg.method === "tools/call" && Object.keys(msg.params).some(key => !["name", "arguments"].includes(key));
+        const answer = msg.method === "tools/call" ? toolAnswers[msg.params.name] : undefined;
+        const result = invalidEnvelope ? { isError: true, content: [{ type: "text", text: "The gateway refused an unexpected call envelope." }] } :
+          msg.method === "tools/list" ? { tools: [{ name: "GMAIL_GET_PROFILE" }] } : answer ? await answer(msg.params.arguments) : { content: [{ type: "text", text: "Fixture profile" }] };
         res.writeHead(200, { "content-type": "application/json", "mcp-session-id": session }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
       });
       await new Promise<void>(resolve => gateway.listen(0, "127.0.0.1", resolve));
@@ -358,11 +382,38 @@ describe("connected app authoritative broker", () => {
       expect(calls.map(row => `${row.method}:${row.status}`)).toEqual(["tools/call:409", "initialize:200", "notifications/initialized:202", "tools/call:200"]);
       expect(toolCalls()[1].session).toBe("fixture-session-2");
       expect(dispatchStatuses).toEqual(["started"]);
-      expect(approve).toHaveBeenCalledOnce();
+      // A mailbox read runs without a card, but still under a durable receipt.
+      expect(approve).not.toHaveBeenCalled();
       expect(operations.list()).toEqual([expect.objectContaining({ threadId: "fixture-managed", toolName: "GMAIL_GET_PROFILE", status: "succeeded" })]);
       // The fresh session carries later calls without another handshake.
       expect((await invoke("tools/list")).body.result.tools).toHaveLength(1);
       expect(calls.filter(row => row.method === "initialize")).toHaveLength(1);
+    });
+    it.each(["GMAIL_GET_PROFILE", "GMAIL_LIST_THREADS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"])("forwards the reviewed %s arguments without Hermes metadata, including after session refresh", async name => {
+      const args = name === "GMAIL_FETCH_MESSAGE_BY_THREAD_ID" ? { thread_id: "abcdef" } : {};
+      const params = { name, arguments: args, _meta: {} };
+      const result = await invoke("tools/call", params, 81);
+      expect(result.body.result.isError).not.toBe(true);
+      expect(toolCalls().map(row => row.params)).toEqual([{ name, arguments: args }, { name, arguments: args }]);
+      expect(approve).not.toHaveBeenCalled();
+      expect(dispatchStatuses).toEqual(["started"]);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: name, status: "succeeded" })]);
+      expect((await invoke("tools/call", params, 81)).body).toEqual(result.body);
+      expect(toolCalls()).toHaveLength(2);
+      expect((await invoke("tools/call", { ...params, _meta: { progressToken: "fictional-progress" } }, 81)).body.result.isError).toBe(true);
+      expect(toolCalls()).toHaveLength(2);
+    });
+    it("removes nonempty protocol metadata without treating it as Gmail account or query arguments", async () => {
+      const result = await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {}, _meta: { progressToken: "fictional-progress", accountId: "fictional-other", query: "anywhere" } });
+      expect(result.body.result.isError).not.toBe(true);
+      expect(toolCalls().map(row => row.params)).toEqual([{ name: "GMAIL_GET_PROFILE", arguments: {} }, { name: "GMAIL_GET_PROFILE", arguments: {} }]);
+      expect(operations.list()[0].status).toBe("succeeded");
+    });
+    it.each([{ accountId: "injected" }, { _meta: null }, { _meta: [] }, { _meta: "invalid" }])("rejects unexpected managed envelope %j before approval or dispatch", async extra => {
+      expect((await invoke("tools/call", { name: "GMAIL_GET_PROFILE", arguments: {}, ...extra })).body.result.isError).toBe(true);
+      expect(approve).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
+      expect(operations.list()).toEqual([]);
     });
     it("reports a plain error without a third attempt when the fresh session is also refused", async () => {
       alwaysExpire = true;
@@ -383,6 +434,229 @@ describe("connected app authoritative broker", () => {
       expect(toolCalls()).toHaveLength(1);
       expect(calls.some(row => row.method === "initialize")).toBe(false);
       expect(operations.list()).toEqual([expect.objectContaining({ status: "unknown" })]);
+    });
+    describe("mailbox review cards", () => {
+      // Dispatches the gateway accepted (a refused stale-session attempt is not one).
+      const sends = () => toolCalls().filter(row => row.status === 200 && !String((row.params as any)?.name).match(/_GET_DRAFT$|_GET_MESSAGE$|_LIST_OUTLOOK_ATTACHMENTS$/));
+      const gmailDraft = (to: string, body = "See you at 10.") => ({ structuredContent: { id: "r-fixture-1", message: { id: "m1", payload: { mimeType: "multipart/mixed",
+        headers: [{ name: "From", value: "office@example.test" }, { name: "To", value: to }, { name: "Cc", value: "cc@example.test" }, { name: "Subject", value: "Inspection" }],
+        parts: [{ mimeType: "text/plain", body: { data: Buffer.from(body).toString("base64url") } }, { mimeType: "application/pdf", filename: "report.pdf", partId: "1", body: { attachmentId: `att-${Math.random()}`, size: 3 } }] } } } });
+      it("shows every recipient, the subject, every body line and the attachment names, then sends exactly what was shown", async () => {
+        const args = { recipient_email: "tenant@example.test", extra_recipients: ["second@example.test"], cc: ["cc@example.test"], bcc: ["hidden@example.test"],
+          subject: "Rent\nTo: attacker@example.test", body: "Line one\nTo: forged@example.test\nLine three",
+          attachment: { name: "lease.pdf", mimetype: "application/pdf", s3key: "fictional/lease.pdf" } };
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: args, _meta: { progressToken: "fictional-progress" } });
+        expect(result.body.result.isError).not.toBe(true);
+        const card: string = approve.mock.calls[0][0];
+        expect(card).toContain('To: "tenant@example.test", "second@example.test"');
+        expect(card).toContain('Cc: "cc@example.test"');
+        expect(card).toContain('Bcc: "hidden@example.test"');
+        expect(card).toContain('Subject: "Rent\\nTo: attacker@example.test"');
+        expect(card).toContain('Attachments: "lease.pdf"');
+        expect(card).toContain("| Line one\n| To: forged@example.test\n| Line three");
+        // Neither the subject nor the body can draw a second recipient line.
+        expect(card.split("\n").filter(line => line.startsWith("To: "))).toEqual(['To: "tenant@example.test", "second@example.test"']);
+        expect(sends().map(row => row.params)).toEqual([{ name: "GMAIL_SEND_EMAIL", arguments: args }]);
+        expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_SEND_EMAIL", status: "succeeded" })]);
+      });
+      it("sends nothing when the person denies the card", async () => {
+        approve.mockResolvedValue(false);
+        const result = await invoke("tools/call", { name: "OUTLOOK_SEND_EMAIL", arguments: { to: "a@example.test, b@example.test", subject: "Keys", body: "Ready." } });
+        expect(result.body.result.isError).toBe(true);
+        expect(approve.mock.calls[0][0]).toContain('To: "a@example.test", "b@example.test"');
+        expect(toolCalls()).toEqual([]);
+        expect(operations.list()).toEqual([expect.objectContaining({ toolName: "OUTLOOK_SEND_EMAIL", status: "denied" })]);
+      });
+      it("reads a saved Gmail draft for the card, re-reads it after approval and sends only that unchanged draft", async () => {
+        let reads = 0;
+        toolAnswers.GMAIL_GET_DRAFT = args => { reads++; expect(args).toEqual({ draft_id: "r-fixture-1", format: "full" }); return gmailDraft("tenant@example.test"); };
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } });
+        expect(result.body.result.isError).not.toBe(true);
+        const card: string = approve.mock.calls[0][0];
+        for (const line of ['From: "office@example.test"', 'To: "tenant@example.test"', 'Cc: "cc@example.test"', "Bcc: none", 'Subject: "Inspection"', 'Attachments: "report.pdf" (application/pdf, 3 bytes)', "| See you at 10."]) expect(card).toContain(line);
+        expect(reads).toBe(2);
+        expect(sends().map(row => row.params)).toEqual([{ name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } }]);
+        expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_SEND_DRAFT", status: "succeeded" })]);
+      });
+      it("does not send a draft that changed after it was approved", async () => {
+        let reads = 0;
+        toolAnswers.GMAIL_GET_DRAFT = () => gmailDraft(++reads === 1 ? "tenant@example.test" : "attacker@example.test");
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } });
+        expect(result.body.result.isError).toBe(true);
+        expect(result.body.result.content[0].text).toContain("changed");
+        expect(sends()).toEqual([]);
+        expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_SEND_DRAFT", status: "denied" })]);
+      });
+      it("fails closed without a card when the draft cannot be read in a known shape", async () => {
+        toolAnswers.GMAIL_GET_DRAFT = () => ({ content: [{ type: "text", text: "Draft r-fixture-1 to someone" }] });
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } });
+        expect(result.body.result.isError).toBe(true);
+        expect(result.body.result.content[0].text).toContain("nothing was sent");
+        expect(approve).not.toHaveBeenCalled();
+        expect(sends()).toEqual([]);
+      });
+      it("holds the mailbox between the final draft read and the send, refusing a concurrent draft edit", async () => {
+        let reads = 0, release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        toolAnswers.GMAIL_GET_DRAFT = async () => { if (++reads === 2) await held; return gmailDraft("tenant@example.test"); };
+        const sending = invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } }, 501);
+        await vi.waitFor(() => expect(reads).toBe(2));
+        const edit = await invoke("tools/call", { name: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r-fixture-1", recipient_email: "attacker@example.test" } }, 502);
+        expect(edit.body.result.isError).toBe(true);
+        expect(edit.body.result.content[0].text).toContain("Wait for it to finish");
+        release();
+        expect((await sending).body.result.isError).not.toBe(true);
+        expect(sends().map(row => (row.params as any).name)).toEqual(["GMAIL_SEND_DRAFT"]);
+        // Released afterwards: the edit can run again.
+        expect((await invoke("tools/call", { name: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r-fixture-1", subject: "Later" } }, 503)).body.result.isError).not.toBe(true);
+      });
+      it("waits for a draft edit already in flight before the final read, and then refuses the changed draft", async () => {
+        let reads = 0, edited = false, finishEdit!: () => void;
+        const editHeld = new Promise<void>(resolve => { finishEdit = resolve; });
+        toolAnswers.GMAIL_UPDATE_DRAFT = async () => { await editHeld; edited = true; return { content: [{ type: "text", text: "{}" }] }; };
+        toolAnswers.GMAIL_GET_DRAFT = () => { reads++; return gmailDraft(edited ? "attacker@example.test" : "tenant@example.test"); };
+        const edit = invoke("tools/call", { name: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r-fixture-1", recipient_email: "attacker@example.test" } }, 601);
+        await vi.waitFor(() => expect(toolCalls().some(row => (row.params as any)?.name === "GMAIL_UPDATE_DRAFT" && row.status === 200)).toBe(true));
+        const sending = invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } }, 602);
+        await vi.waitFor(() => expect(approve).toHaveBeenCalledOnce());
+        await new Promise(resolve => setTimeout(resolve, 50));
+        expect(reads).toBe(1); // The final read waits for the edit in flight.
+        finishEdit();
+        expect((await edit).body.result.isError).not.toBe(true);
+        const sent = await sending;
+        expect(sent.body.result.content[0].text).toContain("changed");
+        expect(reads).toBe(2);
+        expect(sends().map(row => (row.params as any).name)).toEqual(["GMAIL_UPDATE_DRAFT"]);
+      });
+      it("refuses the send when a mail call in flight does not settle within the bound", async () => {
+        await startManaged(true, { mailDrainMs: 30 });
+        await invoke("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture-worker", version: "1" } });
+        let finishEdit!: () => void;
+        const editHeld = new Promise<void>(resolve => { finishEdit = resolve; });
+        toolAnswers.GMAIL_UPDATE_DRAFT = async () => { await editHeld; return { content: [{ type: "text", text: "{}" }] }; };
+        toolAnswers.GMAIL_GET_DRAFT = () => gmailDraft("tenant@example.test");
+        const edit = invoke("tools/call", { name: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r-fixture-1", subject: "Edit" } }, 611);
+        await vi.waitFor(() => expect(toolCalls().some(row => (row.params as any)?.name === "GMAIL_UPDATE_DRAFT")).toBe(true));
+        const sent = await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } }, 612);
+        expect(sent.body.result.content[0].text).toContain("still running");
+        finishEdit(); await edit;
+        expect(sends().map(row => (row.params as any).name)).toEqual(["GMAIL_UPDATE_DRAFT"]);
+      });
+      it("holds the mailbox for every Ask thread on the same connection, not only its own", async () => {
+        const other = await managedBroker(true, { threadId: "fixture-other-thread" });
+        try {
+          let reads = 0, release!: () => void;
+          const held = new Promise<void>(resolve => { release = resolve; });
+          toolAnswers.GMAIL_GET_DRAFT = async () => { if (++reads === 2) await held; return gmailDraft("tenant@example.test"); };
+          const sending = invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } }, 621);
+          await vi.waitFor(() => expect(reads).toBe(2));
+          const headers = Object.fromEntries(other.descriptor.headers.map(({ name, value }) => [name, value]));
+          const response = await fetch(other.descriptor.url, { method: "POST", headers: { ...headers, "content-type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "GMAIL_UPDATE_DRAFT", arguments: { draft_id: "r-fixture-1", subject: "Other" } } }) });
+          expect(((await response.json()) as any).result.content[0].text).toContain("Wait for it to finish");
+          release();
+          expect((await sending).body.result.isError).not.toBe(true);
+          expect(sends().map(row => (row.params as any).name)).toEqual(["GMAIL_SEND_DRAFT"]);
+        } finally { other.close(); }
+      });
+      it("shows the HTML a recipient reads, both versions when they differ, and refuses parts it cannot show", async () => {
+        const encode = (value: string) => Buffer.from(value).toString("base64url");
+        const draftWith = (parts: unknown[]) => ({ structuredContent: { id: "r-fixture-2", message: { id: "m2", payload: { mimeType: "multipart/alternative",
+          headers: [{ name: "To", value: "tenant@example.test" }, { name: "Subject", value: "Bond" }], parts } } } });
+        toolAnswers.GMAIL_GET_DRAFT = () => draftWith([{ mimeType: "text/plain", body: { data: encode("Your bond is ready.") } },
+          { mimeType: "text/html", body: { data: encode('<p>Pay your bond <a href="https://pay.example.test/x">here</a>.</p><div style="display:none">hidden</div>') } }]);
+        await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-2" } }, 631);
+        const card: string = approve.mock.calls[0][0];
+        expect(card).toContain("Plain-text version (some mail apps show this one; it differs from the HTML version)");
+        expect(card).toContain("| Pay your bond here [https://pay.example.test/x].");
+        expect(card).toContain("HTML source");
+        expect(card).toContain("| <p>Pay your bond");
+        expect(card).toContain("display:none");
+        for (const parts of [
+          [{ mimeType: "text/plain", body: { data: encode("Hi") } }, { mimeType: "image/png", body: { attachmentId: "img", size: 10 } }],
+          [{ mimeType: "text/plain", body: { attachmentId: "big-body", size: 900000 } }],
+        ]) {
+          approve.mockClear();
+          toolAnswers.GMAIL_GET_DRAFT = () => draftWith(parts);
+          const refused = await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-2" } });
+          expect(refused.body.result.content[0].text).toContain("nothing was sent");
+          expect(approve).not.toHaveBeenCalled();
+        }
+        expect(sends().map(row => (row.params as any).name)).toEqual(["GMAIL_SEND_DRAFT"]);
+      });
+      it("refuses a draft whose attachment changed size after approval", async () => {
+        let reads = 0;
+        toolAnswers.GMAIL_GET_DRAFT = () => { const draft = gmailDraft("tenant@example.test"); if (++reads > 1) draft.structuredContent.message.payload.parts[1].body.size = 4; return draft; };
+        expect((await invoke("tools/call", { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } })).body.result.content[0].text).toContain("changed");
+        expect(sends()).toEqual([]);
+      });
+      it("spells out direction overrides and line separators in addresses, subject and body", async () => {
+        approve.mockResolvedValue(false);
+        await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "evil\u202Egpj.test@example.test", subject: "Rent\u2028To: x@example.test", body: "Pay\u2066 now\u0085done" } });
+        const card: string = approve.mock.calls[0][0];
+        expect(card).toContain('To: "evil<U+202E>gpj.test@example.test"');
+        expect(card).toContain('Subject: "Rent<U+2028>To: x@example.test"');
+        expect(card).toContain("| Pay<U+2066> now<U+0085>done");
+        expect(card).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u2028\u2029\u0085]/);
+      });
+      it("shows the hidden recipient of an Outlook reply and the attachment names of an Outlook draft", async () => {
+        const message = (extra: Record<string, unknown>) => ({ structuredContent: { data: { id: "AAMk-fixture", subject: "Repairs", from: { emailAddress: { address: "sender@example.test", name: "Fictional Sender" } },
+          replyTo: [], toRecipients: [{ emailAddress: { address: "office@example.test" } }], ccRecipients: [], bccRecipients: [], body: { contentType: "text", content: "Original" }, hasAttachments: false, ...extra } } });
+        toolAnswers.OUTLOOK_GET_MESSAGE = () => message({});
+        expect((await invoke("tools/call", { name: "OUTLOOK_REPLY_EMAIL", arguments: { message_id: "AAMk-fixture", comment: "Booked for Tuesday." } })).body.result.isError).not.toBe(true);
+        expect(approve.mock.calls[0][0]).toContain('To: "Fictional Sender <sender@example.test>"');
+        expect(approve.mock.calls[0][0]).toContain("| Booked for Tuesday.");
+        toolAnswers.OUTLOOK_GET_MESSAGE = () => message({ isDraft: true, hasAttachments: true, toRecipients: [{ emailAddress: { address: "owner@example.test" } }], body: { contentType: "html", content: "<p>Photos</p>" } });
+        toolAnswers.OUTLOOK_LIST_OUTLOOK_ATTACHMENTS = () => ({ structuredContent: { value: [{ id: "att-1", name: "photo-1.jpg", contentType: "image/jpeg", size: 2048 }, { id: "att-2", name: "quote.pdf", size: 512 }] } });
+        expect((await invoke("tools/call", { name: "OUTLOOK_SEND_DRAFT", arguments: { message_id: "AAMk-fixture" } })).body.result.isError).not.toBe(true);
+        const card: string = approve.mock.calls[1][0];
+        expect(card).toContain('To: "owner@example.test"');
+        expect(card).toContain('Attachments: "photo-1.jpg" (image/jpeg, 2048 bytes), "quote.pdf" (512 bytes)');
+        expect(card).toContain("HTML version as text (links in brackets), 6 characters, every line shown:\n| Photos");
+        expect(sends().map(row => (row.params as any).name)).toEqual(["OUTLOOK_REPLY_EMAIL", "OUTLOOK_SEND_DRAFT"]);
+      });
+      it.each([
+        ["no recipient", { name: "GMAIL_SEND_EMAIL", arguments: { subject: "Hi", body: "Hello" } }, "names no recipient"],
+        ["another mailbox", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "a@example.test", body: "Hi", user_id: "other@example.test" } }, "own mailbox"],
+        ["a credential in the body", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "a@example.test", body: "password: Fictional-Secret-123" } }, "password"],
+        ["an unreadable recipient field", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: { address: "a@example.test" }, body: "Hi" } }, "nothing was sent"],
+      ])("refuses a send with %s before any card or dispatch", async (_label, params, message) => {
+        const result = await invoke("tools/call", params);
+        expect(result.body.result.isError).toBe(true);
+        expect(result.body.result.content[0].text).toContain(message);
+        expect(approve).not.toHaveBeenCalled();
+        expect(toolCalls()).toEqual([]);
+      });
+      it.each(["GMAIL_DELETE_MESSAGE", "GMAIL_BATCH_DELETE_MESSAGES", "GMAIL_CREATE_FILTER", "GMAIL_UPDATE_SEND_AS", "OUTLOOK_CREATE_EMAIL_RULE", "OUTLOOK_PERMANENT_DELETE_MESSAGE"])("blocks %s at the desktop", async name => {
+        expect((await invoke("tools/call", { name, arguments: { message_id: "abc" } })).body.result.isError).toBe(true);
+        expect(approve).not.toHaveBeenCalled();
+        expect(toolCalls()).toEqual([]);
+      });
+      it("shows no card for a shared mailbox without the owner's full-access grant, and says the owner must turn it on", async () => {
+        mailboxAccess.mockImplementation((credential: string) => credential === key ? "read_only" : undefined);
+        toolAnswers.GMAIL_GET_DRAFT = () => gmailDraft("tenant@example.test");
+        for (const params of [{ name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } }, { name: "GMAIL_SEND_DRAFT", arguments: { draft_id: "r-fixture-1" } },
+          { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "tenant@example.test" } }, { name: "GMAIL_ADD_LABEL_TO_EMAIL", arguments: { message_id: "abc", remove_label_ids: ["INBOX"] } }]) {
+          const result = await invoke("tools/call", params);
+          expect(result.body.result.isError).toBe(true);
+          expect(result.body.result.content[0].text).toContain("office owner to turn on full access");
+        }
+        expect(approve).not.toHaveBeenCalled();
+        expect(toolCalls()).toEqual([]);
+        // The three bounded reads still run; with the grant, the send card returns.
+        expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: {} })).body.result.isError).not.toBe(true);
+        mailboxAccess.mockReturnValue("full");
+        expect((await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } })).body.result.isError).not.toBe(true);
+        expect(approve).toHaveBeenCalledOnce();
+      });
+      it("runs drafts, labels and archive without a card, and moves to Trash only after one", async () => {
+        for (const params of [{ name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "a@example.test", body: "Draft" } },
+          { name: "GMAIL_ADD_LABEL_TO_EMAIL", arguments: { message_id: "abc", remove_label_ids: ["INBOX", "UNREAD"] } }]) expect((await invoke("tools/call", params)).body.result.isError).not.toBe(true);
+        expect(approve).not.toHaveBeenCalled();
+        expect((await invoke("tools/call", { name: "GMAIL_MOVE_TO_TRASH", arguments: { message_id: "abc" } })).body.result.isError).not.toBe(true);
+        expect(approve).toHaveBeenCalledOnce();
+        expect(approve.mock.calls[0][0]).toContain("GMAIL_MOVE_TO_TRASH");
+      });
     });
     it("does not retry an expired session on a direct (unmanaged) connection", async () => {
       await startManaged(false); calls = [];

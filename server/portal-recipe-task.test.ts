@@ -3,13 +3,14 @@
 // account marker is bound), and RealBud's runner replays the recipes through
 // the real broker against the FICTIONAL REI-style portal. No network, no REI
 // account, no credentials: this proves the wiring, never REI Cloud behaviour.
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
-import { BrowserRuntime } from "./browser-runtime.ts";
+import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, loadPortalRecipePack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
@@ -68,6 +69,48 @@ describe("portal recipe task cards", () => {
     writeFileSync(file, JSON.stringify({ ...saved, tasks: [{ ...saved.tasks[0], recipe: { ...saved.tasks[0].recipe, portal: "../x" } }] }), { mode: 0o600 });
     await expect(new BrowserTaskStore({ file }).get(card.id)).rejects.toThrow(/need recovery/);
     await expect(store.propose({ ...proposal, recipe: { ...proposal.recipe, runs: [] } }, NOW)).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("upload-and-preview recipe tasks", () => {
+  const BYTES = Buffer.from('25/09/2026,"540.00",FICTIONAL PAYMENT,,,,,FT-BRAVO\n');
+  const SHA = createHash("sha256").update(BYTES).digest("hex");
+  const PREVIEW_INPUTS = { bank_format: "ANZ(csv file)", approved_file: "fictional-bank.csv", expected_rows: "1", expected_total: "540.00" };
+  const UPLOAD = { name: "fictional-bank.csv", sha256: SHA };
+  it("needs the reviewed file's exact name and sha256, and still refuses every other prepare recipe", async () => {
+    const card = await portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "bulk-receipting-preview", inputs: PREVIEW_INPUTS, account: ACCOUNT, upload: UPLOAD }, fictional);
+    expect(card.actions).toEqual(expect.arrayContaining(["upload", "fill"]));
+    expect(card.actions).not.toContain("submit");
+    expect(card.recipe.runs.map(run => run.recipe)).toEqual(["open-session", "bulk-receipting-preview"]);
+    expect(card.recipe.runs[1].inputs).toEqual({ ...PREVIEW_INPUTS, approved_sha256: SHA });
+    expect(card.request).toContain(`fictional-bank.csv (sha256 ${SHA})`);
+    expect(card.request).toMatch(/stops before Process Receipts, Receipt All, Save, Post, Finalise; posting stays with you/);
+    const base = { threadId: "t", messageId: "m", portal: "rei-cloud", target: "bulk-receipting-preview", inputs: PREVIEW_INPUTS, account: ACCOUNT };
+    await expect(portalRecipeTaskProposal(base, fictional)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/exact name and sha256/) });
+    await expect(portalRecipeTaskProposal({ ...base, upload: { ...UPLOAD, sha256: "abc" } }, fictional)).rejects.toMatchObject({ status: 400 });
+    await expect(portalRecipeTaskProposal({ ...base, upload: { ...UPLOAD, name: "other.csv" } }, fictional)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/reviewed file/) });
+    await expect(portalRecipeTaskProposal({ ...base, target: "receipt-register", inputs: MORNING_INPUTS, upload: UPLOAD }, fictional)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Only read recipes/) });
+    // A caller cannot smuggle a hash into a read recipe.
+    const read = await portalRecipeTaskProposal({ ...base, target: "arrears-review", inputs: { min_days: "1", approved_sha256: SHA } }, fictional);
+    expect(read.recipe.runs[1].inputs).toEqual({ min_days: "1" });
+  });
+
+  it("runs only when the Start grant lists that exact file, and the upload is still asked of the person", async () => {
+    const f = await fixture();
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "bulk-receipting-preview", inputs: PREVIEW_INPUTS, account: ACCOUNT, upload: UPLOAD }, fictional), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const base = { record: started, runtime: f.runtime, signal: new AbortController().signal, isActive: () => true, load: fictional, ...f.stores };
+    // No attachment in the thread: the grant lists no file.
+    await expect(runPortalRecipeTask({ ...base, grant: started.grant, approve: async () => true })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/not the reviewed file/) });
+    await expect(runPortalRecipeTask({ ...base, grant: { ...started.grant, uploads: [{ ...UPLOAD, sha256: "0".repeat(64) }] }, approve: async () => true })).rejects.toMatchObject({ status: 409 });
+    expect(f.mock.calls.some(args => args[0] === "session")).toBe(false);
+    const upload = await addBrowserTaskUpload(f.stores.workroom, UPLOAD.name, BYTES);
+    const asked: string[] = [];
+    const result = await runPortalRecipeTask({ ...base, grant: { ...started.grant, uploads: [upload] }, approve: async tool => { asked.push(tool); return true; } });
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(asked).toContain("browser_upload");
+    expect(f.mock.effects).toEqual(["upload"]);
+    expect(portalRecipeTaskReply(result)).toContain("RealBud cannot confirm what changed in the portal");
   });
 });
 

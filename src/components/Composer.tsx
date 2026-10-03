@@ -1,4 +1,5 @@
 import { WorkContextCard } from "./WorkContextCard";
+import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 import { isAskProductControl } from "@shared/ask-controls";
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -8,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { useComposerDraft } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
 import { ComposerAttachments } from "./ComposerAttachments";
-import { ComposerOfficeSourceChips, ComposerOfficeToolkit } from "./ComposerOfficeToolkit";
+import { ComposerOfficeToolkit } from "./ComposerOfficeToolkit";
 import {
   composeMessage,
   isLongPaste,
@@ -129,6 +130,8 @@ export function Composer({
   const fileRef = useRef<HTMLInputElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
+  const holdingSpeak = useRef<{ source: "pointer" | " " | "Enter" | "toggle" } | null>(null);
+  const dictationBlocked = useRef(false);
 
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
@@ -184,7 +187,8 @@ export function Composer({
   const [actionPending, setActionPending] = useState<"send" | "steer" | "queue" | "edit-queue" | "delete-queue" | null>(null);
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const askBlocked = productAsk && !askReady && !(attachments.length === 0 && isAskProductControl(text));
-  const interactionBlocked = Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
+  const interactionBlocked = Boolean(DESIGN_PREVIEW_REASON) || Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
+  dictationBlocked.current = Boolean(approval) || Boolean(actionPending);
   // A send tried while Bud is not ready explains itself; the draft stays put.
   const [blockedNotice, setBlockedNotice] = useState(false);
   useEffect(() => { if (!askBlocked) setBlockedNotice(false); }, [askBlocked]);
@@ -222,7 +226,7 @@ export function Composer({
   }, [starter, text, attachments.length, approval, actionPending, setText]);
 
   const checkedMessage = () => {
-    if (askBlocked || approval || actionPending || attachmentCopiesRef.current > 0) return null;
+    if (DESIGN_PREVIEW_REASON || askBlocked || approval || actionPending || attachmentCopiesRef.current > 0) return null;
     const message = composeMessage(text, attachments);
     if (!message) return null;
     const sizeError = askMessageSizeError(message);
@@ -362,6 +366,7 @@ export function Composer({
     if (!recording) return;
     const bridge = window.ogb;
     if (!bridge) {
+      holdingSpeak.current = null;
       setRecording(false);
       return;
     }
@@ -373,6 +378,7 @@ export function Composer({
       }
     });
     const offEnd = bridge.onSpeechEnd(({ code }) => {
+      holdingSpeak.current = null;
       setRecording(false);
       if (code === 2) {
         setSpeechError("Dictation is only available on macOS for now.");
@@ -407,8 +413,6 @@ export function Composer({
     if (fileRef.current) fileRef.current.value = "";
     } finally { attachmentCopyChanged(-1); }
   };
-
-  const holdingSpeak = useRef(false);
 
   const isWin = typeof window !== "undefined" && window.ogb?.platform === "win32";
   const speechPrivacyLabel = isWin ? "Speech" : "Speech Recognition";
@@ -458,42 +462,63 @@ export function Composer({
     }
   };
 
-  const beginSpeak = () => {
+  const beginSpeak = (source: NonNullable<typeof holdingSpeak.current>["source"]) => {
+    if (dictationBlocked.current || recording || holdingSpeak.current) return;
+    const hold = { source };
+    holdingSpeak.current = hold;
     if (!capabilities.dictation.available || !window.ogb?.speechStart) {
       setSpeechError(speakUnavailableMessage());
       setSpeechNeedsSettings(false);
-      holdingSpeak.current = false;
+      holdingSpeak.current = null;
       return;
     }
-    if (recording) return;
     baseText.current = text.trim();
     clearSpeechIssue();
     void (async () => {
       try {
         const result = await requestMicAccess();
+        // Permission may finish after release, blur, or a newer hold.
+        if (holdingSpeak.current !== hold || dictationBlocked.current) return;
         if (result !== "granted") {
-          holdingSpeak.current = false;
+          holdingSpeak.current = null;
           setSpeechNeedsSettings(true);
           setSpeechError(result === "unavailable" ? speakUnavailableMessage() : micBlockedMessage);
           return;
         }
-        // Hold-to-speak: finger may have lifted while the permission sheet was up.
-        if (productAsk && !holdingSpeak.current) return;
         setRecording(true);
       } catch {
-        holdingSpeak.current = false;
+        if (holdingSpeak.current !== hold) return;
+        holdingSpeak.current = null;
         setSpeechNeedsSettings(true);
         setSpeechError(speechCheckMessage);
       }
     })();
   };
 
-  const endSpeak = () => {
-    holdingSpeak.current = false;
-    if (!recording) return;
-    if (window.ogb?.speechFinish) void window.ogb.speechFinish();
+  const endSpeak = (source: NonNullable<typeof holdingSpeak.current>["source"]) => {
+    if (holdingSpeak.current?.source !== source) return;
+    holdingSpeak.current = null;
+    if (recording && window.ogb?.speechFinish) void window.ogb.speechFinish();
     else setRecording(false);
   };
+
+  const cancelSpeak = useCallback(() => {
+    holdingSpeak.current = null;
+    setRecording(false);
+  }, []);
+
+  useEffect(() => {
+    if (!productAsk) return;
+    window.addEventListener("blur", cancelSpeak);
+    return () => {
+      window.removeEventListener("blur", cancelSpeak);
+      holdingSpeak.current = null;
+    };
+  }, [productAsk, cancelSpeak]);
+
+  useEffect(() => {
+    if (approval || actionPending) cancelSpeak();
+  }, [approval, actionPending, cancelSpeak]);
 
   const toggleMic = () => {
     if (!capabilities.dictation.available || !window.ogb?.speechStart) {
@@ -501,17 +526,16 @@ export function Composer({
       return;
     }
     if (recording) {
-      setRecording(false);
+      cancelSpeak();
       return;
     }
-    holdingSpeak.current = true;
-    beginSpeak();
+    beginSpeak("toggle");
   };
 
   return (
     <div className={cn("px-5 pb-5 pt-2", productAsk && "ask-composer")}>
       {(speechError || attachError) && (
-        <div className="mx-auto mb-2 flex max-w-[900px] flex-col gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning sm:flex-row sm:flex-wrap sm:items-center">
+        <div role="alert" className="mx-auto mb-2 flex max-w-[900px] flex-col gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning sm:flex-row sm:flex-wrap sm:items-center">
           <span className="min-w-0 flex-1 leading-5">
             {speechError
               ? speechError
@@ -701,8 +725,8 @@ export function Composer({
           persist={persistAskFile}
           onCopyChange={attachmentCopyChanged}
         />
+        {DESIGN_PREVIEW_REASON && <p role="status" className="mb-2 text-[13px] leading-5 text-ink-secondary">{DESIGN_PREVIEW_REASON} You can compose a draft here.</p>}
         {attachmentCopies > 0 && <p role="status" className="mb-2 text-[13px] text-ink-secondary">Copying selected files to this desktop… Your original files stay unchanged.</p>}
-        {productAsk ? <ComposerOfficeSourceChips /> : null}
         {askBlocked && blockedNotice ? (
           <p role="status" aria-live="polite" className="mb-2 text-[13px] leading-5 text-hold">
             {askRecheckPending
@@ -847,7 +871,7 @@ export function Composer({
               send();
             }
             if (e.key === "Escape" && recording) {
-              holdingSpeak.current = false;
+              holdingSpeak.current = null;
               setRecording(false);
             }
           }}
@@ -870,7 +894,9 @@ export function Composer({
               : busy
                 ? group
                   ? `${busyName} is working — Enter queues your message`
-                  : `${busyName} is working — Enter steers now; use the clock to queue`
+                  : productAsk
+                    ? `${busyName} is working — update the current work or add what to do next`
+                    : `${busyName} is working — Enter steers now; use the clock to queue`
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
                   : productAsk
@@ -897,21 +923,40 @@ export function Composer({
         {capabilities.dictation.available && (!busy || recording) && (
           <button
             type="button"
-            onClick={productAsk ? undefined : toggleMic}
+            onClick={productAsk ? (event) => { event.preventDefault(); event.stopPropagation(); } : toggleMic}
             onPointerDown={
               productAsk
                 ? (event) => {
-                    if (event.button !== 0 || approval || actionPending) return;
+                    if (event.button !== 0 || approval || actionPending || holdingSpeak.current) return;
                     event.preventDefault();
                     event.currentTarget.setPointerCapture(event.pointerId);
-                    holdingSpeak.current = true;
-                    beginSpeak();
+                    beginSpeak("pointer");
                   }
                 : undefined
             }
-            onPointerUp={productAsk ? () => endSpeak() : undefined}
-            onPointerCancel={productAsk ? () => endSpeak() : undefined}
-            onLostPointerCapture={productAsk ? () => endSpeak() : undefined}
+            onPointerUp={productAsk ? () => endSpeak("pointer") : undefined}
+            onPointerCancel={productAsk ? cancelSpeak : undefined}
+            onLostPointerCapture={productAsk ? () => endSpeak("pointer") : undefined}
+            onKeyDown={productAsk ? (event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                cancelSpeak();
+                return;
+              }
+              if (event.key !== " " && event.key !== "Enter") return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.repeat || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return;
+              beginSpeak(event.key);
+            } : undefined}
+            onKeyUp={productAsk ? (event) => {
+              if (event.key !== " " && event.key !== "Enter") return;
+              event.preventDefault();
+              event.stopPropagation();
+              endSpeak(event.key);
+            } : undefined}
+            onBlur={productAsk ? cancelSpeak : undefined}
             disabled={Boolean(approval) || Boolean(actionPending)}
             aria-label={
               productAsk
@@ -937,7 +982,7 @@ export function Composer({
               productAsk
                 ? recording
                   ? "Release to finish"
-                  : "Hold to speak"
+                  : "Hold to speak, or hold Space or Enter while focused"
                 : recording
                   ? "Stop dictation (Esc)"
                   : "Dictate"
@@ -948,29 +993,29 @@ export function Composer({
           </button>
         )}
         {hasContent && !askBlocked && busy && !group && (
-          <>
+          <div className={cn("flex items-center gap-2", productAsk && "ask-busy-actions")}>
             <div className="group relative shrink-0">
               <button
                 type="button"
                 onClick={() => void submitWhileBusy("steer")}
-                disabled={Boolean(actionPending)}
-                aria-label="Steer Bud now"
-                title="Steer now"
+                disabled={interactionBlocked}
+                aria-label={productAsk ? "Update current work" : "Steer Bud now"}
+                title={productAsk ? "Update current work" : "Steer now"}
                 className={cn("flex items-center justify-center gap-1.5 bg-accent text-white hover:brightness-110 disabled:opacity-50", productAsk ? "pm-control rounded px-2.5 text-[13px]" : "size-8 rounded-full")}
               >
                 {actionPending === "steer" ? <Loader2 size={15} className="animate-spin" /> : <CornerDownRight size={16} />}
-                {productAsk ? <span>Steer now</span> : null}
+                {productAsk ? <span>Update current work</span> : null}
               </button>
               <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 whitespace-nowrap rounded bg-ink px-2 py-1 text-[11px] text-paper opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                Steer now · replaces the active direction
+                {productAsk ? "Apply this instruction to the work in progress" : "Steer now · replaces the active direction"}
               </span>
             </div>
             <div className="group relative shrink-0">
               <button
                 type="button"
                 onClick={() => void submitWhileBusy("queue")}
-                disabled={Boolean(actionPending)}
-                aria-label={queuedItem ? "Replace queued follow-up" : "Queue a follow-up"}
+                disabled={interactionBlocked}
+                aria-label={queuedItem ? "Replace queued follow-up" : productAsk ? "Do this next" : "Queue a follow-up"}
                 title={queuedItem ? "Replace queued follow-up" : "Queue follow-up"}
                 className={cn("flex items-center justify-center gap-1.5 bg-raised text-ink-secondary hover:bg-raised-hover hover:text-ink disabled:opacity-50", productAsk ? "pm-control rounded px-2.5 text-[13px]" : "size-8 rounded-full")}
               >
@@ -981,12 +1026,12 @@ export function Composer({
                 {queuedItem ? "Replace follow-up · runs next" : "Queue follow-up · runs next"}
               </span>
             </div>
-          </>
+          </div>
         )}
         {(hasContent || productAsk) && (group || !busy) && (
           <button
             onClick={() => { if (askBlocked) setBlockedNotice(true); else send(); }}
-            disabled={(interactionBlocked && !askBlocked) || !hasContent}
+            disabled={Boolean(DESIGN_PREVIEW_REASON) || (interactionBlocked && !askBlocked) || !hasContent}
             aria-label={busy ? "Queue work for Bud" : productAsk ? "Start this work" : "Send message"}
             title={busy ? "Queue — starts when Bud finishes" : productAsk ? "Start work" : "Send"}
             className={cn(
@@ -996,14 +1041,14 @@ export function Composer({
             )}
           >
             {busy ? <Clock size={15} /> : <ArrowUp size={17} />}
-            {productAsk ? <span>Start work</span> : null}
+            {productAsk ? <span>{busy ? "Do next" : "Start work"}</span> : null}
           </button>
         )}
         </div>
       </div>
       {productAsk && <div className="ask-composer-help">
         <span><ShieldCheck size={13} aria-hidden />Sends, payments and statutory actions need your review.</span>
-        <span className="ask-keyboard-hint">{approval ? "Review the request above to continue" : `${busy ? "Enter to steer" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available ? " · Hold Speak to dictate" : ""}`}</span>
+        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
       </div>}
     </div>
   );

@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "purpose": "realbud-hermes-document-deps",
+  "reviewed": "2026-10-02",
+  "source": "https://pypi.org/pypi/<name>/<version>/json",
+  "note": "Libraries for Hermes' bundled xlsx, docx, pdf and powerpoint skills. Installed with --no-index --no-deps --require-hashes into RealBud's private runtime only. pymupdf and marker-pdf are excluded (AGPL / GPL).",
+  "pythons": [
+    "cp311",
+    "cp312",
+    "cp313"
+  ],
+  "targets": [
+    "darwin-arm64",
+    "darwin-x64",
+    "win32-x64"
+  ],
+  "installer": {
+    "name": "pip",
+    "version": "26.2.1",
+    "license": "MIT",
+    "why": "runs from its verified wheel; the runtime venv has no pip",
+    "wheel": {
+      "filename": "pip-26.2.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl",
+      "sha256": "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e",
+      "size": 1816632,
+      "targets": [
+        "any"
+      ]
+    }
+  },
+  "packages": [
+    {
+      "name": "openpyxl",
+      "version": "3.1.5",
+      "import": "openpyxl",
+      "license": "MIT",
+      "why": "xlsx skill",
+      "wheels": [
+        {
+          "filename": "openpyxl-3.1.5-py2.py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl",
+          "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2",
+          "size": 250910,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "et-xmlfile",
+      "version": "2.0.0",
+      "import": "et_xmlfile",
+      "license": "MIT",
+      "why": "required by openpyxl",
+      "wheels": [
+        {
+          "filename": "et_xmlfile-2.0.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl",
+          "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa",
+          "size": 18059,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "python-docx",
+      "version": "1.2.0",
+      "import": "docx",
+      "license": "MIT",
+      "why": "docx skill",
+      "wheels": [
+        {
+          "filename": "python_docx-1.2.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl",
+          "sha256": "3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7",
+          "size": 252987,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lxml",
+      "version": "6.1.3",
+      "import": "lxml.etree",
+      "license": "BSD-3-Clause",
+      "why": "required by python-docx; docx skill scripts",
+      "wheels": [
+        {
+          "filename": "lxml-6.1.3-cp311-cp311-macosx_10_9_universal2.whl",
+          "url": "https://files.pythonhosted.org/packages/96/f1/95133bde7af7afb1f5ba6090b674d826b7a518318bba54bbbb633b27865a/lxml-6.1.3-cp311-cp311-macosx_10_9_universal2.whl",
+          "sha256": "c66f858b82497173f73366795fc6ee8171620e75a338506d6b2e7bc16f5fca11",
+          "size": 8563141,
+          "targets": [
+            "darwin-arm64-cp311"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp312-cp312-macosx_10_13_universal2.whl",
+          "url": "https://files.pythonhosted.org/packages/dd/1f/a180b57d9eeabaab77f9d5aa30356898ea749c4795596a8f66d1eb6bef2e/lxml-6.1.3-cp312-cp312-macosx_10_13_universal2.whl",
+          "sha256": "0c0710ac085a157b593c38fbcacd950f15c4afa8e2057527185875ab302752bc",
+          "size": 8602094,
+          "targets": [
+            "darwin-arm64-cp312"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp313-cp313-macosx_10_13_universal2.whl",
+          "url": "https://files.pythonhosted.org/packages/52/05/3ef45db776baea068044c799bbba68f3ca00a440c0e930a17c572f3d9639/lxml-6.1.3-cp313-cp313-macosx_10_13_universal2.whl",
+          "sha256": "3a48093cdb058a93af842ede9703520e810b05dcd0fc6d7190a06376c3bfb6bd",
+          "size": 8590357,
+          "targets": [
+            "darwin-arm64-cp313"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp311-cp311-macosx_10_9_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/80/54/5a79ee2181ac773ee13e48205411845feec69e1c3d097e985c1343171712/lxml-6.1.3-cp311-cp311-macosx_10_9_x86_64.whl",
+          "sha256": "032a0a97eed428bd143c75a11118238546424ceb2fa311cca5f073aa44658dc4",
+          "size": 4613690,
+          "targets": [
+            "darwin-x64-cp311"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp312-cp312-macosx_10_13_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/a8/25/070c92013a1c029a602b03560d68772313d918268667fa993da7961759c9/lxml-6.1.3-cp312-cp312-macosx_10_13_x86_64.whl",
+          "sha256": "623c8799c17128753c65699f1c3aa32402657393a9ad6db09ed8b98ddf76611d",
+          "size": 4638308,
+          "targets": [
+            "darwin-x64-cp312"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp313-cp313-macosx_10_13_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/8c/a5/eee2fc77eee5ea68e4a4334b1def1781a3beaeefd3d98e81b4a38dc447b7/lxml-6.1.3-cp313-cp313-macosx_10_13_x86_64.whl",
+          "sha256": "887c021d9a977cff89cb273047c1352997b772a8908a25c21836861f69b92be1",
+          "size": 4632616,
+          "targets": [
+            "darwin-x64-cp313"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp311-cp311-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/45/5a/15531a0d307c96282fe8b639b3d74e8bd783e4ab4cb2b0781146ac4161b8/lxml-6.1.3-cp311-cp311-win_amd64.whl",
+          "sha256": "7ae4949f212a53b007dbc355884fda122545c5764a54256c9217e419a62a6559",
+          "size": 4032700,
+          "targets": [
+            "win32-x64-cp311"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp312-cp312-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/3a/5b/6ed903e4e6278a020c8a6f0dbbe78030d041840a6b4a64ea441a1e414077/lxml-6.1.3-cp312-cp312-win_amd64.whl",
+          "sha256": "3e9a00d1c2c30936f7add097c41afc5da6556c580909104aafd382cac92a855c",
+          "size": 4005999,
+          "targets": [
+            "win32-x64-cp312"
+          ]
+        },
+        {
+          "filename": "lxml-6.1.3-cp313-cp313-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/c0/28/e46a7702bd95e9043291f7c3539b6184cba66f96cea9936f20939b284eeb/lxml-6.1.3-cp313-cp313-win_amd64.whl",
+          "sha256": "e477aca0bc0d19f3b4ae9e4f2a1cfd687c31bf772d78734910658186b40b2477",
+          "size": 4004091,
+          "targets": [
+            "win32-x64-cp313"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pypdf",
+      "version": "6.19.0",
+      "import": "pypdf",
+      "license": "BSD-3-Clause",
+      "why": "pdf skill",
+      "wheels": [
+        {
+          "filename": "pypdf-6.19.0-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/3c/2c/c43c03eaf630435f023f1dc61ec4a4a78951ad5530a62c71cc89bde307b7/pypdf-6.19.0-py3-none-any.whl",
+          "sha256": "7e5d6e730e7dae87d560a2cee218b852f6498c8be61966f3cd02ead971e48d14",
+          "size": 395480,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reportlab",
+      "version": "5.0.1",
+      "import": "reportlab",
+      "license": "BSD-3-Clause",
+      "why": "pdf skill",
+      "wheels": [
+        {
+          "filename": "reportlab-5.0.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/db/cb/dacbc268cb68d0428ea2cbd85266195a9ab3e677449589ddae59bd7542ac/reportlab-5.0.1-py3-none-any.whl",
+          "sha256": "1c36e6bb0e71780c72331eba60da7f602e8d4389a8723825af71342e49d791e8",
+          "size": 1957258,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pdfplumber",
+      "version": "0.11.10",
+      "import": "pdfplumber",
+      "license": "MIT",
+      "why": "pdf skill",
+      "wheels": [
+        {
+          "filename": "pdfplumber-0.11.10-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/a2/9a/07d658e1e7fad860f1c541ab941348125dbdab773be3a0afaf32361866c7/pdfplumber-0.11.10-py3-none-any.whl",
+          "sha256": "7741ea81bf165b474b153e6789d10d18e06b6ddcf3ec84289c3ef2fed6802580",
+          "size": 60047,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pdfminer.six",
+      "version": "20260107",
+      "import": "pdfminer",
+      "license": "MIT",
+      "why": "required by pdfplumber",
+      "wheels": [
+        {
+          "filename": "pdfminer_six-20260107-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/20/8b/28c4eaec9d6b036a52cb44720408f26b1a143ca9bce76cc19e8f5de00ab4/pdfminer_six-20260107-py3-none-any.whl",
+          "sha256": "366585ba97e80dffa8f00cebe303d2f381884d8637af4ce422f1df3ef38111a9",
+          "size": 6592252,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pypdfium2",
+      "version": "5.13.0",
+      "import": "pypdfium2",
+      "license": "Apache-2.0 OR BSD-3-Clause (bundled PDFium: BSD-3-Clause, Apache-2.0 and permissive third-party notices)",
+      "why": "required by pdfplumber",
+      "wheels": [
+        {
+          "filename": "pypdfium2-5.13.0-py3-none-macosx_13_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/08/99/1fe58428b69d2722dcbcfaa08ce71834a332c5b518fd58874bcef936b823/pypdfium2-5.13.0-py3-none-macosx_13_0_arm64.whl",
+          "sha256": "da5c7b74eebf40b5c1fbe1de01aa1edc8827a79fb1efd999616bc20dcaf77ba4",
+          "size": 3507415,
+          "targets": [
+            "darwin-arm64-cp311",
+            "darwin-arm64-cp312",
+            "darwin-arm64-cp313"
+          ]
+        },
+        {
+          "filename": "pypdfium2-5.13.0-py3-none-macosx_13_0_x86_64.whl",
+          "url": "https://files.pythonhosted.org/packages/9f/41/06e26da88a4f5b4ed289325868717a186020661b7b221aa6df622711d31b/pypdfium2-5.13.0-py3-none-macosx_13_0_x86_64.whl",
+          "sha256": "2abedfb5c70992b19c780ed58d7f7b929e8ce8ee52c9140158f44317c90ec6c7",
+          "size": 3670979,
+          "targets": [
+            "darwin-x64-cp311",
+            "darwin-x64-cp312",
+            "darwin-x64-cp313"
+          ]
+        },
+        {
+          "filename": "pypdfium2-5.13.0-py3-none-win_amd64.whl",
+          "url": "https://files.pythonhosted.org/packages/5d/99/a37b6b902457569468ed5908c94e56cb6c4032541f02cf89f723d42a9148/pypdfium2-5.13.0-py3-none-win_amd64.whl",
+          "sha256": "47dcca2a8d507b5fd24f94c3c9d48fb379430f097bc20f01beff6c963ffbcedb",
+          "size": 3885553,
+          "targets": [
+            "win32-x64-cp311",
+            "win32-x64-cp312",
+            "win32-x64-cp313"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "python-pptx",
+      "version": "1.0.2",
+      "import": "pptx",
+      "license": "MIT",
+      "why": "powerpoint skill",
+      "wheels": [
+        {
+          "filename": "python_pptx-1.0.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/d9/4f/00be2196329ebbff56ce564aa94efb0fbc828d00de250b1980de1a34ab49/python_pptx-1.0.2-py3-none-any.whl",
+          "sha256": "160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba",
+          "size": 472788,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xlsxwriter",
+      "version": "3.2.9",
+      "import": "xlsxwriter",
+      "license": "BSD-2-Clause",
+      "why": "required by python-pptx (pptx.chart.xlsx, imported by pptx.chart.data for chart creation)",
+      "wheels": [
+        {
+          "filename": "xlsxwriter-3.2.9-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/3a/0c/3662f4a66880196a590b202f0db82d919dd2f89e99a27fadef91c4a33d41/xlsxwriter-3.2.9-py3-none-any.whl",
+          "sha256": "9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3",
+          "size": 175315,
+          "targets": [
+            "any"
+          ]
+        }
+      ]
+    }
+  ],
+  "runtimeProvided": [
+    {
+      "name": "pillow",
+      "import": "PIL",
+      "minimum": "12.2.0",
+      "license": "MIT-CMU",
+      "why": "required by pdfplumber, reportlab and python-pptx; pinned by Hermes core (Pillow==12.3.0)"
+    },
+    {
+      "name": "cryptography",
+      "import": "cryptography",
+      "minimum": "36.0.0",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "why": "required by pdfminer.six; pinned by Hermes core (cryptography==50.0.0)"
+    },
+    {
+      "name": "charset-normalizer",
+      "import": "charset_normalizer",
+      "minimum": "2.0.0",
+      "license": "MIT",
+      "why": "required by reportlab and pdfminer.six; Hermes core dependency via requests"
+    },
+    {
+      "name": "typing-extensions",
+      "import": "typing_extensions",
+      "minimum": "4.9.0",
+      "license": "PSF-2.0",
+      "why": "required by python-docx and python-pptx; Hermes core dependency via pydantic"
+    }
+  ]
+}

@@ -105,7 +105,31 @@ async function main() {
     if (path === `/connected_accounts/${state.device.accountId}` && noBodyGet && !url.search) return response(account(state));
     const metadataMatch = /^\/tools\/(GMAIL_GET_PROFILE|GMAIL_LIST_THREADS|GMAIL_FETCH_MESSAGE_BY_THREAD_ID)$/.exec(path);
     if (metadataMatch && noBodyGet && (!url.search || query.size === 1 && query.get('version') === TOOL_VERSION)) return response(tool(metadataMatch[1]));
-    const execute = /^\/tools\/execute\/(GMAIL_GET_PROFILE|GMAIL_LIST_THREADS|GMAIL_FETCH_MESSAGE_BY_THREAD_ID)$/.exec(path);
+    if (path === '/tools/execute/proxy') {
+      if (method !== 'POST' || url.search || !object(body) || !exact(body, ['connected_account_id', 'endpoint', 'method']) ||
+        body.connected_account_id !== state.device.accountId || body.method !== 'GET' || typeof body.endpoint !== 'string') return refuse(agency);
+      const target = /^https:\/\/gmail\.googleapis\.com\/gmail\/v1\/users\/me\/threads\/([a-fA-F0-9]{1,64})\?format=full$/.exec(body.endpoint);
+      if (!target || !state.threadIds.includes(target[1])) return refuse(agency);
+      state.stats.threadCalls++;
+      const mode = state.mode;
+      if (state.armed) {
+        state.armed = false; state.stats.held++;
+        let counted = false;
+        const aborted = () => { if (!counted) { counted = true; state.stats.aborted++; } };
+        if (init.signal?.aborted) aborted(); else init.signal?.addEventListener('abort', aborted, { once: true });
+        try {
+          await new Promise<void>(resolve => {
+            state.release = resolve;
+            process.send?.({ type: 'held', agency });
+          });
+          // Deliberately return a late success even after the request was aborted.
+          // Only the real adapter/gateway authority checks may suppress this result.
+        } finally { init.signal?.removeEventListener('abort', aborted); state.release = null; }
+      }
+      if (mode === 'provider-error') return response({ error: `Fictional upstream failure ${state.key}` }, 503);
+      return response({ status: 200, data: thread(agency, target[1], mode) });
+    }
+    const execute = /^\/tools\/execute\/(GMAIL_GET_PROFILE|GMAIL_LIST_THREADS)$/.exec(path);
     if (!execute || method !== 'POST' || url.search || !object(body) || !exact(body, ['connected_account_id', 'user_id', 'version', 'arguments']) ||
       body.connected_account_id !== state.device.accountId || body.user_id !== state.device.userId || body.version !== TOOL_VERSION || !object(body.arguments)) return refuse(agency);
     const args = body.arguments;
@@ -131,25 +155,7 @@ async function main() {
       return response({ successful: true, data: { threads: ids.map(id => ({ id })), resultSizeEstimate: state.mode === 'partial' ? 46 : 45,
         ...(next < state.threadIds.length ? { nextPageToken: `fictional-${agency}-${next}` } : {}) } });
     }
-    if (!exact(args, ['user_id', 'thread_id']) || typeof args.thread_id !== 'string' || !state.threadIds.includes(args.thread_id)) return refuse(agency);
-    state.stats.threadCalls++;
-    const mode = state.mode;
-    if (state.armed) {
-      state.armed = false; state.stats.held++;
-      let counted = false;
-      const aborted = () => { if (!counted) { counted = true; state.stats.aborted++; } };
-      if (init.signal?.aborted) aborted(); else init.signal?.addEventListener('abort', aborted, { once: true });
-      try {
-        await new Promise<void>(resolve => {
-          state.release = resolve;
-          process.send?.({ type: 'held', agency });
-        });
-        // Deliberately return a late success even after the request was aborted.
-        // Only the real adapter/gateway authority checks may suppress this result.
-      } finally { init.signal?.removeEventListener('abort', aborted); state.release = null; }
-    }
-    if (mode === 'provider-error') return response({ error: `Fictional upstream failure ${state.key}` }, 503);
-    return response({ successful: true, data: thread(agency, args.thread_id, mode) });
+    return refuse(agency);
   }
   globalThis.fetch = (input, init) => {
     const pending = providerFetch(input, init);

@@ -47,6 +47,20 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/browser/select"],
     ["POST", "/api/browser/stop"],
     ["POST", "/api/browser/disconnect"],
+    ["GET", "/api/bank-source/redbark/key"],
+    ["PUT", "/api/bank-source/redbark/key"],
+    ["GET", "/api/bank-source/redbark/accounts"],
+    ["POST", "/api/bank-source/redbark/pull"],
+    ["POST", "/api/bank-source/redbark/confirm-import"],
+    ["GET", "/api/w1/status"],
+    ["PUT", "/api/w1/settings"],
+    ["POST", "/api/w1/runs/start"],
+    ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/advance"],
+    ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/posting"],
+    ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/retry-upload"],
+    ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/abandon"],
+    ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/answer"],
+    ["POST", "/api/w1/bank-check"],
   ])("requires the session before %s %s can change work or authority", (method, path) => {
     expect(needsSession(path, method)).toBe(true);
     const req = { url: path, method, headers: { host: "127.0.0.1:8799" } } as unknown as IncomingMessage;

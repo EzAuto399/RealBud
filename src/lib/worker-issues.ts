@@ -11,7 +11,7 @@ export type WorkerIssue = {
 };
 
 const SOURCE_LABEL: Record<WorkerIssueSource, string> = {
-  ask: "Ask",
+  ask: "Work",
   runtime: "Worker",
   channel: "Phone",
   hands: "Hands",

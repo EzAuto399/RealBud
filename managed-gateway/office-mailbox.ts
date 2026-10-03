@@ -4,7 +4,11 @@ import { createHash } from 'node:crypto';
 import { canonical, exact, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import type { ConnectorDevice, ConnectorOptions } from './connectors.ts';
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, createGmailReadOnlyTransport, type GmailReadOnlyBinding } from '../server/composio-gmail.ts';
-interface Policy { mode: 'personal'|'shared'; revision: number; grants: string[] }
+import { FULL_MAILBOX_ACCESS_VERSION, FULL_MAILBOX_ACCESS_WORDING } from '../shared/app-tool-policy.ts';
+/** The owner's versioned full-access grant on the shared mailbox: who accepted
+ * the exact wording, and when. Absent means the three bounded reads. */
+interface FullAccess { version: typeof FULL_MAILBOX_ACCESS_VERSION; grantedBy: string; grantedAt: string }
+interface Policy { mode: 'personal'|'shared'; revision: number; grants: string[]; fullMailboxAccess?: FullAccess }
 interface Mailbox { projectKeyEnv: string; authConfigId: string; userId: string; state: 'unknown'|'pending'|'review'|'ready'; emailAddress?: string; accountId?: string; url?: string; expiresAt?: string }
 const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
 const grantKey=(device:ConnectorDevice)=>digest(canonical({companyId:device.companyId,profile:device.profile,installationId:device.installationId,tokenHash:device.tokenHash,id:device.id,memberId:device.memberId,licenseId:device.licenseId}));
@@ -29,6 +33,13 @@ export class OfficeMailbox {
     return policy.mode==='shared'&&policy.grants.includes(grantKey(device))&&account?.state==='ready'&&Boolean(account.accountId)
       &&device.projectKeyEnv===account.projectKeyEnv&&device.authConfigId===account.authConfigId;
   }
+  /** Ask's Gmail scope for this office: a member's own mailbox is full (owner
+   * decision 2026-10-02); a shared mailbox is full only under the owner's
+   * current versioned grant, otherwise the three bounded reads. */
+  mailboxAccess(company:string):'full'|'read_only' {
+    const policy=this.policy(company);
+    return policy.mode==='personal'||policy.fullMailboxAccess?.version===FULL_MAILBOX_ACCESS_VERSION?'full':'read_only';
+  }
   binding(device:ConnectorDevice):GmailReadOnlyBinding|undefined {
     const policy=this.policy(device.companyId);if(policy.mode==='personal')return undefined;
     requireThat(policy.grants.includes(grantKey(device)),'office_mailbox_desktop_denied',403);
@@ -36,14 +47,31 @@ export class OfficeMailbox {
     requireThat(device.projectKeyEnv===account.projectKeyEnv && device.authConfigId===account.authConfigId,'office_mailbox_binding_changed',409);
     return this.provider(account);
   }
-  private status(company:string){const policy=this.policy(company),account=policy.mode==='shared'?this.account(company):undefined;return {mode:policy.mode,revision:policy.revision,state:account?.state??'not_connected',...(account?.state==='ready'?{accountId:account.accountId}:{}),...(account?.state==='review'?{candidate:{accountId:account.accountId,emailAddress:account.emailAddress}}:{}),installations:this.options.devices().filter(d=>d.companyId===company).map(d=>({installationId:d.installationId,active:d.active,allowed:d.active&&policy.grants.includes(grantKey(d))}))};}
+  private status(company:string){const policy=this.policy(company),account=policy.mode==='shared'?this.account(company):undefined,full=policy.fullMailboxAccess;return {mode:policy.mode,revision:policy.revision,state:account?.state??'not_connected',
+    fullMailboxAccess:full?.version===FULL_MAILBOX_ACCESS_VERSION?{granted:true,version:full.version,grantedBy:full.grantedBy,grantedAt:full.grantedAt}:{granted:false},...(account?.state==='ready'?{accountId:account.accountId}:{}),...(account?.state==='review'?{candidate:{accountId:account.accountId,emailAddress:account.emailAddress}}:{}),installations:this.options.devices().filter(d=>d.companyId===company).map(d=>({installationId:d.installationId,active:d.active,allowed:d.active&&policy.grants.includes(grantKey(d))}))};}
   async handle(actor:PortalPrincipal,operation:string,body:unknown,revalidate:()=>Promise<void>){
     requireThat(actor.role==='billing_owner','forbidden',403);const company=actor.companyId;
     if(operation==='status')return this.status(company);
-    object(body); const fields=operation==='policy'?['mode','expectedRevision']:operation==='grants'?['installationId','allowed','expectedRevision']:operation==='confirm'?['expectedRevision','accountId','emailAddress']:['expectedRevision'];exact(body,fields);
+    object(body); const access=operation==='policy'&&Object.hasOwn(body,'fullMailboxAccess');
+    const fields=access?(body.fullMailboxAccess===true?['mode','expectedRevision','fullMailboxAccess','acknowledgement']:['mode','expectedRevision','fullMailboxAccess']):operation==='policy'?['mode','expectedRevision']:operation==='grants'?['installationId','allowed','expectedRevision']:operation==='confirm'?['expectedRevision','accountId','emailAddress']:['expectedRevision'];exact(body,fields);
     const policy=this.policy(company);requireThat(body.expectedRevision===policy.revision,'office_mailbox_revision_changed',409);
     const check=()=>{requireThat(this.policy(company).revision===policy.revision,'office_mailbox_revision_changed',409);};
     const current=async()=>{await revalidate();check();};
+    if(access){
+      // Owner-only (above), on the current shared mailbox, with the exact wording.
+      // Granting and revoking each move the revision, so every desktop re-reviews.
+      requireThat(body.mode==='shared'&&policy.mode==='shared'&&typeof body.fullMailboxAccess==='boolean','office_mailbox_shared_required',409);
+      if(body.fullMailboxAccess){
+        requireThat(body.acknowledgement===FULL_MAILBOX_ACCESS_WORDING,'office_mailbox_access_wording_required',400);
+        requireThat(this.account(company)?.state==='ready','office_mailbox_confirmation_required',409);
+      }
+      const now=this.options.ledger.now();
+      const {fullMailboxAccess:_previous,...rest}=policy;
+      this.options.ledger.db.transaction(()=>{
+        this.save(company,{...rest,revision:policy.revision+1,...(body.fullMailboxAccess?{fullMailboxAccess:{version:FULL_MAILBOX_ACCESS_VERSION,grantedBy:actor.subject,grantedAt:new Date(now).toISOString()}}:{})});
+        this.options.ledger.db.append(company,body.fullMailboxAccess?'office_mailbox_full_access_granted':'office_mailbox_full_access_revoked',null,now,{by:actor.subject,version:FULL_MAILBOX_ACCESS_VERSION,revision:policy.revision+1});
+      });return this.status(company);
+    }
     if(operation==='policy'){
       requireThat(body.mode==='personal'||body.mode==='shared','invalid_mailbox_mode');
       const mode=body.mode;
@@ -93,7 +121,9 @@ export class OfficeMailbox {
     if(operation==='confirm')requireThat(identity.emailAddress===account.emailAddress,'office_mailbox_candidate_changed',409);
     this.options.ledger.db.transaction(()=>{
       this.saveAccount(company,{...account,emailAddress:identity.emailAddress as string,state:operation==='confirm'?'ready':'review',url:undefined});
-      this.save(company,{...policy,revision:policy.revision+1,grants:operation==='confirm'?policy.grants:[]});
+      // A newly verified candidate is a different mailbox: its grants and any full access start over.
+      const {fullMailboxAccess,...rest}=policy;
+      this.save(company,{...rest,revision:policy.revision+1,grants:operation==='confirm'?policy.grants:[],...(operation==='confirm'&&fullMailboxAccess?{fullMailboxAccess}:{})});
     });return this.status(company);
   }
 }

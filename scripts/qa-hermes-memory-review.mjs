@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash, createHmac, generateKeyPairSync, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -14,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { createServiceAdminPasswordVerifier } from '../server/service-admin.ts';
 import { prepareInterruptedMemoryFixture } from '../server/testing/memory-prepared-fixture.mjs';
+import { provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const memoryProposals = process.argv.includes('--memory-proposals');
@@ -35,14 +37,14 @@ const memoryFile = join(profile, 'memories', 'MEMORY.md'), pendingDir = join(pro
 const api = '/api/hermes/memory-reviews';
 const recoveryApi = `${api}/interrupted`;
 let first = '00000010', second = '00000020';
-const proposalScript = join(temp, 'proposal-input.json'), peerOutput = join(temp, 'proposal-peer.json'), ownedPeers = new Set();
+const proposalScript = join(temp, 'proposal-input.json'), peerOutput = join(data, 'vault', 'bud-work', 'proposal-peer.json'), ownedPeers = new Set();
 let nativeFixtureRuntime, peerCli, peerDrained = !memoryProposals, peerStateFinal = null;
 const proposalInputs = {};
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const checks = [], errors = [], decisions = [], closures = [], blockedNetwork = [];
 const pass = label => { checks.push(label); console.log(`PASS ${label}`); };
-let browser, page, child, port, base, token, logs = '', failure, admittedRuntime, pin, moduleHashes = {}, sourceHashes = {}, cleanup = false, adminHeadersSeen = 0;
+let browser, page, child, connectorFixture, port, base, token, logs = '', failure, admittedRuntime, pin, moduleHashes = {}, sourceHashes = {}, cleanup = false, adminHeadersSeen = 0;
 const write = (path, contents) => { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, contents, { mode: 0o600 }); chmodSync(path, 0o600); };
 const proposal = (id, payload) => write(join(pendingDir, `${id}.json`), JSON.stringify({ id, subsystem: 'memory', action: payload.action, summary: 'Fictional preference review', origin: 'background_review', created_at: 1_790_000_000, payload }));
 const stop = async () => {
@@ -92,7 +94,11 @@ async function prepareRuntime() {
 }
 async function start() {
   const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening'); port = listener.address().port; await new Promise(done => listener.close(done)); base = `http://127.0.0.1:${port}`;
-  child = spawn(executable, [bootstrap], { cwd: serviceCwd, env: { ...serviceSmokeEnv({ executable, home: data, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '1', REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: staticDirectory }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Fictional link/report credentials must never reach an external website.
+  // Loopback remains available for the real private memory broker and relay.
+  const networkGuard = join(temp, 'loopback-only.mjs');
+  write(networkGuard, `const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(url.protocol!=='http:'||url.hostname!=='127.0.0.1')throw new Error('Memory QA denied external network');return realFetch(input,init);};\n`);
+  child = spawn(executable, ['--import', networkGuard, bootstrap], { cwd: serviceCwd, env: { ...serviceSmokeEnv({ executable, home: data, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '1', REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: staticDirectory }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let spawnError; child.once('error', error => { spawnError = error; });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-20000); });
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -115,7 +121,7 @@ async function until(read, label) {
   }
   throw new Error(`Timed out during ${label}.`);
 }
-function prepareProposalFixture() {
+async function prepareProposalFixture() {
   assert.notEqual(process.platform, 'win32', 'The native memory proposal workflow is held pending Windows acceptance.');
   const peerSource = join(root, 'server/testing/memory-proposal-acp-cli.mjs'), peerCopy = join(temp, 'fictional-acp-peer.mjs');
   write(peerCopy, readFileSync(peerSource));
@@ -133,6 +139,16 @@ function prepareProposalFixture() {
   write(join(data, 'service-installation.json'), JSON.stringify({ schema: 1, companyId, hostInstallationId }));
   write(join(data, 'service-trust-keys.json'), JSON.stringify({ schema: 1, keys: [{ keyId: 'fictional-memory-qa-key', publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }) }] }));
   write(join(data, 'service-entitlement.json'), JSON.stringify({ schema: 1, keyId: 'fictional-memory-qa-key', payload, signature: sign(null, Buffer.from(payload), privateKey).toString('base64url') }));
+  // The managed launch also requires its encrypted office/model grant. Use
+  // the real stores with a loopback-only fictional connector and fake key.
+  connectorFixture = createHttpServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const request = JSON.parse(raw || '{}');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: request.method === 'tools/list' ? { tools: [] } : {} }));
+  });
+  await new Promise(done => connectorFixture.listen(0, '127.0.0.1', done));
+  provisionMockWorkerGrant({ executable, resources, home: temp, data, endpoint: `http://127.0.0.1:${connectorFixture.address().port}`, credential: `rbc_${'b'.repeat(64)}`, companyId, hostInstallationId });
   const suffix = packaged ? 'js' : 'ts', selectedRoot = packaged ? resources : root;
   const provision = `const {applyPropertyPack} = await import(${JSON.stringify(pathToFileURL(join(selectedRoot, 'server', `hermes-pack.${suffix}`)).href)}); const {hermesReadinessFingerprint} = await import(${JSON.stringify(pathToFileURL(join(selectedRoot, 'server', `hermes-status.${suffix}`)).href)}); const {writeFileSync} = await import('node:fs'); applyPropertyPack(${JSON.stringify(hermes)}); writeFileSync(${JSON.stringify(join(data, 'hands-ping.json'))}, JSON.stringify({at:Date.now(),ok:true,kind:'ping',detail:'Fictional ACP readiness fixture; no model tested.',workerFingerprint:hermesReadinessFingerprint('Hermes Agent v0.21.3 (2026.9.14)',${JSON.stringify(hermes)})}),{mode:0o600});`;
   const provisioned = spawnSync(executable, ['--input-type=module', '-e', provision], { cwd: serviceCwd, env: serviceSmokeEnv({ executable, home: data, data, scratch: temp, port: 0 }), encoding: 'utf8', timeout: 15000, maxBuffer: 16384 });
@@ -150,7 +166,7 @@ async function proposeThroughAsk(input) {
   const result = peer.calls.at(-1).result;
   assert.notEqual(result.isError, true, 'The actual private proposal broker must accept the fictional preference.');
   const value = JSON.parse(result.content[0].text);
-  assert.deepEqual(value, { version: 1, id: value.id, reviewLocation: 'You → Bud → Bud’s memory' }); assert.match(value.id, /^[0-9a-f]{8}$/);
+  assert.deepEqual(value, { version: 1, id: value.id, reviewLocation: 'Workspace → What Bud learned' }); assert.match(value.id, /^[0-9a-f]{8}$/);
   assert.deepEqual(result.structuredContent, value);
   assert.ok(peer.discovery.every(names => names.length === 1 && names[0] === 'memory_propose'), 'The peer discovers proposal authority only.');
   await page.getByText('Review the fictional proposal in Bud memory.', { exact: true }).last().waitFor();
@@ -165,6 +181,8 @@ async function drainPeers() {
   assert.ok(peerDrained, 'Every owned fictional ACP peer must exit before its profile is deleted.');
 }
 async function panelAfterLoad() {
+  const section = page.locator('#you-memory'); await section.waitFor();
+  if (!(await section.evaluate(element => element.open))) await section.locator('summary').click();
   const panel = page.getByRole('region', { name: 'Bud memory reviews', exact: true }); await panel.waitFor();
   await panel.getByText(/reviews shown/).waitFor({ timeout: 30000 }); return panel;
 }
@@ -295,8 +313,11 @@ try {
   write(join(profile, 'config.yaml'), 'approvals:\n  mode: manual\ncron_mode: deny\nmemory:\n  write_approval: true\n  memory_enabled: true\n  user_profile_enabled: true\n  memory_char_limit: 2200\n  user_char_limit: 1375\n');
   write(memoryFile, before);
   proposalInputs.first = { requestId: 'browser-preference-replacement-1', payload: { action: 'replace', target: 'memory', old_text: 'concise', content: replacement } };
-  if (memoryProposals) prepareProposalFixture(); else proposal(first, proposalInputs.first.payload);
+  if (memoryProposals) await prepareProposalFixture(); else proposal(first, proposalInputs.first.payload);
   await start();
+  // Finish the real first-run receipt without importing demonstration records.
+  let onboarding = await request('/api/onboarding');
+  for (const stage of ['office-rules', 'complete']) onboarding = await request('/api/onboarding', 'PUT', { expectedScope: onboarding.scope, expectedRevision: onboarding.revision, stage });
   assert.equal((await fetch(base + api)).status, 401);
   const anonymousDecision = await fetch(`${base}${api}/${first}/decision`, { method: 'POST', signal: AbortSignal.timeout(10000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedDigest: 'a'.repeat(64), decision: 'approve' }) });
   assert.equal(anonymousDecision.status, 401); assert.equal(readFileSync(memoryFile, 'utf8'), before);
@@ -310,11 +331,11 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => { const url = new URL(route.request().url()); if (url.origin === base) return route.continue(); blockedNetwork.push({ origin: url.origin, method: route.request().method() }); return route.abort(); });
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { const url = new URL(request.url()); if (url.origin === base && request.headers()['x-realbud-service-admin']) adminHeadersSeen++; if (url.origin === base && url.pathname.startsWith(`${api}/`) && url.pathname.endsWith('/decision') && request.method() === 'POST') decisions.push({ path: url.pathname, body: request.postDataJSON() }); if (url.origin === base && url.pathname.startsWith(`${recoveryApi}/`) && url.pathname.endsWith('/close') && request.method() === 'POST') closures.push({ path: url.pathname, body: request.postDataJSON() }); });
   if (memoryProposals) {
-    assert.equal((await request('/api/hermes')).ready, true, 'The synthetic ACP readiness record must match the actual selected profile.');
+    const readiness = await request('/api/hermes');
+    assert.equal(readiness.ready, true, `The synthetic ACP readiness record must match the actual selected profile: ${JSON.stringify({ detail: readiness.detail, cli: readiness.cli, pack: readiness.pack, lastPing: readiness.lastPing, workerFingerprint: readiness.workerFingerprint })}`);
     assert.deepEqual((await request(api)).items, []);
     first = await proposeThroughAsk(proposalInputs.first);
     const pending = JSON.parse(readFileSync(join(pendingDir, `${first}.json`), 'utf8'));
@@ -422,6 +443,7 @@ try {
   await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {});
 } finally {
   await browser?.close().catch(() => {}); await stop();
+  if (connectorFixture) { connectorFixture.closeAllConnections(); await new Promise(done => connectorFixture.close(done)); }
   try { await drainPeers(); rmSync(temp, { recursive: true, force: true }); cleanup = !existsSync(temp); } catch (error) { failure ||= `Fixture cleanup failed: ${error instanceof Error ? error.message : String(error)}`; }
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure && cleanup, node: process.version, platform: process.platform, mode: packaged ? 'packaged' : 'source', memoryProposals, memoryRecovery, executable, executableHash, resources, bootstrap, staticDirectory, admissionModule, helperPath, ...(memoryProposals ? { proposalHelperPath, peerCli, peerDrained, ownedPeerCount: ownedPeers.size, peer: peerStateFinal, readiness: 'Fictional ACP version and fingerprint-bound success record; this run does not test real model readiness.', entitlement: 'Managed, required, independently signed throwaway host grant for reasoning only.' } : {}), runtime, runtimePin: pin, nativeModules: moduleHashes, sourceHashes, resourceHashes, fixtureSourceHashes, fixtureSetup: `Source createServiceAdminPasswordVerifier is used only to provision a fictional managed-admin verifier; no source service/UI/helper fallback is available in packaged mode.${memoryProposals ? ' The fixture ACP peer runs separately on the QA Node runtime. Selected source or compiled packaged modules provision the fictional profile policy and fingerprint-bound readiness fixture.' : ''}${memoryRecovery ? ' Recovery fixtures stop the actual helper after durable signed preparation; only disposable workspace keys are read to construct that test request.' : ''}`, checks, errors, blockedNetwork, decisions, closures, adminHeadersSeen, cleanup,
     layer: `${packaged ? 'Actual specified packaged Electron/Node executable, compiled bootstrap, bundled UI and packaged memory helper' : 'Actual source bootstrap and built React UI'}; authenticated HTTP and admitted native memory modules in a fictional disposable profile.${memoryProposals ? ' Rendered Ask dispatches actual application ACP and private proposal MCP to the native helper; only the ACP peer and readiness are fictional.' : ''} No real Hermes CLI, model/provider calls, customer accounts, installed-device restart IPC, OS keychain or Windows device acceptance.`,

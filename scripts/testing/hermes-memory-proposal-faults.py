@@ -213,7 +213,7 @@ class HermesMemoryProposalFaults(unittest.TestCase):
         value = result["result"]
         self.assertEqual(set(value), {"version", "id", "reviewLocation"})
         self.assertEqual(value["version"], 1)
-        self.assertEqual(value["reviewLocation"], "You → Bud → Bud’s memory")
+        self.assertEqual(value["reviewLocation"], "Workspace → What Bud learned")
         if expected_id is not None:
             self.assertEqual(value["id"], expected_id)
         self.assertEqual([path.name for path in self.pending_dir.glob("*.json")], [value["id"] + ".json"])
@@ -264,7 +264,7 @@ class HermesMemoryProposalFaults(unittest.TestCase):
             self.assertEqual(saved["state"], "prepared")
             self.assertTrue(pending.is_file())
             self.assertFalse(stage.exists())
-            proposal = {"version": 1, "id": saved["id"], "reviewLocation": "You → Bud → Bud’s memory"}
+            proposal = {"version": 1, "id": saved["id"], "reviewLocation": "Workspace → What Bud learned"}
         else:
             proposal = self.assert_pending(self.call())
         preview = self.call(self.request("preview", id=proposal["id"]))

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Hermios</title>
+  <defs>
+    <linearGradient id="hermios-gold" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#A8741F"/>
+      <stop offset="0.55" stop-color="#D9AE4F"/>
+      <stop offset="1" stop-color="#F6DE92"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="#0D0D0F"/>
+  <g transform="translate(-14 12)">
+    <g fill="#FFFFFF">
+      <rect x="96" y="148" width="60" height="232" rx="14"/>
+      <rect x="236" y="148" width="60" height="232" rx="14"/>
+      <rect x="140" y="236" width="112" height="56"/>
+    </g>
+    <g fill="url(#hermios-gold)">
+      <path d="M296 204 C334 150 388 112 448 96 C436 150 396 196 296 236 Z"/>
+      <path d="M296 250 C342 218 390 202 440 200 C414 238 366 266 296 278 Z"/>
+      <path d="M296 292 C332 280 370 278 408 286 C380 312 340 324 296 322 Z"/>
+    </g>
+  </g>
+</svg>

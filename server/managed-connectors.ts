@@ -4,7 +4,8 @@ import type { AppConfig } from './config.ts';
 import { currentWorkerProfile } from './hermes-profile.ts';
 import { parseMailScanResult, type MailScanRequest } from '../shared/mail-ingestion.ts';
 import { managedConnectorApps } from './worker-model-access.ts';
-import { classifyAppTool } from '../shared/app-tool-policy.ts';
+import { classifyAppTool, type MailboxAccess } from '../shared/app-tool-policy.ts';
+import { ConnectionAuthorizationError, managedAuthorizationFailure } from './connection-outcome.ts';
 /** Re-exported so callers of the managed connector surface do not need to know
  * where the installation's provisioning record lives. */
 export { managedConnectorApps };
@@ -17,6 +18,13 @@ type Status = { sourceKind?: 'personal' | 'office_shared'; policyRevision?: numb
   tools: {available:boolean;names:string[]} };
 
 export const managedConnectorConfigured = (cfg: AppConfig): boolean => cfg.composio?.managed !== undefined;
+/** The last checked Gmail scope per managed credential (by hash; the credential
+ * itself is never kept here). The Ask broker reads it so it never shows a send
+ * card for a shared mailbox the gateway holds to the three reads. Unknown means
+ * no status was read yet: the gateway still enforces. */
+const mailboxAccessByCredential = new Map<string, MailboxAccess>();
+const credentialKey = (credential: string) => createHash('sha256').update(credential).digest('hex');
+export const managedMailboxAccess = (credential: string): MailboxAccess | undefined => mailboxAccessByCredential.get(credentialKey(credential));
 export function managedConnectorSettings(cfg: AppConfig, expectedPolicyRevision?: number): {key:string;url:string;headers:Record<string,string>} {
   if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error('The reviewed mail policy needs checking.');
   const managed = cfg.composio?.managed;
@@ -35,6 +43,10 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
   const response=await fetch(new URL(path,settings.url), {method:body===undefined?'GET':'POST',redirect:'error',signal,
     headers:{...settings.headers,...(expectedPolicyRevision === undefined ? {} : {'x-realbud-policy-revision': String(expectedPolicyRevision)}),accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
   if (!response.ok || response.redirected) {
+    if (path === '/v1/connectors/authorize') {
+      if (response.redirected) await response.body?.cancel().catch(() => {});
+      throw managedAuthorizationFailure(response.status, response.redirected ? undefined : await authorizationFailureCode(response));
+    }
     await response.body?.cancel().catch(()=>{});
     const message=response.status===402?'Your managed service is paused or expired. Contact service support.':
       response.status===403?'Managed connection access was revoked or changed. Contact service support.':
@@ -49,6 +61,25 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
   try { for (;;) { const {value,done}=await reader.read(); if(done)break;size+=value.length;if(size>(path==='/v1/connectors/mail-attachment'?2_800_000:1_000_000))throw new Error('The managed connection response was too large.');chunks.push(value); } }
   finally { await reader.cancel().catch(()=>{});reader.releaseLock(); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('The managed connection response was incomplete.'); }
+}
+/** Read only the gateway's bounded error-code envelope. Do not retain or show
+ * upstream diagnostics, credentials, account payloads or error-body links. */
+async function authorizationFailureCode(response: Response): Promise<string | undefined> {
+  if (!response.body) return;
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      size += value.length; if (size > 4096) return;
+      chunks.push(value);
+    }
+    const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).join(',') === 'error') {
+      const code = (value as { error?: unknown }).error;
+      if (typeof code === 'string' && /^[a-z_]{1,100}$/.test(code)) return code;
+    }
+  } catch { /* An unreadable error is an unknown outcome, not a refusal. */ }
+  finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 export async function scanManagedMail(cfg: AppConfig, accountId: string, scope: MailScanRequest, signal: AbortSignal, expectedPolicyRevision?: number) {
   if (typeof accountId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(accountId)) throw Object.assign(new Error('Review and select the Gmail account before scanning mail.'), { status: 400 });
@@ -75,6 +106,7 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
     typeof value.checkedAt !== 'string' || value.checkedAt.length > 40 || !Number.isFinite(Date.parse(value.checkedAt)) ||
     !record(value.services) || Object.keys(value.services).some(key => !granted.includes(key)) ||
     !record(value.tools)) return invalid();
+  if (value.mailboxAccess !== undefined && value.mailboxAccess !== 'full' && value.mailboxAccess !== 'read_only') return invalid();
   if ((value.sourceKind !== undefined || value.policyRevision !== undefined) &&
     (!['personal', 'office_shared'].includes(String(value.sourceKind)) || !Number.isSafeInteger(value.policyRevision) || Number(value.policyRevision) < 0)) return invalid();
   const tools = value.tools;
@@ -98,6 +130,12 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   }
   // Tools exist only for a connected app; a connected app may still expose none.
   if (tools.available !== (tools.names.length > 0) || (tools.names.length > 0 && !anyConnected)) return invalid();
+  // A shared office mailbox without a reported grant is read-only; an older
+  // gateway that reports nothing leaves a personal mailbox's scope unknown.
+  const credential = managedConnectorSettings(cfg).key;
+  const access: MailboxAccess | undefined = value.mailboxAccess === 'full' || value.mailboxAccess === 'read_only' ? value.mailboxAccess
+    : value.sourceKind === 'office_shared' ? 'read_only' : undefined;
+  if (access) mailboxAccessByCredential.set(credentialKey(credential), access); else mailboxAccessByCredential.delete(credentialKey(credential));
   return {
     checkedAt: new Date(value.checkedAt).toISOString(), managed: true, serviceExpiresAt: Number(value.serviceExpiresAt),
     ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
@@ -125,12 +163,19 @@ function toolNameAllowed(name: unknown, granted: string[]): boolean {
 /** Any Composio toolkit: the gateway admits it into this office's own project
  * on demand, or refuses. Gmail follows its own reviewed path there. */
 export async function authorizeManagedConnection(cfg: AppConfig, app: string): Promise<{url:string}> {
-  if(typeof app!=='string'||!APP_SLUG.test(app))throw Object.assign(new Error('Name the app to connect, for example “connect Xero”.'),{status:400});
-  const value=await request(cfg,'/v1/connectors/authorize',{app}) as {url?:unknown};
-  if(typeof value?.url!=='string' || value.url.length>4096)throw new Error('The managed sign-in response needs review.');
-  const url=new URL(value.url);
-  if(url.protocol!=='https:' || url.username || url.password || url.port || !(url.hostname==='composio.dev'||url.hostname.endsWith('.composio.dev')))throw new Error('The managed sign-in link needs review.');
-  return {url:value.url};
+  if(typeof app!=='string'||!APP_SLUG.test(app))throw new ConnectionAuthorizationError('not-started', 'invalid-app', 400);
+  try { managedConnectorSettings(cfg); }
+  catch { throw new ConnectionAuthorizationError('not-started', 'setup', 403); }
+  try {
+    const value=await request(cfg,'/v1/connectors/authorize',{app}) as {url?:unknown};
+    if(typeof value?.url!=='string' || value.url.length>4096)throw new ConnectionAuthorizationError('unknown', 'unknown');
+    const url=new URL(value.url);
+    if(url.protocol!=='https:' || url.username || url.password || url.port || !(url.hostname==='composio.dev'||url.hostname.endsWith('.composio.dev')))throw new ConnectionAuthorizationError('unknown', 'unknown');
+    return {url:value.url};
+  } catch (error) {
+    if (error instanceof ConnectionAuthorizationError) throw error;
+    throw new ConnectionAuthorizationError('unknown', 'unknown');
+  }
 }
 
 /** A provider account can stay the same while its office grant changes. */

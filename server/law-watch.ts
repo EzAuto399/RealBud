@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
+import { readPrivateFileSync, writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { LAW_REFERENCE_FILE } from "./law-reference.ts";
 import { askWorker, lastJsonObject, type WorkerChatOpts } from "./recipe-draft.ts";
@@ -183,7 +183,9 @@ export function persistLawWatchResult(result: { drift: DriftItem[]; checkedSourc
 function appendConfirmedDrift(item: DriftItem): void {
   const vault = seedVault();
   const path = join(vault, LAW_REFERENCE_FILE);
-  const existing = readFileSync(path, "utf8");
+  // The workroom is worker-writable: never follow a planted link or alias.
+  const existing = readPrivateFileSync(path);
+  if (existing === null) throw new Error("The law reference note is missing.");
   const day = new Date().toISOString().slice(0, 10);
   const block =
     `\n## Confirmed drift — ${day}\n\n` +

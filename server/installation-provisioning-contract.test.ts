@@ -7,16 +7,17 @@
  * characters and the parser stopped at 80, so a link failed only after the
  * website had already recorded the installation as provisioned.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fixture } from '../managed-gateway/testing.ts';
 import { fileSecretStore, InstallationProvisioning, SPEND_CAP_LABEL_MAX, type ProvisioningDescriptor } from '../managed-gateway/provisioning.ts';
 import type { ComposioOrgClient } from '../managed-gateway/composio-org.ts';
 import type { ModelviaClient, ModelviaCustomer } from '../managed-gateway/modelvia-keys.ts';
 import { isProvisioningSkipped, parseInstallationProvisioning } from '../shared/office-link.ts';
 import { createWorkerModelAccess, setWorkerModelGrant } from './worker-model-access.ts';
+import { createOfficeLink } from './office-link.ts';
 import { HERMES_PIN } from './hermes-pin.ts';
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 
@@ -68,6 +69,77 @@ function desktop() {
 const wire = (descriptor: ProvisioningDescriptor): unknown => JSON.parse(JSON.stringify(descriptor));
 
 describe('gateway descriptor → desktop grant', WINDOWS_PROFILE_TEST_OPTIONS, () => {
+  it('wires the approved browser link through reporting into the private model and managed apps once', async () => {
+    const g = gateway({ active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2 });
+    const d = desktop();
+    let approved = false;
+    let request: { id: string; token: string } | undefined;
+    let descriptor: ProvisioningDescriptor | undefined;
+    let releaseReport!: () => void;
+    const reportGate = new Promise<void>(resolve => { releaseReport = resolve; });
+    const reportBodies: Record<string, unknown>[] = [];
+    const onLinked = vi.fn();
+    const serviceGrant = vi.fn(async () => {});
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const route = String(url).split('/api/installations/')[1];
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (route === 'link-requests') {
+        request = body;
+        return Response.json({ version: 1, purpose: 'installation-link-issued', approvalUrl: `https://realbud.app/link/${'A'.repeat(43)}`, displayCode: 'ABCD-EFGH', expiresAt: new Date(Date.now() + 600_000).toISOString() });
+      }
+      if (!request || new Headers(init?.headers).get('authorization') !== `Bearer ${request.token}`) return Response.json({}, { status: 401 });
+      if (route === 'link-requests/status') return Response.json(approved
+        ? { version: 1, purpose: 'installation-link-status', state: 'linked', companyId: g.f.tenant.companyId, agencyLabel: 'Fictional Office', installationId: request.id }
+        : { version: 1, purpose: 'installation-link-status', state: 'pending', expiresAt: new Date(Date.now() + 600_000).toISOString() });
+      if (route === 'report' && init?.method === 'POST') {
+        reportBodies.push(body);
+        await reportGate;
+        if (body.needsProvisioning === true) {
+          descriptor = await g.provision(request.id);
+          return Response.json({ provisioning: wire(descriptor) });
+        }
+        return Response.json({ ok: true });
+      }
+      return Response.json({}, { status: 404 });
+    }) as typeof fetch;
+    const link = createOfficeLink({ directory: d.root, appVersion: 'fictional', platform: 'darwin', fetch: fetcher,
+      report: async () => ({ appVersion: 'fictional', workerVersion: null, workerReady: false }),
+      provisioning: { ...d.access, active: async () => (await d.access.state()).provisioned, onLinked, serviceGrant } });
+    try {
+      await link.beginBrowserLink({ label: 'Fictional reception computer' });
+      expect((await link.browserLinkStatus()).state).toBe('pending');
+      expect(reportBodies).toEqual([]);
+      expect(await d.access.env()).toEqual({});
+      approved = true;
+      expect(await link.browserLinkStatus()).toEqual({ state: 'linked', agencyLabel: 'Fictional Office' });
+      await vi.waitFor(() => expect(reportBodies).toHaveLength(1));
+      expect(await link.status()).toMatchObject({ state: 'linked', provisioned: false });
+      expect(d.saved).toEqual([]);
+      expect(onLinked).not.toHaveBeenCalled();
+
+      releaseReport();
+      await vi.waitFor(async () => expect((await link.status()).provisioned).toBe(true), { timeout: 30_000 });
+      await vi.waitFor(() => expect(serviceGrant).toHaveBeenCalledWith({ force: true }));
+      expect(onLinked).toHaveBeenCalledTimes(1);
+      expect(reportBodies[0]).toMatchObject({ workerReady: false, needsProvisioning: true });
+      expect(await d.access.env()).toEqual({ REALBUD_MODEL_API_KEY: descriptor!.model.key });
+      expect(d.saved).toEqual([{ composio: { managed: { endpoint: 'https://managed.example.invalid', credential: descriptor!.connector.credential, profile: HERMES_PIN.profile }, key: '', apiKey: '', url: '', selectedAccounts: {} } }]);
+      expect(await d.access.state()).toMatchObject({ installationId: request!.id, apps: ['gmail'] });
+      const publicStatus = JSON.stringify(await link.status());
+      const savedLink = readFileSync(join(d.root, 'office-link', 'link.json'), 'utf8');
+      for (const secret of [descriptor!.model.key!, descriptor!.connector.credential!, 'ak_fictional_office_project_key_']) {
+        expect(publicStatus).not.toContain(secret);
+        expect(savedLink).not.toContain(secret);
+      }
+      // Reporting again must not rotate credentials or repeat automatic setup.
+      await link.report();
+      expect(reportBodies[1]).not.toHaveProperty('needsProvisioning');
+      expect(d.saved).toHaveLength(1);
+      expect(onLinked).toHaveBeenCalledTimes(1);
+      expect(serviceGrant).toHaveBeenLastCalledWith({ force: false });
+    } finally { releaseReport(); g.close(); }
+  });
+
   it.each([
     ['A$1 a month, one turn at a time', { active: true, monthlyCapNanoAud: '1000000000', maxConcurrent: 1 }, 'A$1/month, A$1/request, 1 at once'],
     ['the A$200 default, two at once', { active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2 }, 'A$200/month, A$4/request, 2 at once'],

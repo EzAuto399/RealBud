@@ -33,13 +33,24 @@ const seed = spawnSync(process.execPath, ["--input-type=module", "-e", `
   store.appendMessage(bot.threadId, { role: 'user', kind: 'text', text: 'Revised request', parentId: blank.id });
   store.appendMessage(bot.threadId, { role: 'bot', kind: 'text', text: 'Revised response (fictional).' });
 `], { cwd: root, env, encoding: "utf8" });
+const finishFirstRun = async base => {
+  // First run is a server receipt (/api/onboarding), not a browser flag: walk the
+  // profile -> office-rules -> complete stages without seeding the sample desk.
+  const headers = { "content-type": "application/json", "x-realbud-session": (await (await fetch(`${base}/api/session`)).json()).token };
+  let state = await (await fetch(`${base}/api/onboarding`, { headers })).json();
+  for (const stage of ["office-rules", "complete"]) {
+    const saved = await fetch(`${base}/api/onboarding`, { method: "PUT", headers, body: JSON.stringify({ expectedScope: state.scope, expectedRevision: state.revision, stage }) });
+    state = await saved.json();
+    assert.equal(saved.status, 200, `Onboarding ${stage} failed: ${JSON.stringify(state)}`);
+  }
+};
 let child, browser, page, logs = "";
 try {
   assert.equal(seed.status, 0, seed.stderr);
   const reservation = createServer(); await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { ...env, OMB_PORT: String(port), OMB_STATIC_DIR: join(root, "dist") }, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env: { ...env, OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR ?? join(root, "dist") }, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", data => { logs += data; }); child.stderr.on("data", data => { logs += data; });
   const until = async (check, label) => {
     const deadline = Date.now() + 15_000;
@@ -47,11 +58,11 @@ try {
     throw new Error(`Timed out: ${label}`);
   };
   await until(async () => (await fetch(`${base}/api/health`)).ok, "server startup");
+  await finishFirstRun(base);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   await context.addInitScript(() => {
-    localStorage.setItem("realbud.first-run-done", "1");
     window.copyAttempts = []; window.failCopy = false;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => {
       window.copyAttempts.push(text);
@@ -61,7 +72,7 @@ try {
   page = await context.newPage(); const errors = [], messageWrites = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("request", req => { if (req.method() === "POST" && /\/messages(?:\/[^/]+\/edit)?$/.test(new URL(req.url()).pathname)) messageWrites.push(req.url()); });
-  await page.goto(base); await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.goto(base); await page.getByRole("button", { name: /^Work\b/ }).first().click();
   const request = page.getByRole("article", { name: "Yoda · Telegram", exact: true }).filter({ hasText: short });
   await request.waitFor();
   assert.equal(await request.locator(".ask-request-body").innerText(), short);
@@ -112,7 +123,7 @@ try {
   assert.equal(await versions.getByRole("button", { name: "Previous request version" }).isDisabled(), true);
   await versions.getByRole("button", { name: "Next request version" }).click();
   await page.getByText("Revised response (fictional).", { exact: true }).waitFor();
-  await page.reload(); await page.getByRole("button", { name: /^Ask\b/ }).first().click();
+  await page.reload(); await page.getByRole("button", { name: /^Work\b/ }).first().click();
   await page.getByText("Revised response (fictional).", { exact: true }).waitFor();
   await request.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(out, "telegram-ask-desktop.png") });
@@ -136,5 +147,5 @@ try {
   await page?.screenshot({ path: join(out, "failure.png") }).catch(() => {});
   writeFileSync(join(out, "failure.log"), `${error.stack}\n${logs}`); throw error;
 } finally {
-  await browser?.close(); child?.kill("SIGTERM"); rmSync(scratch, { recursive: true, force: true });
+  await browser?.close(); child?.kill("SIGTERM"); rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

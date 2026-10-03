@@ -107,8 +107,10 @@ async function* chunks(bytes: Buffer) { for (let offset = 0; offset < bytes.leng
 async function collect(stream: AsyncIterable<Uint8Array>) { const parts: Buffer[] = []; for await (const part of stream) parts.push(Buffer.from(part)); return Buffer.concat(parts); }
 
 const faults = ['missing parent', 'missing successor', 'parent request digest', 'successor reason'] as const;
+/** A store read adds the derived firstPass view; the stored record never has it. */
+const bankRecord = ({ firstPass: _derived, ...row }: ReturnType<typeof populate>['rows'][number]) => ({ ...row, kind: 'bank' });
 function broken(rows: ReturnType<typeof populate>['rows'], fault: typeof faults[number]): CatalogRecord[] {
-  const records = structuredClone(rows).map(row => ({ ...row, kind: 'bank' }));
+  const records = structuredClone(rows).map(bankRecord);
   if (fault === 'missing parent') records.shift();
   else if (fault === 'missing successor') records.pop();
   else if (fault === 'parent request digest') records[0]!.value.supersededBy!.requestDigest = '0'.repeat(64);
@@ -146,14 +148,14 @@ describe('bank amendment graph backup boundaries', () => {
     try { expected = populate(database); } finally { database.close(); }
     expect(source.key.equals(target.key)).toBe(false);
     const catalog = await newCatalog(source, 'catalog');
-    for (const row of expected.rows) catalog.addRecord({ ...row, kind: 'bank' });
+    for (const row of expected.rows) catalog.addRecord(bankRecord(row));
     expect(catalog.validate()).toMatchObject({ records: 3, sealed: false });
     let exported: BackupArchiveReceipt | undefined;
     const archive = await collect(encodeBackupCatalog(catalog, { passphrase: phrase, createdAt, databasePresent: true, onComplete: receipt => { exported = receipt; } }));
     const decoded = await decodeBackupCatalog(chunks(archive), { directory: join(scratch.directory, 'decoded'), key: target.key, passphrase: phrase, expectedArchiveDigest: sha(archive) }); catalogs.push(decoded.catalog);
     expect(decoded.receipt).toEqual(exported!.receipt);
     expect(decoded.catalog.summary()).toMatchObject({ records: 3, sealed: true });
-    expect([...decoded.catalog.iterateRecords('bank')]).toEqual(expected.rows.map(row => ({ ...row, kind: 'bank' })));
+    expect([...decoded.catalog.iterateRecords('bank')]).toEqual(expected.rows.map(bankRecord));
     const transformed = await newCatalog({ ...scratch, key: target.key, workspaceId: source.workspaceId }, 'transformed', false);
     transformPrivateBackupCatalog({ source: decoded.catalog, destination: transformed, at: 1000 });
     const directoryId = randomUUID(), parent = join(target.directory, 'private-backup-v2', 'prepared');

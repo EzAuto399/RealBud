@@ -47,6 +47,13 @@ outputs/**/package-final/
 outputs/**/*.app/
 outputs/**/*.dmg
 outputs/**/*.zip
+# QA runs may contain enrolled workspaces, browser sessions and private keys.
+# Keep generated evidence local by default. Add only individually reviewed,
+# secret-free receipts or screenshots with `git add -f <exact-path>`.
+/outputs/
+/.playwright-mcp/
+# Local IDE launch entries can point at temporary scripts and this Mac's Node.
+/.claude/launch.json
 __pycache__/
 *.pyc
 

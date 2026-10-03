@@ -60,6 +60,14 @@ export function createSourceBillsApi(host: BillApiHost) {
         ...(includeSeriesId ? { includeSeriesId } : {}) }) } };
     }
     const bySource = path.match(/^\/api\/bill-occurrences\/by-source\/([a-f0-9]{64})$/);
+    if (path === '/api/bill-occurrences/duplicate-candidates' && method === 'POST') {
+      if (!record(body) || typeof body.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(body.itemId) || typeof body.messageId !== 'string' || !/^[a-fA-F0-9]{1,128}$/.test(body.messageId)) return fail('Choose the saved mail message being reviewed.');
+      const { itemId, messageId, ...review } = body;
+      const source = await host.source(itemId, messageId);
+      if (host.recovery()) fail('The private book needs recovery.', 503);
+      property(review.facts);
+      return { status: 200, body: host.register().duplicateCandidates(review, source) };
+    }
     if (bySource && method === 'GET') {
       billQuery(url.searchParams, []);
       const register = host.register(), saved = register.findBySourceIdentity(bySource[1]);
@@ -78,6 +86,13 @@ export function createSourceBillsApi(host: BillApiHost) {
       return { status: 200, body: previewBillSource(await host.source(evidence[1], messageId)) };
     }
     const occurrence = path.match(/^\/api\/bill-occurrences\/(source-bill:[a-f0-9]{64})$/);
+    const financialReview = path.match(/^\/api\/bill-occurrences\/(source-bill:[a-f0-9]{64})\/financial-review$/);
+    if (financialReview && method === 'POST') {
+      const register = host.register(), saved = register.getOccurrence(financialReview[1]);
+      if (!saved) return fail('That saved bill is unavailable.', 404);
+      property(saved.facts);
+      return { status: 200, body: register.reviewFinancial(saved.id, body, host.actorId()) };
+    }
     const occurrenceSource = path.match(/^\/api\/bill-occurrences\/(source-bill:[a-f0-9]{64})\/source$/);
     if (occurrenceSource && method === 'GET') {
       billQuery(url.searchParams, []);
@@ -101,7 +116,11 @@ export function createSourceBillsApi(host: BillApiHost) {
       // Recheck after the asynchronous read and before the synchronous CAS.
       if (host.recovery()) fail('The private book needs recovery.',503);
       property(review.facts);
-      return { status: 200, body: occurrence ? host.register().correct(occurrence[1],review,source,host.actorId()) : host.register().accept(review,source,host.actorId()) };
+      try { return { status: 200, body: occurrence ? host.register().correct(occurrence[1],review,source,host.actorId()) : host.register().accept(review,source,host.actorId()) }; }
+      catch (error) {
+        if (error instanceof Error && (error as { code?: string }).code === 'bill_duplicate_review_required') return { status: 409, body: { error: error.message, code: 'bill_duplicate_review_required' } };
+        throw error;
+      }
     }
     if (path === '/api/bill-series' && method === 'POST') {
       if (!record(body)) return fail('Choose the received bill and reviewed arrival pattern.');

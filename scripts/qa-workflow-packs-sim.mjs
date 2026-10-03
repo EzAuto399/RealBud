@@ -30,7 +30,8 @@ import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server
 browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
 browserRuntime.resumeConnection = async () => {};
 `);
-const dumpPath = join(HOME, "fake-acp-dump.json");
+// Fixture evidence obeys the same write boundary as the real worker.
+const dumpPath = join(HOME, ".realbud", "vault", "bud-work", "fake-acp-dump.json");
 chmodSync(FAKE_CLI, 0o755);
 writeFileSync(
   cuaPath,

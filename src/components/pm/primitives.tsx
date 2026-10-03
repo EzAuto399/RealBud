@@ -132,7 +132,7 @@ export function CaseQueueRow({
     >
       <span className="text-[14px] font-medium text-ink">{title}</span>
       {/* A row is a pointer to the case, not the case: two lines, the canvas has the rest. */}
-      <span className="line-clamp-2 text-[12px] text-ink-muted" title={meta}>{meta}</span>
+      <span className={cn("line-clamp-2 text-[12px]", selected ? "text-ink-secondary-strong" : "text-ink-muted")} title={meta}>{meta}</span>
       {showAction ? <span className="text-[12px] text-agency">{action}</span> : null}
     </button>
   );

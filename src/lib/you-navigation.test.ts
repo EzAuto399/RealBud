@@ -15,16 +15,17 @@ describe("settings navigation", () => {
       expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: "auto" });
     } finally { vi.unstubAllGlobals(); }
   });
-  it("keeps a revealed target below the sticky jump navigation", () => {
-    const target = { tagName: "DETAILS", open: false, parentElement: null, getBoundingClientRect: () => ({ top: 310 }) };
-    const scroller = { scrollTop: 20, getBoundingClientRect: () => ({ top: 10 }),
-      querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 70 }) }), scrollTo: vi.fn() };
+  it("opens a section folded inside Settings & help and scrolls it just below the top", () => {
+    const settings = { tagName: "DETAILS", open: false, parentElement: null };
+    const target = { tagName: "DETAILS", open: false, parentElement: settings, getBoundingClientRect: () => ({ top: 310 }) };
+    const scroller = { scrollTop: 20, getBoundingClientRect: () => ({ top: 10 }), scrollTo: vi.fn() };
     vi.stubGlobal("document", { getElementById: () => target, querySelector: () => scroller });
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
     try {
       scrollYouTarget("you-service-admin");
       expect(target.open).toBe(true);
-      expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 252, behavior: "auto" });
+      expect(settings.open).toBe(true);
+      expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 312, behavior: "smooth" });
     } finally { vi.unstubAllGlobals(); }
   });
   it.each([
@@ -35,6 +36,8 @@ describe("settings navigation", () => {
     ["#you-website", "you-website"],
     ["#you-advanced", "you-advanced"],
     ["#you-service-admin", "you-service-admin"],
+    ["#you-memory", "you-memory"], ["#you-settings", "you-settings"],
+    ["#you-browser", "you-browser"],
   ])("resolves %s to its settings section", (hash, id) => {
     expect(youHashTarget(hash)).toBe(id);
   });

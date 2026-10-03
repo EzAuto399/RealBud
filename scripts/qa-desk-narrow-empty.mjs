@@ -39,13 +39,13 @@ const fits = async locator => locator.evaluate(element => {
 
 // Use actual wheel input over the intended scroll region. No scrollIntoView,
 // scrollTop assignment or forced clicks can hide a trapped setup control.
-async function wheelTo(locator, area = page.locator('.desk-workspace')) {
+async function wheelTo(locator, area = page.locator('.desk-content')) {
   await locator.waitFor({ state: 'attached' });
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const target = await locator.boundingBox(), region = await area.boundingBox();
     assert.ok(target && region, 'Target and scroll region have rendered bounds');
     const top = Math.max(0, region.y) + 3;
-    const bottom = Math.min(page.viewportSize().height - 64, region.y + region.height) - 3;
+    const bottom = Math.min(page.viewportSize().height, region.y + region.height) - 3;
     const hit = await locator.evaluate(element => {
       const rect = element.getBoundingClientRect();
       const under = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -66,14 +66,49 @@ async function metrics() {
       return { top: Math.round(rect.top), height: Math.round(rect.height), scrollTop: Math.round(element.scrollTop),
         clientHeight: element.clientHeight, scrollHeight: element.scrollHeight };
     };
-    const header = main.querySelector('.pm-desk-header');
-    return { width: innerWidth, main: box(main), header: box(header), canvas: box(main.querySelector('.pm-split-canvas')),
-      headerMaxHeight: getComputedStyle(header).maxHeight, outerOverflow: getComputedStyle(main).overflowY,
-      emptyCanvas: main.getAttribute('data-empty-canvas'), documentWidth: document.documentElement.scrollWidth };
+    const scrollOwners = [main, ...main.querySelectorAll('*')].filter(element => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY);
+    }).map(element => element.classList.contains('desk-content') ? '.desk-content'
+      : element.classList.contains('desk-queue-column') ? '.desk-queue-column' : element.id || element.className);
+    return { width: innerWidth, main: box(main), header: box(main.querySelector('.pm-desk-header')),
+      content: box(main.querySelector('.desk-content')), queue: box(main.querySelector('.desk-queue-column')),
+      case: box(main.querySelector('.desk-case-column')), scrollOwners,
+      documentScrollTop: document.scrollingElement.scrollTop, documentWidth: document.documentElement.scrollWidth };
   });
 }
+async function singleContentScroll() {
+  const measured = await metrics();
+  assert.deepEqual(measured.scrollOwners, ['.desk-content'], 'Desk has one scroll owner: .desk-content');
+  assert.equal(measured.main.scrollTop, 0, 'The whole Desk does not scroll');
+  assert.equal(measured.header.scrollTop, 0, 'The toolbar does not scroll');
+  assert.ok(measured.content.top >= measured.header.top + measured.header.height - 1, 'The scroll region starts below the fixed toolbar');
+  return measured;
+}
+async function wheelMovesContent(area) {
+  const content = page.locator('.desk-content');
+  const before = await singleContentScroll();
+  const region = await content.boundingBox(), target = await area.boundingBox();
+  assert.ok(region && target);
+  const top = Math.max(region.y, target.y, 0) + 4;
+  const bottom = Math.min(region.y + region.height, target.y + target.height, page.viewportSize().height) - 4;
+  assert.ok(bottom > top, 'The wheel target intersects the visible content');
+  const point = { x: target.x + target.width / 2, y: (top + bottom) / 2 };
+  assert.ok(await area.evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), point), 'Wheel input lands over the intended column');
+  const maximum = before.content.scrollHeight - before.content.clientHeight;
+  assert.ok(maximum > 1, 'Sample content overflows so wheel scrolling is exercised');
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.wheel(0, before.content.scrollTop >= maximum - 1 ? -120 : 120);
+  await page.waitForFunction(previous => Math.abs(document.querySelector('.desk-content').scrollTop - previous) > 1, before.content.scrollTop);
+  const after = await singleContentScroll();
+  assert.equal(after.header.top, before.header.top, 'The toolbar stays in place');
+  assert.equal(after.documentScrollTop, before.documentScrollTop, 'The document does not take the wheel');
+  assert.equal(after.queue.scrollTop, 0, 'The wide queue has no nested scroll');
+  assert.equal(after.case.scrollTop, 0, 'The case has no nested scroll');
+  return { before: before.content.scrollTop, after: after.content.scrollTop };
+}
 async function openOverview() {
-  const show = page.getByRole('region', { name: 'This morning', exact: true }).getByRole('button', { name: 'Show addresses', exact: true });
+  const show = page.getByRole('region', { name: 'This morning', exact: true }).getByRole('button', { name: 'Check details', exact: true });
   if (await show.count()) { await wheelTo(show); await show.click(); }
 }
 async function noOverflow() {
@@ -117,57 +152,61 @@ try {
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Narrow Desk Person');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.locator('.desk-workspace[data-empty-canvas="true"]').waitFor();
+  await page.locator('.desk-content .desk-empty-canvas').waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'complete');
 
   await openOverview();
   const setup = page.getByRole('region', { name: 'Workspace setup', exact: true });
   const expand = setup.getByRole('button', { name: /^Workspace setup · / });
   await wheelTo(expand); await expand.click();
-  await wheelTo(setup);
   const setupAction = setup.getByRole('button', { name: 'Open Agency workflow setup', exact: true });
   const title = setup.getByText('Step 1 of 3: Your agency', { exact: true });
   await wheelTo(title); await wheelTo(setupAction);
   assert.ok(await fits(setupAction));
-  measurements.empty390 = await metrics();
-  assert.ok(measurements.empty390.main.scrollTop > 0, 'The whole empty desk scrolls');
-  assert.equal(measurements.empty390.header.scrollTop, 0, 'Setup is not trapped in a separate header scroller');
-  assert.ok(measurements.empty390.header.height > measurements.empty390.main.height / 2, 'The header is no longer capped at half the window');
+  measurements.empty390 = await singleContentScroll();
   await noOverflow();
   await page.screenshot({ path: join(output, 'setup-390.png') });
   await setupAction.click();
   await page.getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
   await page.locator('#schedule-packs').waitFor();
-  record('At 390px, wheel input reaches setup title and action in one outer scroll; clicking opens Agency workflow setup');
+  record('At 390px, setup title and action are reachable inside .desk-content below a fixed toolbar; clicking opens Agency workflow setup');
 
+  await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
   await page.getByRole('button', { name: 'Desk', exact: true }).click();
-  await page.locator('.desk-workspace[data-empty-canvas="true"]').waitFor();
+  await page.locator('.desk-content .desk-empty-canvas').waitFor();
   for (const width of [720, 1400]) {
     await page.setViewportSize({ width, height: 844 });
-    const measured = await metrics(); measurements[`empty${width}`] = measured;
-    assert.ok(measured.header.height <= measured.main.height * 0.48 + 2, `${width}px retains the original header cap`);
-    assert.ok(measured.canvas.height >= measured.main.height * 0.5, `${width}px retains the case canvas split`);
-    assert.equal(measured.main.scrollTop, 0);
+    measurements[`empty${width}`] = await singleContentScroll();
     await noOverflow(); await page.screenshot({ path: join(output, `empty-${width}.png`) });
   }
-  record('At 720px and 1400px, the empty Desk retains the original header/canvas split without overflow');
+  record('At 720px and 1400px, the empty Desk has one content scroll owner and no horizontal overflow');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const sample = page.locator('.desk-empty-canvas').getByRole('button', { name: 'Run sample morning', exact: true });
+  const sample = page.locator('.desk-empty-canvas').getByRole('button', { name: 'Check sample tasks', exact: true });
   await wheelTo(sample); await noOverflow();
   await page.screenshot({ path: join(output, 'sample-action-390.png') });
   const practiced = page.waitForResponse(response => new URL(response.url()).pathname === '/api/desk/practice' && response.request().method() === 'POST');
   await sample.click(); assert.equal((await practiced).status(), 200);
   const snapshot = await request('/api/desk');
   assert.ok(snapshot.lastRunAt !== null && snapshot.drafts.length > 0);
-  await page.locator('.desk-case').waitFor();
-  assert.equal(await page.locator('.desk-workspace').getAttribute('data-empty-canvas'), null);
+  await page.locator('.desk-case').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('.desk-empty-canvas').count(), 0);
   record('Wheel input reaches the sample action; its actual local practice request creates sample review cases');
 
-  const queue = page.getByRole('listbox', { name: 'Case queue', exact: true });
-  const queuePane = page.locator('.desk-queue-pane');
+  const queue = page.getByRole('listbox', { name: 'Case queue', exact: true, includeHidden: true });
+  const queuePane = page.locator('.desk-queue-column');
+  await page.getByRole('dialog', { name: 'Tasks', exact: true }).waitFor();
   await queue.waitFor();
-  const draft = snapshot.drafts.find(row => row.status === 'pending'); assert.ok(draft);
+  assert.equal(await page.locator('.desk-content').evaluate(element => getComputedStyle(element).overflowY), 'hidden');
+  assert.deepEqual((await metrics()).scrollOwners, ['.desk-queue-column'], 'Only the Tasks drawer scrolls while open');
+  const status = queuePane.getByRole('combobox', { name: 'Status', exact: true });
+  assert.equal(await status.inputValue(), 'now');
+  assert.deepEqual(await status.locator('option').evaluateAll(options => options.map(option => option.textContent.split(' · ')[0])), ['Needs you', 'Next', 'Waiting', 'Done', 'All']);
+  await queuePane.locator('.desk-queue-filters > summary').click();
+  assert.equal(await queuePane.locator('.desk-case-kind select').inputValue(), 'all');
+  await queuePane.getByRole('button', { name: 'Show reminders', exact: true }).click();
+  await queuePane.getByRole('form', { name: 'Add a reminder', exact: true }).waitFor();
+  const draft = snapshot.drafts.filter(row => row.status === 'pending').at(-1); assert.ok(draft);
   const property = snapshot.properties.find(row => row.id === draft.propertyId); assert.ok(property);
   const option = page.locator(`[id="queue-row-draft:${draft.id}"]`);
   await wheelTo(option, queuePane);
@@ -180,85 +219,104 @@ try {
   await option.click(); await queuePane.waitFor({ state: 'hidden' });
   const caseView = page.locator('.desk-case');
   await caseView.getByRole('heading', { name: property.address, exact: true }).waitFor();
-  const edit = caseView.getByRole('button', { name: 'Edit wording', exact: true });
+  const edit = caseView.getByRole('group', { name: 'Review wording', exact: true }).getByRole('button', { name: 'Edit wording', exact: true });
   await edit.waitFor();
-  const caseBody = caseView.locator('div.overflow-y-auto').first();
-  await wheelTo(edit, caseBody); await edit.click();
+  await wheelTo(edit); await edit.click();
   const wording = caseView.getByRole('textbox', { name: 'Draft wording', exact: true });
   await wording.waitFor(); assert.equal(await wording.inputValue(), draft.body);
   const cancel = caseView.getByRole('button', { name: 'Cancel', exact: true });
-  await wheelTo(cancel, caseBody); await cancel.click();
+  await wheelTo(cancel); await cancel.click();
   await wording.waitFor({ state: 'hidden' });
   assert.equal((await request('/api/desk')).drafts.find(row => row.id === draft.id).body, draft.body);
-  measurements.case390 = await metrics();
-  assert.ok(measurements.case390.header.height <= measurements.case390.main.height * 0.48 + 2);
-  assert.ok(measurements.case390.canvas.height >= measurements.case390.main.height * 0.5);
+  measurements.case390 = await singleContentScroll();
   await noOverflow(); await page.screenshot({ path: join(output, 'selected-case-390.png') });
   record('At 390px, wheel input reaches a queue row; clicking selects its actual case and opens/cancels review editing without changing wording');
 
   const header = page.locator('.pm-desk-header');
-  const queueToggle = header.getByRole('button', { name: /^Queue · / });
-  await wheelTo(queueToggle, header); await queueToggle.click(); await queuePane.waitFor();
-  const closeQueue = queuePane.getByRole('button', { name: 'Close queue', exact: true });
+  const queueToggle = header.getByRole('button', { name: /^Tasks · \d+$/ });
+  await queueToggle.click(); await queuePane.waitFor();
+  const closeQueue = queuePane.getByRole('button', { name: 'Close tasks', exact: true });
   await wheelTo(closeQueue, queuePane); await closeQueue.click(); await queuePane.waitFor({ state: 'hidden' });
-  record('The narrow queue can be reopened and closed using its visible Close control');
+  record('Tasks · N opens the narrow drawer and its visible Close tasks control closes it');
 
   await queueToggle.click(); await queuePane.waitFor();
   await wheelTo(option, queuePane);
   const queueBox = await queuePane.boundingBox(); assert.ok(queueBox);
   await page.mouse.move(queueBox.x + queueBox.width / 2, queueBox.y + queueBox.height / 2);
   await page.mouse.wheel(0, 70); await wait(100);
-  const beforeLeaving = await queuePane.evaluate(element => element.scrollTop);
-  assert.ok(beforeLeaving > 0, 'A nonzero narrow queue position is saved');
+  const beforeClosing = await queuePane.evaluate(element => element.scrollTop);
+  assert.ok(beforeClosing > 0, 'The narrow drawer has a nonzero scroll position');
+  const behindDrawer = await page.locator('.desk-content').evaluate(element => element.scrollTop);
+  await page.keyboard.press('Escape'); await queuePane.waitFor({ state: 'hidden' });
+  await queueToggle.click(); await queuePane.waitFor();
+  const afterReopening = await queuePane.evaluate(element => element.scrollTop);
+  assert.ok(Math.abs(afterReopening - beforeClosing) <= 1, 'Closing and reopening the drawer keeps its position');
+  assert.equal(await page.locator('.desk-content').evaluate(element => element.scrollTop), behindDrawer, 'The content stays put behind the drawer');
+  measurements.queueRestored390 = { beforeClosing, afterReopening, behindDrawer };
+  await page.screenshot({ path: join(output, 'queue-restored-390.png') });
+  await wheelTo(closeQueue, queuePane); await closeQueue.click(); await queuePane.waitFor({ state: 'hidden' });
+  record('The narrow drawer preserves its position when closed with Escape and reopened, while the content behind it stays put');
+
+  for (const width of [720, 959, 960, 1400]) {
+    await page.setViewportSize({ width, height: 844 });
+    measurements[`case${width}`] = await singleContentScroll();
+    assert.equal(await queue.evaluate(element => getComputedStyle(element).overflowY), 'visible');
+    if (width < 960) {
+      await queuePane.waitFor({ state: 'hidden' });
+      await queueToggle.click();
+      await page.getByRole('dialog', { name: 'Tasks', exact: true }).waitFor();
+      assert.deepEqual((await metrics()).scrollOwners, ['.desk-queue-column']);
+      await wheelTo(closeQueue, queuePane); await closeQueue.click(); await queuePane.waitFor({ state: 'hidden' });
+    } else {
+      await queuePane.waitFor();
+      assert.equal(await queueToggle.isVisible(), false);
+      await wheelTo(option);
+      measurements[`wheelQueue${width}`] = await wheelMovesContent(queuePane);
+      measurements[`wheelCase${width}`] = await wheelMovesContent(page.locator('.desk-case-column'));
+    }
+    await noOverflow(); await page.screenshot({ path: join(output, `selected-case-${width}.png`) });
+  }
+  record('Below 960px Tasks is a drawer; at 960px and 1400px wheels over both queue and case move the same .desk-content');
+
+  // The new shared content owner, rather than the transient drawer, keeps the navigation position.
+  // A short window guarantees the shared region overflows, so a saved position can be nonzero.
+  await page.setViewportSize({ width: 1400, height: 520 });
+  const hideReminders = queuePane.getByRole('button', { name: 'Hide reminders', exact: true });
+  await wheelTo(hideReminders); await hideReminders.click();
+  const filters = queuePane.locator('.desk-queue-filters > summary');
+  await wheelTo(filters); await filters.click();
+  await wheelTo(option);
+  await wheelMovesContent(queuePane);
+  const beforeLeaving = await page.locator('.desk-content').evaluate(element => element.scrollTop);
+  assert.ok(beforeLeaving > 0, 'A nonzero content position is saved');
   await page.getByRole('button', { name: 'Schedule', exact: true }).click();
   await page.getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Desk', exact: true }).click();
-  await queuePane.waitFor();
+  await caseView.getByRole('heading', { name: property.address, exact: true }).waitFor();
   await page.waitForFunction(expected => {
-    const element = document.querySelector('.desk-queue-pane');
+    const element = document.querySelector('.desk-content');
     return element && Math.abs(element.scrollTop - expected) <= 1;
   }, beforeLeaving, { timeout: 5_000 });
-  const afterReturning = await queuePane.evaluate(element => element.scrollTop);
-  const hideQueue = header.getByRole('button', { name: 'Hide queue', exact: true });
-  await wheelTo(hideQueue, header); await hideQueue.click(); await queuePane.waitFor({ state: 'hidden' });
-  await queueToggle.click(); await queuePane.waitFor();
-  const afterReopening = await queuePane.evaluate(element => element.scrollTop);
-  assert.ok(Math.abs(afterReopening - beforeLeaving) <= 1, 'Closing and reopening the drawer keeps its position');
-  measurements.queueRestored390 = { beforeLeaving, afterReturning, afterReopening };
-  await page.screenshot({ path: join(output, 'queue-restored-390.png') });
-  await wheelTo(closeQueue, queuePane); await closeQueue.click(); await queuePane.waitFor({ state: 'hidden' });
-  record('The narrow queue preserves its scroll position across Schedule → Desk navigation and closing/reopening the drawer');
-
-  for (const width of [720, 1400]) {
-    await page.setViewportSize({ width, height: 844 });
-    const measured = await metrics(); measurements[`case${width}`] = measured;
-    assert.equal(measured.emptyCanvas, null);
-    assert.ok(measured.header.height <= measured.main.height * 0.48 + 2);
-    assert.ok(measured.canvas.height >= measured.main.height * 0.5);
-    assert.equal(await queuePane.evaluate(element => getComputedStyle(element).overflowY), 'visible');
-    // At 720px the closed drawer stays hidden; inspect its CSS without opening it.
-    assert.equal(await queuePane.getByRole('listbox', { name: 'Case queue', exact: true, includeHidden: true })
-      .evaluate(element => getComputedStyle(element).overflowY), 'auto');
-    await noOverflow(); await page.screenshot({ path: join(output, `selected-case-${width}.png`) });
-  }
-  record('At 720px and 1400px, selected cases retain their header/canvas split and the existing separate queue-row scroller');
+  measurements.contentRestored1400 = { beforeLeaving, afterReturning: (await singleContentScroll()).content.scrollTop };
+  record('Schedule → Desk restores the selected case and the shared content scroll position');
   await page.setViewportSize({ width: 390, height: 844 });
 
-  // These modes must never receive the empty-case layout override.
+  // Properties and batch work replace Tasks inside the same content container.
   const more = page.locator('.pm-desk-header').locator('summary').filter({ hasText: /^More$/ });
   const openMore = async () => {
-    await wheelTo(more, header);
-    if (!await page.locator('details.desk-more').evaluate(element => element.open)) await more.click();
+    if (!await more.evaluate(element => element.parentElement.open)) await more.click();
     await page.getByRole('group', { name: 'More Desk tools', exact: true }).waitFor();
   };
-  await openMore(); await page.getByRole('button', { name: 'Book · import & addresses', exact: true }).click();
+  await openMore(); await page.getByRole('button', { name: 'Properties and imports', exact: true }).click();
   await page.getByRole('heading', { name: 'Properties', exact: true }).waitFor();
-  assert.equal(await page.locator('.desk-workspace').getAttribute('data-empty-canvas'), null);
-  await openMore(); await page.getByRole('button', { name: 'Batch prepare', exact: true }).click();
-  await page.getByRole('button', { name: 'Back to Needs you', exact: true }).waitFor();
-  assert.equal(await page.locator('.desk-workspace').getAttribute('data-empty-canvas'), null);
+  await page.locator('.desk-content .desk-property-book').waitFor();
+  assert.equal(await page.locator('.desk-empty-canvas').count(), 0);
+  await openMore(); await page.getByRole('button', { name: 'Prepare several properties', exact: true }).click();
+  await page.locator('.desk-content').getByRole('region', { name: 'Batch workspace', exact: true }).waitFor();
+  await header.getByRole('button', { name: 'Back to tasks', exact: true }).waitFor();
+  assert.equal(await page.locator('.desk-empty-canvas').count(), 0);
   await noOverflow();
-  record('Book and Batch modes keep their existing layout and never receive the empty-case override');
+  record('Properties and batch modes open from More inside .desk-content with Back to tasks available');
   assert.deepEqual(errors, []); assert.deepEqual(deniedOrigins, []);
   record('No horizontal overflow, renderer errors or off-origin browser requests in the exercised flows');
 } catch (cause) {
@@ -278,7 +336,8 @@ try {
     sources: Object.fromEntries(['src/components/DeskPage.tsx', 'src/desk.css', 'scripts/qa-desk-narrow-empty.mjs'].map(path => [path, createHash('sha256').update(readFileSync(join(root, path))).digest('hex')])),
     limits: ['Fictional disposable sample only; no customer data, account linking, provider, model, worker or portal actions.',
       'Real source Vite renderer and loopback Node service in headless Chrome on this host; not a packaged app, native Windows or customer acceptance.',
-      '390x844 narrow empty and selected-case flows plus 720/1400x844 layout boundaries; not an exhaustive device or accessibility audit.'],
+      '390x844 narrow empty and selected-case flows plus 720/959/960/1400x844 layout boundaries; not an exhaustive device or accessibility audit.',
+      'Cross-navigation scroll restoration covers .desk-content; the transient Tasks drawer has no saved cross-navigation scroll contract.'],
   }, null, 2));
 }
 if (failure) process.exitCode = 1;

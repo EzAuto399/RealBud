@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { WorkflowDatabase, type WorkflowRecord } from './workflow-database.ts';
 import { validateSavedBillProposal } from './bill-proposal-validation.ts';
+import { FINANCIAL_OBSERVATION_KEYS, FINANCIAL_STATUS_OPTIONS } from './source-bill-rules.ts';
 import { BILL_REVIEW_DRAFT_LIMITS, BILL_REVIEW_DRAFT_MAX_BYTES,
   type BillReviewDraft, type BillReviewDraftValue, type BillReviewDraftSummary,
   type BillReviewDraftPageQuery, type BillReviewDraftPage, type BillReviewDraftFilter } from '../shared/bill-review-drafts.ts';
@@ -12,6 +13,7 @@ const HEX = /^[a-f0-9]{64}$/;
 const WORKSPACE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALUE_KEYS = ['workspaceId', 'state', 'billId', 'billRevision', 'itemId', 'messageId', 'sourceDigest', 'fields', 'billState', 'reason', 'seriesId', 'arrivalDate', 'proposalRequest'];
 const FIELD_KEYS = ['propertyId', 'kind', 'vendor', 'amount', 'invoiceDate', 'dueDate', 'note'] as const;
+const OPTIONAL_FIELD_KEYS = ['invoiceNumber', 'invoiceVersion'] as const;
 const STATES = ['editing', 'saved', 'accepted', 'discarded'];
 const BILL_STATES = ['received', 'in-process', 'hold', 'cancelled'];
 const fail = (message: string, status: number): never => { throw Object.assign(new Error(message), { status }); };
@@ -25,12 +27,15 @@ const timestamp = (value: unknown): value is number => Number.isSafeInteger(valu
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value);
 const nullable = (value: unknown, pattern: RegExp) => value === null || typeof value === 'string' && pattern.test(value);
 const closed = (value: BillReviewDraftValue) => value.state === 'accepted' || value.state === 'discarded';
+const valueKeys = (value: unknown) => [...VALUE_KEYS, ...(object(value) && Object.hasOwn(value, 'financialReview') ? ['financialReview'] : [])];
 export const billReviewDraftRecordId = (id: string) => `${BILL_REVIEW_DRAFT_KIND}:${id}`;
 
 function checkValue(value: unknown): asserts value is BillReviewDraftValue {
-  if (!exact(value, VALUE_KEYS)) return invalid();
+  if (!exact(value, valueKeys(value))) return invalid();
   const fields = value.fields;
-  if (!exact(fields, FIELD_KEYS)) return invalid();
+  if (!object(fields) || !FIELD_KEYS.every(key => Object.hasOwn(fields, key)) ||
+      Object.keys(fields).some(key => ![...FIELD_KEYS, ...OPTIONAL_FIELD_KEYS].includes(key as typeof FIELD_KEYS[number])) ||
+      OPTIONAL_FIELD_KEYS.some(key => Object.hasOwn(fields, key) && !text(fields[key], BILL_REVIEW_DRAFT_LIMITS[key]))) return invalid();
   if (typeof value.workspaceId !== 'string' || !WORKSPACE.test(value.workspaceId) ||
       typeof value.state !== 'string' || !STATES.includes(value.state) || typeof value.billState !== 'string' || !BILL_STATES.includes(value.billState) ||
       !nullable(value.billId, /^source-bill:[a-f0-9]{64}$/) ||
@@ -39,6 +44,13 @@ function checkValue(value: unknown): asserts value is BillReviewDraftValue {
       FIELD_KEYS.some(key => !text(fields[key], BILL_REVIEW_DRAFT_LIMITS[key])) ||
       !text(value.reason, BILL_REVIEW_DRAFT_LIMITS.reason) || !text(value.seriesId, BILL_REVIEW_DRAFT_LIMITS.seriesId) ||
       !text(value.arrivalDate, BILL_REVIEW_DRAFT_LIMITS.arrivalDate)) return invalid();
+  if (Object.hasOwn(value, 'financialReview')) {
+    const financial = value.financialReview;
+    if (!exact(financial, [...FINANCIAL_OBSERVATION_KEYS, 'reviewReason']) || value.billId === null || value.billRevision === null || value.sourceDigest === null || value.proposalRequest !== null) return invalid();
+    for (const [key, options] of Object.entries(FINANCIAL_STATUS_OPTIONS)) if (!(options as readonly unknown[]).includes(financial[key])) return invalid();
+    for (const [key, max] of [['sourceIds', 4000], ['observedAt', 64], ['locator', 1000], ['accountContext', 200], ['note', 1000], ['reviewReason', 1000]] as const)
+      if (!text(financial[key], max)) return invalid();
+  }
   if (value.proposalRequest !== null) {
     const request = value.proposalRequest;
     if (!exact(request, ['requestId', 'itemId', 'messageId', 'expectedSourceDigest']) || typeof request.requestId !== 'string' || !UUID.test(request.requestId) ||
@@ -64,7 +76,7 @@ function checkSize(value: BillReviewDraft) {
  * proposal or bill authority can be inferred from these untrusted hints. */
 export function validateSavedBillReviewDraft(recordId: string, recordRevision: number, value: unknown, workspaceId?: string): BillReviewDraft {
   try {
-    if (!exact(value, ['version', 'id', 'revision', 'createdAt', 'updatedAt', ...VALUE_KEYS]) || value.version !== 1 || typeof value.id !== 'string' || !UUID.test(value.id) ||
+    if (!exact(value, ['version', 'id', 'revision', 'createdAt', 'updatedAt', ...valueKeys(value)]) || value.version !== 1 || typeof value.id !== 'string' || !UUID.test(value.id) ||
         recordId !== billReviewDraftRecordId(value.id) || !positive(recordRevision) || value.revision !== recordRevision ||
         !timestamp(value.createdAt) || !timestamp(value.updatedAt) || value.updatedAt < value.createdAt) recovery();
     const draft = value as unknown as BillReviewDraft;
@@ -91,7 +103,8 @@ export function validateBillReviewDraftProposalLink(draft: BillReviewDraftValue,
 function summary(draft: BillReviewDraft): BillReviewDraftSummary {
   return { id: draft.id, revision: draft.revision, state: draft.state, createdAt: draft.createdAt, updatedAt: draft.updatedAt,
     billId: draft.billId, itemId: draft.itemId, messageId: draft.messageId, propertyId: draft.fields.propertyId,
-    kind: draft.fields.kind, vendor: draft.fields.vendor, hasProposalRequest: draft.proposalRequest !== null };
+    kind: draft.fields.kind, vendor: draft.fields.vendor, hasProposalRequest: draft.proposalRequest !== null,
+    ...(draft.financialReview ? { hasFinancialReview: true } : {}) };
 }
 type Cursor = { version: 1; kind: 'bill-review-drafts'; workspaceId: string; filter: BillReviewDraftFilter; high: number; before: number };
 const badPage = (): never => fail('This draft history page is invalid. Refresh the draft list and try again.', 400);
@@ -152,11 +165,30 @@ export class BillReviewDraftStore {
       if (expectedRevision <= current.revision && isDeepStrictEqual(prior, input)) return current;
       if (expectedRevision !== current.revision || closed(current) ||
           current.proposalRequest !== null && !isDeepStrictEqual(current.proposalRequest, input.proposalRequest)) conflict();
+      if (Object.hasOwn(current, 'financialReview') !== Object.hasOwn(input, 'financialReview')) conflict();
+      if (OPTIONAL_FIELD_KEYS.some(key => current.fields[key]?.trim() && !Object.hasOwn(input.fields, key)))
+        fail('Keep the saved invoice number and version, or explicitly clear an uncertain value. Your saved draft has been preserved.', 409);
       const draft: BillReviewDraft = { version: 1, id, revision: current.revision + 1, createdAt: current.createdAt,
         updatedAt: Math.max(current.updatedAt, this.time()), ...input };
       checkSize(draft);
       validateBillReviewDraftProposalLink(draft, this.proposal(draft), 409);
       return this.read(this.database.update<BillReviewDraft>(BILL_REVIEW_DRAFT_KIND, recordId, row.revision, () => draft));
+    });
+  }
+  /** Every open draft, oldest first, validated with its proposal link. Closed
+   * and damaged rows are still read so damaged evidence holds the caller.
+   * ponytail: holds all open drafts in memory; page it if backlogs reach thousands. */
+  open(): BillReviewDraft[] {
+    return this.database.transaction(() => {
+      const open: BillReviewDraft[] = [];
+      let before: number | undefined;
+      do {
+        const chunk: { records: (BillReviewDraft | null)[]; next: number | null } = this.database.projectPage<unknown, BillReviewDraft | null>(
+          BILL_REVIEW_DRAFT_KIND, { before, limit: 100 }, row => { const draft = this.read(row); return closed(draft) ? null : draft; });
+        for (const draft of chunk.records) if (draft) open.push(draft);
+        before = chunk.next ?? undefined;
+      } while (before !== undefined);
+      return open.reverse();
     });
   }
   page(query: BillReviewDraftPageQuery = {}): BillReviewDraftPage {

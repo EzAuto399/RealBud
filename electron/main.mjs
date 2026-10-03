@@ -2,7 +2,9 @@ import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findBusyService, findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess, WebContentsView } from "electron";
+import { registerHermiosView } from "./hermios-view.mjs";
+import { guardOfficeWindow, openExternalHttps } from "./external-links.mjs";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
@@ -308,13 +310,19 @@ function createWindow() {
         : {}),
     webPreferences: {
       contextIsolation: true,
+      // Electron's default since 20, stated so a later option cannot drop it.
+      // preload.cjs needs only contextBridge, ipcRenderer and webUtils.
+      sandbox: true,
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
+  // Popups never open; https links go to the browser, nothing else leaves, and
+  // the window stays on the office page it was given (the port can change).
+  guardOfficeWindow(win.webContents, {
+    appUrl: () => (app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL),
+    shell,
+    log: slog,
   });
 
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
@@ -523,17 +531,15 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
 
 // Server-issued connection links arrive after an async broker call, so they
 // cannot rely on a browser popup's user-gesture timing. Keep the bridge
-// narrow: only HTTPS links can leave the app.
-ipcMain.handle("external:open", async (_event, rawUrl) => {
-  try {
-    const url = new URL(String(rawUrl));
-    if (url.protocol !== "https:") return false;
-    await shell.openExternal(url.toString());
-    return true;
-  } catch {
-    return false;
-  }
-});
+// narrow: only HTTPS links can leave the app, the same rule as the window's.
+ipcMain.handle("external:open", (_event, rawUrl) => openExternalHttps(shell, rawUrl));
+
+// ---- Hermios view ------------------------------------------------------------
+// The office CRM in a sandboxed view the person signs in to themselves: its own
+// "persist:hermios" partition, no preload, an https allowlist, and IPC accepted
+// only from this window's own page. All of it lives in hermios-view.mjs.
+registerHermiosView({ ipcMain, BrowserWindow, WebContentsView, session, shell }, { log: slog });
+// ---- end Hermios view --------------------------------------------------------
 
 ipcMain.handle("perm:status", () => {
   if (process.platform === "darwin" || process.platform === "win32") {

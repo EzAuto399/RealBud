@@ -283,6 +283,18 @@ export function createCompanyHost(options: {
           const input = fields(body, ['offset']);
           return { status: 200, body: await kernel.listDepartments(memberToken, input.offset as number | undefined) };
         }
+        if (path === '/api/company/departments/configuration' && method === 'POST') {
+          const input = fields(body, ['departmentId']);
+          return { status: 200, body: await kernel.departmentConfiguration(memberToken, input as Parameters<typeof kernel.departmentConfiguration>[1]) };
+        }
+        if (path === '/api/company/departments/configuration/history' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'beforeRevision', 'limit']);
+          return { status: 200, body: await kernel.departmentConfigurationHistory(memberToken, input as Parameters<typeof kernel.departmentConfigurationHistory>[1]) };
+        }
+        if (path === '/api/company/departments/configuration/save' && method === 'POST') {
+          const input = fields(body, ['requestId', 'departmentId', 'expectedRevision', 'configuration', 'reviewDigest', 'note', 'sourceReceiptId']);
+          return { status: 200, body: await kernel.saveDepartmentConfiguration(memberToken, input as Parameters<typeof kernel.saveDepartmentConfiguration>[1]) };
+        }
         if (path === '/api/company/departments' && method === 'POST') {
           const input = fields(body, ['requestId', 'name']);
           return { status: 201, body: { department: await kernel.createDepartment(memberToken, input as Parameters<typeof kernel.createDepartment>[1]) } };

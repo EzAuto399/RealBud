@@ -7,6 +7,9 @@ import { runtimeCli } from "./hermes-paths.ts";
 import type { HermesRelease } from "./hermes-releases.ts";
 import { BootstrapError } from "./worker-bootstrap.ts";
 import { windowsHermesGit, windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
+import { documentToolsStatus, type DocumentToolsStatus } from "./hermes-document-deps.ts";
+import { DATA_DIR } from "./config.ts";
+import { sandboxedLaunch, type SandboxedLaunch } from "./worker-network-sandbox.ts";
 
 function command(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => execCli(command, args, { env, timeout: 30_000, maxBuffer: 64_000 }, (error, stdout) => {
@@ -15,8 +18,20 @@ function command(command: string, args: string[], env: NodeJS.ProcessEnv): Promi
   }));
 }
 
-/** No provider call or office profile access. Verify source and ACP startup. */
-export async function verifyRuntime(home: string, release: HermesRelease): Promise<string> {
+/** The downloaded agent runs its checks as a worker would: no network,
+ * writes only to the scratch folder, reads of RealBud's data only for the
+ * release being checked. A refusing sandbox fails the check. */
+function checkedLaunch(home: string, scratch: string, cli: string, args: string[], env: NodeJS.ProcessEnv): SandboxedLaunch {
+  try { return sandboxedLaunch(cli, args, env, { loopbackPorts: [], writable: [scratch], reads: [["deny", DATA_DIR], ["allow", home]] }); }
+  catch { throw new BootstrapError("The downloaded agent could not be checked in isolation. Your current agent is kept."); }
+}
+
+/** No provider call or office profile access. Verify source and ACP startup.
+ * Document libraries are import-checked for `documentTools` only: their
+ * absence reads "Document tools need Repair." and never fails the worker. */
+export async function verifyRuntime(home: string, release: HermesRelease, options: {
+  documentTools?: (status: DocumentToolsStatus) => void; checkDocuments?: typeof documentToolsStatus;
+} = {}): Promise<string> {
   const scratch = mkdtempSync(join(tmpdir(), "realbud-runtime-check-"));
   let env: NodeJS.ProcessEnv = {
     PATH: augmentedPath(), HOME: scratch, HERMES_HOME: scratch, HERMES_MANAGED_DIR: scratch,
@@ -35,9 +50,11 @@ export async function verifyRuntime(home: string, release: HermesRelease): Promi
     if (changed.split("\n").filter(Boolean).some(path => !/^contributors\/emails\/[^/]+$/.test(path))) {
       throw new BootstrapError("The downloaded agent contains modified source files. Your current agent is kept.");
     }
-    const version = await command(runtimeCli(home), ["--version"], env);
+    const versionLaunch = checkedLaunch(home, scratch, runtimeCli(home), ["--version"], env);
+    const version = await command(versionLaunch.command, versionLaunch.args, env).finally(() => versionLaunch.release());
+    const acpLaunch = checkedLaunch(home, scratch, runtimeCli(home), ["--toolsets", "realbud_runtime_check", "acp"], env);
     await new Promise<void>((resolve, reject) => {
-      const child = spawnCli(runtimeCli(home), ["--toolsets", "realbud_runtime_check", "acp"], { env, cwd: scratch, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawnCli(acpLaunch.command, acpLaunch.args, { env, cwd: scratch, stdio: ["pipe", "pipe", "pipe"] });
       let buffer = ""; let passed = false; let failed = false;
       let forceStop: ReturnType<typeof setTimeout> | undefined;
       const stop = () => {
@@ -62,15 +79,17 @@ export async function verifyRuntime(home: string, release: HermesRelease): Promi
           } catch { failed = true; stop(); }
         }
       });
-      child.once("error", () => { clearTimeout(timer); if (forceStop) clearTimeout(forceStop); reject(new BootstrapError("The downloaded agent could not start. Your current agent is kept.")); });
+      child.once("error", () => { clearTimeout(timer); if (forceStop) clearTimeout(forceStop); acpLaunch.release(); reject(new BootstrapError("The downloaded agent could not start. Your current agent is kept.")); });
       child.once("close", () => {
         clearTimeout(timer);
         if (forceStop) clearTimeout(forceStop);
+        acpLaunch.release();
         if (passed && !failed) resolve();
         else reject(new BootstrapError("The downloaded agent did not pass the connection check. Your current agent is kept."));
       });
       child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "realbud-runtime-check", version: "1" } } }) + "\n");
     });
+    if (options.documentTools) options.documentTools(await (options.checkDocuments ?? documentToolsStatus)(home));
     return version;
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }

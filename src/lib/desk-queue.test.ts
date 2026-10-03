@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS, type DeskSnapshot, type WorkState } from "../../shared/contracts";
-import { bucketForWork, buildDeskQueue, filterDeskQueue, queueCounts, recoveryPlanFor, type QueueBucket } from "./desk-queue";
+import { bucketForWork, buildDeskQueue, filterDeskQueue, licenseeFact, queueCounts, recoveryPlanFor, type QueueBucket } from "./desk-queue";
 
 function snap(partial: Partial<DeskSnapshot>): DeskSnapshot {
   return {
@@ -308,5 +308,18 @@ describe("desk queue model", () => {
     expect(rows.filter((row) => row.bucket === "done")).toHaveLength(2);
     expect(queueCounts(rows, today).done).toBe(1);
     expect(filterDeskQueue(rows, "done")).toHaveLength(2);
+  });
+});
+
+describe("licensee hold copy", () => {
+  it("reduces the recorded escalation to one plain fact line", () => {
+    const book = snap({});
+    const detail = "12 Oak St, Dickson ACT is 10 days late on this sample book (courtesy window ends day 7). That is a shop reminder rule, not a legal clock. A licensed person decides whether any state notice is due — in the PMS. RealBud will not draft or send one.";
+    expect(licenseeFact(book, "prop-oak", detail)).toBe("10 days late on this sample book; courtesy window ends day 7.");
+    expect(licenseeFact({ ...book, demo: false, mode: "live", ledger: [{ propertyId: "prop-oak", daysSinceDue: 1, rentLanded: false, levyPaid: false, daysSinceCourtesy: null }] }, "prop-oak", "Past courtesy")).toBe("1 day late; courtesy window ends day 7.");
+    expect(licenseeFact(book, "prop-oak", "Past courtesy")).toBe("Days late not recorded.");
+    const row = buildDeskQueue(snap({ escalations: [{ id: "esc-1", propertyId: "prop-oak", reason: "statutory-clock", detail, periodDueAt: 1, createdAt: 2 }] }))[0]!;
+    expect(row.meta).toBe("10 days late on this sample book; courtesy window ends day 7.");
+    expect(JSON.stringify(recoveryPlanFor(row))).not.toMatch(/statutory|PMS/);
   });
 });

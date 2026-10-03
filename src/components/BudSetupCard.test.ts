@@ -124,6 +124,20 @@ describe("provisioned installations never ask for a provider key", () => {
   });
 });
 
+describe("ready capabilities copy", () => {
+  it("names only the research and file work Bud can do today", () => {
+    store.state.hermes = { ...managed(true, "claude-sonnet-5.5"), ready: true };
+    const html = administration();
+    expect(html).toContain('aria-label="Bud capabilities"');
+    expect(html).toContain("Research from your sources");
+    expect(html).toContain("pages you open in the work browser");
+    expect(html).toContain("Private workroom ready for your files, calculations and code.");
+    // No web search or Office-format files until the runtime ships them.
+    expect(html).not.toMatch(/public (information|sources)|web search|search the web|Word|Excel|PDF|files, research/i);
+    expect(html).not.toMatch(/Hermes|MCP|broker/);
+  });
+});
+
 describe("budAvailability for managed access", () => {
   it("shows the last failed readiness reason on the managed surface and clears it when ready", () => {
     const status = managed(true, "fictional-model");
@@ -164,5 +178,31 @@ describe("budAvailability for managed access", () => {
 
   it("reads as a finished model step once the managed grant names a model", () => {
     expect(budAvailability(managed(true, "claude-sonnet-5.5"), true).label).toBe("Check needed");
+  });
+});
+
+describe("document tools readiness", () => {
+  it("keeps Repair available and explains why no Reset action is offered", () => {
+    store.state.hermes = { ...managed(true, "claude-sonnet-5.5"), documentTools: "needs_repair" } as HermesStatus;
+    const html = administration();
+    expect(html).toMatch(/<button\b[^>]*>\s*Repair Bud\s*<\/button>/);
+    expect(html).not.toMatch(/<button\b[^>]*>[^<]*(?:Reset|Remove)[^<]*<\/button>/);
+    expect(html).toContain("Reset is unavailable because RealBud cannot yet verify that every worker has stopped.");
+    expect(html).toContain("Your setup is kept. Repair Bud remains available.");
+    expect(store.api).not.toHaveBeenCalled();
+  });
+
+  it("names Word, Excel and PDF Repair only when the runtime reports needs_repair", () => {
+    const base = managed(true, "claude-sonnet-5.5");
+    for (const [documentTools, shown] of [["needs_repair", true], ["ready", false], ["unknown", false], ["unavailable_here", false]] as const) {
+      store.state.hermes = { ...base, documentTools } as HermesStatus;
+      const html = administration();
+      expect(html.includes("Word, Excel and PDF tools need Repair")).toBe(shown);
+    }
+  });
+  it("accepts only known document tool states from the server", () => {
+    const base = managed(true, "claude-sonnet-5.5");
+    expect(() => parseBudStatus({ ...base, documentTools: "needs_repair" })).not.toThrow();
+    expect(() => parseBudStatus({ ...base, documentTools: "installed!" })).toThrow();
   });
 });

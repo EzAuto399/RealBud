@@ -20,6 +20,26 @@ describe("toolLabel", () => {
     expect(toolLabel("computer")).toBe("using the bounded browser");
   });
 
+  it("labels Bud's page reader and read-only Hermios CRM tools", () => {
+    expect(toolLabel("read_page")).toBe("reading a web page");
+    expect(toolLabel("mcp__web-pages__read_page")).toBe("reading a web page");
+    expect(toolLabel("crm_search")).toBe("searching Hermios CRM");
+    expect(toolLabel("mcp__hermios-crm__crm_search")).toBe("searching Hermios CRM");
+    expect(toolLabel("mcp__hermios-crm__crm_get_record")).toBe("opening a Hermios CRM record");
+    expect(toolLabel("mcp__hermios-crm__crm_set_stage")).toBe("proposing a Hermios CRM stage change");
+    expect(toolLabel("crm_add_note")).toBe("proposing a Hermios CRM note");
+    expect(toolLabel("crm_add_task")).toBe("proposing a Hermios CRM task");
+    expect(toolLabel("mcp__reminders__set_reminder")).toBe("setting a reminder");
+    expect(toolLabel("mcp__workspace-views__views_list")).toBe("checking saved views");
+    expect(toolLabel("views_create")).toBe("proposing a new saved view");
+    expect(toolLabel("mcp__workspace-views__views_rename")).toBe("proposing a saved view name");
+    expect(toolLabel("views_set_visible")).toBe("proposing to show or hide a saved view");
+    expect(toolLabel("views_reorder")).toBe("proposing a saved view order");
+    expect(toolLabel("mcp__workspace-views__views_delete")).toBe("proposing to delete a saved view");
+    expect(toolLabel("mcp__bank-source__bank_accounts_list")).toBe("checking the bank accounts");
+    expect(toolLabel("bank_transactions_list")).toBe("reading bank transactions");
+  });
+
   it("maps names that contain desk to the book phrase", () => {
     expect(toolLabel("desk_read")).toBe("reading the Desk book");
     expect(toolLabel("read_desk_book")).toBe("reading the Desk book");
@@ -55,5 +75,12 @@ describe("approvalHeadline", () => {
 
   it("returns null when the payload has no place", () => {
     expect(approvalPlace("rm -rf scratch")).toBeNull();
+  });
+});
+
+describe("office connector tools", () => {
+  it("names the added service and tool instead of guessing from tokens", () => {
+    expect(toolLabel("mcp__office-connectors__fictional-books__search_books")).toBe("using fictional books (search books)");
+    expect(toolLabel("fictional-books__create_book")).toBe("using fictional books (create book)");
   });
 });

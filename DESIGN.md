@@ -33,28 +33,33 @@ The same objects appear through four doors only:
 
 | Token | Value | Use |
 |---|---|---|
-| `paper` | `#F3EFE5` | App background |
-| `sheet` | `#FFFBF2` | Case canvas and focused work |
+| `paper` | `#F6F5F1` | Navigation and surrounding app surface |
+| `sheet` | `#FFFEFB` | Continuous work canvas and focused work |
 | `ink` | `#25231F` | Primary text |
-| `ink-muted` | `#6F695E` | Secondary text |
-| `line` | `#D4CCBB` | Dividers and structure |
+| `ink-muted` | `#63695F` | Secondary text on paper and sheet |
+| `line` | `#DADFD4` | Decorative dividers and structure |
+| `field-border` | `#81897C` | Input boundaries, separate from decorative dividers |
+| `ink-secondary-strong` | `#4A5346` | Secondary text on selected green surfaces |
 | `agency` | `#3F5F45` | Primary actions and current source |
 | `agency-hover` | `#314B36` | Primary hover |
 | `selected` | `#DDE4D2` | Selected queue/case state |
-| `hold` | `#B27A24` | Held or needs verification |
+| `hold` | `#825A22` | Held or needs verification |
 | `danger` | `#A64632` | Failure or blocked safety state |
 | `portal` | `#315F91` | Active bounded browser session |
 
 No gradients, glow, neon accents, translucent glass panels, or dark card soup. A dark mode may come later; it is not part of this implementation.
 
+Legacy `app`, `panel`, `card`, `hairline` and user-bubble tokens alias these surface roles inside the workspace. Do not introduce a second warm/yellow palette through an old alias. Hover and selected states remain distinct; selected metadata uses the stronger ink token.
+
 ## Typography
 
-- Native system sans: `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `sans-serif`.
+- Native system sans: `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `system-ui`, `sans-serif`.
 - Tabular numerals for rent, dates, days late and evidence timestamps.
-- Operational body text: 14–15px minimum.
+- Operational body text: 15px with 1.5 line height. Controls use 14px; mobile inputs retain 16px.
+- Section headings: 16px semibold. Use 400, 500 and 600 weights for a consistent hierarchy.
 - Case title: 22–24px semibold.
 - Screen title: 26–28px semibold.
-- Labels: 12px, sentence case by default. Uppercase is reserved for short evidence/status labels.
+- Labels and supporting metadata: 13px with at least 1.4 line height, sentence case by default. Uppercase is reserved for short evidence/status labels.
 - Technical identifiers use system monospace only inside Advanced diagnostics.
 
 ## Shape and spacing
@@ -63,6 +68,9 @@ No gradients, glow, neon accents, translucent glass panels, or dark card soup. A
 - Structure comes from split panes and dividers, not nested cards.
 - Control height: 40px minimum; primary decision actions 44px.
 - Spacing scale: 4, 8, 12, 16, 24, 32.
+- Page gutters: 24px desktop, 16px narrow screens. Related controls share an alignment edge.
+- Task panes fill the available height even with short content. Long content uses the existing page scroll region; do not paint a partial-height panel over a different page background.
+- A new empty office book shows setup and reminders together. Do not show zero-count case filters or hide reminders behind a zero-count Tasks drawer. Real review items and failure/recovery warnings retain precedence.
 - Shadows only for modal elevation, drawers and detached browser windows.
 
 ## Core components

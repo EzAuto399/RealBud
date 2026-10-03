@@ -5,7 +5,7 @@ import type { LoopExecuteResult } from './routines.ts';
 
 interface Dependencies {
   collect: () => Promise<MailWorkspaceMetadata>;
-  prepareInput: () => Promise<(MailScanReceipt & { batchThreadCount: number }) | null>;
+  prepareInput: (scan: MailScanReceipt) => Promise<(MailScanReceipt & { batchThreadCount: number }) | null>;
   applyReview: (run: JobRun) => Promise<MailWorkspaceMetadata>;
   recipe: () => Recipe | undefined | Promise<Recipe | undefined>;
   admitPack: (recipeId: string) => Promise<void>;
@@ -22,9 +22,16 @@ export async function runMorningMailWorkflow(run: LoopRun, deps: Dependencies): 
   let jobRunId: string | undefined, reviewed = 0;
   try {
   for (let batch = 0; batch < 5; batch++) {
-    const source = await deps.prepareInput();
+    const source = await deps.prepareInput(scan);
     if (!source) return { ok: true, status: scan.status === 'partial' ? 'partial' : state.counts.open + state.counts.waiting > 0 ? 'awaiting-approval' : 'completed',
       detail: `${scan.threadCount} conversations collected; ${reviewed} prepared for internal review. Existing staff decisions were kept.${scan.status === 'partial' ? ' Source coverage is partial; check the scan receipt.' : ''}`, ...(jobRunId ? { jobRunId } : {}) };
+    // A manual collection can replace the shared latest receipt between
+    // batches. Keep this clock run bound to the collection it started with.
+    if (source.id !== scan.id || source.accountId !== scan.accountId || source.bindingRevision !== scan.bindingRevision) return {
+      ok: false, status: reviewed ? 'partial' : 'failed',
+      detail: 'The Gmail source changed during preparation. Saved sources and completed review batches were kept. Start a fresh review for the current source.',
+      ...(jobRunId ? { jobRunId } : {}),
+    };
     const recipe = await deps.recipe();
     if (!recipe || recipe.id !== first.id || !recipeClockRunnable(recipe) || recipe.revision !== first.revision) return { ok: false, status: reviewed ? 'partial' : 'failed', detail: 'The morning plan changed during preparation. Saved sources and completed review batches were kept.', ...(jobRunId ? { jobRunId } : {}) };
     await deps.admitPack(recipe.id);
@@ -36,7 +43,7 @@ export async function runMorningMailWorkflow(run: LoopRun, deps: Dependencies): 
   }
   // The collector admits at most 100 threads, at 20 per batch. Verify that no
   // input appeared concurrently instead of claiming all work was reviewed.
-  if (await deps.prepareInput()) return { ok: false, status: 'partial', detail: 'Five bounded review batches finished. Additional evidence remains for the next review.', jobRunId };
+  if (await deps.prepareInput(scan)) return { ok: false, status: 'partial', detail: 'Five bounded review batches finished. Additional evidence remains for the next review.', jobRunId };
   return { ok: true, status: scan.status === 'partial' ? 'partial' : 'awaiting-approval', detail: `${scan.threadCount} conversations collected; ${reviewed} prepared for internal review.${scan.status === 'partial' ? ' Source coverage is partial; check the scan receipt.' : ''}`, jobRunId };
   } catch {
     return { ok: false, status: reviewed ? 'partial' : 'failed', detail: reviewed

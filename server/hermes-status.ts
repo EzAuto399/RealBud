@@ -3,15 +3,17 @@ import { bootstrapPending } from "./worker-bootstrap.ts";
 // Read-only worker checks. Hermes is independently installed; RealBud owns
 // the supported adapter contract and its private property profile.
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { execCli } from "./procs.ts";
+import { hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
 import { HERMES_PIN, HERMES_COMPATIBLE_RELEASES, hermesCli, hermesInstallCommand, hermesMatchesPin, hermesIsCompatible, parseHermesVersion } from "./hermes-pin.ts";
 import { approvalsAreManual, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
 import type { HandsLast } from "./hands-last.ts";
 import { readRuntimeSelection } from "./hermes-runtime-selection.ts";
+import { DOCUMENT_TOOLS_UNSUPPORTED, documentToolsStatus, ownedRuntimeHome } from "./hermes-document-deps.ts";
 
 export function workerSetupPending(root?: string): boolean {
   return !readRuntimeSelection(hermesHome(root)).selected && bootstrapPending(hermesHome(root));
@@ -39,7 +41,14 @@ export interface HermesStatus {
   workerFingerprint?: string;
   model?: { attached: boolean; provider: string | null; model: string | null };
   modelAccess?: ModelAccessStatus;
+  /** Word, Excel and PDF libraries in RealBud's own runtime. Informational:
+   * it never changes `ready` or `detail`. */
+  documentTools?: DocumentToolsState;
 }
+
+/** `unavailable_here`: no reviewed libraries for this computer, or Bud runs a
+ * separate Hermes that Repair never changes. `unknown`: not checked yet. */
+export type DocumentToolsState = "ready" | "needs_repair" | "unavailable_here" | "unknown";
 
 /** How this installation's model access is held. `managed` installations never
  * collect a provider key; `withdrawn` is a hold, not "nothing attached". */
@@ -153,6 +162,46 @@ export function clearHermesVersionCache(): void {
   cacheGeneration++;
   versionCache.clear();
   inFlight.clear();
+  documentResults.clear();
+  documentChecks.clear();
+}
+
+// One import check per owned runtime and state of its site-packages folder: a
+// new runtime selection or a Repair that installs anything re-checks once.
+// Status polls only stat a folder; the check itself runs in the background
+// and reads `unknown` until it settles. Repair clears this cache first.
+const documentResults = new Map<string, DocumentToolsState>();
+const documentChecks = new Map<string, Promise<void>>();
+
+function sitePackagesStamp(runtime: string): string {
+  const venv = join(runtime, "hermes-agent", "venv");
+  try {
+    const folders = process.platform === "win32" ? [join(venv, "Lib", "site-packages")]
+      : readdirSync(join(venv, "lib")).filter(name => /^python\d/.test(name)).sort().map(name => join(venv, "lib", name, "site-packages"));
+    return folders.map(folder => { try { return String(statSync(folder).mtimeMs); } catch { return "missing"; } }).join(",");
+  } catch { return "missing"; }
+}
+
+export function documentToolsState(opts?: { root?: string; checkDocuments?: typeof documentToolsStatus }): DocumentToolsState {
+  let runtime: string | null;
+  try { runtime = ownedRuntimeHome(hermesHome(opts?.root)); } catch { return "unknown"; }
+  if (!runtime) return process.env.REALBUD_HERMES_CLI?.trim() ? "unavailable_here" : "unknown";
+  const key = `${runtime}\0${sitePackagesStamp(runtime)}`;
+  const known = documentResults.get(key);
+  if (known) return known;
+  if (!documentChecks.has(key)) {
+    const generation = cacheGeneration;
+    const check = (opts?.checkDocuments ?? documentToolsStatus)(runtime)
+      .then((result): DocumentToolsState => result.ready ? "ready" : result.detail === DOCUMENT_TOOLS_UNSUPPORTED ? "unavailable_here" : "needs_repair", (): DocumentToolsState => "needs_repair")
+      .then(state => {
+        if (generation !== cacheGeneration) return;
+        if (documentResults.size >= 8) documentResults.clear();
+        documentResults.set(key, state);
+      })
+      .finally(() => { if (documentChecks.get(key) === check) documentChecks.delete(key); });
+    documentChecks.set(key, check);
+  }
+  return "unknown";
 }
 
 export function probeHermesCli(cli: string, timeoutMs = 8_000): Promise<VersionProbe> {
@@ -163,7 +212,14 @@ export function probeHermesCli(cli: string, timeoutMs = 8_000): Promise<VersionP
   if (pending) return pending;
   const generation = cacheGeneration;
   const probe = new Promise<VersionProbe>((resolve) => {
-    execCli(cli, ["--version"], { timeout: timeoutMs, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
+    const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath() };
+    // The worker's own storage holds this binary, so even `--version` runs
+    // under the worker sandbox: no network, no writes beyond its temp folder.
+    let launch: ReturnType<typeof hermesWorkerSandbox>;
+    try { launch = hermesWorkerSandbox("diagnostic", cli, ["--version"], env, []); }
+    catch (error) { resolve({ state: (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "error", text: null }); return; }
+    execCli(launch.command, launch.args, { timeout: timeoutMs, env }, (err, stdout) => {
+      launch.release();
       const failure = err as (NodeJS.ErrnoException & { killed?: boolean }) | null;
       const result: VersionProbe = failure
         ? { state: failure.code === "ENOENT" ? "missing" : failure.killed ? "timeout" : "error", text: null }
@@ -184,7 +240,7 @@ export async function probeHermesVersion(cli: string): Promise<string | null> {
   return (await probeHermesCli(cli)).text;
 }
 
-export async function hermesStatus(opts?: { root?: string; cli?: string; platform?: NodeJS.Platform; probeTimeoutMs?: number }): Promise<HermesStatus> {
+export async function hermesStatus(opts?: { root?: string; cli?: string; platform?: NodeJS.Platform; probeTimeoutMs?: number; checkDocuments?: typeof documentToolsStatus }): Promise<HermesStatus> {
   const probe = await probeHermesCli(opts?.cli ?? hermesCli(), opts?.probeTimeoutMs);
   const versionText = probe.text;
   const matchesPin = versionText != null && hermesMatchesPin(versionText);
@@ -209,7 +265,7 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
     pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
     installCommand: hermesInstallCommand(opts?.platform ?? process.platform), bootstrapPending: workerSetupPending(opts?.root),
     installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
-    detail, ready: false, modelAccess,
+    detail, ready: false, modelAccess, documentTools: documentToolsState(opts),
     ...(versionText ? { workerFingerprint: hermesReadinessFingerprint(versionText, opts?.root) } : {}),
   };
 }

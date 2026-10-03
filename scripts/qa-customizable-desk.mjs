@@ -56,12 +56,19 @@ try {
 
   // Default: today's order.
   assert.equal((await call('/api/workspace-tabs')).body.state.version, 2);
-  await page.getByText('More', { exact: true }).click();
-  await page.getByRole('button', { name: 'Customize desk', exact: true }).click();
+  const header = page.locator('.pm-desk-header');
+  const openCustomize = async () => {
+    const more = header.locator('details.desk-more').filter({ has: page.getByRole('group', { name: 'More Desk tools', exact: true, includeHidden: true }) });
+    if (!await more.evaluate(element => element.open)) await more.locator(':scope > summary').click();
+    const options = more.locator('details.desk-options');
+    if (!await options.evaluate(element => element.open)) await options.locator(':scope > summary').click();
+    await options.getByRole('button', { name: 'Customize desk', exact: true }).click();
+  };
+  await openCustomize();
   const panel = page.getByRole('region', { name: 'Customize desk', exact: true });
   await panel.waitFor();
   assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true);
-  pass('Customize desk opens from More with Needs you fixed');
+  pass('Customize desk opens from More → Desk options with Needs you fixed');
   // Keyboard reorder: move Needs you to the top with the keyboard, hide mail/bills/shared work.
   for (let i = 0; i < 5; i++) { const up = panel.getByRole('button', { name: 'Move Needs you up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
   for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) await panel.getByRole('checkbox', { name: `Show ${label}`, exact: true }).uncheck();
@@ -88,16 +95,19 @@ try {
   await panel.getByRole('button', { name: 'Open again', exact: true }).click();
   await panel.getByRole('button', { name: 'Close Customize desk', exact: true }).click();
   await wait(200);
-  const header = page.locator('.pm-desk-header');
-  assert.equal(await header.getByRole('region', { name: 'Mail priorities' }).count(), 0);
-  const navFirst = await header.evaluate(node => {
-    const nav = node.querySelector('nav[aria-label="Desk workspace"]');
-    const rest = [...node.querySelectorAll('section, [role="region"]')].filter(el => !el.closest('nav'));
-    return rest.every(el => nav.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-  assert.ok(navFirst, 'Needs you renders before the other sections');
+  const nav = header.getByRole('navigation', { name: 'Desk workspace', exact: true });
+  assert.equal(await nav.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ }).getAttribute('aria-pressed'), 'true');
+  await page.locator('.desk-content .desk-work-tasks').waitFor();
+  await page.locator('.desk-queue-column').getByRole('combobox', { name: 'Status', exact: true }).waitFor();
+  await header.locator('.desk-other-work > summary').click();
+  const otherWork = header.getByRole('group', { name: 'Other work', exact: true });
+  for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) {
+    assert.equal(await otherWork.getByRole('button', { name: label, exact: true }).count(), 0);
+  }
+  await otherWork.getByText('Turn these on in More → Desk options → Customize desk.', { exact: true }).waitFor();
   await page.screenshot({ animations: 'disabled', path: join(output, 'desk-customized.png') });
-  pass('Desk renders the saved order: Needs you first, mail/bills/shared work hidden');
+  await header.locator('.desk-other-work > summary').click();
+  pass('Saved visibility removes mail/bills/shared work from Other work while Tasks and its queue remain available');
 
   // Revert to the layout before customizing.
   const current = (await call('/api/workspace-tabs')).body.state;
@@ -105,12 +115,24 @@ try {
   assert.equal((await call('/api/workspace-tabs/revert', 'POST', { expectedRevision: current.revision - 1, toRevision: before.revision })).status, 409);
   assert.equal((await call('/api/workspace-tabs/revert', 'POST', { expectedRevision: current.revision, toRevision: before.revision })).status, 200);
   pass('Revert is revision-checked and restores the earlier layout as a new revision');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await header.locator('.desk-other-work > summary').click();
+  await otherWork.getByRole('button', { name: 'Shared work', exact: true }).waitFor();
+  const labels = { mail: 'Mail priorities', bills: 'Bills and calendar', 'shared-work': 'Shared work' };
+  assert.deepEqual(await otherWork.getByRole('button').allTextContents(), before.sections.filter(section => section.visible && labels[section.id]).map(section => labels[section.id]));
+  await otherWork.getByRole('button', { name: 'Mail priorities', exact: true }).click();
+  const mail = page.locator('.desk-other-work-surface[data-other-work="mail"]');
+  await mail.waitFor();
+  assert.equal(await page.locator('.desk-work-tasks').isVisible(), false, 'Other work replaces Tasks');
+  await mail.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  await page.locator('.desk-work-tasks').waitFor();
+  await mail.waitFor({ state: 'hidden' });
+  pass('Restored Other work entries follow the saved order and replace the work area until Back to tasks');
 
   // Narrow window: no horizontal scroll with the panel open.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await page.getByText('More', { exact: true }).click();
-  await page.getByRole('button', { name: 'Customize desk', exact: true }).click();
+  await openCustomize();
   await panel.waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal page scroll at 390px');
   await page.screenshot({ animations: 'disabled', path: join(output, 'customize-panel-390.png') });

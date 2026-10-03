@@ -21,6 +21,8 @@ type Call = { url: URL; options: RequestInit; body: any };
 type Fixture = {
   auth?: any; accounts?: any; detail?: any; metadata?: (slug: string) => any;
   execute?: (slug: string, call: Call) => any | Promise<any>;
+  thread?: () => any;
+  proxy?: (call: Call) => any | Promise<any>;
   override?: (call: Call) => Response | Promise<Response> | undefined;
 };
 function fixture(options: Fixture = {}) {
@@ -38,12 +40,13 @@ function fixture(options: Fixture = {}) {
     if (path === "/api/v3.1/connected_accounts/link") return response({ redirect_url: "https://connect.composio.dev/link/fixture", connected_account_id: "ca_new", expires_at: new Date(Date.now() + 600_000).toISOString(), link_token: "not projected" });
     if (path === "/api/v3.1/connected_accounts") return response(options.accounts ?? { items: [account()], next_cursor: null });
     if (path.includes("/connected_accounts/")) return response(options.detail ?? account());
+    if (path === "/api/v3.1/tools/execute/proxy") return response(options.proxy ? await options.proxy(call) : { status: 200, data: options.thread?.() ?? { id: "abc", messages: [message()] } });
     if (path.includes("/tools/execute/")) {
       const slug = path.split("/").at(-1)!;
       if (options.execute) return response(await options.execute(slug, call));
       if (slug === slugs[0]) return response(success({ emailAddress: "work@example.test", messagesTotal: 15, threadsTotal: 10, access_token: "not projected" }));
       if (slug === slugs[1]) return response(success({ threads: [{ id: "abc", snippet: "not projected" }], nextPageToken: "private-page-token", resultSizeEstimate: 30 }));
-      if (slug === slugs[2]) return response(success({ id: "abc", messages: [message()] }));
+      if (slug === slugs[2]) throw new Error("Thread reads must use the fixed raw Gmail proxy");
     }
     if (path.includes("/tools/")) { const slug = path.split("/").at(-1)!; return response(options.metadata?.(slug) ?? tool(slug)); }
     throw new Error("Unexpected fixture request");
@@ -219,14 +222,14 @@ describe("bounded Gmail MCP transport", () => {
     const current = message(), old = message("bb", Date.now() - 8 * 86_400_000);
     const multipart: any = current.payload;
     multipart.parts = [{ mimeType: "text/plain", filename: "private.txt", body: { attachmentId: "attachment-id", data: Buffer.from("attachment content").toString("base64url") } }];
-    const calls = fixture({ execute: slug => slug === slugs[1] ? success({ threads: [{ id: "abc" }] }) : success({ id: "abc", messages: [current, old] }) });
+    const calls = fixture({ thread: () => ({ id: "abc", messages: [current, old] }) });
     const c = client(); await c.call(slugs[1]);
     const [one, two] = await Promise.all([c.call(slugs[2], { thread_id: "abc" }), c.call(slugs[2], { thread_id: "abc" })]);
     expect(one).toEqual(two);
     expect(data(one)).toMatchObject({ threadId: "abc", messages: [{ id: "aa", headers: { subject: "Fictional repair update" }, attachmentsOmitted: true }], omittedOutsideWindow: 1 });
     expect(data(one).messages).toHaveLength(1);
     for (const forbidden of ["attachment content", "attachment-id", "not projected"]) expect(JSON.stringify(one)).not.toContain(forbidden);
-    expect(calls.filter(call => call.url.pathname.endsWith(`/execute/${slugs[2]}`))).toHaveLength(1);
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
     expect(await c.call(slugs[2], { thread_id: "def" })).toMatchObject({ isError: true });
   });
   it("does not allow an eleventh unique thread even if the provider ignores the limit", async () => {
@@ -236,7 +239,7 @@ describe("bounded Gmail MCP transport", () => {
   });
   it("labels body truncation so a partial message cannot look like a complete read", async () => {
     const row = message(); row.payload.body.data = Buffer.from("x".repeat(10_000)).toString("base64url");
-    fixture({ execute: slug => slug === slugs[1] ? success({ threads: [{ id: "abc" }] }) : success({ id: "abc", messages: [row] }) });
+    fixture({ thread: () => ({ id: "abc", messages: [row] }) });
     const c = client(); await c.call(slugs[1]);
     const result = data(await c.call(slugs[2], { thread_id: "abc" }));
     expect(result.messages[0].bodyTruncated).toBe(true);
@@ -261,10 +264,77 @@ describe("bounded Gmail MCP transport", () => {
     expect((await client().request("tools/list")).tools).toHaveLength(3);
   });
   it.each([success({ messages: [] }), success({ id: "other", messages: [] }), success({ id: "abc", messages: [{ ...message(), threadId: "def" }] }), success({ id: "abc", messages: [{ ...message(), internalDate: "unknown" }] })])("rejects incomplete message identity or dates %j", async result => {
-    // A thread lacking its own id is accepted only when every message binds
-    // to the requested thread; an empty identity-less result is rejected.
-    fixture({ execute: slug => slug === slugs[1] ? success({ threads: [{ id: "abc" }] }) : result });
+    fixture({ thread: () => result.data });
     const c = client(); await c.call(slugs[1]); expect(await c.call(slugs[2], { thread_id: "abc" })).toMatchObject({ isError: true });
+  });
+});
+
+describe("fixed raw Gmail proxy", () => {
+  it("uses only the verified account and fixed GET endpoint, and projects no proxy metadata", async () => {
+    const calls = fixture({ proxy: () => ({ status: 200, data: { id: 'abc', messages: [message()] }, headers: { authorization: 'fictional-header-secret' }, binary_data: { url: 'https://fictional.invalid/private' } }) });
+    const c = client(); await c.call(slugs[1]);
+    const result = await c.call(slugs[2], { thread_id: 'abc' });
+    expect(data(result).messages[0].id).toBe('aa');
+    const proxy = calls.filter(call => call.url.pathname.endsWith('/execute/proxy'));
+    expect(proxy).toHaveLength(1);
+    expect(proxy[0].options.method).toBe('POST');
+    expect(proxy[0].body).toEqual({ connected_account_id: binding.accountId, endpoint: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/abc?format=full', method: 'GET' });
+    expect(calls.some(call => call.url.pathname.endsWith(`/execute/${slugs[2]}`))).toBe(false);
+    expect(JSON.stringify(result)).not.toMatch(/fictional-header-secret|fictional.invalid|binary_data/);
+  });
+  it.each([undefined, '200', 204, 301, 403, 429, 500])("rejects inner status %j despite outer HTTP 200 and does not retry", async status => {
+    const calls = fixture({ proxy: () => ({ status, data: { id: 'abc', messages: [message()] } }) });
+    const c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
+  });
+  it.each([null, [], 'not raw Gmail', { messages: [message()] }, { id: 'def', messages: [message()] }])("rejects an incomplete or foreign raw thread %j", async value => {
+    fixture({ proxy: () => ({ status: 200, data: value }) });
+    const c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+  });
+  it.each([
+    () => ({ ...message(), id: undefined, messageId: 'aa' }),
+    () => ({ ...message(), internalDate: undefined, messageTimestamp: new Date().toISOString() }),
+    () => ({ ...message(), internalDate: undefined, payload: { ...message().payload, headers: [{ name: 'Date', value: new Date().toUTCString() }] } }),
+    () => ({ ...message(), internalDate: '9000000000000000' }),
+  ])("never substitutes normalized fields or header dates for raw Gmail identity/time", async makeMessage => {
+    fixture({ thread: () => ({ id: 'abc', messages: [makeMessage()] }) });
+    const c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+  });
+  it("rejects duplicate message identities even when a duplicate is outside the review window", async () => {
+    fixture({ thread: () => ({ id: 'abc', messages: [message(), message('aa', Date.now() - 9 * 86_400_000)] }) });
+    const c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+  });
+  it.each([{ endpoint: 'https://fictional.invalid/' }, { method: 'POST' }, { connected_account_id: 'fictional-other' }, { headers: { authorization: 'fictional' } }])("rejects proxy overrides %j without proxy dispatch", async extra => {
+    const calls = fixture(), c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc', ...extra })).toMatchObject({ isError: true });
+    expect(calls.some(call => call.url.pathname.endsWith('/execute/proxy'))).toBe(false);
+  });
+  it("withholds proxy data if authority changes during the response", async () => {
+    let revoked = false;
+    const calls = fixture({ proxy: () => { revoked = true; return { status: 200, data: { id: 'abc', messages: [message()] } }; } });
+    const c = client({ ...binding, assertAuthority: () => { if (revoked) throw new Error('Fictional authority revoked'); } });
+    await c.call(slugs[1]);
+    await expect(c.call(slugs[2], { thread_id: 'abc' })).rejects.toThrow(/could not be confirmed/);
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
+  });
+  it("cancels a stalled proxy body without retrying", async () => {
+    const controller = new AbortController(); let cancellations = 0;
+    const calls = fixture({ override: call => call.url.pathname.endsWith('/execute/proxy') ? new Response(new ReadableStream({ start() { queueMicrotask(() => controller.abort()); }, cancel() { cancellations++; } })) : undefined });
+    const c = client(); await c.call(slugs[1]);
+    await expect(c.transport.request('tools/call', { name: slugs[2], arguments: { thread_id: 'abc' } }, controller.signal)).rejects.toThrow(/interrupted/);
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
+    expect(cancellations).toBe(1);
+  });
+  it("bounds the proxy response before parsing or returning it", async () => {
+    const calls = fixture({ override: call => call.url.pathname.endsWith('/execute/proxy') ? response({ padding: 'x'.repeat(2_000_001) }) : undefined });
+    const c = client(); await c.call(slugs[1]);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
   });
 });
 
@@ -299,7 +369,7 @@ describe("Gmail transport failure and privacy boundaries", () => {
   });
   it("scrubs the project key even when the provider echoes it inside allowed message text", async () => {
     const row = message(); row.payload.body.data = Buffer.from(binding.apiKey).toString("base64url");
-    fixture({ execute: slug => slug === slugs[1] ? success({ threads: [{ id: "abc" }] }) : success({ id: "abc", messages: [row] }) });
+    fixture({ thread: () => ({ id: "abc", messages: [row] }) });
     const c = client(); await c.call(slugs[1]);
     const result = await c.call(slugs[2], { thread_id: "abc" });
     expect(JSON.stringify(result)).not.toContain(binding.apiKey);
@@ -336,8 +406,8 @@ describe('host-selected Gmail PDF acquisition',()=>{
     const download=vi.spyOn(attachmentIo,'downloadSourcePdf').mockImplementation(async()=>{change.revoked?.();return bytes;});
     const calls=fixture({auth:change.broaderScope?{...config(),credentials:{scopes:['https://mail.google.com/']}}:undefined,
       metadata:slug=>slug==='GMAIL_GET_ATTACHMENT'?{...tool(slug),version:'20260915_00',input_parameters:{type:'object',properties:Object.fromEntries(['user_id','message_id','attachment_id','file_name'].map(k=>[k,{type:change.metadataChange?'integer':'string'}])),required:['message_id','attachment_id','file_name']}}:tool(slug),
+      thread:()=>({id:'abc',messages:[{...message(),payload:{mimeType:'multipart/mixed',parts:[{mimeType:'application/pdf',filename:change.sourceChange?'changed.pdf':'fictional.pdf',body:{attachmentId:'pdf-one',size:bytes.length}}]}}]}),
       execute:slug=>{
-        if(slug==='GMAIL_FETCH_MESSAGE_BY_THREAD_ID')return success({id:'abc',messages:[{...message(),payload:{mimeType:'multipart/mixed',parts:[{mimeType:'application/pdf',filename:change.sourceChange?'changed.pdf':'fictional.pdf',body:{attachmentId:'pdf-one',size:bytes.length}}]}}]});
         if(slug==='GMAIL_GET_ATTACHMENT')return success({file:{name:'fictional.pdf',mimetype:'application/pdf',s3url:'https://fictional.s3.amazonaws.com/file?fictional-signature'}});
         throw Error('Unexpected tool');
       }});
@@ -349,6 +419,7 @@ describe('host-selected Gmail PDF acquisition',()=>{
     expect(result).toEqual({...selected,bytesBase64:bytes.toString('base64'),sha256:attachmentIo.attachmentHash(bytes)});
     const execute=calls.find(c=>c.url.pathname.endsWith('/execute/GMAIL_GET_ATTACHMENT'))!;
     expect(execute.body).toEqual({connected_account_id:binding.accountId,user_id:binding.userId,version:'20260915_00',arguments:{user_id:'me',message_id:'aa',attachment_id:'pdf-one',file_name:'fictional.pdf'}});
+    expect(calls.find(c=>c.url.pathname.endsWith('/execute/proxy'))?.body).toEqual({connected_account_id:binding.accountId,endpoint:'https://gmail.googleapis.com/gmail/v1/users/me/threads/abc?format=full',method:'GET'});
     expect(download).toHaveBeenCalledOnce();expect(JSON.stringify(result)).not.toContain('signature');
   });
   it('rejects another account before any provider request',async()=>{

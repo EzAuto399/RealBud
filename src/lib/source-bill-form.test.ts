@@ -17,4 +17,15 @@ describe('source bill manual facts', () => {
     expect(displayBillDate(null)).toBe('Not confirmed');
     expect(displayBillDate('2026-01-31')).toContain('31');
   });
+  it('retains invoice references as text, including leading zeros, across correction', () => {
+    const saved = savedBillFacts({ ...emptyBillFacts(), invoiceNumber: '  000142/A  ', invoiceVersion: ' revised 2 ' });
+    expect(saved).toMatchObject({ invoiceNumber: '000142/A', invoiceVersion: 'revised 2' });
+    expect(savedBillFacts(draftBillFacts(saved))).toEqual(saved);
+    expect(savedBillFacts({ ...draftBillFacts(saved), invoiceNumber: '', invoiceVersion: '' })).toMatchObject({ invoiceNumber: null, invoiceVersion: null });
+  });
+  it('requires a number for a version and holds malformed references', () => {
+    expect(() => savedBillFacts({ ...emptyBillFacts(), invoiceVersion: '2' })).toThrow('invoice number');
+    expect(() => savedBillFacts({ ...emptyBillFacts(), invoiceNumber: 'a'.repeat(121) })).toThrow('invoice number');
+    expect(() => savedBillFacts({ ...emptyBillFacts(), invoiceNumber: 'INV\n123' })).toThrow('invoice number');
+  });
 });

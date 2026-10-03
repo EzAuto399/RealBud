@@ -1,10 +1,34 @@
 # RealBud — current working direction
 
+Latest machine handoff: [MacBook continuation — 3 October](MACBOOK-HANDOFF-2026-10-03.md) records integrated setup, UI, department/workflow work, final validation and remaining release gates. Use its newer evidence boundaries before older checkpoints.
+
+Latest product continuation: [Department workflow configuration](DEPARTMENT-CONFIGURATION-2026-10-03.md) records reusable Accounts/admin and Property Management settings, five reviewed case plans and the completed Opus 5.5 source review (xhigh requested). The post-review fixes have focused API, cross-workspace, PostgreSQL/TLS, restore, HTTP and source-bound UI evidence; exact counts and limits are in the checkpoint. This remains an uninstalled source candidate. Worker Stop still blocks release.
+
+Previous continuation: [W1–W3 implementation and verification](W1-W3-OPERATIONAL-2026-10-02.md) records the paused weekly/every-few-days clocks, 08:00 morning defaults, dedicated W2 runner, source-stable W3 preparation, saved results and notifications, and fictional HTTP/UI/native tests. W1 remains incomplete pending bank/REI qualification and recovery implementation. Follow its exact build/package and live-acceptance boundaries; no customer schedule was enabled.
+
+2 October 2026 later continuation: workspace simplification (one footer Workspace, compact Schedule with drawer, single-scroll Desk, Bud-only saved views, W2 month calendar with expected payments) shipped through installed 0.1.30. Gap plan: [W1–W3 gap plan](WORKFLOWS-GAP-PLAN-2026-10-02.md). REI field gaps: [REI gap review](REI-GAP-REVIEW-2026-10-02.md). Live read-only bank check: [Redbark live check](REDBARK-LIVE-CHECK-2026-10-02.md). Lab dry run (fictional REI, never uploads or posts): [W1–W3 dry run](WORKFLOWS-DRYRUN-2026-10-02.md). Hermes upgrade: [0.21.5 adoption review](HERMES-0.21.5-ADOPTION-REVIEW-2026-10-02.md) (candidate only; 0.21.3 stays recommended until qualified). Evidence: source, local tests, unsigned packaged build, owner's installed device; no customer acceptance, no REI write.
+
 Customer name: the customer is Auston Realty (澳仕登地產); earlier documents and internal ids use the historical spelling 'Austin'.
+
+Previous continuation: [Compact sidebar and saved views](SIDEBAR-REFINEMENT-2026-10-01.md) records the requested status popover, relocated Connections control and cleaner saved-view rows, with 11 browser checks and 80 focused tests. This is source/local-build work, not an installed-app update; its installation boundary preserves the existing workflow fixes.
+
+Previous continuation: [Auston mock workflow results](AUSTON-MOCK-WORKFLOWS-2026-10-01.md) records the authorized collector release, installed input-paging fix, actual ten-conversation Bud review, note-preserving zero-model rerun, and held non-invoice proposal. It separates the source-only duplicate-bill repair and maintenance rehearsal pack from installed evidence. Read its performance measurements and remaining property, REI, department and Property Inspect gates before expanding the trial. Kevin remains the sole invoice reviewer; REI writes stay simulated.
+
+Previous continuation: [Bills and morning priorities installed rehearsal](BILLS-MORNING-TEST-2026-10-01.md) preserves the earlier failed scans, envelope repair, raw-Gmail-contract investigation and revision-4 pack upgrade. Its pending-release and zero-import statements are superseded by the latest checkpoint.
+
+Previous continuation: [Kevin's invoice checkpoint](KEVIN-INVOICE-MOCK-2026-10-01.md) records the native browser replacement, its persistent private work profile, source checks and disposable native engine/cookie test. The [owner's decision](decisions/2026-10-01-kevin-invoice-rehearsal.md) assigns W2 to Kevin and requires RealBud-led actual REI reads after personal sign-in, with all writes simulated. No BrowserSkill add-on is required. Cookies remain in the same browser-managed work profile; personal profiles are not copied. Follow the checkpoint's packaged/installed evidence separately from source and fictional tests. Completed actual REI comparison and invoice/calendar acceptance remain open.
+
+Previous continuation: [Kevin invoice mock checkpoint](KEVIN-INVOICE-MOCK-2026-10-01.md) records the local 0.1.26 update, passing package smoke, private rollback backup and fictional evidence packet. Its initial checkpoint recorded startup awaiting the user handling a macOS security/keychain prompt, before the subsequent installed CSV inspection. It does not establish executed REI reads or a completed invoice job.
+
+Workflow planning, 30 September, updated 1 October: [Kevin and Sherry's combined workflow plan](AUSTON-KEVIN-SHERRY-WORKFLOW-PLAN-2026-09-30.md) retains the five-workflow discovery scope and marks Sherry's earlier billing handoffs superseded by Kevin-only ownership. It includes job instructions, setup inputs and acceptance checks for real reads with simulated writes. This is a planning draft; it grants no live authority and is not a delivery receipt.
+
+Confirmed workflow tools, 30 September: [computer use, Composio and Property Inspect through Zapier](decisions/2026-09-30-auston-workflow-tools.md). Computer use and Composio are primary; Zapier is only for connecting Auston's own Property Inspect account. RealBud coordinates the jobs; direct REI API access does not block delivery through computer use.
 
 Machine handoff: [Mac mini handoff](MAC-MINI-HANDOFF-2026-09-29.md) records the 29 September move to the Mac mini: all work committed and merged to `main`, setup steps, what git does not carry, and open items.
 
-Latest continuation: [macOS first-install QA and fixes](MACOS-QA-2026-09-30.md) records the 29–30 September from-scratch office rehearsal (invite, link, automatic Bud setup), the defects fixed in PRs #29–#37, live operational changes and the ordered open items (service entitlement on link, signing, release publish). Packaged builds were ad-hoc signed; no customer acceptance.
+Previous continuation: [core and workflow foundation](CORE-WORKFLOW-FOUNDATION-2026-10-01.md) adds deterministic selected-CSV inspection and Modelvia access recovery/launch guards, and maps the actual W1–W5 implementation gaps. Local regression and installed-worker wire evidence remain separate from live customer accounts and workflow acceptance. Its proposed shared Kevin/Sherry bill ownership predates the Kevin-only direction above.
+
+Previous continuation: [macOS first-install QA and fixes](MACOS-QA-2026-09-30.md) records the 29–30 September from-scratch office rehearsal (invite, link, automatic Bud setup), the defects fixed in PRs #29–#37, live operational changes and the ordered open items (service entitlement on link, signing, release publish). Packaged builds were ad-hoc signed; no customer acceptance.
 
 Previous continuation: [Bud status and setup ownership](BUD-STATUS-2026-09-27.md) refines the setup dead end with permission-aware actions, explicit prerequisites and automatic read-only refresh. Local verification and remaining packaged/device limits are recorded in that checkpoint.
 

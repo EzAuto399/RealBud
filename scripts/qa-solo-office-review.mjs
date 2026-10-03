@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +26,7 @@ try {
   writeFileSync(worker, `#!${process.execPath}\nconsole.log('Hermes Agent v0.21.3 (2026.9.14)');\n`); chmodSync(worker, 0o755);
   const origin = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [process.env.REALBUD_SERVER_ENTRY || join(root, 'server/index.ts')], { cwd: root,
-    env: { PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, REALBUD_DATA_DIR: data, REALBUD_HERMES_CLI: worker, OMB_PORT: String(port), OMB_STATIC_DIR: join(root, 'dist'), VITEST: 'true' },
+    env: { PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, REALBUD_DATA_DIR: data, REALBUD_HERMES_CLI: worker, OMB_PORT: String(port), OMB_STATIC_DIR: resolve(process.env.REALBUD_UI_DIR || join(root, 'dist')), VITEST: 'true' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', bytes => { logs += bytes; }); child.stderr.on('data', bytes => { logs += bytes; });
@@ -35,23 +36,36 @@ try {
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   assert.ok(ready, logs.slice(-1500));
+  // First run is a server receipt, not the old browser flag: record it for this
+  // disposable fictional workspace so the welcome screen does not block Workspace.
+  const session = (await (await fetch(origin + '/api/session')).json()).token;
+  await completeFictionalOnboarding(async (path, method = 'GET', body) => {
+    const response = await fetch(origin + path, { method, headers: { 'content-type': 'application/json', 'x-realbud-session': session }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const result = await response.json(); assert.equal(response.status, 200, `${path}: ${JSON.stringify(result)}`); return result;
+  });
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   const page = await context.newPage(); const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#you-office');
-  await page.getByRole('button', { name: /^You\b/ }).first().click();
-  const office = page.locator('details').filter({ has: page.getByText('This office', { exact: true }) }).first();
-  if (await office.count()) await office.evaluate(node => { node.open = true; });
+  await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+  const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+  await office.waitFor(); await office.evaluate(node => { node.open = true; });
   const collaboration = page.getByRole('heading', { name: 'Local office collaboration', exact: true });
   await collaboration.waitFor();
   const ordered = await page.locator('.settings-section-body').filter({ has: collaboration }).evaluate(node => {
-    const labels = ['This office', 'Local office collaboration', 'Website account'];
+    const labels = ['This office', 'Local office collaboration'];
     const positions = labels.map(label => node.textContent.indexOf(label));
-    return positions.every(position => position >= 0) && positions[0] < positions[1] && positions[1] < positions[2];
+    return positions.every(position => position >= 0) && positions[0] < positions[1];
   });
-  assert.ok(ordered, 'Office basics must appear before optional collaboration and website linking');
+  assert.ok(ordered, 'Office basics must appear before optional collaboration');
+  assert.equal(await office.getByText('Website account', { exact: true }).count(), 0);
+  const settings = page.locator('#you-settings');
+  assert.equal(await settings.evaluate(node => node.open), false, 'Settings & help starts collapsed');
+  await settings.locator(':scope > summary').click();
+  await settings.locator('#you-website').getByText('Website account', { exact: true }).waitFor();
+  assert.ok(await office.evaluate(node => Boolean(node.compareDocumentPosition(document.getElementById('you-settings')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Office details must appear before account settings');
+  await settings.locator(':scope > summary').click();
   assert.equal(await page.getByText(/Optional. Use RealBud on your own/).count(), 1);
   await page.getByRole('button', { name: 'Use on my own', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Join an office', exact: true }).focus();
@@ -165,9 +179,9 @@ try {
   joinPage.on('pageerror', error => joinErrors.push(error.message));
   await joinPage.route('**/api/company/connect-host', route => { connectBodies.push(JSON.parse(route.request().postData() || '{}')); return route.fulfill({ json: { ok: true } }); });
   await joinPage.goto(origin + '/#you-office');
-  await joinPage.getByRole('button', { name: /^You\b/ }).first().click();
-  const joinOffice = joinPage.locator('details').filter({ has: joinPage.getByText('This office', { exact: true }) }).first();
-  if (await joinOffice.count()) await joinOffice.evaluate(node => { node.open = true; });
+  await joinPage.getByRole('button', { name: 'Workspace', exact: true }).click();
+  const joinOffice = joinPage.locator('details').filter({ has: joinPage.getByText('Office details', { exact: true }) }).first();
+  await joinOffice.waitFor(); await joinOffice.evaluate(node => { node.open = true; });
   await joinPage.getByRole('button', { name: 'Join an office', exact: true }).click();
   const joinField = joinPage.getByLabel('Connect to an existing host', { exact: true });
   await joinField.fill(joinCode.slice(0, -1) + (joinCode.endsWith('0') ? '1' : '0'));
@@ -205,10 +219,9 @@ try {
     if (method === 'GET') { linkPolls++; if (linkPolls >= 2) linked = true; return route.fulfill({ json: linked ? { state: 'linked', agencyLabel: 'Fixture Office A' } : { state: 'pending', ...pendingView } }); }
     return route.fulfill({ json: { state: 'none' } });
   });
-  await linkPage.goto(origin + '/#you-office');
-  await linkPage.getByRole('button', { name: /^You\b/ }).first().click();
-  const linkOffice = linkPage.locator('details').filter({ has: linkPage.getByText('This office', { exact: true }) }).first();
-  if (await linkOffice.count()) await linkOffice.evaluate(node => { node.open = true; });
+  await linkPage.goto(origin + '/#/desk');
+  await linkPage.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await linkPage.locator('#you-settings > summary').click();
   const start = linkPage.getByRole('button', { name: 'Link with your RealBud account', exact: true });
   await start.scrollIntoViewIfNeeded();
   const nameField = linkPage.getByLabel('Computer name').first();

@@ -21,7 +21,7 @@ if (packaged) {
   for (const file of [executable, join(resources, 'server/bootstrap.js'), join(resources, 'ui/index.html')]) assert.ok(statSync(file).isFile(), `Required packaged file is missing or invalid: ${file}`);
 }
 const bootstrap = packaged ? join(resources, 'server/bootstrap.js') : join(root, 'server/bootstrap.ts');
-const staticDirectory = packaged ? join(resources, 'ui') : join(root, 'dist');
+const staticDirectory = packaged ? join(resources, 'ui') : resolve(process.env.REALBUD_UI_DIR || join(root, 'dist'));
 const serviceCwd = packaged ? resources : root;
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -29,7 +29,7 @@ const temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud private backup QA
 const source = join(temp, 'source'), target = join(temp, 'target'), output = resolve(process.env.QA_OUTPUT || join(root, packaged ? 'outputs/private-backup-packaged-2026-09-21' : 'outputs/private-backup-v2-2026-09-21/coordinator-browser'));
 for (const directory of [source, target, output]) mkdirSync(directory, { recursive: true, mode: 0o700 });
 for (const directory of [source, target]) writeFileSync(join(directory, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
-const wait = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [];
+const wait = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [], backupHttp = [];
 const pass = text => { checks.push(text); console.log(`PASS ${text}`); };
 let browser, page, child, logs = '', failure, token, base, port;
 let runtime = { node: process.versions.node, electron: process.versions.electron ?? null };
@@ -50,6 +50,9 @@ const start = async directory => {
     assert.equal(setup.stage, stage);
   }
 };
+// Data & recovery (#you-advanced) sits inside the collapsed Settings & help
+// (#you-settings); open both ancestors as revealSettingsTarget does.
+const openDataAndRecovery = async () => { for (const id of ['you-settings', 'you-advanced']) { const section = page.locator(`details#${id}`); if (!(await section.evaluate(node => node.open))) await section.locator(':scope > summary').click(); } };
 const request = async (path, method = 'GET', body, expected = 200) => { const response = await fetch(base + path, { method, signal: AbortSignal.timeout(120000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); const result = await response.json(); assert.equal(response.status, expected, `${path}: ${JSON.stringify(result)}`); return result; };
 try {
   if (packaged) {
@@ -74,13 +77,25 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+  // Failure diagnostics only: never record passphrases, bodies, headers or
+  // the download capability. Keep the existing download/transport deadlines.
+  const backupPath = value => {
+    const url = new URL(value);
+    return url.origin === base && url.pathname.startsWith('/api/private-backup')
+      ? url.pathname.replace(/\/downloads\/[^/]+$/, '/downloads/[redacted]') : null;
+  };
+  page.on('response', response => { const path = backupPath(response.url()); if (path) backupHttp.push({ method: response.request().method(), path, status: response.status() }); });
+  page.on('requestfailed', request => { const path = backupPath(request.url()); if (path) backupHttp.push({ method: request.method(), path, failed: request.failure()?.errorText ?? 'unknown transport failure' }); });
   await page.goto(base + '/#/you');
+  // The footer Workspace entry carries the workday guide; the book label sits in
+  // its Workspace overview (2026-10-02). Both read the same global Desk state.
   await page.waitForFunction(() => {
-    const text = document.querySelector('aside.rb-sidebar')?.textContent ?? '';
-    return /(?:Office|Sample) book/.test(text) && !text.includes('Book loading') && !text.includes('Loading your desk');
+    const side = document.querySelector('aside.rb-sidebar')?.textContent ?? '';
+    const overview = document.querySelector('section[aria-label="Workspace overview"]')?.textContent ?? '';
+    return /(?:Office|Sample) book/.test(overview) && !overview.includes('Book loading') && !side.includes('Loading your desk');
   }, undefined, { timeout: 15000 });
   pass('Direct You navigation resolves the global sidebar book state without opening Desk');
-  const advanced = page.locator('details#you-advanced'); await advanced.locator(':scope > summary').click();
+  await openDataAndRecovery();
   let panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
   const phrase = 'Fictional backup passphrase only 2026';
   await panel.getByLabel('New backup passphrase', { exact: true }).fill(phrase); await panel.getByLabel('Repeat private backup passphrase', { exact: true }).fill('not matching'); assert.equal(await panel.getByRole('button', { name: 'Download encrypted private backup', exact: true }).isDisabled(), true);
@@ -91,14 +106,14 @@ try {
   const upload = { name: download.suggestedFilename(), mimeType: 'application/octet-stream', buffer: bytes };
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles(upload); await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill(phrase); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click(); await panel.getByRole('region', { name: 'Private backup preview', exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Stage reviewed restore', exact: true }).count(), 0);
   pass('Real API preview shows included/excluded contents while the nonfresh source workspace cannot stage a restore');
-  await page.reload(); await page.locator('details#you-advanced > summary').click(); panel = page.getByRole('region', { name: 'Private workspace backup', exact: true });
+  await page.reload(); await openDataAndRecovery(); panel = page.getByRole('region', { name: 'Private workspace backup', exact: true });
   await panel.getByRole('region', { name: 'Saved backup operations', exact: true }).waitFor();
   pass('Reload rediscovers durable backup operations without persisting the passphrase or file in browser storage');
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles(upload); await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill('Incorrect fictional passphrase'); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click(); await panel.getByRole('region', { name: 'Selected backup progress' }).getByRole('alert').waitFor(); assert.equal((await request('/api/private-backup')).staged, false);
   await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill(phrase); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click(); await panel.getByRole('region', { name: 'Private backup preview', exact: true }).waitFor();
   pass('Incorrect passphrase retains the uploaded copy and a correct retry produces a fully checked preview');
   await stop(); await start(target); assert.equal((await request('/api/private-backup')).canRestore, true);
-  await page.reload(); await page.locator('details#you-advanced > summary').click(); panel = page.getByRole('region', { name: 'Private workspace backup', exact: true });
+  await page.reload(); await openDataAndRecovery(); panel = page.getByRole('region', { name: 'Private workspace backup', exact: true });
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles(upload); await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill(phrase); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click(); const preview = panel.getByRole('region', { name: 'Private backup preview', exact: true }); await preview.waitFor(); assert.equal(await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).isDisabled(), true);
   await preview.screenshot({ path: join(output, 'private-backup-preview-desktop.png') }); await page.setViewportSize({ width: 390, height: 844 }); await preview.getByLabel('I checked this backup', { exact: false }).check(); await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'private-backup-preview-mobile.png') }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).click(); await panel.getByText('Restore staged — restart required', { exact: true }).waitFor(); await page.setViewportSize({ width: 1440, height: 1050 }); const staged = await request('/api/private-backup'); assert.equal(staged.staged, true); assert.equal(await panel.getByRole('button', { name: 'Stage reviewed restore', exact: true }).count(), 0); assert.equal(await panel.getByRole('button', { name: 'Download encrypted private backup', exact: true }).count(), 0); await panel.screenshot({ path: join(output, 'private-backup-staged-desktop.png') });
@@ -108,7 +123,7 @@ try {
   const imported = await request('/api/bank-reference'); assert.ok(imported.batches.some(b => b.id === batch.id));
   const original = await request(`/api/bank-reference/${batch.id}/original`, 'POST', {}); assert.deepEqual(Buffer.from(original.bytesBase64, 'base64'), Buffer.from(csv));
   assert.notDeepEqual(readFileSync(join(source, 'desk.key')), readFileSync(join(target, 'desk.key')));
-  await page.reload(); await page.locator('details#you-advanced > summary').click(); await panel.waitFor(); assert.equal(await panel.getByText('Restore staged — restart required', { exact: true }).count(), 0); assert.deepEqual(errors, []);
+  await page.reload(); await openDataAndRecovery(); await panel.waitFor(); assert.equal(await panel.getByText('Restore staged — restart required', { exact: true }).count(), 0); assert.deepEqual(errors, []);
   const completed = panel.getByRole('region', { name: 'Completed private restore', exact: true });
   await completed.getByText('Last restore completed', { exact: true }).waitFor();
   assert.equal(restored.completed.receipt.digest, staged.receipt.digest);
@@ -131,4 +146,4 @@ try {
   pass('Damaged historical completion metadata shows a warning and preserves its bytes while valid business records can still be backed up');
   pass('Desktop and390px previews render without page errors or horizontal overflow');
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
-finally { await browser?.close(); await stop(); rmSync(temp, { recursive: true, force: true }); writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, mode: packaged ? 'packaged' : 'source', executable, resources, bootstrap, staticDirectory, runtime, layer: `${packaged ? 'Actual packaged Electron/Node, compiled bootstrap and bundled UI' : 'Actual local source bootstrap, Node and built UI'}; fictional records; restart exercised by owned child stop/start, not native restart IPC, physical Windows or managed-service proof`, checks, errors, failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2)); if (failure) { console.error(failure); process.exitCode = 1; } else console.log(JSON.stringify({ output, checks }, null, 2)); }
+finally { await browser?.close(); await stop(); rmSync(temp, { recursive: true, force: true }); writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, mode: packaged ? 'packaged' : 'source', executable, resources, bootstrap, staticDirectory, runtime, layer: `${packaged ? 'Actual packaged Electron/Node, compiled bootstrap and bundled UI' : 'Actual local source bootstrap, Node and built UI'}; fictional records; restart exercised by owned child stop/start, not native restart IPC, physical Windows or managed-service proof`, checks, errors, backupHttp, failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2)); if (failure) { console.error(failure); process.exitCode = 1; } else console.log(JSON.stringify({ output, checks }, null, 2)); }

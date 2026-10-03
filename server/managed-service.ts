@@ -1,10 +1,22 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { serviceAdmin } from "./care-unlock.ts";
 import { createServiceEntitlementAuthority } from "./service-entitlement.ts";
 import { writePrivateJson, removePrivateJson } from "./private-json.ts";
 import type { ServiceEntitlementCapability } from "../shared/service-entitlement.ts";
+
+const MAX_INSTALLATION_BYTES = 2048;
+const INSTALLATION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+
+export class ServiceInstallationRecoveryError extends Error {
+  readonly status = 503;
+  readonly code = "service_installation_recovery_required";
+  constructor() {
+    super("This computer's service installation needs recovery. Its access records were kept; contact RealBud support.");
+    this.name = "ServiceInstallationRecoveryError";
+  }
+}
 
 export const serviceInstallationPath = (directory = DATA_DIR): string => join(directory, "service-installation.json");
 
@@ -33,16 +45,43 @@ export function serviceInstallationBinding(directory = DATA_DIR): { companyId: s
 }
 
 function installation(directory = DATA_DIR): { companyId?: string; hostInstallationId?: string } {
+  const path = serviceInstallationPath(directory);
+  let stat: Stats;
+  // Absence is the administrator's withdrawal signal. Damage, an unreadable
+  // entry or a dangling link is not permission to destroy a valid model key.
+  try { stat = lstatSync(path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new ServiceInstallationRecoveryError();
+  }
   try {
-    const path = serviceInstallationPath(directory);
-    if (statSync(path).size > 2048) return {};
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_INSTALLATION_BYTES ||
+      (process.platform !== "win32" && ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))) throw new ServiceInstallationRecoveryError();
+    // The private writer admits Windows ACLs. This synchronous capability-read
+    // path must not launch PowerShell on every worker/tool permission check.
+    const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let value: unknown;
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size > MAX_INSTALLATION_BYTES) throw new ServiceInstallationRecoveryError();
+      // Bound the allocation and read even if the file grows after lstat.
+      const bytes = Buffer.alloc(MAX_INSTALLATION_BYTES + 1);
+      let size = 0;
+      while (size < bytes.length) {
+        const count = readSync(fd, bytes, size, bytes.length - size, null);
+        if (!count) break;
+        size += count;
+      }
+      if (size > MAX_INSTALLATION_BYTES) throw new ServiceInstallationRecoveryError();
+      value = JSON.parse(bytes.subarray(0, size).toString("utf8"));
+    } finally { closeSync(fd); }
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new ServiceInstallationRecoveryError();
     const fields = value as Record<string, unknown>;
     if (fields.schema !== 1 || Object.keys(fields).some(key => !["schema", "companyId", "hostInstallationId"].includes(key)) ||
-      typeof fields.companyId !== "string" || typeof fields.hostInstallationId !== "string") return {};
+      typeof fields.companyId !== "string" || !INSTALLATION_ID.test(fields.companyId) ||
+      typeof fields.hostInstallationId !== "string" || !INSTALLATION_ID.test(fields.hostInstallationId)) throw new ServiceInstallationRecoveryError();
     return { companyId: fields.companyId, hostInstallationId: fields.hostInstallationId };
-  } catch { return {}; }
+  } catch { throw new ServiceInstallationRecoveryError(); }
 }
 
 /** No policy, public key or company/host identity can come from an HTTP body.

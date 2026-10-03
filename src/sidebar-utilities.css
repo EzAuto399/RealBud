@@ -1,0 +1,30 @@
+/* The sidebar footer is one Workspace row; details live on the Workspace screen. */
+.rb-sidebar-utilities { flex-shrink: 0; margin: 12px 12px 10px; padding-top: 8px; border-top: 1px solid var(--color-line); }
+.rb-workspace-status-trigger { display: flex; align-items: center; width: 100%; min-height: 56px; gap: 8px; margin-top: 4px; border: 0; border-radius: 4px; padding: 8px 10px; text-align: left; color: var(--color-ink); background: transparent; cursor: pointer; }
+.rb-workspace-status-trigger:hover { background: var(--color-raised); }
+.rb-workspace-status-trigger[aria-current="page"] { background: var(--color-selected); }
+.rb-workspace-status-trigger:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+.rb-workspace-status-mark { display: flex; align-items: center; justify-content: center; flex: 0 0 24px; }
+.rb-workspace-status-label { flex: 1; min-width: 0; }
+.rb-workspace-status-label > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-workspace-status-label > span:first-child { font-size: 15px; font-weight: 500; }
+.rb-workspace-status-label > span + span { margin-top: 3px; color: var(--color-ink-muted); font-size: 13px; }
+.rb-workspace-status-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; }
+@media (max-width: 719px) {
+  .rb-sidebar-utilities { margin-left: 6px; margin-right: 6px; }
+  .rb-workspace-status-trigger { position: relative; justify-content: center; padding: 8px; }
+  .rb-workspace-status-label { display: none; }
+  .rb-workspace-status-dot { position: absolute; right: 4px; top: 8px; }
+}
+/* Phones: the bottom bar keeps Workspace beside the three doors, since the
+   footer is otherwise hidden below 600px. Doubled classes outrank the
+   shell rule in styles.css that hides everything but navigation. */
+@media (max-width: 599px) {
+  .rb-sidebar.rb-sidebar { flex-direction: row; align-items: stretch; }
+  .rb-sidebar > .rb-sidebar-utilities.rb-sidebar-utilities { display: flex; margin: 0; padding: 4px 6px 4px 0; border-top: 0; }
+  .rb-workspace-status-trigger.rb-workspace-status-trigger { flex-direction: column; justify-content: center; gap: 2px; width: auto; min-width: 64px; min-height: 54px; margin-top: 0; padding: 5px 6px; }
+  .rb-workspace-status-trigger .rb-workspace-status-label { display: block; flex: none; text-align: center; }
+  .rb-workspace-status-trigger .rb-workspace-status-label > span:first-child { font-size: 12px; }
+  .rb-workspace-status-trigger .rb-workspace-status-label > span + span { display: none; }
+  .rb-workspace-status-trigger .rb-workspace-status-mark { flex-basis: auto; }
+}

@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { privateDirectory, writePrivateJson } from "./private-json.ts";
 
 export const HERMES_BROWSER_ENGINE_VERSION = "0.26.0";
@@ -20,7 +20,8 @@ export type HermesEngineStep =
   | { kind: "click"; tab: number; ref: string }
   | { kind: "fill"; tab: number; ref: string; value: string }
   | { kind: "press"; tab: number; ref: string; key: string }
-  | { kind: "select"; tab: number; ref: string; values: string[] };
+  | { kind: "select"; tab: number; ref: string; values: string[] }
+  | { kind: "download" | "upload"; tab: number; ref: string; path: string };
 export interface HermesEngineBundle { executable: string; sha256: string }
 export type HermesEngineExec = (executable: string, args: string[], options: { env: NodeJS.ProcessEnv; cwd: string; signal?: AbortSignal }) => Promise<Json>;
 
@@ -57,7 +58,7 @@ const execute: HermesEngineExec = (executable, args, options) => new Promise((re
   });
 });
 
-const keys: Record<HermesEngineStep["kind"], readonly string[]> = { tabs: ["kind"], read: ["kind", "tab"], navigate: ["kind", "tab", "url"], click: ["kind", "tab", "ref"], fill: ["kind", "tab", "ref", "value"], press: ["kind", "tab", "ref", "key"], select: ["kind", "tab", "ref", "values"] };
+const keys: Record<HermesEngineStep["kind"], readonly string[]> = { tabs: ["kind"], read: ["kind", "tab"], navigate: ["kind", "tab", "url"], click: ["kind", "tab", "ref"], fill: ["kind", "tab", "ref", "value"], press: ["kind", "tab", "ref", "key"], select: ["kind", "tab", "ref", "values"], download: ['kind', 'tab', 'ref', 'path'], upload: ['kind', 'tab', 'ref', 'path'] };
 function checkedStep(raw: HermesEngineStep): HermesEngineStep {
   if (!record(raw) || typeof raw.kind !== "string" || !Object.hasOwn(keys, raw.kind)) throw failed("This browser operation is unavailable.");
   const expected = keys[raw.kind as HermesEngineStep["kind"]];
@@ -71,6 +72,11 @@ function checkedStep(raw: HermesEngineStep): HermesEngineStep {
   if (raw.kind === "fill" && (typeof raw.value !== "string" || raw.value.length > 2000 || raw.value.startsWith("-"))) throw failed("This value cannot be passed safely to the work browser.");
   if (raw.kind === "press" && (typeof raw.key !== "string" || !/^(?:(?:Control|Alt|Shift|Meta)\+)*(?:Enter|Tab|Escape|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete|Space|[a-zA-Z0-9])$/.test(raw.key))) throw failed("Use one supported browser key.");
   if (raw.kind === "select" && (!Array.isArray(raw.values) || raw.values.length < 1 || raw.values.length > 20 || raw.values.some(value => typeof value !== "string" || value.length > 200 || value.startsWith("-")))) throw failed("Choose observed dropdown options.");
+  // This path is supplied only by the host's hash-bound task-file broker.
+  // The worker's tool accepts a granted file name, never a filesystem path.
+  if ((raw.kind === 'download' || raw.kind === 'upload') && (typeof raw.path !== 'string' || raw.path.length > 4096 ||
+      !isAbsolute(raw.path) || (process.platform === 'win32' && !/^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+[\\/])/.test(raw.path)) ||
+      /[\u0000-\u001f\u007f]/.test(raw.path) || raw.path.split(/[\\/]/).includes('..'))) throw failed('Use a file staged by this browser task.');
   return structuredClone(raw);
 }
 
@@ -143,7 +149,8 @@ export class HermesBrowserTransport {
       }
       const args = step.kind === "read" ? ["snapshot"] : step.kind === "navigate" ? ["open", step.url]
         : step.kind === "click" ? ["click", step.ref] : step.kind === "fill" ? ["fill", step.ref, step.value]
-          : step.kind === "select" ? ["select", step.ref, ...step.values] : null;
+          : step.kind === "select" ? ["select", step.ref, ...step.values]
+            : step.kind === 'download' || step.kind === 'upload' ? [step.kind, step.ref, step.path] : null;
       if (step.kind === "press") {
         await this.command(["focus", step.ref]);
         if (this.phase !== "active" || signal?.aborted) throw failed("This browser controller is stopped.");

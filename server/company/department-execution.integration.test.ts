@@ -8,10 +8,20 @@ import {createCompanyKernel} from './index.ts';
 import {createCompanyPortalCertificateGate} from './portal-proof.ts';
 import {startCompanyPostgresFixture} from './testing-postgres.ts';
 import {createOfficeBackup,restoreOfficeBackup} from './backup.ts';
+import {createCompanyHost} from '../company-host.ts';
+import {createHostCertificate} from './host-certificate.ts';
+import {requestCompanyHost,startCompanyTransport} from './host-transport.ts';
 import * as C from '../../shared/company-execution.ts';
+import {departmentConfigurationReviewMaterial,type DepartmentConfiguration} from '../../shared/department-configuration.ts';
 import {canonicalWebsiteCommand} from '../../shared/website-commands.ts';
 
 const secret=()=>randomBytes(32).toString('hex');
+const reviewedRecipe=():C.CompanyExecutionRecipe&{review:C.CompanyExecutionReview}=>{
+ const review:C.CompanyExecutionReview={plan:{title:'Prepare fictional department case',description:'Draft a summary from this assigned case only.',steps:['Analyse the supplied case.','Draft a summary for human review.'],evidence:'Fictional draft, no external action',capabilities:['analyse','draft'],allowedOrigins:[],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:null},instructions:'Complete fictional instructions — preserve the supplied case facts.'};
+ const hash=(v:unknown)=>createHash('sha256').update(canonicalWebsiteCommand(v)).digest('hex');
+ return {id:'case-preparation',revision:1,digest:hash(review.plan),instructionDigest:hash(review.instructions),review};
+};
+
 describe.runIf(process.env.REALBUD_TEST_POSTGRES==='1')('scoped department execution on actual PostgreSQL',()=>{
  let fixture:Awaited<ReturnType<typeof startCompanyPostgresFixture>>,directory:string,kernel:ReturnType<typeof createCompanyKernel>;
  let cert='a'.repeat(64);const gate=createCompanyPortalCertificateGate();
@@ -22,10 +32,13 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES==='1')('scoped department execu
   const owner=await kernel.createCompany({name:'Fictional local office',ownerName:'Owner'}),invite=await kernel.issueInvitation(owner.sessionToken,{displayName:'Case member'}),member=await kernel.redeemInvitation(invite.invitationToken);
   let department=await kernel.createDepartment(owner.sessionToken,{requestId:randomUUID(),name:'Accounts'});
   department=await kernel.setDepartmentAccess(owner.sessionToken,{departmentId:department.id,memberId:member.memberId,access:'write',expectedRevision:department.revision});
+  const configuration:DepartmentConfiguration={version:1,template:'accounts-admin',plans:[{recipe:reviewedRecipe(),pack:null}],workflowDefaults:[]};
+  const change={departmentId:department.id,expectedRevision:department.revision,configuration,note:'Review fictional department plan',sourceReceiptId:null};
+  department=(await kernel.saveDepartmentConfiguration(owner.sessionToken,{...change,requestId:randomUUID(),reviewDigest:createHash('sha256').update(departmentConfigurationReviewMaterial(owner.companyId,change)).digest('hex')})).department;
   const item=(await kernel.createDepartmentCase(owner.sessionToken,{departmentId:department.id,requestId:randomUUID(),title:'Prepare fictional case',description:'Only this case description is permitted.',assigneeMemberId:member.memberId})).item;
   return {owner,member,department,item};
  }
- function beginInput(o:Awaited<ReturnType<typeof office>>):C.BeginCompanyExecution{return {version:1,requestId:randomUUID(),grantSecret:secret(),departmentId:o.department.id,expectedDepartmentRevision:o.department.revision,caseId:o.item.id,expectedCaseFence:o.item.fence,recipe:{id:'case-preparation',revision:1,digest:'b'.repeat(64),instructionDigest:'c'.repeat(64)},executor:{workspaceId:randomUUID(),workerBinding:randomUUID()},durationMs:86400000};}
+ function beginInput(o:Awaited<ReturnType<typeof office>>):C.BeginCompanyExecution{return {version:1,requestId:randomUUID(),grantSecret:secret(),departmentId:o.department.id,expectedDepartmentRevision:o.department.revision,caseId:o.item.id,expectedCaseFence:o.item.fence,recipe:reviewedRecipe(),executor:{workspaceId:randomUUID(),workerBinding:randomUUID()},durationMs:86400000};}
  async function active(){const o=await office(),input=beginInput(o),pending=await kernel.beginDepartmentExecution(o.member.sessionToken,input),confirmation:C.ConfirmCompanyExecution={version:1,requestId:randomUUID(),grantId:pending.id,expectedRevision:pending.revision,grantDigest:pending.digest};const grant=await kernel.confirmDepartmentExecution(o.owner.sessionToken,confirmation);return {...o,input,confirmation,grant};}
  const admitInput=(grant:C.CompanyExecutionGrant):C.AdmitCompanyExecution=>({version:1,grantId:grant.id,requestId:randomUUID(),executionId:randomUUID(),claimSecret:secret(),ttlMs:300000});
  const checkInput=(input:C.AdmitCompanyExecution,r:C.CompanyExecutionReceipt):C.CheckCompanyExecution=>({version:1,grantId:input.grantId,executionId:input.executionId,claimSecret:input.claimSecret,fence:r.fence});
@@ -191,11 +204,36 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES==='1')('scoped department execu
   // This shared fixture contains several companies, so isolate the source for
   // the existing one-office backup contract instead of weakening that check.
   const src=await startCompanyPostgresFixture({outputDirectory:join(directory,'restore-source')}),dest=await startCompanyPostgresFixture({outputDirectory:join(directory,'restore-target')});
-  try{const k=createCompanyKernel(src.pool,{portalBridge:bridge}),owner=await k.createCompany({name:'Backup source',ownerName:'Owner'}),d=await k.createDepartment(owner.sessionToken,{requestId:randomUUID(),name:'Accounts'}),item=(await k.createDepartmentCase(owner.sessionToken,{requestId:randomUUID(),departmentId:d.id,title:'Backup case',description:'Local description',assigneeMemberId:owner.memberId})).item;
+  let restoredTransport:Awaited<ReturnType<typeof startCompanyTransport>>|undefined;
+  try{const k=createCompanyKernel(src.pool,{portalBridge:bridge}),owner=await k.createCompany({name:'Backup source',ownerName:'Owner'});let d=await k.createDepartment(owner.sessionToken,{requestId:randomUUID(),name:'Accounts'});
+   const credentials={loginName:'fictional-restore-owner',password:'Fictional-restore-owner-password-2026'};
+   await k.enrollMemberCredential(owner.sessionToken,credentials);
+   const configuration:DepartmentConfiguration={version:1,template:'accounts-admin',plans:[{recipe:reviewedRecipe(),pack:null}],workflowDefaults:[]};
+   const change={departmentId:d.id,expectedRevision:d.revision,configuration,note:'Reviewed backup fixture configuration',sourceReceiptId:null};
+   const saved=await k.saveDepartmentConfiguration(owner.sessionToken,{...change,requestId:randomUUID(),reviewDigest:createHash('sha256').update(departmentConfigurationReviewMaterial(owner.companyId,change)).digest('hex')});d=saved.department;
+   const historyBefore=await k.departmentConfigurationHistory(owner.sessionToken,{departmentId:d.id,beforeRevision:null,limit:10});
+   const item=(await k.createDepartmentCase(owner.sessionToken,{requestId:randomUUID(),departmentId:d.id,title:'Backup case',description:'Local description',assigneeMemberId:owner.memberId})).item;
    const input:C.BeginCompanyExecution={...beginInput(o),requestId:randomUUID(),departmentId:d.id,expectedDepartmentRevision:d.revision,caseId:item.id,expectedCaseFence:item.fence},p=await k.beginDepartmentExecution(owner.sessionToken,input),g=await k.confirmDepartmentExecution(owner.sessionToken,{version:1,requestId:randomUUID(),grantId:p.id,expectedRevision:p.revision,grantDigest:p.digest}),admit=admitInput(g),r=await k.admitDepartmentExecution(input.grantSecret,admit);
    const backup=(await createOfficeBackup(src.adminPool,'A sufficiently long fictional passphrase',owner.companyId,true)).backup;expect(JSON.stringify(backup)).not.toContain(input.grantSecret);await restoreOfficeBackup(dest.adminPool,backup,'A sufficiently long fictional passphrase');
    const restored=createCompanyKernel(dest.pool,{portalBridge:bridge});await expect(restored.checkDepartmentExecution(input.grantSecret,checkInput(admit,r))).rejects.toMatchObject({code:'stale_claim'});
+   expect((await dest.adminPool.query('SELECT department_configuration FROM realbud_company.scopes WHERE id=$1',[d.id])).rows[0].department_configuration).toEqual(configuration);
+   expect((await dest.adminPool.query('SELECT details FROM realbud_company.audit_events WHERE id=$1',[saved.receiptId])).rows[0].details.afterConfiguration).toEqual(configuration);
+   await expect(restored.authenticateSession(owner.sessionToken)).rejects.toMatchObject({code:'unauthenticated'});
    expect((await dest.adminPool.query('SELECT status FROM realbud_company.cases')).rows[0].status).toBe('recovery_required');expect((await dest.adminPool.query('SELECT revoked_at FROM realbud_company.department_execution_grants')).rows[0].revoked_at).toBeInstanceOf(Date);
-  }finally{await src.stop();await dest.stop();}
+   // Read through the public API after a fresh password sign-in; never revive
+   // a restored bearer or bypass the host's member and configuration validators.
+   const certificate=await createHostCertificate('localhost');
+   const host=createCompanyHost({kernel:restored,authorizeAdmin:()=>({ok:false,status:401,error:'Admin unavailable'}),hasAdminSession:()=>false});
+   restoredTransport=await startCompanyTransport({...certificate,host:'127.0.0.1',port:0,handle:host.handle});
+   const call=(path:string,body:unknown,memberToken='')=>requestCompanyHost({origin:`https://localhost:${restoredTransport!.port}`,certificatePem:certificate.cert,path:`/api/company/${path}`,method:'POST',memberToken,body});
+   const historyInput={departmentId:d.id,beforeRevision:null,limit:10};
+   expect(await call('departments/configuration/history',historyInput,owner.sessionToken)).toMatchObject({status:401,body:{code:'unauthenticated'}});
+   const signedIn=await call('sign-in',credentials);expect(signedIn.status).toBe(200);
+   const memberToken=(signedIn.body as {memberToken:string}).memberToken;
+   expect(await call('departments/configuration',{departmentId:d.id},memberToken)).toMatchObject({status:200,body:{department:{id:d.id,revision:d.revision},configuration,canManage:true}});
+   const history=await call('departments/configuration/history',historyInput,memberToken);
+   expect(history).toMatchObject({status:200,body:{department:{id:d.id},entries:historyBefore.entries,nextBeforeRevision:null}});
+   expect((history.body as {entries:unknown[]}).entries).toEqual(historyBefore.entries);
+  }finally{await restoredTransport?.close();await src.stop();await dest.stop();}
  },60000);
 });

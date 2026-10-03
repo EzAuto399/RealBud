@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { createServiceAdminPasswordVerifier } from '../server/service-admin.ts';
 import { canonicalServiceEntitlementPayload } from '../server/service-entitlement.ts';
+import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serverExecutable = process.env.REALBUD_QA_EXECUTABLE || process.execPath, resources = process.env.REALBUD_QA_RESOURCES;
@@ -80,7 +81,8 @@ async function boot(d) {
 }
 async function makeDesktop(name) {
   const home = join(temp, name), data = join(home, 'data'); mkdirSync(data, { recursive: true, mode: 0o700 });
-  const d = { name, home, data, worker: join(home, 'worker.mjs'), networkGuard: join(home, 'network-guard.mjs'), calls: join(home, 'worker-calls.json'), password: `Fictional-${name}-administration-2026!`, session: '' };
+  // Fixture call evidence stays inside the real worker's writable work folder.
+  const d = { name, home, data, worker: join(home, 'worker.mjs'), networkGuard: join(home, 'network-guard.mjs'), calls: join(data, 'vault', 'bud-work', 'worker-calls.json'), password: `Fictional-${name}-administration-2026!`, session: '' };
   desktops.push(d);
   write(join(data, 'config.json'), { instances: { fixture: { driver: 'not-a-real-driver' } } });
   write(join(data, 'service-admin.json'), { version: 1, passwordVerifier: await createServiceAdminPasswordVerifier(d.password) });
@@ -93,11 +95,17 @@ async function makeDesktop(name) {
   write(d.networkGuard, `const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(url.origin!==${JSON.stringify(ready.endpoint)})throw new Error('QA denied non-gateway fetch');return realFetch(input,init);};`);
   writeFileSync(d.worker, `#!${process.execPath}\nimport {readFileSync,writeFileSync,existsSync} from 'node:fs';
 if(process.argv.includes('--version')){console.log('Hermes Agent v0.21.3 (2026.9.14)');process.exit(0);}
+// The provider key stays with the host; this worker receives only the loopback relay token.
+if(process.env.REALBUD_MODEL_API_KEY===${JSON.stringify(fictionalWorkerModelKey)}||!/^[a-f0-9]{64}$/.test(process.env.REALBUD_MODEL_API_KEY??''))throw new Error('Fictional worker did not receive an isolated relay token');
+const relayOverlay=JSON.parse(readFileSync(process.env.HERMES_MANAGED_DIR+'/config.yaml','utf8'));
+const relayProviders=Object.values(relayOverlay.providers??{});
+if(relayProviders.length!==1||!['api','url','base_url'].every(key=>{const url=new URL(relayProviders[0][key]);return url.protocol==='http:'&&url.hostname==='127.0.0.1'&&url.port;}))throw new Error('Fictional worker relay must use loopback only');
 const path=${JSON.stringify(join(data, 'vault/workflow-inputs/accounts-inbox.json'))};if(!existsSync(path)){console.log('{}');process.exit(0);}
 const input=JSON.parse(readFileSync(path,'utf8'));
 const result={version:1,kind:'accounts-inbox-triage',skillSource:'email-inbox-triage@0.1.0',sourceReference:input.sourceReference,status:'complete',coverageComplete:true,holds:[],actionsPerformed:[],threads:input.threads.map(t=>({threadId:t.threadId,disposition:'action-review',owner:'property-manager',priority:'normal',sourceMessageIds:t.messages.map(m=>m.messageId),reason:'Fictional maintenance request.',nextAction:'Review internally.',missingFacts:[]}))};
 let calls=[];try{calls=JSON.parse(readFileSync(${JSON.stringify(d.calls)},'utf8'));}catch{}calls.push(input.threads.length);writeFileSync(${JSON.stringify(d.calls)},JSON.stringify(calls));
 console.log(JSON.stringify({summary:'Deterministic fictional review',evidence:['Fictional mail'],outputs:[JSON.stringify(result)],needsApproval:[]}));\n`, { mode: 0o700 });
+  provisionMockWorkerGrant({ executable: serverExecutable, resources, home, data, endpoint: ready.endpoint, credential: ready.agencies[name].credential, companyId, hostInstallationId });
   await boot(d);
   assert.equal((await fetch(d.base + '/api/mail-workspace')).status, 401);
   d.admin = (await request(d, '/api/service-admin/login', 'POST', { password: d.password })).token;
@@ -132,7 +140,8 @@ async function review(d) {
   const state = await request(d, '/api/mail-workspace'), body = { requestId: randomUUID(), expectedRevision: state.schedule.revision };
   await request(d, '/api/mail-workspace/review', 'POST', body, 202);
   await until(async () => (await request(d, '/api/mail-workspace')).operation?.state !== 'running', 'mail reasoning');
-  assert.equal((await request(d, '/api/mail-workspace')).operation.state, 'complete'); return body;
+  const operation = (await request(d, '/api/mail-workspace')).operation;
+  assert.equal(operation.state, 'complete', JSON.stringify(operation)); return body;
 }
 async function preserved(d, before) { assert.deepEqual(await allItems(d), before); }
 async function heldScan(d, mutation) {
@@ -266,6 +275,7 @@ finally {
   rmSync(temp, { recursive: true, force: true });
   write(join(output, 'integration-receipt.json'), { at: new Date().toISOString(), passed: !failure,
     layer: `${resources ? 'Packaged' : 'Source'} two local managed desktop processes, actual source gateway/default Gmail adapter; fictional upstream and deterministic Hermes CLI; no live provider/model or native Windows proof`,
+    limits: ['Synthetic model grants admit deterministic CLI workers; no model network or inference is exercised.', 'No live Gmail, customer account, native UI or Windows proof.'],
     checks, stats: finalStats, cleaned: !existsSync(temp), ...(failure ? { error: String(failure.message).replaceAll(/ak_fictional_gateway_canary_[AB]/g, '[redacted fixture canary]') } : {}) });
 }
 if (failure) throw failure;

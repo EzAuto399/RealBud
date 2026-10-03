@@ -22,9 +22,12 @@ assert.ok(Number(process.versions.node.split(".")[0]) >= 24, "Use Node 24 or lat
 const packPath = join(root, "pack/workflows/austin-accounts/workflows.json");
 const fixtureRoot = join(root, "outputs/austin-accounts-workflows-2026-09-13/fixtures");
 const pack = JSON.parse(readFileSync(packPath, "utf8"));
-const manifest = JSON.parse(readFileSync(join(fixtureRoot, "manifest.json"), "utf8"));
+const manifestPath = join(fixtureRoot, "manifest.json");
+// Non-live mode tests import/export and approval gates only. Model case files
+// are required when those cases actually run; never fabricate their evidence.
+const manifest = live || existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : { cases: [] };
 const selectedCases = manifest.cases.filter(c => (!argument("--case") || c.id === argument("--case")) && (!argument("--workflow") || argument("--workflow").split(",").includes(c.workflowId)));
-assert.ok(selectedCases.length > 0, "At least one declared case must be selected.");
+if (live) assert.ok(selectedCases.length > 0, "At least one declared case must be selected.");
 mkdirSync(out, { recursive: true, mode: 0o700 });
 const scratch = mkdtempSync(join(tmpdir(), "realbud-accounts-qa-")); chmodSync(scratch, 0o700);
 const engineSource = process.env.REALBUD_HERMES_HOME || join(homedir(), ".realbud/hermes");
@@ -44,6 +47,7 @@ const report = { startedAt: new Date().toISOString(), live, node: process.versio
   layer: "Current-source HTTP import and immutable Prepare job executor; real model only when live=true; synthetic files; no installed UI or customer/Windows acceptance.",
   scope: "Manual file-only preparation in two disposable offices. No connected mailbox, browser, ANZ, REI, outgoing message or schedule activation.",
   checks: [], runs: [], fixtureHashes: inputsBefore,
+  modelCaseCoverage: live ? "Declared fixture cases run below" : "Not run: non-live mode tests pack portability and approval gates only",
   source: { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), dirtyEntryCount: execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim().split("\n").length,
     hashes: hashes([...walk(join(root, "server")), ...walk(join(root, "shared")), ...walk(join(root, "pack/property")), fileURLToPath(import.meta.url)]) },
   limitations: ["The host validates shape, bound source identity and item coverage and derives the review queue. External fixture assertions assess model interpretation; neither layer applies business records.", "Native installed UI, real Windows workstation, phone delivery and actual office accounts are not exercised.", "File-tool capability and prepare-only policy are used; this is not an OS filesystem-containment penetration test.", "No recurring schedule is enabled and no always-on or multi-day office reliability claim is made."] };

@@ -150,7 +150,7 @@ describe("step 2 starts with linking this computer to its RealBud account", () =
 
   it("makes the account link the first action of step 2, before any account connection", () => {
     const steps = sequenceOf({ agencySetup: facts(), websiteLink: "not-linked" });
-    expect(currentSetupStep(steps)).toMatchObject({ number: 2, id: "accounts", target: "you-office", actionLabel: "Link with your RealBud account" });
+    expect(currentSetupStep(steps)).toMatchObject({ number: 2, id: "accounts", target: "you-website", actionLabel: "Link with your RealBud account" });
     expect(steps[1].status).toMatch(/^Link this computer with your RealBud account first; .*model access and account connections\. Then connect the accounts your work reads\.$/);
     // A verified mailbox does not skip the link: model access comes through it.
     const mailOnly = sequenceOf({ agencySetup: verified, websiteLink: "not-linked" });

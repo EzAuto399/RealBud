@@ -12,15 +12,14 @@ import { HERMES_RECOMMENDED, HERMES_RECOMMENDED_VERSION, HERMES_RELEASES } from 
 import { bootstrapInvocation, bootstrapPlan } from "./worker-bootstrap.ts";
 
 describe("what a fresh install receives", () => {
-  it("recommends 0.21.3 by name, not by position in the catalog", () => {
-    // Promoted 2026-09-19 after the pin procedure completed: the tag-exact build
-    // was staged via startRuntimeUpdate({ release }), `pnpm qa:acp-smoke` answered
-    // the RealBud handshake on both 0.21.2 (control) and 0.21.3, and only then did
-    // this constant move. Rollback stays available at 0.21.2.
-    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.3");
+  it("recommends 0.21.5 by name, not by position in the catalog", () => {
+    // Promoted 2026-10-02 by owner decision after the tag-exact build was staged
+    // via startRuntimeUpdate({ release }) and `pnpm qa:acp-smoke` answered on both
+    // 0.21.3 (control) and 0.21.5. Rollback stays available at 0.21.3.
+    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.5");
     expect(HERMES_RECOMMENDED.product).toBe(HERMES_RECOMMENDED_VERSION);
-    expect(HERMES_RECOMMENDED.tag).toBe("v2026.9.14");
-    expect(HERMES_RECOMMENDED.commit).toBe("345cd2b057a452236de401d3534b8502a7465e8d");
+    expect(HERMES_RECOMMENDED.tag).toBe("v2026.9.24");
+    expect(HERMES_RECOMMENDED.commit).toBe("f97608f178d1ffeca59860195ab7da295f7c8e5f");
   });
 
   it("never recommends the compatibility floor", () => {
@@ -30,25 +29,39 @@ describe("what a fresh install receives", () => {
     expect(HERMES_RECOMMENDED.commit).not.toBe(HERMES_PIN.commit);
   });
 
-  // 0.21.3 was admitted as an installable candidate so it could be staged and
-  // smoked, and is now the recommended release. 0.21.2 stays admitted as the
-  // rollback target: an office that updates can always return to it, so it must
-  // remain supported and installable even though it is no longer recommended.
-  it("keeps 0.21.2 admitted as the rollback release after promoting 0.21.3", () => {
+  // 0.21.3 was recommended until 0.21.5 was promoted. It stays admitted as the
+  // rollback target (and 0.21.2 behind it): an office that updates can always
+  // return to it, so it must remain supported and installable.
+  it("keeps 0.21.3 and 0.21.2 admitted as rollback releases after promoting 0.21.5", () => {
     const catalog: readonly { product: string; tag: string; commit: string }[] = HERMES_RELEASES;
     const compatible: readonly { product: string; calendar: string }[] = HERMES_COMPATIBLE_RELEASES;
-    const candidate = catalog.find(release => release.product === "0.21.2");
-    expect(candidate, "0.21.2 must stay installable so Restore can select it").toBeDefined();
-    expect(candidate?.tag).toBe("v2026.9.11");
+    const rollback = HERMES_RELEASES.find(release => release.product === "0.21.3");
+    expect(rollback, "0.21.3 must stay installable so Restore can select it").toBeDefined();
+    expect(rollback?.tag).toBe("v2026.9.14");
     // The v2026.9.14 TAG commit, not a main-branch head. This machine's personal
     // Hermes also says "v0.21.3 (2026.9.14)" but is built from upstream 6005aa1f,
     // 1653 commits ahead of the tag.
-    expect(candidate?.commit).toBe("939e45c91d751fadd94dcd1b873ac3cb44846213");
+    expect(rollback?.commit).toBe("345cd2b057a452236de401d3534b8502a7465e8d");
+    expect(compatible.some(release => release.product === "0.21.3" && release.calendar === "2026.9.14")).toBe(true);
+    expect(catalog.find(release => release.product === "0.21.2")?.commit).toBe("939e45c91d751fadd94dcd1b873ac3cb44846213");
     expect(compatible.some(release => release.product === "0.21.2" && release.calendar === "2026.9.11")).toBe(true);
-    // A fresh office still receives the newest admitted release, which is now the
-    // former control. Promotion moved the recommendation; it did not remove anything.
-    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.3");
-    expect(HERMES_RECOMMENDED.product).toBe("0.21.3");
+    // Promotion moved the recommendation; it did not remove anything.
+    expect(HERMES_RECOMMENDED.product).not.toBe("0.21.3");
+    expect(bootstrapPlan("darwin")?.url).not.toContain(rollback!.commit);
+    expect(bootstrapPlan("darwin", rollback)?.sha256).toBe(rollback!.installers.unix);
+  });
+
+  it("pins 0.21.5 by its tag commit and official installer digests", () => {
+    // The commit is the peeled v2026.9.24 tag commit; e3dd27ee... is the
+    // annotated tag object and must not be used as an installer URL commit.
+    const recommended = HERMES_RELEASES.find(release => release.product === "0.21.5");
+    expect(recommended?.tag).toBe("v2026.9.24");
+    expect(recommended?.commit).toBe("f97608f178d1ffeca59860195ab7da295f7c8e5f");
+    expect(recommended?.installers).toEqual({
+      unix: "2017ddf0cc7bc6cfb70d40dc9fba1d916f47dbcccf5fe73bdee2cf93a11262af",
+      windows: "0a80dfeb7434229933bac32e73140d10086dff81bd84b156e71be9abc87cddf2",
+    });
+    expect(bootstrapPlan("darwin")?.url).toContain(recommended!.commit);
   });
 
   it("keeps the rollback/floor release installable rather than deleting it", () => {

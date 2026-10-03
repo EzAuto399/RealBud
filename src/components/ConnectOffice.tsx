@@ -3,7 +3,7 @@ import { Check, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { BrowserLinkRequest, OfficeLinkStatus } from "../../server/office-link";
 import {
-  browserLinkMessage, defaultComputerName, linkedOffice, modelAccessMessage, modelAccessState, openApproval, pendingRequest,
+  browserLinkMessage, defaultComputerName, linkedOffice, modelAccessMessage, modelAccessState, officeLinkRecoveryMessage, openApproval, pendingRequest,
   useBrowserLink, type BrowserLinkPhase,
 } from "./you/browser-link";
 
@@ -39,9 +39,10 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
   const request = pendingRequest(phase);
   const codePending = status?.state === "pending" && !status.browser;
   const problem = phase.kind === "unreachable" || phase.kind === "failed" ? phase.message : "";
-  const failure = error || (status?.error && status.error !== problem && !office ? status.error : "");
   const announce = office ? `Connected to ${office}.` : browserLinkMessage(phase);
-  const access = office ? modelAccessMessage(status) : null;
+  const access = office ? modelAccessMessage(status, { passive: true }) : null;
+  const recovery = officeLinkRecoveryMessage(status);
+  const failure = error || (office ? recovery !== access ? recovery : "" : status?.error !== problem ? status?.error : "");
 
   return <div className="space-y-3 text-[13.5px] text-ink" data-connect-office="">
     <p role="status" aria-live="polite" className="sr-only">{[announce, access ?? ""].filter(Boolean).join(" ")}</p>

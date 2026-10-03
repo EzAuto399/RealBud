@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import type { BillFacts, BillMailSource, BillSourceEvidence, SourceBillOccurrence, BillRecurrenceSeries, SourceBillsSnapshot, SourceBillPageQuery, SourceBillPage, SourceBillCalendarQuery, SourceBillCalendarPage, SourceBillPatternQuery, BillCalendarEntry } from '../shared/source-bills.ts';
+import type { BillFacts, BillMailSource, BillSourceEvidence, SourceBillOccurrence, BillRecurrenceSeries, SourceBillsSnapshot, SourceBillPageQuery, SourceBillPage, SourceBillCalendarQuery, SourceBillCalendarPage, SourceBillPatternQuery, BillCalendarEntry, BillDuplicateCheck, BillDuplicateCandidate, BillDuplicateReference, BillDuplicateReview } from '../shared/source-bills.ts';
+import { sameBillFacts } from '../shared/source-bills.ts';
 import { addBillDays, billDateInZone } from '../shared/bill-dates.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { DATA_DIR } from './config.ts';
 import { listExpectedBills, type ExpectedBill } from './expected-bills.ts';
 import { SourceBillStorage } from './source-bill-storage.ts';
-import { fail, hash, object, text, date, positive, state, dateSpan, facts, reviewed, versionOf, seriesVersion, sameBillKind, pattern, cadenceDate, previewBillSource, projectBillCalendar } from './source-bill-rules.ts';
+import { fail, hash, object, text, date, positive, state, dateSpan, facts, reviewed, versionOf, seriesVersion, sameBillKind, pattern, cadenceDate, previewBillSource, projectBillCalendar, projectBillEntries, projectSeriesCalendar, billEvidenceMatch, financialObservation, observationOf } from './source-bill-rules.ts';
 export { previewBillSource, projectBillCalendar, validateSourceBillRegister } from './source-bill-rules.ts';
 
 type HeadKind = 'bill-occurrence' | 'bill-series';
 interface Cursor { v: 1; kind: HeadKind | 'calendar'; propertyId: string | null; high: number; before: number; seriesHigh: number; phase: HeadKind; offset: number; revision: number | null; from: string | null; to: string | null }
 const encode = (cursor: Cursor) => Buffer.from(JSON.stringify(cursor)).toString('base64url');
+const duplicateHold = (message: string): never => { throw Object.assign(new Error(message), { status: 409, code: 'bill_duplicate_review_required' }); };
 export class SourceBillRegister {
   private readonly storage: SourceBillStorage;
   private readonly db: WorkflowDatabase;
@@ -43,7 +45,7 @@ export class SourceBillRegister {
         cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8')) as Cursor;
         object(cursor, ['v', 'kind', 'propertyId', 'high', 'before', 'seriesHigh', 'phase', 'offset', 'revision', 'from', 'to']);
         if (cursor.v !== 1 || cursor.kind !== kind || cursor.propertyId !== propertyId || cursor.from !== (query.from ?? null) || cursor.to !== (query.to ?? null)) throw new Error();
-        if (![cursor.high, cursor.before, cursor.seriesHigh].every(n => Number.isSafeInteger(n) && n >= 1) || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0 || cursor.offset > 24) throw new Error();
+        if (![cursor.high, cursor.before, cursor.seriesHigh].every(n => Number.isSafeInteger(n) && n >= 1) || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0 || cursor.offset > 48) throw new Error();
         if (!['bill-occurrence', 'bill-series'].includes(cursor.phase) || cursor.before > (cursor.phase === 'bill-series' ? cursor.seriesHigh : cursor.high)) throw new Error();
         if (kind !== 'calendar' && (cursor.phase !== kind || cursor.before > cursor.high || cursor.offset !== 0 || cursor.revision !== null)) throw new Error();
         if (kind === 'calendar' && (!Number.isSafeInteger(cursor.revision) || Number(cursor.revision) < 0)) throw new Error();
@@ -84,13 +86,10 @@ export class SourceBillRegister {
           const propertyId = 'facts' in row ? row.facts.propertyId : row.propertyId;
           let entries: BillCalendarEntry[] = [];
           if (!current.propertyId || propertyId === current.propertyId) {
-            if ('facts' in row) entries = projectBillCalendar({ occurrences: [row], series: [] }, query.from, query.to);
-            else entries = projectBillCalendar({ occurrences: [], series: [row] }, query.from, query.to).filter(entry => {
-              const arrival = entry.id.slice(`arrival:${row.id}:`.length);
-              return !this.storage.occupied(row.id, arrival);
-            });
+            if ('facts' in row) entries = projectBillEntries(row, query.from, query.to);
+            else if (row.active) entries = projectSeriesCalendar(row, this.storage.patternOccurrences(row), query.from, query.to, arrival => !!this.storage.occupied(row.id, arrival));
           }
-          // Offset is within this one series's bounded range projection, never across a full lifetime list.
+          // Offset is within this one series's bounded range projection (at most 24 arrivals and 24 payment forecasts), never across a full lifetime list.
           const offset = i === 0 ? current.offset : 0;
           const available = entries.slice(offset), take = Math.min(limit - items.length, available.length);
           items.push(...available.slice(0, take));
@@ -141,28 +140,82 @@ export class SourceBillRegister {
     }
     return { seriesId, expectedArrivalDate };
   }
+  /** Called inside the existing register transaction. Only this candidate
+   * scan is bounded-memory: storage admission has its own graph validation. */
+  private duplicates(source: BillSourceEvidence, billFacts: BillFacts, current?: SourceBillOccurrence): BillDuplicateCheck {
+    const candidates: BillDuplicateCandidate[] = [];
+    let before: number | undefined, complete = true;
+    if (billFacts.invoiceNumber || source.message.body.trim() && !source.message.bodyTruncated) do {
+      const page = this.db.page<SourceBillOccurrence>('bill-occurrence', { before, limit: 200 });
+      for (const { value: row } of page.records) {
+        // Cancellation deliberately releases the cross-message hold. Retained
+        // aliases still prevent accepting the same cancelled message again.
+        if (row.id === current?.id || row.state === 'cancelled') continue;
+        const matched = [row, ...row.history.slice().reverse()].find(version => billEvidenceMatch({ source, facts: billFacts }, version));
+        if (!matched) continue;
+        if (candidates.length === 20) { complete = false; break; }
+        candidates.push({ billId: row.id, revision: row.revision, matchedRevision: matched.revision, sourceDigest: matched.source.digest,
+          facts: structuredClone(matched.facts), subject: matched.source.message.subject, receivedAt: matched.source.message.at,
+          match: billEvidenceMatch({ source, facts: billFacts }, matched)! });
+      }
+      before = page.next ?? undefined;
+    } while (before && complete);
+    candidates.sort((a, b) => a.billId.localeCompare(b.billId));
+    const references = candidates.map(({ billId, revision, matchedRevision, sourceDigest }) => ({ billId, revision, matchedRevision, sourceDigest }));
+    return { version: 1, sourceDigest: source.digest, candidates, complete,
+      reviewDigest: complete ? hash({ version: 1, sourceDigest: source.digest, facts: billFacts, target: current ? { id: current.id, revision: current.revision } : null, candidates: references }) : null };
+  }
+  duplicateCandidates(body: unknown, trustedSource: BillMailSource): BillDuplicateCheck {
+    const input = object(body, ['expectedSourceDigest', 'facts', 'billId']), source = previewBillSource(trustedSource), billFacts = facts(input.facts);
+    if (input.expectedSourceDigest !== source.digest) return fail('This source changed. Reopen the saved message and review it again.', 409);
+    if (input.billId !== undefined && (typeof input.billId !== 'string' || !/^source-bill:[a-f0-9]{64}$/.test(input.billId))) return fail('Choose the saved bill being corrected.');
+    return this.change(() => {
+      const current = input.billId === undefined ? undefined : this.storage.occurrence(input.billId as string);
+      if (input.billId !== undefined && !current) return fail('That saved bill is unavailable.', 404);
+      if (current && source.accountId !== current.source.accountId) return fail('A correction must stay within the original source account.', 409);
+      return this.duplicates(source, billFacts, current);
+    });
+  }
+  private reviewDuplicates(input: Record<string, unknown>, source: BillSourceEvidence, billFacts: BillFacts, reason: string, actor: string, at: number, current?: SourceBillOccurrence): BillDuplicateReview | undefined {
+    const check = this.duplicates(source, billFacts, current);
+    if (!check.complete) return duplicateHold('More than twenty possible duplicate bills need review. Reconcile the existing records before accepting another.');
+    if (check.candidates.some(candidate => candidate.match === 'invoice-conflict')) return duplicateHold('This invoice number has conflicting versions or bill facts. Review and correct the existing bill, or resolve its invoice identity before saving a separate bill.');
+    if (Object.hasOwn(input, 'duplicateReview')) {
+      const confirmation = object(input.duplicateReview, ['reviewDigest']);
+      if (Object.keys(confirmation).length !== 1 || typeof confirmation.reviewDigest !== 'string' || !/^[a-f0-9]{64}$/.test(confirmation.reviewDigest)) return fail('Use the current duplicate review confirmation.');
+      if (!check.candidates.length || confirmation.reviewDigest !== check.reviewDigest) return duplicateHold('The duplicate review changed. Check the current candidates and confirm again.');
+      const candidates: BillDuplicateReference[] = check.candidates.map(({ billId, revision, matchedRevision, sourceDigest }) => ({ billId, revision, matchedRevision, sourceDigest }));
+      return { version: 1, reviewDigest: confirmation.reviewDigest, candidates, reviewedAt: at, reviewedBy: actor, reason };
+    }
+    if (check.candidates.length) return duplicateHold('This source has a possible duplicate bill. Review the matching saved records and explicitly confirm a separate invoice before accepting it.');
+    return undefined;
+  }
   accept(body: unknown, trustedSource: BillMailSource, actorId: string): SourceBillOccurrence {
-    const input = object(body, ['expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'seriesId', 'expectedArrivalDate']);
+    const input = object(body, ['expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
     const source = previewBillSource(trustedSource), reviewedFacts = facts(input.facts), reason = reviewed(input, source), actor = text(actorId, 200);
     return this.change(() => {
       const duplicate = this.storage.byIdentity(source.identity);
       if (duplicate) {
-        if (duplicate.source.digest === source.digest && hash(duplicate.facts) === hash(reviewedFacts) && duplicate.seriesId === (input.seriesId ?? null) && duplicate.expectedArrivalDate === (input.expectedArrivalDate ?? null)) return duplicate;
+        if (duplicate.source.digest === source.digest && sameBillFacts(duplicate.facts, reviewedFacts) && duplicate.seriesId === (input.seriesId ?? null) && duplicate.expectedArrivalDate === (input.expectedArrivalDate ?? null)) return duplicate;
         return fail('This message already has a bill review. Open it and make an explicit correction.', 409);
       }
       const now = (this.options.now ?? Date.now)(), link = this.assignment(input, reviewedFacts, source);
+      const duplicateReview = this.reviewDuplicates(input, source, reviewedFacts, reason, actor, now);
       const row: SourceBillOccurrence = { id: `source-bill:${source.identity}`, revision: 1, createdAt: now, facts: reviewedFacts, state: 'received', source,
-        ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, history: [] };
+        ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, history: [], ...(duplicateReview ? { duplicateReview } : {}) };
       this.storage.saveOccurrence(row); return row;
     });
   }
   correct(id: string, body: unknown, trustedSource: BillMailSource, actorId: string): SourceBillOccurrence {
-    const input = object(body, ['expectedRevision', 'expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'state', 'seriesId', 'expectedArrivalDate']);
+    const input = object(body, ['expectedRevision', 'expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'state', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
     const source = previewBillSource(trustedSource), reviewedFacts = facts(input.facts), reason = reviewed(input, source), actor = text(actorId, 200), expectedRevision = positive(input.expectedRevision), nextState = state(input.state);
     return this.change(() => {
       const row = this.storage.occurrence(id);
       if (!row) return fail('That received bill is unavailable.', 404);
       if (row.revision !== expectedRevision) return fail('This bill changed. Refresh it before correcting the record.', 409);
+      for (const key of ['invoiceNumber', 'invoiceVersion'] as const) {
+        if (row.facts[key] && !Object.hasOwn(input.facts as object, key)) return fail('Keep the reviewed invoice number and version, or explicitly clear an uncertain value before saving.', 409);
+      }
       const alias = this.storage.byIdentity(source.identity);
       if (alias && alias.id !== row.id) return fail('This message belongs to another saved bill. Reconcile those records first.', 409);
       if (source.accountId !== row.source.accountId) return fail('A correction must stay within the original source account.', 409);
@@ -170,8 +223,41 @@ export class SourceBillRegister {
       if (founded?.active && (nextState === 'cancelled' || !sameBillKind(reviewedFacts, founded) || source.digest !== row.source.digest)) return fail('Pause the approved arrival pattern before changing its source or property, or cancelling its founding bill.', 409);
       if (row.history.length >= 50) return fail('This bill has reached its correction history limit. Preserve its history and contact support.', 409);
       const link = this.assignment({ seriesId: input.seriesId === undefined ? row.seriesId : input.seriesId, expectedArrivalDate: input.expectedArrivalDate === undefined ? row.expectedArrivalDate : input.expectedArrivalDate }, reviewedFacts, source, row);
+      const now = (this.options.now ?? Date.now)();
+      const sameFacts = sameBillFacts(reviewedFacts, row.facts);
+      const unchanged = source.digest === row.source.digest && sameFacts;
+      // Staff can cancel or update the status of an unchanged bill without
+      // another distinctness decision. Reactivation always checks afresh.
+      const needsReview = nextState !== 'cancelled' && (!unchanged || row.state === 'cancelled');
+      if (!needsReview && Object.hasOwn(input, 'duplicateReview')) return fail('This correction does not need a new duplicate review confirmation.');
+      const duplicateReview = needsReview ? this.reviewDuplicates(input, source, reviewedFacts, reason, actor, now, row) : unchanged ? row.duplicateReview : undefined;
       row.history.push(versionOf(row));
-      Object.assign(row, { revision: row.revision + 1, facts: reviewedFacts, source, state: nextState, ...link, reviewedAt: (this.options.now ?? Date.now)(), reviewedBy: actor, reviewReason: reason });
+      delete row.duplicateReview;
+      Object.assign(row, { revision: row.revision + 1, facts: sameFacts ? row.facts : reviewedFacts, source, state: nextState, ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, ...(duplicateReview ? { duplicateReview } : {}) });
+      this.storage.saveOccurrence(row); return row;
+    });
+  }
+  /** Explicit reviewer claims only. This does not call or verify an external
+   * system, update invoice facts or authorize any financial operation. */
+  reviewFinancial(id: string, body: unknown, actorId: string): SourceBillOccurrence {
+    const input = object(body, ['expectedRevision', 'expectedSourceDigest', 'sourceReviewed', 'reviewReason', 'observation']);
+    if (input.sourceReviewed !== true) return fail('Confirm that you reviewed the financial evidence and its scope.');
+    const expectedRevision = positive(input.expectedRevision), observation = financialObservation(input.observation), reason = text(input.reviewReason, 1000).trim(), actor = text(actorId, 200);
+    return this.change(() => {
+      const row = this.storage.occurrence(id);
+      if (!row) return fail('That received bill is unavailable.', 404);
+      if (input.expectedSourceDigest !== row.source.digest) return fail('The bill source changed. Reopen the bill and review current evidence.', 409);
+      const previous = row.financialReview;
+      if (row.revision === expectedRevision + 1 && previous?.basisBillRevision === expectedRevision && previous.sourceDigest === input.expectedSourceDigest &&
+          previous.reviewedBy === actor && previous.reviewReason === reason && hash(observationOf(previous)) === hash(observation)) return row;
+      if (row.revision !== expectedRevision) return fail('This bill changed. Refresh it before reviewing financial evidence.', 409);
+      if (row.state === 'cancelled') return fail('This bill is cancelled. Financial observations remain historical; review the current bill first.', 409);
+      if (row.history.length >= 50) return fail('This bill has reached its correction history limit. Preserve its history and contact support.', 409);
+      const now = (this.options.now ?? Date.now)();
+      if (observation.observedAt > now) return fail('A financial observation cannot be dated in the future.');
+      row.history.push(versionOf(row));
+      Object.assign(row, { revision: row.revision + 1, reviewedAt: now, reviewedBy: actor, reviewReason: reason,
+        financialReview: { ...observation, version: 1 as const, basisBillRevision: expectedRevision, sourceDigest: row.source.digest, reviewedAt: now, reviewedBy: actor, reviewReason: reason } });
       this.storage.saveOccurrence(row); return row;
     });
   }

@@ -7,9 +7,13 @@
 //
 //   FAKE_ACP_MODE   happy (default) | slow | exit-early | hang | no-auth | permission
 //                   | permission-once-only | mode-error
+//                   | wrap-up | wrap-up-refuse (stream FAKE_ACP_TOOL_CALLS tool calls,
+//                     then hold the prompt until a `/steer` prompt arrives or
+//                     FAKE_ACP_WRAP_WAIT_MS passes; wrap-up-refuse errors the steer)
 //                   | ask-peer (spawn the injected "agents" MCP server from
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
+//   FAKE_ACP_USAGE_META  report usage in the legacy `_meta` instead of ACP `usage`
 //   FAKE_ACP_DUMP   path to write {argv, env, mcpServers} as JSON, so a test
 //                   can assert argv shape (agent/stdio flags), env hygiene,
 //                   and the session/new mcpServers list
@@ -74,9 +78,10 @@ let agentsMcp: McpEntry | null = null;
 let seenMcpServers: McpEntry[] = [];
 let promptCount = 0;
 let pendingPromptId: number | null = null;
+const steers: string[] = [];
 
 function dumpState() {
-  publishDump({ argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode });
+  publishDump({ argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode, steers });
 }
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
@@ -227,8 +232,45 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/prompt": {
+      const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      if ((mode === "wrap-up" || mode === "wrap-up-refuse") && promptText.startsWith("/steer ")) {
+        // Hermes ACP `/steer`: a status line on the session stream, then the
+        // held turn finishes with a short partial answer.
+        steers.push(promptText.slice("/steer ".length));
+        dumpState();
+        if (mode === "wrap-up-refuse") {
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "steer unavailable" } });
+        } else {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `⏩ Steer queued for the active turn: ${promptText.slice(7, 87)}...` } } } });
+          result(msg.id, { stopReason: "end_turn" });
+        }
+        if (pendingPromptId !== null) {
+          const held = pendingPromptId;
+          pendingPromptId = null;
+          setTimeout(() => {
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "partial answer from fake acp" } } } });
+            result(held, { stopReason: "end_turn" });
+          }, 20);
+        }
+        return;
+      }
       promptCount += 1;
       dumpState();
+      if (mode === "wrap-up" || mode === "wrap-up-refuse") {
+        const calls = Number(process.env.FAKE_ACP_TOOL_CALLS ?? "3");
+        for (let i = 1; i <= calls; i++) {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: `tc-${i}`, title: `step ${i}` } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: `tc-${i}`, status: "completed" } } });
+        }
+        pendingPromptId = msg.id;
+        setTimeout(() => {
+          if (pendingPromptId !== msg.id) return;
+          pendingPromptId = null;
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "finished without a wrap-up note" } } } });
+          result(msg.id, { stopReason: "end_turn" });
+        }, Number(process.env.FAKE_ACP_WRAP_WAIT_MS ?? "1500"));
+        return;
+      }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
         pendingPromptId = msg.id;
@@ -236,7 +278,9 @@ function handle(msg: any) {
         return;
       }
       const complete = () =>
-        result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+        result(msg.id, process.env.FAKE_ACP_USAGE_META
+          ? { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } }
+          : { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedReadTokens: 3 } });
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy

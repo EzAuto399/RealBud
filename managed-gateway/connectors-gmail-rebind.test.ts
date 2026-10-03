@@ -158,19 +158,23 @@ test('composed registry rebinding moves only the named device and only while it 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('read-only is the gateway: under a full-scope managed token, send, delete and modify never reach the provider', async () => {
-  const s = setup(); const realFetch = globalThis.fetch; let upstream = 0;
-  globalThis.fetch = (async () => { upstream++; throw new Error('no network in tests'); }) as typeof fetch;
+test('the gateway holds the mailbox line: blocked Gmail tools never reach the provider, and nothing runs before the account is verified', async () => {
+  const s = setup(); const realFetch = globalThis.fetch; const upstream: string[] = [];
+  globalThis.fetch = (async (url: string | URL) => { upstream.push(String(url)); throw new Error('no network in tests'); }) as typeof fetch;
   try {
-    // The default Gmail adapter (server/composio-gmail.ts), not a test double.
+    // The default Gmail transport and adapters, not test doubles.
     const broker = new ManagedConnectors({ ledger: s.f.ledger, devices: () => s.devices(), secret: () => 'ak_fictional_office_a' });
     const rpc = (body: Record<string, unknown>, session?: string) => broker.handle({ token: s.a.token, profile: 'property', method: 'POST', path: '/v1/connectors/mcp', body: { jsonrpc: '2.0', ...body }, ...(session ? { session } : {}), signal: new AbortController().signal });
     const init = await rpc({ id: 1, method: 'initialize' });
-    for (const name of ['GMAIL_SEND_EMAIL', 'GMAIL_DELETE_MESSAGE', 'GMAIL_MOVE_TO_TRASH', 'GMAIL_MODIFY_THREAD_LABELS', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_REPLY_TO_THREAD']) {
-      const reply = await rpc({ id: 2, method: 'tools/call', params: { name, arguments: { recipient_email: 'someone@example.test' } } }, init.session);
+    // Permanent delete, filters, forwarding identity and settings: refused with no provider access at all.
+    for (const name of ['GMAIL_DELETE_MESSAGE', 'GMAIL_DELETE_THREAD', 'GMAIL_BATCH_DELETE_MESSAGES', 'GMAIL_CREATE_FILTER', 'GMAIL_UPDATE_VACATION_SETTINGS', 'GMAIL_UPDATE_SEND_AS', 'GMAIL_EMPTY_TRASH', 'SLACK_POST_MESSAGE']) {
+      const reply = await rpc({ id: 2, method: 'tools/call', params: { name, arguments: { message_id: 'abc' } } }, init.session);
       const result = (reply.body as { result: { isError: boolean; content: { text: string }[] } }).result;
-      assert.equal(result.isError, true); assert.match(result.content[0]!.text, /only supports the three fixed Gmail read tools/);
+      assert.equal(result.isError, true); assert.match(result.content[0]!.text, /outside the connected-app boundary/);
     }
-    assert.equal(upstream, 0);
+    assert.equal(upstream.length, 0);
+    // A send is only ever forwarded after the Gmail config and account verify; here they cannot, so nothing executes.
+    await assert.rejects(() => rpc({ id: 3, method: 'tools/call', params: { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'someone@example.test' } } }, init.session), /connector_check_failed/);
+    assert.ok(upstream.length > 0 && upstream.every(url => !url.includes('/tools/execute')), upstream.join(' '));
   } finally { globalThis.fetch = realFetch; s.f.close(); }
 });

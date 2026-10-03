@@ -4,6 +4,7 @@ import {isDeepStrictEqual as same} from 'node:util';
 import type {PoolClient} from 'pg';
 import {canonicalWebsiteCommand} from '../../shared/website-commands.ts';
 import * as C from '../../shared/company-execution.ts';
+import {departmentConfigurationAllows} from '../../shared/department-configuration.ts';
 import {CompanyError,type CompanyActor} from './types.ts';
 import type {CompanyPortalBridge} from './portal-bindings.ts';
 
@@ -19,7 +20,7 @@ type Grant={
  token_hash:string;begin_body:unknown;spec:C.CompanyExecutionSpec;source:C.CompanyExecutionSource;created_at:Date;expires_at:Date;revision:string;
  confirmed_by:string|null;confirmed_epoch:string|null;confirm_request:unknown;confirmed_at:Date|null;revoked_at:Date|null;revoke_request:unknown;consumed_claim_id:string|null;
  member_name:string;member_active:boolean;member_role:'owner'|'member';current_member_epoch:string;owner_active:boolean|null;owner_role:string|null;current_owner_epoch:string|null;
- department_name:string;current_department_revision:string;retired_at:Date|null;write_allowed:boolean;
+ department_name:string;current_department_revision:string;department_configuration:unknown;retired_at:Date|null;write_allowed:boolean;
  current_authority:string;current_case_fence:string;case_status:string;assignee_member_id:string|null;title:string;description:string;
  holder_member_id:string|null;claim_token_hash:string|null;case_lease:Date|null;claim_case_fence:string|null;
 };
@@ -30,7 +31,7 @@ const secretHash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const fail=(code:ConstructorParameters<typeof CompanyError>[0]):never=>{throw new CompanyError(code);};
 function privateBody<T extends {claimSecret?:string;grantSecret?:string}>(v:T){const {claimSecret,grantSecret,...body}=v;return {...body,...(claimSecret?{claimSecretHash:secretHash(claimSecret)}:{}),...(grantSecret?{grantSecretHash:secretHash(grantSecret)}:{})};}
 const projection=`g.*,m.display_name AS member_name,m.active AS member_active,m.role AS member_role,m.execution_epoch AS current_member_epoch,
- o.active AS owner_active,o.role AS owner_role,o.execution_epoch AS current_owner_epoch,s.name AS department_name,s.revision AS current_department_revision,s.retired_at,
+ o.active AS owner_active,o.role AS owner_role,o.execution_epoch AS current_owner_epoch,s.name AS department_name,s.revision AS current_department_revision,s.department_configuration,s.retired_at,
  (m.role='owner' OR EXISTS(SELECT 1 FROM ${S}.scope_grants a WHERE a.company_id=g.company_id AND a.scope_id=g.department_id AND a.member_id=g.member_id AND a.permission='write')) AS write_allowed,
  c.remote_authority_incarnation AS current_authority,k.fence AS current_case_fence,k.status AS case_status,k.assignee_member_id,k.title,k.description,k.holder_member_id,k.claim_token_hash,k.lease_expires_at AS case_lease,e.case_fence AS claim_case_fence`;
 const joins=`JOIN ${S}.members m ON m.company_id=g.company_id AND m.id=g.member_id
@@ -44,7 +45,7 @@ export function createDepartmentExecutionApi(env:Environment){
  const clock=async(client:PoolClient)=>Number((await client.query('SELECT floor(extract(epoch from clock_timestamp())*1000)::text AS ms')).rows[0].ms);
  const source=(g:Grant):C.CompanyExecutionSource=>({caseId:g.case_id,title:g.title,description:g.description});
  function eligible(g:Grant,at:number,cert:string|null){
-  return !g.revoked_at&&g.expires_at.getTime()>at&&g.member_active&&g.member_epoch===g.current_member_epoch&&g.department_revision===g.current_department_revision&&!g.retired_at&&g.write_allowed&&
+  return !g.revoked_at&&g.expires_at.getTime()>at&&g.member_active&&g.member_epoch===g.current_member_epoch&&g.department_revision===g.current_department_revision&&!g.retired_at&&g.write_allowed&&departmentConfigurationAllows(g.department_configuration,g.spec.recipe)&&
    g.spec.authorityId===g.current_authority&&g.spec.certificateDigest===cert&&digest(source(g))===g.spec.sourceDigest&&g.assignee_member_id===g.member_id&&
    (!g.confirmed_at||g.owner_active&&g.owner_role==='owner'&&g.confirmed_epoch===g.current_owner_epoch);
  }
@@ -90,12 +91,13 @@ export function createDepartmentExecutionApi(env:Environment){
     const previous=(await client.query(`SELECT id FROM ${S}.department_execution_grants WHERE company_id=$1 AND id=$2`,[actor.companyId,input.requestId])).rows[0];
     if(previous){const g=await row(client,actor.companyId,input.requestId);if(g.member_id!==actor.memberId||!same(g.begin_body,body))fail('conflict');return view(g,await clock(client));}
     await unused(client,actor,input.requestId);await lock(client,`scope:${actor.companyId}:${input.departmentId}`);
-    const selected=(await client.query(`SELECT k.*,s.revision AS department_revision,s.retired_at,s.purpose,m.execution_epoch,c.remote_authority_incarnation,
+    const selected=(await client.query(`SELECT k.*,s.revision AS department_revision,s.department_configuration,s.retired_at,s.purpose,m.execution_epoch,c.remote_authority_incarnation,
      (m.role='owner' OR EXISTS(SELECT 1 FROM ${S}.scope_grants a WHERE a.company_id=s.company_id AND a.scope_id=s.id AND a.member_id=m.id AND a.permission='write')) AS writable
      FROM ${S}.cases k JOIN ${S}.scopes s ON s.company_id=k.company_id AND s.id=k.scope_id JOIN ${S}.members m ON m.company_id=k.company_id AND m.id=$4 JOIN ${S}.companies c ON c.id=k.company_id
      WHERE k.company_id=$1 AND k.id=$2 AND k.scope_id=$3 FOR UPDATE OF k`,[actor.companyId,input.caseId,input.departmentId,actor.memberId])).rows[0];
     if(!selected)fail('not_found');if(selected.purpose!=='department'||selected.retired_at||!selected.writable||selected.assignee_member_id!==actor.memberId)fail('forbidden');
     if(selected.status!=='open'||selected.fence!==input.expectedCaseFence||selected.department_revision!==input.expectedDepartmentRevision)fail('conflict');
+    if(!departmentConfigurationAllows(selected.department_configuration,input.recipe))fail('forbidden');
     if(Number((await client.query(`SELECT count(*)::int AS n FROM ${S}.department_execution_grants WHERE company_id=$1`,[actor.companyId])).rows[0].n)>=1000)fail('conflict');
     const src:C.CompanyExecutionSource={caseId:input.caseId,title:selected.title,description:selected.description};if(!C.isCompanyExecutionSource(src))fail('invalid_input');
     const at=await clock(client),cert=certificate();

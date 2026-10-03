@@ -16,7 +16,7 @@ export interface HermesRelease {
  * pin the official immutable installer scripts by SHA-256, run the ACP smoke,
  * then recommend. Never follow upstream `latest`.
  */
-export const HERMES_RECOMMENDED_VERSION = "0.21.3" as const;
+export const HERMES_RECOMMENDED_VERSION = "0.21.5" as const;
 
 // Release promotion is a RealBud compatibility decision. Bytes are official,
 // immutable upstream installer scripts; no engine patches or branch tracking.
@@ -49,11 +49,30 @@ export const HERMES_RELEASES: readonly HermesRelease[] = [
   // being trusted here. Note install.ps1 is byte-identical to 0.21.2's — only
   // install.sh changed in this release.
   //
-  // NOT YET RECOMMENDED: the pin procedure requires an ACP smoke against the new
-  // worker, which has not been run.
+  // Recommended from c9d43db (2026-09-22) until 0.21.5 was promoted on
+  // 2026-10-02; kept installable as the rollback target. Its first tag-exact ACP
+  // smoke is recorded in docs/HERMES-0.21.5-EVIDENCE.md (control run).
   { product: "0.21.3", tag: "v2026.9.14", commit: "345cd2b057a452236de401d3534b8502a7465e8d", installers: {
     unix: "38547c22f4dd2224ba68a13bc3479309abb17e295b2a2ef79c2d1b8293bd822e",
     windows: "226c70a90ad47e8a4d34cb11aca4ecbeb649e2f9b67fbd009ea49791de2d56f5",
+  } },
+  // Admitted 2026-10-02 as a candidate and promoted to RECOMMENDED the same day
+  // by owner decision (docs/HERMES-0.21.5-EVIDENCE.md,
+  // docs/HERMES-0.21.5-ADOPTION-REVIEW-2026-10-02.md). Staged runtime, ACP smoke,
+  // memory admission, ACP toolsets and config migrations are done; the live
+  // contract run, packaged upgrade and Windows are still open gates.
+  //
+  // Commit is the v2026.9.24 TAG commit (peeled `^{}`), resolved from the official
+  // repo with `git ls-remote`. e3dd27ee2d8b011737a4eea8e3eb3d711ab78690 is the
+  // annotated tag OBJECT, not a commit; installer URLs need the commit.
+  //
+  // Installer digests derived from
+  // raw.githubusercontent.com/NousResearch/hermes-agent/<commit>/scripts/<file>,
+  // the same method as 0.21.3, and they reproduce the adoption review's
+  // local-blob hashes exactly. Both scripts changed since 0.21.3.
+  { product: "0.21.5", tag: "v2026.9.24", commit: "f97608f178d1ffeca59860195ab7da295f7c8e5f", installers: {
+    unix: "2017ddf0cc7bc6cfb70d40dc9fba1d916f47dbcccf5fe73bdee2cf93a11262af",
+    windows: "0a80dfeb7434229933bac32e73140d10086dff81bd84b156e71be9abc87cddf2",
   } },
   // The rollback target. Named literally, NOT via HERMES_RECOMMENDED_VERSION.
   //

@@ -3,6 +3,7 @@ import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, realpa
 import { join, resolve } from "node:path";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
 import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
+import { ASK_CSV_REPORT_SUFFIX, inspectAskCsv } from "./ask-csv-inspect.ts";
 export { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
 
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
@@ -28,6 +29,24 @@ function privateDirectory(path: string, requirePrivate = true): void {
   }
 }
 
+/** Establish privacy before any content, for originals and derived reports. */
+function writeSelectedCopy(path: string, bytes: Buffer): void {
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
+  let saved = false;
+  try {
+    windowsFilePrivacySync(path, "file", true);
+    writeFileSync(fd, bytes);
+    fsyncSync(fd);
+    saved = true;
+  } finally {
+    closeSync(fd);
+    if (!saved) {
+      // Only this call's exclusive new file; never an earlier upload.
+      try { unlinkSync(path); } catch { /* preserve original failure */ }
+    }
+  }
+}
+
 /** Copies only the explicitly selected bytes into this desktop's workroom.
  * Never accepts a source path or grants access to the source's parent folder.
  * Existing attachment paths are retained; new copies are local to the vault.
@@ -50,6 +69,9 @@ export function saveAskAttachment(dataDir: string, input: unknown): { path: stri
   if (bytes.toString("base64") !== raw) return fail("file content was not readable");
   if (bytes.length > ASK_ATTACH_MAX_BYTES) return fail("that file is too large (8 MB)", 413);
   if (data.size !== undefined && (!Number.isSafeInteger(data.size) || data.size !== bytes.length)) return fail("file size did not match the upload");
+  // Parsing selected bytes needs no shell or fresh source-folder authority.
+  // Unsupported/malformed CSVs get an honest report, never an estimated count.
+  const report = name.endsWith(".csv") ? Buffer.from(JSON.stringify(inspectAskCsv(name, bytes), null, 2) + "\n") : null;
   // Older installations created the application root with mode 755. The
   // selected bytes are protected by the private vault below it; do not make
   // those existing installations fail on their first attachment.
@@ -61,25 +83,18 @@ export function saveAskAttachment(dataDir: string, input: unknown): { path: stri
   privateDirectory(dir);
   if (realpathSync(dir) !== dir) return fail("The private attachment folder needs service attention.", 409);
   const path = join(dir, `${randomUUID()}-${name}`);
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
   let saved = false;
   try {
-    // The exclusive file is still empty. A refused Windows descriptor must
-    // stop the copy before any selected bytes reach disk.
-    windowsFilePrivacySync(path, "file", true);
-    writeFileSync(fd, bytes);
-    fsyncSync(fd);
+    writeSelectedCopy(path, bytes);
     saved = true;
+    if (report) writeSelectedCopy(path + ASK_CSV_REPORT_SUFFIX, report);
   } catch {
-    // Report a safe error after closing and cleaning the incomplete copy.
-  } finally {
-    closeSync(fd);
-    if (!saved) {
-      // This is a new unique upload owned by this call, never an original file.
-      // Close first so Windows can remove an incomplete copy too.
+    // A CSV is accepted only with its report. A failed report removes this
+    // call's copy so a failed upload cannot appear to have succeeded.
+    if (saved) {
       try { unlinkSync(path); } catch { /* preserve original failure */ }
     }
+    return fail("The file copy could not be saved. The original file is unchanged.", 503);
   }
-  if (!saved) return fail("The file copy could not be saved. The original file is unchanged.", 503);
   return { path, name, size: bytes.length };
 }

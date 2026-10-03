@@ -1,6 +1,7 @@
 // Actual desktop HTTP application + fixture connector + deterministic CLI.
 // Fictional data only. This proves wiring/recovery, not real Gmail/LLM behavior.
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 import assert from 'node:assert/strict';
@@ -44,6 +45,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal((await fetch(base+'/api/mail-workspace')).status,401);assert.equal((await fetch(base+'/api/agency-setup')).status,401);
   const token=(await(await fetch(base+'/api/session')).json()).token;
   const request=async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json','x-realbud-session':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const v=await r.json();assert.equal(r.status,expected,`${path}: ${JSON.stringify(v)}`);return v;};
+  await completeFictionalOnboarding(request);
   await request('/api/hermes/apply-pack','POST',{});
   const exported=await request('/api/customer-packs/office-core/export');const preview=await request('/api/customer-packs/preview','POST',{pack:exported});
   await request('/api/customer-packs/install','POST',{pack:exported,expectedDigest:preview.digest});
@@ -57,6 +59,11 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   setup=await request('/api/agency-setup/check-gmail','POST',{expectedRevision:setup.state.revision});
   const workflow=setup.workflows.find(w=>w.id==='morning-priorities');assert.ok(workflow.canReview,JSON.stringify(workflow));
   await request('/api/agency-setup/workflows/morning-priorities/review','POST',{expectedRevision:setup.state.revision,expectedEvidenceDigest:workflow.evidenceDigest});
+  // Agency review begins its bounded history scan. Preserve the single-scan
+  // gate and wait for its receipt before collecting the twelve fixture scans.
+  let historyState=await request('/api/mail-workspace');
+  for(let i=0;i<300&&historyState.history?.state==='checking';i++){await wait(100);historyState=await request('/api/mail-workspace');}
+  assert.notEqual(historyState.history?.state,'checking');
   for(let i=0;i<12;i++) await request('/api/mail-workspace/scan','POST',{});
   let state=await request('/api/mail-workspace');assert.equal(state.counts.total,45);assert.equal(Object.hasOwn(state,'items'),false);
   const all=(await request('/api/mail-workspace/items?group=all&limit=100')).items;
@@ -67,17 +74,27 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});
   const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   await context.route('**/*', route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
-  await context.addInitScript(()=>localStorage.setItem('realbud.first-run-done','1'));
   page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='GET')readUrls.push(new URL(request.url()).pathname+new URL(request.url()).search);});
-  await page.goto(base+'/#/desk');const summary=page.getByRole('region',{name:'Mail priorities summary',exact:true});
-  await summary.getByText('43 need attention · 1 waiting',{exact:true}).waitFor();
-  assert.ok(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')&&url.includes('limit=3')));
-  await summary.getByRole('button',{name:'Open mail priorities',exact:true}).click();
+  await page.goto(base+'/#/desk');
+  await page.getByRole('heading',{name:'Desk',exact:true}).waitFor();
+  assert.equal(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')),false,'Desk leaves mail conversations unloaded until Other work is opened');
+  await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
+  await page.locator('.desk-options > summary').click();
+  await page.getByRole('button',{name:'Customize desk',exact:true}).click();
+  const showMail=page.getByLabel('Show Mail priorities',{exact:true});
+  if(!await showMail.isChecked()){await showMail.check();await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Desk layout saved.',{exact:true}).waitFor();}
+  await page.getByRole('button',{name:'Close Customize desk',exact:true}).click();
+  await page.locator('.desk-other-work > summary').click();
+  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const panel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});await panel.waitFor();
   await panel.getByText('Showing 20 of 43 conversations',{exact:false}).waitFor();
+  await panel.getByRole('button',{name:'Needs attention (43)',exact:true}).waitFor();
+  await panel.getByRole('button',{name:'Waiting (1)',exact:true}).waitFor();
+  await panel.getByRole('button',{name:'Done (1)',exact:true}).waitFor();
+  assert.ok(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')&&new URL(url,base).searchParams.get('limit')==='20'));
   assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);
   assert.equal(await panel.getByRole('heading',{name:oldest.subject,exact:true}).count(),0);
-  pass('Real HTTP metadata has global counts without tasks; Desk requests three rows and full mail view initially fetches twenty of43 open conversations');
+  pass('Real HTTP metadata has global counts without tasks; Desk loads no mail rows until Other work opens the full mail view with twenty of43 open conversations');
   const search=panel.getByLabel('Find a conversation',{exact:true});await search.fill(oldest.subject);
   await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
   await panel.getByRole('button',{name:'Review or edit this item',exact:true}).click();const editor=panel.getByRole('form',{name:'Review saved mail item',exact:true});
@@ -149,6 +166,6 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   if(child && child.exitCode===null && child.signalCode===null){child.kill('SIGTERM');await Promise.race([once(child,'exit'),wait(4000)]);if(child.exitCode===null && child.signalCode===null){child.kill('SIGKILL');await Promise.race([once(child,'exit'),wait(4000)]);}}
   await new Promise(resolve=>connector.close(resolve));
   const cleaned=!child||child.exitCode!==null||child.signalCode!==null;if(cleaned)rmSync(temp,{recursive:true,force:true});else failure??='Owned fixture child did not exit; scratch preserved.';
-  writeFileSync(join(output,'receipt.json'),JSON.stringify({at:new Date().toISOString(),passed:!failure,layer:'Actual local HTTP and built React UI with fictional connector and deterministic worker. One explicitly labelled503 browser injection. No live Gmail/customer/Windows proof.',checks,scanCalls,errors,failure,cleanup:{childExited:cleaned,scratchRemoved:cleaned},...(failure?{diagnostic:logs}:{})},null,2));
+  writeFileSync(join(output,'receipt.json'),JSON.stringify({at:new Date().toISOString(),passed:!failure,layer:'Actual local HTTP and built React UI with fictional connector and deterministic worker. One explicitly labelled503 browser injection. No live Gmail/customer/Windows proof.',checks,scanCalls,errors,limits:['Desk no longer has a three-row mail summary; coverage checks lazy loading, global counts and the paginated full mail panel instead.','Fictional connector and deterministic worker; no live Gmail, customer, packaged or Windows proof.'],failure,cleanup:{childExited:cleaned,scratchRemoved:cleaned},...(failure?{diagnostic:logs}:{})},null,2));
   if(failure){console.error(failure);process.exitCode=1;}else console.log(JSON.stringify({output,checks},null,2));
 }

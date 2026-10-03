@@ -84,12 +84,12 @@ export function isDiskFull(error: unknown): boolean {
   return error instanceof DiskFullError || code === 'ENOSPC' || code === 'EDQUOT';
 }
 
-export async function writePrivateJson(path: string, value: unknown, existingAdmission?: { maxBytes: number; validate: (value: unknown) => void }): Promise<void> {
-  try { await writePrivateJsonOnce(path, value, existingAdmission); }
+export async function writePrivateJson(path: string, value: unknown, existingAdmission?: { maxBytes: number; validate: (value: unknown) => void }, format: 'compact' | 'readable' = 'compact'): Promise<void> {
+  try { await writePrivateJsonOnce(path, value, existingAdmission, format); }
   catch (error) { throw isDiskFull(error) && !(error instanceof DiskFullError) ? new DiskFullError(error) : error; }
 }
 
-async function writePrivateJsonOnce(path: string, value: unknown, existingAdmission?: { maxBytes: number; validate: (value: unknown) => void }): Promise<void> {
+async function writePrivateJsonOnce(path: string, value: unknown, existingAdmission: { maxBytes: number; validate: (value: unknown) => void } | undefined, format: 'compact' | 'readable'): Promise<void> {
   await privateDirectory(dirname(path));
   // Validate an existing destination's privacy, including before replacement.
   const existing = await readPrivateJson(path, existingAdmission?.maxBytes ?? 2_000_000);
@@ -98,7 +98,7 @@ async function writePrivateJsonOnce(path: string, value: unknown, existingAdmiss
   const file = await open(temporary, 'wx', 0o600);
   try {
     await windowsFilePrivacy(temporary, 'file', true);
-    await file.writeFile(JSON.stringify(value)); await file.sync(); await file.close();
+    await file.writeFile(JSON.stringify(value, null, format === 'readable' ? 2 : undefined)); await file.sync(); await file.close();
     await renameReplacing(temporary, path); fsyncDir(dirname(path));
   } finally { await file.close().catch(() => {}); await unlink(temporary).catch(() => {}); }
 }

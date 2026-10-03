@@ -31,7 +31,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       const upgraded=await api('/api/customer-packs/upgrade/preview',{method:'POST',body:JSON.stringify({pack})}); if(alive.current)setChange(upgraded);
     } else setPreview(result);
   };
-  const download = async (packId: 'office-core' | 'austin-office') => {
+  const download = async (packId: 'office-core' | 'austin-office' | 'department-starters') => {
     const pack = await api(`/api/customer-packs/${packId}/export`);
     const url = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `realbud-${packId}-v${pack.revision}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -39,6 +39,15 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
   };
   return <section aria-label="Customer workflow pack setup" className="mt-5 border-t border-line pt-4 space-y-4" aria-busy={busy}>
     <div><h3 className="font-medium text-ink">Customer workflow packs</h3><p className="mt-1 text-sm text-ink-secondary">One portable file brings together the work plans, Bud’s instructions and setup checks. Review it before adding anything to this computer.</p></div>
+    <div className="rounded-lg bg-inset p-4 space-y-2">
+      <h4 className="font-medium text-ink">Start with department case reviews</h4>
+      <p className="text-sm text-ink-secondary">Five plans for Accounts and Property Management, including general admin, maintenance and inspections. Bud uses the assigned case text to prepare findings and drafts for review.</p>
+      <div className="flex flex-wrap gap-2">
+        <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/department-starters/export')))}>Preview department starter pack</button>
+        <button className={button} disabled={busy} onClick={() => void run(() => download('department-starters'))}>Download department starter pack</button>
+      </div>
+      <p className="text-sm text-ink-secondary">After importing and approving the plans, the office owner chooses which plans each department can use under Departments and access. Connections and per-case approvals remain separate.</p>
+    </div>
     <div className="flex flex-wrap gap-2">
       <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/office-core/export')))}>Preview real estate office core pack</button>
       <button className={button} disabled={busy} onClick={() => void run(() => download('office-core'))}>Download office core pack</button>
@@ -62,7 +71,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       <h4 className="font-medium">{preview.pack.title} · version {preview.pack.revision}</h4>
       <ul className="list-disc pl-5 text-sm">{preview.pack.workflows.map(workflow => <li key={workflow.id}>{workflow.title}</li>)}</ul>
       <p className="text-sm">{preview.additions.length} new plans · {preview.kept.length} existing plans kept · {preview.skills.filter(skill => skill.state === 'missing').length} instruction skills to install.</p>
-      <p className="text-sm text-ink-secondary">This version prepares work from supplied source files. Import does not fetch mail, download bank files, change REI, test a paid model, approve a plan or turn on a schedule.</p>
+      <p className="text-sm text-ink-secondary">Each plan states which supplied evidence it needs. Import does not fetch mail, download bank files, change REI, test a paid model, approve a plan or turn on a schedule.</p>
       <details><summary className="min-h-11 cursor-pointer text-sm">Review included plans and instructions</summary><div className="max-h-96 overflow-auto space-y-3 text-sm">
         {preview.pack.recipes.map(recipe => <details key={recipe.id}><summary className="min-h-11 cursor-pointer">{recipe.title}</summary><p className="whitespace-pre-wrap break-words">{recipe.description}</p><ol className="list-decimal pl-5">{recipe.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></details>)}
         {preview.pack.skills.map(skill => <details key={skill.id}><summary className="min-h-11 cursor-pointer">Instruction skill: {skill.name}</summary><pre className="whitespace-pre-wrap break-words font-sans">{skill.instructions}</pre></details>)}
