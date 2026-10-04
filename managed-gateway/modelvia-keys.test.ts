@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { modelviaKeyClient, operatorToken } from './modelvia-keys.ts';
+import { modelviaKeyClient, ModelviaRotationRefused, operatorToken } from './modelvia-keys.ts';
 import type { HttpTransport } from './composio-org.ts';
 
 const OPERATOR_SECRET = 'fictional-modelvia-operator-secret-32ch';
@@ -209,6 +209,31 @@ test('rotate posts an empty body so the label is kept, and ties the replacement 
     { key: 'sk-not-a-modelvia-key', record: { id: 'fedcba9876543210', project: 'rb-install-one' }, replaced: '0123456789abcdef' },
   ]) await assert.rejects(() => client(transport(() => ({ body }))).rotate('0123456789abcdef'), /modelvia_key_unusable/);
   await assert.rejects(() => client(t).rotate('../other'), /invalid_key_id/);
+});
+
+test('listKeys refuses partial envelopes and duplicate records used as cleanup evidence', async () => {
+  const key = { id: '0123456789abcdef', project: 'rb-install-one', environment: 'production', label: 'company-a:install-one', revokedAt: 5 };
+  for (const body of [
+    { keys: [key], nextCursor: 'more-keys' },
+    { keys: [key], hasMore: false },
+    { keys: [key, key] },
+    { keys: Array.from({ length: 1001 }, () => key) },
+  ]) await assert.rejects(() => client(transport(() => ({ body }))).listKeys('rb-install-one', 'production'), /modelvia_unreadable/);
+});
+
+test('only an explicit key_revoked 409 is a definitive no-effect rotation refusal', async () => {
+  await assert.rejects(() => client(transport(() => ({ status: 409, body: { error: 'key_revoked' } }))).rotate('0123456789abcdef'),
+    error => error instanceof ModelviaRotationRefused && error.code === 'modelvia_key_revoked');
+  for (const result of [
+    { status: 403, body: { error: 'key_revoked' } },
+    { status: 404, body: { error: 'key_revoked' } },
+    { status: 500, body: { error: 'key_revoked' } },
+    { status: 409, body: { error: 'other_conflict' } },
+    { status: 409, text: 'unreadable' },
+  ]) await assert.rejects(() => client(transport(() => result)).rotate('0123456789abcdef'),
+    error => error instanceof Error && !(error instanceof ModelviaRotationRefused) && error.message === 'modelvia_rejected');
+  await assert.rejects(() => client(transport(() => { throw new Error('lost response'); })).rotate('0123456789abcdef'),
+    error => error instanceof Error && !(error instanceof ModelviaRotationRefused) && error.message === 'modelvia_unreachable');
 });
 
 test('findProject reads the operator project list and refuses a project under another client', async () => {
