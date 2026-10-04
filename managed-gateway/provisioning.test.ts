@@ -4,11 +4,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixture } from './testing.ts';
+import { LedgerDatabase } from './database.ts';
+import { UsageLedger } from './ledger.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
 import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
-import type { ModelviaCaps, ModelviaClient, ModelviaCustomer, ModelviaProjectInput } from './modelvia-keys.ts';
+import { ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
 
 const ORG_KEY = 'fictional-org-key-never-in-a-response';
@@ -25,9 +27,13 @@ const CUSTOMER_CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
 const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 };
 const SPEND_LABEL = 'A$70/month, A$4/request, 3 at once';
 
-function harness() {
-  const f = fixture();
+function harness(persistent = false, bound = true) {
   const root = mkdtempSync(join(tmpdir(), 'realbud-provisioning-'));
+  const databasePath = persistent ? join(root, 'gateway.db') : ':memory:';
+  const f = fixture(databasePath);
+  // The operator binding the office AI access route records; fail-closed without it.
+  if (bound) bindOfficeCustomer(f.ledger, f.tenant.companyId, CUSTOMER);
+  let ledger = f.ledger;
   const registry = join(root, 'registry', 'devices.json'), secretsDir = join(root, 'secrets');
   const org = { created: [] as string[], deleted: [] as string[], projects: [] as { id: string; name: string }[], orgKeyReads: 0 };
   /** A stateful stand-in for Modelvia: what it holds survives a lost reply,
@@ -69,13 +75,18 @@ function harness() {
       return modelvia.keys.filter(key => key.projectId === projectId).map(key => ({ keyId: key.keyId, projectId, environment, label: key.label, ...(key.revokedAt ? { revokedAt: key.revokedAt } : {}) }));
     },
     async rotate(keyId) {
-      const old = modelvia.keys.find(key => key.keyId === keyId && !key.revokedAt);
+      const old = modelvia.keys.find(key => key.keyId === keyId);
       if (!old) throw new GatewayError('modelvia_rejected', 502);
+      if (old.revokedAt) throw new ModelviaRotationRefused();
       modelvia.rotated.push(keyId); old.revokedAt = 1;
       const key = issue(old.projectId, old.label); lost('rotate');
       return { ...key, projectId: old.projectId, replaced: keyId };
     },
-    async revoke(keyId) { modelvia.revoked.push(keyId); },
+    async revoke(keyId) {
+      modelvia.revoked.push(keyId);
+      const key = modelvia.keys.find(key => key.keyId === keyId);
+      if (key) key.revokedAt ??= 1;
+    },
     async updateProjectCaps(projectId, caps: ModelviaCaps) {
       modelvia.capUpdates.push({ projectId, ...caps });
       const held = modelvia.held.get(projectId)!;
@@ -86,13 +97,21 @@ function harness() {
   };
   const secrets = fileSecretStore(secretsDir);
   const make = (overrides: Partial<ConstructorParameters<typeof InstallationProvisioning>[0]> = {}) => new InstallationProvisioning({
-    ledger: f.ledger, registry, endpoint: 'https://managed.example.invalid', secrets,
+    ledger, registry, endpoint: 'https://managed.example.invalid', secrets,
     org: orgClient, modelvia: modelviaClient, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' }, ...overrides,
   });
   const request = { companyId: f.tenant.companyId, installationId: 'install-one', customerId: CUSTOMER, profile: 'property' };
   return { f, root, registry, secretsDir, secrets, org, modelvia, orgClient, modelviaClient, make, request,
     devices: () => validateConnectorDevices(JSON.parse(readFileSync(registry, 'utf8'))),
-    close: () => { rmSync(root, { recursive: true, force: true }); f.close(); } };
+    record: () => JSON.parse(ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning WHERE tenant=? AND installation=?', request.companyId, request.installationId)!.body),
+    restart: () => { assert.ok(persistent); ledger.db.close(); ledger = new UsageLedger(new LedgerDatabase(databasePath), f.now); },
+    close: () => { ledger.db.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+function pause() {
+  let resume!: () => void;
+  const reached = new Promise<void>(resolve => { resume = resolve; });
+  return { reached, resume };
 }
 
 test('provision returns secret material once and the same descriptor on repeat without minting again', async () => {
@@ -427,21 +446,332 @@ test('a redelivery whose rotate reply is lost is taken over later and rotates th
     assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef', 'fedcba9876543210']);
     assert.deepEqual(live(h), ['00000000000000a3']);
     assert.equal(again.model.keyId, '00000000000000a3');
+    assert.equal(h.record().pendingRotations.length, 1);
+    const removed = await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    assert.equal(removed.revoked.modelKeyRevoked, true);
+    assert.equal(h.record().state, 'revoked');
+    assert.deepEqual(h.record().pendingRotations, []);
+    assert.deepEqual(live(h), []);
   } finally { h.close(); }
 });
 
-test('a redelivery overtaken by a revoke revokes its fresh key and delivers nothing', async () => {
+test('a fenced listing revokes the successor before a delayed rotation response returns', async () => {
   const h = harness(); try {
     await h.make().provision(h.f.owner, h.request);
     const racing = h.make({ modelvia: { ...h.modelviaClient, async rotate(keyId) {
       const rotated = await h.modelviaClient.rotate(keyId);
-      await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+      assert.equal((await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' })).revoked.modelKeyRevoked, true);
+      assert.equal(h.record().state, 'revoked');
+      assert.deepEqual(live(h), []);
       return rotated;
     } } });
     await assert.rejects(() => racing.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
-    // The revoke reached the recorded (already rotated-away) key; the fresh one is revoked here.
+    // Reconciliation already confirmed both keys. The late reply must not
+    // reopen cleanup or make an additional compensation request.
     assert.deepEqual(h.modelvia.revoked, ['0123456789abcdef', 'fedcba9876543210']);
     assert.equal(h.devices()[0]!.active, false);
+    assert.deepEqual(live(h), []);
+    assert.equal(h.record().state, 'revoked');
+    assert.deepEqual(h.record().cleanupKeyIds, []);
+    const removed = await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    assert.equal(removed.revoked.modelKeyRevoked, true);
+    assert.deepEqual(removed.revoked.modelKeyIds, ['0123456789abcdef', 'fedcba9876543210']);
+  } finally { h.close(); }
+});
+
+test('redelivery returning while predecessor revoke waits cannot deliver or overwrite the revocation claim', async () => {
+  const h = harness(), rotated = pause(), releaseRotation = pause(), revoking = pause(), releaseRevoke = pause();
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    const service = h.make({ modelvia: { ...h.modelviaClient,
+      async rotate(keyId) {
+        const result = await h.modelviaClient.rotate(keyId);
+        rotated.resume(); await releaseRotation.reached; return result;
+      },
+      async revoke(keyId) {
+        if (keyId === KEY_IDS[0]) { revoking.resume(); await releaseRevoke.reached; }
+        return h.modelviaClient.revoke(keyId);
+      },
+    } });
+    const delivery = assert.rejects(service.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
+    await rotated.reached;
+    const removal = service.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    await revoking.reached;
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().revocation, undefined);
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /installation_revoked/);
+    await assert.rejects(() => h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /installation_revocation_in_progress/);
+    releaseRotation.resume(); await delivery;
+    releaseRevoke.resume();
+    assert.equal((await removal).revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), []);
+    assert.equal(h.record().state, 'revoked');
+    assert.deepEqual(h.record().revocationWork.keyIds, KEY_IDS.slice(0, 2));
+    assert.ok(!JSON.stringify(h.record()).includes(synthetic(KEY_IDS[1]!)));
+  } finally { releaseRotation.resume(); releaseRevoke.resume(); h.close(); }
+});
+
+test('a late superseded rotation reply does not reopen an intermediate key confirmed revoked in the listing', async () => {
+  const h = harness(), rotated = pause(), release = pause();
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    const delayed = h.make({ modelvia: { ...h.modelviaClient, async rotate(keyId) {
+      const result = await h.modelviaClient.rotate(keyId);
+      rotated.resume(); await release.reached; return result;
+    } } });
+    const rejected = assert.rejects(delayed.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
+    await rotated.reached; later(h);
+    const replacement = await h.make().provision(h.f.owner, { ...h.request, redeliver: true });
+    assert.equal(replacement.provisioning.model.keyId, KEY_IDS[2]);
+    await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    assert.equal(h.record().state, 'revoked');
+    assert.ok(h.record().revocationWork.revokedKeyIds.includes(KEY_IDS[1]));
+    const revoked = [...h.modelvia.revoked];
+    release.resume(); await rejected;
+    assert.equal(h.record().state, 'revoked');
+    assert.deepEqual(h.record().cleanupKeyIds, []);
+    assert.deepEqual(h.modelvia.revoked, revoked);
+    assert.deepEqual(live(h), []);
+  } finally { release.resume(); h.close(); }
+});
+
+test('failed successor compensation keeps its identifier and revoking state across a database restart', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    const service = h.make({ modelvia: { ...h.modelviaClient,
+      async rotate(keyId) {
+        const result = await h.modelviaClient.rotate(keyId);
+        const failedListing = h.make({ modelvia: { ...h.modelviaClient, async listKeys() { throw new GatewayError('modelvia_unreachable', 502); } } });
+        await assert.rejects(() => failedListing.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /modelvia_unreachable/);
+        return result;
+      },
+      async revoke() { throw new GatewayError('modelvia_unreachable', 502); },
+    } });
+    await assert.rejects(() => service.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
+    assert.deepEqual(h.record().cleanupKeyIds, [KEY_IDS[1]]);
+    assert.deepEqual(h.record().pendingRotations, []);
+    assert.equal(h.record().revocation, undefined);
+    assert.deepEqual(live(h), [KEY_IDS[1]]);
+    h.restart();
+    assert.equal(h.record().state, 'revoking');
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+    const removed = await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    assert.equal(removed.revoked.modelKeyRevoked, true);
+    assert.deepEqual(removed.revoked.modelKeyIds, KEY_IDS.slice(0, 2));
+    assert.deepEqual(live(h), []);
+    assert.deepEqual(h.record().cleanupKeyIds, []);
+  } finally { h.close(); }
+});
+
+test('a predecessor fence completes cleanup before a delayed rotation is refused', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    const entered = pause(), release = pause();
+    const service = h.make({ modelvia: { ...h.modelviaClient, async rotate(keyId) {
+      entered.resume(); await release.reached;
+      return h.modelviaClient.rotate(keyId);
+    } } });
+    const redelivery = service.provision(h.f.owner, { ...h.request, redeliver: true });
+    const rejected = assert.rejects(redelivery, error => error instanceof ModelviaRotationRefused);
+    await entered.reached;
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.equal(h.record().state, 'revoked');
+    release.resume(); await rejected;
+    assert.deepEqual(h.record().pendingRotations, []);
+    assert.equal(h.record().redelivery, undefined);
+    h.restart();
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.deepEqual(h.modelvia.rotated, []);
+    assert.deepEqual(live(h), []);
+  } finally { h.close(); }
+});
+
+test('a lost rotation response is cleaned up automatically after fencing its predecessor', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    h.restart();
+    let fencedListing = false;
+    const service = h.make({ modelvia: { ...h.modelviaClient, async listKeys(project, environment) {
+      assert.deepEqual(h.modelvia.revoked, [KEY_IDS[0]]);
+      fencedListing = true;
+      return h.modelviaClient.listKeys(project, environment);
+    } } });
+    assert.equal((await service.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.equal(fencedListing, true);
+    assert.deepEqual(h.modelvia.revoked, KEY_IDS.slice(0, 2));
+    assert.deepEqual(live(h), []);
+    assert.equal(h.record().state, 'revoked');
+    assert.deepEqual(h.record().pendingRotations, []);
+  } finally { h.close(); }
+});
+
+test('failed, empty and stale listings preserve lost rotation cleanup through restart', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    const failedListing = h.make({ modelvia: { ...h.modelviaClient, async listKeys() { throw new GatewayError('modelvia_unreachable', 502); } } });
+    await assert.rejects(() => failedListing.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /modelvia_unreachable/);
+    const obligation = h.record().pendingRotations;
+    assert.equal(obligation.length, 1);
+    assert.equal(obligation[0].sourceKeyId, KEY_IDS[0]);
+    h.restart(); later(h);
+    const emptyListing = h.make({ modelvia: { ...h.modelviaClient, async listKeys() { return []; } } });
+    await assert.rejects(() => emptyListing.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /installation_revocation_cleanup_pending/);
+    assert.deepEqual(h.record().pendingRotations, obligation);
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().revocation, undefined);
+    assert.equal(h.devices()[0]!.active, false);
+    assert.deepEqual(live(h), [KEY_IDS[1]]);
+    const staleListing = h.make({ modelvia: { ...h.modelviaClient, async listKeys(project, environment) {
+      return (await h.modelviaClient.listKeys(project, environment)).map(key => ({ ...key, revokedAt: undefined }));
+    } } });
+    await assert.rejects(() => staleListing.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /installation_revocation_cleanup_pending/);
+    assert.deepEqual(h.record().pendingRotations, obligation);
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), []);
+  } finally { h.close(); }
+});
+
+test('an initial revoke failure remains fenced and a restarted worker can retry its known key', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    const failure = h.make({ modelvia: { ...h.modelviaClient, async revoke() { throw new GatewayError('modelvia_unreachable', 502); } } });
+    await assert.rejects(() => failure.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /modelvia_unreachable/);
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().revocationWork.attempt, undefined);
+    h.restart();
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), []);
+  } finally { h.close(); }
+});
+
+test('revoking a pending install after a lost mint cancels it durably: restart, then the key is revoked and provision stays refused', async () => {
+  const h = harness(true);
+  try {
+    const scope = { companyId: h.request.companyId, installationId: h.request.installationId };
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /modelvia_unreachable/);
+    assert.equal(h.record().state, 'pending');
+    assert.deepEqual(live(h), [KEY_IDS[0]]);
+    // The attempt could still be running: it is fenced now, its keys are listed later.
+    await assert.rejects(() => h.make().revoke(h.f.owner, scope), /installation_revocation_in_progress/);
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().attempt, undefined);
+    assert.equal(h.devices()[0]!.active, false);
+    assert.deepEqual(h.modelvia.revoked, []);
+    h.restart();
+    later(h);
+    // A provision resuming after the cancellation never mints or rotates.
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+    const done = await h.make().revoke(h.f.owner, scope);
+    assert.deepEqual(done.revoked, { ...scope, connectorDeactivated: true, modelKeyRevoked: true, modelKeyIds: [KEY_IDS[0]], provisioningCancelled: true,
+      modelProjectRetained: 'rb-install-one', projectDeleted: false });
+    assert.deepEqual(h.modelvia.revoked, [KEY_IDS[0]]);
+    assert.deepEqual(live(h), []);
+    assert.equal(h.modelvia.minted.length, 1); assert.deepEqual(h.modelvia.rotated, []);
+    // Idempotent, and a later provision for that installation is refused.
+    assert.deepEqual((await h.make().revoke(h.f.owner, scope)).revoked, done.revoked);
+    later(h);
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+  } finally { h.close(); }
+});
+
+test('a provision fenced by a pending revoke while it was running never mints', async () => {
+  const h = harness();
+  try {
+    const gate = pause(); let reached!: () => void; const arrived = new Promise<void>(resolve => { reached = resolve; });
+    const slow = h.make({ modelvia: { ...h.modelviaClient, async createProject(input) { reached(); await gate.reached; return h.modelviaClient.createProject(input); } } });
+    const running = slow.provision(h.f.owner, h.request);
+    await arrived;
+    await assert.rejects(() => h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /installation_revocation_in_progress/);
+    gate.resume();
+    await assert.rejects(() => running, /installation_provisioning_superseded/);
+    assert.deepEqual(h.modelvia.minted, []);
+    later(h);
+    const done = await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId });
+    assert.equal(done.revoked.provisioningCancelled, true);
+    assert.equal(done.revoked.modelKeyIds, undefined);
+    assert.deepEqual(h.modelvia.revoked, []);
+  } finally { h.close(); }
+});
+
+test('a Modelvia outage while cancelling a pending install fails cleanly and a retry finishes it', async () => {
+  const h = harness(true);
+  try {
+    const scope = { companyId: h.request.companyId, installationId: h.request.installationId };
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /modelvia_unreachable/);
+    later(h);
+    const down = () => { throw new GatewayError('modelvia_unreachable', 502); };
+    await assert.rejects(() => h.make({ modelvia: { ...h.modelviaClient, findProject: async () => down() } }).revoke(h.f.owner, scope), /modelvia_unreachable/);
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().revocationWork.attempt, undefined);
+    assert.equal(h.record().revocationWork.discovered, undefined);
+    // Discovered, then the revoke itself fails: the found key stays journalled.
+    await assert.rejects(() => h.make({ modelvia: { ...h.modelviaClient, revoke: async () => down() } }).revoke(h.f.owner, scope), /modelvia_unreachable/);
+    assert.deepEqual(h.record().revocationWork.keyIds, [KEY_IDS[0]]);
+    assert.deepEqual(live(h), [KEY_IDS[0]]);
+    h.restart();
+    const done = await h.make().revoke(h.f.owner, scope);
+    assert.equal(done.revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), []);
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+  } finally { h.close(); }
+});
+
+test('an unconfirmed predecessor fence never reaches reconciliation or erases the rotation intent', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    const pending = h.record().pendingRotations;
+    let reads = 0;
+    const failure = h.make({ modelvia: { ...h.modelviaClient,
+      async revoke() { throw new GatewayError('modelvia_unreachable', 502); },
+      async listKeys(project, environment) { reads++; return h.modelviaClient.listKeys(project, environment); },
+    } });
+    await assert.rejects(() => failure.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /modelvia_unreachable/);
+    assert.equal(reads, 0);
+    assert.deepEqual(h.record().pendingRotations, pending);
+    assert.equal(h.record().revocation, undefined);
+    h.restart();
+    assert.deepEqual(h.record().pendingRotations, pending);
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), []);
+  } finally { h.close(); }
+});
+
+test('a discovered successor remains journalled after cleanup failure and another installation label is untouched', async () => {
+  const h = harness(true);
+  try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    const foreign = { keyId: KEY_IDS[2]!, projectId: h.modelvia.keys[0]!.projectId, label: 'company-other:install-other' };
+    h.modelvia.keys.push(foreign);
+    const failure = h.make({ modelvia: { ...h.modelviaClient, async revoke(keyId) {
+      if (keyId === KEY_IDS[1]) throw new GatewayError('modelvia_unreachable', 502);
+      return h.modelviaClient.revoke(keyId);
+    } } });
+    await assert.rejects(() => failure.revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId }), /modelvia_unreachable/);
+    assert.deepEqual(h.record().cleanupKeyIds, [KEY_IDS[1]]);
+    assert.deepEqual(h.record().pendingRotations, []);
+    assert.equal(h.record().state, 'revoking');
+    assert.equal(h.record().revocation, undefined);
+    h.restart();
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId })).revoked.modelKeyRevoked, true);
+    assert.deepEqual(live(h), [foreign.keyId]);
+    assert.equal(h.modelvia.revoked.includes(foreign.keyId), false);
   } finally { h.close(); }
 });
 
@@ -456,7 +786,7 @@ test('an office can only provision into a Modelvia customer bound to it', async 
     assert.ok((await other.make().provision(other.f.owner, other.request)).provisioning.model.key);
   } finally { other.close(); }
   // Client-paid: the operator binding decides, both ways.
-  const bound = harness(); try {
+  const bound = harness(false, false); try {
     bindOfficeCustomer(bound.f.ledger, 'company-other', CUSTOMER);
     await assert.rejects(() => bound.make().provision(bound.f.owner, bound.request), /modelvia_customer_not_bound/);
     bindOfficeCustomer(bound.f.ledger, 'company-other', 'cus-other-office');
@@ -467,6 +797,84 @@ test('an office can only provision into a Modelvia customer bound to it', async 
     assert.ok((await bound.make().provision(bound.f.owner, bound.request)).provisioning.model.key);
     assert.equal(bound.modelvia.projects.length, 1);
   } finally { bound.close(); }
+});
+
+test('a client-paid office with no operator binding is refused; a key is never redelivered or re-capped under a customer the office left', async () => {
+  // Fail closed: the body names a customer, but no operator bound this office.
+  const unbound = harness(false, false); try {
+    await assert.rejects(() => unbound.make().provision(unbound.f.owner, unbound.request), (error: unknown) =>
+      error instanceof GatewayError && error.code === 'office_customer_unbound' && error.status === 409);
+    assert.equal(unbound.modelvia.projects.length, 0); assert.equal(unbound.modelvia.minted.length, 0); assert.equal(existsSync(unbound.registry), false);
+    assert.equal(unbound.f.ledger.db.get('SELECT 1 AS x FROM installation_provisioning'), undefined);
+  } finally { unbound.close(); }
+  // Provisioned while bound; the operator cannot move the office while that
+  // computer holds keys. A binding moved before that rule (raw SQL) still fails closed.
+  const moved = harness(); try {
+    await moved.make().provision(moved.f.owner, moved.request);
+    assert.throws(() => bindOfficeCustomer(moved.f.ledger, moved.f.tenant.companyId, 'cus-office-new'), (error: unknown) =>
+      error instanceof GatewayError && error.code === 'office_customer_rebind_has_installations' && error.status === 409);
+    moved.f.ledger.db.run('UPDATE office_modelvia_customer SET customer=? WHERE tenant=?', 'cus-office-new', moved.f.tenant.companyId);
+    await assert.rejects(() => moved.make().provision(moved.f.owner, { ...moved.request, redeliver: true }), /modelvia_customer_not_bound/);
+    assert.deepEqual(moved.modelvia.rotated, []);
+    assert.equal(moved.record().redelivery, undefined);
+    assert.deepEqual(await moved.make().applyCustomerCaps(moved.f.tenant.companyId), [{ installationId: 'install-one', state: 'failed', error: 'modelvia_customer_not_bound' }]);
+    assert.deepEqual(moved.modelvia.capUpdates, []);
+    // Bound back to its customer, both work again.
+    bindOfficeCustomer(moved.f.ledger, moved.f.tenant.companyId, CUSTOMER);
+    assert.ok((await moved.make().provision(moved.f.owner, { ...moved.request, redeliver: true })).provisioning.model.key);
+    assert.deepEqual(await moved.make().applyCustomerCaps(moved.f.tenant.companyId), [{ installationId: 'install-one', state: 'applied' }]);
+  } finally { moved.close(); }
+});
+
+test('an office customer binding never moves while any installation holds keys under the old customer', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const company = h.f.tenant.companyId;
+    const refused = (fn: () => void) => assert.throws(fn, (error: unknown) =>
+      error instanceof GatewayError && error.code === 'office_customer_rebind_has_installations' && error.status === 409);
+    // Office A cannot leave CUSTOMER while install-one's project sits under it.
+    refused(() => bindOfficeCustomer(h.f.ledger, company, 'cus-office-new'));
+    // Even with A's binding gone (legacy state), CUSTOMER cannot go to office B.
+    h.f.ledger.db.run('DELETE FROM office_modelvia_customer WHERE tenant=?', company);
+    refused(() => bindOfficeCustomer(h.f.ledger, 'company-b', CUSTOMER));
+    bindOfficeCustomer(h.f.ledger, company, CUSTOMER);
+    // A revoking record still owes key cleanup, so it still blocks.
+    h.f.ledger.db.run("UPDATE installation_provisioning SET state='revoking' WHERE tenant=?", company);
+    refused(() => bindOfficeCustomer(h.f.ledger, company, 'cus-office-new'));
+    h.f.ledger.db.run("UPDATE installation_provisioning SET state='ready' WHERE tenant=?", company);
+    // Disconnected (fully revoked): the move is allowed, and the old customer is free for B.
+    await h.make().revoke(h.f.owner, { companyId: company, installationId: 'install-one' });
+    bindOfficeCustomer(h.f.ledger, company, 'cus-office-new');
+    bindOfficeCustomer(h.f.ledger, 'company-b', CUSTOMER);
+  } finally { h.close(); }
+  // An operator move that lands while provisioning waits on Modelvia is seen
+  // before the pending record is journalled, so nothing is minted under it.
+  const race = harness(); try {
+    const modelvia = { ...race.modelviaClient, async findCustomer(customerId: string) {
+      const found = await race.modelviaClient.findCustomer(customerId);
+      bindOfficeCustomer(race.f.ledger, race.f.tenant.companyId, 'cus-office-new');
+      return found;
+    } };
+    await assert.rejects(() => race.make({ modelvia }).provision(race.f.owner, race.request), /modelvia_customer_not_bound/);
+    assert.equal(race.f.ledger.db.get('SELECT 1 AS x FROM installation_provisioning'), undefined);
+    assert.equal(race.modelvia.projects.length, 0); assert.equal(race.modelvia.minted.length, 0);
+  } finally { race.close(); }
+});
+
+test('a redelivery already running is refused before Modelvia is asked; a completed one returns the new key id', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const first = await h.make().provision(h.f.owner, { ...h.request, redeliver: true });
+    // The website records the rotated key id from the descriptor.
+    assert.equal(first.provisioning.model.keyId, h.record().keyId);
+    assert.equal(first.provisioning.model.keyId, KEY_IDS[1]);
+    assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.keyId, KEY_IDS[1]);
+    h.f.ledger.db.run('UPDATE installation_provisioning SET body=? WHERE tenant=? AND installation=?',
+      JSON.stringify({ ...h.record(), redelivery: { attempt: 'other', at: h.f.ledger.now(), phase: 'preparing' } }), h.request.companyId, h.request.installationId);
+    const reads = h.modelvia.customerReads;
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_in_progress/);
+    assert.equal(h.modelvia.customerReads, reads);
+  } finally { h.close(); }
 });
 
 test('a Modelvia customer that is missing, inactive, another client\'s or zero-capped is refused before any effect', async () => {
@@ -838,7 +1246,10 @@ test('three office installations reuse a verified config, another office uses it
     assert.deepEqual(h.devices().map(d => d.authConfigId), ['ac_office1', 'ac_office1', 'ac_office1']);
     const other = { ...h.f.owner, companyId: 'company-b' };
     h.f.ledger.provisionTenant({ ...h.f.tenant, companyId: 'company-b', licenseId: 'license-b' });
-    await h.make({ authConfigs, org }).provision(other, { ...h.request, companyId: 'company-b', installationId: 'install-four' });
+    // Another office provisions only under its own bound Modelvia customer.
+    bindOfficeCustomer(h.f.ledger, 'company-b', 'cus-office-b');
+    const modelviaB = { ...h.modelviaClient, async findCustomer(id: string) { return id === 'cus-office-b' ? { active: true, ...CUSTOMER_CAPS } : null; } };
+    await h.make({ authConfigs, org, modelvia: modelviaB }).provision(other, { ...h.request, companyId: 'company-b', customerId: 'cus-office-b', installationId: 'install-four' });
     assert.equal(creates, 2); assert.equal(h.devices()[3]!.authConfigId, 'ac_office2');
   } finally { h.close(); }
 });

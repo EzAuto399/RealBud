@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createOfficeLink, installationWorkerVersion, websiteOrigin } from "./office-link.ts";
+import { createOfficeLink, installationWorkerVersion, noteModelKeyAnswer, websiteOrigin } from "./office-link.ts";
+import { formatCustomerCharge, formatNanoAud, parseInstallationUsage } from "../shared/office-link.ts";
 import { ConfigRecoveryError, type AppConfig } from "./config.ts";
 import { createWorkerModelAccess, setWorkerModelGrant } from "./worker-model-access.ts";
 import { privateFixtureRoot, privateFixtureDirectory, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
@@ -52,6 +53,30 @@ describe("website installation link", () => {
     expect(calls[1].init.redirect).toBe("error");
     await app.report(); expect(report).toHaveBeenCalledTimes(1);
     await app.disconnect(); expect((await app.status()).state).toBe("unlinked");
+  });
+  it("honours Retry-After on a rate-limited report, capped, without asking again early", async () => {
+    let reports = 0, retryAfter = "120";
+    const { app } = fixture(vi.fn(async (url, init) => {
+      if (String(url).endsWith("redeem")) { const body = JSON.parse(String(init?.body)); return Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" }); }
+      reports++;
+      return reports % 2 ? new Response("{}", { status: 429, headers: { "Retry-After": retryAfter } }) : Response.json({});
+    }));
+    await app.link({ code, label: "Desk" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await expect(app.report()).rejects.toThrow(/wait before reporting/);
+      await expect(app.report()).rejects.toThrow(/wait before reporting/);
+      expect(reports).toBe(1);
+      vi.setSystemTime(Date.now() + 121_000);
+      await app.report(); expect(reports).toBe(2);
+      retryAfter = "999999";
+      await expect(app.report()).rejects.toThrow(/wait before reporting/);
+      vi.setSystemTime(Date.now() + 59 * 60_000);
+      await expect(app.report()).rejects.toThrow(/wait before reporting/);
+      expect(reports).toBe(3);
+      vi.setSystemTime(Date.now() + 61_000);
+      await app.report(); expect(reports).toBe(4);
+    } finally { vi.useRealTimers(); }
   });
   it("keeps the link when reporting or disconnecting fails", async () => {
     const { app } = fixture(vi.fn(async (url, init) => {
@@ -231,6 +256,10 @@ describe("zero-touch provisioning through the website link", () => {
     await desk.app.report();
     expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
     expect(site.state.keys).toHaveLength(2);
+    // The check-in names the key in force by its id so the website can flag a
+    // mismatch; the key itself never leaves this computer.
+    expect(site.state.reports.at(-1).modelKeyId).toBe("rbkkey-02");
+    expect(JSON.stringify(site.state.reports)).not.toContain(site.state.keys[1]);
 
     // Another computer holding the same code but its own id and token gets nothing.
     const other = managedDesk(site.fetch);
@@ -255,11 +284,50 @@ describe("zero-touch provisioning through the website link", () => {
     expect(await quietDesk.access.env()).toEqual({});
     await quietDesk.app.report();
     expect(site.state.reports.at(-1).needsProvisioning).toBe(true);
+    expect(site.state.reports.at(-1)).not.toHaveProperty("modelKeyId");
     expect(await quietDesk.app.modelAccessEnv(quietDesk.access.env)).toMatchObject({ REALBUD_MODEL_API_KEY: site.state.keys[1] });
     expect(site.state.revoked).toEqual([site.state.keys[0]]);
     await quietDesk.app.report();
     expect(site.state.reports.at(-1).needsProvisioning).toBeUndefined();
     expect(site.state.keys).toHaveLength(2);
+  });
+
+  it("reports no key id and asks for redelivery when the vault lost the key the records still name", async () => {
+    const site = website(); const desk = managedDesk(site.fetch);
+    await desk.app.link({ code, label: "Fictional desk" });
+    rmSync(join(desk.root, "company-installation/private/worker-model-access.json"));
+    expect(await desk.app.status()).toMatchObject({ provisioned: true, modelKey: "missing" });
+    await desk.app.report();
+    expect(site.state.reports.at(-1)).toMatchObject({ needsProvisioning: true });
+    expect(site.state.reports.at(-1)).not.toHaveProperty("modelKeyId");
+    expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({ REALBUD_MODEL_API_KEY: site.state.keys[1] });
+    expect(await desk.app.status()).not.toHaveProperty("modelKey");
+    await desk.app.report();
+    expect(site.state.reports.at(-1)).toMatchObject({ modelKeyId: "rbkkey-02" });
+    expect(site.state.reports.at(-1)).not.toHaveProperty("needsProvisioning");
+    expect(site.state.keys).toHaveLength(2);
+  });
+
+  it("reports a key the AI service rejected without asking for another, and a revoked installation stays revoked", async () => {
+    const site = website(); const desk = managedDesk(site.fetch);
+    await desk.app.link({ code, label: "Fictional desk" });
+    noteModelKeyAnswer("rbkkey-01", false);
+    try {
+      expect(await desk.app.status()).toMatchObject({ modelKey: "rejected" });
+      await desk.app.report();
+      expect(site.state.reports.at(-1)).toMatchObject({ modelKeyId: "rbkkey-01", modelKeyRejected: true });
+      expect(site.state.reports.at(-1)).not.toHaveProperty("needsProvisioning");
+      expect(site.state.keys).toHaveLength(1);
+      // The office revoked this computer: the website refuses its token.
+      site.state.owner = { id: "fictional-other", token: "fictional-other" };
+      await desk.app.report();
+      expect(await desk.app.status()).toMatchObject({ state: "revoked" });
+      expect(await desk.app.modelAccessEnv(desk.access.env)).toEqual({});
+      const reports = site.state.reports.length;
+      await desk.app.report();
+      expect(site.state.reports).toHaveLength(reports);
+      expect(site.state.keys).toHaveLength(1);
+    } finally { noteModelKeyAnswer("rbkkey-01", true); }
   });
 
   it("keeps requesting provisioning after a connector write failure instead of stranding a linked computer", async () => {
@@ -816,6 +884,13 @@ describe("AI usage for the current month", () => {
       fetch: vi.fn(async (url: any, init: any) => { calls.push(String(url)); return String(url).includes("redeem") ? linked(init) : usageReply(); }) as any });
     return { link, calls };
   };
+
+  it("reads a credit month, where credits exceed charges, as a negative net", () => {
+    const usage = parseInstallationUsage(body({ money: { customerNetNanoAud: "-50000000000" } }), period);
+    expect(formatNanoAud(usage.money.customerNetNanoAud)).toBe("-A$50.00");
+    expect(formatCustomerCharge(usage.money.customerNetNanoAud)).toBe("A$50.00 credit");
+    expect(() => parseInstallationUsage(body({ tokens: { input: "-1", output: "0" } }), period)).toThrow();
+  });
 
   it("explicitly refreshes before the passive TTL and coalesces concurrent checks", async () => {
     let requests = 0, release!: () => void;

@@ -14,11 +14,17 @@ vi.mock("./managed-service.ts", async (original) => ({
   managedService: { assertCapability: vi.fn() },
 }));
 
+vi.mock("./office-link.ts", async (original) => ({
+  ...await original<typeof import("./office-link.ts")>(),
+  noteModelKeyAnswer: vi.fn(),
+}));
+
+import { noteModelKeyAnswer } from "./office-link.ts";
 import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_WITHDRAWN } from "./hermes-runtime-env.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { productAskFailure } from "./ask-book.ts";
-import { ASK_MODEL_RELAY_UNAVAILABLE, applyAskModelRelayEnv, startAskModelRelay, type AskModelRelay } from "./ask-model-relay.ts";
+import { ASK_MODEL_RELAY_UNAVAILABLE, applyAskModelRelayEnv, createAskModelRelayLease, withAskModelRelayLease, startAskModelRelay, type AskModelRelay, type AskModelRelayLease } from "./ask-model-relay.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { recordEvents } from "./testing/events.ts";
 import { clearManagedAccess, FICTIONAL_GRANTED_KEY, grantManagedAccess } from "./testing/managed-grant.ts";
@@ -65,13 +71,20 @@ const json = (body: unknown) => (response: ServerResponse) => {
   response.end(JSON.stringify(body));
 };
 
-async function relayFor(root: string, opts: { maxRequestBytes?: number; timeoutMs?: number; serviceFailure?: () => string | null } = {}): Promise<{ relay: AskModelRelay; token: string; overlayDir: string }> {
+function workerEnv(root: string) {
+  const lease = createAskModelRelayLease();
+  cleanups.push(() => lease.revoke());
+  const env: NodeJS.ProcessEnv = {};
+  expect(lease.run(() => applyAskModelRelayEnv(env, root))).toBeNull();
+  return { env, lease };
+}
+
+async function relayFor(root: string, opts: { maxRequestBytes?: number; timeoutMs?: number; serviceFailure?: () => string | null } = {}): Promise<{ relay: AskModelRelay; token: string; overlayDir: string; lease: AskModelRelayLease }> {
   const overlayDir = join(root, "relay-overlay");
   const relay = await startAskModelRelay({ root, overlayDir, serviceFailure: opts.serviceFailure ?? (() => null), ...opts });
   cleanups.push(() => relay.close());
-  const env: NodeJS.ProcessEnv = {};
-  expect(applyAskModelRelayEnv(env, root)).toBeNull();
-  return { relay, token: env.REALBUD_MODEL_API_KEY!, overlayDir };
+  const { env, lease } = workerEnv(root);
+  return { relay, token: env.REALBUD_MODEL_API_KEY!, overlayDir, lease };
 }
 
 function post(relay: AskModelRelay, body: unknown, token: string | null, extra: Record<string, string> = {}, signal?: AbortSignal): Promise<Response> {
@@ -87,6 +100,68 @@ const messages = [{ role: "user", content: "fictional question" }];
 const choiceOf = (id: ManagedModelChoiceId) => MANAGED_MODEL_CHOICES.find(choice => choice.id === id)!;
 
 describe("Ask model relay", () => {
+  it("revokes only the stopped execution and never reauthorizes its token on a later turn", async () => {
+    const root = home(), gateway = await upstream(json({}));
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token, lease } = await relayFor(root);
+    const second = workerEnv(root), body = { model: "deepseek-v4.1-flash", messages };
+    expect((await post(relay, body, token)).status).toBe(200);
+    expect((await post(relay, body, second.env.REALBUD_MODEL_API_KEY!)).status).toBe(200);
+    lease.revoke();
+    expect((await post(relay, body, token)).status).toBe(401);
+    expect(lease.run(() => applyAskModelRelayEnv({}, root))).toBe(ASK_MODEL_RELAY_UNAVAILABLE);
+    const third = workerEnv(root);
+    expect(new Set([token, second.env.REALBUD_MODEL_API_KEY, third.env.REALBUD_MODEL_API_KEY]).size).toBe(3);
+    expect((await post(relay, body, token)).status).toBe(401);
+    expect((await post(relay, body, third.env.REALBUD_MODEL_API_KEY!)).status).toBe(200);
+    expect((await post(relay, body, second.env.REALBUD_MODEL_API_KEY!)).status).toBe(200);
+    expect(gateway.seen).toHaveLength(4);
+  });
+
+  it.each(["completion", "error", "abort"] as const)("aborts an outstanding upstream exchange on execution %s", async outcome => {
+    const root = home(), gateway = await upstream(response => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"fictional":1}\n\n');
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay } = await relayFor(root);
+    const stop = new AbortController();
+    let release!: () => void, ready!: () => void, token = "";
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { ready = resolve; });
+    const failure = new Error("Fictional execution failure");
+    const execution = withAskModelRelayLease(async () => {
+      const env: NodeJS.ProcessEnv = {};
+      expect(applyAskModelRelayEnv(env, root)).toBeNull();
+      token = env.REALBUD_MODEL_API_KEY!;
+      const response = await post(relay, { model: "deepseek-v4.1-flash", messages, stream: true }, token);
+      await response.body!.getReader().read();
+      ready();
+      await pending;
+      if (outcome === "error") throw failure;
+    }, { signal: stop.signal });
+    const settled = outcome === "error" ? expect(execution).rejects.toBe(failure) : execution;
+    await started;
+    if (outcome === "abort") stop.abort();
+    else release();
+    await expect(gateway.seen[0]!.closed).resolves.toBe(true);
+    expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(401);
+    release();
+    await settled;
+    expect(gateway.seen).toHaveLength(1);
+  });
+
+  it("does not issue a process-wide model token outside an active execution", async () => {
+    const root = home(), gateway = await upstream(json({}));
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const relay = await startAskModelRelay({ root, overlayDir: join(root, "relay-overlay"), serviceFailure: () => null });
+    cleanups.push(() => relay.close());
+    const env: NodeJS.ProcessEnv = {};
+    expect(applyAskModelRelayEnv(env, root)).toBe(ASK_MODEL_RELAY_UNAVAILABLE);
+    expect(env.REALBUD_MODEL_API_KEY).toBeUndefined();
+    expect(gateway.seen).toHaveLength(0);
+  });
+
   it.each(MANAGED_MODEL_CHOICES.map(choice => choice.id))("sends the office key and %s's reasoning effort upstream", async (id) => {
     const root = home(), gateway = await upstream(json({ id: "fictional-completion", choices: [] }));
     grantManagedAccess(root, { baseUrl: gateway.url, choice: id });
@@ -352,8 +427,7 @@ describe.skipIf(process.platform === "win32")("Ask model relay overlay integrity
     const overlayDir = join(root, "relay-overlay");
     const relay = await startAskModelRelay({ root, overlayDir, serviceFailure: () => null, onTamper });
     cleanups.push(() => relay.close());
-    const env: NodeJS.ProcessEnv = {};
-    expect(applyAskModelRelayEnv(env, root)).toBeNull();
+    const { env } = workerEnv(root);
     const token = env.REALBUD_MODEL_API_KEY!;
     const body = { model: "deepseek-v4.1-flash", messages };
     expect((await post(relay, body, token)).status).toBe(200);
@@ -396,7 +470,7 @@ describe.skipIf(process.platform === "win32")("Ask model relay overlay integrity
     const second = await startAskModelRelay({ root, overlayDir, serviceFailure: () => null });
     cleanups.push(() => second.close(), () => first.close());
     expect(readdirSync(overlayDir)).toEqual(["config.yaml"]);
-    expect(applyAskModelRelayEnv({}, root)).toBeNull();
+    expect(workerEnv(root).env.REALBUD_MODEL_API_KEY).toBeTruthy();
   });
 });
 
@@ -465,6 +539,26 @@ describe("Ask model relay model listing", () => {
     setWorkerModelGrant({ state: "withdrawn" });
     expect((await fetch(`${relay.url}/models`, { headers: auth })).status).toBe(503);
     expect(gateway.seen).toHaveLength(1);
+  });
+
+  it("records the AI service rejecting the office key for check-in, and clears it on success", async () => {
+    let status = 401;
+    const gateway = await upstream(response => { response.writeHead(status, { "content-type": "application/json" }); response.end("{}"); });
+    const root = home();
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token } = await relayFor(root);
+    const answer = vi.mocked(noteModelKeyAnswer); answer.mockClear();
+    expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(401);
+    expect(answer).toHaveBeenLastCalledWith("fictional-key-id", false);
+    status = 403;
+    expect((await fetch(`${relay.url}/models`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(403);
+    expect(answer).toHaveBeenLastCalledWith("fictional-key-id", false);
+    status = 429; answer.mockClear();
+    expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(429);
+    expect(answer).not.toHaveBeenCalled();
+    status = 200;
+    expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(200);
+    expect(answer).toHaveBeenLastCalledWith("fictional-key-id", true);
   });
 
   it("refuses an oversized listing", async () => {
@@ -543,8 +637,11 @@ describe("Ask worker key custody", () => {
     cleanups.push(async () => { recorder.stop(); await instance.dispose(); });
     const turn = await instance.adapter.sendTurn({ threadId: "custody", text: "hi" });
     await recorder.until(event => (event.type === "turn.completed" && event.turnId === turn.turnId) || event.type === "runtime.error");
-    const seen = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
-    expect(seen.env.REALBUD_MODEL_API_KEY).toBe(token);
+    const seen = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string>; pid: number };
+    const workerToken = seen.env.REALBUD_MODEL_API_KEY!;
+    expect(workerToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(workerToken).not.toBe(token);
+    expect((await post(relay, { model: "claude-sonnet-5.5", messages }, workerToken)).status).toBe(401);
     expect(seen.env.HERMES_MANAGED_DIR).toBe(overlayDir);
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
     expect(JSON.stringify(seen.env)).not.toContain(FICTIONAL_GRANTED_KEY);
@@ -556,8 +653,52 @@ describe("Ask worker key custody", () => {
       const text = readFileSync(file, "utf8");
       expect(text, file).not.toContain(FICTIONAL_GRANTED_KEY);
       expect(text, file).not.toContain(token);
+      expect(text, file).not.toContain(workerToken);
     }
     // The profile still names the granted endpoint, so every other managed check holds.
     expect(readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8")).toContain(gateway.url);
+    const next = await instance.adapter.sendTurn({ threadId: "custody", text: "next", resumeCursor: "fictional-session" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === next.turnId);
+    const later = JSON.parse(readFileSync(dump, "utf8"));
+    expect(later.pid).not.toBe(seen.pid);
+    expect(later.env.REALBUD_MODEL_API_KEY).not.toBe(workerToken);
+    expect((await post(relay, { model: "claude-sonnet-5.5", messages }, workerToken)).status).toBe(401);
+  }, 30_000);
+
+  it.each(["stop", "dispose", "error"] as const)("revokes the actual ACP child's model capability on %s", async outcome => {
+    const root = home(), gateway = await upstream(response => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"fictional":1}\n\n');
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay } = await relayFor(root);
+    chmodSync(FAKE_CLI, 0o755);
+    const dump = join(root, "lifetime-dump.json");
+    const instance = await HermesAgentDriver.create({
+      instanceId: "fictional-lifetime", displayName: "Bud", enabled: true,
+      environment: { REALBUD_HERMES_HOME: root, FAKE_ACP_DUMP: dump, FAKE_ACP_MODE: outcome === "error" ? "exit-early" : "hang" },
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    cleanups.push(async () => { recorder.stop(); await instance.dispose(); });
+    const turn = await instance.adapter.sendTurn({ threadId: "fictional-lifetime", text: "Fictional request" });
+    if (outcome === "error") await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
+    else await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1), { timeout: 5_000 });
+    const token = JSON.parse(readFileSync(dump, "utf8")).env.REALBUD_MODEL_API_KEY;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    if (outcome !== "error") {
+      const response = await post(relay, { model: "deepseek-v4.1-flash", messages, stream: true }, token);
+      expect(response.status).toBe(200);
+      await response.body!.getReader().read();
+      const ending = outcome === "stop" ? instance.adapter.interruptTurn("fictional-lifetime") : instance.dispose();
+      const stopped = outcome === "stop" && process.platform === "darwin"
+        ? expect(ending).rejects.toMatchObject({ code: "worker_cleanup_unproven" }) : ending;
+      await expect(gateway.seen[0]!.closed).resolves.toBe(true);
+      expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(401);
+      await stopped;
+    } else {
+      expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(401);
+      expect(gateway.seen).toHaveLength(0);
+    }
   }, 30_000);
 });

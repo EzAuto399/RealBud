@@ -33,7 +33,7 @@ import { connectorRegistry, newConnectorCredential, validateConnectorDevices, ty
 import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServiceBundle, type ServiceIssuer, type ServiceIssuerState } from './service-entitlement-issuer.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { hasCustomerTerms, modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
+import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaRotatedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -187,7 +187,7 @@ export interface ProvisioningDescriptor {
   model: { provider: 'modelvia'; baseUrl: string; key?: string; keyId: string; projectId: string; spendCapLabel: string };
 }
 interface StoredRecord {
-  state: 'pending' | 'ready' | 'revoked';
+  state: 'pending' | 'ready' | 'revoking' | 'revoked';
   profile: string; apps: string[];
   /** Modelvia customer account id for this company. Stored beside the descriptor
    * because revocation needs it; kept out of responses and audit lines. */
@@ -210,7 +210,26 @@ interface StoredRecord {
   authConfigCreateName?: string;
   /** Ready only, while a credential redelivery is running: which attempt owns
    * it and since when. Cleared when that redelivery is recorded. */
-  redelivery?: { attempt: string; at: number };
+  redelivery?: { attempt: string; at: number; phase?: 'preparing' | 'rotating'; sourceKeyId?: string };
+  /** All rotations whose responses remain unknown, including an older attempt
+   * taken over by redelivery. Replacing a lease must not erase its remote effect. */
+  pendingRotations?: { attempt: string; sourceKeyId: string }[];
+  /** Returned successors that have not yet been confirmed revoked. Identifiers
+   * only; retained even when a compensating provider call fails. */
+  cleanupKeyIds?: string[];
+  /** Durable revocation intent. A lease prevents concurrent cleanup workers;
+   * losing that worker never restores delivery or erases an unknown rotation. */
+  revocationWork?: {
+    deleteProject: boolean;
+    keyIds: string[];
+    revokedKeyIds: string[];
+    attempt?: { id: string; at: number };
+    /** Set when revoke cancelled a pending provision: when that attempt began.
+     * Its keys are listed by label only once it can no longer be running. */
+    pendingSince?: number;
+    /** That listing has been journalled into `keyIds`. */
+    discovered?: true;
+  };
   /** Legacy, written by the removed cap sync before 24 September 2026. Old ready
    * records still carry it and still parse; nothing reads or writes it now. */
   modelviaCaps?: unknown;
@@ -551,7 +570,7 @@ export class InstallationProvisioning {
     const recorded = (): StoredRecord | undefined => {
       const existing = this.saved(companyId, installationId);
       if (!existing) return undefined;
-      requireThat(existing.state !== 'revoked', 'installation_revoked', 409);
+      requireThat(existing.state !== 'revoked' && existing.state !== 'revoking', 'installation_revoked', 409);
       requireThat(existing.state === 'ready' ? Boolean(existing.descriptor) : existing.state === 'pending', 'installation_provisioning_outcome_unknown', 409);
       requireThat(existing.profile === profile && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
       // The app list is not identity: apps are admitted on demand later, so a
@@ -568,7 +587,7 @@ export class InstallationProvisioning {
     const customer = await this.options.modelvia.findCustomer(customerId);
     // The body names the customer; only a customer bound to this office may be
     // provisioned into, or this office's spend would bill another one.
-    requireThat(!customer || customerBoundTo(this.options.ledger, companyId, customerId, customer), 'modelvia_customer_not_bound', 403);
+    if (customer) requireCustomerBound(this.options.ledger, companyId, customerId, customer);
     const caps = projectCaps(readyCustomer(customer), this.options.requestCapNanoAud);
 
     // Read again: another call may have started or finished while Modelvia answered.
@@ -707,6 +726,14 @@ export class InstallationProvisioning {
    */
   private async redeliver(companyId: string, installationId: string, ready: StoredRecord): Promise<{ provisioning: ProvisioningDescriptor }> {
     requireThat(ready.descriptor && ready.deviceId && ready.modelProjectId && ready.keyId, 'installation_provisioning_outcome_unknown', 409);
+    requireThat(ready.modelProjectId === `rb-${installationId}`, 'modelvia_project_scope_mismatch', 409);
+    // A running redelivery is refused before Modelvia is asked anything; the
+    // claim below re-checks it under the write lock.
+    requireThat(!ready.redelivery || this.options.ledger.now() - ready.redelivery.at >= PENDING_RESUME_AFTER_MS, 'installation_provisioning_in_progress', 409);
+    // A read before any effect: the key stays only under this office's customer.
+    const customer = await this.options.modelvia.findCustomer(ready.customerId);
+    requireThat(customer, 'modelvia_customer_not_ready', 409);
+    requireCustomerBound(this.options.ledger, companyId, ready.customerId, customer!);
     const now = this.options.ledger.now();
     const attempt = randomBytes(12).toString('hex');
     const credential = newConnectorCredential();
@@ -718,7 +745,7 @@ export class InstallationProvisioning {
       const current = this.saved(companyId, installationId);
       requireThat(current && canonical(current) === canonical(ready), 'installation_provisioning_in_progress', 409);
       requireThat(!current!.redelivery || now - current!.redelivery.at >= PENDING_RESUME_AFTER_MS, 'installation_provisioning_in_progress', 409);
-      this.store(companyId, installationId, { ...current!, redelivery: { attempt, at: now } });
+      this.store(companyId, installationId, { ...current!, redelivery: { attempt, at: now, phase: 'preparing' } });
       this.options.ledger.db.append(companyId, 'installation_redelivery_requested', null, now, { installationId, ...(current!.redelivery ? { resumedSince: current!.redelivery.at } : {}) });
       updateRegistry(this.options.registry, devices => {
         const device = devices.find(entry => entry.id === deviceId);
@@ -737,6 +764,14 @@ export class InstallationProvisioning {
       requireThat(this.options.ledger.now() - now < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
       requireThat(owned(this.saved(companyId, installationId)), 'installation_provisioning_superseded', 409);
       replace = live[0]!.keyId;
+      // The intent names the exact predecessor before the remote effect. A
+      // missing response remains an unresolved rotation, even after a restart.
+      this.options.ledger.db.transaction(() => {
+        const current = this.saved(companyId, installationId);
+        requireThat(owned(current), 'installation_provisioning_superseded', 409);
+        this.store(companyId, installationId, { ...current!, redelivery: { attempt, at: now, phase: 'rotating', sourceKeyId: replace },
+          pendingRotations: [...(current!.pendingRotations ?? []), { attempt, sourceKeyId: replace }] });
+      });
     } catch (error) {
       // No key effect was attempted, so a later redelivery may start at once.
       try {
@@ -749,13 +784,42 @@ export class InstallationProvisioning {
       } catch { /* the marker expires after PENDING_RESUME_AFTER_MS */ }
       throw error;
     }
-    const rotated = await modelvia.rotate(replace);
+    let rotated: ModelviaRotatedKey;
+    try { rotated = await modelvia.rotate(replace); }
+    catch (error) {
+      if (error instanceof ModelviaRotationRefused) {
+        // Only Modelvia's definitive no-effect response settles this intent.
+        // Network failures and unrecognized responses can conceal a successor.
+        this.options.ledger.db.transaction(() => {
+          const current = this.saved(companyId, installationId);
+          if (!current) return;
+          const next = { ...current, pendingRotations: (current.pendingRotations ?? []).filter(rotation => rotation.attempt !== attempt) };
+          if (next.redelivery?.attempt === attempt) delete next.redelivery;
+          this.store(companyId, installationId, next);
+        });
+      }
+      throw error;
+    }
     requireThat(rotated.projectId === modelProjectId, 'modelvia_key_scope_mismatch', 502);
-    let descriptor: ProvisioningDescriptor | undefined;
+    let descriptor: ProvisioningDescriptor | undefined, successorAlreadyRevoked = false;
     this.options.ledger.db.transaction(() => {
       const current = this.saved(companyId, installationId);
-      if (!owned(current)) return;
-      const { redelivery: _done, ...rest } = current!;
+      const settled = current && { ...current, pendingRotations: (current.pendingRotations ?? []).filter(rotation => rotation.attempt !== attempt) };
+      if (!owned(current)) {
+        requireThat(current, 'installation_provisioning_superseded', 409);
+        successorAlreadyRevoked = current!.revocationWork?.revokedKeyIds.includes(rotated.keyId) === true;
+        const next = { ...settled!, cleanupKeyIds: [...new Set([...(current!.cleanupKeyIds ?? []), ...(successorAlreadyRevoked ? [] : [rotated.keyId])])] };
+        // Recording the successor settles this rotation, but not its cleanup.
+        // Never let failure of the following revoke lose the new identifier.
+        if (next.redelivery?.attempt === attempt) delete next.redelivery;
+        // A late response normally names a successor already reconciled from
+        // Modelvia's listing. Never reopen that confirmed cleanup. An unexpected
+        // identifier still becomes a durable obligation before compensation.
+        if (next.state === 'revoked' && !successorAlreadyRevoked) { next.state = 'revoking'; delete next.revocation; }
+        this.store(companyId, installationId, next);
+        return;
+      }
+      const { redelivery: _done, ...rest } = settled!;
       descriptor = { ...rest.descriptor!, model: { ...rest.descriptor!.model, baseUrl: rotated.baseUrl, keyId: rotated.keyId } };
       this.store(companyId, installationId, { ...rest, keyId: rotated.keyId, descriptor });
       // Identifiers only: no credential, no model key, no Modelvia customer id.
@@ -764,7 +828,18 @@ export class InstallationProvisioning {
     });
     if (!descriptor) {
       // Revoked (or taken over) while rotating: the fresh key must not outlive it.
-      try { await modelvia.revoke(rotated.keyId); } catch { /* the revocation record names the installation for an operator */ }
+      if (!successorAlreadyRevoked) try {
+        await modelvia.revoke(rotated.keyId);
+        this.options.ledger.db.transaction(() => {
+          const current = this.saved(companyId, installationId);
+          if (!current) return;
+          const next = { ...current, cleanupKeyIds: (current.cleanupKeyIds ?? []).filter(keyId => keyId !== rotated.keyId) };
+          if (next.revocationWork) next.revocationWork = { ...next.revocationWork,
+            keyIds: [...new Set([...next.revocationWork.keyIds, rotated.keyId])],
+            revokedKeyIds: [...new Set([...next.revocationWork.revokedKeyIds, rotated.keyId])] };
+          this.store(companyId, installationId, next);
+        });
+      } catch { /* cleanupKeyIds is the durable retry obligation */ }
       throw new GatewayError('installation_provisioning_superseded', 409);
     }
     const delivered: ProvisioningDescriptor = descriptor;
@@ -804,45 +879,164 @@ export class InstallationProvisioning {
     // A tombstone answers exactly like the first removal, so the website clears
     // its pending cleanup the same way every time.
     requireThat(saved && saved.revocation?.neverProvisioned !== true, 'installation_not_provisioned', 404);
-    // Already revoked: return the recorded outcome rather than repeating an
-    // irreversible act nobody asked for twice.
+    // Only a completed record is idempotent success. A durable revoking record
+    // still owes cleanup, even when its previous worker or response was lost.
     if (saved!.state === 'revoked') return { revoked: saved!.revocation ?? { companyId, installationId } };
-    requireThat(saved!.state === 'ready' && saved!.deviceId && saved!.keyId && saved!.projectId, 'installation_provisioning_outcome_unknown', 409);
+    // A pending record (a provision whose outcome was lost) becomes a durable
+    // cancellation: the claim below fences its attempt, and once that attempt can
+    // no longer be running the keys it may have minted are found by label and revoked.
+    const cancelling = saved!.state === 'pending' || saved!.revocationWork?.pendingSince !== undefined;
+    requireThat(cancelling ? !deleteProject : (saved!.state === 'ready' || saved!.state === 'revoking') && saved!.deviceId && saved!.keyId && saved!.projectId, 'installation_provisioning_outcome_unknown', 409);
     // The Composio project and its key are the office's, shared by every
     // installation of the company. Deleting them for one computer would cut off
     // every other one, so it is refused, before any effect, while another
     // installation is ready or still being provisioned. Revoke the others first.
     if (deleteProject) {
-      const others = this.options.ledger.db.get<{ count: number }>("SELECT count(*) AS count FROM installation_provisioning WHERE tenant=? AND installation<>? AND state IN ('ready','pending')", companyId, installationId)!.count;
+      const others = this.options.ledger.db.get<{ count: number }>("SELECT count(*) AS count FROM installation_provisioning WHERE tenant=? AND installation<>? AND state IN ('ready','pending','revoking')", companyId, installationId)!.count;
       requireThat(others === 0, 'connector_project_in_use', 409);
     }
 
-    // 1. Stop new reads before anything irreversible.
-    updateRegistry(this.options.registry, devices => ({ devices: devices.map(entry => entry.id === saved!.deviceId ? { ...entry, active: false } : entry) }));
-    // 2. Mark the model key for revocation. The installation's Modelvia project
-    // is deliberately LEFT IN PLACE: it holds the usage and billing history the
-    // ledger reconciles against, and its caps stop any key under it regardless.
-    // Removing a project is an operator action at Modelvia, not a side effect here.
-    await this.options.modelvia.revoke(saved!.keyId!);
-    // 3. Optional, irreversible, explicit.
-    let revokeJobId: string | undefined, projectAlreadyAbsent = false;
-    if (deleteProject) {
-      // A retry after a delete whose reply (or the record write after it) was
-      // lost finds the project gone. Deleting it again would be refused upstream
-      // and leave this revocation stuck, so an absent project counts as deleted.
-      projectAlreadyAbsent = !(await this.options.org.listProjects()).some(project => project.id === saved!.projectId);
-      if (!projectAlreadyAbsent) revokeJobId = (await this.options.org.deleteProject(saved!.projectId!)).revokeJobId;
-      if (saved!.projectKeyEnv) this.options.secrets.remove(saved!.projectKeyEnv);
-    }
-    const revocation = { companyId, installationId, connectorDeactivated: true, modelKeyRevoked: true, modelKeyId: saved!.keyId!,
-      modelProjectRetained: saved!.modelProjectId ?? null, projectDeleted: deleteProject, ...(revokeJobId ? { revokeJobId } : {}),
-      ...(projectAlreadyAbsent ? { projectAlreadyAbsent: true } : {}) };
+    const attempt = randomBytes(12).toString('hex'), now = this.options.ledger.now();
     this.options.ledger.db.transaction(() => {
-      this.store(companyId, installationId, { ...saved!, state: 'revoked', revocation });
-      // One audit line for the whole revocation, with no secret in it.
-      this.options.ledger.db.append(companyId, 'installation_revoked', null, this.options.ledger.now(), revocation);
+      const current = this.saved(companyId, installationId);
+      requireThat(current && canonical(current) === canonical(saved), 'installation_revocation_in_progress', 409);
+      const previous = current!.revocationWork;
+      requireThat(!previous || previous.deleteProject === deleteProject, 'installation_revocation_conflict', 409);
+      requireThat(!previous?.attempt || now - previous.attempt.at >= PENDING_RESUME_AFTER_MS, 'installation_revocation_in_progress', 409);
+      // Dropping the provision attempt id fences it: its pre-key ownership check
+      // and every journal write now fail, so it can never mint after this point.
+      const { attempt: _fenced, attemptAt, ...rest } = current!;
+      const pendingSince = previous?.pendingSince ?? (current!.state === 'pending'
+        ? attemptAt ?? this.options.ledger.db.get<{ created: number }>('SELECT created FROM installation_provisioning WHERE tenant=? AND installation=?', companyId, installationId)!.created
+        : undefined);
+      const next: StoredRecord = { ...(current!.state === 'pending' ? rest : current!), state: 'revoking', revocationWork: {
+        deleteProject,
+        keyIds: [...new Set([...(previous?.keyIds ?? []), ...(current!.keyId ? [current!.keyId] : []), ...(current!.redelivery?.sourceKeyId ? [current!.redelivery.sourceKeyId] : []),
+          ...(current!.pendingRotations ?? []).map(rotation => rotation.sourceKeyId)])],
+        revokedKeyIds: previous?.revokedKeyIds ?? [], attempt: { id: attempt, at: now },
+        ...(pendingSince !== undefined ? { pendingSince } : {}), ...(previous?.discovered ? { discovered: true as const } : {}),
+      } };
+      // A preparing redelivery cannot start rotate after this transaction. Old
+      // markers lack that proof and remain unknown until explicitly resolved.
+      if (next.redelivery?.phase === 'preparing') delete next.redelivery;
+      this.store(companyId, installationId, next);
+      if (current!.state === 'ready') this.options.ledger.db.append(companyId, 'installation_revocation_requested', null, now, { installationId });
+      if (current!.state === 'pending') this.options.ledger.db.append(companyId, 'installation_revocation_requested', null, now, { installationId, provisioningCancelled: true, pendingSince });
     });
-    return { revoked: revocation };
+    const currentWork = (): StoredRecord => {
+      const current = this.saved(companyId, installationId);
+      requireThat(current?.state === 'revoking' && current.revocationWork?.attempt?.id === attempt, 'installation_revocation_superseded', 409);
+      return current!;
+    };
+    try {
+      // Stop connector access before the first remote call. A failure leaves
+      // the durable claim in place and cannot restore credential delivery.
+      // A pending record has no deviceId yet; the device it may have admitted is
+      // keyed by the installation id.
+      const deviceId = saved!.deviceId ?? installationId;
+      updateRegistry(this.options.registry, devices => ({ devices: devices.map(entry => entry.id === deviceId && entry.companyId === companyId ? { ...entry, active: false } : entry) }));
+      for (;;) {
+        const current = currentWork(), work = current.revocationWork!;
+        if (work.pendingSince !== undefined && !work.discovered) {
+          // The fenced attempt may still have a key call in flight until its own
+          // deadline has passed; only then is a listing complete.
+          requireThat(this.options.ledger.now() - work.pendingSince >= PENDING_RESUME_AFTER_MS, 'installation_revocation_in_progress', 409);
+          const modelvia = this.options.modelvia, modelProjectId = `rb-${installationId}`, label = `${companyId}:${installationId}`;
+          const project = await modelvia.findProject(modelProjectId);
+          const listed = project ? await modelvia.listKeys(modelProjectId, modelvia.environment) : [];
+          requireThat(listed.every(key => key.projectId === modelProjectId && key.environment === modelvia.environment), 'modelvia_key_scope_mismatch', 502);
+          // Only keys carrying this installation's label are attributable to it.
+          const ours = listed.filter(key => key.label === label);
+          this.options.ledger.db.transaction(() => {
+            const latest = currentWork(), held = latest.revocationWork!;
+            this.store(companyId, installationId, { ...latest, ...(project ? { modelProjectId } : {}), revocationWork: { ...held, discovered: true,
+              keyIds: [...new Set([...held.keyIds, ...ours.map(key => key.keyId)])],
+              revokedKeyIds: [...new Set([...held.revokedKeyIds, ...ours.filter(key => key.revokedAt !== undefined).map(key => key.keyId)])] } });
+          });
+          continue;
+        }
+        const keys = [...new Set([...work.keyIds, ...(current.cleanupKeyIds ?? [])])];
+        const keyId = keys.find(key => !work.revokedKeyIds.includes(key));
+        if (!keyId) {
+          if (!current.redelivery && !(current.pendingRotations ?? []).length) break;
+          // Successful revokes fence every possible source: Modelvia serializes
+          // revoke/rotate and cannot rotate an already-revoked predecessor. Its
+          // project listing includes all committed keys (revoked ones too), with
+          // no pagination. A fresh listing after these fences therefore captures
+          // every possible successor even when the rotation response was lost.
+          const rotations = [...(current.pendingRotations ?? [])];
+          if (current.redelivery) {
+            requireThat(current.redelivery.phase === 'rotating' && current.redelivery.sourceKeyId, 'installation_revocation_cleanup_pending', 409);
+            rotations.push({ attempt: current.redelivery.attempt, sourceKeyId: current.redelivery.sourceKeyId });
+          }
+          const sources = [...new Set(rotations.map(rotation => rotation.sourceKeyId))];
+          requireThat(current.modelProjectId && sources.every(source => work.revokedKeyIds.includes(source)), 'installation_revocation_cleanup_pending', 409);
+          const listed = await this.options.modelvia.listKeys(current.modelProjectId, this.options.modelvia.environment);
+          const label = `${companyId}:${installationId}`;
+          requireThat(new Set(listed.map(key => key.keyId)).size === listed.length && listed.every(key => key.projectId === current.modelProjectId && key.environment === this.options.modelvia.environment), 'modelvia_key_scope_mismatch', 502);
+          // An empty, stale or inconsistent listing is not proof: all fenced
+          // source records must still be visible with the expected binding.
+          requireThat(sources.every(source => listed.some(key => key.keyId === source && key.label === label && key.revokedAt !== undefined))
+            && listed.every(key => !work.revokedKeyIds.includes(key.keyId) || key.revokedAt !== undefined), 'installation_revocation_cleanup_pending', 409);
+          this.options.ledger.db.transaction(() => {
+            const latest = currentWork(), held = latest.revocationWork!;
+            const settled = new Set(rotations.map(rotation => rotation.attempt));
+            const successors = listed.filter(key => key.label === label && key.revokedAt === undefined && !held.revokedKeyIds.includes(key.keyId)).map(key => key.keyId);
+            const confirmed = listed.filter(key => key.label === label && key.revokedAt !== undefined).map(key => key.keyId);
+            const next = { ...latest,
+              pendingRotations: (latest.pendingRotations ?? []).filter(rotation => !settled.has(rotation.attempt)),
+              cleanupKeyIds: [...new Set([...(latest.cleanupKeyIds ?? []), ...successors])],
+              revocationWork: { ...held, keyIds: [...new Set([...held.keyIds, ...confirmed])], revokedKeyIds: [...new Set([...held.revokedKeyIds, ...confirmed])] } };
+            if (next.redelivery && settled.has(next.redelivery.attempt)) delete next.redelivery;
+            this.store(companyId, installationId, next);
+          });
+          continue;
+        }
+        // The per-key provider revoke does not cascade to a successor. Re-read
+        // the journal after every await so a returned successor is also revoked.
+        await this.options.modelvia.revoke(keyId);
+        this.options.ledger.db.transaction(() => {
+          const latest = currentWork(), held = latest.revocationWork!;
+          this.store(companyId, installationId, { ...latest,
+            cleanupKeyIds: (latest.cleanupKeyIds ?? []).filter(key => key !== keyId),
+            revocationWork: { ...held, keyIds: [...new Set([...held.keyIds, keyId])], revokedKeyIds: [...new Set([...held.revokedKeyIds, keyId])] } });
+        });
+      }
+      // The Modelvia project is retained for usage and billing history. Project
+      // deletion below concerns only the explicitly requested Composio cleanup.
+      let revokeJobId: string | undefined, projectAlreadyAbsent = false;
+      if (deleteProject) {
+        const others = this.options.ledger.db.get<{ count: number }>("SELECT count(*) AS count FROM installation_provisioning WHERE tenant=? AND installation<>? AND state IN ('ready','pending','revoking')", companyId, installationId)!.count;
+        requireThat(others === 0, 'connector_project_in_use', 409);
+        projectAlreadyAbsent = !(await this.options.org.listProjects()).some(project => project.id === saved!.projectId);
+        if (!projectAlreadyAbsent) revokeJobId = (await this.options.org.deleteProject(saved!.projectId!)).revokeJobId;
+        if (saved!.projectKeyEnv) this.options.secrets.remove(saved!.projectKeyEnv);
+      }
+      return this.options.ledger.db.transaction(() => {
+        const current = currentWork(), work = current.revocationWork!;
+        requireThat(!current.redelivery && !(current.pendingRotations ?? []).length && !(current.cleanupKeyIds ?? []).length && work.keyIds.every(key => work.revokedKeyIds.includes(key)), 'installation_revocation_cleanup_pending', 409);
+        const revocation = { companyId, installationId, connectorDeactivated: true, modelKeyRevoked: true,
+          ...(current.keyId ? { modelKeyId: current.keyId } : {}),
+          ...(work.keyIds.length > 1 || (!current.keyId && work.keyIds.length) ? { modelKeyIds: work.keyIds } : {}),
+          ...(work.pendingSince !== undefined ? { provisioningCancelled: true } : {}),
+          modelProjectRetained: current.modelProjectId ?? null, projectDeleted: deleteProject, ...(revokeJobId ? { revokeJobId } : {}),
+          ...(projectAlreadyAbsent ? { projectAlreadyAbsent: true } : {}) };
+        const { attempt: _done, ...completed } = work;
+        this.store(companyId, installationId, { ...current, state: 'revoked', revocationWork: completed, revocation });
+        this.options.ledger.db.append(companyId, 'installation_revoked', null, this.options.ledger.now(), revocation);
+        return { revoked: revocation };
+      });
+    } catch (error) {
+      // Known failed workers release only their lease. Unconfirmed key effects
+      // and the revoking state survive and can be inspected/retried after restart.
+      this.options.ledger.db.transaction(() => {
+        const current = this.saved(companyId, installationId);
+        if (current?.state !== 'revoking' || current.revocationWork?.attempt?.id !== attempt) return;
+        const { attempt: _failed, ...remaining } = current.revocationWork;
+        this.store(companyId, installationId, { ...current, revocationWork: remaining });
+      });
+      throw error;
+    }
   }
 }
 
@@ -852,29 +1046,45 @@ export function provisioningError(error: unknown): GatewayError {
 }
 
 /**
- * Which office a Modelvia customer bills. A customer that pays Modelvia itself
- * carries its billing account, which is the office's company id, and must name
- * this office. A customer RealBud's client pays for carries none; then the
- * operator binding recorded through the office AI access route
- * (`bindOfficeCustomer`) must not give the customer to another office, nor this
- * office to another customer. An office never set through that route, with a
- * client-paid customer, has no binding to contradict (see DEPLOY.md).
+ * Refuses unless `customerId` is `companyId`'s own Modelvia customer. Every path
+ * that issues, rotates, adopts or re-caps an installation key goes through here.
+ * A customer that pays Modelvia itself carries its billing account, which is the
+ * office's company id, and must name this office. A customer RealBud's client
+ * pays for carries none; then the operator binding recorded through the office
+ * AI access route (`bindOfficeCustomer`) decides, and it is never inferred from
+ * a request body: a customer bound to another office, or an office bound to
+ * another customer, is 403 `modelvia_customer_not_bound`; an office with no
+ * binding yet is 409 `office_customer_unbound` until an operator sets its office
+ * AI access once (see DEPLOY.md).
  */
-export function customerBoundTo(ledger: UsageLedger, companyId: string, customerId: string, customer: ModelviaCustomer): boolean {
-  if (customer.billingCompanyId !== undefined) return customer.billingCompanyId === companyId;
+export function requireCustomerBound(ledger: UsageLedger, companyId: string, customerId: string, customer: ModelviaCustomer): void {
+  if (customer.billingCompanyId !== undefined) return requireThat(customer.billingCompanyId === companyId, 'modelvia_customer_not_bound', 403);
   ensureCustomerBindingTable(ledger);
-  const office = ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId);
   const holder = ledger.db.get<{ tenant: string }>('SELECT tenant FROM office_modelvia_customer WHERE customer=?', customerId);
-  return (!office || office.customer === customerId) && (!holder || holder.tenant === companyId);
+  requireThat(!holder || holder.tenant === companyId, 'modelvia_customer_not_bound', 403);
+  const office = ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId);
+  requireThat(office, 'office_customer_unbound', 409);
+  requireThat(office!.customer === customerId, 'modelvia_customer_not_bound', 403);
 }
 /** Operator-only: record that `customerId` is `companyId`'s Modelvia customer.
  * A customer already bound to another office is refused; an office may be
  * moved to a new customer by its operator, unless it has accepted AI resale
- * (409 `office_customer_rebind_blocked`). */
+ * (409 `office_customer_rebind_blocked`) or any installation still holds keys
+ * under a different customer (409 `office_customer_rebind_has_installations`):
+ * an installation's Modelvia project stays under the customer it was made in,
+ * so its keys would keep spending against whichever office holds that customer
+ * next. Disconnect those computers first. */
 export function bindOfficeCustomer(ledger: UsageLedger, companyId: string, customerId: string): void {
   id(companyId); requireThat(MODELVIA_CUSTOMER.test(customerId), 'invalid_modelvia_customer');
   ensureCustomerBindingTable(ledger);
+  ensureProvisioningTable(ledger);
   ledger.db.transaction(() => {
+    // In the same write transaction as the binding. Provisioning checks the
+    // binding with no await before it journals its pending record, so one of the
+    // two always sees the other. A revoking record still owes key cleanup.
+    const crossed = ledger.db.all<{ tenant: string; body: string }>("SELECT tenant, body FROM installation_provisioning WHERE state<>'revoked'")
+      .some(row => (row.tenant === companyId) !== ((JSON.parse(row.body) as StoredRecord).customerId === customerId));
+    requireThat(!crossed, 'office_customer_rebind_has_installations', 409);
     const other = ledger.db.get<{ tenant: string }>('SELECT tenant FROM office_modelvia_customer WHERE customer=? AND tenant<>?', customerId, companyId);
     requireThat(!other, 'modelvia_customer_bound_elsewhere', 409);
     // An office that accepted AI resale is billed from its bound customer's
@@ -931,9 +1141,13 @@ export function applyCustomerCaps(options: { ledger: UsageLedger; modelvia: Mode
     const results: CapsApplied[] = [];
     for (const { installationId, record } of rows) {
       try {
+        requireThat(record.modelProjectId === `rb-${installationId}`, 'modelvia_project_scope_mismatch', 409);
         let caps = customers.get(record.customerId);
         if (!caps) {
-          caps = modelvia.findCustomer(record.customerId).then(customer => projectCaps(readyCustomer(customer), options.requestCapNanoAud));
+          caps = modelvia.findCustomer(record.customerId).then(customer => {
+            if (customer) requireCustomerBound(ledger, companyId, record.customerId, customer);
+            return projectCaps(readyCustomer(customer), options.requestCapNanoAud);
+          });
           customers.set(record.customerId, caps);
         }
         const applied = await caps;

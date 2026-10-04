@@ -7,6 +7,8 @@ import { lstatSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "./atomic.ts";
+import { readServiceProvisioning, WORKER_MODEL_ENV_NAMES } from "./worker-model-access.ts";
+import { workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { currentUsagePeriod, isProvisioningSkipReasonText, isProvisioningSkipped, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
@@ -98,7 +100,10 @@ export type OfficeLinkStatus = { state: "unlinked" | "pending" | "linked" | "rev
   /** Vendor service access was withdrawn. Saved work records are unaffected. */
   serviceWithdrawn?: boolean;
   /** AI usage for the current month. In memory only; never saved to disk. */
-  usage?: InstallationUsageState };
+  usage?: InstallationUsageState;
+  /** Provisioned, but the model key is unusable: "missing" from the private
+   * vault (redelivery is asked for), or "rejected" by the AI service. */
+  modelKey?: "missing" | "rejected" };
 /** Server-only capability. Never return this object through a renderer route. */
 export type OfficeLinkCredentials = { installationId: string; token: string; companyId: string; agencyLabel: string };
 /** Zero-touch provisioning sink. Supplied by the composition that owns the
@@ -116,6 +121,9 @@ export interface OfficeLinkProvisioning {
   /** Notices a service administrator removing the installation binding, so the
    * grant is released on the ordinary status tick rather than at next use. */
   reconcile: () => Promise<boolean>;
+  /** The model key env this grant resolves to, read from the private vault.
+   * Absent, the running service's snapshot (what the relay sends) is used. */
+  env?: () => Promise<Record<string, string>>;
   /** The person disconnected this computer: release without a withdrawn state. */
   clear: () => Promise<void>;
   /** Optional authority on whether a grant is already in force. Absent, the
@@ -132,6 +140,23 @@ export interface OfficeLinkProvisioning {
    * failure backoff (a fresh link). */
   serviceGrant?: (options: { force?: boolean }) => Promise<unknown>;
 }
+/** Key id the AI service last refused (401/403) for this office, recorded by
+ * the Ask model relay. In memory: the next refused request records it again
+ * after a restart. Reported on check-in, never acted on locally: a key the
+ * office revoked must stay revoked, so this never asks for a replacement. */
+let rejectedModelKeyId: string | undefined;
+export function noteModelKeyAnswer(keyId: string, accepted: boolean): void {
+  if (!accepted) rejectedModelKeyId = keyId;
+  else if (rejectedModelKeyId === keyId) rejectedModelKeyId = undefined;
+}
+/** The website's Retry-After on a 429 report, capped so a bad header cannot
+ * silence check-ins for long; without one, wait a minute. */
+const REPORT_RETRY_DEFAULT_MS = 60_000, REPORT_RETRY_CAP_MS = 60 * 60_000;
+function retryAfterMs(header: string | null, now = Date.now()): number {
+  const value = header?.trim() ?? "";
+  const ms = /^\d+$/.test(value) ? Number(value) * 1000 : value ? Date.parse(value) - now : NaN;
+  return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), REPORT_RETRY_CAP_MS) : REPORT_RETRY_DEFAULT_MS;
+}
 export function createOfficeLink(options: { directory: string; appVersion: string; fetch?: typeof fetch; report: () => Promise<Report>; platform?: NodeJS.Platform; provisioning?: OfficeLinkProvisioning; origin?: string }) {
   const directory = join(options.directory, "office-link");
   const path = join(directory, "link.json");
@@ -140,6 +165,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   let error: string | undefined;
   let busy = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let reportRetryAt = 0;
   async function read(): Promise<Saved | null> {
     let st;
     try { st = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
@@ -234,7 +260,9 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       ? { provisioned: await provisioningActive(saved) } : {};
     // A stated reason is only news while no grant is in force.
     const skipped = provisioned.provisioned === false && saved?.provisioningSkipped ? { provisioningSkipped: saved.provisioningSkipped } : {};
-    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...skipped, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
+    const issue = provisioned.provisioned ? (await modelKeyHealth(saved!.id)).issue : undefined;
+    const modelKey = issue ? { modelKey: issue } : {};
+    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...skipped, ...modelKey, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
   }
   /** Reads the website answers from its own records. */
   const REQUEST_TIMEOUT_MS = 10_000;
@@ -282,6 +310,17 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     return options.provisioning?.active
       ? options.provisioning.active(saved.id).catch(() => false)
       : saved.provisioned === true;
+  }
+  /** For a grant on record: the non-secret id of its model key, so the website
+   * can flag a computer running on a key not issued for it (never the key
+   * itself), or why it cannot be used. The record alone is not a usable key:
+   * "missing" when the vault no longer yields it (deleted, profile restored). */
+  async function modelKeyHealth(installationId: string): Promise<{ keyId?: string; issue?: "missing" | "rejected" }> {
+    const record = await readServiceProvisioning(options.directory).catch(() => undefined);
+    if (!options.provisioning || record?.state !== "active" || record.installationId !== installationId) return {};
+    const env = options.provisioning.env ? await options.provisioning.env().catch(() => ({} as Record<string, string>)) : workerModelAccessSnapshot();
+    if (!env[WORKER_MODEL_ENV_NAMES[0]]) return { issue: "missing" };
+    return rejectedModelKeyId === record.keyId ? { keyId: record.keyId, issue: "rejected" } : { keyId: record.keyId };
   }
   async function preflightProvisioning(installationId: string) {
     try { await options.provisioning?.preflight?.(installationId); }
@@ -495,21 +534,37 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // one, its secret-bearing reply was lost on the way here; the website then
       // has this installation's own credentials replaced and sends them back.
       // Never asked while a grant is in force: that would rotate a working key.
+      // A grant whose key the vault no longer holds (deleted, profile restored)
+      // is asked for again like a missing grant. A key the AI service rejected
+      // is only reported: the office may have revoked it on purpose.
       const active = await provisioningActive(saved);
-      const needsProvisioning = options.provisioning !== undefined && !active;
+      const key = active ? await modelKeyHealth(saved.id) : {};
+      let needsProvisioning = options.provisioning !== undefined && !active;
       // A report for a never-provisioned row can mint credentials even without
       // needsProvisioning. Hold the whole request on a known local failure;
       // the ordinary timer retries this local check without rotating keys.
-      // Already-active installations still report and observe revocation.
+      // Already-active installations still report and observe revocation, so a
+      // missing key is asked for only once local storage can take delivery.
       if (needsProvisioning) await preflightProvisioning(saved.id);
+      const replaceKey = key.issue === "missing" && await preflightProvisioning(saved.id).then(() => true, () => false);
+      if (replaceKey) needsProvisioning = true;
+      const body = { ...report, ...(needsProvisioning ? { needsProvisioning: true } : {}), ...(key.keyId ? { modelKeyId: key.keyId } : {}),
+        ...(key.issue === "rejected" ? { modelKeyRejected: true } : {}) };
+      // The website asked this computer to slow down: no request until then.
+      if (Date.now() < reportRetryAt) throw new Error("The website asked this computer to wait before reporting again. Your local work can continue.");
       const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` },
-        body: JSON.stringify(needsProvisioning ? { ...report, needsProvisioning: true } : report) }, PROVISIONING_TIMEOUT_MS);
+        body: JSON.stringify(body) }, PROVISIONING_TIMEOUT_MS);
       // 401/403 is the website saying this installation's access is gone. Stop
       // using the vendor grant immediately; every saved work record is kept.
       if (response.status === 401 || response.status === 403) {
         try { await save({ ...saved, revoked: true }); }
         finally { await options.provisioning?.withdraw(); }
         return;
+      }
+      if (response.status === 429) {
+        reportRetryAt = Date.now() + retryAfterMs(response.headers.get("retry-after"));
+        await response.body?.cancel().catch(() => {});
+        throw new Error("The website asked this computer to wait before reporting again. Your local work can continue.");
       }
       if (!response.ok) throw new Error("The website did not accept the latest status. Your local work can continue.");
       // The portal retries provisioning here on every check-in until it has
@@ -518,7 +573,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // that it redelivers only when asked above. A grant
       // already in force is left alone: re-applying would replace a live
       // revocable key with whatever this reply happened to carry.
-      let provisioned = active;
+      let provisioned = active && !replaceKey;
       let newlyApplied = false;
       const { provisioningSkipped: previous, ...rest } = saved;
       let skipped = previous;
@@ -530,7 +585,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
           // A grant has arrived: whatever the website said before no longer holds.
           skipped = undefined;
           const already = await provisioningActive(saved);
-          if (!already) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; newlyApplied = true; }
+          if (!already || replaceKey) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; newlyApplied = true; }
         }
       }
       await save({ ...rest, lastReportedAt: new Date().toISOString(), provisioned, ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
