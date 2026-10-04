@@ -121,6 +121,40 @@ describe("parseLedgerFacts", () => {
     ]);
   });
 
+  const ledgerRow = (n: number) => ({
+    propertyId: `prop-${n}`,
+    daysSinceDue: n,
+    rentLanded: false,
+    levyPaid: n % 2 === 0,
+    daysSinceCourtesy: n > 3 ? n - 3 : null,
+  });
+  const ledgerRows = (count: number) => Array.from({ length: count }, (_, i) => ledgerRow(i + 1));
+
+  it("returns every row of a two-row answer, not just the last", () => {
+    expect(parseLedgerFacts(JSON.stringify(ledgerRows(2)))).toEqual(ledgerRows(2));
+  });
+
+  it("returns all six rows after reasoning that quotes []", () => {
+    const text =
+      'The prompt says "return [] exactly" when nothing is observable. Six notes carry facts, e.g. {"propertyId"}.\n' +
+      JSON.stringify(ledgerRows(6), null, 2);
+    expect(parseLedgerFacts(text)).toEqual(ledgerRows(6));
+  });
+
+  it("reads a multi-row array inside a fenced code block", () => {
+    const text = "Here are the facts:\n```json\n" + JSON.stringify(ledgerRows(3)) + "\n```\nDone.";
+    expect(parseLedgerFacts(text)).toEqual(ledgerRows(3));
+  });
+
+  it("reads a single bare object even when trailing prose has braces", () => {
+    expect(parseLedgerFacts(JSON.stringify(ledgerRow(1)) + "\nChecked {1} note.")).toEqual([ledgerRow(1)]);
+  });
+
+  it("reads a multi-row answer followed by prose with its own brackets", () => {
+    const text = JSON.stringify(ledgerRows(2)) + "\n\nSee [note 1] for the source.";
+    expect(parseLedgerFacts(text)).toEqual(ledgerRows(2));
+  });
+
   it("rejects the string \"false\" instead of coercing it truthy", () => {
     expect(
       parseLedgerFacts(

@@ -13,6 +13,7 @@ import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { currentWorkerProfile } from "./hermes-profile.ts";
+import { lastJsonBlock } from "./hermes-hands.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 import type { CsvColumnMapping } from "../shared/contracts.ts";
@@ -56,29 +57,13 @@ function headerRow(csv: string): string[] | null {
 }
 
 function lastJsonValue(text: string): unknown | null {
-  const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
-  const starts: number[] = [];
-  for (let i = clean.length - 1; i >= 0; i--) {
-    if (clean[i] === "[" || clean[i] === "{") starts.push(i);
-  }
-  for (const start of starts) {
-    let raw = clean.slice(start).trim();
-    const fence = raw.indexOf("```");
-    if (fence > 0) raw = raw.slice(0, fence).trim();
+  return lastJsonBlock(text, (raw) => {
     try {
-      return JSON.parse(raw);
+      return JSON.parse(raw) as unknown;
     } catch {
-      const close = raw.startsWith("[") ? raw.lastIndexOf("]") : raw.startsWith("{") ? raw.lastIndexOf("}") : -1;
-      if (close > 0) {
-        try {
-          return JSON.parse(raw.slice(0, close + 1));
-        } catch {
-          /* try an earlier bracket */
-        }
-      }
+      return null;
     }
-  }
-  return null;
+  });
 }
 
 function mappingFromReply(parsed: unknown, headers: string[]): CsvColumnMapping | null {
