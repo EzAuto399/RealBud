@@ -368,3 +368,19 @@ test('PDF acquisition refuses unadmitted apps and caller-supplied upstream autho
     s.set([{...s.device(),apps:['calendar']}]);await assert.rejects(()=>broker.handle(request));assert.equal(calls,0);
   }finally{s.f.close();}
 });
+
+test('expired tool listings are released and the tool cache stays bounded',async()=>{
+  const s=setup(), signal=new AbortController().signal;
+  try {
+    const broker=s.make({apps:{async listTools(){return [{name:'GMAIL_FICTIONAL',description:'x',inputSchema:{type:'object'},policy:'read'}];}} as never});
+    const internal=broker as unknown as {toolCache:Map<string,unknown>;appTools(binding:unknown,app:string,signal:AbortSignal):Promise<unknown[]>};
+    const tools=(apiKey:string)=>internal.appTools({apiKey,authConfigId:'auth-a',userId:'user-a'},'gmail',signal);
+    for(let i=0;i<10;i++) await tools(`ak_fictional_${i}`);
+    assert.equal(internal.toolCache.size,10);
+    s.f.setTime(s.f.now()+11*60_000);
+    await tools('ak_fictional_new');
+    assert.equal(internal.toolCache.size,1);
+    for(let i=0;i<1000;i++) await tools(`ak_fictional_bulk_${i}`);
+    assert.ok(internal.toolCache.size<=256,`tool cache held ${internal.toolCache.size} entries`);
+  }finally{s.f.close();}
+});

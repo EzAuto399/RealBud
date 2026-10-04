@@ -245,3 +245,17 @@ test('the invoice document prints the due date and, for a payable invoice, how t
   assert.deepEqual(composePaymentInstructions({REALBUD_PAYID:'0455123764',REALBUD_BANK_ACCOUNT_NAME:'Name',REALBUD_BANK_BSB:'06400',REALBUD_BANK_ACCOUNT_NUMBER:'12345678'}),{payId:null,bank:null});
   assert.deepEqual(composePaymentInstructions({}),{payId:null,bank:null});
 });
+
+test('the invoice list runs no schema DDL after the first read and reads each invoice\'s payments once',()=>{
+  const {f,billing}=closed();
+  operatorInvoices(billing);
+  const count=f.db.get<{n:number}>('SELECT count(*) AS n FROM invoices')!.n;
+  let prepares=0, ddl=0;
+  const prepare=f.db.sql.prepare.bind(f.db.sql), exec=f.db.sql.exec.bind(f.db.sql);
+  f.db.sql.prepare=((...a:Parameters<typeof prepare>)=>{prepares++;return prepare(...a);}) as typeof prepare;
+  f.db.sql.exec=((s:string)=>{ddl+=(s.match(/CREATE /g)??[]).length;return exec(s);}) as typeof exec;
+  try { assert.equal(operatorInvoices(billing).invoices.length,count); }
+  finally { f.db.sql.prepare=prepare; f.db.sql.exec=exec; }
+  assert.equal(ddl,0);
+  assert.ok(prepares<=2*count+1,`${prepares} queries for ${count} invoices`);
+});
