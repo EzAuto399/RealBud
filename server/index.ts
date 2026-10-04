@@ -1,5 +1,6 @@
 import { appVersion } from "./app-version.ts";
 import { LiveStreamRecovery } from "../shared/live-stream.ts";
+import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
 import { createRemindersService } from "./reminders.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
@@ -941,14 +942,7 @@ function reportJobHistoryFailure(error: unknown): void {
 
 function broadcast(payload: unknown) {
   liveStreamRecovery.accept(payload);
-  const frame = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of [...sseClients]) {
-    try {
-      res.write(frame);
-    } catch {
-      sseClients.delete(res);
-    }
-  }
+  sendToSseClients(sseClients, `data: ${JSON.stringify(payload)}\n\n`);
 }
 
 function publishWorkerIssue(input: Parameters<typeof noteWorkerIssue>[0]): void {
