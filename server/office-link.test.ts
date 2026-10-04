@@ -845,14 +845,17 @@ describe("provisioning retried on the report path", () => {
     const timeouts = vi.spyOn(AbortSignal, "timeout");
     try {
       const { app } = build({ provisioning }, () => ({ ok: true }));
+      // Counts, not order: the status read after linking starts a background
+      // usage read (10s) that may begin before or after the report's request.
+      const count = (ms: number) => timeouts.mock.calls.filter(call => call[0] === ms).length;
       await app.link({ code, label: "Desk" });
-      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000]);
+      expect(count(60_000)).toBe(1);
       await app.report();
-      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000]);
+      expect(count(60_000)).toBe(2);
       await app.usage();
-      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000, 10_000]);
+      expect([count(60_000), count(10_000)]).toEqual([2, 1]);
       await app.disconnect();
-      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000, 10_000, 10_000]);
+      expect([count(60_000), count(10_000), timeouts.mock.calls.length]).toEqual([2, 2, 4]);
     } finally { timeouts.mockRestore(); }
   });
 
