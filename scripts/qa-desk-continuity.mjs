@@ -7,6 +7,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/desk-continuity-2026-09-09/browser"));
@@ -48,7 +49,7 @@ const provider = createServer(async (req, res) => {
 const finishFirstRun = async base => {
   // First run is a server receipt (/api/onboarding), not a browser flag: walk the
   // profile -> office-rules -> complete stages without seeding the sample desk.
-  const headers = { "content-type": "application/json", "x-realbud-session": (await (await fetch(`${base}/api/session`)).json()).token };
+  const headers = { "content-type": "application/json", "x-realbud-session": await readSessionToken(dataDir) };
   let state = await (await fetch(`${base}/api/onboarding`, { headers })).json();
   for (const stage of ["office-rules", "complete"]) {
     const saved = await fetch(`${base}/api/onboarding`, { method: "PUT", headers, body: JSON.stringify({ expectedScope: state.scope, expectedRevision: state.revision, stage }) });
@@ -73,6 +74,7 @@ try {
   await until(async () => (await fetch(`${base}/api/health`)).ok, "server startup");
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await primeBrowserSession(context, base, await readSessionToken(dataDir));
   await context.route("https://signin.example.test/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Fictional sign-in</h1>" }));
   await finishFirstRun(base);
   page = await context.newPage(); const errors = [];

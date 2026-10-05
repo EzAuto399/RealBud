@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { startCompanyPostgresFixture } from '../server/company/testing-postgres.ts';
 import { createPrivateVault } from '../server/private-vault.ts';
 import { createCompanyKernel } from '../server/company/index.ts';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to installed Playwright.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -49,7 +50,7 @@ try {
   };
   await launch();
   const vault = createPrivateVault(data, privateKey);
-  const bootToken = (await (await fetch(origin + '/api/session')).json()).token;
+  const bootToken = await readSessionToken(data);
   const response = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': bootToken }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(response.status, 200); const memberToken = (await response.json()).memberToken;
   // Welcome completion is a scoped server receipt; do not seed sample data.
@@ -62,10 +63,12 @@ try {
   }
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
+  await primeBrowserSession(context, origin, bootToken);
   await context.addInitScript(token => { sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (request.url().includes('/api/company/departments/cases/') && request.method() === 'POST') writes.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() }); });
   const open = async () => {
+    await primeBrowserSession(context, origin, await readSessionToken(data));
     if (page.url() === origin + '/#/you') await page.reload();
     else await page.goto(origin + '/#/you');
     const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();

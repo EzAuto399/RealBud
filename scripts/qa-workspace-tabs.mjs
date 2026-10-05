@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,7 +31,7 @@ try {
   for (let i = 0; i < 100; i++) { try { if ((await fetch(origin + '/api/health')).ok) { ready = true; break; } } catch {} await new Promise(resolve => setTimeout(resolve, 200)); }
   assert.ok(ready, logs.slice(-1500));
   for (const [path, method] of [['/api/workspace-tabs', 'GET'], ['/api/workspace-tabs', 'PUT'], ['/api/workspace-tabs/reset', 'POST']]) assert.equal((await fetch(origin + path, { method, ...(method !== 'GET' ? { headers: { 'content-type': 'application/json' }, body: '{}' } : {}) })).status, 401);
-  const token = (await (await fetch(origin + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
   const request = async (path, method = 'GET', body) => {
     const response = await fetch(origin + path, { method, headers: { 'x-realbud-session': token, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(result)}`); return result;
@@ -39,6 +40,7 @@ try {
   await request('/api/recipes', 'POST', { draft: { title: 'Practice review job', description: 'Review a fictional supplied record', steps: ['Read the supplied practice record'], allowedOrigins: [], evidence: 'Practice receipt', capabilities: ['read-files', 'analyse', 'draft'], limits: { maxRuntimeMinutes: 2, maxTurns: 6 }, schedule: null, status: 'shadow', expectedRevision: 0 } });
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
+  await primeBrowserSession(context, origin, token);
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const nav = () => page.getByRole('navigation', { name: 'Main navigation', exact: true });

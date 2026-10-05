@@ -8,11 +8,13 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 import { startCompanyPostgresFixture } from '../server/company/testing-postgres.ts';
 import { createCompanyKernel } from '../server/company/index.ts';
 import { createPrivateVault } from '../server/private-vault.ts';
 import { serviceIdentity, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { requestServiceStop } from '../electron/service-lifecycle.mjs';
+import { windowsKeyPrivacy } from '../electron/desk-key-custody.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE || !process.env.REALBUD_DESKTOP_EXECUTABLE) throw new Error('Set PLAYWRIGHT_MODULE and REALBUD_DESKTOP_EXECUTABLE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -34,7 +36,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const alive = () => child && child.exitCode === null && child.signalCode === null;
 async function stopService() {
   if (!alive()) return;
-  await requestServiceStop(handle, identity);
+  await requestServiceStop(handle, identity, { dataDirectory: data, verifyWindowsPrivacy: windowsKeyPrivacy });
   for (let i = 0; i < 50 && alive(); i++) await delay(100);
   if (alive()) { child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(5000)]); }
   if (alive()) { child.kill('SIGKILL'); await once(child, 'exit'); }
@@ -85,7 +87,7 @@ try {
     await delay(150);
   }
   assert.ok(ready, 'Packaged service must start');
-  const session = (await (await fetch(origin + '/api/session')).json()).token;
+  const session = await readSessionToken(data);
   const signedIn = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': session }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(signedIn.status, 200);
   const memberToken = (await signedIn.json()).memberToken;
@@ -233,6 +235,7 @@ try {
   // Narrow browser layout uses the same packaged server, real database and built assets.
   mobileBrowser = await chromium.launch({ headless: true });
   const mobile = await mobileBrowser.newPage({ viewport: { width: 390, height: 844 } });
+  await primeBrowserSession(mobile.context(), origin, session);
   await mobile.addInitScript(init, memberToken); await mobile.goto(origin);
   await openOffice(mobile); await expand(mobile, 'Departments and access');
   await mobile.getByRole('button', { name: 'Manage Accounts', exact: true }).click();

@@ -2,7 +2,7 @@ import type { ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
 import { budStatusObserverRevision, hasBudStatusObservers } from "@/lib/bud-status-monitor";
-import { ensureSession } from "@/lib/local-session";
+import { ensureSession, localSessionFetch, rejectLocalSession } from "@/lib/local-session";
 import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
 import type { ServiceAdminStatus } from "../../shared/service-admin";
@@ -895,12 +895,14 @@ const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;
+  let sentSession = "";
   const unavailable = (cause?: unknown): never => {
     if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
     throw localServiceError(cause);
   };
   const call = async () => {
     const token = await ensureSession().catch(() => "");
+    sentSession = token;
     const headers = new Headers(init?.headers);
     if (/^\/api\//.test(path)) for (const [name, value] of Object.entries(serviceAdminHeaders())) headers.set(name, value);
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
@@ -933,6 +935,8 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     await ensureSession(true).catch(() => "");
     res = await request();
     body = await res.json().catch(() => ({}));
+    // Still refused with a fresh token: a browser tab must be reconnected.
+    if (res.status === 401 && body.error === "session required") rejectLocalSession(sentSession);
   }
   if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
   if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
@@ -1041,7 +1045,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     // fire-and-forget card persistence; the route is optional server-side
     const persistCard = (botId: string, messageId: string, patch: Partial<OptionCardData>) => {
-      fetch(`/api/bots/${botId}/cards/${messageId}`, {
+      localSessionFetch(`/api/bots/${botId}/cards/${messageId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(patch),
@@ -1459,7 +1463,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           if (bot.unread && bot.id === stateRef.current.selectedId) {
             bot.unread = false;
-            fetch(`/api/bots/${bot.id}`, {
+            localSessionFetch(`/api/bots/${bot.id}`, {
               method: "PATCH",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ unread: false }),
@@ -1476,7 +1480,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected room clears its badge immediately
           if (group.unread && group.id === stateRef.current.selectedId) {
             group.unread = false;
-            fetch(`/api/groups/${group.id}`, {
+            localSessionFetch(`/api/groups/${group.id}`, {
               method: "PATCH",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ unread: false }),
@@ -1596,6 +1600,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const connect = async (forceSession = false) => {
       let token = "";
       try {
+        // EventSource cannot report why it failed. A browser tab's token cannot
+        // refresh itself, so check it once; a rejection asks its owner again.
+        if (forceSession && !window.ogb?.getLocalSession) await api("/api/session").catch(() => {});
         token = await ensureSession(forceSession);
       } catch {
         scheduleReconnect();

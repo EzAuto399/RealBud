@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -58,7 +59,7 @@ async function start(data) {
   }
   assert.ok(ready, 'Disposable service starts');
   assert.equal((await fetch(base + '/api/onboarding')).status, 401);
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   vite = await createViteServer({ root, configFile: join(root, 'vite.config.ts'), logLevel: 'warn',
     server: { host: '127.0.0.1', port: uiPort, strictPort: true, proxy: { '/api': { target: base, changeOrigin: true, ws: true } } },
   });
@@ -69,6 +70,7 @@ async function request(path, method = 'GET', body) {
   const value = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(value)}`); return value;
 }
 async function open() {
+  await primeBrowserSession(context, uiBase, token);
   const page = await context.newPage(); page.setDefaultTimeout(15_000);
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto(uiBase); return page;

@@ -42,6 +42,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { uptime as osUptime } from "node:os";
 import { isOurService, probeService } from "./service-instance.mjs";
+import { localSessionFor } from "../shared/local-session.mjs";
 
 /** @typedef {object} ServicePidFile
  * @property {1} version
@@ -527,23 +528,22 @@ export function ownsRunningService(handle, running, identity) {
 }
 
 /** Ask the authenticated service to stop itself. Never signal a recorded PID.
+ * The session token comes from the service's private file, never over HTTP.
  * @param {ServicePidFile | null} handle
  * @param {import('./service-instance.mjs').ServiceIdentity} identity
- * @param {{fetchImpl?: typeof fetch, ifIdle?: boolean}} [options] `ifIdle` asks the service to refuse while it is working. */
-export async function requestServiceStop(handle, identity, options = {}) {
+  * @param {{fetchImpl?: typeof fetch, dataDirectory: string, verifyWindowsPrivacy?: (path: string, kind: "file") => unknown, ifIdle?: boolean}} options `ifIdle` asks the service to refuse while it is working. */
+export async function requestServiceStop(handle, identity, options) {
   if (!handle?.controlToken) return false;
   const request = options.fetchImpl ?? fetch;
   const running = await probeService(handle.port, { fetchImpl: request });
   if (!ownsRunningService(handle, running, identity)) return false;
   try {
     const origin = `http://127.0.0.1:${handle.port}`;
-    const session = await request(`${origin}/api/session`, { signal: AbortSignal.timeout(3000) });
-    if (!session.ok) return false;
-    const auth = await session.json();
-    if (!auth || typeof auth.token !== "string") return false;
+    const token = await localSessionFor(options.dataDirectory, running, options);
+    if (!token) return false;
     const response = await request(`${origin}/api/service/stop`, {
       method: "POST", signal: AbortSignal.timeout(5000),
-      headers: { "content-type": "application/json", "x-realbud-session": auth.token, "x-realbud-service-control": handle.controlToken },
+      headers: { "content-type": "application/json", "x-realbud-session": token, "x-realbud-service-control": handle.controlToken },
       body: JSON.stringify({ pid: handle.pid, instanceId: identity.instanceId, controlId: createHash("sha256").update(handle.controlToken).digest("hex"), ...(options.ifIdle ? { ifIdle: true } : {}) }),
     });
     return response.ok;

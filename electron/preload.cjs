@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
+  /** The local API session token; main checks the sender frame and service. */
+  getLocalSession: () => ipcRenderer.invoke("local-session:get"),
   /** One frame of this computer's screen as a data: URL when supported. */
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),

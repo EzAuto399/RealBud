@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { realpathSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
@@ -70,7 +71,7 @@ describe('real service bootstrap for prepared v2 restoration', () => {
       await delay(100);
     }
     expect(ready, server.logs()).toBe(true);
-    const session = await (await fetch(`${server.base}/api/session`)).json() as { token: string };
+    const session = { token: await readSessionToken(f.directory) };
     const status = await (await fetch(`${server.base}/api/private-backup`, { headers: { 'x-realbud-session': session.token } })).json() as any;
     expect(status.completed.receipt).toEqual(f.receipt); expect(status.staged).toBe(false);
     expect(readFileSync(join(f.directory, 'desk.key'))).toEqual(f.key);

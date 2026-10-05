@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { externalHttpsUrl, guardOfficeWindow, onAppOrigin, openExternalHttps } from "./external-links.mjs";
+import { externalHttpsUrl, guardedIpc, guardOfficeWindow, onAppOrigin, openExternalHttps, trustedDisplayRequest, trustedOfficePermission, trustedOfficeSender } from "./external-links.mjs";
 
 const UNSAFE = [
   "file:///etc/passwd",
@@ -77,6 +77,76 @@ describe("app origin", () => {
         expect(onAppOrigin(target, app), `${target} on ${app}`).toBe(false);
       }
     }
+  });
+});
+
+describe("local session IPC sender", () => {
+  const APP = "http://127.0.0.1:8799";
+  const office = () => {
+    const mainFrame = { url: `${APP}/#work` };
+    const sender = { mainFrame };
+    return { sender, senderFrame: mainFrame };
+  };
+  const ownWindow = sender => sender;
+
+  it("answers only the office window's own top frame on the office origin", () => {
+    expect(trustedOfficeSender(office(), APP, ownWindow)).toBe(true);
+    // A subframe on the office origin (an embedded document) gets nothing.
+    const sub = office(); sub.senderFrame = { url: `${APP}/frame` };
+    expect(trustedOfficeSender(sub, APP, ownWindow)).toBe(false);
+    // A page that navigated off-origin still has the preload bridge attached.
+    for (const url of ["https://attacker.example/", "http://localhost:8799/", "http://127.0.0.1:5199/", "data:text/html,x", "file:///etc/passwd"]) {
+      const moved = office(); moved.sender.mainFrame.url = url;
+      expect(trustedOfficeSender(moved, APP, ownWindow), url).toBe(false);
+    }
+    // An embedded view or a contents that no office window hosts.
+    expect(trustedOfficeSender(office(), APP, () => null)).toBe(false);
+    expect(trustedOfficeSender(office(), APP, () => ({ mainFrame: {} }))).toBe(false);
+    // A destroyed frame or a malformed event.
+    expect(trustedOfficeSender({ ...office(), senderFrame: null }, APP, ownWindow)).toBe(false);
+    expect(trustedOfficeSender({}, APP, ownWindow)).toBe(false);
+    expect(trustedOfficeSender(undefined, APP, ownWindow)).toBe(false);
+  });
+});
+
+describe("guarded native IPC and permissions", () => {
+  const APP = "http://127.0.0.1:8799";
+  const officeContents = (url = `${APP}/`) => { const mainFrame = { url }; return { mainFrame }; };
+  const ownWindow = contents => contents;
+
+  it("refuses IPC from a foreign frame or origin before the handler runs", async () => {
+    const handlers = new Map();
+    const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) };
+    const handler = vi.fn(() => "ran");
+    guardedIpc(ipcMain, event => trustedOfficeSender(event, APP, ownWindow)).handle("engine:open-terminal", handler);
+    const invoke = handlers.get("engine:open-terminal");
+    const office = officeContents();
+    expect(invoke({ sender: office, senderFrame: office.mainFrame }, "fixture")).toBe("ran");
+    expect(handler).toHaveBeenCalledWith(expect.anything(), "fixture");
+    const foreign = officeContents("https://attacker.example/");
+    for (const event of [{ sender: foreign, senderFrame: foreign.mainFrame }, { sender: office, senderFrame: { url: `${APP}/frame` } }, {}]) {
+      expect(() => invoke(event, "fixture")).toThrow("office window");
+    }
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("grants browser permissions only to the office page asking for itself", () => {
+    const office = officeContents();
+    expect(trustedOfficePermission(office, { isMainFrame: true, requestingUrl: `${APP}/#work` }, APP, ownWindow)).toBe(true);
+    expect(trustedOfficePermission(office, { isMainFrame: true, requestingUrl: "https://attacker.example/" }, APP, ownWindow)).toBe(false);
+    expect(trustedOfficePermission(office, { isMainFrame: false, requestingUrl: `${APP}/` }, APP, ownWindow)).toBe(false);
+    expect(trustedOfficePermission(officeContents("https://attacker.example/"), { isMainFrame: true, requestingUrl: `${APP}/` }, APP, ownWindow)).toBe(false);
+    expect(trustedOfficePermission(office, { isMainFrame: true, requestingUrl: `${APP}/` }, APP, () => null)).toBe(false);
+    expect(trustedOfficePermission(null, { isMainFrame: true, requestingUrl: `${APP}/` }, APP, ownWindow)).toBe(false);
+  });
+
+  it("grants screen capture only to the office main frame on the office origin", () => {
+    const office = officeContents();
+    const windowFor = frame => (frame === office.mainFrame ? office : null);
+    expect(trustedDisplayRequest({ frame: office.mainFrame, securityOrigin: APP }, APP, windowFor)).toBe(true);
+    expect(trustedDisplayRequest({ frame: office.mainFrame, securityOrigin: "https://attacker.example" }, APP, windowFor)).toBe(false);
+    expect(trustedDisplayRequest({ frame: { url: `${APP}/` }, securityOrigin: APP }, APP, windowFor)).toBe(false);
+    expect(trustedDisplayRequest({ frame: null, securityOrigin: APP }, APP, windowFor)).toBe(false);
   });
 });
 
@@ -159,6 +229,17 @@ describe("main process wiring", () => {
     expect(main).toMatch(/guardOfficeWindow\(win\.webContents,/);
     expect(main).not.toMatch(/win\.webContents\.(setWindowOpenHandler\(|on\("will-(navigate|redirect)")/);
     expect(main).toMatch(/webPreferences:\s*\{[^}]*sandbox:\s*true/);
-    expect(main).toMatch(/ipcMain\.handle\("external:open",\s*\(_event, rawUrl\)\s*=>\s*openExternalHttps\(shell, rawUrl\)\)/);
+    expect(main).toMatch(/officeIpc\.handle\("external:open",\s*\(_event, rawUrl\)\s*=>\s*openExternalHttps\(shell, rawUrl\)\)/);
+  });
+
+  it("routes every native IPC channel and browser permission through the office guard", () => {
+    expect(main).not.toMatch(/ipcMain\.(handle|on)\(/);
+    expect(main).toMatch(/registerHermiosView\(\{ ipcMain: officeIpc,/);
+    expect(main).toMatch(/registerCuaIpc\(officeIpc\)/);
+    expect(main).toMatch(/registerUpdaterIpc\(officeIpc\)/);
+    expect(main).toMatch(/setPermissionRequestHandler\([^)]*\) =>\s*callback\(trustedOfficePermission\(/);
+    expect(main).toMatch(/setPermissionCheckHandler\([^)]*\) =>\s*trustedOfficePermission\(/);
+    expect(main).toMatch(/if \(!trustedDisplayRequest\(request,/);
+    for (const name of ["cua.mjs", "updater.mjs"]) expect(readFileSync(new URL(`./${name}`, import.meta.url), "utf8")).not.toMatch(/ipcMain\.handle\(/);
   });
 });

@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
@@ -128,7 +129,7 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
       try { return (await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(300) })).json() as { pid?: number }).pid === child?.pid; }
       catch { return false; }
     }, 'isolated bootstrap');
-    token = (await (await fetch(base + '/api/session')).json() as { token: string }).token;
+    token = await readSessionToken(data);
   }, 20_000);
   afterAll(async () => {
     await stop();

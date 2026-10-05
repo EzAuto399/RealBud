@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serviceSmokeEnv } from "./service-smoke-env.mjs";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let baseUrl;
@@ -88,7 +89,7 @@ async function boot(home) {
       try {
         const health = await (await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(500) })).json();
         if (health.app === 'realbud' && health.pid === child.pid) {
-          const sess = await (await fetch(`${baseUrl}/api/session`, { signal: AbortSignal.timeout(1000) })).json(); session = String(sess?.token ?? '');
+          session = await readSessionToken(data);
           assert.ok(session, 'No fixture session');
           return { child, startupMs: Math.round(performance.now() - started) };
         }

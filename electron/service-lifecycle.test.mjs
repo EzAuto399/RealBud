@@ -36,6 +36,18 @@ const INSTANCE = "a".repeat(32);
 const CONTROL = "c".repeat(64);
 const CONTROL_ID = createHash("sha256").update(CONTROL).digest("hex");
 const IDENTITY = { instanceId: INSTANCE, ports: [8799] };
+const SESSION = "5".repeat(48);
+// Fixture directories are fresh and owner-created; on Windows a real ACL check
+// belongs to the private-file tests, not these shutdown-ordering tests.
+const FIXTURE_ACL = () => {};
+/** A data directory whose private file names the healthy() service on 8799. */
+function sessionDirectory(over = {}, mode = 0o600) {
+  const directory = mkdtempSync(join(tmpdir(), "realbud-session-"));
+  mkdirSync(join(directory, "local-auth"), { mode: 0o700 });
+  writeFileSync(join(directory, "local-auth", "session.json"), JSON.stringify({ version: 1, pid: 4242, port: 8799, token: SESSION, ...over }), { mode });
+  chmodSync(join(directory, "local-auth", "session.json"), mode);
+  return directory;
+}
 const healthy = (over = {}) => ({ app: "realbud", static: true, instanceId: INSTANCE, pid: 4242, controlId: CONTROL_ID, ...over });
 const dirs = [];
 
@@ -530,50 +542,54 @@ describe("process-bound service control", () => {
     const request = vi.fn();
     expect(legacy).not.toBeNull();
     expect(ownsRunningService(legacy, { port: 8799, body: healthy() }, IDENTITY)).toBe(false);
-    expect(await requestServiceStop(legacy, IDENTITY, { fetchImpl: request })).toBe(false);
+    expect(await requestServiceStop(legacy, IDENTITY, { fetchImpl: request, dataDirectory: sessionDirectory(), verifyWindowsPrivacy: FIXTURE_ACL })).toBe(false);
     expect(request).not.toHaveBeenCalled();
   });
 
   it("never requests an app session or sends Stop when recorded ownership is stale", async () => {
+    const dataDirectory = sessionDirectory();
     for (const body of [healthy({ pid: 999 }), healthy({ controlId: "d".repeat(64) }), healthy({ instanceId: "b".repeat(32) })]) {
       const request = vi.fn(async () => Response.json(body));
-      expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request })).toBe(false);
+      expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request, dataDirectory, verifyWindowsPrivacy: FIXTURE_ACL })).toBe(false);
       expect(request).toHaveBeenCalledTimes(1);
       expect(request.mock.calls[0][0]).toBe("http://127.0.0.1:8799/api/health");
       expect(request.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
     }
   });
 
-  it("sends the private capability only to the freshly verified service with app-session proof", async () => {
+  it("sends the private capability only to the freshly verified service with its private-file session", async () => {
     const request = vi.fn()
       .mockResolvedValueOnce(Response.json(healthy()))
-      .mockResolvedValueOnce(Response.json({ token: "fictional-app-session" }))
       .mockResolvedValueOnce(Response.json({ stopping: true }));
-    expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request })).toBe(true);
+    expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request, dataDirectory: sessionDirectory(), verifyWindowsPrivacy: FIXTURE_ACL })).toBe(true);
+    // The token is read from the owner's file, never fetched over HTTP.
     expect(request.mock.calls.map(([url]) => url)).toEqual([
-      "http://127.0.0.1:8799/api/health", "http://127.0.0.1:8799/api/session", "http://127.0.0.1:8799/api/service/stop",
+      "http://127.0.0.1:8799/api/health", "http://127.0.0.1:8799/api/service/stop",
     ]);
-    const options = request.mock.calls[2][1];
+    const options = request.mock.calls[1][1];
     expect(options.method).toBe("POST");
-    expect(options.headers).toEqual({ "content-type": "application/json", "x-realbud-session": "fictional-app-session", "x-realbud-service-control": CONTROL });
+    expect(options.headers).toEqual({ "content-type": "application/json", "x-realbud-session": SESSION, "x-realbud-service-control": CONTROL });
     expect(JSON.parse(options.body)).toEqual({ pid: 4242, instanceId: INSTANCE, controlId: CONTROL_ID });
     expect(options.headers).not.toHaveProperty("origin");
     expect(request.mock.calls[0][1]).not.toHaveProperty("headers");
-    expect(request.mock.calls[1][1]).not.toHaveProperty("headers");
   });
 
   it("reports failed or uncertain shutdown without retrying", async () => {
-    for (const failure of ["unreachable", "session-denied", "session-malformed", "stop-denied", "stop-response-lost"]) {
+    // POSIX mode bits are the privacy proof only off Windows (ACLs there).
+    const failures = ["unreachable", "session-missing", "session-other-process", "stop-denied", "stop-response-lost"];
+    if (process.platform !== "win32") failures.push("session-loose-mode");
+    for (const failure of failures) {
+      const dataDirectory = failure === "session-missing" ? mkdtempSync(join(tmpdir(), "realbud-no-session-"))
+        : sessionDirectory(failure === "session-other-process" ? { pid: 999 } : {}, failure === "session-loose-mode" ? 0o644 : 0o600);
       const request = vi.fn(async url => {
         if (url.endsWith("/health")) {
           if (failure === "unreachable") throw new Error("Synthetic connection unavailable");
           return Response.json(healthy());
         }
-        if (url.endsWith("/session")) return Response.json(failure === "session-malformed" ? {} : { token: "fictional-session" }, { status: failure === "session-denied" ? 403 : 200 });
         if (failure === "stop-response-lost") throw new Error("Synthetic stop receipt lost");
         return Response.json({ error: "Synthetic refusal" }, { status: 403 });
       });
-      expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request }), failure).toBe(false);
+      expect(await requestServiceStop(handle({ controlToken: CONTROL }), IDENTITY, { fetchImpl: request, dataDirectory, verifyWindowsPrivacy: FIXTURE_ACL }), failure).toBe(false);
       expect(request.mock.calls.filter(([url]) => url.endsWith("/stop")).length).toBe(failure.startsWith("stop-") ? 1 : 0);
     }
   });

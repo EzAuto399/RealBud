@@ -31,12 +31,13 @@ export function serviceCompatible(body, identity, version = APP_VERSION) {
  * @param {string} options.dataDirectory
  * @param {import('./service-instance.mjs').ServiceIdentity} options.identity
  * @param {typeof fetch} [options.fetchImpl]
+ * @param {(path: string, kind: "file") => unknown} [options.verifyWindowsPrivacy] Required on Windows to read the session file.
  * @param {(port: number) => Promise<boolean>} [options.isPortFree]
  * @param {(ms: number) => Promise<void>} [options.sleep]
  * @param {number} [options.waitMs] How long a stopping service may take to release its port.
  * @returns {Promise<HandoffResult>}
  */
-export async function prepareServiceForUpdate({ dataDirectory, identity, fetchImpl = fetch, isPortFree = async (port) => (await availableServicePort([port])) !== null,
+export async function prepareServiceForUpdate({ dataDirectory, identity, fetchImpl = fetch, verifyWindowsPrivacy, isPortFree = async (port) => (await availableServicePort([port])) !== null,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), waitMs = 15_000 }) {
   const handle = readServiceHandle(dataDirectory, identity.instanceId);
   const running = await findRunningService(identity, { fetchImpl });
@@ -46,7 +47,7 @@ export async function prepareServiceForUpdate({ dataDirectory, identity, fetchIm
     return handle && !(await isPortFree(handle.port)) ? { ready: false, reason: "still-running" } : { ready: true };
   }
   if (/** @type {Record<string, unknown>} */ (running.body).busy === true) return { ready: false, reason: "busy" };
-  if (!(await requestServiceStop(handle, identity, { fetchImpl, ifIdle: true }))) {
+  if (!(await requestServiceStop(handle, identity, { fetchImpl, dataDirectory, verifyWindowsPrivacy, ifIdle: true }))) {
     // Refused because work started meanwhile, or not ours to stop.
     const again = await probeService(running.port, { fetchImpl });
     return /** @type {Record<string, unknown> | undefined} */ (again?.body)?.busy === true ? { ready: false, reason: "busy" } : { ready: false, reason: "cannot-stop" };

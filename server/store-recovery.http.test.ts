@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { readSessionToken } from "./testing/local-session.ts";
 
 const SERVER = dirname(fileURLToPath(import.meta.url));
 let child: ChildProcess | undefined, home = "";
@@ -30,7 +31,7 @@ globalThis.fetch = (url, init) => new URL(String(url)).hostname === "127.0.0.1" 
     if (Date.now() > until) throw new Error(`server did not start: ${stderr.slice(-1500)}`);
     await new Promise(r => setTimeout(r, 150));
   }
-  const session = String((await (await fetch(`${base}/api/session`)).json() as { token: string }).token);
+  const session = await readSessionToken(data);
   const api = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(base + path, { method, headers: { "content-type": "application/json", "x-realbud-session": session }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: res.status, body: await res.json() as any };

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { readSessionToken } from "./testing/local-session.ts";
 import { HELD_STEP_RECONCILE_PATH, HELD_STEPS_PATH, WORKER_CUSTODY_CHECK_PATH, WORKER_CUSTODY_PATH } from "./recovery-holds.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -40,7 +41,7 @@ describe.skipIf(process.platform === "win32")("recovery routes (real server)", (
       if (Date.now() > deadline || child.exitCode !== null) throw new Error(`server never came up. stderr:\n${stderr}`);
       await new Promise(resolve => setTimeout(resolve, 150));
     }
-    session = String(((await (await fetch(`${BASE}/api/session`)).json()) as { token?: string }).token ?? "");
+    session = await readSessionToken(join(home, ".realbud"));
   }, 30_000);
 
   afterAll(async () => {

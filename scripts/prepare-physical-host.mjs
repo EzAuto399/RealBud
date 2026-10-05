@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { readSessionToken } from './local-session.mjs';
 const [testRun, hostname, kitPath] = process.argv.slice(2);
 assert.match(testRun, /^physical-macs(?:-v\d+)?-2026-09-14$/);
 assert.match(hostname, /^100\.\d+\.\d+\.\d+$/);
@@ -17,7 +18,7 @@ async function call(path, body, expected = 200, method = body === undefined ? 'G
   assert.equal(response.status, expected, `${path}: unexpected response status`);
   return response.json();
 }
-headers['x-realbud-session'] = (await call('/api/session')).token;
+headers['x-realbud-session'] = await readSessionToken(join(base, 'host/home/.realbud'));
 headers['x-realbud-service-admin'] = (await call('/api/service-admin/login', { password: 'RealBud-Synthetic-Lab-2026' })).token;
 const status = await call('/api/company/status');
 if (!status.storageAvailable) await call('/api/company/setup', {});

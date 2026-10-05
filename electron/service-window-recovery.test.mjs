@@ -41,6 +41,17 @@ describe("fallback window recovery", () => {
     }
   });
 
+  it("moves a desk left on the previous port's origin to the adopted port", async () => {
+    const f = fixture(); f.setUrl("http://127.0.0.1:8799/#work");
+    expect(f.recover(18799)).toBe(true);
+    expect(f.beforeLoad).toHaveBeenCalledWith(18799);
+    expect(f.window.loadURL).toHaveBeenCalledWith("http://127.0.0.1:18799");
+    for (const url of ["https://example.test/", "http://localhost:8799/", "file:///etc/passwd"]) {
+      const other = fixture(); other.setUrl(url);
+      expect(other.recover(18799), url).toBe(false);
+    }
+  });
+
   it("does not issue duplicate navigation while the previous recovery is pending", async () => {
     const f = fixture();
     let reject;

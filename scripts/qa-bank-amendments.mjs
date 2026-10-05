@@ -10,6 +10,7 @@ import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {serviceSmokeEnv} from './service-smoke-env.mjs';
 import {completeFictionalOnboarding} from './qa-onboarding.mjs';
+import {readSessionToken,primeBrowserSession} from './local-session.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Set PLAYWRIGHT_MODULE.');
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
@@ -34,7 +35,7 @@ async function start(){
     const health=await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)}).then(r=>r.json()).catch(()=>null);
     if(health?.pid===child.pid){ready=true;break;}await new Promise(resolve=>setTimeout(resolve,100));
   }
-  assert.ok(ready,'Fixture service ready');token=(await (await fetch(base+'/api/session')).json()).token;
+  assert.ok(ready,'Fixture service ready');token=await readSessionToken(data);
 }
 async function stop(){
   if(!child)return;
@@ -53,7 +54,7 @@ try{
   const mapping={columns:{date:'Date',amount:'Amount',narrative:'Narrative',reference:'Reference'},dateFormat:'YYYY-MM-DD',rules:[{propertyId:'Fictional Unit 1',reference:'00127',aliases:['Fictional','Alpha; Beta | literal punctuation',' padded payer ']}]};
   const row=await request('/api/bank-reference','POST',{...mapping,source:{filename:'Fictional original.csv',bytesBase64:Buffer.from(csv).toString('base64')}});
   assert.equal((await fetch(`${base}/api/bank-reference/${row.id}/amend`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,401);
-  browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+  browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});await primeBrowserSession(context,base,token);
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===base)return route.continue();unexpectedNetwork.push(route.request().url());return route.abort();});
   page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));
   await page.goto(base+'/#/schedule');

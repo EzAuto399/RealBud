@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -42,7 +43,7 @@ try {
   }
   assert.ok(ready, 'Fixture startup');
   assert.equal((await fetch(base + '/api/bank-reference')).status, 401);
-  const token = (await (await fetch(base + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
   const request = async (path, method = 'GET', body) => {
     const response = await fetch(base + path, { method, headers: { 'x-realbud-session': token, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const value = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(value)}`); return value;
@@ -50,6 +51,7 @@ try {
   await completeFictionalOnboarding(request);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1000 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, base, token);
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/schedule');

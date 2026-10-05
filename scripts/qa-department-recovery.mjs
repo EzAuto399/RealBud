@@ -8,6 +8,7 @@ import { createServer } from 'node:net';
 import { join, resolve } from 'node:path';
 import { startCompanyPostgresFixture } from '../server/company/testing-postgres.ts';
 import { createCompanyKernel } from '../server/company/index.ts';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -41,7 +42,7 @@ try {
   let ready = false;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(origin + '/api/health')).ok) { ready = true; break; } } catch {} await new Promise(resolve => setTimeout(resolve, 150)); }
   assert.ok(ready, logs.slice(-1000));
-  const bootToken = (await (await fetch(origin + '/api/session')).json()).token;
+  const bootToken = await readSessionToken(data);
   const signIn = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': bootToken }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(signIn.status, 200);
   const memberToken = (await signIn.json()).memberToken;
@@ -55,6 +56,7 @@ try {
   }
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
+  await primeBrowserSession(context, origin, bootToken);
   await context.addInitScript(token => { sessionStorage.setItem('realbud.company-member-session', token); }, memberToken);
   page = await context.newPage(); page.setDefaultTimeout(12_000); page.on('pageerror', error => errors.push(error.message));
   const open = async () => {

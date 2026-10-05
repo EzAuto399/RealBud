@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -9,6 +9,7 @@ import { servicePidPath } from "./service-lifecycle.mjs";
 
 const INSTANCE = "a".repeat(32);
 const CONTROL = "c".repeat(64);
+const SESSION = "5".repeat(48);
 const IDENTITY = { instanceId: INSTANCE, ports: [8799] };
 const dirs = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -17,6 +18,9 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 function office({ busy = false, refuseStop = false, exits = true, recorded = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-handoff-")); dirs.push(dir);
   if (recorded) writeFileSync(servicePidPath(dir), JSON.stringify({ version: 1, pid: 4242, port: 8799, instanceId: INSTANCE, startedAt: 1, controlToken: CONTROL }));
+  // The session token reaches its owner only through the service's private file.
+  mkdirSync(join(dir, "local-auth"), { mode: 0o700 });
+  writeFileSync(join(dir, "local-auth", "session.json"), JSON.stringify({ version: 1, pid: 4242, port: 8799, token: SESSION }), { mode: 0o600 });
   const state = { up: true, busy, stops: [] };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fetchImpl = async (url, init = {}) => {
@@ -24,8 +28,8 @@ function office({ busy = false, refuseStop = false, exits = true, recorded = tru
     if (!state.up) throw new Error("connection refused");
     if (pathname === "/api/health") return json({ app: "realbud", static: true, instanceId: INSTANCE, pid: 4242, version: "0.0.1-old",
       controlId: createHash("sha256").update(CONTROL).digest("hex"), busy: state.busy });
-    if (pathname === "/api/session") return json({ token: "fictional-session" });
     if (pathname === "/api/service/stop") {
+      if (new Headers(init.headers).get("x-realbud-session") !== SESSION) return json({ error: "unauthorized" }, 401);
       state.stops.push(JSON.parse(String(init.body)));
       if (refuseStop) { state.busy = true; return json({ code: "service_busy" }, 409); }
       if (exits) state.up = false;
@@ -34,7 +38,7 @@ function office({ busy = false, refuseStop = false, exits = true, recorded = tru
     return json({}, 404);
   };
   const isPortFree = async () => !state.up;
-  return { dir, state, options: { dataDirectory: dir, identity: IDENTITY, fetchImpl, isPortFree, sleep: async () => {}, waitMs: 1_000 } };
+  return { dir, state, options: { dataDirectory: dir, identity: IDENTITY, fetchImpl, verifyWindowsPrivacy: () => {}, isPortFree, sleep: async () => {}, waitMs: 1_000 } };
 }
 
 describe("handing the office service over to an update", () => {

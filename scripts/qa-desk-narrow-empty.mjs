@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -134,13 +135,14 @@ try {
     await wait(100);
   }
   assert.ok(ready, 'Disposable source service starts');
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   vite = await createViteServer({ root, configFile: join(root, 'vite.config.ts'), logLevel: 'warn',
     server: { host: '127.0.0.1', port: uiPort, strictPort: true, proxy: { '/api': { target: base, changeOrigin: true, ws: true } } },
   });
   await vite.listen();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, uiBase, token);
   await context.route('**/*', route => {
     const origin = new URL(route.request().url()).origin;
     if (origin === uiBase) return route.continue();

@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18880);
@@ -73,7 +74,7 @@ try {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}.\n${stderr}`);
     await sleep(150);
   }
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("session issued", Boolean(session));
 
   // ── 1. demo desk ──
@@ -196,7 +197,7 @@ try {
     if (Date.now() > deadline2) throw new Error(`recovered server never came up.\n${revivedErr}`);
     await sleep(150);
   }
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   const recRes = await api("GET", "/api/desk");
   const recovered = recRes.body;
   console.log(`     [debug] recovery GET ${recRes.status}:`, JSON.stringify(recovered?.recovery), "mode:", recovered?.mode);

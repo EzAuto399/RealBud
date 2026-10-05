@@ -8,6 +8,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { serviceSmokeEnv } = await import(join(root, 'scripts/service-smoke-env.mjs'));
@@ -41,9 +42,10 @@ try {
     ready = health?.pid === child.pid; if (!ready) await wait(100);
   }
   assert.ok(ready, 'service starts');
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1000 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, base, token);
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.setDefaultTimeout(15_000);
   page.on('pageerror', error => errors.push(error.message));

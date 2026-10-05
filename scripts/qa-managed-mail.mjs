@@ -13,6 +13,7 @@ import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { createServiceAdminPasswordVerifier } from '../server/service-admin.ts';
 import { canonicalServiceEntitlementPayload } from '../server/service-entitlement.ts';
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serverExecutable = process.env.REALBUD_QA_EXECUTABLE || process.execPath, resources = process.env.REALBUD_QA_RESOURCES;
@@ -75,7 +76,7 @@ async function boot(d) {
     if (d.child.exitCode !== null || d.child.signalCode) throw new Error(`Desktop ${d.name} exited`);
     try { return (await (await fetch(d.base + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === d.child.pid; } catch { return false; }
   }, `desktop ${d.name} startup`);
-  d.session = (await (await fetch(d.base + '/api/session')).json()).token;
+  d.session = await readSessionToken(d.data);
   assert.equal((await request(d, '/api/service/status')).state, 'active');
   assert.equal((await request(d, '/api/service-admin/status')).authenticated, false);
 }

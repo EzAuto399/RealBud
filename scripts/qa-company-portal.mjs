@@ -10,6 +10,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCompanyInstallation } from '../server/company-installation.ts';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 import { startCommandSite } from '../website/scripts/testing/command-site.mjs';
 import { Pool } from 'pg';
 import { parseCompanyPairing } from '../server/company/host-certificate.ts';
@@ -49,7 +50,7 @@ async function start() {
     try { healthy = (await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(300) })).json()).pid === child.pid; } catch { /* starting */ }
     if (healthy) break; await wait(100);
   }
-  assert(healthy, logs); token = (await (await fetch(base + '/api/session')).json()).token;
+  assert(healthy, logs); token = await readSessionToken(data);
 }
 async function app(path, body, expected = 200) {
   const response = await fetch(base + '/api/company/' + path, { method: body === undefined ? 'GET' : 'POST',
@@ -87,6 +88,7 @@ try {
   assert.deepEqual(await onboarding(), welcome);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+  await primeBrowserSession(context, base, token);
   await context.addInitScript(value => { sessionStorage.setItem('realbud.company-member-session', value); }, ownerToken);
   let page = await context.newPage();
   const observe = p => { p.on('pageerror', e => errors.push(e.message)); p.on('request', request => {
@@ -150,7 +152,7 @@ try {
   pass('Fresh portal login issues a bounded proof through actual Next/PostgreSQL; lost issue and committed company acceptance replies recover exact saved requests and one candidate.');
 
   const confirmCode = await card().getByLabel('Member confirmation code', { exact: true }).inputValue();
-  await page.close(); await stop(); await start(); page = await context.newPage(); observe(page); await open();
+  await page.close(); await stop(); await start(); await primeBrowserSession(context, base, token); page = await context.newPage(); observe(page); await open();
   assert.equal(await card().getByLabel('Member confirmation code', { exact: true }).inputValue(), confirmCode);
   const confirmationProof = await issueThroughUi(confirmCode);
   writeFileSync(drop, 'lose once', { mode: 0o600 });

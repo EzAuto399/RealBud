@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { primeBrowserSession, readSessionToken } from "./local-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, `outputs/recovery-cards-${new Date().toISOString().slice(0, 10)}`));
@@ -67,12 +68,14 @@ try {
     throw new Error(`Timed out: ${label}`);
   };
   await until(async () => (await fetch(`${base}/api/health`)).ok, "server startup");
-  const headers = { "content-type": "application/json", "x-realbud-session": (await (await fetch(`${base}/api/session`)).json()).token };
+  const token = await readSessionToken(data);
+  const headers = { "content-type": "application/json", "x-realbud-session": token };
   assert.equal((await fetch(`${base}/api/browser/held`)).status, 401); checks.push("held list refused without session");
   await finishFirstRun(base, headers);
 
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await primeBrowserSession(context, base, token);
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); const errors = [];
   page.on("pageerror", error => errors.push(error.message));

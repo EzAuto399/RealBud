@@ -1,6 +1,8 @@
 // Per-boot API session + loopback Host/Origin checks.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { HERMIOS_OAUTH_CALLBACK_PATH } from "../shared/hermios-connection.ts";
+import { connectorRoute } from "../shared/mcp-connector.ts";
 
 export const SESSION_TOKEN = randomBytes(24).toString("hex");
 
@@ -71,8 +73,10 @@ function tokenFromRequest(req: IncomingMessage): string | null {
   if (typeof header === "string" && header.trim()) return header.trim();
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // EventSource cannot set headers; nothing else may carry the token in a
+    // URL, where it lands in history, logs and Referer.
     const q = url.searchParams.get("session");
-    if (q) return q;
+    if (q && req.method === "GET" && url.pathname === "/api/events") return q;
   } catch {
     /* ignore */
   }
@@ -100,65 +104,20 @@ export function sessionOk(req: IncomingMessage, listenPort: number): { ok: true 
   return { ok: true };
 }
 
-export function needsSession(path: string, method?: string): boolean {
-  if (path === "/api/health" || path === "/api/session") return false;
+/** Every API is private unless an exact route has its own independent
+ * authority, so a new route is protected without joining any list.
+ * - GET /api/health: public identity/readiness, no business data.
+ * - GET /api/internal/agents, POST /api/internal/ask-bot: the agents-proxy
+ *   inside a bot process; authenticated by the per-boot comms bearer token
+ *   (`commsAuthorized` in index.ts), which never equals the session token.
+ * - GET OAuth returns: reached by the person's browser after provider sign-in,
+ *   authenticated by their single-use state. They live on this listener until
+ *   a callback-only listener exists. */
+export function needsSession(path: string, method = "GET"): boolean {
   if (!path.startsWith("/api/")) return false;
-  if (path.startsWith("/api/internal/")) return false;
-  // Ask can create a provider sign-in or execute an approved app operation.
-  // Protect every mutation of its bot/thread state, including queued work,
-  // edits, steering and approval responses. Keep legacy read-only views intact.
-  if (method && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()) &&
-    /^\/api\/(?:bots|threads|instances)(?:\/|$)/.test(path)) return true;
-  return (
-    path === "/api/config" ||
-    /^\/api\/onboarding(?:\/|$)/.test(path) ||
-    path.startsWith("/api/hermes") ||
-    // A member's own Hermios connection. The OAuth callback
-    // (/api/hermios/oauth/callback) is reached by the browser and is
-    // authenticated only by its single-use state, so it stays outside.
-    path === "/api/hermios/connection" || path.startsWith("/api/hermios/connection/") ||
-    // Office connectors (Redbark first) and the earlier /api/redbark alias.
-    // Their OAuth callbacks (/api/connectors/<id>/oauth/callback,
-    // /api/redbark/oauth/callback) are authenticated by single-use state.
-    /^\/api\/connectors\/[^/]+\/connection(?:\/|$)/.test(path) ||
-    // The added-connector list, add, review and remove.
-    path === "/api/connectors" || /^\/api\/connectors\/[^/]+\/(?:review|remove)$/.test(path) ||
-    path === "/api/redbark/connection" || path.startsWith("/api/redbark/connection/") ||
-    path.startsWith("/api/care") ||
-    path.startsWith("/api/service-admin") ||
-    path.startsWith("/api/service/") ||
-    path.startsWith("/api/support/") ||
-    path.startsWith("/api/tts") ||
-    path.startsWith("/api/company") ||
-    path.startsWith("/api/connected-apps") ||
-    path === "/api/browser" || path.startsWith("/api/browser/") ||
-    path.startsWith("/api/desk") ||
-    // The office's own bank-source key and pulls (W1).
-    path === "/api/bank-source" || path.startsWith("/api/bank-source/") ||
-    // The W1 bank-to-REI run: start, continue, posting report, approvals.
-    path === "/api/w1" || path.startsWith("/api/w1/") ||
-    path.startsWith("/api/channels") ||
-    path.startsWith("/api/rules") ||
-    path.startsWith("/api/law-watch") ||
-    path.startsWith("/api/workflow-packs") ||
-    path.startsWith("/api/customer-packs") ||
-    path.startsWith("/api/agency-setup") ||
-    /^\/api\/(?:website-requests|office-link)(?:\/|$)/.test(path) ||
-    path.startsWith("/api/private-backup") ||
-    path.startsWith("/api/mail-workspace") ||
-    path.startsWith("/api/workspace-tabs") ||
-    path.startsWith("/api/expected-bills") ||
-    /^\/api\/bill-(?:register|evidence|occurrences|series|scan|proposals|review-drafts)(?:\/|$)/.test(path) ||
-    path.startsWith("/api/recipes") ||
-    path.startsWith("/api/job-runs") ||
-    path.startsWith("/api/computer-history") ||
-    path.startsWith("/api/worker-issues") ||
-    path.startsWith("/api/loops") ||
-    path === "/api/reminders" || path.startsWith("/api/reminders/") ||
-    path.startsWith("/api/loop-runs") ||
-    path.startsWith("/api/artifacts") ||
-    path.startsWith("/api/portal") ||
-    path.startsWith("/api/imports") ||
-    path.startsWith("/api/events")
-  );
+  if (path === "/api/health" && method === "GET") return false;
+  if (path === "/api/internal/agents" && method === "GET") return false;
+  if (path === "/api/internal/ask-bot" && method === "POST") return false;
+  if (method === "GET" && (path === HERMIOS_OAUTH_CALLBACK_PATH || connectorRoute(path)?.action === "callback")) return false;
+  return true;
 }

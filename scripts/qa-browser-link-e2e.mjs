@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 import { startCommandSite } from '../website/scripts/testing/command-site.mjs';
 import { isLinkRequestIssued, LINK_DISPLAY_CODE } from '../shared/installation-link.ts';
 
@@ -91,7 +92,7 @@ async function startDesktop(name, websiteOrigin) {
     await wait(100);
   }
   assert.ok(ready, `${name} desktop did not start:\n${desktop.logs}`);
-  desktop.session = (await (await fetch(base + '/api/session')).json()).token;
+  desktop.session = await readSessionToken(data);
   desktop.api = async (path, method = 'GET', body) => {
     const response = await fetch(base + path, { method, signal: AbortSignal.timeout(45000),
       headers: { 'content-type': 'application/json', 'x-realbud-session': desktop.session }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });

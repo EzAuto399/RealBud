@@ -3,6 +3,7 @@
 // own explicit grant, and an Ask task that reaches a sign-in page pauses like
 // an attended job, stays paused over a restart, and continues with the same
 // grant after the person signs in.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,7 +79,7 @@ describe.skipIf(process.platform === "win32")("browser grants through the server
       if (started.exitCode !== null) throw new Error(`server exited ${started.exitCode}. stderr:\n${stderr}`);
       await new Promise(resolve => setTimeout(resolve, 150));
     }
-    session = String(((await (await fetch(`${BASE}/api/session`)).json()) as { token?: string }).token ?? "");
+    session = await readSessionToken(join(home, ".realbud"));
     threadId = (await bud()).threadId;
   }
   async function stop() {

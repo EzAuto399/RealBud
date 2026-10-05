@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from './local-session.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.QA_LIVE_PORT ?? 18883);
@@ -80,7 +81,7 @@ try {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}.\n${stderr}`);
     await sleep(150);
   }
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(QA_HOME, ".realbud"));
   check("session issued", Boolean(session));
 
   // Use the existing CLI and login. Normal server startup synchronises the

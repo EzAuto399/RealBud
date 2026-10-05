@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 import { serviceSmokeEnv } from "./service-smoke-env.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -76,7 +77,7 @@ async function boot(name, existing) {
     if (Date.now() > deadline) throw new Error(`${name} server startup timed out: ${office.logs}`);
     await delay(120);
   }
-  office.token = (await api(office, "GET", "/api/session")).body.token;
+  office.token = await readSessionToken(data);
   check(`${name}: issued local session`, Boolean(office.token));
   return office;
 }

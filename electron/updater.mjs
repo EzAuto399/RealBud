@@ -7,12 +7,13 @@
 // signing). In dev it's a no-op so the browser/dev shell is unaffected.
 // electron-updater is vendored (electron/vendor/electron-updater.cjs) because
 // the packaged app ships no node_modules.
-import { app, ipcMain } from "electron";
+import { app } from "electron";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { runUpdaterAction } from "./updater-action.mjs";
 import { serviceIdentity } from "./service-instance.mjs";
 import { prepareServiceForUpdate } from "./update-service-handoff.mjs";
+import { windowsKeyPrivacy } from "./desk-key-custody.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -47,16 +48,17 @@ function reportError(e) {
   setState({ status: "error", message: String(e?.message ?? e) });
 }
 
-export function registerUpdaterIpc() {
-  ipcMain.handle("update:get-state", () => state);
-  ipcMain.handle("update:check", () => check(true));
-  ipcMain.handle("update:download", () => {
+/** `ipc` is main's guarded wrapper: only the office window may call. */
+export function registerUpdaterIpc(ipc) {
+  ipc.handle("update:get-state", () => state);
+  ipc.handle("update:check", () => check(true));
+  ipc.handle("update:download", () => {
     runUpdaterAction(
       () => autoUpdater?.downloadUpdate(),
       (e) => setState({ status: "error", message: String(e?.message ?? e) }),
     );
   });
-  ipcMain.handle("update:install", () => install());
+  ipc.handle("update:install", () => install());
 }
 
 // The detached office service would otherwise keep running the old version
@@ -77,7 +79,7 @@ function install() {
     clearTimeout(deferTimer);
     // Same rule as realbudDataDir() in main.mjs: the service identity is its data directory.
     const dataDirectory = process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || join(app.getPath("home"), ".realbud");
-    const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory) });
+    const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory), verifyWindowsPrivacy: windowsKeyPrivacy });
     if (!handoff.ready) {
       setState({ status: "downloaded", deferred: handoff.reason, message: DEFERRED[handoff.reason] });
       if (handoff.reason !== "cannot-stop") deferTimer = setTimeout(() => void install(), DEFER_RETRY_MS);

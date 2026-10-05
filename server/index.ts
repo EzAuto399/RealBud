@@ -68,6 +68,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join } from "node:path";
 import { askMessageSizeError } from "../shared/ask-message.ts";
 import { serviceInstanceId } from "../shared/service-identity.mjs";
+import { localSessionPath } from "../shared/local-session.mjs";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } from '../shared/approval-policy.ts';
@@ -3120,6 +3121,7 @@ const workerAutoSetup = createWorkerAutoSetup({
 
 /** Work an update must not cut short: a turn, a browser task, a held workspace operation. */
 function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0; }
+let localSessionPublished = false;
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -3129,9 +3131,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (needsSession(path, method)) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
-    } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
-      const gate = sessionOk(req, PORT);
-      if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
+    } else if (path.startsWith("/api/") && path !== "/api/health" &&
+      (!hostAllowed(req.headers.host, PORT) || !originAllowed(typeof req.headers.origin === "string" ? req.headers.origin : undefined, PORT))) {
+      // The few independently authenticated routes still refuse a rebound or
+      // foreign Host/Origin before their own check runs.
+      return json(res, 403, { error: "refused host or origin" });
     }
     // Staging is an installation-wide barrier. Reads that can recover or
     // refresh business stores also remain held until the cold restore finishes.
@@ -3247,29 +3251,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
 
     if (path === "/api/session" && method === "GET") {
-      const host = typeof req.headers.host === "string" ? req.headers.host : undefined;
-      const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
-      if (!hostAllowed(host, PORT) || !originAllowed(origin, PORT)) {
-        return json(res, 403, { error: "refused host or origin" });
-      }
-      // This route hands out the session token that guards the whole local API, so
-      // it is the one place worth being strict. `originAllowed` treats a missing
-      // Origin as allowed, which is right for the server's own clients but wrong
-      // for a browser request started by another site: `fetch(..., {mode:"no-cors"})`
-      // sends no readable response but still reaches here, and a token obtained
-      // that way would unlock the desk for anything that could read it. Refuse the
-      // browser shapes that are not this app or a top-level navigation to it.
-      const fetchSite = typeof req.headers["sec-fetch-site"] === "string" ? req.headers["sec-fetch-site"] : undefined;
-      const fetchMode = typeof req.headers["sec-fetch-mode"] === "string" ? req.headers["sec-fetch-mode"] : undefined;
-      // Refuse only when the request *affirmatively* says it came from elsewhere.
-      // `sec-fetch-site` is the discriminating header; `sec-fetch-mode` is not,
-      // because Node's own fetch sends `mode: cors` with no `site` at all, and
-      // treating that as cross-site refused this app's own bootstrap.
-      const fromElsewhere = fetchSite === "cross-site" || fetchSite === "same-site";
-      if (fromElsewhere && fetchMode !== "navigate") {
-        return json(res, 403, { error: "refused cross-site session request" });
-      }
-      return json(res, 200, { token: SESSION_TOKEN, product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
+      // Authenticated by the session gate above. The token itself is never served
+      // over HTTP: owners read it from the private data directory, and Electron
+      // hands it to its own window over IPC.
+      res.setHeader("cache-control", "no-store");
+      return json(res, 200, { product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
     }
 
     // ── internal peer-agent comms (localhost + shared token only) ──────
@@ -5383,6 +5369,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
     if (method === "GET" && path === "/api/health") {
+      if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
         busy: serviceBusy() });
     }
@@ -6126,6 +6113,16 @@ const askModelRelay = await startAskModelRelay({
 // already closed and sees a reset instead of our answer (e.g. a 507).
 server.keepAliveTimeout = 65_000;
 server.listen(PORT, "127.0.0.1", () => {
+  // Publish this boot's session token to its owner only once this process owns
+  // the port (a duplicate start that loses the bind never overwrites the live
+  // service's record), and report healthy only after it is readable. Never over
+  // HTTP. A service nobody can authenticate to must not look healthy.
+  void writePrivateJson(localSessionPath(DATA_DIR), { version: 1, pid: process.pid, port: PORT, token: SESSION_TOKEN })
+    .then(() => { localSessionPublished = true; }, (error: unknown) => {
+      console.error(`Local session file could not be written (${localSessionPath(DATA_DIR)}): ${error instanceof Error ? error.message : String(error)}`);
+      oplog("boot", "Local session file could not be written; stopping so the owner can recover it.");
+      process.exit(1);
+    });
   if (!privateRestoreLocked) loops?.start();
   // An approved window that was never confirmed is still missing coverage, so a
   // restart continues the saved checkpoint under its own authority re-check. It

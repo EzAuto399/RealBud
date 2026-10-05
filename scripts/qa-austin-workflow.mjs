@@ -8,6 +8,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readSessionToken, primeBrowserSession } from "./local-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/austin-validation-2026-09-10/austin-browser"));
@@ -76,7 +77,7 @@ const boot = async () => {
     if (child.exitCode !== null) throw new Error(`Fixture server exited ${child.exitCode}`);
     return fetch(`${base}/api/health`).then(res => res.ok, () => false);
   }, "server startup");
-  session = (await api("GET", "/api/session")).body.token;
+  session = await readSessionToken(data);
 };
 const finishFirstRun = async () => {
   let state = (await api("GET", "/api/onboarding")).body;
@@ -131,6 +132,7 @@ try {
   await boot();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+  await primeBrowserSession(context, base, session);
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   const errors = [];
   page = await context.newPage(); page.on("pageerror", e => errors.push(e.message));

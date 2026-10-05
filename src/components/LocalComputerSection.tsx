@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
 import { cn } from "@/lib/cn";
+import { localSessionFetch } from "@/lib/local-session";
 
 type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
 
@@ -102,7 +103,7 @@ export function LocalComputerSection() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch("/api/local-computer", { signal });
+    const response = await localSessionFetch("/api/local-computer", { signal });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error ?? `Status request failed (${response.status})`);
     setStatus(body as Status);
@@ -138,7 +139,7 @@ export function LocalComputerSection() {
   }, [refresh, refreshKey]);
 
   const post = async (action: Exclude<Action, "recreate">) => {
-    const response = await fetch(`/api/local-computer/${action}`, {
+    const response = await localSessionFetch(`/api/local-computer/${action}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",

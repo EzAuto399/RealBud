@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -412,8 +413,7 @@ browserRuntime.resumeConnection = async () => {};
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
-    const boot = await fetch(`${BASE}/api/session`);
-    session = String(((await boot.json()) as { token?: string }).token ?? "");
+    session = await readSessionToken(join(home, ".realbud"));
   }, 30_000);
 
   afterAll(async () => {

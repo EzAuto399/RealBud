@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken, primeBrowserSession } from "./local-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/workspace-unification-2026-09-09/browser"));
@@ -47,9 +48,11 @@ try {
     throw new Error(`Timed out: ${label}`);
   };
   await until(async () => (await fetch(`${base}/api/health`)).ok, "server startup");
+  const token = await readSessionToken(data);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  await primeBrowserSession(context, base, token);
   await context.addInitScript(() => {
     window.copyAttempts = []; window.failCopy = false;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => {
@@ -190,7 +193,7 @@ try {
   await page.locator('#bud-job-builder summary').filter({ hasText: /^Edit job details$/ }).click();
   assert.equal(await page.getByRole("textbox", { name: "Job name", exact: true }).inputValue(), "Repair follow-up (fictional)");
   // Carry a fictional saved-result reference into Ask and remove it explicitly.
-  const roster = await (await fetch(`${base}/api/bots`)).json();
+  const roster = await (await fetch(`${base}/api/bots`, { headers: { "x-realbud-session": token } })).json();
   const draftKey = `bot:${roster.bots[0].id}`;
   await page.evaluate(({ draftKey }) => {
     const rows = JSON.parse(localStorage.getItem("omb-draft-attachments") || "{}");

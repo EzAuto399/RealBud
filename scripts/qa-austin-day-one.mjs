@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
@@ -140,7 +141,7 @@ async function startService() {
   for (let i = 0; i < 200 && child.exitCode === null; i++) { if ((await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }).then(r => r.json()).catch(() => null))?.pid === child.pid) { ready = true; break; } await wait(100); }
   assert.ok(ready, `source service did not start\n${logs}`);
   assert.equal((await fetch(base + '/api/desk')).status, 401, 'Desk needs the session');
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
 }
 async function stopService() {
   if (child?.exitCode !== null || child.signalCode) return;
