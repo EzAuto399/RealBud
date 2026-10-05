@@ -65,6 +65,8 @@ function FindingCard({ saved, review, busy, onDecide }: { saved: Saved; review: 
 export function MaintenanceFindingsPanel() {
   const { state } = useStore();
   const latest = state.loopRuns?.find(run => run.loopId === 'maintenance-review');
+  // The weekly Supplier list check starts the same REI refresh; each change to its run re-reads the refresh below.
+  const check = state.loopRuns?.find(run => run.loopId === 'rei-supplier-check');
   const [review, setReview] = useState<Review | null>(null), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const load = useCallback(async () => setReview(readReview(await api('/api/maintenance-review'))), []);
   useEffect(() => {
@@ -115,7 +117,7 @@ export function MaintenanceFindingsPanel() {
       </label>
       {review.directory.suppliers > 0 && <span className="text-[13px] text-ink-secondary">{review.directory.suppliers} suppliers{review.directory.withoutEmail ? ` · ${review.directory.withoutEmail} without email` : ''}</span>}
     </div>
-    <ReiDirectoryRefresh kind="suppliers" onSaved={() => void load().catch(() => {})} />
+    <ReiDirectoryRefresh kind="suppliers" refreshKey={check ? `${check.id}:${check.status}:${check.detail ?? ''}` : undefined} onSaved={() => void load().catch(() => {})} />
     {conflicts.length > 0 && <ul aria-label="Supplier list conflicts" className="list-disc rounded-lg border border-hold/40 p-2 pl-6 text-hold">
       {conflicts.map(c => <li key={c.email} className="break-words">Same email on two suppliers: {c.supplierRefs.join(', ')} ({c.email})</li>)}
     </ul>}

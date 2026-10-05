@@ -11,9 +11,14 @@ interface Preview {
   file: { name: string; size: number; sha256: string }; rows: number; footer: number | null; countMatches: boolean | null;
   accepted: number; rejected: Array<{ row: number; reason: string }>; withoutEmail?: number;
   added: number; removed: number; changed: number; unchanged: boolean; baseRevision: number;
+  changes?: SupplierChanges;
 }
+type Supplier = { reference: string; description: string; emails: string[] };
+export interface SupplierChanges { added: Supplier[]; removed: Supplier[]; emails: Array<{ reference: string; description: string; before: string[]; after: string[] }>; bigDrop: boolean }
 interface RunView {
   id: string; kind: ReiDirectoryKind; phase: "working" | "preview" | "saved" | "stopped" | "failed"; working: boolean; message: string | null;
+  /** "schedule": started by the weekly Supplier list check, so the preview is a change to approve. */
+  origin?: "person" | "schedule";
   ask: { requestId: string; tool: string; summary: string } | null; signIn: string | null; preview: Preview | null;
 }
 type Saved = { revision: number; count: number; savedAt: number | null };
@@ -35,7 +40,24 @@ export function parseReiDirectoryStatus(value: unknown): ReiDirectoryStatus {
   return v;
 }
 
-export function ReiDirectoryRefresh({ kind, onSaved }: { kind: ReiDirectoryKind; onSaved?: (status: ReiDirectoryStatus) => void }) {
+const BIG_DROP = "REI returned far fewer suppliers than before — check the export before approving.";
+const name = (s: { reference: string; description: string }) => s.description ? `${s.reference} · ${s.description}` : s.reference;
+const more = (shown: number, total: number) => total > shown ? <li className="text-ink-muted">and {total - shown} more</li> : null;
+
+/** Who REI added or removed and whose emails changed; a removed supplier's address stops counting as listed only once this is approved. */
+export function SupplierChangeList({ changes, added, removed }: { changes: SupplierChanges; added: number; removed: number }) {
+  return <div className="space-y-2">
+    {changes.bigDrop && <p role="alert" className="rounded border border-hold/40 p-2 font-medium text-hold">{BIG_DROP}</p>}
+    {added > 0 && <div><p className="font-medium">Added in REI · {added}</p><ul aria-label="Suppliers added in REI" className="list-disc pl-5">
+      {changes.added.map(s => <li key={s.reference} className="break-words">{name(s)}{s.emails.length ? ` · ${s.emails.join(", ")}` : " · no email"}</li>)}{more(changes.added.length, added)}</ul></div>}
+    {removed > 0 && <div><p className="font-medium">Removed in REI · {removed}</p><ul aria-label="Suppliers removed in REI" className="list-disc pl-5">
+      {changes.removed.map(s => <li key={s.reference} className="break-words">{name(s)}{s.emails.length ? ` · ${s.emails.join(", ")} will no longer count as listed` : ""}</li>)}{more(changes.removed.length, removed)}</ul></div>}
+    {changes.emails.length > 0 && <div><p className="font-medium">Email changed · {changes.emails.length}</p><ul aria-label="Supplier emails changed in REI" className="list-disc pl-5">
+      {changes.emails.map(c => <li key={c.reference} className="break-words">{name(c)}: {c.before.join(", ") || "no email"} → {c.after.join(", ") || "no email"}</li>)}</ul></div>}
+  </div>;
+}
+
+export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDirectoryKind; onSaved?: (status: ReiDirectoryStatus) => void; refreshKey?: string }) {
   const [status, setStatus] = useState<ReiDirectoryStatus | null>(null), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
   const noun = NOUN[kind], mounted = useRef(true), saved = useRef(onSaved);
   saved.current = onSaved;
@@ -46,7 +68,7 @@ export function ReiDirectoryRefresh({ kind, onSaved }: { kind: ReiDirectoryKind;
     mounted.current = true;
     void api("/api/rei-directory/status").then(show).catch(() => { if (mounted.current) setFailure("The REI refresh could not be loaded."); });
     return () => { mounted.current = false; };
-  }, [show]);
+  }, [show, refreshKey]);
   // Poll while Bud works, waits for an answer or for sign-in.
   useEffect(() => {
     if (!status?.run?.working) return;
@@ -62,6 +84,8 @@ export function ReiDirectoryRefresh({ kind, onSaved }: { kind: ReiDirectoryKind;
   const at = run ? `/api/rei-directory/runs/${run.id}` : "";
   const savedList = status?.[kind];
   const preview = run?.phase === "preview" ? run.preview : null;
+  const scheduled = run?.origin === "schedule", drop = Boolean(preview?.changes?.bigDrop);
+  const saveLabel = preview?.unchanged ? "Confirm" : drop ? (scheduled ? "Approve anyway" : "Save anyway") : scheduled ? "Approve" : `Save ${noun.list}`;
   const askHeadline = (tool: string) => tool === "browser_download" ? `Allow Bud to download REI's ${noun.list}?` : tool === "browser_select" ? "Allow Bud to choose Export Only on REI's report?" : "Allow this step in REI?";
 
   return <section aria-label={`Refresh ${noun.list} from REI`} className="space-y-2 rounded-lg border border-line p-3 text-sm">
@@ -89,14 +113,16 @@ export function ReiDirectoryRefresh({ kind, onSaved }: { kind: ReiDirectoryKind;
     {preview && <div role="group" aria-label={`REI ${noun.list} preview`} className="space-y-2 rounded-lg border border-line p-2">
       <p className="font-medium">{count(preview.accepted, noun.one, noun.many)} ready to save{preview.rejected.length ? ` · ${preview.rejected.length} skipped` : ""}{preview.withoutEmail ? ` · ${preview.withoutEmail} without email` : ""}</p>
       <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{preview.rows} rows in REI's export{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${preview.footer} records REI lists` : ` · REI lists ${preview.footer} records`}</p>
+      {scheduled && !preview.unchanged && <p className="font-medium">Bud's weekly check found changes in REI's {noun.list}. Nothing changes here until you approve.</p>}
       <p className="text-ink-secondary">{preview.unchanged ? "No changes since the last save." : `${preview.added} new · ${preview.removed} removed · ${preview.changed} changed`}</p>
+      {preview.changes && !preview.unchanged && <SupplierChangeList changes={preview.changes} added={preview.added} removed={preview.removed} />}
       {preview.rejected.length > 0 && <details><summary className="min-h-11 cursor-pointer">Skipped rows · {preview.rejected.length}</summary>
         <ul className="list-disc pl-5">{preview.rejected.map((item, index) => <li key={index} className="break-words">{item.reason}</li>)}</ul></details>}
       <p className="text-[12px] text-ink-muted break-all">File {preview.file.name} · sha256 {preview.file.sha256.slice(0, 16)}…</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={`${control} border-agency font-medium`} disabled={busy || preview.countMatches === false}
-          onClick={() => void post(`${at}/save`, { expectedRevision: preview.baseRevision }).then(next => { if (next) saved.current?.(next); })}>{preview.unchanged ? "Confirm" : `Save ${noun.list}`}</button>
-        <button type="button" className={control} disabled={busy} onClick={() => void post(`${at}/stop`, {})}>Discard</button>
+          onClick={() => void post(`${at}/save`, { expectedRevision: preview.baseRevision, ...(drop ? { acknowledgeDrop: true } : {}) }).then(next => { if (next) saved.current?.(next); })}>{saveLabel}</button>
+        <button type="button" className={control} disabled={busy} onClick={() => void post(`${at}/stop`, {})}>{scheduled ? "Dismiss" : "Discard"}</button>
       </div>
     </div>}
     {run?.message && <p role={run.phase === "failed" ? "alert" : "status"} className={run.phase === "failed" || preview?.countMatches === false ? "text-hold break-words" : "text-ink-secondary break-words"}>{run.message}</p>}
