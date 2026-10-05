@@ -11,7 +11,10 @@ export type PackSignature = NonNullable<CustomerPack['signature']>;
 /** Pinned RealBud publisher keys. Several may be listed while a key rotates;
  * remove a key to revoke it. Empty until the owner pins the first public key
  * (`node scripts/sign-pack.mjs --public --key <path>` prints the entry). */
-export const PACK_PUBLISHER_KEYS: readonly PackPublisherKey[] = [];
+export const PACK_PUBLISHER_KEYS: readonly PackPublisherKey[] = [
+  // RealBud publisher key, generated 2026-10-06 by the owner. Private key held offline (1Password).
+  { keyId: 'realbud-2026-10', publicKey: 'MCowBQYDK2VwAyEAV2xTNNnqf4GpjlAo0zBqHXqlTUOcD9d+dJbVdSNYyQQ=' },
+];
 
 export const UNSIGNED_PACK_MESSAGE = "This pack isn't signed by RealBud, so it wasn't installed.";
 const refuse = (): never => { throw Object.assign(new Error(UNSIGNED_PACK_MESSAGE), { status: 400 }); };
