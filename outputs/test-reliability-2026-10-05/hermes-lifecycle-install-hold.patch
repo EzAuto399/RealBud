@@ -1,0 +1,33 @@
+--- a/server/hermes-lifecycle.test.ts
++++ b/server/hermes-lifecycle.test.ts
+@@ -282,15 +282,22 @@
+   });
+ 
+   it("returns 409 while an install job is running", async () => {
+-    const job = startInstall("sleep 3", { timeoutMs: 8_000 });
+-    expect(["running", "verifying", "preflight"]).toContain(job.state);
+-    expect(installInFlight()).toBe(true);
+-    expect(() => startRepair("true")).toThrow(/already running/);
+-    await expect(uninstallWorker()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Let Bud setup finish/) });
++    // The job runs until this test releases it, then exits non-zero: a zero
++    // exit would start the post-install version probe (~6 s of retries).
++    const release = join(tempDir("realbud-life-install-hold-"), "release");
++    const job = startInstall(`while [ ! -e '${release}' ]; do sleep 0.05; done; exit 1`, { timeoutMs: 8_000 });
+     try {
+-      startRepair("true");
+-    } catch (err) {
+-      expect((err as { status?: number }).status).toBe(409);
++      expect(["running", "verifying", "preflight"]).toContain(job.state);
++      expect(installInFlight()).toBe(true);
++      expect(() => startRepair("true")).toThrow(/already running/);
++      await expect(uninstallWorker()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Let Bud setup finish/) });
++      try {
++        startRepair("true");
++      } catch (err) {
++        expect((err as { status?: number }).status).toBe(409);
++      }
++    } finally {
++      writeFileSync(release, "");
+     }
+   });
+ });
