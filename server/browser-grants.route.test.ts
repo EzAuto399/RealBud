@@ -80,6 +80,7 @@ browserRuntime.status = async () => existsSync(${JSON.stringify(browserReady)})
   ? ({ state: "ready", enabled: true, browsers: [{ id: "fictional-browser", name: "Chrome", label: "Fictional profile", compatible: true }], selectedBrowserId: "fictional-browser", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" })
   : ({ state: "off", enabled: false, browsers: [], selectedBrowserId: null, active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Connect your browser." });
 browserRuntime.resumeConnection = async () => {};
+browserRuntime.openSignInTab = async url => { (await import("node:fs")).appendFileSync(${JSON.stringify(join(home, "opened-tabs"))}, url + "\\n"); return "fictional-tab"; };
 `);
     child = spawn(process.execPath, ["--import", browserFixture, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
@@ -141,10 +142,12 @@ browserRuntime.resumeConnection = async () => {};
     const started = await api("POST", `/api/browser/tasks/${card.id}/start`, { threadId });
     expect(started.status).toBe(202);
     expect(started.body.task).toMatchObject({ status: "active", sites: [SITE] });
+    // The work browser opens on the task's site before Bud's first turn, independent of the model.
+    expect(readFileSync(join(home, "opened-tabs"), "utf8")).toBe(`https://${SITE}/\n`);
     // Each worker process rewrites the dump; the task's turn is the one with RealBud's browser mounted.
-    await waitFor(() => Boolean(worker()?.mcpServers?.some(server => server.name === "browser")) && (worker()?.promptCount ?? 0) >= 1, "the task turn to reach the worker");
+    await waitFor(() => Boolean(worker()?.mcpServers?.some(server => server.name === "workbrowser")) && (worker()?.promptCount ?? 0) >= 1, "the task turn to reach the worker");
     const mounted = worker()!.mcpServers ?? [];
-    expect(mounted.map(server => server.name)).toEqual(["browser"]);
+    expect(mounted.map(server => server.name)).toEqual(["workbrowser"]);
     const listing = await rpc(mounted[0], "tools/list", {});
     expect(listing.result.tools!.map(tool => tool.name)).toEqual(grantedBrowserTools({ actions: card.actions, uploads: [] }, true));
     expect((await bud()).messages?.some(message => message.role === "user" && message.text === `Start this task: ${card.request}`)).toBe(true);

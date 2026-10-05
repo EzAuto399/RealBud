@@ -194,7 +194,7 @@ import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
 import { askBrowserRuntime, useAskBrowserLab } from "./ask-browser-lab.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
-import { legacyBrowserGrant } from "./browser-authority.ts";
+import { jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -4185,6 +4185,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
           runAskRecipeTask(threadId, bud.id, started);
           return json(res, 202, { task: browserTaskCardView(started) });
         }
+        // Open the job's site before the model's first turn, so the person sees it (or its sign-in page)
+        // at once. Within the grant only; no page access. Best effort, bounded: a missing tab is Bud's to report.
+        const site = jobBrowserUrl(`${new URL(grant.sites[0]!.includes("://") ? grant.sites[0]! : `https://${grant.sites[0]}`).origin}/`, grant.sites);
+        const opener = runtime as { openSignInTab?: (url: string) => Promise<string> };
+        if (site && opener.openSignInTab) await Promise.race([opener.openSignInTab(site.href).catch(() => {}), new Promise(resolve => setTimeout(resolve, 10_000).unref())]);
         try {
           await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
         } catch (error) {

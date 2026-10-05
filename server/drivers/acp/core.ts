@@ -36,7 +36,7 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
-import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { BROWSER_SERVER, startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
 import { browserRuntime } from "../../browser-runtime.ts";
 import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts";
 import { portalMapForSites } from "../../portal-recipe-task.ts";
@@ -173,7 +173,7 @@ type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
  * `browser_vault_fill`, …), named by the leading tool name Hermes ACP puts in a
  * tool call's title (acp_adapter/tools.py `build_tool_title`) or by an explicit
  * name field. RealBud's fenced browser reaches Hermes as MCP tools
- * (`mcp__browser__…`), which never match. The profile policy and worker
+ * (`mcp__workbrowser__…`), which never match. The profile policy and worker
  * environment keep these tools from being offered; this is the backstop. */
 export function hermesNativeBrowserTool(...values: unknown[]): string | null {
   for (const value of values) {
@@ -192,6 +192,19 @@ const WRAP_UP_TIMEOUT = 10_000;
 /** Hermes answers `/steer` with a short status line on the same session
  * stream (acp_adapter/commands.py `_cmd_steer`); it is not Bud's answer. */
 const HERMES_STEER_ACK = /^\s*(?:⏩ Steer queued for the active turn:|⚠️ Steer failed:|No active turn — queued for the next turn\.)/u;
+
+/** Hermes' own failed-turn copy (agent/turn_failure_copy.py) arrives as one
+ * whole assistant message naming the engine or provider, slash commands,
+ * `hermes …` hints and a raw "Provider said:"/"Details:" line. The person sees
+ * plain words instead; the raw chunk stays in the private native log. A
+ * model's streamed chunk is a few words, so the length floor keeps an answer
+ * that merely mentions such a word from being replaced. */
+const HERMES_FAILURE_COPY = /(?:^|[\s(])\/(?:retry|model|new|reasoning)\b|`hermes [a-z]|\n\n(?:Provider said|Details): /u;
+export const ENGINE_FAILURE_REPLY =
+  "Bud couldn't finish this step because the AI service ran into a problem. Try again, or tell me if it keeps happening.";
+export function plainEngineFailure(delta: string): string | null {
+  return delta.length >= 80 && HERMES_FAILURE_COPY.test(delta) ? ENGINE_FAILURE_REPLY : null;
+}
 
 export const HERMES_BROWSER_REFUSED =
   "Bud tried to use a web browser of its own, which RealBud does not allow, so this request was stopped. Website work runs in RealBud’s browser, where you sign in yourself.";
@@ -303,7 +316,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           servers.push({ type: "http", name: "memory-proposals", url: "http://127.0.0.1/realbud-memory-proposals", headers: [] });
         }
-        if (turn.integrations?.browser) servers.push({ type: "http", name: "browser", url: "http://127.0.0.1/realbud-browser", headers: [] });
+        if (turn.integrations?.browser) servers.push({ type: "http", name: BROWSER_SERVER, url: "http://127.0.0.1/realbud-browser", headers: [] });
         // Replaced with private loopback brokers before session/new or load.
         const pages = turn.integrations?.webPages;
         if (pages && (!Array.isArray(pages.allowedUrls) || pages.allowedUrls.length > 200 || pages.allowedUrls.some(url => typeof url !== "string" || url.length > 2048))) {
@@ -779,12 +792,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const update = params.update ?? {};
           switch (update.sessionUpdate) {
             case "agent_message_chunk": {
-              const delta = update.content?.text;
+              let delta = update.content?.text;
               if (typeof delta === "string" && delta) {
                 if (run.steerAckPending && HERMES_STEER_ACK.test(delta)) {
                   run.steerAckPending = false;
                   break;
                 }
+                const plain = plainEngineFailure(delta);
+                if (plain) delta = (run.text.trim() ? "\n\n" : "") + plain;
                 run.text += delta;
                 if (run.sawTool) run.answerText += delta;
                 emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
@@ -984,7 +999,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }),
             });
             if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }
-            mcpServers = mcpServers.map(server => server.name === "browser" ? browserBroker!.descriptor : server);
+            mcpServers = mcpServers.map(server => server.name === BROWSER_SERVER ? browserBroker!.descriptor : server);
           }
           if (firstTurn.integrations?.composio) {
             const { key, url, headers, gmailReadOnly, allowedApps, managed } = firstTurn.integrations.composio;
@@ -1154,7 +1169,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // resolved session capabilities at the actual prompt boundary,
             // including a computer mounted through the CUA fallback.
             managedService.assertCapability("reasoning");
-            if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
+            if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
             if (!sessionAnnounced) {
               sessionAnnounced = true;
               emit({
@@ -1296,7 +1311,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
-        if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
+        if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
         const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm);
         let runtime = warm.get(threadId);

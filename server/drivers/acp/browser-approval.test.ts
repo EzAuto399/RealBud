@@ -19,9 +19,10 @@ vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability 
 type Approve = (tool: string, params: Record<string, unknown>, summary: string, signal: AbortSignal, projection?: unknown) => Promise<boolean>;
 const broker = vi.hoisted(() => ({ approve: null as Approve | null, close: vi.fn() }));
 vi.mock("../../browser-broker.ts", () => ({
+  BROWSER_SERVER: "workbrowser",
   startBrowserBroker: async (options: { approve: Approve }) => {
     broker.approve = options.approve;
-    return { descriptor: { type: "http", name: "browser", url: "http://127.0.0.1:9/mcp", headers: [{ name: "authorization", value: "Bearer fictional" }] },
+    return { descriptor: { type: "http", name: "workbrowser", url: "http://127.0.0.1:9/mcp", headers: [{ name: "authorization", value: "Bearer fictional" }] },
       close: broker.close, cancelPending: broker.close, released: async () => {} };
   },
 }));

@@ -49,6 +49,13 @@ import { BROWSER_LEGACY_JOB_ORIGIN, parseBrowserTaskGrant, type BrowserActionCla
 
 export { browserLoginFields, jobBrowserUrl, observationRefs } from "./browser-authority.ts";
 
+/** The MCP server name RealBud mounts its fenced browser under. Never a Hermes
+ * built-in toolset name: pinned Hermes aliases a same-named server onto that
+ * toolset (toolsets.py `get_toolset`), so the pack's `disabled_toolsets: [browser]`
+ * would strip every RealBud browser tool and the model would call one it was
+ * never offered. One token (no `-`/`_`) so `mcp__<server>__<tool>` parsing holds. */
+export const BROWSER_SERVER = "workbrowser";
+
 const props = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const tab = { type: "integer", description: "An exact tab ID returned by browser_tabs in this job." };
 const ref = { type: "string", description: "A fresh @eN reference from browser_read, used once." };
@@ -602,7 +609,7 @@ export async function startBrowserBroker(options: {
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Browser broker did not start.");
   const broker: BrowserBroker = {
-    descriptor: { type: "http", name: "browser", url: `http://127.0.0.1:${address.port}/mcp`, headers: [{ name: "authorization", value: `Bearer ${token}` }] },
+    descriptor: { type: "http", name: BROWSER_SERVER, url: `http://127.0.0.1:${address.port}/mcp`, headers: [{ name: "authorization", value: `Bearer ${token}` }] },
     close() {
       if (closed) return; closed = true;
       for (const controller of controllers) controller.abort();
