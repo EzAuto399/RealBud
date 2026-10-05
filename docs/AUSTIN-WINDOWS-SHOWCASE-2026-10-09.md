@@ -28,4 +28,26 @@ Demo rehearsal (Mac, fake providers): `scripts/qa-austin-showcase.mjs` passes 8/
 - W4 trusts a supplier only when Gmail's mx.google.com Authentication-Results confirms DMARC or DKIM for the From domain (for Xero relays, Xero's signature), and ambiguous From or Authentication-Results headers fail closed. Imports the REI Suppliers export and flags the same email on two supplier records.
 - Waiting on: Kevin's REI Tenants export (so the last column holds REI's tenant Reference and payer names can match), the REI Suppliers export, and a Windows installer from CI followed by an install on a Windows PC.
 
+## Overnight, 5–6 October (`claude/kevin-sherry-showcase`, PR #59; local tests on macOS + Windows CI install)
+- **REI login wait (W1 and the supplier check):** waits on REI's sign-in page until 18:00, detects the sign-in itself (no button), checks the saved REI business code silently, reopens the page after a restart ("Resumed after restart"), reloads a stale login page every 10 minutes, notifies once plus one midday reminder, and settles "missed" if nobody signs in. Upload still needs its per-instance approval. `qa-rei-login-wait` 9/9.
+- **Austin pack:** six workflows at Brisbane times, all off until reviewed: W3 weekdays 07:30, W2 Monday 08:00, W4 weekdays 08:30, W1 every 2 days 08:00, the supplier check every 14 days (Monday 08:15), and a new monthly W5 inspection draft. Setup checklist in Schedule. `qa-austin-pack` 9/9. Design: `docs/AUSTIN-WORKFLOWS-OPERATING-DESIGN-2026-10-06.md`.
+- **Browser tasks:**
+  - Root cause of the live failure: our MCP server was named `browser`, a toolset name Hermes already uses and that the pack disables, so Bud never received its browser tools (`unoffered_tool_call`). Renamed `workbrowser`, with a test.
+  - Start now opens the site's sign-in, and a read-only REI task is Start + sign-in + one account confirm the first time.
+  - Engine errors show in plain words.
+- **Security review fixes (all with regression tests):**
+  - the link shortcut needs a visible, safe, same-site address;
+  - one strict address parser;
+  - the account check is pinned to the portal origin;
+  - classification reads the whole control name;
+  - approval cards show and bind the real record;
+  - real paths stay on the local card and approval record (event log and call speech now masked);
+  - learned paths never become standing permission.
+- **Gate:** typecheck clean; vitest 8762 passed / 327 skipped (the Postgres-gated suites, not run); all 21 GUI QA scripts pass (qa-shell-purpose needs `QA_BASELINE`); `Package Windows` passes install checks on each rebuild.
+- **Known limits:**
+  - The production browser engine doesn't report link addresses, so ordinary REI links ask; reviewed REI menus don't.
+  - The live REI exploration isn't done yet.
+  - No Windows VM: the external drive needs plugging in.
+  - The local private event log keeps short numeric ids and name-like path segments in masked paths. Owner call whether to mask those too.
+
 Checkpoint links: `docs/KEVIN-SHERRY-WORKFLOWS-2026-10-04.md`.
