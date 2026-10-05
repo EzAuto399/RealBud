@@ -95,7 +95,8 @@ try {
   const step = page.getByRole("region", { name: "Check a step on portal.fictional-strata.example" });
   const custody = page.getByRole("region", { name: "Earlier work may still be running" });
   await step.waitFor(); await custody.waitFor();
-  for (const text of ["Bud isn't sure this happened. Check portal.fictional-strata.example, then tell Bud.", "Pay A$1,240.00 to Fictional Strata Pty Ltd?", "LEVY-FICTIONAL-12"]) assert.ok((await step.innerText()).includes(text), text);
+  for (const text of ["Bud isn't sure this happened. Check portal.fictional-strata.example, then tell Bud.", "Did the A$1,240.00 payment to Fictional Strata Pty Ltd go through?", "LEVY-FICTIONAL-12"]) assert.ok((await step.innerText()).includes(text), text);
+  assert.ok(!(await step.innerText()).includes("Pay A$1,240.00 to Fictional Strata Pty Ltd?"), "held step keeps the approval question");
   assert.ok((await custody.innerText()).includes("restart this computer and then let Bud check."));
   checks.push("held payment card shows payee, amount and reference", "custody notice shows one sentence and one button");
   await page.screenshot({ path: join(out, "1-both-holds.png") });

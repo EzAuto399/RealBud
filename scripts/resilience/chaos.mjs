@@ -75,11 +75,11 @@ const shownMessage = (m) => ({ role: m.role, kind: m.kind, ...(m.text ? { text: 
 const lastText = (msgs) => [...msgs].reverse().find((m) => m.role === "bot")?.text?.slice(0, 200) ?? null;
 
 // ── relay helpers (cases 4 and 7) ─────────────────────────────────────────
-async function startRelay(caseDir, gatewayPort) {
+async function startRelay(caseDir, gatewayPort, { idleMs } = {}) {
   const dataDir = join(caseDir, "data"); mkdirSync(join(dataDir, "hermes"), { recursive: true });
   const child = fork(join(ROOT, "scripts", "resilience", "relay-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"], env: {
     PATH: `${dirname(NODE)}:/usr/bin:/bin`, HOME: join(caseDir, "home"), REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_HOME: join(dataDir, "hermes"),
-    CHAOS_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}/v1`, CHAOS_MODEL_KEY: FICTIONAL_MODELVIA_KEY } });
+    CHAOS_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}/v1`, CHAOS_MODEL_KEY: FICTIONAL_MODELVIA_KEY, ...(idleMs ? { CHAOS_RELAY_IDLE_MS: String(idleMs) } : {}) } });
   child.label = "relay"; child.log = ""; child.closed = new Promise((r) => child.once("close", r));
   for (const st of [child.stdout, child.stderr]) st.on("data", (b) => { child.log = (child.log + b).slice(-20000); });
   owned.children.push(child);
@@ -348,7 +348,8 @@ const cases = [
   { id: "7d", name: "Fake Modelvia slow stream, then stalled stream", deadlineMs: 10000, async run(dir, check, observe) {
     const mv = await fakeModelvia();
     try {
-      const relay = await startRelay(dir, mv.port);
+      // Injected idle timeout (product default 60 s) so the stall is ended inside the deadline.
+      const relay = await startRelay(dir, mv.port, { idleMs: 3000 });
       mv.state.mode = "slow";
       const slow = await readStream(relay, { stallMs: this.deadlineMs });
       observe({ slow });
@@ -356,7 +357,7 @@ const cases = [
       mv.state.mode = "stall";
       const stall = await readStream(relay, { stallMs: this.deadlineMs });
       observe({ stall });
-      check(`stalled stream ended by the relay within ${this.deadlineMs}ms`, !stall.ended.startsWith("still-open"), `${stall.ended} (relay total limit is 15 min; no idle/first-byte deadline)`);
+      check(`stalled stream ended by the relay within ${this.deadlineMs}ms`, !stall.ended.startsWith("still-open") && !stall.sawDone, `${stall.ended} after ${stall.totalMs}ms (injected relay idle timeout 3000ms)`);
       check("one upstream call per request", upstreamAudit(mv).upstreamRequests === 2 && upstreamAudit(mv).duplicateIdempotencyKeys === 0, JSON.stringify(upstreamAudit(mv)));
     } finally { await mv.close(); }
   } },

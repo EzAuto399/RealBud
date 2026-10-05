@@ -24,7 +24,8 @@ describe('held browser step card', () => {
     const html = renderToStaticMarkup(createElement(HeldStepCard, { step, busy: false, onAnswer: answer }));
     expect(html).toContain('aria-label="Check a step on portal.fictional-strata.example"');
     expect(html).toContain('Bud isn&#x27;t sure this happened. Check portal.fictional-strata.example, then tell Bud.');
-    for (const text of ['Pay A$1,240.00 to Fictional Strata Pty Ltd?', 'Fictional Strata Pty Ltd', 'A$1,240.00', 'Button “Pay now” on portal.fictional-strata.example']) expect(html).toContain(text);
+    for (const text of ['Did the A$1,240.00 payment to Fictional Strata Pty Ltd go through?', 'Fictional Strata Pty Ltd', 'A$1,240.00', 'Button “Pay now” on portal.fictional-strata.example']) expect(html).toContain(text);
+    expect(html).not.toContain('Pay A$1,240.00 to Fictional Strata Pty Ltd?');
     expect(html).toContain('>It happened</button>');
     expect(html).toContain('>It didn&#x27;t happen</button>');
     expect(html).not.toContain('disabled=""');

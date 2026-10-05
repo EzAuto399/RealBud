@@ -5,7 +5,7 @@
 // (server/recovery-holds.ts) decides; these cards only ask and report.
 import { CircleAlert } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { readBrowserApprovalCard, type BrowserApprovalCard } from "@shared/browser-approval-card";
+import { browserApprovalFact, browserApprovalMoney, readBrowserApprovalCard, type BrowserApprovalCard, type BrowserApprovalFactName } from "@shared/browser-approval-card";
 import { BrowserApprovalFacts } from "./BrowserApprovalCard";
 import { api } from "@/state/store";
 
@@ -29,6 +29,25 @@ export const readCustodyState = (value: unknown): CustodyState => {
   throw new Error("Bud's record of running work could not be read.");
 };
 
+/** A held step asks about the past, never the approval's "Pay …?", e.g.
+ * "Did the A$1,240.00 payment to Fictional Strata Pty Ltd go through?". */
+export function heldStepTitle(card: BrowserApprovalCard): string {
+  const confirmed = (name: BrowserApprovalFactName) => {
+    const fact = browserApprovalFact(card, name);
+    return fact?.confirmed && fact.value ? fact.value : null;
+  };
+  const money = browserApprovalMoney(card), payee = confirmed("recipient"), to = confirmed("to");
+  const document = confirmed("document"), target = confirmed("target");
+  switch (card.kind) {
+    case "pay": return money && payee ? `Did the ${money} payment to ${payee} go through?` : `Did the payment on ${card.site} go through?`;
+    case "send": return to ? `Did the message to ${to} send?` : `Did the message on ${card.site} send?`;
+    case "sign": return document ? `Was “${document}” signed?` : `Was the document on ${card.site} signed?`;
+    case "notice": return document ? `Was the notice “${document}” issued?` : `Was the notice on ${card.site} issued?`;
+    case "delete": return target ? `Was ${target} deleted?` : `Was the item on ${card.site} deleted?`;
+    case "account-change": return target ? `Did the account change go through: ${target}?` : `Did the account change on ${card.site} go through?`;
+  }
+}
+
 export const heldStepPrompt = (host: string) => `Bud isn't sure this happened. Check ${host}, then tell Bud.`;
 const ANSWERED: Record<Answer, string> = {
   confirmed: "Recorded as done. Bud won't do it again.",
@@ -41,7 +60,7 @@ export function HeldStepCard({ step, busy, error, onAnswer }: { step: HeldStep; 
     <section aria-label={`Check a step on ${step.host}`} className="mb-2 overflow-hidden rounded-2xl border border-hold/40 bg-card">
       <div className="border-b border-line bg-sheet px-4 py-3">
         {step.approval
-          ? <BrowserApprovalFacts approval={step.approval} now={Date.now()} status={heldStepPrompt(step.host)} />
+          ? <BrowserApprovalFacts approval={step.approval} now={Date.now()} status={heldStepPrompt(step.host)} title={heldStepTitle(step.approval)} />
           : <><h3 className="break-words text-[16px] font-semibold text-ink">{step.summary}</h3><p className="mt-2 text-[13px] text-ink">{heldStepPrompt(step.host)}</p></>}
       </div>
       <div className="flex flex-col gap-2 px-4 py-3">
