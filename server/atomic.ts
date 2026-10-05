@@ -30,17 +30,23 @@ export function assertOwnPrivate(stat: Stats, kind: "file" | "directory"): void 
 export function openPrivateFileSync(path: string, flags: number = constants.O_RDONLY): number {
   // Windows has no O_NOFOLLOW: open follows a link and fstat then describes
   // its target. Refuse a link by name first, then require the descriptor to be
-  // that same object, so a swap between the two checks is refused too.
-  const named = NOFOLLOW ? undefined : lstatSync(path, { bigint: true });
-  if (named?.isSymbolicLink()) unsafe();
-  // Non-blocking: a FIFO planted under the name must not hold this process
-  // open; the descriptor's type is checked before anything is read.
-  const fd = openSync(path, flags | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
-  try {
-    assertOwnPrivate(fstatSync(fd), "file");
-    if (named) { const opened = fstatSync(fd, { bigint: true }); if (opened.ino !== named.ino || opened.dev !== named.dev) unsafe(); }
-  } catch (error) { closeSync(fd); throw error; }
-  return fd;
+  // that same object. Our own atomic replace can swap the name in between, so
+  // a mismatch looks again (a planted link is then seen by name) before refusing.
+  for (let attempt = 0; ; attempt++) {
+    const named = NOFOLLOW ? undefined : lstatSync(path, { bigint: true });
+    if (named?.isSymbolicLink()) unsafe();
+    // Non-blocking: a FIFO planted under the name must not hold this process
+    // open; the descriptor's type is checked before anything is read.
+    const fd = openSync(path, flags | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
+    try {
+      if (named) {
+        const opened = fstatSync(fd, { bigint: true });
+        if (opened.ino !== named.ino || opened.dev !== named.dev) { if (attempt < 2) { closeSync(fd); continue; } unsafe(); }
+      }
+      assertOwnPrivate(fstatSync(fd), "file");
+      return fd;
+    } catch (error) { closeSync(fd); throw error; }
+  }
 }
 /** Largest private text file the host reads whole (notes, logs, reference sheets). */
 export const PRIVATE_FILE_LIMIT = 16 * 1024 * 1024;
