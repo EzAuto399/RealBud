@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Recipe } from '../shared/contracts.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
-import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
+import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+const createCustomerPackService = withFictionalPublisher(createPackService);
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await removeFixture(root); });

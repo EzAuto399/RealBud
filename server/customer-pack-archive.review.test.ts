@@ -9,7 +9,9 @@ import type { CustomerPack, CustomerPackArchivePreview, CustomerPackChangePrevie
 const control=vi.hoisted(()=>{const root=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-archive-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=root;return {root,fault:undefined as undefined|((path:string,value:any,stage:'before'|'after')=>void)};});
 vi.mock('./private-json.ts',async importOriginal=>{const original=await importOriginal<typeof import('./private-json.ts')>();return {...original,
   writePrivateJson:async(path:string,value:unknown)=>{control.fault?.(path,value,'before');await original.writePrivateJson(path,value);control.fault?.(path,value,'after');}};});
-const {createCustomerPackService,validateCustomerPackArchiveSet}=await import('./customer-packs.ts');
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
+const {createCustomerPackService:createPackService,validateCustomerPackArchiveSet}=await import('./customer-packs.ts');
+const createCustomerPackService=withFictionalPublisher(createPackService);
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(control.root,{recursive:true});await rm(join(control.root,'recipes.json'),{force:true});});
 afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await removeFixture(root);});

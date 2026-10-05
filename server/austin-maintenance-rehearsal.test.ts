@@ -7,12 +7,14 @@ import type { Recipe } from '../shared/contracts.ts';
 import { agencyRecipeRole } from '../shared/agency-workflow-packs.ts';
 import { isCompanyExecutionSource, type CompanyExecutionSource } from '../shared/company-execution.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
-import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
+import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
 import { departmentWorkRecipe } from './department-work-plan.ts';
 import { executeRecipeJob } from './job-executor.ts';
 import { JobRunStore } from './job-runs.ts';
 import type { WorkerChatOpts } from './recipe-draft.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+const createCustomerPackService = withFictionalPublisher(createPackService);
 
 const directory = fileURLToPath(new URL('../pack/workflows/austin-maintenance-rehearsal/', import.meta.url));
 const read = (file: string) => JSON.parse(readFileSync(join(directory, file), 'utf8'));

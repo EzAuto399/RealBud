@@ -12,7 +12,9 @@ const environment = vi.hoisted(() => {
   process.env.REALBUD_DATA_DIR = directory;
   return { previous, directory };
 });
-const { createCustomerPackService, validateCustomerPack } = await import('./customer-packs.ts');
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
+const { createCustomerPackService: createPackService, validateCustomerPack } = await import('./customer-packs.ts');
+const createCustomerPackService = withFictionalPublisher(createPackService);
 const { getRecipe, patchRecipe, resetRecipeApprovalsAtomically, saveRecipe } = await import('./recipes.ts');
 const roots: string[] = [];
 beforeEach(async () => { await mkdir(environment.directory, { recursive: true }); await rm(join(environment.directory, 'recipes.json'), { force: true }); });
