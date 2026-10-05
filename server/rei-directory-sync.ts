@@ -75,10 +75,38 @@ export interface ReiDirectoryPreview {
   withoutEmail?: number;
   /** Against the saved directory at `baseRevision`. */
   added: number; removed: number; changed: number; unchanged: boolean; baseRevision: number;
+  /** Suppliers only: who was added or removed and whose emails changed, for the person to approve. */
+  changes?: SupplierChanges;
 }
+/** At most this many suppliers are listed per kind of change; the counts above stay exact. */
+const MAX_LISTED = 50;
+export interface SupplierChanges {
+  added: Supplier[]; removed: Supplier[];
+  emails: Array<{ reference: string; description: string; before: string[]; after: string[] }>;
+  /** REI returned far fewer suppliers than before: held with a warning, saved only when the person confirms. */
+  bigDrop: boolean;
+}
+/** Who was added, removed or had their emails changed, by REI Reference. More than 30% of saved suppliers removed is a big drop. */
+export function supplierChanges(saved: readonly Supplier[], next: readonly Supplier[]): SupplierChanges {
+  const before = new Map(saved.map(s => [s.reference, s])), after = new Set(next.map(s => s.reference));
+  const key = (emails: readonly string[]) => [...emails].sort().join(",");
+  const removed = saved.filter(s => !after.has(s.reference));
+  return {
+    added: next.filter(s => !before.has(s.reference)).slice(0, MAX_LISTED),
+    removed: removed.slice(0, MAX_LISTED),
+    emails: next.flatMap(s => { const old = before.get(s.reference); return old && key(old.emails) !== key(s.emails) ? [{ reference: s.reference, description: s.description, before: old.emails, after: s.emails }] : []; }).slice(0, MAX_LISTED),
+    bigDrop: saved.length > 0 && removed.length / saved.length > 0.3,
+  };
+}
+export const SUPPLIER_BIG_DROP = "REI returned far fewer suppliers than before — check the export before approving.";
+/** What the Schedule run says while the supplier check waits or after it ends. */
+export interface SupplierCheckResult { ok: boolean; status: "completed" | "awaiting-approval" | "failed"; detail: string; quiet?: boolean }
+const WHERE = "Bills and calendar → Maintenance checks";
 type Phase = "working" | "preview" | "saved" | "stopped" | "failed";
 interface Run {
   id: string; kind: ReiDirectoryKind; phase: Phase; startedAt: string; message: string | null;
+  /** Started by the person (Refresh from REI) or by the weekly Supplier list check. */
+  origin: "person" | "schedule";
   ask: { requestId: string; tool: string; summary: string } | null;
   /** The sign-in handover's thread while Bud waits for the person (GET /api/browser/sign-in?threadId=…). */
   signIn: string | null;
@@ -200,8 +228,9 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       if (!list.suppliers.length) return fail(502, "No supplier rows could be used. Nothing was saved.");
       const saved = await deps.suppliers.read();
       parsed = { kind: "suppliers", csv: text };
+      const next = importedSuppliers(list.suppliers);
       preview = { rows: Math.max(0, table.length - 1), accepted: list.suppliers.length, rejected: list.rejected.map(r => ({ row: r.row, reason: redactSecretsInText(r.reason) })),
-        withoutEmail: list.suppliers.filter(s => !s.emails.length).length, ...diff(saved.suppliers, importedSuppliers(list.suppliers)), baseRevision: saved.revision };
+        withoutEmail: list.suppliers.filter(s => !s.emails.length).length, ...diff(saved.suppliers, next), baseRevision: saved.revision, changes: supplierChanges(saved.suppliers, next) };
     }
     run.preview = { file: { name: read.download.name, size: read.download.size, sha256: read.download.sha256 }, footer, countMatches: footer === null ? null : footer === preview.rows, ...preview };
     run.phase = "preview";
@@ -209,10 +238,10 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       : run.preview.countMatches === null ? "REI's record count could not be read, so the row count was not compared." : null;
   }
 
-  function start(kind: unknown) {
+  function start(kind: unknown, origin: Run["origin"] = "person"): Run {
     if (kind !== "tenants" && kind !== "suppliers") return fail(400, "Choose the tenant list or the supplier list.");
     if (working) return fail(409, "A refresh from REI is already running. Stop it or wait.");
-    const run: Run = { id: `reidir_${randomUUID()}`, kind, phase: "working", startedAt: new Date().toISOString(), message: null, ask: null, signIn: null, preview: null, saved: null };
+    const run: Run = { id: `reidir_${randomUUID()}`, kind, origin, phase: "working", startedAt: new Date().toISOString(), message: null, ask: null, signIn: null, preview: null, saved: null };
     const controller = new AbortController();
     current = run; parsed = null; stop = controller;
     const job = execute(run, controller.signal).catch(error => {
@@ -221,13 +250,15 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       run.preview = null; parsed = null;
     }).finally(() => { run.ask = null; run.signIn = null; if (working === job) { working = null; stop = null; } });
     working = job;
+    return run;
   }
   const own = (id: string) => current?.id === id ? current : fail(404, "That refresh has ended. Refresh again.");
 
-  async function save(id: string, expectedRevision: unknown) {
+  async function save(id: string, expectedRevision: unknown, acknowledgeDrop = false) {
     const run = own(id);
     if (working || run.phase !== "preview" || !run.preview || !parsed) return fail(409, "There is no preview to save. Refresh from REI again.");
     if (run.preview.countMatches === false) return fail(409, run.message ?? "The export's row count does not match REI's list. Nothing was saved.");
+    if (run.preview.changes?.bigDrop && !acknowledgeDrop) return fail(409, SUPPLIER_BIG_DROP);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== run.preview.baseRevision) return fail(409, "The saved list changed since this preview. Refresh from REI again.");
     const source = { name: run.preview.file.name, sha256: run.preview.file.sha256, rows: run.preview.rows };
     let result: { revision: number; changed: boolean };
@@ -266,13 +297,40 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       if (run.ask?.requestId !== body.requestId || !answerPortalRecipeAsk(`rei-dir:${id}`, body.requestId, body.allowed)) return { status: 409, body: { error: "This request has already been answered or has ended." } };
     }
     if (action === "save") {
-      if (!object(body) || !("expectedRevision" in body)) return { status: 400, body: { error: "Send the saved list's revision." } };
-      await save(id, body.expectedRevision);
+      if (!object(body) || !("expectedRevision" in body) || ("acknowledgeDrop" in body && typeof body.acknowledgeDrop !== "boolean")) return { status: 400, body: { error: "Send the saved list's revision." } };
+      await save(id, body.expectedRevision, body.acknowledgeDrop === true);
     }
     return { status: 200, body: await status() };
   }
+  /** The weekly Supplier list check (loop rei-supplier-check): the same refresh up to its preview, never saved
+   * without the person. Sign-in and every per-run ask wait for the person (`note` tells Schedule); an unchanged
+   * list ends quietly; a change, a big drop or a count mismatch waits in Maintenance checks for Approve or Dismiss. */
+  async function checkSuppliers(note: (detail: string) => void): Promise<SupplierCheckResult> {
+    let run: Run;
+    try { run = start("suppliers", "schedule"); }
+    catch (error) { return { ok: false, status: "failed", detail: `${message(error)} The supplier check did not start.` }; }
+    let said = "";
+    while (working) {
+      const ask = run.ask?.tool === "browser_download" ? "the download of REI's supplier list" : run.ask?.tool === "browser_select" ? "Export Only on REI's report" : "a step in REI";
+      const detail = run.signIn ? `Waiting for you to sign in to REI Cloud. Continue in ${WHERE}.`
+        : run.ask ? `Waiting for you to allow ${ask}. Answer in ${WHERE}.` : "Reading REI's supplier list. Nothing in REI changes.";
+      if (detail !== said) { said = detail; note(detail); }
+      await Promise.race([working, new Promise(resolve => setTimeout(resolve, deps.pollMs ?? 250))]);
+    }
+    const preview = run.preview;
+    if (run.phase !== "preview" || !preview) return { ok: false, status: "failed", detail: run.message ?? "The supplier check could not finish. Nothing was saved." };
+    if (preview.countMatches === false) return { ok: true, status: "awaiting-approval", detail: `${run.message} Dismiss it in ${WHERE}.` };
+    if (preview.unchanged) {
+      await save(run.id, preview.baseRevision);
+      return { ok: true, status: "completed", quiet: true, detail: "REI's supplier list has not changed." };
+    }
+    if (preview.changes?.bigDrop) return { ok: true, status: "awaiting-approval", detail: `${SUPPLIER_BIG_DROP} Review it in ${WHERE}.` };
+    const emails = preview.changes?.emails.length ?? 0;
+    const parts = [preview.added && `${preview.added} added`, preview.removed && `${preview.removed} removed`, emails && `${emails} email${emails === 1 ? "" : "s"} changed`].filter(Boolean);
+    return { ok: true, status: "awaiting-approval", detail: `Supplier list changed in REI: ${parts.length ? parts.join(", ") : "supplier details changed"} — review in ${WHERE}.` };
+  }
   /** Settles when the run in flight ends (tests). */
   const settled = async () => { await working; };
-  return { handle, status, settled };
+  return { handle, status, settled, checkSuppliers };
 }
 export type ReiDirectorySync = ReturnType<typeof createReiDirectorySync>;

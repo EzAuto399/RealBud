@@ -104,7 +104,7 @@ describe("LoopManager catalog", () => {
   it("declares built mail routines and keeps the unqualified bank routine paused", () => {
     const { manager } = makeManager();
     const loops = manager.listLoops();
-    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review"]);
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review", "rei-supplier-check"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
     expect(loops[1]).toMatchObject({ available: true, enabled: true });
     expect(loops[2]).toMatchObject({ available: true, enabled: false });
@@ -146,7 +146,7 @@ describe("LoopManager catalog", () => {
     writeFileSync(file, "not json {{{");
     const manager = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const loops = manager.listLoops();
-    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review"]);
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review", "rei-supplier-check"]);
     expect(loops.find((loop) => loop.id === "morning-arrears")?.enabled).toBe(true);
     expect(loops.every((loop) => loop.nextRunAt === null)).toBe(true);
     expect(manager.recovery.active).toBe(true);
@@ -367,6 +367,34 @@ describe("LoopManager runs", () => {
     expect(manager.listRuns().filter((row) => row.loopId === "morning-arrears")).toHaveLength(1);
   });
 
+  it("Supplier list check: off until enabled, Monday 08:15, says what it waits for, then awaits approval or ends quietly", async () => {
+    let finish!: (result: { ok: boolean; status: "awaiting-approval" | "completed"; detail: string; quiet?: boolean }) => void;
+    const manager = track(new LoopManager({ file: tempFile(), runDeadlineMs: 20, execute: (loop, run) => {
+      if (loop.id !== "rei-supplier-check") return Promise.resolve({ ok: true, detail: "" });
+      manager.noteRun(run.id, "Waiting for you to sign in to REI Cloud.");
+      return new Promise((resolve) => { finish = resolve; });
+    } }));
+    const check = manager.listLoops().find((loop) => loop.id === "rei-supplier-check")!;
+    expect(check).toMatchObject({ available: true, enabled: false, nextRunAt: null, name: "Supplier list check", schedule: { time: "08:15", weekdays: [1] } });
+    expect(check.description).toMatch(/added or removed suppliers .* for you to approve/);
+    const run = manager.runNow("rei-supplier-check")!;
+    // The wait outlasts the run deadline and still says what it waits for; other loops carry on.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(manager.listRuns().find((row) => row.id === run.id)).toMatchObject({ status: "running", detail: "Waiting for you to sign in to REI Cloud." });
+    const other = manager.runNow("owner-letter")!;
+    await manager.tick();
+    expect(manager.listRuns().find((row) => row.id === other.id)?.status).toBe("completed");
+    finish({ ok: true, status: "awaiting-approval", detail: "Supplier list changed in REI: 1 added — review." });
+    await vi.waitFor(() => expect(manager.listRuns().find((row) => row.id === run.id)).toMatchObject({ status: "awaiting-approval", detail: "Supplier list changed in REI: 1 added — review." }));
+    expect(manager.listRuns().find((row) => row.id === run.id)?.seenAt).toBeUndefined();
+    const quiet = manager.runNow("rei-supplier-check")!;
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    finish({ ok: true, status: "completed", quiet: true, detail: "REI's supplier list has not changed." });
+    await vi.waitFor(() => expect(manager.listRuns().find((row) => row.id === quiet.id)).toMatchObject({ status: "completed", seenAt: expect.any(Number) }));
+    expect(manager.patchClock("rei-supplier-check", { enabled: true }).nextRunAt).not.toBeNull();
+  });
+
   it("pauses the clock when the agency timezone does not match the host", () => {
     const { manager } = makeManager();
     const paused = track(new LoopManager({
@@ -577,6 +605,7 @@ describe("LoopManager recipe loops", () => {
       "bank-references",
       "weekly-bills",
       "maintenance-review",
+      "rei-supplier-check",
       "recipe-job-1",
     ]);
     const job = loops.find((loop) => loop.id === "recipe-job-1")!;
@@ -664,6 +693,7 @@ describe("LoopManager recipe loops", () => {
       "bank-references",
       "weekly-bills",
       "maintenance-review",
+      "rei-supplier-check",
     ]);
     expect(manager.listRuns().some((row) => row.id === run.id)).toBe(true);
     expect(manager.runNow("recipe-job-1")).toBeNull();

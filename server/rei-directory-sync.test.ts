@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createReiDirectorySync } from "./rei-directory-sync.ts";
+import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
 import { createW1Lab } from "./testing/w1-lab.ts";
@@ -135,5 +135,81 @@ describe("refresh from REI (fictional portal)", () => {
     expect(now.run!.message).toMatch(/asks for more than reading \(keys\)/);
     expect((await typing.lab.handle({ action: "status" }) as { effects: string[] }).effects).toEqual([]);
     await expect(typing.call("/api/rei-directory/runs", { kind: "owners" })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("supplier list changes", () => {
+  const s = (reference: string, ...emails: string[]) => ({ reference, description: `Fictional ${reference}`, emails });
+  const saved = [s("FS-A", "a@fictional.test"), s("FS-B", "b@fictional.test", "b2@fictional.test"), s("FS-C"), s("FS-D", "d@fictional.test")];
+  it("lists added and removed suppliers and email changes; email order alone is not a change", () => {
+    expect(supplierChanges(saved, [s("FS-A", "a@fictional.test"), s("FS-B", "b2@fictional.test", "b@fictional.test"), s("FS-C", "c@fictional.test"), s("FS-D", "d@fictional.test"), s("FS-E", "e@fictional.test")])).toEqual({
+      added: [s("FS-E", "e@fictional.test")], removed: [],
+      emails: [{ reference: "FS-C", description: "Fictional FS-C", before: [], after: ["c@fictional.test"] }], bigDrop: false });
+    expect(supplierChanges(saved, saved.slice(0, 3))).toMatchObject({ added: [], removed: [s("FS-D", "d@fictional.test")], emails: [], bigDrop: false });
+    expect(supplierChanges(saved, saved)).toEqual({ added: [], removed: [], emails: [], bigDrop: false });
+  });
+  it("holds a big drop: more than 30% of saved suppliers removed; a first import is never one", () => {
+    expect(supplierChanges(saved, saved.slice(0, 2)).bigDrop).toBe(true);
+    expect(supplierChanges([], saved).bigDrop).toBe(false);
+  });
+});
+
+describe("weekly Supplier list check (fictional portal)", () => {
+  it("waits for sign-in and the download ask, ends quietly when unchanged, and holds a change for approval", async () => {
+    const f = await fixture(), notes: string[] = [];
+    await f.lab.handle({ action: "handover" });
+    const first = f.sync.checkSuppliers(detail => notes.push(detail));
+    let now = await f.settle();
+    expect(now.run).toMatchObject({ origin: "schedule", signIn: expect.stringMatching(/^rei-dir-/) });
+    await f.lab.handle({ action: "sign-in" });
+    await f.answer(true);
+    // First check against an empty directory: every supplier is new, nothing saved until Approve.
+    expect(await first).toEqual({ ok: true, status: "awaiting-approval", detail: "Supplier list changed in REI: 5 added — review in Bills and calendar → Maintenance checks." });
+    expect(notes).toEqual(expect.arrayContaining([expect.stringMatching(/^Waiting for you to sign in to REI Cloud/), expect.stringMatching(/^Waiting for you to allow the download of REI's supplier list/)]));
+    expect((await f.suppliers.read()).revision).toBe(0);
+    await f.save(0);
+    // Unchanged in REI: quiet, and no new revision.
+    const unchanged = f.sync.checkSuppliers(() => {});
+    await f.answer(true);
+    expect(await unchanged).toEqual({ ok: true, status: "completed", quiet: true, detail: "REI's supplier list has not changed." });
+    expect((await f.sync.status()).run).toMatchObject({ phase: "saved", saved: { revision: 1, changed: false } });
+    // REI adds FS-PAINT, removes FS-ROOF and changes FS-ELEC's address: shown, applied only on Approve.
+    await f.lab.handle({ action: "change-suppliers" });
+    const changed = f.sync.checkSuppliers(() => {});
+    await f.answer(true);
+    expect((await changed).detail).toBe("Supplier list changed in REI: 1 added, 1 removed, 1 email changed — review in Bills and calendar → Maintenance checks.");
+    now = await f.sync.status();
+    expect(now.run!.preview!.changes).toMatchObject({ added: [{ reference: "FS-PAINT" }], removed: [{ reference: "FS-ROOF" }], bigDrop: false,
+      emails: [{ reference: "FS-ELEC", before: ["jobs@fictional-electrical.test", "invoices@fictional-electrical.test"], after: ["jobs@fictional-electrical.test", "billing@fictional-electrical.test"] }] });
+    expect(matchSender(await f.suppliers.read(), "roof@fictional-roofing.test")).toEqual({ kind: "listed", supplierRef: "FS-ROOF" });
+    await f.save(1);
+    const directory = await f.suppliers.read();
+    expect(matchSender(directory, "roof@fictional-roofing.test")).toEqual({ kind: "unlisted" });
+    expect(matchSender(directory, "paint@fictional-painting.test")).toEqual({ kind: "listed", supplierRef: "FS-PAINT" });
+  });
+
+  it("holds a big drop with a warning until the person confirms it", async () => {
+    const f = await fixture();
+    await f.lab.handle({ action: "sign-in" });
+    await f.start("suppliers"); await f.answer(true); await f.save(0);
+    await f.lab.handle({ action: "drop-suppliers" });
+    const check = f.sync.checkSuppliers(() => {});
+    await f.answer(true);
+    expect(await check).toMatchObject({ status: "awaiting-approval", detail: `${SUPPLIER_BIG_DROP} Review it in Bills and calendar → Maintenance checks.` });
+    await expect(f.save(1)).rejects.toThrow(/far fewer suppliers/);
+    const id = (await f.sync.status()).run!.id;
+    await f.call(`/api/rei-directory/runs/${id}/save`, { expectedRevision: 1, acknowledgeDrop: true });
+    expect((await f.suppliers.read()).suppliers.map(s => s.reference)).toEqual(["FS-PLUMB", "FS-ELEC"]);
+  });
+
+  it("a refused download or a refresh already running ends the check without saving", async () => {
+    const f = await fixture();
+    await f.lab.handle({ action: "sign-in" });
+    const refused = f.sync.checkSuppliers(() => {});
+    await f.answer(false);
+    expect(await refused).toMatchObject({ ok: false, status: "failed", detail: expect.stringMatching(/didn't allow that step in REI/) });
+    await f.call("/api/rei-directory/runs", { kind: "tenants" });
+    expect(await f.sync.checkSuppliers(() => {})).toMatchObject({ ok: false, status: "failed", detail: expect.stringMatching(/already running/) });
+    expect((await f.suppliers.read()).revision).toBe(0);
   });
 });

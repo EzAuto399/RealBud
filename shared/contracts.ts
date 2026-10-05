@@ -60,7 +60,7 @@ export type WorkState =
   | "effect-unknown"
   | "handoff-expired";
 
-export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage" | "weekly-bills" | "bank-references" | "maintenance-review" | `recipe-${string}`;
+export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage" | "weekly-bills" | "bank-references" | "maintenance-review" | "rei-supplier-check" | `recipe-${string}`;
 
 export type LoopSchedule = { type: "daily"; time: string; weekdays: number[]; timezone?: string; intervalDays?: number; anchorDate?: string };
 

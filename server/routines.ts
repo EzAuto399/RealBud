@@ -1,6 +1,8 @@
 // Named product loops on the RealBud clock. The injected executor resolves
 // a code-owned evaluator and writes proposals through Desk. A loop never
-// launches Cua, waits for approval, or performs a background handoff.
+// launches Cua or approves anything itself. The Supplier list check is the one
+// loop that reads a portal: through the work browser's read-only grant, waiting
+// for the person at sign-in and at every per-run ask (server/rei-directory-sync.ts).
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -81,6 +83,8 @@ export function coverageFromUncoveredHeld(
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
+/** Off until an office turns them on, and runnable from Schedule while off. */
+const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check'];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
 /** Ceiling on one run. Generous next to the worker's own 20s timeout — this
@@ -172,6 +176,13 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     description: 'Compares reviewed maintenance bills with your supplier list. Flags unknown email addresses and several invoices for one property in a month. Review them in Bills.',
     schedule: { type: 'daily', time: '08:30', weekdays: WEEKDAYS },
     evaluatorId: 'maintenance-review', evaluatorVersion: 1,
+  },
+  {
+    // Off until an office enables it. Reads REI in the work browser up to a preview; saving needs the person.
+    id: 'rei-supplier-check', name: 'Supplier list check', available: true,
+    description: "Checks REI's supplier list for added or removed suppliers and shows changes for you to approve.",
+    schedule: { type: 'daily', time: '08:15', weekdays: [1] },
+    evaluatorId: 'rei-supplier-check', evaluatorVersion: 1,
   },
 ];
 
@@ -308,7 +319,7 @@ export class LoopManager {
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
       // First-run inbox access must be deliberately enabled after scope review.
-      const enabled = loop.available && (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
+      const enabled = loop.available && (OPT_IN_LOOPS.includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -521,7 +532,7 @@ export class LoopManager {
     if (request && loop && request.expectedRevision !== loop.revision) {
       throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
     }
-    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(id))) return null;
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !OPT_IN_LOOPS.includes(id))) return null;
     if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     let run!: LoopRun;
     this.commit(() => {
@@ -548,6 +559,14 @@ export class LoopManager {
       this.emitRun(run);
     }
     return { ...run };
+  }
+
+  /** A running run that waits for the person says so in Schedule (the supplier check's sign-in or download ask). */
+  noteRun(id: string, detail: string): void {
+    const run = this.runs.find((item) => item.id === id);
+    if (this.recovery.active || !run || run.status !== "running" || run.detail === detail) return;
+    this.commit(() => { run.detail = redactSecretsInText(detail).slice(0, 500); });
+    this.emitRun(run);
   }
 
   get busy() { return this.ticking || this.executing.size > 0; }
@@ -622,7 +641,7 @@ export class LoopManager {
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(OPT_IN_LOOPS.includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
           this.commit(() => {
             run.status = "interrupted";
             run.finishedAt = this.now();
@@ -668,7 +687,8 @@ export class LoopManager {
       // The deadline does not cancel the executor. Keep the receipt and lock
       // running while other loops proceed; the eventual result settles this ID.
       void outcome.then((late) => this.finishRun(run.id, loop.id, late)).catch(() => this.hold(WRITE_RECOVERY));
-      this.commit(() => {
+      // A run that already says what it waits for (noteRun) keeps saying it.
+      if (!run.detail) this.commit(() => {
         run.detail = "This run is taking longer than expected. Its outcome is still unconfirmed; RealBud is waiting for the original work and will not start a second run.";
       });
       this.emitRun(run);

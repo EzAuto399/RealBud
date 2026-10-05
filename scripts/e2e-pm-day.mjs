@@ -91,7 +91,7 @@ try {
 
   const catalog = (await api("GET", "/api/loops")).body;
   const ids = (catalog?.loops ?? []).map((l) => l.id);
-  check("six named routines", ids.join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review");
+  check("seven named routines", ids.join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review,rei-supplier-check");
   const morning = catalog.loops.find((l) => l.id === "morning-arrears");
   const letter = catalog.loops.find((l) => l.id === "owner-letter");
   const inbound = catalog.loops.find((l) => l.id === "inbound-triage");

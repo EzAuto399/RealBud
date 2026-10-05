@@ -17,7 +17,7 @@ import { createRedbarkClient, REDBARK_API_BASE, type RedbarkClientOptions } from
 import { BrowserRuntime } from "../browser-runtime.ts";
 import { openForSignIn, siteFromMap, type SignInSite } from "../browser-sign-in.ts";
 import type { W1HostDeps } from "../w1-host.ts";
-import { FICTIONAL_REI_ORIGIN, FICTIONAL_REI_SIGNIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./fictional-rei-portal.ts";
+import { FICTIONAL_REI_ORIGIN, FICTIONAL_REI_SIGNIN, FICTIONAL_SUPPLIER_LIST, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./fictional-rei-portal.ts";
 
 /** Redbark REST calls go to the loopback fake instead of api.redbark.com. */
 export function labRedbarkFetch(base: string, real: RedbarkClientOptions["fetch"] = globalThis.fetch): RedbarkClientOptions["fetch"] {
@@ -70,7 +70,13 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       else if (action === "lost-reply") options.unknownUpload = "before";
       // The portal accepted the file (it stays pending in Bulk receipting) but the reply is lost.
       else if (action === "lost-reply-after") options.unknownUpload = "after";
-      else if (action === "clear") { delete options.previewEdit; delete options.directoryRows; }
+      else if (action === "clear") { delete options.previewEdit; delete options.directoryRows; delete options.suppliers; }
+      // REI's Suppliers list changes: FS-PAINT is added, FS-ROOF removed, and FS-ELEC's invoices address changes.
+      else if (action === "change-suppliers") options.suppliers = [...FICTIONAL_SUPPLIER_LIST.filter(row => row.cells[0] !== "FS-ROOF").map(row => row.cells[0] !== "FS-ELEC" ? row
+        : { ...row, cells: row.cells.map(cell => cell.replace("invoices@fictional-electrical.test", "billing@fictional-electrical.test")) }),
+        { status: "Active", cells: ["FS-PAINT", "Fictional Painting", "07 0000 0006", "", "", "", "paint@fictional-painting.test", "6 Fictional St, Brisbane", "Painter"] }];
+      // REI's Suppliers list loses most of its rows (a big drop to hold for the person).
+      else if (action === "drop-suppliers") options.suppliers = FICTIONAL_SUPPLIER_LIST.slice(0, 2);
       // REI's tenant and supplier list exports carry names other than the pack's placeholders (a path Bud learns in Ask).
       else if (action === "rename-reports") options.reports = { tenants: FICTIONAL_LEARNED_REPORTS.tenants, suppliers: FICTIONAL_LEARNED_REPORTS.suppliers };
       // The next tenant or supplier list export drops its first row (it disagrees with REI's own record count).

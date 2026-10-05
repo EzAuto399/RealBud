@@ -7,7 +7,7 @@ import type { LoopRun } from '../shared/contracts.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import type { Message, OptionCardData, Store } from './store.ts';
 
-const LOOPS = ['weekly-bills', 'inbound-triage', 'maintenance-review'];
+const LOOPS = ['weekly-bills', 'inbound-triage', 'maintenance-review', 'rei-supplier-check'];
 const SETTLED = ['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'];
 const HOLDS = ['failed', 'missed', 'interrupted'];
 const KEEP = 200;

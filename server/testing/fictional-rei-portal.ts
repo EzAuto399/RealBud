@@ -240,6 +240,8 @@ export interface FictionalReiOptions {
   directoryRows?: (rows: string[][]) => string[][];
   /** Report names for the tenant and supplier list exports instead of the pack's placeholders (rehearses a path learned in the portal). */
   reports?: { tenants?: string; suppliers?: string };
+  /** The Suppliers grid and export instead of FICTIONAL_SUPPLIER_LIST (rehearses REI's list changing between checks). */
+  suppliers?: Array<{ status: string; cells: string[] }>;
   /** Receipts already in REI before this run; defaults to FICTIONAL_HISTORY. */
   receipts?: FictionalReceipt[];
 }
@@ -308,7 +310,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       return { cols: [...cols], rows: rows.filter(row => (!status || status === "All" || row.status === status) && (!query || names.some(i => row.cells[i].toLowerCase().includes(query)))).map(row => row.cells) };
     };
     if (path === "/customers/tenant") return list(FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, [0, 1, 2]);
-    if (path === "/customers/supplier") return list(FICTIONAL_SUPPLIER_COLUMNS, FICTIONAL_SUPPLIER_LIST, [0, 1]);
+    if (path === "/customers/supplier") return list(FICTIONAL_SUPPLIER_COLUMNS, options.suppliers ?? FICTIONAL_SUPPLIER_LIST, [0, 1]);
     if (path === "/customers/owner") return filter("owners", () => true);
     if (path === "/customers/property") return filter("rentals", () => true);
     if (path === "/customers/task") return filter("tasks", row => (!field("From") || row[2] >= field("From")) && (!field("To") || row[2] <= field("To")));
@@ -471,7 +473,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       control(args);
       // A directory export: the list's Active rows (what its grid shows by default), every column.
       const directory = report === tenantReport() ? { cols: FICTIONAL_TENANT_COLUMNS, rows: FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
-        : report === supplierReport() ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
+        : report === supplierReport() ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: options.suppliers ?? FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
       if (directory) {
         const rows = (options.directoryRows ?? (rows => rows))(directory.rows.filter(row => row.status === "Active").map(row => [...row.cells]));
         await writeFile(args[args.indexOf("--out") + 1], [directory.cols, ...rows].map(csvLine).join("\r\n") + "\r\n");

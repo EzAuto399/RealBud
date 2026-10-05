@@ -428,6 +428,7 @@ describe("harness HTTP API", () => {
       "bank-references",
       "weekly-bills",
       "maintenance-review",
+      "rei-supplier-check",
     ]);
     const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");
     expect(morning).toMatchObject({ available: true, enabled: true });
