@@ -58,6 +58,7 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   const lab = {
     provider,
     runtime,
+    signInTab,
     load: async () => fictionalReiPack(),
     browserId: async () => "work",
     openForSignIn: undefined as W1HostDeps["openForSignIn"],
