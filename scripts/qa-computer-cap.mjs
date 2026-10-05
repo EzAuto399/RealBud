@@ -39,7 +39,7 @@ const quote = value => `'${String(value).replaceAll("'", "''")}'`;
 const serviceKey = randomBytes(32).toString('hex'), authSecret = randomBytes(32).toString('hex'), platformKey = randomBytes(16).toString('hex');
 const office = 'fixture-office-a', owner = 'owner-a@example.test', customer = 'customer-fixture-office-a';
 const listable = new Set(['id', 'label', 'platform', 'app_version', 'worker_version', 'worker_ready', 'linked_at', 'last_seen_at', 'revoked_at', 'provisioning_attempted_at', 'provisioned_at', 'revocation_pending_at', 'apps', 'model_key_id', 'reported_model_key_id', 'model_key_rejected_at']);
-const rpcArgs = { realbud_issue_pairing: ['p_company', 'p_actor', 'p_code_hash'], realbud_revoke_installation: ['p_company', 'p_actor', 'p_id'], realbud_clear_revocation_pending: ['p_company', 'p_actor', 'p_id'], realbud_account_commands: ['p_company', 'p_actor', 'p_cursor'] };
+const rpcArgs = { realbud_issue_pairing: ['p_company', 'p_actor', 'p_code_hash'], realbud_revoke_installation: ['p_company', 'p_actor', 'p_id'], realbud_clear_revocation_pending: ['p_company', 'p_actor', 'p_id'], realbud_account_commands: ['p_company', 'p_actor', 'p_cursor'], realbud_take_rate_limit: ['p_scope', 'p_key', 'p_per_minute'] };
 const children = [], checks = [], violations = [], modelviaCalls = [], tableReads = [];
 let browser, bridge, logs = '', started = false;
 const sql = async text => (await run('psql', ['-h', temp, '-d', 'postgres', '-XAt', '-v', 'ON_ERROR_STOP=1', '-c', text])).stdout.trim();
@@ -85,8 +85,9 @@ try {
   await run('pg_ctl', ['-D', join(temp, 'data'), '-l', join(temp, 'log'), '-o', `-k ${temp} -c listen_addresses=''`, '-w', 'start']); started = true;
   // Supabase provides these roles and the storage schema the baseline writes to.
   await sql(`create role anon; create role authenticated; create role service_role bypassrls; create schema storage; create table storage.buckets(id text primary key, name text not null, public boolean not null, file_size_limit bigint);`);
-  const migrations = readdirSync(join(source, 'supabase/migrations')).filter(f => f.endsWith('.sql')).sort();
-  for (const file of migrations) await run('psql', ['-h', temp, '-d', 'postgres', '-XAtq', '-v', 'ON_ERROR_STOP=1', '-f', join(source, 'supabase/migrations', file)]);
+  // The migrations and session code come from the same website tree that was built.
+  const migrations = readdirSync(join(website, 'supabase/migrations')).filter(f => f.endsWith('.sql')).sort();
+  for (const file of migrations) await run('psql', ['-h', temp, '-d', 'postgres', '-XAtq', '-v', 'ON_ERROR_STOP=1', '-f', join(website, 'supabase/migrations', file)]);
   await sql(`insert into billing_accounts(clerk_user_id,company_id,email,agency_label,role,disabled_at,created_at) values (${quote(owner)},${quote(office)},${quote(owner)},'Fixture Office A','billing_owner',null,0)`);
 
   // 2. PostgREST transport only; authority stays in SQL. Plus the Modelvia FIXTURE.
@@ -151,7 +152,7 @@ try {
   children.push(child); child.stdout.on('data', b => { logs += b; }); child.stderr.on('data', b => { logs += b; });
   await ready(site + '/');
   process.env.REALBUD_AUTH_SECRET = authSecret;
-  const { mintSession } = await import(join(source, 'lib/session.ts'));
+  const { mintSession } = await import(join(website, 'lib/session.ts'));
   const cookie = await mintSession(owner);
   const headers = { origin: site, 'content-type': 'application/json', cookie: `rb_session=${cookie}` };
 
