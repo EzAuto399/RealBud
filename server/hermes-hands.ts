@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
 import { trackSandboxedChild } from "./worker-network-sandbox.ts";
-import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
+import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 
@@ -111,7 +111,7 @@ async function scopedHermesPing(opts?: {
   }
 
   workerFingerprint = hermesReadinessFingerprint(version, opts?.root);
-  return new Promise((resolve) => {
+  return withAskModelRelayLease(() => new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(done(false, serviceFailure));
@@ -163,7 +163,7 @@ async function scopedHermesPing(opts?: {
         resolve(done(true, "Bud answered OK — Recheck can ask for the morning ledger."));
       },
     ));
-  });
+  }));
 }
 
 export function uncoveredPropertyIds(requested: string[], rows: LedgerFacts[]): string[] {
@@ -271,7 +271,7 @@ async function scopedHermesLedger(
     `The last line of your reply must be the JSON array (at minimum []), with no text after it.\n` +
     `Do not send, pay, or draft a statutory notice.`;
 
-  return new Promise((resolve) => {
+  return withAskModelRelayLease(() => new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
@@ -315,7 +315,7 @@ async function scopedHermesLedger(
         resolve({ rows, detail: `Bud answered with ${rows.length} ledger rows.` });
       },
     ));
-  });
+  }));
 }
 
 const activePings = new Set<string>();

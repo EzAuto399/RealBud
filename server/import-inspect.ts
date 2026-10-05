@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
 import { trackSandboxedChild } from "./worker-network-sandbox.ts";
-import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
+import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { writeBookFile } from "./vault.ts";
@@ -147,7 +147,7 @@ export async function inspectLedgerColumns(
     `Use the file's literal header names. If a role has no column, omit the key. If the file is unreadable, mapping is null.\n` +
     `Return JSON ONLY as the last line: { "mapping": { "identity": "<header>", "daysSinceDue": "<header>", "rentLanded": "<header>", "levyPaid": "<header>" }, "confidence": "high|low" }`;
 
-  return new Promise((resolve) => {
+  return withAskModelRelayLease(() => new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
@@ -203,5 +203,5 @@ export async function inspectLedgerColumns(
         resolve({ mapping, detail: "Bud read the columns." });
       },
     ));
-  });
+  }));
 }
