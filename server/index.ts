@@ -834,9 +834,9 @@ const askTaskStartedAt = new Map<string, number>();
 const askTaskDone = new Map<string, string[]>();
 /** Running portal recipe tasks (server/portal-recipe-task.ts): ending the task stops its runner. */
 const recipeTaskStops = new Map<string, AbortController>();
-
 /** Ask tasks waiting at Start for the person to sign in (server/ask-task-sign-in.ts): ending the task stops the wait. */
 const askSignInWaits = new Map<string, AbortController>();
+
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
   const earlier = askTaskTimers.get(grant.id);
@@ -860,8 +860,8 @@ function reportBrowserTaskFailure(): void {
 async function endAskBrowserTask(threadId: string, grantId: string, status: BrowserTaskEnd, note?: string) {
   if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
   recipeTaskStops.get(grantId)?.abort(); recipeTaskStops.delete(grantId); releasePortalRecipeGrant(grantId);
-  const timer = askTaskTimers.get(grantId);
   askSignInWaits.get(grantId)?.abort(); askSignInWaits.delete(grantId);
+  const timer = askTaskTimers.get(grantId);
   if (timer) clearTimeout(timer);
   askTaskTimers.delete(grantId);
   askTaskStartedAt.delete(grantId);
@@ -877,7 +877,6 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
   return ended;
 }
 
-/** A started portal recipe task: RealBud's runner (no model turn) with the task's
 /** Start's sign-in wait ended (server/ask-task-sign-in.ts). Signed in: Bud's first turn starts with the
  * task's grant, unless the task ended meanwhile. Anything else ends the task; nothing was done on the site. */
 async function afterAskTaskSignIn(threadId: string, botId: string, grant: BrowserTaskGrant, site: string, outcome: SignInOutcome | null): Promise<void> {
@@ -898,6 +897,7 @@ async function afterAskTaskSignIn(threadId: string, botId: string, grant: Browse
   }
 }
 
+/** A started portal recipe task: RealBud's runner (no model turn) with the task's
  * saved grant. Anything the recipe cannot answer for is shown as the ordinary
  * approval card and answered through /api/threads/:id/respond. The task ends
  * with the run; Stop, time and the step limit end the run (endAskBrowserTask). */
@@ -4234,6 +4234,15 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
           runAskRecipeTask(threadId, bud.id, started);
           return json(res, 202, { task: browserTaskCardView(started) });
         }
+        // A mapped portal (REI): open its site and wait on that tab's address until the person has signed in;
+        // Bud's turn starts only then (afterAskTaskSignIn), so nobody picks a page. Start answers once the tab is open.
+        const wait = new AbortController();
+        const signIn = await askTaskSignIn({ threadId, sites: grant.sites, runtime: askSignInRuntime(runtime), load: askPortalPackLoader(), signal: wait.signal }).catch(() => null);
+        if (signIn) {
+          askSignInWaits.set(grant.id, wait);
+          void signIn.outcome.catch(() => null).then(outcome => afterAskTaskSignIn(threadId, bud.id, grant, signIn.site.name, outcome));
+          return json(res, 202, { task: browserTaskCardView(started) });
+        }
         // Open the job's site before the model's first turn, so the person sees it (or its sign-in page)
         // at once. Within the grant only; no page access. Best effort, bounded: a missing tab is Bud's to report.
         const site = jobBrowserUrl(`${new URL(grant.sites[0]!.includes("://") ? grant.sites[0]! : `https://${grant.sites[0]}`).origin}/`, grant.sites);
@@ -4247,15 +4256,6 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         }
         return json(res, 202, { task: browserTaskCardView(started) });
       } catch (error) {
-        // A mapped portal (REI): open its site and wait on that tab's address until the person has signed in;
-        // Bud's turn starts only then (afterAskTaskSignIn), so nobody picks a page. Start answers once the tab is open.
-        const wait = new AbortController();
-        const signIn = await askTaskSignIn({ threadId, sites: grant.sites, runtime: askSignInRuntime(runtime), load: askPortalPackLoader(), signal: wait.signal }).catch(() => null);
-        if (signIn) {
-          askSignInWaits.set(grant.id, wait);
-          void signIn.outcome.catch(() => null).then(outcome => afterAskTaskSignIn(threadId, bud.id, grant, signIn.site.name, outcome));
-          return json(res, 202, { task: browserTaskCardView(started) });
-        }
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }
