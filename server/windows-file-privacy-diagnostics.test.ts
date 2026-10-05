@@ -23,6 +23,8 @@ function launched(call = 0) {
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
   vi.stubEnv('SystemRoot', 'C:\\Windows');
+  // These cases pin the one-shot launch contract; the admission host has its own.
+  vi.stubEnv('REALBUD_WINDOWS_PRIVACY_HOST', '0');
   subprocess.run.mockReset();
   result();
 });

@@ -66,7 +66,9 @@ async function race(dir: string, operations: { method: string; args: unknown[] }
 describe('permanent source-bill heads', () => {
   it('retains the 501st bill and 101st pattern with truthful complete compatibility and stable pages', () => {
     const { store, db, dir } = fixture(); const accepted: SourceBillOccurrence[] = [];
-    for (let n = 0; n < 501; n++) { const row = store.accept(review(source(n), n), source(n), 'reviewer'); accepted.push(row); if (n < 101) approve(store, row); }
+    // One commit for the setup: each accept still runs in full, but a hosted
+    // Windows runner pays ~0.1 s of durable-commit flushing per transaction.
+    db.transaction(() => { for (let n = 0; n < 501; n++) { const row = store.accept(review(source(n), n), source(n), 'reviewer'); accepted.push(row); if (n < 101) approve(store, row); } });
     expect(store.counts()).toMatchObject({ occurrences: 501, series: 101, activeSeries: 101 });
     expect(store.snapshot(range).occurrences).toHaveLength(501); expect(store.expectedRows()).toHaveLength(501);
     expect(allPages(cursor => store.occurrencePage({ cursor, limit: 17 }))).toHaveLength(501);
