@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateTempRoot } from "./testing/private-fixture.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BrowserApprovalStore, type BrowserApprovalDraft } from "./browser-authority.ts";
@@ -21,7 +22,7 @@ const draft = (effect = "a"): BrowserApprovalDraft => ({
 });
 const owner = { grantId: "grant-fictional", runId: "run-fictional", threadId: "thread-fictional" };
 async function storeWith(outcome: "unverified" | "not-dispatched" | "dispatching") {
-  const store = new BrowserApprovalStore({ file: join(mkdtempSync(join(tmpdir(), "realbud-held-")), "browser-approvals.json") });
+  const store = new BrowserApprovalStore({ file: join(privateTempRoot(join(tmpdir(), "realbud-held-")), "browser-approvals.json") });
   const row = await store.create(draft(), owner, "pending");
   await store.update(row.id, { decision: "approved", outcome, decidedAt: Date.now() });
   return { store, id: row.id };

@@ -16,7 +16,7 @@ import {
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
-import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -687,7 +687,7 @@ describe("browser approval records", () => {
     if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
     const row = { ...auth.draft, version: 1, purpose: "browser-approval", grantId: grant().id, runId: RUN, threadId: "thread-fictional", createdAt: 1, decidedAt: 1, decision: "approved", outcome: "unverified" };
     const rows = Array.from({ length: 500 }, (_, i) => ({ ...row, id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
-    writeFileSync(file, JSON.stringify({ version: 1, purpose: "browser-approvals", approvals: rows }), { mode: 0o600 });
+    plantPrivateFile(file, JSON.stringify({ version: 1, purpose: "browser-approvals", approvals: rows }));
     const store = new BrowserApprovalStore({ file });
     await expect(store.create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending")).rejects.toThrow(/waiting for you to check/);
     expect(await new BrowserApprovalStore({ file }).list()).toHaveLength(500);
