@@ -354,7 +354,9 @@ export interface InvoiceStanding { dueAt:number; paidCents:string; outstandingCe
 
 /** Operator-recorded payments and their reversals. Created on first use (like
  * `office_ai_consolidations`), append-only: nothing is updated or deleted. */
+const manualPaymentSchema=new WeakSet<object>();
 export function ensureManualPaymentTables(ledger:UsageLedger) {
+  if(manualPaymentSchema.has(ledger.db)) return;
   ledger.db.sql.exec(`CREATE TABLE IF NOT EXISTS manual_payments (id TEXT PRIMARY KEY, invoice TEXT NOT NULL REFERENCES invoices(id), body TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS manual_payments_invoice ON manual_payments(invoice);
     CREATE TABLE IF NOT EXISTS manual_payment_reversals (payment TEXT PRIMARY KEY REFERENCES manual_payments(id), body TEXT NOT NULL);
@@ -362,6 +364,8 @@ export function ensureManualPaymentTables(ledger:UsageLedger) {
     CREATE TRIGGER IF NOT EXISTS immutable_manual_payments_DELETE BEFORE DELETE ON manual_payments BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_manual_payment_reversals_UPDATE BEFORE UPDATE ON manual_payment_reversals BEGIN SELECT RAISE(ABORT,'immutable_record'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_manual_payment_reversals_DELETE BEFORE DELETE ON manual_payment_reversals BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
+  // Inside a transaction the DDL can still roll back, so only a committed schema is remembered.
+  if(!ledger.db.sql.isTransaction) manualPaymentSchema.add(ledger.db);
 }
 /** One invoice's recorded payments, oldest first, each with its reversal if any.
  * Callers run `ensureManualPaymentTables` first. */
@@ -385,11 +389,12 @@ export function effectiveDueAt(invoice:Invoice,termsDays:number):number {
 /** Paid, outstanding and status. Paid is the Square settlement (refunds are
  * shown separately and do not change it) plus unreversed recorded payments.
  * Overdue only for an unpaid or part-paid invoice after its due date. */
-export function invoiceStanding(ledger:UsageLedger,invoice:Invoice,now:number,termsDays:number):InvoiceStanding {
+export function invoiceStanding(ledger:UsageLedger,invoice:Invoice,now:number,termsDays:number,
+  payments?:{square:ReturnType<typeof squarePayment>;manual:ReturnType<typeof manualPayments>}):InvoiceStanding {
   ensureManualPaymentTables(ledger);
   const total=BigInt(invoice.totalCents);
-  const square=squarePayment(ledger,invoice.id);
-  const paid=(square?BigInt(square.payment.amountCents):0n)+manualPayments(ledger,invoice.id).filter(p=>!p.reversed).reduce((sum,p)=>sum+BigInt(p.amountCents),0n);
+  const square=payments?payments.square:squarePayment(ledger,invoice.id);
+  const paid=(square?BigInt(square.payment.amountCents):0n)+(payments?payments.manual:manualPayments(ledger,invoice.id)).filter(p=>!p.reversed).reduce((sum,p)=>sum+BigInt(p.amountCents),0n);
   const status:InvoiceStatus=total<0n?'credit':total===0n?'nothing_due':paid>total?'overpaid':paid===total?'paid':paid>0n?'part_paid':'unpaid';
   const dueAt=effectiveDueAt(invoice,termsDays);
   const overdue=(status==='unpaid' || status==='part_paid') && now>dueAt;

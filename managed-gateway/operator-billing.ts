@@ -66,12 +66,14 @@ const officeName=(customer:{name:string;tradingName?:string})=>customer.tradingN
 
 /** The operator's view of one invoice: its standing and every payment, Square and recorded. */
 export function operatorInvoice(billing:BillingService,invoice:Invoice,now=billing.ledger.now()):OperatorInvoice {
-  const ledger=billing.ledger, standing=invoiceStanding(ledger,invoice,now,billing.invoiceTermsDays);
+  const ledger=billing.ledger;
+  ensureManualPaymentTables(ledger);
+  const square=squarePayment(ledger,invoice.id), manual=manualPayments(ledger,invoice.id);
+  const standing=invoiceStanding(ledger,invoice,now,billing.invoiceTermsDays,{square,manual});
   const payments:OperatorPayment[]=[];
-  const square=squarePayment(ledger,invoice.id);
   if(square) payments.push({id:square.id,method:'square',amountCents:square.payment.amountCents,receivedOn:brisbaneDate(square.payment.settledAt),reference:square.payment.transactionId,note:null,
     recordedBy:null,recordedAt:square.payment.settledAt,reversed:null});
-  for(const p of manualPayments(ledger,invoice.id)) payments.push({id:p.id,method:p.method,amountCents:p.amountCents,receivedOn:p.receivedOn,reference:p.reference,note:p.note,
+  for(const p of manual) payments.push({id:p.id,method:p.method,amountCents:p.amountCents,receivedOn:p.receivedOn,reference:p.reference,note:p.note,
     recordedBy:p.recordedBy,recordedAt:p.recordedAt,reversed:p.reversed?{reason:p.reversed.reason,by:p.reversed.by,at:p.reversed.at}:null});
   return {id:invoice.id,companyId:invoice.companyId,officeName:officeName(invoice.customer),billingEmail:invoice.customer.billingEmail??null,period:invoice.period,kind:invoice.kind,
     issuedAt:invoice.issuedAt,dueAt:standing.dueAt,totalCents:invoice.totalCents,gstCents:invoice.gstCents,paidCents:standing.paidCents,outstandingCents:standing.outstandingCents,

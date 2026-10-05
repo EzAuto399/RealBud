@@ -99,6 +99,7 @@ export interface ConnectorOptions {
   /** Generic toolkit adapter; defaults to the real Composio project API. */
   apps?: ComposioAppAdapter;
 }
+const TOOL_CACHE_TTL_MS = 10 * 60_000, TOOL_CACHE_MAX = 256;
 export class ManagedConnectors {
   readonly officeMailbox: OfficeMailbox;
   private readonly sessions = new Map<string, Session>();
@@ -334,8 +335,13 @@ export class ManagedConnectors {
   }
   private async appTools(binding: AppBinding, app: string, signal: AbortSignal): Promise<AppTool[]> {
     const key = `${hash(binding.apiKey)}:${binding.authConfigId}:${app}`, cached = this.toolCache.get(key), now = this.options.ledger.now();
-    if (cached && now - cached.at < 10 * 60_000) return cached.tools;
+    if (cached && now - cached.at < TOOL_CACHE_TTL_MS) return cached.tools;
     const tools = (await this.apps.listTools(binding, app, signal)).filter(tool => tool.policy !== 'blocked');
+    // Expired listings (including rotated keys or auth configs) are released,
+    // and the oldest entry goes once the cache is full.
+    for (const [old, entry] of this.toolCache) if (now - entry.at >= TOOL_CACHE_TTL_MS) this.toolCache.delete(old);
+    this.toolCache.delete(key);
+    if (this.toolCache.size >= TOOL_CACHE_MAX) this.toolCache.delete(this.toolCache.keys().next().value!);
     this.toolCache.set(key, { at: now, tools });
     return tools;
   }
