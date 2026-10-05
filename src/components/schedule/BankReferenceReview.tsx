@@ -7,6 +7,7 @@ import type { BankDownloadArtifact, BankSourceArtifact, BankSourceUpload } from 
 import type { AgencySetupView } from "../../../shared/agency-setup";
 import { bankReviewVersion, type BankReviewAmendment as Amendment, type BankReviewSuccessor } from '../../../shared/bank-review';
 import { BankReviewAmendment } from './BankReviewAmendment';
+import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
 
 const request = <T,>(method: string, path: string, body?: unknown): Promise<T> => api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -68,6 +69,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
   const settingsDirty = useRef(false);
   const [dateFormat, setDateFormat] = useState("DD/MM/YYYY");
   const [directory, setDirectory] = useState("");
+  const [tenantList, setTenantList] = useState<{ filename: string; csv: string } | null>(null), tenantRead = useRef(0);
   const [page, setPage] = useState(0);
   const [saved, setSaved] = useState<Saved | null>(null);
   const [history, setHistory] = useState<BankHistoryPage | null>(null);
@@ -84,10 +86,10 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
   const mounted = useRef(true), historyGeneration = useRef(0), pending = useRef(false);
   const decisionDraft = Boolean(saved && !saved.value.result && hasUnsavedBankDecisions(decisions));
   const unsaved = decisionDraft || amending;
-  const preparation = { source, mapping, dateFormat, directory };
+  const preparation = { source, mapping, dateFormat, directory, tenantList };
   const savedPreparation = useRef<typeof preparation | null>(null);
   const samePreparation = savedPreparation.current && source === savedPreparation.current.source &&
-    dateFormat === savedPreparation.current.dateFormat && directory === savedPreparation.current.directory &&
+    dateFormat === savedPreparation.current.dateFormat && directory === savedPreparation.current.directory && tenantList === savedPreparation.current.tenantList &&
     (Object.keys(mapping) as Array<keyof typeof mapping>).every(key => mapping[key] === savedPreparation.current!.mapping[key]);
   const unfinished = useRef(false), reading = useRef(false);
   unfinished.current = unsaved || Boolean((source || settingsDirty.current) && !samePreparation);
@@ -199,10 +201,22 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
       {directoryNotice && <p role="status" className="text-sm text-ink-secondary">{directoryNotice}</p>}
       <label className="block text-sm">Property reference directory<textarea aria-label="Property reference directory" className={`block w-full mt-1 ${control}`} rows={4} value={directory} onChange={e => { settingsDirty.current = true; setDirectory(e.target.value); }} placeholder={"Property name | reference number | payer alias; another alias | REI tenant"} /></label>
       <p className="text-xs text-ink-muted">One property per line. Use the exact reference from your property records, and the tenant exactly as REI names it if you import into REI. Matches are suggestions for your review.</p>
-      <button className={control} disabled={busy || unsaved || readingFile || !source || !directory.trim()} onClick={() => void perform(async () => {
+      <label className="block text-sm">REI tenant list (optional) <input className={`block mt-1 ${control}`} type="file" accept=".csv,text/csv" disabled={busy || unsaved} onChange={e => {
+        const file = e.target.files?.[0], current = ++tenantRead.current;
+        settingsDirty.current = true; setTenantList(null); setError("");
+        if (!file) return;
+        void (async () => {
+          if (!file.size || file.size > 750_000) throw new Error("Choose a tenant list CSV smaller than 750 KB.");
+          try { return new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
+          catch { throw new Error("The tenant list is not a UTF-8 CSV. Export it again from REI's Tenants page."); }
+        })().then(csv => { if (mounted.current && current === tenantRead.current) setTenantList({ filename: file.name, csv }); })
+          .catch(cause => { if (mounted.current && current === tenantRead.current) setError(cause instanceof Error ? cause.message : "The tenant list could not be read."); });
+      }} /></label>
+      <p className="text-xs text-ink-muted">{tenantList ? `Using ${tenantList.filename}: each tenant's REI reference goes in the last column. Directory lines above fill in properties it does not list.` : "Export Tenants from REI to put each tenant's REI reference in the last column and check payments against the rent."}</p>
+      <button className={control} disabled={busy || unsaved || readingFile || !source || (!directory.trim() && !tenantList)} onClick={() => void perform(async () => {
         if (unsaved) return;
         const rules = directory.split(/\r?\n/).filter(line => line.trim()).map(line => { const [propertyId, reference, aliases, tenant, extra] = line.split("|").map(s => s.trim()); if (!propertyId || !reference || !aliases || tenant === "" || extra !== undefined) throw new Error("Use property | reference | payer aliases | REI tenant (optional) for each directory line."); return { propertyId, reference, aliases: aliases.split(";").map(s => s.trim()).filter(Boolean), ...(tenant ? { tenant } : {}) }; });
-        const prepared = await request<Saved>("POST", "/api/bank-reference", { source, columns: mapping, dateFormat, rules });
+        const prepared = await request<Saved>("POST", "/api/bank-reference", { source, columns: mapping, dateFormat, rules, ...(tenantList ? { tenantList: tenantList.csv } : {}) });
         parseFirstPass(prepared.firstPass);
         if (!mounted.current) return;
         savedPreparation.current = preparation;
@@ -279,6 +293,8 @@ export type W1Status = {
     upload: { preview: { warnings: string[] } | null } | null; confirm: { coveredThrough: string | null } | null };
   working: boolean; ask: { requestId: string; tool: string; summary: string } | null; note: string | null;
   readback: { accepted: number; rejected: number; pending: number; warnings: string[] } | null; handoff: string | null;
+  /** While the run waits for the person to sign in to REI: the handover's thread. */
+  signIn?: string | null;
 };
 const W1_STEPS: W1Step[] = ["fetch", "review", "sign_in", "upload", "handoff", "readback", "check_outcome", "confirm", "done"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -287,7 +303,8 @@ const text = (v: unknown) => typeof v === "string";
 /** A malformed reply is an error, never a state. */
 export function parseW1Status(value: unknown): W1Status {
   const bad = () => { throw new Error("The bank import status could not be checked. Refresh and try again."); };
-  if (!record(value) || typeof value.working !== "boolean" || !(value.note === null || text(value.note)) || !(value.handoff === null || text(value.handoff))) return bad();
+  if (!record(value) || typeof value.working !== "boolean" || !(value.note === null || text(value.note)) || !(value.handoff === null || text(value.handoff)) ||
+    !(value.signIn === undefined || value.signIn === null || text(value.signIn))) return bad();
   const { settings, run, ask, readback } = value;
   if (!(settings === null || record(settings) && text(settings.account) && record(settings.rei) && text(settings.rei.marker) && (settings.rei.urlValue === undefined || text(settings.rei.urlValue)) && text(settings.bankFormat) && Number.isSafeInteger(settings.revision))) return bad();
   if (!(ask === null || record(ask) && text(ask.requestId) && text(ask.tool) && text(ask.summary))) return bad();
@@ -369,6 +386,7 @@ export function w1View(status: W1Status, reviewReady: boolean): View {
   const { run, ask } = status;
   if (ask) return { headline: ask.tool === "browser_upload" ? "Allow Bud to upload the reviewed file to REI?" : ask.tool === "browser_download" ? "Allow Bud to download REI's receipt list to check the result?" : "Allow this step in REI?",
     detail: ask.summary, primary: ["allow", "Allow"], secondary: ["deny", "Don't allow"] };
+  if (status.working && status.signIn) return { headline: "Waiting for you to sign in to REI Cloud", detail: "Bud opened REI Cloud's sign-in page in RealBud's work browser. This import carries on by itself once you're signed in; other work keeps running. Bud never types your password." };
   if (status.working) return { headline: "Working…", detail: "Bud is checking. This page updates by itself." };
   if (!run || run.step === "done") {
     const last = run?.outcome === "imported" ? `Last import confirmed${run.confirm?.coveredThrough ? `. Covered to ${auDate(run.confirm.coveredThrough)}` : ""}.`
@@ -441,6 +459,7 @@ export function W1Setup({ accounts, error, onLoad, onSaved }: { accounts: BankAc
 /** The open bank import: polls while Bud works or waits for an answer. */
 function W1RunPanel({ accounts, error, reviewReady, onOpenBatch, onLoadAccounts }: { accounts: BankAccount[] | null; error: string; reviewReady: (batchId: string) => boolean; onOpenBatch: (batchId: string) => Promise<void>; onLoadAccounts: () => void }) {
   const [status, setStatus] = useState<W1Status | null>(null), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
+  const signIns = useBrowserSignIns({ threadId: status?.signIn ?? "", busy: Boolean(status?.working), enabled: Boolean(status?.signIn) });
   const refresh = () => request<unknown>("GET", "/api/w1/status").then(value => setStatus(parseW1Status(value)));
   useEffect(() => { void refresh().catch(cause => setFailure(cause instanceof Error ? cause.message : "The bank import could not be loaded.")); }, []);
   useEffect(() => {
@@ -465,6 +484,8 @@ function W1RunPanel({ accounts, error, reviewReady, onOpenBatch, onLoadAccounts 
   };
   return <div className="space-y-2">
     <W1RunStrip status={status} busy={busy} onAction={act} reviewReady={Boolean(run?.step === "review" && run.fetch && reviewReady(run.fetch.batchId))} />
+    {signIns.handovers.map(handover => <BrowserSignInStrip key={handover.id} handover={handover} busy={signIns.acting === handover.id}
+      error={signIns.error?.id === handover.id ? signIns.error.text : null} onDone={() => void signIns.act(handover.id, "done")} onStop={() => void signIns.act(handover.id, "stop")} />)}
     {failure && <p role="alert" className="text-sm text-hold">{failure}</p>}
   </div>;
 }

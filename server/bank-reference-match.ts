@@ -44,17 +44,22 @@ export function narrativeTail(narrative: string, payerColumn: string): { name: s
   }
   // Other banks pad the name from the reference with two or more spaces.
   const parts = rest.split(/\s{2,}/);
+  // ANZ's own TRANSFER narrative fills (or cuts) the payer to 16 characters,
+  // so a name that runs past them ends at the field when that is a word boundary.
+  if (match[1] === "TRANSFER" && !payer && parts[0].length > 16 && (rest[15] === " " || rest[16] === " ")) return { name: rest.slice(0, 16).trim(), tail: rest.slice(16).trim() };
   return { name: payer || parts[0].trim(), tail: parts.slice(1).join(" ").trim() };
 }
 
-/** Ways one reference text may name a code, most exact first: as written,
- * without a trailing "-name", "rent" or "water", then the leading code alone
- * ("A2004Smithson", "1204 JORDAN"). */
+/** Ways one reference text may name a code, most exact first: as written
+ * (a leading "Rent" dropped), without a trailing "-name", "rent" or "water",
+ * then the leading code alone ("A2004Smithson", "1204 JORDAN"). Each also in
+ * unit notation: "A5U4" is unit 4 of A5, written "A5-4". */
 export function referenceVariants(text: string): string[] {
-  const value = upper(text).replace(/\s+/g, " ");
+  const value = upper(text).replace(/\s+/g, " ").replace(/^RENT /, "");
   const trimmed = value.replace(/(?:\s*-\s*[A-Z]+|\s+(?:RENT|WATER))+$/, "").trim();
-  const code = /^([A-Z]{0,2}\d+(?:[A-Z]\d+)?)(?=[A-Z]{2,}|[\s-]|$)/.exec(value)?.[1];
-  return [...new Set([value, trimmed, code ?? ""].filter(variant => variant && !/^(?:RENT|WATER)$/.test(variant)))];
+  const code = /^([A-Z]{0,2}\d+(?:[A-Z]\d+|-\d+)?)(?=[A-Z]{2,}|[\s-]|$)/.exec(value)?.[1];
+  return [...new Set([value, trimmed, code ?? ""].flatMap(variant => [variant, variant.replace(/^([A-Z]+\d+)U(\d+)\b/, "$1-$2")])
+    .filter(variant => variant && !/^(?:RENT|WATER)$/.test(variant)))];
 }
 
 type Match = { kind: "match" | "invoice"; rules: BankReferenceRule[] } | null;
@@ -68,7 +73,8 @@ export function matchReference(text: string, rules: BankReferenceRule[]): Match 
     }
     return [];
   };
-  const tenantCodes = (rule: BankReferenceRule) => [rule.reference, ...rule.aliases];
+  // The property code names the property too (an REI tenant rule's reference is "code name").
+  const tenantCodes = (rule: BankReferenceRule) => [rule.reference, rule.propertyId, ...rule.aliases];
   const anyCode = (rule: BankReferenceRule) => [...tenantCodes(rule), ...(rule.invoiceCodes ?? [])];
   const value = upper(text);
   if (INVOICE.test(value)) {
@@ -78,7 +84,37 @@ export function matchReference(text: string, rules: BankReferenceRule[]): Match 
   const tenant = find(value, tenantCodes);
   if (tenant.length) return { kind: "match", rules: tenant };
   const invoice = find(value, rule => rule.invoiceCodes ?? []);
-  return invoice.length ? { kind: "invoice", rules: invoice } : null;
+  if (invoice.length) return { kind: "invoice", rules: invoice };
+  const near = nearMatch(value, rules);
+  return near.length ? { kind: "match", rules: near } : null;
+}
+
+/** Looser readings, only when nothing matched exactly: a code written without
+ * its leading letter ("1204" for A1204) when exactly one plain letter+digits
+ * code fits (never from a street address), or a street number and name at the
+ * start of a property's alias. */
+function nearMatch(text: string, rules: BankReferenceRule[]): BankReferenceRule[] {
+  const street = ADDRESS.test(upper(text).replace(/\s+/g, " ")); // "12 Smith St" is not code 12
+  for (const variant of referenceVariants(text)) {
+    if (!street && /^\d+$/.test(variant)) {
+      const found = rules.filter(rule => [rule.reference, rule.propertyId].some(code => /^[A-Z]\d+$/.test(upper(code)) && upper(code).slice(1) === variant));
+      if (found.length === 1) return found;
+    }
+    const address = /^(\d+[A-Z]?\s+[A-Z]{3,})/.exec(variant)?.[1];
+    if (!address) continue;
+    const found = rules.filter(rule => rule.aliases.some(alias => { const a = upper(alias).replace(/\s+/g, " "); return a === address || a.startsWith(`${address} `); }));
+    if (found.length) return found;
+  }
+  return [];
+}
+
+/** The one tenant whose whole name (any word order, case and spacing aside) is the payer's. */
+function payerTenant(name: string, rules: BankReferenceRule[]): BankReferenceRule | undefined {
+  const words = (text: string) => upper(text).split(/[^\p{L}]+/u).filter(Boolean).sort().join(" ");
+  const payer = words(name);
+  if (!payer.includes(" ")) return undefined;
+  const found = rules.filter(rule => rule.aliases.some(alias => !/\d/.test(alias) && words(alias) === payer));
+  return found.length === 1 ? found[0] : undefined;
 }
 
 export const maskPayer = (name: string) => {
@@ -87,6 +123,11 @@ export const maskPayer = (name: string) => {
 };
 const money = (cents: bigint) => `$${(Number(cents) / 100).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const rentFits = (cents: bigint, rule: BankReferenceRule) => !rule.expectedRent || [1n, 2n, 4n].some(multiple => cents === BigInt(rule.expectedRent!) * multiple);
+const PERIODLY = { week: "weekly", fortnight: "fortnightly", month: "monthly" } as const;
+const amountReason = (cents: bigint, rule: BankReferenceRule) => {
+  const rent = BigInt(rule.expectedRent!), stated = `Paid ${money(cents)}; ${PERIODLY[rule.rentPeriod ?? "week"]} rent ${money(rent)}`;
+  return cents < rent ? `${stated} — partial or shared?` : `${stated}. Paid more than rent — in advance?`;
+};
 const label = (rule: BankReferenceRule) => `${rule.propertyId} (${rule.reference})`;
 
 export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
@@ -103,8 +144,13 @@ export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
     const sources = [cells[7], cells[6], tail].map(upper).filter(Boolean);
     const haystack = upper(`${cells[2]} ${cells[3]}`);
     if (cents <= 0n) return { ...base, class: "not-rent", disposition: "exclude", reason: "Outgoing payment: not tenant rent." };
+    if (/RESIDENTIAL TENA/.test(haystack)) return { ...base, class: "not-rent", disposition: "exclude", reason: "Bond payment from the RTA: not tenant rent." };
     if (/AIRBNB/.test(haystack) && !sources.length) return { ...base, class: "not-rent", disposition: "exclude", reason: "Airbnb payout: not tenant rent." };
     if (/\bBUSACCT\b/.test(haystack) || PROCESSORS.test(haystack)) return { ...base, class: "exception", disposition: "hold", reason: "Not recognised as tenant rent: a business or payment-service transfer." };
+    // The last two columns naming different properties: a person decides which.
+    const [last, before] = [cells[7], cells[6]].map(cell => cell.trim() ? matchReference(cell, rules) : null);
+    if (last?.rules.length === 1 && before?.rules.length === 1 && last.rules[0].propertyId !== before.rules[0].propertyId)
+      return { ...base, class: "exception", disposition: "hold", reason: `The last column names ${last.rules[0].reference} but the column before it names ${before.rules[0].reference}: confirm the property.`, suggestion: `${label(last.rules[0])} or ${label(before.rules[0])}` };
     for (const source of sources) {
       const match = matchReference(source, rules);
       if (!match) continue;
@@ -112,12 +158,14 @@ export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
       if (match.rules.length > 1) return { ...base, class: "exception", disposition: "hold", reason: `Reference ${source} matches more than one property.`, suggestion: match.rules.map(label).join(" or ") };
       if (match.kind === "invoice") return { ...base, class: "invoice", disposition: "hold", propertyId: rule.propertyId, reason: "Invoice payment: check the invoice number.", suggestion: `${label(rule)} · ${source}` };
       if (!rentFits(cents, rule)) return { ...base, class: "exception", disposition: "hold", propertyId: rule.propertyId,
-        reason: `Amount differs from the expected rent (late, overpaid or shared?): expected ${money(BigInt(rule.expectedRent!))} per ${rule.rentPeriod ?? "week"}, paid ${money(cents)}.`, suggestion: label(rule) };
+        reason: amountReason(cents, rule), suggestion: label(rule) };
       return { ...base, class: "matched", disposition: "import", propertyId: rule.propertyId, reason: `Reference matched ${rule.reference}.` };
     }
     // Nothing matched: suggest a property only from the office's own aliases.
+    const named = payerTenant(name, rules);
     const suggested = row.candidates.length === 1 ? rules.find(rule => rule.propertyId === row.candidates[0]) : undefined;
-    const hint = suggested ? { propertyId: suggested.propertyId, suggestion: `Possibly ${label(suggested)}` } : {};
+    const hint = named ? { propertyId: named.propertyId, suggestion: `Matched by payer name: ${label(named)}` }
+      : suggested ? { propertyId: suggested.propertyId, suggestion: `Possibly ${label(suggested)}` } : {};
     const address = sources.find(source => ADDRESS.test(source.replace(/\s+/g, " ")));
     if (address) return { ...base, class: "exception", disposition: "hold", reason: "Only an address was given: confirm the property.", ...hint };
     const unknown = sources.find(source => referenceVariants(source).length);
@@ -125,7 +173,7 @@ export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
     return { ...base, class: "exception", disposition: "hold", reason: "No reference found.", ...hint };
   });
   // Several payers into one property in one batch may be shared rent.
-  const rentRows = rows.filter(row => row.propertyId && (row.class === "matched" || row.reason.startsWith("Amount differs")));
+  const rentRows = rows.filter(row => row.propertyId && (row.class === "matched" || row.reason.startsWith("Paid $")));
   for (const row of rentRows) {
     if (new Set(rentRows.filter(other => other.propertyId === row.propertyId).map(other => payers.get(other.rowId))).size < 2) continue;
     const rule = rules.find(item => item.propertyId === row.propertyId)!;

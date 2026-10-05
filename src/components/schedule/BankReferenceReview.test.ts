@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 
-import { accountLabel, coverageLine, FirstPassReview, parseFirstPass, parseW1Status, W1RunStrip, W1Setup, w1View, type FirstPass, type W1Status } from "./BankReferenceReview";
+import { accountLabel, BankReferenceReview, coverageLine, FirstPassReview, parseFirstPass, parseW1Status, W1RunStrip, W1Setup, w1View, type FirstPass, type W1Status } from "./BankReferenceReview";
 
 // FICTIONAL run states; no bank, account or REI data.
 const base: W1Status = { settings: { account: "acct_Fictional1", rei: { urlValue: "fictional-reicid-1", marker: "FICT1" }, bankFormat: "Fictional Bank CSV", revision: 1 },
@@ -107,5 +107,14 @@ describe("W1 settings form", () => {
     const { urlValue: _, ...marker } = base.settings!.rei;
     expect(parseW1Status({ ...base, settings: { ...base.settings, rei: marker } }).settings!.rei).toEqual({ marker: "FICT1" });
     expect(() => parseW1Status({ ...base, settings: { ...base.settings, rei: { urlValue: 7, marker: "FICT1" } } })).toThrow(/could not be checked/);
+  });
+});
+
+describe("prepare a new export", () => {
+  it("offers an optional REI tenant list beside the property directory", () => {
+    const html = renderToStaticMarkup(createElement(BankReferenceReview));
+    expect(html).toContain("REI tenant list (optional)");
+    expect(html).toContain("Export Tenants from REI to put each tenant&#x27;s REI reference in the last column");
+    expect(html).toMatch(/aria-label="Property reference directory"/);
   });
 });

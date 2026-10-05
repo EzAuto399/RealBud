@@ -1,4 +1,4 @@
-import { bankBatchSource, bankDigest, bankImportArtifact, createBankReferenceBatch, decisionDisposition, decodeBankSource, reviewBankReferences, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
+import { bankBatchSource, bankDigest, bankImportArtifact, createBankReferenceBatch, decisionDisposition, decodeBankSource, reviewBankReferences, withTenantDirectory, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
 import { isLocalDate, REDBARK_ACCOUNT_ID, REDBARK_CONNECTION_ID, REDBARK_TRANSACTION_ID, type BankDownloadArtifact, type RedbarkBatchProvenance } from "../shared/bank-source.ts";
 import { join } from "node:path";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
@@ -80,12 +80,15 @@ export class BankReferenceStore {
   /** A review as shown to the person: the saved record plus the first-pass
    * suggestions, derived from the saved batch on every read and never stored. */
   private view<T extends { value: SavedBankBatch }>(record: T) { return { ...record, firstPass: bankFirstPass(record.value.batch) }; }
-  create(input: BankReferenceInput | BankReferenceUpload) {
+  /** `tenantList`: an REI Tenants export (CSV text) used as this batch's directory, the
+   * given rules as fallback. The merged rules are saved in the batch, so preparing the
+   * same file again with a different list meets the existing-review conflict below. */
+  create(input: (BankReferenceInput | BankReferenceUpload) & { tenantList?: unknown }) {
     // Source provenance is set only by the server's own Redbark pull.
     if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
       throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
     }
-    return this.view(this.save(input));
+    return this.view(this.save(withTenantDirectory(input)));
   }
   /** Internal: a batch generated from validated Redbark rows. */
   createFromRedbark(input: BankReferenceUpload) {
