@@ -313,7 +313,7 @@ export function parseInstallationUsage(value: unknown, period: string): Installa
     period,
     requests: value.requests,
     tokens: { input: amount(tokens.input, AMOUNT), output: amount(tokens.output, AMOUNT) },
-    money: { customerNetNanoAud: money.customerNetNanoAud === null ? null : amount(money.customerNetNanoAud, AMOUNT) },
+    money: { customerNetNanoAud: money.customerNetNanoAud === null ? null : amount(money.customerNetNanoAud, SIGNED_AMOUNT) },
     monthlyCapNanoAud: optionalAmount(value.monthlyCapNanoAud, AMOUNT),
     remainingNanoAud: optionalAmount(value.remainingNanoAud, SIGNED_AMOUNT),
     updatedAt: new Date(value.updatedAt).toISOString(),
@@ -339,6 +339,8 @@ export function formatNanoAud(value: string | null, decimals = 2): string {
 
 /** A positive customer charge must not read as free at the selected precision. */
 export function formatCustomerCharge(value: string | null, decimals = 2): string {
+  // Credits above charges: say "credit" in words, as the portal does, never a minus sign.
+  if (value !== null && /^-\d+$/.test(value) && BigInt(value) < BigInt(0)) return `${formatCustomerCharge(value.slice(1), decimals)} credit`;
   if (value !== null && /^\d+$/.test(value) && Number.isInteger(decimals) && decimals >= 0 && decimals <= 9) {
     const amount = BigInt(value), minimum = BigInt(10) ** BigInt(9 - decimals);
     if (amount > BigInt(0) && amount < minimum) return `<${formatNanoAud(minimum.toString(), decimals)}`;

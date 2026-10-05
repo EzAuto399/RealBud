@@ -132,6 +132,11 @@ export interface ModelviaProjectRecord extends ModelviaCaps {
  * to one installation; Modelvia keeps it across a rotation. */
 export interface ModelviaKeyRecord { keyId: string; projectId: string; environment: string; label?: string; expiresAt?: number; revokedAt?: number }
 export interface ModelviaRotatedKey extends ModelviaMintedKey { projectId: string; replaced: string }
+/** The documented 409 means the predecessor was already revoked and this
+ * rotation created no successor. Transport and opaque failures stay unknown. */
+export class ModelviaRotationRefused extends GatewayError {
+  constructor() { super('modelvia_key_revoked', 409); }
+}
 export interface ModelviaClient {
   readonly environment: string;
   /** Creates the installation's project under the customer, with the ledger cap.
@@ -143,7 +148,8 @@ export interface ModelviaClient {
   /** The stored project, or undefined when Modelvia holds no project with that id. */
   findProject(projectId: string): Promise<ModelviaProjectRecord | undefined>;
   mint(input: { projectId: string; label: string }): Promise<ModelviaMintedKey>;
-  /** Secret-free key records for one project and environment, revoked ones included. */
+  /** Complete, fresh key records for one project and environment, revoked ones
+   * included. Modelvia reads its writer database without pagination. */
   listKeys(projectId: string, environment: string): Promise<ModelviaKeyRecord[]>;
   /** Revokes `keyId` and returns its replacement's secret, once. Never retried here. */
   rotate(keyId: string): Promise<ModelviaRotatedKey>;
@@ -411,12 +417,12 @@ export function modelviaKeyClient(options: {
   /** `conflicts` names the Modelvia error codes this call treats as a conflict
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
    * and only for control flow — an upstream body is never surfaced. */
-  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown; serverNow?: number }> => {
+  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; conflictStatus?: number; body?: unknown; serverNow?: number }> => {
     const bearerToken = token();
     let response: Response;
     try {
       response = await options.fetch(`${base}${path}`, method === 'GET'
-        ? { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json' } }
+        ? { method, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'cache-control': 'no-cache' } }
         : { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
           body: JSON.stringify(body) });
@@ -425,7 +431,7 @@ export function modelviaKeyClient(options: {
     if ((response.status === 409 || response.status === 404 || response.status === 403) && conflicts.length) {
       let code: unknown;
       try { code = ((await response.json()) as Record<string, unknown>).error; } catch { throw new GatewayError('modelvia_rejected', 502); }
-      if (typeof code === 'string' && conflicts.includes(code)) return { conflict: code };
+      if (typeof code === 'string' && conflicts.includes(code)) return { conflict: code, conflictStatus: response.status };
       throw new GatewayError('modelvia_rejected', 502);
     }
     // Modelvia's error bodies may quote the presented credential; only a code is reported.
@@ -590,8 +596,8 @@ export function modelviaKeyClient(options: {
       requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
       requireThat(ACCOUNT_ID.test(environment), 'modelvia_environment_invalid');
       const body = await read(`/v1/operator/keys?${new URLSearchParams({ projectId, environment })}`);
-      requireThat(record(body) && Array.isArray(body.keys) && body.keys.length <= 1000, 'modelvia_unreadable', 502);
-      return (body.keys as unknown[]).map(entry => {
+      requireThat(record(body) && Object.keys(body).length === 1 && Array.isArray(body.keys) && body.keys.length <= 1000, 'modelvia_unreadable', 502);
+      const keys = (body.keys as unknown[]).map(entry => {
         requireThat(record(entry) && typeof entry.id === 'string' && KEY_ID.test(entry.id) && (entry.label === undefined || typeof entry.label === 'string')
           && optionalTime(entry.expiresAt) && optionalTime(entry.revokedAt), 'modelvia_unreadable', 502);
         const e = entry as Record<string, unknown>;
@@ -602,12 +608,17 @@ export function modelviaKeyClient(options: {
           ...(e.expiresAt === undefined ? {} : { expiresAt: e.expiresAt as number }),
           ...(e.revokedAt === undefined ? {} : { revokedAt: e.revokedAt as number }) };
       });
+      requireThat(new Set(keys.map(key => key.keyId)).size === keys.length, 'modelvia_unreadable', 502);
+      return keys;
     },
     async rotate(keyId) {
       requireThat(KEY_ID.test(keyId), 'invalid_key_id');
       // No label or expiry override: the replacement keeps the installation label,
       // which is what attributes it on a later listing.
-      const body = await call(`/v1/operator/keys/${keyId}/rotate`, {});
+      const answer = await callRaw(`/v1/operator/keys/${keyId}/rotate`, {}, ['key_revoked']);
+      if (answer.conflict === 'key_revoked' && answer.conflictStatus === 409) throw new ModelviaRotationRefused();
+      requireThat(!answer.conflict, 'modelvia_rejected', 502);
+      const body = answer.body;
       const issued = issuedKey(body);
       requireThat((body as Record<string, unknown>).replaced === keyId && issued.keyId !== keyId, 'modelvia_key_unusable', 502);
       return { key: issued.key, keyId: issued.keyId, baseUrl: `${base}/v1`, projectId: issued.projectId, replaced: keyId };

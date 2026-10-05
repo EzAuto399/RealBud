@@ -8,6 +8,7 @@
 // two visible tails) running at once.
 //
 // Same POSIX gating as comms.test.ts (the fake CLI is a shebang script).
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -117,9 +118,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
-    const handshake = await fetch(`${BASE}/api/session`);
-    expect(handshake.ok).toBe(true);
-    sessionToken = (await handshake.json() as { token: string }).token;
+    sessionToken = await readSessionToken(join(home, ".realbud"));
     expect(sessionToken).toBeTruthy();
   }, 30_000);
 

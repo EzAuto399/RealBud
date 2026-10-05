@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -156,7 +157,7 @@ describe('support file through the real HTTP boundary', () => {
       if (attempt === 149) throw new Error('Disposable service startup timed out.');
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    session = ((await (await fetch(`${base}/api/session`)).json()) as { token: string }).token;
+    session = await readSessionToken(join(home, 'data'));
   }, 25_000);
 
   afterAll(async () => {

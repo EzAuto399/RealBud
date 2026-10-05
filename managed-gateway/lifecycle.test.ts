@@ -17,7 +17,7 @@ import { GatewayError, type PortalPrincipal } from './contracts.ts';
 import { createGatewayServer } from './http.ts';
 import { composeGateway, type GatewayComposition } from './composition.ts';
 import { validateConnectorDevices, type ConnectorOptions } from './connectors.ts';
-import { fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, type ProvisioningDescriptor, type SecretStore } from './provisioning.ts';
+import { bindOfficeCustomer, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, type ProvisioningDescriptor, type SecretStore } from './provisioning.ts';
 import { OfficeAiAccessService } from './office-ai-access.ts';
 import { OPERATOR_ROLE, type OperatorPrincipal } from './operator-token.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
@@ -128,6 +128,7 @@ function lifecycle() {
   const root = mkdtempSync(join(tmpdir(), 'realbud-lifecycle-'));
   const dbPath = join(root, 'data', 'ledger.sqlite');
   const f = fixture(dbPath);
+  bindOfficeCustomer(f.ledger, f.tenant.companyId, CUSTOMER);
   let db = f.db, ledger = f.ledger;
   const v = vendors();
   const env: NodeJS.ProcessEnv = {
@@ -439,10 +440,15 @@ test('6. revoke is idempotent across a restart, refuses a pending computer, and 
     // A revoked computer is never silently provisioned again.
     h.ledger().setService(h.f.tenant.companyId, true, h.f.now() + 86_400_000, 'fixture-renewed');
     assert.equal((await failure(h.provision('install-one')))?.code, 'installation_revoked');
-    // A pending computer's outcome is unknown: revoke refuses rather than guess.
+    // A pending computer is cancelled: its attempt is fenced at once, and the key
+    // its lost reply carried is revoked once that attempt can no longer be running.
     h.v.mv.lose = 'mint';
     await failure(h.provision('install-two'));
-    assert.equal((await failure(h.revoke('install-two')))?.code, 'installation_provisioning_outcome_unknown');
+    assert.equal((await failure(h.revoke('install-two')))?.code, 'installation_revocation_in_progress');
+    h.later();
+    const cancelled = (await h.revoke('install-two')).revoked;
+    assert.equal(cancelled.provisioningCancelled, true); assert.equal(cancelled.modelKeyRevoked, true);
+    assert.equal((await failure(h.provision('install-two')))?.code, 'installation_revoked');
   } finally { h.close(); }
 });
 

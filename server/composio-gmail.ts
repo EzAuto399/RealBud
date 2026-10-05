@@ -367,12 +367,14 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
   let profile: Promise<ObjectValue> | undefined;
   let selectedId = binding.accountId;
   const reads = new Map<string, Promise<ObjectValue>>();
+  // A rejected snapshot is evicted so the next call retries; a settled one stays.
+  const evictOnFailure = <T>(promise: Promise<T>, evict: () => void) => { promise.catch(evict); return promise; };
   async function ready(signal: AbortSignal) {
     const config = await verifyConfig(binding, signal);
     const account = await verifyAccount({ ...binding, ...(selectedId ? { accountId: selectedId } : {}) }, signal, config);
     if (selectedId && selectedId !== account.id) fail("the selected account changed.", 403);
     selectedId = account.id;
-    discovered ??= discoverTools(binding, signal);
+    discovered ??= evictOnFailure(discoverTools(binding, signal), () => { discovered = undefined; });
     return { tools: await discovered, account };
   }
   async function execute(slug: Slug, signal: AbortSignal, id?: string) {
@@ -400,13 +402,13 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
       if (slug !== "GMAIL_FETCH_MESSAGE_BY_THREAD_ID" && Object.keys(args).length) fail("this read uses a fixed account and scope; custom arguments are not allowed.", 403);
       let data: ObjectValue;
       if (slug === "GMAIL_GET_PROFILE") {
-        profile ??= execute(slug, signal).then(value => {
+        profile ??= evictOnFailure(execute(slug, signal).then(value => {
           if (typeof value.emailAddress !== "string" || !/^[^\s@]{1,128}@[^\s@]{1,128}$/.test(value.emailAddress) || !Number.isSafeInteger(value.messagesTotal) || !Number.isSafeInteger(value.threadsTotal) || value.messagesTotal < 0 || value.threadsTotal < 0) fail("the provider returned an unsupported profile.", 502);
           return { accountId: selectedId, emailAddress: value.emailAddress, messagesTotal: value.messagesTotal, threadsTotal: value.threadsTotal };
-        });
+        }), () => { profile = undefined; });
         data = await profile;
       } else if (slug === "GMAIL_LIST_THREADS") {
-        listing ??= execute(slug, signal).then(value => {
+        listing ??= evictOnFailure(execute(slug, signal).then(value => {
           // Gmail omits the optional threads field when its result is empty.
           const rows = value.threads === undefined && value.resultSizeEstimate === 0 ? [] : value.threads;
           if (!Array.isArray(rows) || rows.length > 10 ||
@@ -418,14 +420,15 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
             seen.add(row.id); return { id: row.id };
           });
           return { threads, hasMore: Boolean(value.nextPageToken) || (Number.isFinite(value.resultSizeEstimate) && value.resultSizeEstimate > threads.length), from: new Date(from * 1000).toISOString(), until: new Date(until * 1000).toISOString() };
-        });
+        }), () => { listing = undefined; });
         data = await listing;
       } else {
         if (Object.keys(args).length !== 1 || !threadId(args.thread_id)) fail("provide only a thread_id from this task's listing.", 403);
         if (!listing || !(await listing).threads.some(row => row.id === args.thread_id)) fail("list this task's bounded threads first, then choose an exact returned ID.", 403);
         if (!reads.has(args.thread_id)) {
           if (reads.size >= 10) fail("this task has reached its ten-thread limit.", 403);
-          reads.set(args.thread_id, execute(slug, signal, args.thread_id).then(value => projectThread(value, args.thread_id, from, until)));
+          const id: string = args.thread_id;
+          reads.set(id, evictOnFailure(execute(slug, signal, id).then(value => projectThread(value, id, from, until)), () => { reads.delete(id); }));
         }
         data = await reads.get(args.thread_id)!;
       }

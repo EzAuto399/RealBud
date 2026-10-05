@@ -69,6 +69,7 @@ import { AskMessage } from "./AskMessage";
 import { MailPriorityCard } from "./work/MailPriorityCard";
 import { channelMessage } from "@/lib/channel-message";
 import { AskReadiness } from "./AskReadiness";
+import { RecoveryCards } from "./RecoveryCards";
 import { AskContext } from "./AskContext";
 import { AskAppContextPanel, AskAppContextToggle, useAskAppContext } from "./AskAppContext";
 import { hasUnfinishedJobDraft, repeatableJobDescription } from "@/lib/work-continuation";
@@ -1720,7 +1721,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         askRecheckPending={productAsk && Boolean(budAutoSetupView(state.hermes)?.working)}
         askSetupLabel={availability.action ?? undefined}
         onAskSetup={productAsk && availability.action ? goYouSetup : undefined}
-        readiness={productAsk ? <AskReadiness onSetup={goYouSetup} /> : undefined}
+        readiness={productAsk ? <><AskReadiness onSetup={goYouSetup} /><RecoveryCards /></> : undefined}
         starter={productAsk ? composerStarter : undefined}
         onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}

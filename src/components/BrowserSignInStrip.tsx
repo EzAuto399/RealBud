@@ -62,10 +62,16 @@ export function useBrowserSignIns({ threadId, busy, enabled }: { threadId: strin
   const watching = enabled && (busy || handovers.some(item => open(item.state)));
   useEffect(() => {
     if (!enabled) { setHandovers([]); return; }
-    void refresh();
-    if (!watching) return;
-    const timer = setInterval(() => { void refresh(); }, 2000);
-    return () => clearInterval(timer);
+    // One read in flight: the next poll waits for this one to settle, so a
+    // slow reply is never made stale by the poll that follows it.
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      await refresh();
+      if (!stopped && watching) timer = setTimeout(poll, 2000);
+    };
+    void poll();
+    return () => { stopped = true; clearTimeout(timer); };
   }, [enabled, watching, refresh]);
   const act = useCallback(async (id: string, action: "done" | "stop") => {
     if (acting) return;

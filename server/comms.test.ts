@@ -9,6 +9,7 @@
 // The fake CLI is a shebang script — POSIX-only until resolveCliSpawn
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -138,9 +139,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
-    const handshake = await fetch(`${BASE}/api/session`);
-    expect(handshake.ok).toBe(true);
-    sessionToken = (await handshake.json() as { token: string }).token;
+    sessionToken = await readSessionToken(join(home, ".realbud"));
     expect(sessionToken).toBeTruthy();
   }, 30_000);
 

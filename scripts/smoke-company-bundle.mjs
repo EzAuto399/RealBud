@@ -10,6 +10,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // /var is a macOS alias. A fresh fixture must use real ancestry, like the app.
@@ -520,7 +521,7 @@ try {
   } finally { readinessMs = Math.round(performance.now() - started); }
   assert.ok(ready, 'Compiled service readiness'); checks.push('Compiled server starts outside checkout without node_modules');
   startupMs = Math.round(performance.now() - started);
-  const session = await fetch(base + '/api/session').then(r => r.json());
+  const session = { token: await readSessionToken(data) };
   const response = await fetch(base + '/api/company/status', { headers: { 'x-realbud-session': session.token } });
   assert.equal(response.status, 200); assert.equal((await response.json()).storageAvailable, false);
   checks.push('Packaged PostgreSQL driver loads; unprovisioned company status is usable');

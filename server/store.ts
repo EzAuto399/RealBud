@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { DiskFullError, isDiskFull } from "./private-json.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -305,12 +306,44 @@ interface ThreadState {
 export class StoreRecoveryError extends Error {
   readonly status = 503;
   readonly code = "store_recovery_required";
+  /** For a failed save: did the new bytes reach the file? Unset when unknown. */
+  committed?: boolean;
   constructor(writeUncertain = false) {
     super(writeUncertain
       ? "The assistant conversation save was not confirmed. Reload the saved conversation before continuing."
       : "Saved assistant conversations need recovery. Existing files are preserved; changes are paused.");
     this.name = "StoreRecoveryError";
   }
+}
+
+/** Publish one store file. On failure, re-read the target instead of guessing
+ * whether the new bytes landed: a full disk before publication is "nothing
+ * changed, free space and retry" (507); anything else is an unconfirmed save
+ * that must be reloaded, never retried blindly (503). */
+function publish(path: string, data: string): void {
+  try { writeFileAtomic(path, data); }
+  catch (cause) {
+    let committed: boolean | undefined;
+    try { committed = readFileSync(path, "utf8") === data; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") committed = false; }
+    if (committed === false && isDiskFull(cause)) throw Object.assign(new DiskFullError(cause), { committed });
+    throw Object.assign(new StoreRecoveryError(true), { committed });
+  }
+}
+
+/** Put a catalog back to its last published rows without replacing the row
+ * objects callers still hold; transient fields keep their live values. */
+function restoreRows<T extends { id: string }>(current: T[], saved: T[], transient: readonly (keyof T)[]): T[] {
+  const live = new Map(current.map(row => [row.id, row]));
+  return saved.map(row => {
+    const kept = live.get(row.id);
+    if (!kept) return row;
+    const keep = transient.map(key => [key, kept[key]] as const);
+    for (const key of Object.keys(kept)) delete (kept as Record<string, unknown>)[key];
+    Object.assign(kept, row);
+    for (const [key, value] of keep) kept[key] = value;
+    return kept;
+  });
 }
 
 function readSaved(path: string): unknown {
@@ -382,12 +415,29 @@ export class Store {
   groups: GroupRecord[] = [];
   private threads = new Map<string, ThreadState>();
   private defaultSelection: () => ModelSelection;
+  /** A damaged catalog: boot continues, nothing is written, files are kept. */
+  private held = false;
+  private damagedThreads = new Set<string>();
+  private savedBots = "[]";
+  private savedGroups = "[]";
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    this.bots = savedCatalog(BOTS_FILE, savedBot);
-    this.groups = savedCatalog(GROUPS_FILE, savedGroup);
+    try {
+      this.bots = savedCatalog(BOTS_FILE, savedBot);
+      this.groups = savedCatalog(GROUPS_FILE, savedGroup);
+    } catch (error) {
+      if (!(error instanceof StoreRecoveryError)) throw error;
+      // Restricted mode instead of a service that cannot start: the rest of
+      // the office keeps working and every Ask write answers "needs recovery".
+      this.held = true;
+      this.bots = [];
+      this.groups = [];
+      return;
+    }
+    this.savedBots = JSON.stringify(this.bots);
+    this.savedGroups = JSON.stringify(this.groups);
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
@@ -459,14 +509,39 @@ export class Store {
       botsMigrated = true;
     }
     if (botsMigrated) this.saveBots();
+    this.savedBots = JSON.stringify(this.bots);
+    this.savedGroups = JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g));
   }
 
+  /** What an operator needs to repair Ask without reading private content. */
+  recoveryStatus(): { held: boolean; threads: string[] } {
+    return { held: this.held, threads: [...this.damagedThreads] };
+  }
+
+  // A failed save that did not land puts the catalog back to what disk holds,
+  // so a refused change never surfaces later through an unrelated save.
   private saveBots() {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    if (this.held) { this.bots = []; throw new StoreRecoveryError(); }
+    const rows = JSON.stringify(this.bots);
+    try { publish(BOTS_FILE, JSON.stringify(this.bots, null, 2)); }
+    catch (error) {
+      if ((error as { committed?: boolean }).committed !== true) this.bots = restoreRows(this.bots, JSON.parse(this.savedBots), ["busy"]);
+      else this.savedBots = rows;
+      throw error;
+    }
+    this.savedBots = rows;
   }
 
   private saveGroups() {
-    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
+    if (this.held) { this.groups = []; throw new StoreRecoveryError(); }
+    const persisted = this.groups.map(({ busyBotId, ...g }) => g), rows = JSON.stringify(persisted);
+    try { publish(GROUPS_FILE, JSON.stringify(persisted, null, 2)); }
+    catch (error) {
+      if ((error as { committed?: boolean }).committed !== true) this.groups = restoreRows(this.groups, JSON.parse(this.savedGroups), ["busyBotId"]);
+      else this.savedGroups = rows;
+      throw error;
+    }
+    this.savedGroups = rows;
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -539,8 +614,20 @@ export class Store {
   }
 
   private thread(threadId: string): ThreadState {
-    let t = this.threads.get(threadId);
+    const t = this.threads.get(threadId);
     if (t) return t;
+    try {
+      const loaded = this.loadThread(threadId);
+      this.damagedThreads.delete(threadId);
+      return loaded;
+    } catch (error) {
+      if (error instanceof StoreRecoveryError) this.damagedThreads.add(threadId);
+      throw error;
+    }
+  }
+
+  private loadThread(threadId: string): ThreadState {
+    let t: ThreadState;
     let messages: Message[] = [];
     let activeLeafId: string | null = null;
     const raw = readSaved(messagesFile(threadId));
@@ -566,18 +653,19 @@ export class Store {
   }
 
   private saveThread(threadId: string) {
+    if (this.held) { this.threads.delete(threadId); throw new StoreRecoveryError(); }
     const t = this.thread(threadId);
     try {
-      writeFileAtomic(
+      publish(
         messagesFile(threadId),
         JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
       );
-    } catch {
+    } catch (error) {
       // A caller may already have changed this cached object. Discard it so
       // the next read observes disk, whether failure preceded publication or
       // followed a successful rename. Never retry an uncertain append here.
       this.threads.delete(threadId);
-      throw new StoreRecoveryError(true);
+      throw error;
     }
   }
 
@@ -694,6 +782,18 @@ export class Store {
     t.messages[idx] = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
     this.saveThread(threadId);
     return t.messages[idx];
+  }
+
+  /** Boot-time settle of every task. A damaged transcript is left exactly as
+   * it is and reported, never allowed to stop the whole service starting; a
+   * full disk leaves the card for the next boot. */
+  settleAllOpenRequests(): void {
+    for (const bot of this.bots) {
+      for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])) {
+        try { this.settleOpenRequests(threadId); }
+        catch (error) { if (!(error instanceof StoreRecoveryError) && !isDiskFull(error)) throw error; }
+      }
+    }
   }
 
   /** A stopped or restarted provider can no longer answer its old request.
@@ -1008,6 +1108,7 @@ export class Store {
 
   /** One visible worker. Desk is home; Ask talks to Bud. */
   seedIfEmpty() {
+    if (this.held) return;
     if (this.bots.some((b) => b.id === "bud")) return;
     if (this.bots.length) return;
     const bot: BotRecord = {

@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 19020 + Math.floor(Math.random() * 400));
@@ -348,7 +349,7 @@ try {
   await startComposioStub();
   child = spawnServer();
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("08:00 session", Boolean(session));
 
   // ── 1. Open office / book ──

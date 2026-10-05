@@ -13,6 +13,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { serviceIdentity, findRunningService, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { availableServicePort, readServiceHandle, requestServiceStop } from '../electron/service-lifecycle.mjs';
+import { windowsKeyPrivacy } from '../electron/desk-key-custody.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore', '--welcome-cancel-setup'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore, --welcome-cancel-setup, or --reproduce-welcome-restore-block for expected-defect evidence only.');
@@ -103,7 +105,7 @@ async function api(path, method = 'GET', body, status = 200, sourceRequest = fal
   const value = await response.json(); assert.equal(response.status, status, `${path}: ${JSON.stringify(value)}`); return value;
 }
 async function sessionToken() {
-  token = (await (await fetch(origin + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   const handle = readServiceHandle(data, identity.instanceId);
   if (handle) servicePids.add(handle.pid);
 }
@@ -145,7 +147,7 @@ async function prepareSourceBackup() {
   sourceChild = spawn(executable, [join(resources, 'server/bootstrap.js')], { cwd: resources, env: { ...serviceSmokeEnv({ executable, home: source, data: source, scratch, port: sourcePort }), REALBUD_DESK_KEY: sourceKey.toString('hex'), OMB_STATIC_DIR: join(resources, 'ui') }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [sourceChild.stdout, sourceChild.stderr]) stream.on('data', b => sourceLog = (sourceLog + b).slice(-15000));
   await until(async () => { if (sourceChild.exitCode !== null) throw new Error(sourceLog); try { return (await (await fetch(sourceOrigin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === sourceChild.pid; } catch { return false; } }, 'source compiled service');
-  sourceToken = (await (await fetch(sourceOrigin + '/api/session')).json()).token;
+  sourceToken = await readSessionToken(source);
   const sourceBook = await api('/api/desk/properties', 'POST', { address: 'Fictional Native Restore Oak Street', tenantName: 'Fictional Tenant', tenantPhone: '0400 000 000', weeklyRentCents: 50000 }, 201, true);
   const propertyId = sourceBook.properties.find(property => property.address === 'Fictional Native Restore Oak Street')?.id;
   assert.ok(propertyId);
@@ -647,7 +649,7 @@ finally {
   // Stop only the matching service recorded in this disposable directory.
   const handle = readServiceHandle(data, identity.instanceId);
   const uncertainHandle = existsSync(join(data, 'service.json')) && !handle;
-  if (handle) { servicePids.add(handle.pid); await requestServiceStop(handle, identity); }
+  if (handle) { servicePids.add(handle.pid); await requestServiceStop(handle, identity, { dataDirectory: data, verifyWindowsPrivacy: windowsKeyPrivacy }); }
   await browser?.close().catch(() => {}); inspector?.close(); await stopChild(nativeChild); await stopChild(seedChild); await stopChild(sourceChild); await stopChild(targetChild);
   let cleanup = { capturedServicePids: [...servicePids], serviceProcessesExited: false, scratchRemoved: false };
   try {

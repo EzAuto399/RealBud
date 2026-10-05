@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
 import { trackSandboxedChild } from "./worker-network-sandbox.ts";
-import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
+import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { writeBookFile } from "./vault.ts";
@@ -13,6 +13,7 @@ import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { currentWorkerProfile } from "./hermes-profile.ts";
+import { lastJsonBlock } from "./hermes-hands.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 import type { CsvColumnMapping } from "../shared/contracts.ts";
@@ -56,29 +57,13 @@ function headerRow(csv: string): string[] | null {
 }
 
 function lastJsonValue(text: string): unknown | null {
-  const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
-  const starts: number[] = [];
-  for (let i = clean.length - 1; i >= 0; i--) {
-    if (clean[i] === "[" || clean[i] === "{") starts.push(i);
-  }
-  for (const start of starts) {
-    let raw = clean.slice(start).trim();
-    const fence = raw.indexOf("```");
-    if (fence > 0) raw = raw.slice(0, fence).trim();
+  return lastJsonBlock(text, (raw) => {
     try {
-      return JSON.parse(raw);
+      return JSON.parse(raw) as unknown;
     } catch {
-      const close = raw.startsWith("[") ? raw.lastIndexOf("]") : raw.startsWith("{") ? raw.lastIndexOf("}") : -1;
-      if (close > 0) {
-        try {
-          return JSON.parse(raw.slice(0, close + 1));
-        } catch {
-          /* try an earlier bracket */
-        }
-      }
+      return null;
     }
-  }
-  return null;
+  });
 }
 
 function mappingFromReply(parsed: unknown, headers: string[]): CsvColumnMapping | null {
@@ -147,7 +132,7 @@ export async function inspectLedgerColumns(
     `Use the file's literal header names. If a role has no column, omit the key. If the file is unreadable, mapping is null.\n` +
     `Return JSON ONLY as the last line: { "mapping": { "identity": "<header>", "daysSinceDue": "<header>", "rentLanded": "<header>", "levyPaid": "<header>" }, "confidence": "high|low" }`;
 
-  return new Promise((resolve) => {
+  return withAskModelRelayLease(() => new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
@@ -203,5 +188,5 @@ export async function inspectLedgerColumns(
         resolve({ mapping, detail: "Bud read the columns." });
       },
     ));
-  });
+  }));
 }

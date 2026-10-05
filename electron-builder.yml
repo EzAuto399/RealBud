@@ -28,6 +28,7 @@ files:
   # Electron main imports the same installation identity as the server. The
   # server's extraResources copy is outside ASAR and cannot satisfy this import.
   - shared/service-identity.mjs
+  - shared/local-session.mjs
   - "!electron/**/*.test.*"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"

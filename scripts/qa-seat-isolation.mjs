@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serviceSmokeEnv } from "./service-smoke-env.mjs";
+import { readSessionToken } from "./local-session.mjs";
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from "./testing/mock-worker-grant.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -135,8 +136,8 @@ try {
   const running = [];
   for (const [index, seat] of SEATS.entries()) running.push({ seat, ...(await startSeat(seat, index)) });
 
-  for (const { seat, port, worker } of running) {
-    const token = (await (await fetch(`http://127.0.0.1:${port}/api/session`)).json()).token;
+  for (const { seat, port, worker, dataDir } of running) {
+    const token = await readSessionToken(dataDir);
     // The hands test is the readiness check that spawns the worker with a profile.
     const test = await fetch(`http://127.0.0.1:${port}/api/hermes/test`, {
       method: "POST",
@@ -162,8 +163,8 @@ try {
   check("two seats use distinct Hermes homes", launchEvidence.every(Boolean) && new Set(launchEvidence.map(value => value?.hermesHome)).size === 2);
 
   // The wall line is per seat, not only for the first one.
-  for (const { seat, port } of running) {
-    const token = (await (await fetch(`http://127.0.0.1:${port}/api/session`)).json()).token;
+  for (const { seat, port, dataDir } of running) {
+    const token = await readSessionToken(dataDir);
     const send = await fetch(`http://127.0.0.1:${port}/api/desk/drafts/anything/send`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-realbud-session": token },

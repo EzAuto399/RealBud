@@ -97,6 +97,14 @@ describe("durable property batches", () => {
     expect(ask).toHaveBeenCalledTimes(3);
   });
 
+  it("refuses an action Bud never allows with 400 even when the revision is stale", () => {
+    const { service, input } = setup();
+    const batch = service.create(input);
+    for (const revision of [batch.revision, batch.revision - 1, -1]) {
+      expect(() => service.control(batch.id, "send", revision)).toThrow(expect.objectContaining({ status: 400, message: "Unknown batch action." }));
+    }
+  });
+
   it("pauses after the current property, retries failures alone, then resumes never-started properties", async () => {
     const { service, input, ask } = setup();
     const started = deferred<void>(); const worker = deferred<ReturnType<typeof receipt>>();

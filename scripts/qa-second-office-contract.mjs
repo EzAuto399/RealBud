@@ -28,6 +28,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18891);
@@ -100,9 +101,7 @@ async function withHome(label, fn) {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode} (${label}). stderr:\n${stderr}`);
       await sleep(150);
     }
-    const sessionRes = await fetch(`${BASE}/api/session`);
-    const sessionBody = await sessionRes.json();
-    session = sessionBody.token;
+    session = await readSessionToken(dataDir);
     const result = await fn({ api, dataDir, home, session });
     return result;
   } finally {

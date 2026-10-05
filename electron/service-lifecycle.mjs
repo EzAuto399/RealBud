@@ -35,13 +35,14 @@
 //     was last checked — never as apparent success.
 // A managed OS unit that runs before any sign-in remains open, and would have to
 // solve key custody without an unlocked keychain first.
-import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, closeSync, fchmodSync, fstatSync, renameSync, constants } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, closeSync, fchmodSync, fstatSync, fsyncSync, renameSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { uptime as osUptime } from "node:os";
 import { isOurService, probeService } from "./service-instance.mjs";
+import { localSessionFor } from "../shared/local-session.mjs";
 
 /** @typedef {object} ServicePidFile
  * @property {1} version
@@ -50,6 +51,8 @@ import { isOurService, probeService } from "./service-instance.mjs";
  * @property {string} instanceId
  * @property {number} startedAt
  * @property {string} [controlToken] Private capability for this service process.
+ * @property {string} [bootId] OS boot session the service was started in.
+ * @property {number} [bootUptime] OS uptime in seconds when it was started.
  */
 
 /** @param {string} dataDirectory @returns {string} */
@@ -154,6 +157,8 @@ export function parseServiceHandle(value, instanceId) {
     instanceId,
     startedAt: Number.isSafeInteger(handle.startedAt) ? Number(handle.startedAt) : 0,
     ...(handle.controlToken ? { controlToken: handle.controlToken } : {}),
+    ...(typeof handle.bootId === "string" && /^[\w:.-]{1,80}$/.test(handle.bootId) ? { bootId: handle.bootId } : {}),
+    ...(Number.isFinite(handle.bootUptime) && Number(handle.bootUptime) >= 0 ? { bootUptime: Number(handle.bootUptime) } : {}),
   };
 }
 
@@ -203,6 +208,14 @@ export function processAlive(pid, kill = process.kill) {
  * comparison. Boot time comes from `os.uptime()`, so it is second-granular;
  * that is harmless here because nothing starts this service within a second of
  * boot — the app is launched by a person.
+ *
+ * Wall time alone must never override a live owner: a clock set forward makes
+ * every record look "before boot" and admits a second service. A record names
+ * the OS boot it was written in (`bootId`); the same boot holds whatever the
+ * clock says, a different boot is stale. Without a boot id on this machine, a
+ * smaller uptime than the record's proves a reboot and nothing else does. Only
+ * a legacy record with neither keeps the wall-clock rule, until its service is
+ * next restarted.
  */
 /**
  * @param {object} decision
@@ -211,17 +224,54 @@ export function processAlive(pid, kill = process.kill) {
  * @param {boolean} [decision.recordedPortFree] The recorded port could be bound right now.
  * @param {number | null} [decision.bootedAt] Wall-clock ms of the current boot, from `systemBootedAt()`.
  * @param {(pid: number) => boolean} [decision.alive]
+ * @param {string | null} [decision.bootId] This machine's boot session, from `systemBootId()`.
+ * @param {number} [decision.uptimeSeconds] This machine's uptime now.
  * @returns {{ start: boolean, reason: 'adopted' | 'recorded-service-alive' | 'recorded-before-boot' | 'nothing-of-ours' }}
  */
-export function shouldStartService({ adopted, recorded = null, recordedPortFree = true, bootedAt = null, alive = processAlive }) {
+export function shouldStartService({ adopted, recorded = null, recordedPortFree = true, bootedAt = null, alive = processAlive, bootId = undefined, uptimeSeconds = undefined }) {
   if (adopted) return { start: false, reason: "adopted" };
   if (recorded && !recordedPortFree && alive(recorded.pid)) {
-    if (Number.isFinite(bootedAt) && recorded.startedAt < Number(bootedAt)) {
-      return { start: true, reason: "recorded-before-boot" };
-    }
+    const current = bootId === undefined ? systemBootId() : bootId;
+    let beforeBoot;
+    if (recorded.bootId && current) beforeBoot = recorded.bootId !== current;
+    else if (recorded.bootUptime !== undefined) beforeBoot = (uptimeSeconds ?? osUptime()) < recorded.bootUptime;
+    else beforeBoot = Number.isFinite(bootedAt) && recorded.startedAt < Number(bootedAt);
+    if (beforeBoot) return { start: true, reason: "recorded-before-boot" };
     return { start: false, reason: "recorded-service-alive" };
   }
   return { start: true, reason: "nothing-of-ours" };
+}
+
+/** @type {string | null | undefined} */
+let cachedBootId;
+/**
+ * The OS boot session, or null when this machine does not say. Constant for
+ * the life of a boot and unaffected by the wall clock.
+ * @param {NodeJS.Platform} [platform]
+ * @param {(file: string, args: string[]) => string} [run]
+ * @returns {string | null}
+ */
+export function systemBootId(platform = process.platform, run = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })) {
+  const cache = platform === process.platform && arguments.length < 2;
+  if (cache && cachedBootId !== undefined) return cachedBootId;
+  let id = null;
+  try {
+    if (platform === "darwin") {
+      const value = run("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"]).trim();
+      if (/^[0-9A-Fa-f-]{36}$/.test(value)) id = `darwin:${value.toLowerCase()}`;
+    } else if (platform === "linux") {
+      const value = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      if (/^[0-9a-f-]{36}$/.test(value)) id = `linux:${value}`;
+    } else if (platform === "win32") {
+      // BootId counts boots; it is not a clock.
+      const reg = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "reg.exe");
+      const out = run(reg, ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters", "/v", "BootId"]);
+      const match = /BootId\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(out);
+      if (match) id = `win32:${parseInt(match[1], 16)}`;
+    }
+  } catch { id = null; }
+  if (cache) cachedBootId = id;
+  return id;
 }
 
 /**
@@ -263,7 +313,35 @@ export async function availableServicePort(ports) {
  * @property {string} [executable]
  * @property {() => number} [now]
  * @property {(path: string, data: string, options: { mode: number }) => void} [writeFile]
+ * @property {string | null} [bootId]
+ * @property {() => number} [uptime]
  */
+
+/**
+ * Publish the custody record whole or not at all: temp → fsync → rename →
+ * directory fsync. A crash or a full disk leaves the previous record intact.
+ * The temp name matches the server's own atomic writers, so a leftover is
+ * swept at the next service boot.
+ * @param {string} path @param {string} data @param {{ mode: number }} options
+ */
+export function writeServiceHandleFile(path, data, options) {
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), options.mode);
+  try {
+    writeFileSync(fd, data);
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = -1;
+    renameSync(temporary, path);
+  } catch (error) {
+    if (fd !== -1) try { closeSync(fd); } catch { /* already closed */ }
+    try { unlinkSync(temporary); } catch { /* never created or already renamed */ }
+    throw error;
+  }
+  if (process.platform === "win32") return; // Windows refuses directory handles.
+  const dir = openSync(dirname(path), "r");
+  try { fsyncSync(dir); } finally { closeSync(dir); }
+}
 
 /**
  * Start the office service as a detached process.
@@ -277,7 +355,7 @@ export async function availableServicePort(ports) {
 export function startDetachedService(options) {
   const spawnImpl = options.spawnImpl ?? spawn;
   const executable = options.executable ?? process.execPath;
-  const write = options.writeFile ?? ((path, data, opts) => writeFileSync(path, data, opts));
+  const write = options.writeFile ?? writeServiceHandleFile;
   const now = options.now ?? Date.now;
   const controlToken = randomBytes(32).toString("hex");
 
@@ -349,15 +427,23 @@ export function startDetachedService(options) {
     startedAt: now(),
     controlToken,
   };
+  const bootId = options.bootId === undefined ? systemBootId() : options.bootId;
+  if (bootId) handle.bootId = bootId;
+  handle.bootUptime = (options.uptime ?? osUptime)();
   // Remember the child itself, not just its pid: this is the only thing that
   // ever authorises abandoning a start that went silent.
   spawnedChildren.set(handle, child);
   try {
     mkdirSync(dirname(servicePidPath(options.dataDirectory)), { recursive: true });
     write(servicePidPath(options.dataDirectory), `${JSON.stringify(handle)}\n`, { mode: 0o600 });
-  } catch {
-    // The service is already starting; failing to record it only means this
-    // launch cannot stop it later, which is reported rather than fatal.
+  } catch (error) {
+    // The record is the ONLY thing that can ever stop this service again. A
+    // service nobody can stop, adopt-check or upgrade is worse than no start:
+    // retire it through the child object we hold and report the failure.
+    spawnedChildren.delete(handle);
+    try { child.kill?.(); } catch { /* already gone */ }
+    diagnostic(`office service record could not be saved (${error?.code ?? "I/O error"}); the new service was stopped`);
+    throw Object.assign(new Error("The office service record could not be saved, so the new service was stopped."), { code: error?.code });
   }
   return handle;
 }
@@ -442,24 +528,23 @@ export function ownsRunningService(handle, running, identity) {
 }
 
 /** Ask the authenticated service to stop itself. Never signal a recorded PID.
+ * The session token comes from the service's private file, never over HTTP.
  * @param {ServicePidFile | null} handle
  * @param {import('./service-instance.mjs').ServiceIdentity} identity
- * @param {{fetchImpl?: typeof fetch}} [options] */
-export async function requestServiceStop(handle, identity, options = {}) {
+  * @param {{fetchImpl?: typeof fetch, dataDirectory: string, verifyWindowsPrivacy?: (path: string, kind: "file") => unknown, ifIdle?: boolean}} options `ifIdle` asks the service to refuse while it is working. */
+export async function requestServiceStop(handle, identity, options) {
   if (!handle?.controlToken) return false;
   const request = options.fetchImpl ?? fetch;
   const running = await probeService(handle.port, { fetchImpl: request });
   if (!ownsRunningService(handle, running, identity)) return false;
   try {
     const origin = `http://127.0.0.1:${handle.port}`;
-    const session = await request(`${origin}/api/session`, { signal: AbortSignal.timeout(3000) });
-    if (!session.ok) return false;
-    const auth = await session.json();
-    if (!auth || typeof auth.token !== "string") return false;
+    const token = await localSessionFor(options.dataDirectory, running, options);
+    if (!token) return false;
     const response = await request(`${origin}/api/service/stop`, {
       method: "POST", signal: AbortSignal.timeout(5000),
-      headers: { "content-type": "application/json", "x-realbud-session": auth.token, "x-realbud-service-control": handle.controlToken },
-      body: JSON.stringify({ pid: handle.pid, instanceId: identity.instanceId, controlId: createHash("sha256").update(handle.controlToken).digest("hex") }),
+      headers: { "content-type": "application/json", "x-realbud-session": token, "x-realbud-service-control": handle.controlToken },
+      body: JSON.stringify({ pid: handle.pid, instanceId: identity.instanceId, controlId: createHash("sha256").update(handle.controlToken).digest("hex"), ...(options.ifIdle ? { ifIdle: true } : {}) }),
     });
     return response.ok;
   } catch { return false; }

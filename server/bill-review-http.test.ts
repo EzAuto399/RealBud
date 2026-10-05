@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
@@ -57,7 +58,7 @@ async function start() {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   if (!ready) throw new Error(`Fictional review service did not start: ${logs}`);
-  token = (await (await fetch(base + '/api/session')).json() as { token: string }).token;
+  token = await readSessionToken(data);
 }
 beforeAll(async () => {
   // The desktop app creates the data folder and these files with their own protected descriptors.

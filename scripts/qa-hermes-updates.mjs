@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(process.env.QA_OUTPUT ?? join(root, 'outputs/realbud-hermes-upstream-2026-09-12/update-ui'));
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -28,6 +29,7 @@ try {
   await until(async () => (await fetch(`${base}/api/health`)).ok, 'server startup');
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, base, await readSessionToken(data));
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   let installed = false, job = { state: 'idle', error: null }, installs = 0, cancels = 0, failedReads = 0;
   const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });

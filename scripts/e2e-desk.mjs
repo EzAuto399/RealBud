@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18879);
@@ -80,10 +81,11 @@ try {
   const health = (await api("GET", "/api/health")).body;
   check("server identifies as realbud", health?.app === "realbud", health?.app);
 
-  const sessionRes = await fetch(`${BASE}/api/session`);
-  const sessionBody = await sessionRes.json();
-  session = sessionBody.token;
-  check("per-boot session token issued", sessionRes.ok && typeof session === "string" && session.length > 8);
+  session = await readSessionToken(join(home, ".realbud"));
+  const sessionRes = await api("GET", "/api/session");
+  check("per-boot session token issued", sessionRes.status === 200 && sessionRes.body?.token === undefined && typeof session === "string" && session.length > 8);
+
+  check("session route without a token is 401", (await fetch(`${BASE}/api/session`)).status === 401);
 
   const noSession = await fetch(`${BASE}/api/desk`);
   check("desk without a session is 401", noSession.status === 401);

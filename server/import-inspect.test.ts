@@ -81,6 +81,15 @@ describe("inspectLedgerColumns", () => {
     expect(result.mapping?.daysSinceDue).toBeUndefined();
   });
 
+  it("reads the whole mapping when trailing prose has its own braces", async () => {
+    const { dir, script } = fakeHermes(
+      `{"mapping":{"identity":"Property","levyPaid":"Levies"},"confidence":"high"}\nMatched {2} headers.`,
+    );
+    dirs.push(dir);
+    const result = await inspectLedgerColumns(CSV, { cli: script, root: dir });
+    expect(result.mapping).toEqual({ identity: "Property", levyPaid: "Levies" });
+  });
+
   it("returns null with an honest detail when the worker answers junk", async () => {
     const { dir, script } = fakeHermes("Sure, looks like address and days to me.");
     dirs.push(dir);

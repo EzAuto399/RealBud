@@ -950,7 +950,11 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
 // ── persisted approval records ───────────────────────────────────────────
 /** `stopped`: browser work was stopped while the card was still open and unexpired, which is not a refusal. */
 export type BrowserApprovalDecision = "pending" | "approved" | "denied" | "expired" | "changed" | "unconfirmed" | "stopped";
-export type BrowserApprovalOutcome = "not-dispatched" | "dispatching" | "succeeded" | "unknown";
+/** `unverified`: the browser acknowledged the press, which proves dispatch, not the payment or send.
+ * `confirmed` / `not-done`: a person checked the site and recorded what happened.
+ * `succeeded` is only in records saved before that distinction; it was an
+ * acknowledgement too, so it is held like `unverified`. */
+export type BrowserApprovalOutcome = "not-dispatched" | "dispatching" | "succeeded" | "unknown" | "unverified" | "confirmed" | "not-done";
 export interface BrowserApprovalRecord extends BrowserApprovalDraft {
   version: 1;
   purpose: "browser-approval";
@@ -962,15 +966,21 @@ export interface BrowserApprovalRecord extends BrowserApprovalDraft {
   decidedAt: number | null;
   decision: BrowserApprovalDecision;
   outcome: BrowserApprovalOutcome;
+  /** When a person recorded the outcome after checking the site. */
+  reconciledAt?: number;
 }
 const DECISIONS: readonly BrowserApprovalDecision[] = ["pending", "approved", "denied", "expired", "changed", "unconfirmed", "stopped"];
-const OUTCOMES: readonly BrowserApprovalOutcome[] = ["not-dispatched", "dispatching", "succeeded", "unknown"];
+const OUTCOMES: readonly BrowserApprovalOutcome[] = ["not-dispatched", "dispatching", "succeeded", "unknown", "unverified", "confirmed", "not-done"];
+/** Outcomes that release the same action: never pressed, or a person checked the site. Everything else is held. */
+const SETTLED: ReadonlySet<BrowserApprovalOutcome> = new Set(["not-dispatched", "confirmed", "not-done"]);
+const held = (row: BrowserApprovalRecord) => !SETTLED.has(row.outcome);
+/** A pressed step whose result no person has recorded yet. */
+export const browserApprovalHeld = held;
 const MAX_RECORDS = 500;
 const MAX_BYTES = 4_000_000;
-/** An approved action whose result is unknown blocks the same action for a day. */
-export const UNRESOLVED_HOLD_MS = 24 * 60 * 60_000;
 const RECOVERY = "Browser approval history needs recovery. Approval-gated browser steps are paused. Check disk space and file access, then restart RealBud.";
 const recovery = () => Object.assign(new Error(RECOVERY), { status: 503 });
+const FULL = "Too many approved browser steps are waiting for you to check their result. Check the site and record each result before approving more.";
 function validRecord(value: unknown): value is BrowserApprovalRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
@@ -979,6 +989,7 @@ function validRecord(value: unknown): value is BrowserApprovalRecord {
     // Records saved before the effect hash existed still match by fingerprint.
     (row.effect === undefined || typeof row.effect === "string" && /^[0-9a-f]{64}$/.test(row.effect)) &&
     typeof row.createdAt === "number" && typeof row.expiresAt === "number" && Array.isArray(row.facts) &&
+    (row.reconciledAt === undefined || typeof row.reconciledAt === "number") &&
     DECISIONS.includes(row.decision as BrowserApprovalDecision) && OUTCOMES.includes(row.outcome as BrowserApprovalOutcome);
 }
 function parseStore(value: unknown): BrowserApprovalRecord[] {
@@ -1017,9 +1028,11 @@ export class BrowserApprovalStore {
         createdAt: now, decidedAt: decision === "pending" ? null : now, decision, outcome: "not-dispatched",
       };
       rows.push(record);
+      // Only settled history is trimmed; dropping a held record would release its hold.
       while (rows.length > MAX_RECORDS) {
-        const settled = rows.findIndex(row => row.outcome !== "dispatching" && row.outcome !== "unknown");
-        rows.splice(settled < 0 ? 0 : settled, 1);
+        const settled = rows.findIndex(row => row !== record && !held(row));
+        if (settled < 0) throw Object.assign(new Error(FULL), { status: 409 });
+        rows.splice(settled, 1);
       }
       await this.save(rows);
       return structuredClone(record);
@@ -1035,12 +1048,24 @@ export class BrowserApprovalStore {
     });
   }
   /** An earlier approval of the same action, or of the same effect through
-   * another control or key, whose result was never confirmed. */
-  unresolved(fingerprint: string, now = Date.now(), effect?: string): Promise<BrowserApprovalRecord | undefined> {
+   * another control or key, whose result no person has recorded. Time never
+   * releases it: a clock jump or a long wait is not evidence of the outcome. */
+  unresolved(fingerprint: string, effect?: string): Promise<BrowserApprovalRecord | undefined> {
     return this.exclusive(async () => {
-      const row = (await this.load()).find(item => (item.fingerprint === fingerprint || (effect !== undefined && item.effect === effect)) &&
-        (item.outcome === "dispatching" || item.outcome === "unknown") && now - item.createdAt < UNRESOLVED_HOLD_MS);
+      const row = (await this.load()).find(item => (item.fingerprint === fingerprint || (effect !== undefined && item.effect === effect)) && held(item));
       return row ? structuredClone(row) : undefined;
+    });
+  }
+  /** The only release of a held action: a person checked the site and records
+   * whether it happened. A record that was never pressed or is already settled is not changed. */
+  reconcile(id: string, result: "confirmed" | "not-done", now = Date.now()): Promise<BrowserApprovalRecord> {
+    return this.exclusive(async () => {
+      const current = (await this.load()).find(row => row.id === id);
+      if (!current) throw Object.assign(new Error("This browser approval is not on record."), { status: 404 });
+      if (!held(current)) throw Object.assign(new Error("This browser step has no result waiting to be checked."), { status: 409 });
+      const rows = (await this.load()).map(row => row.id === id ? { ...row, outcome: result, reconciledAt: now } : row);
+      await this.save(rows);
+      return structuredClone(rows.find(row => row.id === id)!);
     });
   }
   list(): Promise<BrowserApprovalRecord[]> {

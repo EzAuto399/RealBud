@@ -9,7 +9,7 @@ import { careTermsDraft, fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { BillingService, type HostedPaymentAdapter } from './billing.ts';
 import { GatewayError } from './contracts.ts';
-import { fileSecretStore, InstallationProvisioning, modelviaOperatorState } from './provisioning.ts';
+import { bindOfficeCustomer, fileSecretStore, InstallationProvisioning, modelviaOperatorState } from './provisioning.ts';
 import { modelviaKeyClient } from './modelvia-keys.ts';
 import type { HttpTransport } from './composio-org.ts';
 import { composeGateway } from './composition.ts';
@@ -27,6 +27,7 @@ const OWNER='synthetic-portal-token-owner-000001',READER='synthetic-portal-token
 const OPERATOR_SECRET='fictional-gateway-operator-secret-000001';
 async function serverFixture(options:{provisioning?:boolean;customer?:Record<string,unknown>;serviceIssuer?:ServiceIssuer;operator?:boolean}={}) {
   const f=fixture(),root=mkdtempSync(join(tmpdir(),'realbud-http-'));
+  bindOfficeCustomer(f.ledger,f.tenant.companyId,'cus-fictional-office');
   const modelviaCalls:string[]=[];
   const customer={id:'cus-fictional-office',clientId:'realbud',name:'Fictional office',active:true,monthlyCapNanoAud:'100000000000',maxConcurrent:4,allowedModels:['auto'],version:1,...options.customer};
   const projects=new Map<string,Record<string,unknown>>();

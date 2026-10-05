@@ -1,4 +1,5 @@
 // The real desktop HTTP/session boundary, with an isolated synthetic database.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,7 +36,7 @@ beforeAll(async()=>{
     if(health?.pid===child.pid){ready=true;break;}await new Promise(resolve=>setTimeout(resolve,100));
   }
   if(!ready)throw new Error(`Synthetic bank service did not start: ${logs}`);
-  session=(await read<{token:string}>(await fetch(base+'/api/session'))).token;
+  session=await readSessionToken(data);
 },30_000);
 afterAll(async()=>{
   if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),5000);try{await closed;}finally{clearTimeout(timer);}}

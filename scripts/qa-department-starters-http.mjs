@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { createCompanyInstallation } from '../server/company-installation.ts';
 import { departmentConfigurationReviewMaterial, normalizeDepartmentConfiguration } from '../shared/department-configuration.ts';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 assert(Number(process.versions.node.split('.')[0]) >= 24, 'Use Node 24 or later.');
 assert(!process.env.REALBUD_COMPANY_DATABASE_URL, 'Remove the external company database setting before this disposable QA run.');
@@ -81,7 +82,7 @@ async function start(office) {
     if (office.child.exitCode !== null) throw new Error(`${office.label} server stopped: ${office.logs}`);
     try { return (await (await fetch(office.origin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === office.child.pid; } catch { return false; }
   }, `${office.label} service health`);
-  office.token = (await (await fetch(office.origin + '/api/session')).json()).token;
+  office.token = await readSessionToken(office.data);
   const signed = await app(office, '/api/company/sign-in', office.credential, 200, 'POST', '');
   office.ownerToken = signed.memberToken; office.companyId = signed.company.id; office.ownerId = signed.member.id;
 }

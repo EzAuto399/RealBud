@@ -35,6 +35,7 @@ import { accessSync, closeSync, constants, fchmodSync, fstatSync, lstatSync, mkd
 import { createServer, request, type Server } from "node:http";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { recordWorkerCustody, releaseWorkerCustody, workerCustodyRefusal } from "./worker-custody.ts";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
@@ -53,6 +54,11 @@ export function setWorkerLaunchesHeld(held: boolean): void { launchesHeld = held
 export function trackSandboxedChild<T extends ChildProcess | null>(child: T): T {
   if (!child || child.exitCode !== null || child.signalCode !== null) return child;
   liveChildren.add(child);
+  // Durable before the caller hands the worker any work. A worker whose
+  // custody could not be saved is stopped rather than left unrecorded.
+  if (child.pid && !recordWorkerCustody(child.pid)) {
+    try { if (process.platform === "win32") child.kill("SIGKILL"); else process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+  }
   // A leader's exit does not prove its process group is gone. Keep ownership
   // until every descendant has stopped, including on ordinary worker exit.
   child.once("exit", () => { void stopSandboxedChild(child, 5_000).catch(() => { /* retained for an explicit stop to retry/refuse */ }); });
@@ -110,6 +116,7 @@ function stopSandboxedChild(child: ChildProcess, deadlineMs: number): Promise<vo
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     liveChildren.delete(child);
+    void releaseWorkerCustody(pid);
   })();
   stoppingChildren.set(child, stopped);
   void stopped.finally(() => stoppingChildren.delete(child)).catch(() => {});
@@ -121,9 +128,7 @@ export const NETWORK_ISOLATION_UNAVAILABLE =
 
 /** Credential and private-data locations under the person's home that no
  * worker may read, whatever its job. */
-/** Test-only: extra writable roots for the fakes' evidence files. Honoured
- * only under vitest; production never reads it. */
-export const SANDBOX_TEST_WRITABLE: string[] = [];
+export { SANDBOX_TEST_WRITABLE } from "./worker-sandbox-test-writable.ts";
 
 export const PRIVATE_HOME_PATHS = [
   ".ssh", ".aws", ".config/gcloud", ".config/gh", ".gnupg", ".netrc", ".kube", ".docker",
@@ -406,6 +411,9 @@ export interface SandboxedLaunch {
  */
 export function sandboxedLaunch(command: string, args: readonly string[], env: Record<string, string | undefined>, spec: WorkerSandboxSpec, deps: SandboxDeps = {}): SandboxedLaunch {
   if (launchesHeld) throw new Error(WORKERS_HELD);
+  // Work from an earlier run whose stop was never confirmed may overlap this one.
+  const custody = workerCustodyRefusal();
+  if (custody) throw new Error(custody);
   if ((deps.platform ?? process.platform) !== "darwin") return { command, args: [...args], release() {} };
   // A missing program fails as a plain spawn would (ENOENT), not as a
   // sandbox refusal: setup copy depends on telling the two apart.

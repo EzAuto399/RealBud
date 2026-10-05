@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fixture } from '../managed-gateway/testing.ts';
-import { fileSecretStore, InstallationProvisioning, SPEND_CAP_LABEL_MAX, type ProvisioningDescriptor } from '../managed-gateway/provisioning.ts';
+import { bindOfficeCustomer, fileSecretStore, InstallationProvisioning, SPEND_CAP_LABEL_MAX, type ProvisioningDescriptor } from '../managed-gateway/provisioning.ts';
 import type { ComposioOrgClient } from '../managed-gateway/composio-org.ts';
 import type { ModelviaClient, ModelviaCustomer } from '../managed-gateway/modelvia-keys.ts';
 import { isProvisioningSkipped, parseInstallationProvisioning } from '../shared/office-link.ts';
@@ -27,6 +27,7 @@ afterEach(() => { setWorkerModelGrant({ state: 'none' }); for (const root of roo
 /** The gateway as production composes it, over stateless vendor fakes. */
 function gateway(customer: ModelviaCustomer) {
   const f = fixture();
+  bindOfficeCustomer(f.ledger, f.tenant.companyId, 'cus-fictional-office');
   const root = mkdtempSync(join(tmpdir(), 'realbud-contract-gateway-')); roots.push(root);
   const org: ComposioOrgClient = {
     async listProjects() { return []; },

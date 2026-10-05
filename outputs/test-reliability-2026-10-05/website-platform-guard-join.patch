@@ -1,0 +1,40 @@
+--- a/lib/platform-guard.test.mjs
++++ b/lib/platform-guard.test.mjs
+@@ -11,6 +11,10 @@
+ const tokens={input:'1',output:'1',cacheRead:'0',cacheWrite:'0',totalInput:'1'},money={customerGrossNanoAud:'1',customerCreditsNanoAud:'0',customerNetNanoAud:'1',unknownCustomerPriceRequests:0},lat={samples:0,p50Ms:null,p95Ms:null};
+ const summary={requests:1,settled:1,pending:0,unknown:0,tokens,money,latency:{total:lat,routing:lat,provider:lat,firstToken:lat},routing:{jevSelected:0,jevAbstained:0,jevFailed:0,jevSkipped:0}};
+ const analytics=(customerId,period)=>({schemaVersion:1,scope:{role:'customer',customerId},period,generatedAt:1,summary,byModel:[],byProject:[],byDay:[],recentRequests:[],coverage:{requests:1,timedRequests:0,legacyUntimedRequests:0}});
++/** Resolves once a second read has joined the guard's in-flight table, instead
++ * of guessing how long the route's async key derivation takes. */
++const joining=guard=>{const joined=Promise.withResolvers();let n=0;
++  return {joined:joined.promise,guard:{...guard,coalesce(...args){const result=guard.coalesce(...args);if(++n===2)joined.resolve();return result;}}};};
+ /** A fake Modelvia that counts calls and serves each customer its own billing. */
+ function modelvia(){
+   const calls=[];
+@@ -166,11 +170,11 @@
+ 
+ test('identical concurrent authorized reads share one dispatch and independently readable responses', async () => {
+   for (const kind of ['analytics','usage']) {
+-    const guard=createPlatformGuard({perMinute:1}),started=Promise.withResolvers(),release=Promise.withResolvers();let calls=0;
++    const {guard,joined}=joining(createPlatformGuard({perMinute:1})),started=Promise.withResolvers(),release=Promise.withResolvers();let calls=0;
+     const transport=async()=>{calls++;started.resolve();await release.promise;return Response.json(kind==='analytics'?analytics('customer-a','2026-09'):{period:'2026-09',requests:1,tokens:{input:'1',output:'1'},money:{customerNetNanoAud:'1'},updatedAt:1});};
+     const run=()=> (kind==='analytics'?platformAnalytics:platformUsage)(officeA,env,new URLSearchParams('period=2026-09'),transport,1,guard);
+     const first=run();await started.promise;const second=run();
+-    await new Promise(resolve=>setTimeout(resolve,10));release.resolve();
++    await joined;release.resolve();
+     const responses=await Promise.all([first,second]);assert.equal(calls,1,kind);
+     assert.deepEqual(responses.map(r=>r.status),[200,200]);assert.deepEqual(await responses[0].json(),await responses[1].json());
+   }
+@@ -189,10 +193,10 @@
+ 
+ test('failed in-flight reads are discarded; later calls retry and sibling offices are unaffected',async()=>{
+   for (const failure of ['throw','status','malformed']) {
+-    const guard=createPlatformGuard(),started=Promise.withResolvers(),release=Promise.withResolvers();let calls=0;
++    const {guard,joined}=joining(createPlatformGuard()),started=Promise.withResolvers(),release=Promise.withResolvers();let calls=0;
+     const broken=async()=>{calls++;started.resolve();await release.promise;if(failure==='throw')throw new Error('FICTIONAL_PRIVATE');return failure==='status'?Response.json({error:'FICTIONAL_PRIVATE'},{status:500}):Response.json({secret:'FICTIONAL_PRIVATE'});};
+     const run=transport=>platformAnalytics(officeA,env,new URLSearchParams('period=2026-09'),transport,1,guard);
+-    const first=run(broken);await started.promise;const second=run(broken);await new Promise(resolve=>setTimeout(resolve,10));release.resolve();
++    const first=run(broken);await started.promise;const second=run(broken);await joined;release.resolve();
+     for(const r of await Promise.all([first,second])){assert.equal(r.status,503);assert(!(await r.text()).includes('FICTIONAL_PRIVATE'));}
+     assert.equal(calls,1);
+     const good=async url=>{calls++;return Response.json(analytics(new URL(url).pathname.split('/')[4],'2026-09'));};

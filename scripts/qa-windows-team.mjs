@@ -11,6 +11,7 @@ import { release, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 import { smokeInstalledWorker } from './smoke-one-shot-worker.mjs';
 
 const script = fileURLToPath(import.meta.url);
@@ -414,7 +415,7 @@ if (scenarioMode) {
     check(token.outcome === 'queried' && token.pid === child.pid && token.sameUser === true && authorityMatches,
       'The actual service token must match the explicitly selected acceptance mode');
     context.startupMs = Math.round(performance.now() - started);
-    context.token = (await call(context, '/api/session')).token; await captureDatabase(context);
+    context.token = await readSessionToken(context.data); await captureDatabase(context);
     return context;
   }
   async function stop(context) {

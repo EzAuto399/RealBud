@@ -106,11 +106,13 @@ export function browserApprovalRows(card: BrowserApprovalCard): Row[] {
 }
 
 /** Title, where it happens, the verified facts and the time left. */
-export function BrowserApprovalFacts({ approval, now, status }: {
+export function BrowserApprovalFacts({ approval, now, status, title }: {
   approval: BrowserApprovalCard | null;
   now: number;
   /** Replaces the time left once the card is settled (e.g. "Stopped. …"). */
   status?: string;
+  /** Replaces the approval question, e.g. when asking whether it happened. */
+  title?: string;
 }) {
   const expired = approval ? now >= approval.expiresAt : false;
   return (
@@ -126,7 +128,7 @@ export function BrowserApprovalFacts({ approval, now, status }: {
           </span>
         ) : null}
       </div>
-      <h3 className="mt-1 break-words text-[16px] font-semibold leading-snug text-ink">{browserApprovalTitle(approval)}</h3>
+      <h3 className="mt-1 break-words text-[16px] font-semibold leading-snug text-ink">{title ?? browserApprovalTitle(approval)}</h3>
       {approval ? (
         <p className="mt-1 break-words text-[13px] text-ink-muted">Button “{approval.control}” on {approval.site}</p>
       ) : null}

@@ -5,8 +5,16 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll } from "vitest";
-import { SANDBOX_TEST_WRITABLE } from "../worker-network-sandbox.ts";
+import { afterAll, vi } from "vitest";
+import { SANDBOX_TEST_WRITABLE } from "../worker-sandbox-test-writable.ts";
+
+// vi.waitFor gives up after 1 s by default. The suite waits on background
+// work (fsync'd private writes, child servers, approval cards) that a loaded
+// machine can push past that, which failed tests that were otherwise correct.
+// It still resolves as soon as the condition holds; a caller's own timeout wins.
+const waitFor = vi.waitFor;
+vi.waitFor = ((callback, options) => waitFor(callback,
+  typeof options === "number" ? options : { timeout: 10_000, ...options })) as typeof vi.waitFor;
 
 // Test fakes (fake CLIs, FAKE_ACP_DUMP) leave their evidence under the temp
 // folder; the worker sandbox grants it only through this explicit hook.

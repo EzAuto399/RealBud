@@ -7,6 +7,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, release } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { readSessionToken } from './local-session.mjs';
 const execute = promisify(execFile);
 const phase = process.argv[2] || 'join';
 assert.ok(['join', 'offline', 'resume'].includes(phase));
@@ -49,7 +50,7 @@ async function start() {
       exited.then(() => { throw new Error('Peer launcher exited before ready'); }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Peer launcher readiness timed out')), 30_000); })]);
   } finally { clearTimeout(timer); }
-  appToken = (await call('/api/session')).token;
+  appToken = await readSessionToken(join(base, 'client', 'home', '.realbud'));
 }
 async function stop() {
   if (!child) return;

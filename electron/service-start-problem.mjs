@@ -7,7 +7,7 @@
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 
-/** @typedef {"disk-full" | "no-access" | "ports-taken"} StartProblem */
+/** @typedef {"disk-full" | "no-access" | "ports-taken" | "old-service" | "old-service-busy"} StartProblem */
 
 const DISK_FULL_CODES = new Set(["ENOSPC", "EDQUOT", "storage-full"]);
 const NO_ACCESS_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
@@ -80,6 +80,24 @@ export function startProblemCopy(problem, { dataDirectory, ports, platform = pro
       paragraphs: [
         `The office service needs one of these local ports on ${computer}, and all of them are in use: ${ports.join(", ")}.`,
         `Quit the app that is using them, or restart ${computer}, then reopen RealBud.`,
+      ],
+    };
+  }
+  if (problem === "old-service-busy") {
+    return {
+      title: "The previous version of RealBud is still working",
+      paragraphs: [
+        "Bud is finishing a task in the office service from the previous version. RealBud will not interrupt it or start this version beside it.",
+        "When the task is done, quit and reopen RealBud to finish the update.",
+      ],
+    };
+  }
+  if (problem === "old-service") {
+    return {
+      title: "The previous version of RealBud is still running",
+      paragraphs: [
+        "RealBud could not stop the office service from the previous version, so it has not started this version beside it. Nothing was lost.",
+        `Restart ${computer}, then reopen RealBud.`,
       ],
     };
   }

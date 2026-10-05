@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,7 +43,8 @@ try {
 
   assert.equal((await fetch(origin + '/api/browser')).status, 401);
   assert.equal((await fetch(origin + '/api/browser/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
-  const token = (await (await fetch(origin + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
+  await primeBrowserSession(context, origin, token);
   const current = await fetch(origin + '/api/browser', { headers: { 'x-realbud-session': token } });
   assert.equal(current.status, 200);
   assert.equal((await current.json()).enabled, false);

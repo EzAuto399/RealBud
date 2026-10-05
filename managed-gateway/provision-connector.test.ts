@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { updateRegistry } from './provisioning.ts';
 
 const cli = fileURLToPath(new URL('./provision-connector.mjs', import.meta.url));
 const descriptor = (id = 'device-fictional') => ({ id, companyId: 'company-fictional', licenseId: 'license-fictional',
@@ -117,5 +118,68 @@ test('aliased registry/client directories cannot overwrite the only issued crede
     const registry = join(actual, 'same.json'), client = join(alias, 'same.json');
     assert.notEqual(f.run({ registry, 'client-output': client }).status, 0);
     assert.equal(existsSync(registry), false);
+  } finally { f.close(); }
+});
+
+/** A real second process that takes the registry lock and then blocks inside the
+ * change, so the test can kill it while it holds the lock. */
+function lockHolder(f: ReturnType<typeof fixture>) {
+  const provisioning = new URL('./provisioning.ts', import.meta.url).href;
+  const program = `import { writeSync } from 'node:fs'; import { updateRegistry } from ${JSON.stringify(provisioning)};
+    updateRegistry(${JSON.stringify(f.registry)}, () => { writeSync(1, 'locked\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000); return { devices: [] }; });`;
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', program], { cwd: f.root, env: f.env, stdio: ['ignore', 'pipe', 'ignore'] });
+  const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
+  const locked = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('lock holder did not start')), 10_000);
+    child.stdout!.on('data', chunk => { if (String(chunk).includes('locked')) { clearTimeout(timer); resolve(); } });
+    void closed.then(() => { clearTimeout(timer); reject(new Error('lock holder exited early')); });
+  });
+  const killed = () => { child.kill('SIGKILL'); return closed; };
+  return { child, locked, killed };
+}
+
+test('a lock whose owner was killed while holding it is recovered on restart', async () => {
+  const f = fixture(); try {
+    const holder = lockHolder(f); await holder.locked;
+    const owner = JSON.parse(readFileSync(`${f.registry}.lock`, 'utf8'));
+    assert.equal(owner.pid, holder.child.pid); assert.equal(owner.host, hostname()); assert.equal(owner.version, 1);
+    await holder.killed();
+    assert.equal(existsSync(`${f.registry}.lock`), true, 'the killed owner never released its lock');
+    const result = f.run(); assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(readFileSync(f.registry, 'utf8')).devices.length, 1);
+    assert.equal(existsSync(`${f.registry}.lock`), false);
+  } finally { f.close(); }
+});
+
+test('a live lock owner is never stolen from, and its lock is untouched', async () => {
+  const f = fixture(); const holder = lockHolder(f); try {
+    await holder.locked;
+    const before = readFileSync(`${f.registry}.lock`);
+    for (let i = 0; i < 3; i++) assert.notEqual(f.run().status, 0);
+    assert.deepEqual(readFileSync(`${f.registry}.lock`), before);
+    assert.equal(existsSync(f.clientOutput), false); assert.equal(existsSync(f.registry), false);
+  } finally { await holder.killed(); f.close(); }
+});
+
+test('a lock from another host or an unknown writer is never recovered; a proved-dead same-host owner is', () => {
+  const f = fixture(); try {
+    mkdirSync(dirname(f.registry), { recursive: true });
+    const lock = `${f.registry}.lock`;
+    const update = () => updateRegistry(f.registry, devices => ({ devices }));
+    // Another host's process is unknowable, even with a pid that cannot exist here.
+    const remote = JSON.stringify({ version: 1, host: 'other-host.invalid', pid: 2 ** 30, token: 'fictional' });
+    writeFileSync(lock, remote, { mode: 0o600 });
+    assert.throws(update); assert.equal(readFileSync(lock, 'utf8'), remote);
+    // A live same-host process (this test's parent) is never proved dead.
+    const live = JSON.stringify({ version: 1, host: hostname(), pid: process.ppid, token: 'fictional' });
+    writeFileSync(lock, live, { mode: 0o600 });
+    assert.throws(update); assert.equal(readFileSync(lock, 'utf8'), live);
+    // A same-host pid that does not exist is proved dead.
+    writeFileSync(lock, JSON.stringify({ version: 1, host: hostname(), pid: 2 ** 30, token: 'fictional' }), { mode: 0o600 });
+    update(); assert.equal(existsSync(lock), false);
+    // A restarted container often gets the dead owner's pid back; the update is
+    // synchronous, so a lock naming our own pid cannot be a live change.
+    writeFileSync(lock, JSON.stringify({ version: 1, host: hostname(), pid: process.pid, token: 'fictional' }), { mode: 0o600 });
+    update(); assert.equal(existsSync(lock), false);
   } finally { f.close(); }
 });

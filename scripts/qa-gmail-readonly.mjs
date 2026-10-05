@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { redactSecretsInText } from "../server/redact.ts";
 import { pmInboxCases } from "./lib/pm-inbox-fixture.mjs";
+import { readSessionToken } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const option = name => {
@@ -220,7 +221,7 @@ try {
     assert.ok(Date.now() < bootDeadline, `Canary server did not start: ${scrub(stderr)}`);
     await delay(100);
   }
-  token = (await api("GET", "/api/session")).token;
+  token = await readSessionToken(dataDir);
   const cfg = await api("GET", "/api/config");
   assert.equal(cfg.composio.mode, "gmail-readonly"); assert.equal(cfg.composio.readOnlyConfigured, true);
   assert.equal(JSON.stringify(cfg).includes(key), false);
@@ -233,7 +234,7 @@ try {
     while (!control().stop && Date.now() < deadline) await delay(500);
     assert.ok(Date.now() < deadline, "Interactive rehearsal reached its thirty-minute limit.");
     // Manual recovery testing may restart the server and rotate its session.
-    token = (await api("GET", "/api/session")).token;
+    token = await readSessionToken(dataDir);
     lastBot = (await api("GET", "/api/bots")).bots.find(bot => bot.id === "bud");
     if (lastBot?.busy) await api("POST", "/api/bots/bud/interrupt", {});
     save("messages.json", lastBot?.messages || []);

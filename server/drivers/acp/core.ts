@@ -20,6 +20,7 @@ import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../proc
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { stripServiceSecrets } from "../../service-child-env.ts";
 import { managedService } from "../../managed-service.ts";
+import { createAskModelRelayLease, type AskModelRelayLease } from "../../ask-model-relay.ts";
 
 import type {
   DriverCreateInput,
@@ -414,6 +415,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         args: string[],
         mcpServers: AcpMcpServer[],
         signature: string,
+        modelLease?: AskModelRelayLease,
       ): SessionRuntime => {
         const { threadId } = firstTurn;
         const env = childEnv();
@@ -502,6 +504,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
 
         const removeRuntime = () => {
+          modelLease?.revoke();
           browserBroker?.close();
           appBroker?.close();
           memoryBroker?.close();
@@ -545,6 +548,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         const settle = (run: RunningTurn, ok: boolean, stopReason: string | null, keepWarm: boolean) => {
           if (run.settled) return;
+          // The relay token lives as long as this Hermes process. A Stop has
+          // already revoked it, so that process cannot be kept warm.
+          if (modelLease && run.cancellationRequested) keepWarm = false;
           run.settled = true;
           // A browser capability belongs to one job attempt, never a warm chat.
           if (browserBroker) { browserBroker.close(); keepWarm = false; }
@@ -1166,6 +1172,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const interrupt = async (run: RunningTurn) => {
           if (run.settled) return run.done;
           run.cancellationRequested = true;
+          modelLease?.revoke();
           browserBroker?.close();
           appBroker?.cancelPending();
           memoryBroker?.cancelPending();
@@ -1271,12 +1278,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           runtime = undefined;
         }
         const first = !runtime;
-        runtime ??= createRuntime(turn, cwd, args, mcpServers, signature);
+        if (!runtime) {
+          const modelLease = DRIVER_KIND === "hermesAgent" ? createAskModelRelayLease() : undefined;
+          try {
+            runtime = modelLease
+              ? modelLease.run(() => createRuntime(turn, cwd, args, mcpServers, signature, modelLease))
+              : createRuntime(turn, cwd, args, mcpServers, signature);
+          } catch (error) { modelLease?.revoke(); throw error; }
+        }
         return { turnId: runtime.resume(turn, first) };
       };
 
       const snapshot = async (): Promise<ProviderSnapshot> => {
-        const env = childEnv();
+        // A version probe is not a model turn: its token is revoked before spawning.
+        const probeLease = DRIVER_KIND === "hermesAgent" ? createAskModelRelayLease() : undefined;
+        let env: ReturnType<typeof childEnv>;
+        try { env = probeLease ? probeLease.run(childEnv) : childEnv(); }
+        finally { probeLease?.revoke(); }
         const version = await new Promise<string | null>((resolve) => {
           // The same boundary as a turn: a binary in worker-writable storage
           // never runs unconfined, not even to print its version.

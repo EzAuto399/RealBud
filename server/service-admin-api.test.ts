@@ -1,5 +1,6 @@
 // Two actual HTTP harnesses, separate installation passwords, disposable data.
 // No live providers, personal accounts, desktop control or billing service.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
@@ -90,7 +91,7 @@ beforeAll(async () => {
       if (attempt === 149) throw new Error("Disposable service startup timed out.");
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    instance.session = ((await (await fetch(instance.base + "/api/session")).json()) as { token: string }).token;
+    instance.session = await readSessionToken(instance.data);
     grant(instance, Date.now() + 60_000);
   }
 }, 40_000);

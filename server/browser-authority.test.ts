@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +16,7 @@ import {
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
-import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 const cleanup: Array<() => Promise<unknown>> = [];
@@ -645,10 +645,51 @@ describe("browser approval records", () => {
     if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(file, "utf8")).approvals[0]).toMatchObject({ id: saved.id, decision: "pending", outcome: "not-dispatched" });
     await store.update(saved.id, { decision: "approved", outcome: "unknown", decidedAt: 20 });
-    expect(await new BrowserApprovalStore({ file }).unresolved(saved.fingerprint, 30)).toMatchObject({ id: saved.id });
+    expect(await new BrowserApprovalStore({ file }).unresolved(saved.fingerprint)).toMatchObject({ id: saved.id });
     writeFileSync(file, "{\"version\":1,\"purpose\":\"browser-approvals\",\"approvals\":[{}]}", { mode: 0o600 });
     const damaged = new BrowserApprovalStore({ file });
     await expect(damaged.create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending")).rejects.toThrow(/needs recovery/);
     expect(readFileSync(file, "utf8")).toContain("\"approvals\":[{}]");
+  });
+
+  it("holds an unknown or unverified effect across restarts and ±48h clock jumps until a person records the result", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-approvals-")); cleanup.push(() => removeFixture(root));
+    const file = join(root, "approvals.json");
+    const owner = { grantId: grant().id, runId: RUN, threadId: "thread-fictional" };
+    const auth = authorizeBrowserAction(grant(), PAY_PAGE, "browser_click_semantic", { ref: "@e1" }, { now: 10 });
+    if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
+    const t0 = 1_000_000_000_000; const h48 = 48 * 3_600_000;
+    for (const outcome of ["unknown", "unverified", "dispatching", "succeeded"] as const) {
+      const store = new BrowserApprovalStore({ file });
+      const saved = await store.create(auth.draft, owner, "pending", t0);
+      await store.update(saved.id, { decision: "approved", outcome, decidedAt: t0 });
+      // A fresh store is a restart; the clock jumps either way are not evidence of the outcome.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      for (const now of [t0, t0 + h48, t0 - h48, t0 + 400 * h48]) {
+        vi.setSystemTime(now);
+        expect(await new BrowserApprovalStore({ file }).unresolved(saved.fingerprint, saved.effect)).toMatchObject({ id: saved.id, outcome });
+      }
+      vi.useRealTimers();
+      const reopened = new BrowserApprovalStore({ file });
+      expect(await reopened.reconcile(saved.id, outcome === "unknown" ? "confirmed" : "not-done", t0 + 5)).toMatchObject({ reconciledAt: t0 + 5 });
+      expect(await new BrowserApprovalStore({ file }).unresolved(saved.fingerprint, saved.effect)).toBeUndefined();
+      // A settled record is not reconciled twice.
+      await expect(reopened.reconcile(saved.id, "confirmed")).rejects.toThrow(/no result waiting/);
+    }
+    const never = await new BrowserApprovalStore({ file }).create(auth.draft, owner, "pending", t0);
+    await expect(new BrowserApprovalStore({ file }).reconcile(never.id, "confirmed")).rejects.toThrow(/no result waiting/);
+  });
+
+  it("never trims a held record to make room", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-approvals-")); cleanup.push(() => removeFixture(root));
+    const file = join(root, "approvals.json");
+    const auth = authorizeBrowserAction(grant(), PAY_PAGE, "browser_click_semantic", { ref: "@e1" }, { now: 10 });
+    if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
+    const row = { ...auth.draft, version: 1, purpose: "browser-approval", grantId: grant().id, runId: RUN, threadId: "thread-fictional", createdAt: 1, decidedAt: 1, decision: "approved", outcome: "unverified" };
+    const rows = Array.from({ length: 500 }, (_, i) => ({ ...row, id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
+    plantPrivateFile(file, JSON.stringify({ version: 1, purpose: "browser-approvals", approvals: rows }));
+    const store = new BrowserApprovalStore({ file });
+    await expect(store.create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending")).rejects.toThrow(/waiting for you to check/);
+    expect(await new BrowserApprovalStore({ file }).list()).toHaveLength(500);
   });
 });

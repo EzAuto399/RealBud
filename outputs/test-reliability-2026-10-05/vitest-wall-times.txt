@@ -1,0 +1,8 @@
+run base1 exit 0 wall 562s
+run base2 exit 0 wall 613s
+run base3 exit 0 wall 638s
+run stress1 exit 1 wall 723s
+run after1 exit 0 wall 778s
+run after2 exit 1 wall 390s
+run after3 exit 1 wall 0s
+run stress2 exit 1 wall 0s

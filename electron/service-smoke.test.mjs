@@ -156,14 +156,23 @@ describe('installed Windows service acceptance', () => {
             else powershell(${JSON.stringify(BROAD_FIXTURE_SCRIPT)}, { REALBUD_FIXTURE_BROAD_FILE: path });
           }
         }
+        // Like the real service: publish the per-boot session only to the owner's
+        // private data directory, before listening, never over HTTP.
+        const sessionToken = 'f'.repeat(48);
+        const sessionDir = join(process.env.REALBUD_DATA_DIR, 'local-auth'), sessionFile = join(sessionDir, 'session.json');
+        mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+        writeFileSync(sessionFile, JSON.stringify({ version: 1, pid: process.pid, port: Number(process.env.OMB_PORT), token: sessionToken }), { mode: 0o600 });
+        if (process.platform === 'win32') powershell(${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)}, {
+          REALBUD_FIXTURE_COUNT: '2', REALBUD_FIXTURE_PATH_0: sessionDir, REALBUD_FIXTURE_KIND_0: 'directory',
+          REALBUD_FIXTURE_PATH_1: sessionFile, REALBUD_FIXTURE_KIND_1: 'file',
+        });
         const server = createServer((req, res) => {
           res.setHeader('content-type', 'application/json');
           if (req.url === '/api/health') return res.end(JSON.stringify({ app: 'realbud', pid: process.pid }));
-          if (req.url === '/api/session') return res.end(JSON.stringify({ token: 'fictional-session' }));
-          if (req.url === '/api/company/status' && req.headers['x-realbud-session'] === 'fictional-session') {
+          if (req.url === '/api/company/status' && req.headers['x-realbud-session'] === sessionToken) {
             return res.end(JSON.stringify({ storageAvailable: false }));
           }
-          if (req.url === '/api/hermes' && req.headers['x-realbud-session'] === 'fictional-session') {
+          if (req.url === '/api/hermes' && req.headers['x-realbud-session'] === sessionToken) {
             return res.end(JSON.stringify({ pack: { installed: true, approvalsManual: true, workroomReady: scenario !== 'false policy status' }, homeDir: home, profileDir: profile, model: { attached: false }, ready: false }));
           }
           res.writeHead(401); res.end('{}');

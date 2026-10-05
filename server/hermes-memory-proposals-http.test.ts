@@ -1,4 +1,5 @@
 /** Actual Product Ask → ACP → private MCP → native pending → staff decision. */
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
@@ -70,7 +71,7 @@ describe.skipIf(!runtime || process.platform === 'win32')('Product Ask typed nat
     closed = new Promise((done, fail) => { child!.once('close', done); child!.once('error', fail); });
     for (const stream of [child.stdout, child.stderr]) stream?.on('data', bytes => { logs = (logs + bytes).slice(-12_000); });
     await until(async () => { try { return (await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })).json() as { pid?: number }).pid === child?.pid; } catch { return false; } }, 'owned bootstrap');
-    token = (await (await fetch(base + '/api/session')).json() as { token: string }).token;
+    token = await readSessionToken(data);
   }, 45_000);
   afterAll(async () => {
     if (child && child.exitCode === null && !child.signalCode) {

@@ -1,5 +1,6 @@
 // Real HTTP setup tests. Only the test child redirects Composio's fixed REST
 // origin; production has no endpoint override, and these fixtures cannot read mail.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -135,7 +136,7 @@ async function startFixture() {
     if (Date.now() >= deadline) throw new Error(`Fixture server did not start: ${stderr}`);
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  session = String((await (await fetch(`${base}/api/session`)).json() as any).token);
+  session = await readSessionToken(dataDir);
   expect(session).toBeTruthy();
 }
 async function expectHeldConsent() {

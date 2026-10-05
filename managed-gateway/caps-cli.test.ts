@@ -7,6 +7,7 @@ import { runCapsCli } from './caps-cli.ts';
 import { GatewayError } from './contracts.ts';
 import { ledgerPath } from './local-env.ts';
 import { fixture } from './testing.ts';
+import { bindOfficeCustomer } from './provisioning.ts';
 import type { ModelviaCaps, ModelviaClient, ModelviaCustomer } from './modelvia-keys.ts';
 
 const CUSTOMER = 'cus-fictional-office';
@@ -19,6 +20,7 @@ function harness() {
   const env: NodeJS.ProcessEnv = { REALBUD_GATEWAY_DATA: root, ...OPERATOR_ENV };
   // The server's database with one entitled company and its provisioning rows.
   const f = fixture(ledgerPath(env)), companyId = f.tenant.companyId, now = f.now();
+  bindOfficeCustomer(f.ledger, companyId, CUSTOMER);
   f.ledger.db.run('CREATE TABLE IF NOT EXISTS installation_provisioning (tenant TEXT NOT NULL, installation TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(tenant,installation))');
   const row = (installation: string, state: string) => f.ledger.db.run('INSERT INTO installation_provisioning VALUES(?,?,?,?,?)', companyId, installation, state,
     JSON.stringify({ state, profile: 'property', apps: ['gmail'], customerId: CUSTOMER, modelProjectId: `rb-${installation}` }), now);

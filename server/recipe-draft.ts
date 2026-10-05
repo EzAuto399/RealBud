@@ -7,7 +7,7 @@ import type { Recipe } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
 import { trackSandboxedChild } from "./worker-network-sandbox.ts";
-import { applyAskModelRelayEnv } from "./ask-model-relay.ts";
+import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
@@ -135,7 +135,7 @@ export async function askWorker(
   if (!packInstalled(root) || !approvalsAreManual(root)) {
     return { ok: false, detail: "The selected worker pack changed. Restore manual approvals before trying again." };
   }
-  return new Promise((resolve) => {
+  return withAskModelRelayLease(() => new Promise((resolve) => {
     // Launch the exact profile whose pack and approvals were checked above.
     // REALBUD_HERMES_HOME is a RealBud setting; upstream only reads HERMES_HOME.
     // Without this binding, source/helper launches can fall back to ~/.hermes.
@@ -191,7 +191,7 @@ export async function askWorker(
         resolve({ ok: true, stdout: String(stdout) });
       },
     ));
-  });
+  }), { signal: opts?.signal });
 }
 
 function draftPrompt(text: string, correction?: string): string {

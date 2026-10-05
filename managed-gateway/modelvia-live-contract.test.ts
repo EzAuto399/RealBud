@@ -57,7 +57,7 @@ import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import { customerTermsPolicy, DEFAULT_CLIENT_FUNDED_REFERENCE, modelviaKeyClient, TERMS_EFFECTIVE_LEAD_MS } from './modelvia-keys.ts';
 import { composeOperatorRoutes } from './office-ai-access.ts';
 import { OPERATOR_ROLE } from './operator-token.ts';
-import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, type InstallationProvisioning } from './provisioning.ts';
+import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, type InstallationProvisioning } from './provisioning.ts';
 import { modelviaRefusal, parseModelviaReceipt } from '../shared/modelvia-receipt.ts';
 import { MANAGED_MODEL_CHOICES } from '../shared/managed-model-choices.ts';
 
@@ -629,6 +629,8 @@ test('request caps against prompt-sized holds: A$4 serves Sonnet short of the wi
     // The old A$1 default no longer refuses a short prompt on either route; about
     // 200 KB of prose holds about A$1.44 on Sonnet and drops it.
     const old = gateway(m, { REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '1000000000' }); try {
+      // A fresh ledger: the operator binding the access route recorded above lives in `g`'s.
+      bindOfficeCustomer(old.f.ledger, 'company-a', 'realbud-company-a');
       const small = (await old.provision('realbud-company-a', 'install-two')).provisioning.model.key!;
       assert.equal((await chat(m, small, { ...FIRST, model: 'max' }, 'realbud-turn-small-max')).status, 200);
       const refused = await chat(m, small, prose(200_000, 'max'), 'realbud-turn-small-max-200k');

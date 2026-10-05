@@ -4,13 +4,14 @@ import { findBusyService, findRunningService, isOurService, probeService, servic
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess, WebContentsView } from "electron";
 import { registerHermiosView } from "./hermios-view.mjs";
-import { guardOfficeWindow, openExternalHttps } from "./external-links.mjs";
+import { guardedIpc, guardOfficeWindow, openExternalHttps, trustedDisplayRequest, trustedOfficePermission, trustedOfficeSender } from "./external-links.mjs";
+import { localSessionFor } from "../shared/local-session.mjs";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { focusedWindowAction, headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
-import { resolveDeskKey } from "./desk-key-custody.mjs";
+import { resolveDeskKey, windowsKeyPrivacy } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -21,6 +22,7 @@ import { startCuaControl } from "./cua-control.mjs";
 import { finishSpeech, speechSupported, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { retireIncompatibleService, serviceCompatible } from "./update-service-handoff.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const require = createRequire(import.meta.url);
@@ -39,6 +41,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
+// Every native IPC channel answers only the office window's own main frame on
+// the office origin; an off-origin page or subframe keeping the preload gets
+// nothing. Browser permissions follow the same rule.
+const officeWindowContents = (contents) => BrowserWindow.fromWebContents(contents)?.webContents ?? null;
+const trustedOfficeEvent = (event) => trustedOfficeSender(event, officeAppUrl(), officeWindowContents);
+const officeIpc = guardedIpc(ipcMain, trustedOfficeEvent);
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
 // Electron otherwise presents the development binary as "Electron" in the
@@ -320,7 +328,7 @@ function createWindow() {
   // Popups never open; https links go to the browser, nothing else leaves, and
   // the window stays on the office page it was given (the port can change).
   guardOfficeWindow(win.webContents, {
-    appUrl: () => (app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL),
+    appUrl: officeAppUrl,
     shell,
     log: slog,
   });
@@ -342,9 +350,8 @@ function createWindow() {
               throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
             }
             const health = await healthResponse.json();
-            const sessionResponse = await fetch("/api/session");
-            if (!sessionResponse.ok) throw new Error("local desktop session is unavailable");
-            const { token } = await sessionResponse.json();
+            const token = await window.ogb.getLocalSession().catch(() => null);
+            if (!token) throw new Error("local desktop session is unavailable");
             const companyResponse = await fetch("/api/company/status", { headers: { "x-realbud-session": token } });
             if (!companyResponse.ok) throw new Error("company setup status is unavailable");
             const company = await companyResponse.json();
@@ -379,7 +386,7 @@ function createWindow() {
         // because a driver that never settles must still not hang the smoke.
         await settledWithin(cuaReady, 10_000, "computer use start");
         if (smokeMode && serviceHandle) {
-          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()));
+          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacy });
         }
         win.close();
         if (smokeMode) app.quit();
@@ -411,7 +418,11 @@ function createWindow() {
         if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
         let found = null;
         try {
-          found = await findRunningService(serviceIdentity(realbudDataDir()));
+          // Only a service running this version may fill the window; an older one
+          // is retired by the start path, never loaded.
+          const identity = serviceIdentity(realbudDataDir());
+          found = await findRunningService(identity);
+          if (found && !serviceCompatible(found.body, identity)) found = null;
         } catch {
           found = null;
         }
@@ -497,7 +508,7 @@ function createWindow() {
 
 // "This Mac" screen preview — served from the main process so the Screen
 // Recording permission prompt attributes to the app, never the server
-ipcMain.handle("screen:frame", async () => {
+officeIpc.handle("screen:frame", async () => {
   if (process.platform !== "darwin") return null;
   const sources = await desktopCapturer.getSources({
     types: ["screen"],
@@ -523,7 +534,7 @@ ipcMain.handle("screen:frame", async () => {
 // Copy the engine command, then open a blank terminal. Renderer-controlled
 // text must never become a process argument: the user reviews and pastes it.
 // Returns false when the renderer should show the clipboard fallback.
-ipcMain.handle("engine:open-terminal", async (_event, command) => {
+officeIpc.handle("engine:open-terminal", async (_event, command) => {
   if (typeof command !== "string" || !command.trim()) return false;
   clipboard.writeText(command);
   return openBlankTerminal();
@@ -532,16 +543,16 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
 // Server-issued connection links arrive after an async broker call, so they
 // cannot rely on a browser popup's user-gesture timing. Keep the bridge
 // narrow: only HTTPS links can leave the app, the same rule as the window's.
-ipcMain.handle("external:open", (_event, rawUrl) => openExternalHttps(shell, rawUrl));
+officeIpc.handle("external:open", (_event, rawUrl) => openExternalHttps(shell, rawUrl));
 
 // ---- Hermios view ------------------------------------------------------------
 // The office CRM in a sandboxed view the person signs in to themselves: its own
 // "persist:hermios" partition, no preload, an https allowlist, and IPC accepted
 // only from this window's own page. All of it lives in hermios-view.mjs.
-registerHermiosView({ ipcMain, BrowserWindow, WebContentsView, session, shell }, { log: slog });
+registerHermiosView({ ipcMain: officeIpc, BrowserWindow, WebContentsView, session, shell }, { log: slog });
 // ---- end Hermios view --------------------------------------------------------
 
-ipcMain.handle("perm:status", () => {
+officeIpc.handle("perm:status", () => {
   if (process.platform === "darwin" || process.platform === "win32") {
     return {
       mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
@@ -549,7 +560,7 @@ ipcMain.handle("perm:status", () => {
   }
   return { mic: "unsupported" };
 });
-ipcMain.handle("perm:request-mic", async () => {
+officeIpc.handle("perm:request-mic", async () => {
   if (process.platform === "darwin") {
     try {
       return await systemPreferences.askForMediaAccess("microphone");
@@ -567,7 +578,7 @@ ipcMain.handle("perm:request-mic", async () => {
 });
 
 // Denied permissions only reopen from System Settings / Windows Settings.
-ipcMain.handle("perm:open-settings", async (_event, pane) => {
+officeIpc.handle("perm:open-settings", async (_event, pane) => {
   const candidates = privacySettingsUrls(process.platform, pane);
   if (!candidates.length) return false;
   const { execFile } = await import("node:child_process");
@@ -599,7 +610,7 @@ ipcMain.handle("perm:open-settings", async (_event, pane) => {
   return false;
 });
 
-ipcMain.handle("speech:start", (event, options) => {
+officeIpc.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
   if (!speechSupported()) {
@@ -608,14 +619,14 @@ ipcMain.handle("speech:start", (event, options) => {
   }
   startSpeech(win, options);
 });
-ipcMain.handle("speech:stop", () => {
+officeIpc.handle("speech:stop", () => {
   if (speechSupported()) stopSpeech();
 });
-ipcMain.handle("speech:finish", () => {
+officeIpc.handle("speech:finish", () => {
   if (speechSupported()) finishSpeech();
 });
 
-ipcMain.handle("desktop:capabilities", async () =>
+officeIpc.handle("desktop:capabilities", async () =>
   desktopCapabilities({
     platform: process.platform,
     env: process.env,
@@ -623,6 +634,37 @@ ipcMain.handle("desktop:capabilities", async () =>
     localConnection: currentCuaConnection() ?? await cuaReady,
   }),
 );
+
+// The local API token never travels over unauthenticated HTTP. Main reads it
+// from the service's private file and answers only the office window's own top
+// frame on the office origin, for the service this installation recognises.
+function officeAppUrl() {
+  return app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL;
+}
+async function officeSessionToken() {
+  const dataDirectory = realbudDataDir();
+  const identity = serviceIdentity(dataDirectory);
+  if (app.isPackaged) {
+    const running = await probeService(SERVER_PORT);
+    if (!running || !isOurService(running.body, identity)) return null;
+    return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+  }
+  // Development: Vite proxies to `pnpm dev:server`, which serves no static UI
+  // (so isOurService does not apply). Same installation id, pid and port still.
+  const running = await probeService(Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799));
+  const body = running?.body;
+  if (!body || typeof body !== "object" || body.app !== "realbud" || body.instanceId !== identity.instanceId) return null;
+  return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+}
+officeIpc.handle("local-session:get", async (event) => {
+  // The wrapper checked the sender; check again after the file read, since the
+  // page can navigate while it runs.
+  const trusted = () => trustedOfficeEvent(event);
+  const token = await officeSessionToken();
+  // The page can navigate while the file is read; check it again.
+  if (!token || !trusted()) throw new Error("The office service is unavailable.");
+  return token;
+});
 
 // Service lifecycle for the renderer. This is intentionally IPC rather than an
 // HTTP route: when the service is not running it cannot answer /api/*, so the
@@ -656,12 +698,13 @@ async function officeServiceStatus() {
   };
 }
 
-ipcMain.handle("service:status", officeServiceStatus);
-ipcMain.handle("service:retry", async () => {
+officeIpc.handle("service:status", officeServiceStatus);
+officeIpc.handle("service:retry", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   serviceStopRequested = false;
-  const before = await findRunningService(serviceIdentity(realbudDataDir()));
-  if (before) {
+  const identity = serviceIdentity(realbudDataDir());
+  const before = await findRunningService(identity);
+  if (before && serviceCompatible(before.body, identity)) {
     // Already answering. Record the port, so a window created after this (macOS
     // re-activate) loads the app rather than the recovery page.
     SERVER_PORT = before.port;
@@ -674,12 +717,12 @@ ipcMain.handle("service:retry", async () => {
   return { ok, status: await officeServiceStatus() };
 });
 // Explicitly stop the office service. Closing the window never does this.
-ipcMain.handle("service:stop", async () => {
+officeIpc.handle("service:stop", async () => {
   serviceStopRequested = true;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  if (!await requestServiceStop(handle, identity)) {
+  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacy })) {
     return { ok: false, status: await officeServiceStatus() };
   }
   // Wait for the port to be released so the next start is not racing a dying service.
@@ -694,7 +737,7 @@ ipcMain.handle("service:stop", async () => {
   }
   return { ok: false, status: await officeServiceStatus() };
 });
-ipcMain.handle("service:start", async () => {
+officeIpc.handle("service:start", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   serviceStopRequested = false;
   const ok = await startOrAdoptOfficeService();
@@ -744,9 +787,8 @@ async function officeSupportReport(desktopLog) {
   if (!running) return null;
   const base = `http://127.0.0.1:${running.port}`;
   try {
-    const sessionResponse = await fetch(`${base}/api/session`, { signal: AbortSignal.timeout(5_000) });
-    const token = sessionResponse.ok ? (await sessionResponse.json().catch(() => null))?.token : null;
-    if (typeof token !== "string" || !token) return null;
+    const token = await localSessionFor(realbudDataDir(), running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+    if (!token) return null;
     const response = await fetch(`${base}/api/support/bundle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-realbud-session": token },
@@ -785,7 +827,7 @@ function desktopOnlySupportReport(desktopLog) {
   ].join("\n");
 }
 
-ipcMain.handle("support:save", async (event) => {
+officeIpc.handle("support:save", async (event) => {
   if (supportSaveInFlight) return { ok: false, error: "A support file is already being saved." };
   supportSaveInFlight = true;
   try {
@@ -1008,8 +1050,8 @@ function servicePersistenceState() {
 }
 
 /** Both settings, what they can do on this build, and what is held right now. */
-ipcMain.handle("service:persistence:get", () => servicePersistenceState());
-ipcMain.handle("service:persistence:set", (_event, patch) => {
+officeIpc.handle("service:persistence:get", () => servicePersistenceState());
+officeIpc.handle("service:persistence:set", (_event, patch) => {
   const request = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
   // scheduleEnabled is a report, not a setting: it never becomes consent.
   if (typeof request.scheduleEnabled === "boolean") recordScheduleFact(request.scheduleEnabled);
@@ -1161,8 +1203,25 @@ async function startOrAdoptOfficeServiceOnce() {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
 
+  // An office service from an older version is never adopted: this window was
+  // built for its own runtime. Retire it through the update handoff, or stop here
+  // and name the reason; never start a second service beside it.
+  /** @returns {Promise<"adopt" | "retired" | "blocked">} */
+  const settle = async (found) => {
+    const outcome = await retireIncompatibleService(found, { dataDirectory, identity, verifyWindowsPrivacy: windowsKeyPrivacy });
+    if (outcome.adopt) return "adopt";
+    if (outcome.problem) {
+      serviceStartProblem = outcome.problem;
+      slog(`an older office service answers on port ${found.port} and was not stopped (${outcome.problem}); not adopting it`);
+      return "blocked";
+    }
+    slog(`stopped the older office service on port ${found.port}; starting this version`);
+    return "retired";
+  };
   const running = await findRunningService(identity);
-  if (running) {
+  const runningOutcome = running ? await settle(running) : null;
+  if (runningOutcome === "blocked") return false;
+  if (runningOutcome === "adopt") {
     SERVER_PORT = running.port;
     serverEverStarted = true;
     serviceAdopted = true;
@@ -1172,8 +1231,10 @@ async function startOrAdoptOfficeServiceOnce() {
   // A busy service (a long Recheck, a backup pause) can miss the quick probe
   // while it holds its port. Ask each bound port again, patiently, before any
   // child is abandoned or spawned.
-  const busy = await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
-  if (busy) {
+  const busy = runningOutcome ? null : await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
+  const busyOutcome = busy ? await settle(busy) : null;
+  if (busyOutcome === "blocked") return false;
+  if (busyOutcome === "adopt") {
     SERVER_PORT = busy.port;
     serverEverStarted = true;
     serviceAdopted = true;
@@ -1352,7 +1413,9 @@ function startServiceWatchdog() {
     observe: async () => {
       const dataDirectory = realbudDataDir();
       const identity = serviceIdentity(dataDirectory);
-      const running = await findRunningService(identity);
+      // An older service is not ours to adopt or load (see startOrAdoptOfficeServiceOnce).
+      const found = await findRunningService(identity);
+      const running = found && serviceCompatible(found.body, identity) ? found : null;
       // The watchdog can observe healthy on the SAME port, which is not an
       // adoption or restart. Recover exhausted fallback windows in that case too.
       if (running && !serviceStopRequested && !appQuitting()) {
@@ -1423,9 +1486,15 @@ app.whenReady().then(async () => {
   // inside the app's own processes — the one capture path macOS reliably
   // attributes to the app (registers it in the Screen Recording pane and
   // prompts). Used by the onboarding "Enable screen preview" button.
+  session.defaultSession.setPermissionRequestHandler((contents, _permission, callback, details) =>
+    callback(trustedOfficePermission(contents, details, officeAppUrl(), officeWindowContents)));
+  session.defaultSession.setPermissionCheckHandler((contents, _permission, _origin, details) =>
+    trustedOfficePermission(contents, details, officeAppUrl(), officeWindowContents));
   if (process.platform === "darwin") {
     session.defaultSession.setDisplayMediaRequestHandler(
-      (_request, callback) => {
+      (request, callback) => {
+        const officeFrame = (frame) => BrowserWindow.getAllWindows().find(win => !win.isDestroyed() && win.webContents.mainFrame === frame)?.webContents ?? null;
+        if (!trustedDisplayRequest(request, officeAppUrl(), officeFrame)) return callback({});
         desktopCapturer
           .getSources({ types: ["screen"] })
           .then((sources) => callback(sources[0] ? { video: sources[0] } : {}))
@@ -1434,9 +1503,9 @@ app.whenReady().then(async () => {
       { useSystemPicker: false },
     );
   }
-  registerCuaIpc();
+  registerCuaIpc(officeIpc);
   cuaControl = await startCuaControl({ release: releaseCuaForHuman, verify: verifyCuaAfterHuman, restore: restoreCuaAfterHuman });
-  registerUpdaterIpc();
+  registerUpdaterIpc(officeIpc);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.

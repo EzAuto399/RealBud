@@ -25,7 +25,7 @@ export function UpdateBanner() {
   // update (and when an available one finishes downloading)
   const [dismissed, setDismissed] = useState<string | null>(null);
   if (!s || s.status === "idle" || s.status === "checking") return null;
-  const key = `${s.status}:${s.version ?? ""}`;
+  const key = `${s.status}:${s.version ?? ""}:${s.deferred ?? ""}`;
   if (dismissed === key) return null;
   const updater = window.ogb!.updater!;
 
@@ -43,7 +43,7 @@ export function UpdateBanner() {
       : s.status === "downloading"
         ? `Downloading ${Math.round(s.percent ?? 0)}%`
         : s.status === "downloaded"
-          ? "Restart to finish updating."
+          ? s.deferred && s.message ? s.message : "Restart to finish updating."
           : friendlyError(s.message);
   const StatusIcon =
     s.status === "available"
@@ -65,7 +65,7 @@ export function UpdateBanner() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold text-ink">{title}</div>
-          <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary" title={subtitle}>
+          <div className={`mt-0.5 text-[12.5px] text-ink-secondary ${s.deferred ? "" : "truncate"}`} title={subtitle}>
             {subtitle}
           </div>
         </div>

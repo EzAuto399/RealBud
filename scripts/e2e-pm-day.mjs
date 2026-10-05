@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18881);
@@ -85,7 +86,7 @@ try {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}.\n${stderr}`);
     await sleep(150);
   }
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("session issued", Boolean(session));
 
   const catalog = (await api("GET", "/api/loops")).body;

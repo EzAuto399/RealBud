@@ -181,9 +181,11 @@ describe('Hermes typed memory proposal ACP capability', () => {
     await vi.waitFor(() => expect(hanging).toHaveBeenCalledTimes(1));
     await instance!.adapter.interruptTurn(threadId);
     expect(observedSignal?.aborted).toBe(true); expect((await pending).body.result.isError).toBe(true);
-    expect((await call(server, proposal('interrupted'), 'rpc-interrupted')).body.result.isError).toBe(true);
+    // A Stop revokes the turn's model relay lease, so the Hermes process is not
+    // kept warm: its proposal server is closed and the next turn gets a new one.
+    await expectRevoked(server);
     const replacement = vi.fn().mockResolvedValue(saved('3333cccc'));
-    const next = await start({ scope: 'same-profile', propose: replacement }, 2);
+    const next = await start({ scope: 'same-profile', propose: replacement }, 1);
     expectSaved(await call(descriptor(), proposal('later'), 'rpc-later'), '3333cccc'); await finish(next.turnId);
   });
 

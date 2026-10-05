@@ -9,7 +9,7 @@ describe("customer charge precision", () => {
   it("keeps zero, credits, exact cents, large integers and unavailable amounts intact", () => {
     expect(formatCustomerCharge("0")).toBe("A$0.00");
     expect(formatCustomerCharge("10000000")).toBe("A$0.01");
-    expect(formatCustomerCharge("-10000000")).toBe("-A$0.01");
+    expect(formatCustomerCharge("-10000000")).toBe("A$0.01 credit");
     expect(formatCustomerCharge("12345678901234567890123456789", 9)).toBe("A$12,345,678,901,234,567,890.123456789");
     expect(formatCustomerCharge(null)).toBe("Not priced");
     expect(formatCustomerCharge("invalid")).toBe("Unavailable");

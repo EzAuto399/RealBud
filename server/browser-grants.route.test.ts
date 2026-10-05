@@ -3,6 +3,7 @@
 // never does), Start mounts RealBud's browser with exactly the task's grant,
 // Stop takes the grant away before the turn ends, and no connected browser
 // means no start.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -97,7 +98,7 @@ browserRuntime.resumeConnection = async () => {};
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise(resolve => setTimeout(resolve, 150));
     }
-    session = String(((await (await fetch(`${BASE}/api/session`)).json()) as { token?: string }).token ?? "");
+    session = await readSessionToken(join(home, ".realbud"));
     threadId = (await bud()).threadId;
   }, 30_000);
 
