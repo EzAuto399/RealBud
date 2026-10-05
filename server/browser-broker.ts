@@ -25,6 +25,7 @@ import {
   browserLoginFields,
   browserAccountMarkerShown,
   browserReadOnlyAction,
+  portalAccountName,
   jobBrowserUrl,
   observationRefs,
   type BrowserApprovalStore,
@@ -45,7 +46,8 @@ import { checkPortalPathProposal, choiceHash, observedControl, portalEvidence, p
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 import type { JobRunEvidence } from "../shared/contracts.ts";
-import { BROWSER_LEGACY_JOB_ORIGIN, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { BROWSER_ACCOUNT_CONFIRM_TOOL, BROWSER_LEGACY_JOB_ORIGIN, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { portalAccountLabel, portalAccounts, type PortalAccountStore } from "./portal-accounts.ts";
 
 export { browserLoginFields, jobBrowserUrl, observationRefs } from "./browser-authority.ts";
 
@@ -215,6 +217,8 @@ export async function startBrowserBroker(options: {
   /** Where an Ask task's dispatched steps are recorded, and learned paths saved (server/portal-path-overrides.ts). */
   evidence?: PortalEvidenceStore;
   paths?: PortalPathStore;
+  /** The portal accounts this office confirmed in earlier Ask tasks (server/portal-accounts.ts). */
+  accounts?: PortalAccountStore;
 }): Promise<BrowserBroker> {
   const runtime = options.runtime ?? browserRuntime;
   const operations = options.operations ?? connectedAppOperations;
@@ -237,6 +241,13 @@ export async function startBrowserBroker(options: {
   const askTask = grant.route === "ask" && !grant.origin;
   const evidence = options.evidence ?? portalEvidence();
   const learn = askTask && options.learn && Object.keys(LEARNABLE_SLOTS[options.learn.pack.portal] ?? {}).length ? structuredClone(options.learn) : undefined;
+  // An Ask task on a mapped portal works in one account: the name the portal shows where its map says
+  // (REI's top-bar business code). One the office confirmed before is used without a question; any other
+  // asks once, and every later read must still show it. A task already bound to an account keeps that check.
+  const accountMap = askTask && options.learn && !checkpoint && !grant.browser.accountMarker
+    ? { portal: options.learn.portal, where: { ...options.learn.pack.account.pageMarker } } : undefined;
+  const accounts = accountMap ? options.accounts ?? portalAccounts() : undefined;
+  let confirmedAccount: string | null = null;
   const tools = [...BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } }),
@@ -310,8 +321,37 @@ export async function startBrowserBroker(options: {
       throw problem(SIGN_IN_NEEDED);
     }
     if (marker && !browserAccountMarkerShown(data.text, marker, portal)) { broker.close(); throw problem("The verified account label is no longer visible in its expected place. This step stopped. Check the account and page before continuing."); }
+    if (accountMap) {
+      if (!confirmedAccount) await confirmAccount(String(after.url), data.text, signal);
+      else if (portalAccountName(data.text, accountMap.where) !== confirmedAccount) {
+        broker.close(); throw problem(`This page is no longer in ${confirmedAccount}, the account this task works in. Bud stopped; nothing more was done. Switch back in the site, then ask again.`);
+      }
+    }
     snapshots.set(tabId, { refs: observationRefs(data.text), at: now(), url: String(after.url), text: data.text });
     return { text: data.text, truncated: data.truncated, source: new URL(String(after.url)).origin };
+  };
+  /** Which account this task works in, read from the page where the portal's map says it shows. The one
+   * the office confirmed before continues; otherwise the person confirms it once (or Stop ends the task).
+   * Unreadable, unsaved or refused, nothing from the page is returned. */
+  const confirmAccount = async (url: string, page: string, signal: AbortSignal) => {
+    const host = new URL(url).hostname;
+    const shown = portalAccountName(page, accountMap!.where);
+    if (!shown || !portalAccountLabel(shown) || redactSecretsInText(shown) !== shown) {
+      throw problem(`Bud could not read which account ${host} is signed in to, so it read nothing there. Check the account shows at the top of the page, then ask again.`);
+    }
+    const saved = await accounts!.get(accountMap!.portal);
+    check(signal);
+    if (saved === shown) { confirmedAccount = shown; publish("action", `Working in ${shown} on ${host}, the account you confirmed before.`); return; }
+    publish("asked", `Asked you to confirm the account ${shown} on ${host}.`);
+    const summary = saved ? `${host} is signed in to ${shown}, not ${saved}, the account you confirmed before. Continue in ${shown}? Bud then uses ${shown} here until you confirm another.`
+      : `Signed in to ${host} as ${shown}. Continue in this account? Bud remembers it, and asks again if a later task finds a different account.`;
+    if (!await options.approve(BROWSER_ACCOUNT_CONFIRM_TOOL, { url, account: shown }, summary, signal, { fence: { surface: "portal-read", origin: host, ruleOffer: null }, approvalPolicy: "once" })) {
+      broker.close(); throw problem(`The account ${shown} was not confirmed, so Bud stopped and did nothing on ${host}.`);
+    }
+    check(signal);
+    await accounts!.confirm(accountMap!.portal, shown);
+    confirmedAccount = shown;
+    publish("action", `You confirmed the account ${shown} on ${host}.`);
   };
   /** Login hand-off on the page itself: the pause (grant, budget, completed
    * steps) is saved before the person is asked, they sign in in their own
@@ -552,6 +592,10 @@ export async function startBrowserBroker(options: {
       // unverified, and held against repeats, until a person records its result.
       operations.finish(receipt, "succeeded"); receipt = undefined;
       await capture(observed, "succeeded");
+      // The task card's progress line: what an Ask task opened (a click or a page of the site), by name only.
+      if (askTask && observed && !logged && (observed.tool === "click" || observed.tool === "navigate")) {
+        publish("action", `Opened ${observed.label || observed.path} on ${new URL(url).hostname}.`);
+      }
       if (claim && approval) {
         claim = undefined; await approvals.update(approval.id, { outcome: "unverified" });
         publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Its result is not confirmed; check the site. RealBud will not repeat it.`);

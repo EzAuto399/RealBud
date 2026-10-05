@@ -15,6 +15,7 @@ import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
 import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from "@shared/approval-policy";
 import { readBrowserApprovalCard, type BrowserApprovalCard } from "@shared/browser-approval-card";
+import { BROWSER_ACCOUNT_CONFIRM_TOOL } from "@shared/browser-task";
 import { BrowserPendingActions, BrowserPendingPanel, browserApprovalBlocked } from "./BrowserApprovalCard";
 
 export interface Pending {
@@ -85,7 +86,9 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
   const memoryReview = isMemory && validMemoryApprovalReview(pending.memoryReview) ? pending.memoryReview : null;
   const knownAddresses = productAsk ? (state.desk?.properties ?? []).map((row) => row.address) : [];
-  const headline = isMemory ? "Review a memory change" : productAsk
+  // Which portal account a browser task works in: a plain question, answered Continue or Stop.
+  const isAccount = pending.tool === BROWSER_ACCOUNT_CONFIRM_TOOL;
+  const headline = isMemory ? "Review a memory change" : isAccount ? "Check the account" : productAsk
     ? approvalHeadline(pending.tool, payloadText(pending), knownAddresses)
     : legacyLabel(pending.tool);
   const isSubmit = !isMemory && pending.fence?.surface === "portal-submit";
@@ -112,7 +115,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
           </> : <p role="alert" className="text-[13px] text-hold">The complete memory change is unavailable. This request stays blocked. Deny it or stop this turn.</p>}
           <p className="text-[12px] text-ink-muted">Approval applies to this memory change only; it does not confirm the change has finished. Future changes require their own review.</p>
         </div>
-      ) : isSubmit ? (
+      ) : isSubmit || isAccount ? (
         <p className="mt-2 text-[15px] font-medium leading-relaxed text-ink">{pending.detail}</p>
       ) : (
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink">
@@ -122,7 +125,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {isSubmit ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
-      {productAsk && !isMemory && <ApprovalScope kind="action" />}
+      {productAsk && !isMemory && !isAccount && <ApprovalScope kind="action" />}
       {pending.held && <div className="mt-2 text-[12px] text-hold">{pending.held}</div>}
     </div>
   );
@@ -207,7 +210,7 @@ export function PendingApprovalActions({
               onClick={() => decide("allow", { scope: "once" })}
               className={cn(base, productBud ? "border border-line text-ink hover:bg-raised" : "bg-agency font-medium text-white hover:bg-agency-hover")}
             >
-              {isMemory ? "Allow this memory change once" : "Allow once"}
+              {isMemory ? "Allow this memory change once" : pending.tool === BROWSER_ACCOUNT_CONFIRM_TOOL ? "Continue in this account" : "Allow once"}
             </button>
             {/* On a fenced browser step a task-wide grant would stop the worker
                 asking, and the fence only sees what it asks. The server coerces it
@@ -239,7 +242,7 @@ export function PendingApprovalActions({
           onClick={() => decide("deny")}
           className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
         >
-          Deny
+          {pending.tool === BROWSER_ACCOUNT_CONFIRM_TOOL ? "Stop" : "Deny"}
         </button>
         <button
           type="button"

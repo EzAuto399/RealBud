@@ -231,10 +231,15 @@ export function accountMarkerShown(text: string, marker: string): boolean {
 /** On a declared portal the account marker counts only where the pack says it is shown:
  * the first node of its role in the page's first such landmark (the business switcher in the banner). */
 function portalMarkerShown(text: string, where: { landmark: string; role: string }, marker: string): boolean {
+  return portalAccountName(text, where) === marker.trim() && marker.trim() !== "";
+}
+/** The account name a portal shows at its declared place (REI's top-bar business code), or null when nothing is shown there. */
+export function portalAccountName(text: string, where: { landmark: string; role: string }): string | null {
+  if (!isStructuredBrowserObservation(text)) return null;
   const { nodes } = parseVom(text);
   const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode));
   const shown = landmark ? descendants(landmark).find(node => node.role === where.role.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode)) : undefined;
-  return shown?.name?.trim() === marker.trim() && marker.trim() !== "";
+  return shown?.name?.trim() || null;
 }
 /** Portal account labels only count at their declared location. Plain text
  * can never weaken that check just because structured data is unavailable. */
@@ -319,11 +324,17 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
   if (!classified.label || !observation.text || !isStructuredBrowserObservation(observation.text) || typeof args.ref !== "string") return false;
   const current = jobBrowserUrl(observation.url, grant.sites); if (!current) return false;
   const declared = portalControlsFor(grant, portal, current);
-  if (declared) return readSafeControl(declared, observation.text, args.ref, classified.label);
-  // A site without a reviewed map gets only a plainly named search/filter
-  // control in a tree with no saving or consequential form in its scope.
   const label = controlName(classified.label);
-  if (!/^(?:search|search:|filter|filter:|filter results|search results|show results|view details|show details|previous page|next page)$/i.test(label)) return false;
+  // A plain link opens another page of the granted site, so it reads on the same
+  // proof as a reviewed read-safe control (nothing in its form, group, landmark or
+  // page changes records). Never a button, a confirming name ("Continue", "Next")
+  // or a name the pack or the global table calls consequential.
+  const link = classified.step === "click" && roleOf(classified.label) === "link" && !SUBMIT_CONTROL.test(label) && !AFFIRMATIVE.test(label);
+  if (declared) return readSafeControl(declared, observation.text, args.ref, classified.label) ||
+    link && readSafeControl({ ...declared, readSafe: [label], pagination: [] }, observation.text, args.ref, classified.label);
+  // A site without a reviewed map gets only a plain link or a plainly named
+  // search/filter control in a tree with no saving or consequential form in its scope.
+  if (!link && !/^(?:search|search:|filter|filter:|filter results|search results|show results|view details|show details|previous page|next page)$/i.test(label)) return false;
   const generic: BrowserPortalControls = { origin: current.origin, readSafe: [label], menu: [], pagination: [], signInHosts: [], consequential: ["Save", "Submit", "Create", "Update", "Confirm", "Continue", "Finish", "Done", "Delete", "Archive"] };
   if (!readSafeControl(generic, observation.text, args.ref, classified.label)) return false;
   if (classified.step === "press") {

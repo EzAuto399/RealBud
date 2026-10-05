@@ -18,6 +18,7 @@ describe("toolLabel", () => {
     expect(toolLabel("terminal")).toBe("running a command in the workroom");
     expect(toolLabel("browser")).toBe("using the bounded browser");
     expect(toolLabel("computer")).toBe("using the bounded browser");
+    expect(toolLabel("browser_account_confirm")).toBe("checking the account");
   });
 
   it("labels Bud's page reader and read-only Hermios CRM tools", () => {

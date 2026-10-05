@@ -192,7 +192,9 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
-import { askBrowserRuntime, useAskBrowserLab } from "./ask-browser-lab.ts";
+import { askBrowserRuntime, askPortalPackLoader, askSignInRuntime, useAskBrowserLab } from "./ask-browser-lab.ts";
+import { askTaskSignIn } from "./ask-task-sign-in.ts";
+import type { SignInOutcome } from "./browser-sign-in.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
 import { jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
@@ -832,6 +834,8 @@ const askTaskDone = new Map<string, string[]>();
 /** Running portal recipe tasks (server/portal-recipe-task.ts): ending the task stops its runner. */
 const recipeTaskStops = new Map<string, AbortController>();
 
+/** Ask tasks waiting at Start for the person to sign in (server/ask-task-sign-in.ts): ending the task stops the wait. */
+const askSignInWaits = new Map<string, AbortController>();
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
   const earlier = askTaskTimers.get(grant.id);
@@ -856,6 +860,7 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
   if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
   recipeTaskStops.get(grantId)?.abort(); recipeTaskStops.delete(grantId); releasePortalRecipeGrant(grantId);
   const timer = askTaskTimers.get(grantId);
+  askSignInWaits.get(grantId)?.abort(); askSignInWaits.delete(grantId);
   if (timer) clearTimeout(timer);
   askTaskTimers.delete(grantId);
   askTaskStartedAt.delete(grantId);
@@ -872,6 +877,26 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
 }
 
 /** A started portal recipe task: RealBud's runner (no model turn) with the task's
+/** Start's sign-in wait ended (server/ask-task-sign-in.ts). Signed in: Bud's first turn starts with the
+ * task's grant, unless the task ended meanwhile. Anything else ends the task; nothing was done on the site. */
+async function afterAskTaskSignIn(threadId: string, botId: string, grant: BrowserTaskGrant, site: string, outcome: SignInOutcome | null): Promise<void> {
+  askSignInWaits.delete(grant.id);
+  if (fenceContextFor(threadId)?.grant?.id !== grant.id) return;
+  if (outcome !== "signed_in") {
+    const note = outcome === "timed_out" ? `Sign-in to ${site} was not finished within 15 minutes, so this task stopped. Nothing was done there; ask again when you are ready.`
+      : outcome === "stopped" ? `You stopped the sign-in to ${site}, so this task stopped. Nothing was done there.`
+        : `The work browser could not open ${site} for sign-in, so this task stopped. Nothing was done there.`;
+    await endAskBrowserTask(threadId, grant.id, outcome === "stopped" ? "stopped" : "interrupted", note).catch(() => {});
+    return;
+  }
+  void browserTasks().appendEvidence(grant.id, [{ at: Date.now(), kind: "action", note: `Signed in to ${site}.` }]).catch(reportBrowserTaskFailure);
+  try {
+    await startTurn(botId, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
+  } catch {
+    await endAskBrowserTask(threadId, grant.id, "interrupted", "This task could not start. Nothing was done in your browser.").catch(() => {});
+  }
+}
+
  * saved grant. Anything the recipe cannot answer for is shown as the ordinary
  * approval card and answered through /api/threads/:id/respond. The task ends
  * with the run; Stop, time and the step limit end the run (endAskBrowserTask). */
@@ -2584,7 +2609,7 @@ loops = new LoopManager({
 const w1Lab = process.env.REALBUD_TEST_LAB === "1" && process.env.REALBUD_TEST_W1_FICTIONAL_REI === "1"
   ? import("./testing/w1-lab.ts").then(({ createW1Lab }) => createW1Lab(DATA_DIR)) : null;
 // Lab only: Ask browser tasks use the same fictional portal (useAskBrowserLab refuses outside a lab process).
-const askLab = w1Lab?.then(lab => useAskBrowserLab({ runtime: lab.runtime, load: lab.load }));
+const askLab = w1Lab?.then(lab => useAskBrowserLab({ runtime: lab.runtime, load: lab.load, signIn: lab.signInTab }));
 askLab?.catch(() => {}); // a failed lab start is answered on the next Ask browser request
 /** Ask's browser runtime: the work browser, or in the lab its fictional portal once the lab is up. */
 async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
@@ -4209,6 +4234,15 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         }
         return json(res, 202, { task: browserTaskCardView(started) });
       } catch (error) {
+        // A mapped portal (REI): open its site and wait on that tab's address until the person has signed in;
+        // Bud's turn starts only then (afterAskTaskSignIn), so nobody picks a page. Start answers once the tab is open.
+        const wait = new AbortController();
+        const signIn = await askTaskSignIn({ threadId, sites: grant.sites, runtime: askSignInRuntime(runtime), load: askPortalPackLoader(), signal: wait.signal }).catch(() => null);
+        if (signIn) {
+          askSignInWaits.set(grant.id, wait);
+          void signIn.outcome.catch(() => null).then(outcome => afterAskTaskSignIn(threadId, bud.id, grant, signIn.site.name, outcome));
+          return json(res, 202, { task: browserTaskCardView(started) });
+        }
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }

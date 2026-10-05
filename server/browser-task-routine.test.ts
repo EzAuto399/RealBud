@@ -55,6 +55,18 @@ describe("bounded task-local routine authority", () => {
     ] as const) expect(decide(tool, args).decision, `${tool} ${JSON.stringify(args)}`).not.toBe("allow");
   });
 
+  it("follows a plain link on the granted site, but not a confirming or consequential one, nor one beside a control that changes records", () => {
+    const links = { ...page, text: '@vom 1\nL1 page\n  navigation "Main"\n    @e1 link "Reports"\n  main\n    table "Results"\n      row\n        @e2 link "Tenant contact export"\n      row\n        @e3 link "Continue"\n      row\n        @e4 link "Delete tenant"\n      row\n        @e5 link "Approve"' };
+    const plain = { ...links, text: links.text.split("\n").slice(0, 8).join("\n") };
+    for (const ref of ["@e1", "@e2"]) expect(decide("browser_click_semantic", { ref }, {}, grant(), plain), ref).toMatchObject({ decision: "allow", note: "allowed for this browser task" });
+    // A confirming name, a deletion, or any link on a page that also offers one, still asks.
+    for (const ref of ["@e1", "@e2", "@e3", "@e4", "@e5"]) expect(decide("browser_click_semantic", { ref }, {}, grant(), links).decision, ref).not.toBe("allow");
+    // The page's own Save and Log out buttons sit in the same main region: its plain link asks too.
+    expect(decide("browser_click_semantic", { ref: "@e5" }).decision).not.toBe("allow");
+    // Without the live task scope a plain link asks as before.
+    expect(decide("browser_click_semantic", { ref: "@e1" }, { taskScope: undefined }, grant(), links).decision).toBe("ask");
+  });
+
   it("retains bound account proof and rejects a search button inside a save form", () => {
     const g = { ...grant(), browser: { id: "fictional-browser", accountMarker: "Fictional office" } };
     expect(decide("browser_fill", { ref: "@e1", value: "FICT-7" }, {}, g).decision).not.toBe("allow");

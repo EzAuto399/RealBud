@@ -22,8 +22,9 @@ import { createTenantDirectoryStore } from "./tenant-directory.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { writePrivateJson } from "./private-json.ts";
+import { portalAccounts, type PortalAccountStore } from "./portal-accounts.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
-import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
+import { BROWSER_ACCOUNT_CONFIRM_TOOL, parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
@@ -41,7 +42,9 @@ async function lab(portal: FictionalReiOptions = {}) {
   return { root, mock, runtime, evidence: new PortalEvidenceStore({ file: join(root, "evidence.json") }), paths: new PortalPathStore({ file: join(root, "paths.json") }) };
 }
 
-async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: boolean; actions?: BrowserActionClass[]; id?: string; pack?: PortalRecipePack; expiresAt?: number; now?: () => number } = {}) {
+/** The office already confirmed the fictional business in an earlier Ask task (server/portal-accounts.ts). */
+const confirmedBefore = (): PortalAccountStore => ({ get: async () => FICTIONAL_BUSINESS, confirm: async () => {} });
+async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: boolean; actions?: BrowserActionClass[]; id?: string; pack?: PortalRecipePack; expiresAt?: number; now?: () => number; accounts?: PortalAccountStore } = {}) {
   const pack = options.pack ?? fictionalReiPack();
   const text = "Find out how to export the tenant list from the fictional REI portal";
   const grant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: options.id ?? "fictional-learn-1", runId: "run-learn-1", route: "ask",
@@ -54,7 +57,7 @@ async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: bool
   const broker: BrowserBroker = await startBrowserBroker({ threadId: "thread-learn", runId: grant.runId, grant, runtime: f.runtime, isActive: () => true, approve,
     context: { allowedOrigins: grant.sites, capabilities: [] }, assertCapability: () => {}, attachRoot: null,
     operations: new ConnectedAppOperationStore({ file: join(f.root, "operations.json") }), approvals: new BrowserApprovalStore({ file: join(f.root, "approvals.json") }),
-    evidence: f.evidence, paths: f.paths, ...(options.now ? { now: options.now } : {}), ...(options.map === false ? {} : { portal: controls, learn: { portal: pack.portal, pack } }) });
+    evidence: f.evidence, paths: f.paths, accounts: options.accounts ?? confirmedBefore(), ...(options.now ? { now: options.now } : {}), ...(options.map === false ? {} : { portal: controls, learn: { portal: pack.portal, pack } }) });
   cleanup.push(async () => { broker.close(); await broker.released(); });
   let id = 0; let page = "";
   const call = async (name: string, args: BrowserJson = {}): Promise<Result> => {
@@ -118,12 +121,15 @@ describe("map-aware Ask browser tasks", () => {
     expect(choose("Email")).toBe("ask");
   });
 
-  it("without the map the same menu click asks; the propose tool exists only on a mapped Ask task", async () => {
+  it("without the map a plain link still reads but the portal's Status choice asks; the propose tool exists only on a mapped Ask task", async () => {
     const f = await lab();
     const plain = await askTask(f, { map: false });
     expect(await plain.tools()).not.toContain(PORTAL_PROPOSE_TOOL);
     await plain.start();
-    await plain.ok("browser_click_semantic", { tab_id: 1, ref: plain.ref("link", "Reports") });
+    // A plain link opens another page of the granted site (browser-authority.ts browserReadOnlyAction).
+    await plain.ok("browser_click_semantic", { tab_id: 1, ref: plain.ref("link", "Tenants") }); await plain.read();
+    expect(plain.approve).not.toHaveBeenCalled();
+    await plain.ok("browser_select", { tab_id: 1, ref: plain.ref("combobox", "Status"), values: ["All"] });
     expect(plain.approve).toHaveBeenCalledTimes(1);
     plain.broker.close(); await plain.broker.released();
     const mapped = await askTask(f, { id: "fictional-learn-2" });
@@ -274,7 +280,7 @@ describe("Refresh from REI follows the learned path", () => {
 });
 
 describe("one Allow on a path is not standing permission", () => {
-  it("a later Ask task still asks before the unmapped report the path uses, while the repo's read-safe names stay card-free", async () => {
+  it("a later Ask task opens the report the path uses as a plain link, while the repo's read-safe names stay card-free", async () => {
     const f = await lab({ reports: { tenants: REPORT } });
     const first = await askTask(f);
     await explore(first);
@@ -286,9 +292,10 @@ describe("one Allow on a path is not standing permission", () => {
     await later.ok("browser_navigate", { tab_id: 1, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard` }); await later.read(); // closes the earlier task's popup
     await later.ok("browser_click_semantic", { tab_id: 1, ref: later.ref("link", "Reports") }); await later.read();
     expect(later.approve).not.toHaveBeenCalled();
+    // The learned path is not standing permission (Refresh from REI still asks on every run); an Ask task follows the
+    // report because a plain link on the granted site reads in its own task scope.
     await later.ok("browser_click_semantic", { tab_id: 1, ref: later.ref("link", REPORT) });
-    expect(later.approve).toHaveBeenCalledTimes(1);
-    expect(later.asked[0].summary).toMatch(new RegExp(REPORT.replace(/[()]/g, "\\$&")));
+    expect(later.approve).not.toHaveBeenCalled();
   });
 
   it("a proposal after the task's permission ended is refused before any card", async () => {
@@ -302,6 +309,56 @@ describe("one Allow on a path is not standing permission", () => {
     expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/permission has ended/);
     expect(t.asked.length).toBe(asks);
     expect((await f.paths.list("rei-cloud", "tenant-list")).versions).toEqual([]);
+  });
+});
+
+describe("the account an Ask task works in", () => {
+  const store = (f: Awaited<ReturnType<typeof lab>>) => portalAccounts(join(f.root, "portal-accounts.json"));
+  const fails = async (t: Awaited<ReturnType<typeof askTask>>, pattern: RegExp) => {
+    const result = await t.call("browser_read", { tab_id: 1 });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(pattern);
+    return result.content[0].text;
+  };
+
+  it("asks once which business the portal shows, remembers it, and a later task in the same business asks nothing", async () => {
+    const f = await lab(); const accounts = store(f);
+    const first = await askTask(f, { accounts });
+    await first.start(); await first.read();
+    expect(first.asked).toHaveLength(1);
+    expect(first.asked[0]).toMatchObject({ tool: BROWSER_ACCOUNT_CONFIRM_TOOL, params: { account: FICTIONAL_BUSINESS },
+      summary: `Signed in to rei-mock.fictional.test as ${FICTIONAL_BUSINESS}. Continue in this account? Bud remembers it, and asks again if a later task finds a different account.` });
+    expect(await accounts.get("rei-cloud")).toBe(FICTIONAL_BUSINESS);
+    first.broker.close(); await first.broker.released();
+    const later = await askTask(f, { accounts, id: "fictional-learn-2" });
+    await later.start(); await later.read();
+    expect(later.approve).not.toHaveBeenCalled();
+  });
+
+  it("explains a different business than the one confirmed, and Stop ends the task with nothing read", async () => {
+    const f = await lab({ business: "FICT2" }); const accounts = store(f);
+    await accounts.confirm("rei-cloud", FICTIONAL_BUSINESS);
+    const t = await askTask(f, { accounts });
+    t.deny();
+    await t.ok("browser_borrow", { tab_id: 1 });
+    await fails(t, /The account FICT2 was not confirmed, so Bud stopped and did nothing on rei-mock\.fictional\.test\./);
+    expect(t.asked[0].summary).toBe("rei-mock.fictional.test is signed in to FICT2, not FICT1, the account you confirmed before. Continue in FICT2? Bud then uses FICT2 here until you confirm another.");
+    expect(await accounts.get("rei-cloud")).toBe(FICTIONAL_BUSINESS);
+    await expect(t.call("browser_read", { tab_id: 1 })).rejects.toThrow(); // the task's browser access ended
+  });
+
+  it("stops when the page leaves the confirmed business mid-task, and reads nothing when the business cannot be read", async () => {
+    const f = await lab({ switchBusinessAfterSteps: 1 });
+    const t = await askTask(f);
+    await t.start();
+    await t.ok("browser_click_semantic", { tab_id: 1, ref: t.ref("link", "Tenants") }); await t.read();
+    await t.ok("browser_click_semantic", { tab_id: 1, ref: t.ref("link", "Owners") });
+    await fails(t, /This page is no longer in FICT1, the account this task works in\. Bud stopped/);
+    const g = await lab();
+    const pack = fictionalReiPack();
+    const hidden = await askTask(g, { accounts: store(g), pack: { ...pack, account: { ...pack.account, pageMarker: { landmark: "banner", role: "heading" } } } });
+    await hidden.ok("browser_borrow", { tab_id: 1 });
+    await fails(hidden, /could not read which account rei-mock\.fictional\.test is signed in to, so it read nothing there/);
+    expect(hidden.approve).not.toHaveBeenCalled();
   });
 });
 

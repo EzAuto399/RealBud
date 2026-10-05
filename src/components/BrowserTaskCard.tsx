@@ -1,7 +1,8 @@
 // A one-off browser task from Ask, as one decision: the site, the browser,
 // what Bud may do there, what always asks first, and how long it lasts.
-// Start saves the grant on the server; Stop ends it for good. The server is
-// the authority: this card only shows what the saved task allows.
+// Start saves the grant on the server and opens the work browser when it is
+// not open yet (one press); Stop ends it for good. The server is the
+// authority: this card only shows what the saved task allows.
 import { Globe, Square } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { BrowserActionClass, BrowserConsequentialKind } from "@shared/browser-task";
@@ -28,6 +29,8 @@ export interface BrowserTaskCardView {
   startedAt: number | null;
   expiresAt: number | null;
   endNote: string | null;
+  /** What the task has done so far ("Signed in to REI Cloud", "Opened Reports"), oldest first. */
+  progress: string[];
 }
 export interface BrowserTaskBrowser { ready: boolean; name: string | null }
 export interface BrowserTaskList { tasks: BrowserTaskCardView[]; browser: BrowserTaskBrowser }
@@ -56,12 +59,14 @@ export function parseBrowserTaskList(value: unknown): BrowserTaskList {
     if (!str(row.id, 64) || !str(row.messageId, 200) || !STATUSES.includes(row.status as BrowserTaskStatus) || !str(row.request, 4000) ||
       !Array.isArray(row.sites) || !row.sites.every(site => str(site, 260)) || !["request", "saved-job", "person", "none"].includes(row.siteSource as string) ||
       !nullable(row.savedJob, (v): v is string => str(v, 200)) || !num(row.minutes) || !num(row.budget) || !num(row.offerExpiresAt) ||
-      !nullable(row.startedAt, num) || !nullable(row.expiresAt, num) || !nullable(row.endNote, (v): v is string => str(v, 500))) invalid();
+      !nullable(row.startedAt, num) || !nullable(row.expiresAt, num) || !nullable(row.endNote, (v): v is string => str(v, 500)) ||
+      !Array.isArray(row.progress) || row.progress.length > 10 || !row.progress.every(line => str(line, 200))) invalid();
     return {
       id: row.id as string, messageId: row.messageId as string, status: row.status as BrowserTaskStatus, request: row.request as string,
       sites: [...row.sites as string[]], siteSource: row.siteSource as BrowserTaskCardView["siteSource"], savedJob: row.savedJob as string | null,
       actions: list(row.actions, ACTIONS), consequential: list(row.consequential, KINDS), minutes: row.minutes as number, budget: row.budget as number,
       offerExpiresAt: row.offerExpiresAt as number, startedAt: row.startedAt as number | null, expiresAt: row.expiresAt as number | null, endNote: row.endNote as string | null,
+      progress: [...row.progress as string[]],
     };
   });
   return { tasks, browser: { ready: browser.ready as boolean, name: browser.name as string | null } };
@@ -93,6 +98,12 @@ export function browserTaskAsksFirst(kinds: readonly BrowserConsequentialKind[])
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
+/** For a task that cannot submit or upload (typing in a search box is still looking): what Bud does, in one plain line. Null otherwise. */
+export function browserTaskLooksOnly(task: Pick<BrowserTaskCardView, "actions" | "sites">): string | null {
+  if (task.actions.includes("submit") || task.actions.includes("upload")) return null;
+  return `Bud only looks: it opens ${task.sites[0] ?? "the site"}, reads pages and follows links. It changes nothing there without asking you first.`;
+}
+
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const ENDED: Partial<Record<BrowserTaskStatus, string>> = {
   declined: "Not started. Nothing was done in your browser.",
@@ -106,7 +117,7 @@ export function browserTaskStatusLine(task: BrowserTaskCardView, now: number): s
   return ENDED[task.status] ?? task.endNote ?? "This task has ended.";
 }
 
-export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false, error, onStart, onDecline, onSaveJob, onStop, onConnect }: {
+export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false, error, onStart, onDecline, onSaveJob, onStop }: {
   task: BrowserTaskCardView;
   browser: BrowserTaskBrowser;
   now?: number;
@@ -116,17 +127,17 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
   onDecline: () => void;
   onSaveJob: () => void;
   onStop: () => void;
-  onConnect: () => void;
 }) {
   const reasonId = useId();
   const siteId = useId();
   const [site, setSite] = useState("");
   const offered = task.status === "proposed" && now <= task.offerExpiresAt;
   const needsSite = offered && task.sites.length === 0;
-  const blocked = !browser.ready ? "Connect your browser before starting. Bud works in the browser you choose on this computer, where you are already signed in."
-    : needsSite && !site.trim() ? "Enter the site's web address to start." : null;
+  const blocked = needsSite && !site.trim() ? "Enter the site's web address to start." : null;
   const title = task.status === "active" ? "Browser task · running" : "Browser task";
   const asksFirst = browserTaskAsksFirst(task.consequential);
+  // What Bud will do, before and while it runs; once it ends the progress line says what it did.
+  const looksOnly = offered || task.status === "active" || task.status === "paused" ? browserTaskLooksOnly(task) : null;
   return (
     <section aria-label="Browser task" className={cn("w-full max-w-[48rem] rounded-lg border bg-sheet", task.status === "active" ? "border-portal/40" : "border-line")}>
       <div className="px-4 pt-3">
@@ -135,6 +146,8 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
           <span role="status" className={cn("text-[12px]", task.status === "active" ? "text-portal" : "text-ink-muted")}>{browserTaskStatusLine(task, now)}</span>
         </div>
         <h3 className="mt-1 break-words text-[15px] font-semibold leading-snug text-ink">{sentence(task.request)}</h3>
+        {looksOnly ? <p className="mt-1 text-[14px] leading-relaxed text-ink-secondary">{looksOnly}</p> : null}
+        {task.progress.length ? <p aria-label="Progress" className="mt-1 break-words text-[13px] leading-relaxed text-ink-muted">{task.progress.join(" · ")}</p> : null}
         <dl aria-label="What this task covers" className="mt-2 divide-y divide-line border-y border-line text-[14px]">
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
             <dt className="text-[12px] text-ink-muted">Site</dt>
@@ -151,7 +164,7 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
           </div>
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
             <dt className="text-[12px] text-ink-muted">Browser</dt>
-            <dd className={cn("min-w-0", browser.ready ? "text-ink" : "text-hold")}>{browser.ready ? `${browser.name ?? "Your selected browser"} on this computer` : "Not connected"}</dd>
+            <dd className="min-w-0 text-ink">{browser.ready ? `${browser.name ?? "Your selected browser"} on this computer` : "Work browser on this computer · opens when you start"}</dd>
           </div>
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
             <dt className="text-[12px] text-ink-muted">Bud can</dt>
@@ -175,18 +188,11 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
           <>
             {blocked ? <p id={reasonId} className="text-[13px] leading-relaxed text-hold">{blocked}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
-              {browser.ready ? (
-                <button type="button" disabled={busy || blocked !== null} aria-describedby={blocked ? reasonId : undefined} aria-busy={busy || undefined}
-                  onClick={() => onStart(needsSite ? site.trim() : undefined)}
-                  className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white transition-colors hover:bg-agency-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-agency">
-                  {busy ? "Starting…" : "Start this task"}
-                </button>
-              ) : (
-                <button type="button" onClick={onConnect} aria-describedby={reasonId}
-                  className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white transition-colors hover:bg-agency-hover">
-                  Connect your browser
-                </button>
-              )}
+              <button type="button" disabled={busy || blocked !== null} aria-describedby={blocked ? reasonId : undefined} aria-busy={busy || undefined}
+                onClick={() => onStart(needsSite ? site.trim() : undefined)}
+                className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white transition-colors hover:bg-agency-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-agency">
+                {busy ? "Starting…" : "Start this task"}
+              </button>
               <button type="button" disabled={busy} onClick={onDecline} className="pm-control rounded border border-line px-3.5 text-[14px] text-ink transition-colors hover:bg-selected disabled:opacity-50">
                 Not now
               </button>
