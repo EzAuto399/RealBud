@@ -4,7 +4,7 @@
 // the app's lifetime, and a later launch must be able to tell "our service is
 // already running" from "that pid is stale" without ever signalling a pid that
 // is not ours.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync, fstatSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, statSync, fstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -28,6 +28,8 @@ import {
   spawnedServiceState,
   startDetachedService,
   systemBootedAt,
+  systemBootId,
+  writeServiceHandleFile,
 } from "./service-lifecycle.mjs";
 
 const INSTANCE = "a".repeat(32);
@@ -182,6 +184,46 @@ describe("deciding whether to start a service", () => {
     expect(
       shouldStartService({ adopted: false, recorded: handle({ startedAt: 0 }), recordedPortFree: false, alive: () => true }),
     ).toEqual({ start: false, reason: "recorded-service-alive" });
+  });
+
+  it("never lets a clock jump admit a second service beside a live owner from this boot", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const recorded = handle({ startedAt: 50_000_000, bootId: "darwin:fictional-boot-a", bootUptime: 600 });
+    for (const jump of [-DAY, -1, 0, 1, DAY]) {
+      expect(
+        shouldStartService({ adopted: false, recorded, recordedPortFree: false, alive: () => true,
+          bootedAt: 50_000_000 - 600_000 + jump, bootId: "darwin:fictional-boot-a", uptimeSeconds: 700 }),
+      ).toEqual({ start: false, reason: "recorded-service-alive" });
+    }
+    // A different boot session is stale whatever the clock says.
+    expect(
+      shouldStartService({ adopted: false, recorded, recordedPortFree: false, alive: () => true,
+        bootedAt: 0, bootId: "darwin:fictional-boot-b", uptimeSeconds: 700 }),
+    ).toEqual({ start: true, reason: "recorded-before-boot" });
+  });
+
+  it("falls back to uptime, not wall time, when the machine has no boot id", () => {
+    const recorded = handle({ startedAt: 1, bootUptime: 600 });
+    const decide = (uptimeSeconds) => shouldStartService({ adopted: false, recorded, recordedPortFree: false, alive: () => true,
+      bootedAt: 10_000_000, bootId: null, uptimeSeconds });
+    expect(decide(700)).toEqual({ start: false, reason: "recorded-service-alive" });
+    expect(decide(30)).toEqual({ start: true, reason: "recorded-before-boot" });
+  });
+
+  it("reads the OS boot session, never a clock", () => {
+    expect(systemBootId("darwin", () => "8B0A4C6E-1F2D-4E3A-9B8C-7D6E5F4A3B2C\n")).toBe("darwin:8b0a4c6e-1f2d-4e3a-9b8c-7d6e5f4a3b2c");
+    expect(systemBootId("win32", () => "\r\n    BootId    REG_DWORD    0x1a\r\n")).toBe("win32:26");
+    expect(systemBootId("darwin", () => { throw new Error("sysctl unavailable"); })).toBeNull();
+    expect(systemBootId("win32", () => "no value")).toBeNull();
+    expect(systemBootId("freebsd", () => "x")).toBeNull();
+  });
+
+  it("records the boot session with the handle and reads it back", () => {
+    const dir = tempDir();
+    startDetachedService({ entry: "/app/server/index.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+      spawnImpl: () => ({ pid: 62, unref() {}, kill() {} }), executable: "/app/RealBud", bootId: "darwin:fictional-boot-a", uptime: () => 321 });
+    expect(readServiceHandle(dir, INSTANCE)).toMatchObject({ pid: 62, bootId: "darwin:fictional-boot-a", bootUptime: 321 });
+    expect(parseServiceHandle({ ...handle(), bootId: "../../etc", bootUptime: -1 }, INSTANCE)).not.toHaveProperty("bootId");
   });
 
   it("derives boot time from system uptime", () => {
@@ -351,15 +393,36 @@ describe("detached start", () => {
     expect(env.REALBUD_DESK_KEY).toBe("ab");
   });
 
-  it("still returns a usable handle when the file cannot be written", () => {
+  it("retires a service it cannot record, through its own child, and reports why", () => {
+    // Without the record nothing can ever stop, check or upgrade that service.
     const dir = tempDir();
-    const spawnImpl = vi.fn(() => ({ pid: 5, unref: () => {} }));
-    // An unwritable record must not turn a started service into a failed launch.
-    const result = startDetachedService({
+    const previous = `${JSON.stringify(handle({ controlToken: CONTROL }))}\n`;
+    writeFileSync(servicePidPath(dir), previous);
+    const child = { pid: 5, unref: () => {}, kill: vi.fn(), exitCode: null, signalCode: null };
+    const full = Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    expect(() => startDetachedService({
       entry: "/app/server/index.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
-      spawnImpl, executable: "/app/RealBud", writeFile: () => { throw new Error("read-only"); },
-    });
-    expect(result.pid).toBe(5);
+      spawnImpl: () => child, executable: "/app/RealBud", writeFile: () => { throw full; },
+    })).toThrow(expect.objectContaining({ code: "ENOSPC" }));
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(readFileSync(servicePidPath(dir), "utf8")).toBe(previous);
+  });
+
+  it("publishes the record atomically at 0600 and keeps the old one when publication fails", () => {
+    const dir = tempDir();
+    startDetachedService({ entry: "/app/server/index.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+      spawnImpl: () => ({ pid: 61, unref() {}, kill() {} }), executable: "/app/RealBud" });
+    const first = readFileSync(servicePidPath(dir), "utf8");
+    expect(readServiceHandle(dir, INSTANCE)).toMatchObject({ pid: 61 });
+    if (process.platform !== "win32") expect(statSync(servicePidPath(dir)).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir)).toEqual(["service.json"]);
+    if (process.platform === "win32") return;
+    chmodSync(dir, 0o500);
+    try {
+      expect(() => writeServiceHandleFile(servicePidPath(dir), "{\"torn\":", { mode: 0o600 })).toThrow();
+    } finally { chmodSync(dir, 0o700); }
+    expect(readFileSync(servicePidPath(dir), "utf8")).toBe(first);
+    expect(readdirSync(dir)).toEqual(["service.json"]);
   });
 
   it("records a handle that reads back as the same service", () => {
