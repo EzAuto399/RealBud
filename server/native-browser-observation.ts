@@ -22,7 +22,7 @@ export function nativeBrowserObservation(snapshot: unknown): string {
       // A quoted address is the engine's escaped form; one JSON cannot read (a \x0b the browser strips) is left out, never kept raw.
       if (url.startsWith('"')) { try { const decoded: unknown = JSON.parse(url); url = typeof decoded === "string" ? decoded : ""; } catch { url = ""; } }
       // Anything else (not under a link, a second destination, an odd or overlong address) is left out, as before: no url, no shortcut.
-      if (owner?.role === "link" && !owner.url && url && url.length <= 2048 && !/[\x00-\x1f]/.test(url)) { out[owner.line] += ` url=${JSON.stringify(url)}`; owner.url = true; }
+      if (owner?.role === "link" && !owner.url && url && url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(url)) { out[owner.line] += ` url=${JSON.stringify(url)}`; owner.url = true; }
       continue;
     }
     if (!match || match[1].length > 120 || match[1].length % 2) throw new Error("The work browser returned an unsupported accessibility observation.");

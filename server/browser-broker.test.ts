@@ -10,13 +10,14 @@ import { openForSignIn, signInHandovers, signInStop } from "./browser-sign-in.ts
 import { BrowserApprovalStore, legacyBrowserGrant, type BrowserPortalControls } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { PortalEvidenceStore } from "./portal-path-overrides.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
 type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }>; browserId?: string; accountMarker?: string; expiresAt?: number; budget?: number; sites?: string[] };
-async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean } = {}) {
+async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean; evidence?: PortalEvidenceStore } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   const workroom = browserTaskWorkroom(root, "grant-fictional-1");
   const uploads = [...await Promise.all((job.task?.files ?? []).map(file => addBrowserTaskUpload(workroom, file.name, file.bytes))), ...(job.task?.extraUploads ?? [])];
@@ -59,7 +60,7 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
     const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, grant,
       context: { allowedOrigins: ["portal.example"], capabilities, ...(job.rules ? { rules: job.rules } : {}) },
       ...(job.rules ? { rules: () => job.rules! } : {}),
-      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root });
+      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root, ...(job.evidence ? { evidence: job.evidence } : {}) });
     cleanup.push(async () => { started.close(); await started.released(); });
     return started;
   };
@@ -741,5 +742,33 @@ describe("explicit grants and exact tool lists", () => {
     const same = await fixture(undefined, { task: { actions: ["read"], browserId: "work" } });
     expect((await same.request("browser_borrow", { tab_id: 1 })).isError).not.toBe(true);
     expect(same.calls.filter(args => args[0] === "tab" && args[1] === "borrow")).toHaveLength(1);
+  });
+});
+
+// Security review of 8ce3e6c9: a link's address and the tab's query carry tokens. Neither reaches what the model reads,
+// an approval card's params (also written to the thread's event log), the run's evidence, or the learned-path record.
+describe("addresses stay out of what is read, shown and kept", () => {
+  it("never shows a link's address, the tab's query or an id-like path segment", async () => {
+    const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
+    const root = privateTempRoot(join(tmpdir(), "rb-broker-evidence-")); cleanup.push(() => removeFixture(root));
+    const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
+    const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click", "keys"] }, evidence });
+    f.url("https://portal.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e?token=SYNTHETIC-TAB-TOKEN&session=SYNTHETIC-TAB-SESSION");
+    f.page('@native-ax 1\nrootwebarea\n  @e1 link "foo url=" url="/tenants?token=SYNTHETIC-LINK-TOKEN&session=SYNTHETIC-LINK-SESSION"\n  @e2 textbox "Reference" value=""');
+    await f.request("browser_borrow", { tab_id: 1 });
+    const read = await f.request("browser_read", { tab_id: 1 });
+    expect(read.content[0].text).toContain('@e1 link \\"foo url=\\"');
+    for (const [name, args] of [["browser_click_semantic", { ref: "@e1" }], ["browser_press", { ref: "@e2", key: "Tab" }], ["browser_navigate", { url: "https://portal.example/tenants?token=SYNTHETIC-NAV-TOKEN" }]] as const) {
+      await f.request("browser_read", { tab_id: 1 });
+      expect((await f.request(name, { tab_id: 1, ...args })).isError, name).not.toBe(true);
+    }
+    const steps = await evidence.steps("grant-fictional-1");
+    expect(steps.map(step => [step.tool, step.label, step.path])).toEqual([["click", "foo url=", "/tenants/:id"], ["press", "Reference", "/tenants/:id"], ["navigate", "", "/tenants"]]);
+    const cardUrls = f.approve.mock.calls.map(call => (call[1] as { url?: string }).url);
+    expect(new Set(cardUrls)).toEqual(new Set(["https://portal.example/tenants/:id", "https://portal.example/tenants"])); expect(cardUrls.at(-1)).toBe("https://portal.example/tenants");
+    expect(f.approve.mock.calls.at(-1)![2]).toBe("Open portal.example/tenants in this job's borrowed tab.");
+    const shown = JSON.stringify({ read, approvals: f.approve.mock.calls, seen, steps, kept: await readFile(join(root, "evidence.json"), "utf8") });
+    expect(shown).not.toMatch(/SYNTHETIC|0f8fad5b/);
+    expect(seen.some(event => event.action?.path === "/tenants/:id")).toBe(true);
   });
 });

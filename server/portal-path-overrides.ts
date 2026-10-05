@@ -44,7 +44,7 @@ export interface PortalObservedStep {
   tool: PortalStepTool;
   /** The control's role and accessible name; empty for a navigation. Never a field's value. */
   role: string; label: string;
-  /** Path only: a query can carry tokens. */
+  /** Decoded path only, ids and tokens as ":id" (shownPath, server/browser-authority.ts): a query or a path segment can carry tokens. */
   path: string;
   /** For a dropdown choice: sha256 of the chosen option values, never the values. */
   valuesHash?: string;

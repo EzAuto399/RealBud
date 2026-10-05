@@ -97,12 +97,24 @@ export function jobBrowserUrl(value: unknown, origins: readonly string[]): URL |
 }
 export function observationRefs(text: string): Map<string, string> {
   const refs = new Map<string, string>();
+  const structured = isStructuredBrowserObservation(text);
   for (const line of text.split("\n")) {
     const match = line.match(/^\s*(?:[-│├└─ ]*)?(@e\d+)\s+(.+)$/);
-    // A link's destination (url="…") is the authority's metadata, not part of the control's label.
-    if (match && !refs.has(match[1])) refs.set(match[1], match[2].replace(LINK_DESTINATIONS, "").slice(0, 1000));
+    // A link's destination (url="…") is the authority's metadata, never part of the control's label (shownLine).
+    if (match && !refs.has(match[1])) refs.set(match[1], shownLine(match[2], structured).slice(0, 1000));
   }
   return refs;
+}
+/** A page address as task evidence, a learned path's provenance, an approval card or a log line keeps it: the
+ * percent-decoded path only (never the query, fragment or sign-in), with any segment that may be a record id or a
+ * token (an email, a UUID or long hex, anything of 16+ characters with a digit, anything holding query, encoding or
+ * control characters) shown as ":id". */
+export function shownPath(address: string | URL): string {
+  let path: string; try { path = new URL(address).pathname; } catch { return ""; }
+  return path.split("/").map(raw => {
+    let segment: string; try { segment = decodeURIComponent(raw); } catch { return ":id"; }
+    return /[@?#&=;%+\p{C}]/u.test(segment) || /^[\da-f-]{16,}$/i.test(segment) || segment.length >= 16 && /\d/.test(segment) ? ":id" : segment;
+  }).join("/");
 }
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const hostOf = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, "");
@@ -635,20 +647,45 @@ interface VomNode { indent: number; ref: string | null; role: string; name: stri
 export const isVomObservation = (text: string): boolean => /^\s*@vom\s+\d+[^\S\n]*(?:\n|$)/.test(text);
 export const isStructuredBrowserObservation = (text: string): boolean => isVomObservation(text) || isNativeBrowserObservation(text);
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
-const VOM_NODE = new RegExp(String.raw`^(?:(@e\d+)\s+)?([A-Za-z][\w-]*)(?:\s+${QUOTED})?(.*)$`);
+const QUOTED_ALL = new RegExp(QUOTED, "g");
+/** A node line's head: ref, role and quoted name. Names and values escape their quotes. */
+const NODE_HEAD = String.raw`(?:(@e\d+)\s+)?([A-Za-z][\w-]*)(?:\s+${QUOTED})?`;
+const VOM_NODE = new RegExp(String.raw`^${NODE_HEAD}(.*)$`);
+/** The same head on a whole line, after its indent and any tree glyphs (observationRefs allows them). */
+const LINE_NODE = new RegExp(String.raw`^[\s\-│├└─]*${NODE_HEAD}`);
 const VOM_VALUE = new RegExp(String.raw`(?:^|\s)value=${QUOTED}`);
-/** A link's observed destination: exactly one url="…" attribute, last on its line, written with JSON.stringify
- * (server/native-browser-observation.ts). Names and values escape their quotes, so an unescaped `url="` can only be
- * this attribute. Two of them, one not last, bad JSON, a control character or an overlong address: no destination. */
-const LINK_DESTINATION = new RegExp(String.raw`\s+url=${QUOTED}$`);
-const LINK_DESTINATIONS = new RegExp(String.raw`\s+url=${QUOTED}`, "g");
-function linkDestination(tail: string): string | null {
-  const only = [...tail.matchAll(LINK_DESTINATIONS)].length === 1 ? tail.match(LINK_DESTINATION) : null;
-  let url: unknown; try { url = only ? JSON.parse(`"${only[1]}"`) : null; } catch { return null; }
-  return typeof url === "string" && url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(url) ? url : null;
+/** What follows a node's head, one token at a time: a [flag], a key="…" attribute, or anything else. */
+const TAIL_TOKEN = new RegExp(String.raw`\s*(?:\[[^\]"\n]*\]|([A-Za-z][\w-]*)=${QUOTED}|\S+)`, "gy");
+/** The one reading of a link's destination, shared by the authority (parseVom) and by everything the model or a
+ * person reads (withoutLinkDestinations, and observationRefs labels, which reach cards, logs and task evidence).
+ * From the first token after the head that is not a plain [flag] or key="…" attribute (a url attribute, anything
+ * holding "url=", anything unreadable) to the end of the line belongs to the destination and is never kept. It is the
+ * destination only when it is exactly one url="…" attribute, last on its line, that JSON reads (as
+ * server/native-browser-observation.ts writes it), at most 2048 characters with no control character. */
+function linkTail(tail: string): { kept: string; url: string | null } {
+  for (const token of tail.matchAll(TAIL_TOKEN)) {
+    const key = token[1];
+    if (key !== undefined ? !/url/i.test(key) : token[0].trimStart().startsWith("[") && !/url=/i.test(token[0])) continue;
+    const only = tail.slice(token.index).match(/^\s+url=("(?:[^"\\]|\\.)*")$/);
+    let url: unknown = null; try { url = only ? JSON.parse(only[1]) : null; } catch { url = null; }
+    return { kept: tail.slice(0, token.index), url: typeof url === "string" && url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(url) ? url : null };
+  }
+  return { kept: tail, url: null };
+}
+/** One observation line as the model and a control label read it: a node keeps its head and what linkTail keeps.
+ * Plain text, a header or a layer line is cut at the start of its first word holding "url=". */
+function shownLine(line: string, structured: boolean): string {
+  const head = structured && !/^(?:@(?:vom|native-ax|view|layers)\b|L\d+\s+\S)/.test(line) ? line.match(LINE_NODE)?.[0] : undefined;
+  if (head !== undefined) return head + linkTail(line.slice(head.length)).kept;
+  const at = line.search(/url=/i); if (at < 0) return line;
+  let start = at; while (start > 0 && !/\s/.test(line[start - 1])) start--;
+  return line.slice(0, start).trimEnd();
 }
 /** The observation as the model reads it: link destinations stay with RealBud's authority (an address can carry a token). */
-export const withoutLinkDestinations = (text: string): string => text.split("\n").map(line => line.replace(LINK_DESTINATIONS, "")).join("\n");
+export function withoutLinkDestinations(text: string): string {
+  const structured = isStructuredBrowserObservation(text);
+  return text.split("\n").map(line => shownLine(line, structured)).join("\n");
+}
 const unescapeVom = (text: string) => text.replace(/\\(.)/g, "$1");
 function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
   const nodes: VomNode[] = []; const stack: VomNode[] = []; let focus: string | null = null;
@@ -661,14 +698,16 @@ function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
     const match = layer ? null : body.match(VOM_NODE);
     if (!layer && !match) continue;
     while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-    const rest = (match?.[4] ?? "").replace(LINK_DESTINATIONS, "");
+    const tail = match?.[4] ?? "";
+    const { kept: rest, url } = linkTail(tail);
     const value = rest.match(VOM_VALUE);
     const node: VomNode = {
       indent, ref: match?.[1] ?? null, role: layer ? "layer" : match![2].toLowerCase(),
       name: layer ? layer[1] : match![3] === undefined ? null : unescapeVom(match![3]),
       value: value ? unescapeVom(value[1]) : /\[empty\]/i.test(rest) ? "" : null,
-      url: linkDestination(match?.[4] ?? ""),
-      flags: [...rest.replace(VOM_VALUE, " ").matchAll(/\[([A-Za-z-]+)[^\]]*\]/g)].map(flag => flag[1].toLowerCase()),
+      url,
+      // Flags outside quoted text anywhere on the line: an address never sets one, and a [hidden] after it still counts.
+      flags: [...tail.replace(QUOTED_ALL, " ").matchAll(/\[([A-Za-z-]+)[^\]]*\]/g)].map(flag => flag[1].toLowerCase()),
       parent: stack.at(-1) ?? null, children: [],
     };
     node.parent?.children.push(node); stack.push(node); nodes.push(node);
@@ -879,7 +918,7 @@ export function browserApprovalDraft(kind: BrowserConsequentialKind, observation
   return {
     kind,
     origin: url.origin,
-    url: `${url.origin}${url.pathname}`,
+    url: `${url.origin}${shownPath(url)}`,
     control: { ref, label: control },
     facts,
     unconfirmed: facts.filter(item => !item.confirmed).map(item => item.name),
@@ -1001,7 +1040,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const target = step === "navigate" ? jobBrowserUrl(args.url, grant.sites) : null;
   const summary = step === "borrow" ? `Use the existing tab on ${url.hostname} for this saved job. The browser will also ask for confirmation.`
     : step === "read" ? `Read the current page on ${url.hostname} for this job.`
-      : step === "navigate" ? `Open ${target!.hostname}${target!.pathname} in this job's borrowed tab.`
+      : step === "navigate" ? `Open ${target!.hostname}${shownPath(target!)} in this job's borrowed tab.`
         : step === "fill" ? `Prepare the field ${classification.label} on ${url.hostname}.`
           : step === "press" ? (action === "submit" ? `Bud wants to press ${key} in '${label}' on ${site}. Check the form in the browser first.` : `Press ${key} in ${classification.label} on ${url.hostname}.`)
             : step === "select" ? `Choose ${shownChoices(args.values)} in ${classification.label} on ${url.hostname}.`

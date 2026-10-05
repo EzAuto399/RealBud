@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nativeBrowserObservation } from "./native-browser-observation.ts";
-import { browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
+import { browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, shownPath, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 import { createHash } from "node:crypto";
 
@@ -165,5 +165,75 @@ describe("a link's address is judged where the browser will send it", () => {
     expect(navigate("/tenants/123")).toBe(true);
     for (const path of ["/tenants/1/%2564elete", "/Tenants/DeleteTenant", "/invoices/1/ſubmit", "/tenants/1/%E0%A4%A", "/tenants?doArchive=1"]) expect(navigate(path), path).toBe(false);
     expect(classifyBrowserAction(grant, page(), "browser_navigate", { url: "https://fictional.example/account/%256Cogout" }).class).toBe("consequential");
+  });
+});
+
+// Security review of 8ce3e6c9: the model's text and the control labels dropped url="…" across the whole line while the
+// authority read it after the name, so a link named `foo url=` showed its address (and its token) to the model, in its
+// label, and from there on cards and in task evidence. Both now come from one reading (browser-authority.ts linkTail);
+// whatever that reading does not accept as the one address is dropped, never left as text.
+describe("a link's address never reaches the model or a label", () => {
+  const SECRET = /SYNTHETIC-(?:TOKEN|SESSION)/;
+  const href = "/tenants?token=SYNTHETIC-TOKEN&session=SYNTHETIC-SESSION";
+  const typed = (line: string) => ({ url: "https://fictional.example/invoices", text: `@native-ax 1\nrootwebarea\n  @e9 button "MOCK-OFFICE"\n  @e1 ${line}` });
+  const click = (line: string) => browserReadOnlyAction(grant, typed(line), "browser_click_semantic", { ref: "@e1" });
+  const shown = (line: string) => withoutLinkDestinations(typed(line).text).split("\n").at(-1)!.slice("  @e1 ".length);
+  const label = (line: string) => observationRefs(typed(line).text).get("@e1");
+
+  it("keeps a link named like an attribute whole, and its address with the authority only", () => {
+    const observed = page(`- banner:\n  - button "MOCK-OFFICE" [ref=e9]\n- main:\n  - link "foo url=" [ref=e1]:\n    - /url: ${href}`);
+    expect(observed.text).toContain(`@e1 link "foo url=" url=${JSON.stringify(href)}`);
+    expect(withoutLinkDestinations(observed.text)).not.toMatch(SECRET);
+    expect(withoutLinkDestinations(observed.text).split("\n").at(-1)).toBe('    @e1 link "foo url="');
+    expect(observationRefs(observed.text).get("@e1")).toBe('link "foo url="');
+    expect(browserReadOnlyAction(grant, observed, "browser_click_semantic", { ref: "@e1" })).toBe(true); // the authority still reads it
+  });
+
+  it.each([
+    ["an unbalanced quote", `link "Tenant" url="${href}`],
+    ["two address attributes", `link "Tenant" url="/reports" url="${href}"`],
+    ["an address before a flag", `link "Tenant" url="${href}" [hidden]`],
+    ["escaped quotes", `link "Tenant" url=\\"${href}\\"`],
+    ["an unquoted address", `link "Tenant" url=${href}`],
+    ["an upper-case attribute", `link "Tenant" URL="${href}"`],
+    ["another url-named attribute", `link "Tenant" data-url="${href}"`],
+    ["an address inside a flag", `link "Tenant" [url=${href}]`],
+    ["no space before the attribute", `link "Tenant"url="${href}"`],
+    ["a name the engine escaped wrongly", `link "a\\" url="${href}"`],
+    ["a bare address after the name", `link "Tenant" ${href}`],
+  ])("drops %s entirely from the model's text and the label, and gives no shortcut", (_, line) => {
+    expect(shown(line)).not.toMatch(SECRET); expect(label(line)).not.toMatch(SECRET);
+    expect(line.startsWith(shown(line))).toBe(true);
+    expect(click(line)).toBe(false);
+  });
+
+  it("the authority and the stripper agree on every name and tail", () => {
+    const names = ["", ' "Tenant"', ' "foo url="', ' "a\\\\"', ' "x\\" url=\\"y"', ' "a\\" url="'];
+    const tails = ["", " [hidden]", ' value="v"', ` url="${href}"`, ` [focused] url="${href}"`, ` url="${href}" url="/reports"`, ` url="/reports" url="${href}"`,
+      ` url="${href}`, ` url=${href}`, ` url="${href}" [hidden]`, ` url="${href.replace("?", "\\u003f")}"`, ` URL="${href}"`, ` url="${href}" `, ` ${href}`, ` url="${href}"x`];
+    let accepted = 0;
+    for (const name of names) for (const tail of tails) {
+      const line = `link${name}${tail}`; const kept = shown(line);
+      expect(kept, line).not.toMatch(SECRET);
+      expect(line.startsWith(kept), line).toBe(true); // only the end of a line is ever removed
+      expect(label(line), line).toBe(kept); // the model and the label read the same text
+      // The authority takes an address only when what was removed is exactly one url="…" attribute.
+      if (click(line)) { accepted++; expect(line.slice(kept.length), line).toMatch(/^\s+url="(?:[^"\\]|\\.)*"\s*$/); }
+    }
+    expect(click(`link "Tenant" url="${href}"`)).toBe(true); expect(click(`link "foo url=" url="${href}"`)).toBe(true);
+    expect(accepted).toBeGreaterThan(5);
+  });
+
+  it("cuts plain text at its first url=, and leaves other text alone", () => {
+    expect(withoutLinkDestinations(`Welcome\nOpen url="${href}" now\nPage 2`)).toBe("Welcome\nOpen\nPage 2");
+    expect(withoutLinkDestinations("Tenants (12)\nPage 2 of 3")).toBe("Tenants (12)\nPage 2 of 3");
+  });
+
+  it("keeps a page address for evidence and cards as its decoded path, with ids and tokens as :id and no query", () => {
+    expect(shownPath("https://user:pass@fictional.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e/a%40b.example/deadbeefcafebabe/SYNTHETICb64Token123/x;jsessionid=AB12?token=SYNTHETIC-TOKEN#frag"))
+      .toBe("/tenants/:id/:id/:id/:id/:id");
+    expect(shownPath("https://fictional.example/customers/reconciliation/bankreconciliation")).toBe("/customers/reconciliation/bankreconciliation");
+    expect(shownPath("https://fictional.example/Reports/Tenant%20List/123?page=2")).toBe("/Reports/Tenant List/123");
+    expect(shownPath("https://fictional.example/r/%3Ftoken%3D1/%E0%A4%A/%2541")).toBe("/r/:id/:id/:id");
   });
 });
