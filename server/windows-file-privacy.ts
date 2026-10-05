@@ -127,10 +127,11 @@ if ($env:REALBUD_WINDOWS_FILE_PRIVACY_HOST -eq '1') {
   # Long-lived host: one request per stdin line, "<id> TAB <kind> TAB <action>
   # TAB <base64 of the UTF-8 path>"; one reply per line, "<id> TAB <result> TAB
   # <the Report line or nothing>". The path is decoded as data, never evaluated.
-  # A malformed request or a closed stdin ends the host.
+  # A malformed request or a closed stdin ends the host, never with success: a
+  # one-shot launch that somehow inherited this switch must not read as admitted.
   while ($true) {
     $line = [Console]::In.ReadLine()
-    if ($line -eq $null) { exit 0 }
+    if ($line -eq $null) { exit 9 }
     $parts = $line.Split([char]9)
     if ($parts.Count -ne 4 -or $parts[0] -notmatch '^[0-9]{1,9}$') { exit 9 }
     try { $requested = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[3])) } catch { exit 9 }
@@ -303,7 +304,7 @@ function privacyInvocation(
   // pinned PSModulePath still keeps Windows PowerShell 5.1 away from PowerShell 7 module roots
   // (hosted runners spend half a minute searching them). Windows environment names are
   // case-insensitive while this copy is a plain object, so drop every spelling first.
-  for (const name of Object.keys(env)) if (name.toLowerCase() === 'psmodulepath') delete env[name];
+  for (const name of Object.keys(env)) if (['psmodulepath', 'realbud_windows_file_privacy_host'].includes(name.toLowerCase())) delete env[name];
   env.PSModulePath = nodePath.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
   operations.forEach((operation, index) => {
     const { path, kind, action } = operation ?? ({} as Partial<WindowsFilePrivacyOperation>);

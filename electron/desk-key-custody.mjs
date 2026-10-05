@@ -41,10 +41,6 @@ const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
 # No cmdlets: each one auto-loads a module, which costs ~23 s per launch in the
 # installed service's stripped environment and fails outright under some hosts.
-$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
-if ([string]::IsNullOrEmpty($count)) { $count = '1' }
-if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
-$total = [int]$count
 # The innermost exception names the primitive that refused. Never the message,
 # the path, the identity, or a second line.
 function Report($reportStage, $reportIndex, $reportRecord) {
@@ -61,21 +57,15 @@ function Report($reportStage, $reportIndex, $reportRecord) {
   } catch { }
   $fqid = '-'
   try { $fqid = ([string]$reportRecord.FullyQualifiedErrorId) -replace '[^A-Za-z0-9_.,:-]', ''; if ($fqid.Length -gt 120) { $fqid = $fqid.Substring(0, 120) }; if ($fqid.Length -eq 0) { $fqid = '-' } } catch { }
-  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid")
+  $script:detail = "[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid"
 }
-for ($index = 0; $index -lt $total; $index++) {
-[Console]::Out.WriteLine($index)
-$path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
-$kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
-$action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
-if ($index -gt 0) {
-  $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
-  $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
-  $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
-}
-if ([string]::IsNullOrEmpty($path)) { exit 9 }
-if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
-if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
+# One admission; returns its numeric result (0 admitted). Every value it reads
+# is assigned inside this call, so nothing survives into the next operation.
+function Admit($path, $kind, $action, $index) {
+$script:detail = ''
+if ([string]::IsNullOrEmpty($path)) { return 9 }
+if ($kind -ne 'directory' -and $kind -ne 'file') { return 9 }
+if ($action -ne 'restrict' -and $action -ne 'verify') { return 9 }
 $directory = $kind -eq 'directory'
 $acl = $null
 $actual = $null
@@ -91,11 +81,11 @@ while ($true) {
   if ($target) { $stage = 21 } else { $stage = 22 }
   $attrs = [System.IO.File]::GetAttributes($cursor)
   if (($attrs -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint) {
-    if ($target) { exit 6 } else { exit 8 }
+    if ($target) { return 6 } else { return 8 }
   }
   if ($target) {
     $isDir = ($attrs -band [System.IO.FileAttributes]::Directory) -eq [System.IO.FileAttributes]::Directory
-    if ($directory -ne $isDir) { exit 7 }
+    if ($directory -ne $isDir) { return 7 }
     $target = $false
   }
   $stage = 22
@@ -117,7 +107,7 @@ if ($action -eq 'restrict') {
   foreach ($principal in @($sid, $system)) {
     if ($directory) { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
     else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
-    $acl.AddAccessRule($rule)
+    [void]$acl.AddAccessRule($rule)
   }
   $stage = 24
   if ($directory) { ([System.IO.DirectoryInfo]::new($path)).SetAccessControl($acl) }
@@ -127,25 +117,63 @@ $stage = 25
 if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
 else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
 $stage = 26
-if (-not $actual.AreAccessRulesProtected) { exit 5 }
-if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
+if (-not $actual.AreAccessRulesProtected) { return 5 }
+if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { return 2 }
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   # This is a conservative private-storage admission policy, not an effective
   # access calculation over the current token's enabled and deny-only groups.
-  if ($rule.AccessControlType -eq 'Deny') { exit 10 }
+  if ($rule.AccessControlType -eq 'Deny') { return 10 }
   if ($rule.AccessControlType -eq 'Allow') {
-    if ($allowed -notcontains $rule.IdentityReference.Value) { exit 3 }
+    if ($allowed -notcontains $rule.IdentityReference.Value) { return 3 }
     $targetGrant = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
     if ($targetGrant -and $rule.IdentityReference.Value -eq $sid.Value -and (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl)) { $usable = $true }
   }
 }
-if (-not $usable) { exit 4 }
+if (-not $usable) { return 4 }
 } catch {
   # Never emit the exception object: native messages can contain a path or an
   # identity. Only the stage, the index, the type name and numeric codes.
   Report $stage $index $_
-  exit $stage
+  return $stage
 }
+return 0
+}
+if ($env:REALBUD_WINDOWS_FILE_PRIVACY_HOST -eq '1') {
+  # Long-lived host: one request per stdin line, "<id> TAB <kind> TAB <action>
+  # TAB <base64 of the UTF-8 path>"; one reply per line, "<id> TAB <result> TAB
+  # <the Report line or nothing>". The path is decoded as data, never evaluated.
+  # A malformed request or a closed stdin ends the host, never with success: a
+  # one-shot launch that somehow inherited this switch must not read as admitted.
+  while ($true) {
+    $line = [Console]::In.ReadLine()
+    if ($line -eq $null) { exit 9 }
+    $parts = $line.Split([char]9)
+    if ($parts.Count -ne 4 -or $parts[0] -notmatch '^[0-9]{1,9}$') { exit 9 }
+    try { $requested = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[3])) } catch { exit 9 }
+    $result = @(Admit $requested $parts[1] $parts[2] 0)[-1]
+    [Console]::Out.WriteLine($parts[0] + [char]9 + [string]$result + [char]9 + $script:detail)
+    [Console]::Out.Flush()
+  }
+}
+$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
+if ([string]::IsNullOrEmpty($count)) { $count = '1' }
+if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
+$total = [int]$count
+for ($index = 0; $index -lt $total; $index++) {
+  [Console]::Out.WriteLine($index)
+  $path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
+  $kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
+  $action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
+  if ($index -gt 0) {
+    $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
+    $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
+    $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
+  }
+  $result = @(Admit $path $kind $action $index)[-1]
+  if ($result -ne 0) {
+    if ($script:detail) { [Console]::Error.WriteLine($script:detail) }
+    exit $result
+  }
 }
 exit 0
 `;

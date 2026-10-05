@@ -108,9 +108,13 @@ it('validates before starting a host, and the kill switch keeps the one-shot lau
   await expect(windowsFilePrivacy('relative', 'file')).rejects.toMatchObject({ category: 'invalid-path-or-kind' });
   expect(spawned.calls).toHaveLength(0);
   vi.stubEnv('REALBUD_WINDOWS_PRIVACY_HOST', '0');
+  // A leaked host switch never reaches a one-shot launch (it would wait on stdin).
+  vi.stubEnv('REALBUD_WINDOWS_FILE_PRIVACY_HOST', '1');
   const { execFile } = await import('node:child_process');
   vi.mocked(execFile).mockImplementation(((...args: unknown[]) => (args.at(-1) as Function)(null, '', '')) as never);
   await windowsFilePrivacy('C:\\a', 'directory');
   expect(spawned.calls).toHaveLength(0);
   expect(execFile).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(execFile).mock.calls[0]![2]).toMatchObject({ env: { REALBUD_WINDOWS_FILE_PRIVACY_PATH: 'C:\\a' } });
+  expect(vi.mocked(execFile).mock.calls[0]![2]).not.toHaveProperty('env.REALBUD_WINDOWS_FILE_PRIVACY_HOST');
 });
