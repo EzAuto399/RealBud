@@ -6,6 +6,7 @@ export interface BillReviewDraftFields {
   propertyId: string; kind: string; vendor: string; amount: string;
   invoiceDate: string; dueDate: string; note: string;
   invoiceNumber?: string; invoiceVersion?: string;
+  supplierReference?: string; workDescription?: string;
 }
 export interface BillReviewDraftProposalRequest {
   requestId: string; itemId: string; messageId: string; expectedSourceDigest: string;
@@ -49,7 +50,7 @@ export interface BillReviewDraftPage {
 export const BILL_REVIEW_DRAFT_LIMITS = {
   propertyId: 200, kind: 80, vendor: 160, amount: 80,
   invoiceDate: 32, dueDate: 32, note: 8000,
-  invoiceNumber: 120, invoiceVersion: 80,
+  invoiceNumber: 120, invoiceVersion: 80, supplierReference: 120, workDescription: 1000,
   reason: 4000, seriesId: 180, arrivalDate: 32,
 } as const;
 /** Both UTF-8 plaintext and its encrypted stored envelope obey this ceiling. */

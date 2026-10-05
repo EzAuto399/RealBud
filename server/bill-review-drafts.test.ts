@@ -92,6 +92,20 @@ describe('permanent encrypted bill review drafts', () => {
     expect(bytes(f)).toEqual(before);
   });
 
+  it('keeps supplier reference and work description through save for later, while older drafts without them still load', () => {
+    const f = fixture(), legacyId = randomUUID(), legacy = f.store.create(legacyId, null, input(f.workspaceId));
+    expect(f.open().get(legacyId)).toEqual(legacy); expect(Object.keys(legacy.fields)).not.toContain('supplierReference');
+    const id = randomUUID(), labelled = input(f.workspaceId);
+    labelled.fields = { ...labelled.fields, supplierReference: 'SUP-FICTIONAL-042', workDescription: 'Fictional gutter clean, still checking' };
+    const saved = f.store.create(id, null, labelled);
+    expect(f.open().get(id).fields).toEqual(labelled.fields);
+    const outdated = structuredClone(labelled); delete outdated.fields.workDescription;
+    expect(() => f.store.update(id, 1, outdated)).toThrow(expect.objectContaining({ status: 409 }));
+    expect(f.store.get(id)).toEqual(saved);
+    expect(f.store.update(id, 1, { ...labelled, fields: { ...labelled.fields, supplierReference: '', workDescription: '' } }).revision).toBe(2);
+    expect(() => f.store.update(id, 2, { ...labelled, fields: { ...labelled.fields, workDescription: 'x'.repeat(BILL_REVIEW_DRAFT_LIMITS.workDescription + 1) } })).toThrow(expect.objectContaining({ status: 400 }));
+  });
+
   it('deduplicates exact creates without reverting a later saved revision', () => {
     const f = fixture(), id = randomUUID(), initial = input(f.workspaceId), first = f.store.create(id, null, initial);
     f.time(2000); expect(f.store.create(id, null, initial)).toEqual(first);

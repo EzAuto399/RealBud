@@ -11,12 +11,15 @@ export interface BillFacts {
   invoiceDate: string | null; dueDate: string | null; note: string;
   /** Reviewed source labels, never inferred supplier identity or payment proof. */
   invoiceNumber?: string | null; invoiceVersion?: string | null;
+  /** Reviewed labels: the supplier reference (e.g. REI) and what the invoice
+   * charges for. Neither is inferred supplier identity or payment proof. */
+  supplierReference?: string | null; workDescription?: string | null;
 }
 /** Comparison only: retain stored legacy facts and their original audit hashes. */
 export function sameBillFacts(a: BillFacts, b: BillFacts): boolean {
   return (['propertyId', 'kind', 'vendor', 'note'] as const).every(key => a[key].trim() === b[key].trim()) &&
     (['amountCents', 'currency', 'invoiceDate', 'dueDate'] as const).every(key => a[key] === b[key]) &&
-    (['invoiceNumber', 'invoiceVersion'] as const).every(key => (a[key]?.trim() ?? null) === (b[key]?.trim() ?? null));
+    (['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const).every(key => (a[key]?.trim() ?? null) === (b[key]?.trim() ?? null));
 }
 export type SourceBillState = 'received' | 'in-process' | 'hold' | 'cancelled';
 /** Human-reviewed claims, never a connector receipt or permission to act. */

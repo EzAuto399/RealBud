@@ -213,8 +213,8 @@ export class SourceBillRegister {
       const row = this.storage.occurrence(id);
       if (!row) return fail('That received bill is unavailable.', 404);
       if (row.revision !== expectedRevision) return fail('This bill changed. Refresh it before correcting the record.', 409);
-      for (const key of ['invoiceNumber', 'invoiceVersion'] as const) {
-        if (row.facts[key] && !Object.hasOwn(input.facts as object, key)) return fail('Keep the reviewed invoice number and version, or explicitly clear an uncertain value before saving.', 409);
+      for (const key of ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const) {
+        if (row.facts[key] && !Object.hasOwn(input.facts as object, key)) return fail('Keep the reviewed invoice number, version, supplier reference and work description, or explicitly clear an uncertain value before saving.', 409);
       }
       const alias = this.storage.byIdentity(source.identity);
       if (alias && alias.id !== row.id) return fail('This message belongs to another saved bill. Reconcile those records first.', 409);
