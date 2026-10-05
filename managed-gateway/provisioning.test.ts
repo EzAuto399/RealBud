@@ -1,14 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fixture } from './testing.ts';
 import { LedgerDatabase } from './database.ts';
 import { UsageLedger } from './ledger.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
+import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, nodeIo, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, updateRegistry, type DurableIo, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import { ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
@@ -1310,4 +1311,110 @@ test('auth config create intent for a deleted project does not block a replaceme
     assert.equal(created.length, 2); assert.equal(h.org.created.length, 2);
     assert.equal(h.devices().find(d => d.id === 'install-new')!.authConfigId, 'ac_office2');
   } finally { h.close(); }
+});
+
+// ---------------------------------------------------------------------------
+// Registry and secret durability: ENOSPC or a kill at every write boundary
+// ---------------------------------------------------------------------------
+
+const SECRET_NAME_FIXTURE = 'REALBUD_COMPOSIO_PROJECT_FICTIONAL';
+const SECRET_VALUE = `ak_fictional_durable_${'x'.repeat(64)}`;
+const registryDevice = (id: string) => ({ id, companyId: 'company-fictional', licenseId: 'license-fictional', memberId: 'member-fictional',
+  installationId: `install-${id}`, profile: 'property-fixture', active: true, expiresAt: Date.UTC(2030, 0, 1), projectKeyEnv: SECRET_NAME_FIXTURE,
+  authConfigId: 'auth-fictional', userId: 'user-fictional', tokenHash: createHashHex(id) });
+function createHashHex(text: string) { return Buffer.from(text.padEnd(32, '-').slice(0, 32)).toString('hex'); }
+const ids = (registry: string) => (JSON.parse(readFileSync(registry, 'utf8')).devices as { id: string }[]).map(d => d.id);
+const temps = (directory: string) => readdirSync(directory).filter(name => name.endsWith('.tmp'));
+function durabilityRoot() {
+  const root = mkdtempSync(join(tmpdir(), 'realbud-durability-'));
+  const registry = join(root, 'server', 'devices.json'), secrets = join(root, 'secrets');
+  updateRegistry(registry, () => ({ devices: [registryDevice('device-a')] }));
+  return { root, registry, secrets, close: () => rmSync(root, { recursive: true, force: true }) };
+}
+/** Real file operations, except call number `failAt` fails with ENOSPC; a write
+ * lands one byte first, as a filling disk does. */
+function enospcAt(failAt: number) {
+  let calls = 0; const state = { fired: false };
+  const io = Object.fromEntries(Object.entries(nodeIo).map(([name, operation]) => [name, (...args: any[]) => {
+    if (calls++ !== failAt) return (operation as (...a: any[]) => unknown)(...args);
+    state.fired = true;
+    if (name === 'writeSync') nodeIo.writeSync(args[0], (args[1] as Buffer).subarray(args[2], args[2] + 1), 0);
+    throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+  }])) as unknown as DurableIo;
+  return { io, state };
+}
+
+test('ENOSPC at every registry write boundary leaves the previous or next registry, no temp, and a usable lock', () => {
+  for (let failAt = 0; ; failAt++) {
+    const r = durabilityRoot(); try {
+      const { io, state } = enospcAt(failAt);
+      let threw = false;
+      try { updateRegistry(r.registry, devices => ({ devices: [...devices, registryDevice('device-b')] }), io); } catch { threw = true; }
+      if (!state.fired) { assert.equal(threw, false); assert.deepEqual(ids(r.registry), ['device-a', 'device-b']); assert.ok(failAt > 10); break; }
+      // Only a failed cleanup of an already published file reports success.
+      assert.ok([threw ? 'device-a' : '', 'device-a,device-b'].includes(ids(r.registry).join(',')), `boundary ${failAt}`);
+      // The lock is released, or held by this (necessarily finished) process and
+      // recovered; a stray temp from a failed cleanup is reconciled.
+      updateRegistry(r.registry, devices => ({ devices: [...devices, registryDevice('device-c')] }));
+      assert.ok(ids(r.registry).includes('device-c')); assert.equal(existsSync(`${r.registry}.lock`), false);
+      assert.deepEqual(temps(join(r.root, 'server')), [], `boundary ${failAt}`);
+    } finally { r.close(); }
+  }
+});
+
+test('ENOSPC at every secret write boundary never admits a partial secret and leaves the name reusable', () => {
+  for (let failAt = 0; ; failAt++) {
+    const r = durabilityRoot(); try {
+      const { io, state } = enospcAt(failAt);
+      let threw = false;
+      try { fileSecretStore(r.secrets, io).write(SECRET_NAME_FIXTURE, SECRET_VALUE); } catch { threw = true; }
+      const store = fileSecretStore(r.secrets);
+      if (!state.fired) { assert.equal(threw, false); assert.equal(store.read(SECRET_NAME_FIXTURE), SECRET_VALUE); assert.ok(failAt > 5); break; }
+      // Restart reconciliation removed any temp copy of the secret.
+      assert.deepEqual(temps(r.secrets), [], `boundary ${failAt}`);
+      // A failed write leaves nothing behind, so the caller's cleanup (deleting
+      // the project whose key it could not store) is complete. Only a failed
+      // cleanup of an already published secret reports success.
+      assert.equal(store.read(SECRET_NAME_FIXTURE), threw ? undefined : SECRET_VALUE, `boundary ${failAt}`);
+      if (threw) { store.write(SECRET_NAME_FIXTURE, SECRET_VALUE); assert.equal(store.read(SECRET_NAME_FIXTURE), SECRET_VALUE); }
+    } finally { r.close(); }
+  }
+});
+
+test('a process killed at every registry or secret write boundary is reconciled on restart', () => {
+  const provisioning = new URL('./provisioning.ts', import.meta.url).href;
+  for (let killAt = 0; ; killAt++) {
+    const r = durabilityRoot(); try {
+      const program = `import { fileSecretStore, nodeIo, updateRegistry } from ${JSON.stringify(provisioning)};
+        let calls = 0; const io = Object.fromEntries(Object.entries(nodeIo).map(([name, operation]) => [name, (...args) => {
+          if (calls++ === ${killAt}) { process.kill(process.pid, 'SIGKILL'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); }
+          return operation(...args); }]));
+        updateRegistry(${JSON.stringify(r.registry)}, devices => ({ devices: [...devices, ${JSON.stringify(registryDevice('device-b'))}] }), io);
+        fileSecretStore(${JSON.stringify(r.secrets)}, io).write(${JSON.stringify(SECRET_NAME_FIXTURE)}, ${JSON.stringify(SECRET_VALUE)});`;
+      const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', program], { encoding: 'utf8', timeout: 20_000 });
+      if (child.signal !== 'SIGKILL') {
+        assert.equal(child.status, 0, child.stderr); assert.ok(killAt > 15);
+        assert.equal(fileSecretStore(r.secrets).read(SECRET_NAME_FIXTURE), SECRET_VALUE);
+        break;
+      }
+      // Restart: the secret store reconciles its directory and the registry
+      // writer recovers the dead owner's lock.
+      const store = fileSecretStore(r.secrets);
+      assert.ok([undefined, SECRET_VALUE].includes(store.read(SECRET_NAME_FIXTURE)), `boundary ${killAt}`);
+      if (existsSync(r.secrets)) assert.deepEqual(temps(r.secrets), [], `boundary ${killAt}`);
+      assert.ok(['device-a', 'device-a,device-b'].includes(ids(r.registry).join(',')), `boundary ${killAt}`);
+      updateRegistry(r.registry, devices => ({ devices: [...devices, registryDevice('device-c')] }));
+      assert.ok(ids(r.registry).includes('device-c'), `boundary ${killAt}`);
+      assert.deepEqual(temps(join(r.root, 'server')), [], `boundary ${killAt}`);
+      assert.equal(existsSync(`${r.registry}.lock`), false, `boundary ${killAt}`);
+    } finally { r.close(); }
+  }
+});
+
+test('a secret file cut short (no trailing newline) is never admitted', () => {
+  const r = durabilityRoot(); try {
+    mkdirSync(r.secrets, { mode: 0o700 });
+    writeFileSync(join(r.secrets, SECRET_NAME_FIXTURE), SECRET_VALUE.slice(0, 20), { mode: 0o600 });
+    assert.throws(() => fileSecretStore(r.secrets).read(SECRET_NAME_FIXTURE), (error: unknown) => error instanceof GatewayError && error.code === 'gateway_secret_unreadable');
+  } finally { r.close(); }
 });
