@@ -206,7 +206,7 @@ describe("full browser actions in RealBud's own work browser", () => {
       facts: expect.arrayContaining([{ name: "recipient", value: "Fictional Plumbing Pty Ltd", confirmed: true }, { name: "amount", value: "480.00", confirmed: true }]) } });
     expect(projection).toEqual({ fence: { surface: "portal-submit", origin: "portal.example", ruleOffer: null }, approvalPolicy: "once" });
     expect(dispatched(f, "click")).toHaveLength(1);
-    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "succeeded", kind: "pay" }]);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "unverified", kind: "pay" }]);
   });
 
   it("keeps a payment whose amount the page does not confirm with the person, and refused submits dispatch nothing", async () => {
@@ -428,7 +428,7 @@ describe("consequential browser steps need a once-only approval of the verified 
     expect(projection).toEqual({ fence: { surface: "portal-submit", origin: "portal.example", ruleOffer: null }, approvalPolicy: "once" });
     expect((params as { approval: { kind: string } }).approval.kind).toBe("pay");
     expect(clicks(f)).toBe(1);
-    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "succeeded", kind: "pay", control: { label: "Pay now" } }]);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "unverified", kind: "pay", control: { label: "Pay now" } }]);
     // Once only: the approval is spent and the old reference is gone.
     expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).toBe(true);
     expect(clicks(f)).toBe(1);
@@ -487,6 +487,35 @@ describe("consequential browser steps need a once-only approval of the verified 
     const retry = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, 103, next);
     expect(retry.isError).toBe(true); expect(retry.content[0].text).toMatch(/unknown result\. Check the site yourself/);
     expect(f.approve.mock.calls.length).toBe(asked); expect(clicks(f)).toBe(1);
+  });
+  it("keeps an acknowledged payment unverified across a crash and reopen until a person records its result", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    // The browser ACKs the press; that proves dispatch, not the payment.
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).not.toBe(true);
+    expect(clicks(f)).toBe(1);
+    // Crash: the broker is gone and the store is reopened from disk.
+    f.broker.close(); await f.broker.released();
+    const reopened = new BrowserApprovalStore({ file: join(f.root, "approvals.json") });
+    const [saved] = await reopened.list();
+    expect(saved).toMatchObject({ decision: "approved", outcome: "unverified", kind: "pay" });
+    let id = 200;
+    for (const jump of [48 * 3_600_000, -96 * 3_600_000]) {
+      f.advance(jump);
+      const next = await f.start();
+      await f.request("browser_borrow", { tab_id: 1 }, ++id, next); await f.request("browser_read", { tab_id: 1 }, ++id, next);
+      const asked = f.approve.mock.calls.length;
+      const retry = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, ++id, next);
+      expect(retry.isError).toBe(true); expect(retry.content[0].text).toMatch(/unknown result\. Check the site yourself/);
+      expect(f.approve.mock.calls.length).toBe(asked); expect(clicks(f)).toBe(1);
+      next.close(); await next.released();
+    }
+    // Only a person's recorded check releases it.
+    await f.approvals.reconcile(saved.id, "not-done", 5);
+    const after = await f.start();
+    await f.request("browser_borrow", { tab_id: 1 }, ++id, after); await f.request("browser_read", { tab_id: 1 }, ++id, after);
+    const released = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, ++id, after);
+    expect(released.content[0].text).toMatch(/acknowledged/);
+    expect(clicks(f)).toBe(2);
   });
   it("keeps a saved job's routine steps as before and records the broker's own decisions", async () => {
     const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
@@ -606,7 +635,7 @@ describe("keys, dropdowns, downloads and uploads", () => {
     expect(summary).toBe("Pay AUD 480.00 to Fictional Plumbing Pty Ltd (reference INV-FICTIONAL-7) by pressing Enter in 'Amount' on portal.example. This approval is for this one payment and expires in 2 minutes.");
     expect(projection).toEqual({ fence: { surface: "portal-submit", origin: "portal.example", ruleOffer: null }, approvalPolicy: "once" });
     expect(dispatched(f, "press")).toHaveLength(1);
-    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "succeeded", kind: "pay", control: { label: "Amount" } }]);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "unverified", kind: "pay", control: { label: "Amount" } }]);
   });
 
   it("refuses when a routine key would now submit a payment after the page changed", async () => {
