@@ -18,7 +18,7 @@
  *
  * Key custody: the office key stays in this process (`workerModelAccessSnapshot`,
  * refreshed from the private vault). An Ask worker gets only the loopback URL
- * and a random per-process token, under the env name the profile's
+ * and a random execution-scoped token, under the env name the profile's
  * `providers.realbud.key_env` already names. The worker profile is not
  * rewritten: it keeps naming the granted endpoint, which every other managed
  * launch and readiness check still verifies. Ask is pointed at the relay per
@@ -29,8 +29,12 @@
  * hermes_cli/runtime_provider_custom.py `_entry_url`), so no profile edit can
  * route around it. If the overlay were ever ignored, the worker would present
  * the token to the granted endpoint and be refused: an Ask worker never holds
- * the key. This is Ask only: one-shot CLI jobs and loops still receive the key
- * in their launch environment through `applyManagedModelLaunchEnv`.
+ * the key. Each token belongs to one execution's lease (`createAskModelRelayLease`,
+ * `withAskModelRelayLease`): revoked on completion, error or Stop, it is
+ * refused from then on and its in-flight exchanges are aborted. An exchange is
+ * also aborted when the grant or key it was admitted under is withdrawn or
+ * replaced. This is Ask only: one-shot CLI jobs and loops still receive the
+ * key in their launch environment through `applyManagedModelLaunchEnv`.
  *
  * The overlay folder is outside the worker's Hermes home and workroom but, on
  * one OS account, nothing a same-user process cannot write. Hermes rereads it
@@ -43,11 +47,11 @@
  * Nothing here logs a body, a key or a token.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { once } from "node:events";
 
 import { DATA_DIR } from "./config.ts";
 import { writePrivateJson } from "./private-json.ts";
@@ -55,7 +59,7 @@ import { hermesHome } from "./hermes-paths.ts";
 import { managedServiceFailure } from "./managed-service.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
 import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER_ENTRY, managedModelProfile } from "./hermes-pack.ts";
-import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { managedModelChoice } from "../shared/managed-model-choices.ts";
 import { noteModelKeyAnswer } from "./office-link.ts";
 
@@ -78,10 +82,22 @@ const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
  * treat the endpoint as local and relax its own stale timers, so this is the
  * bound on a stalled upstream. */
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
+/** Once the AI service has answered, the longest it may go without sending a
+ * byte before the exchange is ended. Streams carry tokens or keep-alives well
+ * inside this. */
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
+/** Abort reason for an answer that stopped arriving. */
+const IDLE = Symbol("idle");
+const STALLED = "The AI service stopped sending its answer. Try again.";
 const IDEMPOTENCY_MEMORY = 256;
 /** Output ceiling before the gateway's listing has been read: the smallest
  * `max_output_tokens` the gateway publishes for the offered models. */
 const FALLBACK_MAX_OUTPUT_TOKENS = 32_000;
+/** Longest 429 wait passed to the worker. Hermes' OpenAI SDK ignores a
+ * longer Retry-After and falls back to its own short backoff. */
+const MAX_RETRY_AFTER_SECONDS = 60;
+/** Abort reason for an exchange whose grant or key was withdrawn mid-flight. */
+const GRANT_ENDED = Symbol("grant ended");
 /** Read-only after writing; any other mode is a change made outside RealBud. */
 const OVERLAY_DIR_MODE = 0o500, OVERLAY_FILE_MODE = 0o400;
 
@@ -93,6 +109,8 @@ export interface AskModelRelayOptions {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   timeoutMs?: number;
+  /** No bytes from the AI service for this long, after it answered, ends the exchange. */
+  idleTimeoutMs?: number;
   /** Entitlement check per request; defaults to the managed service's reasoning capability. */
   serviceFailure?: () => string | null;
   /** Called once when the overlay folder was changed outside RealBud; the
@@ -107,10 +125,54 @@ export interface AskModelRelay {
 }
 
 interface ActiveRelay {
-  url: string; token: string; home: string; overlayDir: string; overlayPath: string; overlayBody: string;
+  url: string; home: string; overlayDir: string; overlayPath: string; overlayBody: string;
   compromised: boolean; onTamper?: () => void;
+  /** Live execution tokens; a revoked lease's token is removed. */
+  capabilities: Map<string, RelayCapability>;
 }
+interface RelayCapability {
+  token: Buffer; relay: ActiveRelay; scope: LeaseScope;
+  inflight: Set<AbortController>;
+  /** body digest → the Idempotency-Key its first attempt carried, so an SDK
+   * retry of a lost reply is answered from Modelvia's receipt instead of
+   * charged again. Never shared across executions. */
+  issued: Map<string, string>;
+}
+interface LeaseScope { revoked: boolean; capability?: RelayCapability }
+const leaseContext = new AsyncLocalStorage<LeaseScope>();
 let active: ActiveRelay | null = null;
+
+export interface AskModelRelayLease {
+  /** Run a launch inside this lease, so `applyAskModelRelayEnv` mints its token. */
+  run<T>(operation: () => T): T;
+  /** Final and synchronous: the token is refused from now on and its exchanges abort. */
+  revoke(): void;
+}
+
+/** One execution's relay authority. Nothing is granted until a checked
+ * launch inside `run` applies its environment. */
+export function createAskModelRelayLease(options: { signal?: AbortSignal } = {}): AskModelRelayLease {
+  const scope: LeaseScope = { revoked: false };
+  const revoke = () => {
+    scope.revoked = true;
+    options.signal?.removeEventListener("abort", revoke);
+    const capability = scope.capability;
+    if (!capability) return;
+    capability.relay.capabilities.delete(capability.token.toString());
+    capability.issued.clear();
+    for (const controller of capability.inflight) controller.abort();
+  };
+  if (options.signal?.aborted) revoke();
+  else options.signal?.addEventListener("abort", revoke, { once: true });
+  return { run: operation => leaseContext.run(scope, operation), revoke };
+}
+
+/** A one-shot launch holds relay authority only until its operation settles. */
+export async function withAskModelRelayLease<T>(operation: () => Promise<T>, options: { signal?: AbortSignal } = {}): Promise<T> {
+  const lease = createAskModelRelayLease(options);
+  try { return await lease.run(operation); }
+  finally { lease.revoke(); }
+}
 
 /** The overlay Hermes deep-merges over the profile for one Ask worker. JSON is
  * YAML, and upstream parses the file with `yaml.safe_load`. */
@@ -129,7 +191,15 @@ export function applyAskModelRelayEnv(env: NodeJS.ProcessEnv, root?: string): st
   if (refusal) return refusal;
   const relay = active;
   if (!relay || resolve(hermesHome(root, env)) !== relay.home || !overlayHolds(relay)) return ASK_MODEL_RELAY_UNAVAILABLE;
-  env[MANAGED_MODEL_KEY_ENV] = relay.token;
+  // Outside a live lease there is no execution to scope a token to.
+  const scope = leaseContext.getStore();
+  if (!scope || scope.revoked || scope.capability && scope.capability.relay !== relay) return ASK_MODEL_RELAY_UNAVAILABLE;
+  if (!scope.capability) {
+    const tokenText = randomBytes(32).toString("hex");
+    scope.capability = { token: Buffer.from(tokenText), relay, scope, inflight: new Set(), issued: new Map() };
+    relay.capabilities.set(tokenText, scope.capability);
+  }
+  env[MANAGED_MODEL_KEY_ENV] = scope.capability.token.toString();
   env[ASK_MODEL_RELAY_OVERLAY_ENV] = relay.overlayDir;
   return null;
 }
@@ -183,12 +253,28 @@ function clampOutput(body: Record<string, unknown>, ceiling: number): void {
   }
 }
 
-function tokenMatches(request: IncomingMessage, token: Buffer): boolean {
+/** The upstream's Retry-After as whole seconds in [0, MAX_RETRY_AFTER_SECONDS],
+ * from delta-seconds or an HTTP date; null when absent or malformed. */
+export function boundedRetryAfter(value: string | null, now = Date.now()): string | null {
+  const text = value?.trim() ?? "";
+  let seconds: number;
+  if (/^\d{1,10}$/.test(text)) seconds = Number(text);
+  else if (/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(text) && Number.isFinite(Date.parse(text))) {
+    seconds = Math.max(0, Math.ceil((Date.parse(text) - now) / 1000));
+  } else return null;
+  return String(Math.min(seconds, MAX_RETRY_AFTER_SECONDS));
+}
+
+/** The live execution capability this request's token names, if any. The
+ * map lookup finds the candidate; the constant-time compare decides. */
+function requestCapability(request: IncomingMessage, relay: ActiveRelay | undefined): RelayCapability | undefined {
   const auth = request.headers.authorization;
   const presented = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7)
     : typeof request.headers["x-api-key"] === "string" ? request.headers["x-api-key"] : "";
+  const capability = relay?.capabilities.get(presented);
+  if (!capability || capability.scope.revoked) return undefined;
   const candidate = Buffer.from(presented);
-  return candidate.length === token.length && timingSafeEqual(candidate, token);
+  return candidate.length === capability.token.length && timingSafeEqual(candidate, capability.token) ? capability : undefined;
 }
 
 function refuse(response: ServerResponse, status: number, message: string): void {
@@ -203,15 +289,21 @@ class RelayRefusal extends Error {
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
-async function readBody(request: IncomingMessage, limit: number): Promise<Buffer> {
+async function readBody(request: IncomingMessage, limit: number, signal: AbortSignal): Promise<Buffer> {
   const declared = Number(request.headers["content-length"]);
   if (Number.isFinite(declared) && declared > limit) throw new RelayRefusal(413, "This request is too large for Bud's AI connection.");
   const chunks: Buffer[] = []; let size = 0;
-  for await (const chunk of request as AsyncIterable<Buffer>) {
-    size += chunk.length;
-    if (size > limit) throw new RelayRefusal(413, "This request is too large for Bud's AI connection.");
-    chunks.push(chunk);
-  }
+  // A lease revoked mid-upload stops the read too.
+  const stop = () => request.destroy();
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    signal.throwIfAborted();
+    for await (const chunk of request as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > limit) throw new RelayRefusal(413, "This request is too large for Bud's AI connection.");
+      chunks.push(chunk);
+    }
+  } finally { signal.removeEventListener("abort", stop); }
   return Buffer.concat(chunks);
 }
 
@@ -263,13 +355,17 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const serviceFailure = options.serviceFailure ?? (() => managedServiceFailure("reasoning"));
-  const tokenText = randomBytes(32).toString("hex"), token = Buffer.from(tokenText);
-  // body digest → the Idempotency-Key its first attempt carried, so an SDK
-  // retry of a lost reply is answered from Modelvia's receipt instead of
-  // charged again, while a genuinely new request (retry count 0) is new.
-  const issued = new Map<string, string>();
   const inflight = new Set<AbortController>();
+  // Each forwarded exchange → the grant and key it was admitted under. A
+  // withdrawn, cleared or replaced key ends exactly those exchanges; one
+  // admitted under the current key carries on.
+  const admittedUnder = new Map<AbortController, { keyId: string; key: string }>();
+  const grantHolds = (admitted: { keyId: string; key: string }) => {
+    const grant = workerModelGrant();
+    return grant.state === "active" && grant.keyId === admitted.keyId && workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim() === admitted.key;
+  };
   // model → the output ceiling the gateway's listing published for it.
   const maxOutput = new Map<string, number>();
   let relay: ActiveRelay | undefined;
@@ -278,12 +374,19 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const forwarding = new AbortController();
+    let capability: RelayCapability | undefined;
     inflight.add(forwarding);
     // The worker went away (turn cancelled, process stopped): stop the upstream exchange too.
     const abandon = () => { if (!response.writableFinished) forwarding.abort(); };
     response.once("close", abandon);
     const timer = setTimeout(() => forwarding.abort(), timeoutMs);
     timer.unref();
+    let idleTimer: NodeJS.Timeout | undefined, streaming = false;
+    const stillArriving = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => forwarding.abort(IDLE), idleTimeoutMs);
+      idleTimer.unref();
+    };
     try {
       // Hermes probes local-server metadata (Ollama, LM Studio, llama.cpp,
       // vLLM) for a loopback base URL; none of it is forwarded. The one read
@@ -292,13 +395,16 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       const path = (request.url ?? "").split("?")[0];
       const listing = request.method === "GET" && path === MODELS_PATH;
       if (request.method !== "POST" && !listing) { request.resume(); response.writeHead(404, { "cache-control": "no-store" }); response.end(); return; }
-      if (!tokenMatches(request, token)) { request.resume(); refuse(response, 401, "Bud's AI connection did not accept this worker."); return; }
+      capability = requestCapability(request, relay);
+      if (!capability) { request.resume(); refuse(response, 401, "Bud's AI connection did not accept this worker."); return; }
+      capability.inflight.add(forwarding);
       if (!listing && path !== CHAT_PATH) { request.resume(); response.writeHead(404, { "cache-control": "no-store" }); response.end(); return; }
       // The overlay is re-verified before every forwarded request, so a change
       // made mid-session can drive no further model call.
       if (!relay || !overlayHolds(relay)) { request.resume(); refuse(response, 503, ASK_MODEL_RELAY_UNAVAILABLE); return; }
-      const raw = listing ? Buffer.alloc(0) : await readBody(request, maxRequestBytes);
+      const raw = listing ? Buffer.alloc(0) : await readBody(request, maxRequestBytes, forwarding.signal);
       if (listing) request.resume();
+      if (capability.scope.revoked) throw new RelayRefusal(401, "Bud's AI connection did not accept this worker.");
 
       // Authority at this boundary, per request: the grant, its key, the
       // profile still naming the granted endpoint, and the office's choice.
@@ -310,6 +416,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       const key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
       const choice = managedModelChoice(managedModelProfile(root).choice);
       if (grant.state !== "active" || !key || !choice) throw new RelayRefusal(503, "Bud's AI access is not ready on this computer.");
+      admittedUnder.set(forwarding, { keyId: grant.keyId, key });
       const base = new URL(normalizedGatewayUrl(grant.baseUrl));
       if (base.username || base.password || base.search || base.hash ||
           !(base.protocol === "https:" || base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname))) {
@@ -339,6 +446,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       clampOutput(body, maxOutput.get(choice.model) ?? FALLBACK_MAX_OUTPUT_TOKENS);
 
       const digest = createHash("sha256").update(raw).digest("hex");
+      const issued = capability.issued;
       const retry = Number(request.headers["x-stainless-retry-count"] ?? 0) > 0;
       let idempotencyKey = retry ? issued.get(digest) : undefined;
       if (!idempotencyKey) {
@@ -357,29 +465,43 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         signal: forwarding.signal,
       });
       noteKeyAnswer(grant.keyId, upstream.status);
+      forwarding.signal.throwIfAborted();
+      const upstreamType = upstream.headers.get("content-type") || "application/json";
+      streaming = /^text\/event-stream\b/i.test(upstreamType);
+      const retryAfter = upstream.status === 429 ? boundedRetryAfter(upstream.headers.get("retry-after")) : null;
       response.writeHead(upstream.status, {
-        "content-type": upstream.headers.get("content-type") || "application/json",
+        "content-type": upstreamType,
         "cache-control": "no-store",
+        ...(retryAfter === null ? {} : { "retry-after": retryAfter }),
       });
       response.flushHeaders();
       if (!upstream.body) { response.end(); return; }
+      // Chunk by chunk, in order, SSE events unchanged; the next upstream read
+      // waits for the worker's socket to drain, so backpressure carries back.
       let relayed = 0;
-      const bound = new Transform({
-        transform(chunk: Buffer, _encoding, done) {
-          relayed += chunk.length;
-          done(relayed > maxResponseBytes ? new Error("response too large") : null, chunk);
-        },
-      });
-      // pipeline carries backpressure from the worker's socket back to the
-      // upstream read, chunk by chunk, in order; SSE events pass unchanged.
-      await pipeline(Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream<Uint8Array>), bound, response);
+      stillArriving();
+      for await (const chunk of upstream.body) {
+        stillArriving();
+        relayed += chunk.length;
+        if (relayed > maxResponseBytes) throw new Error("response too large");
+        if (!response.write(chunk)) await once(response, "drain", { signal: forwarding.signal });
+      }
+      response.end();
     } catch (error) {
       if (error instanceof RelayRefusal) { request.resume(); refuse(response, error.status, error.message); }
-      else if (!response.headersSent) refuse(response, forwarding.signal.aborted ? 504 : 502, "Bud's AI connection could not reach the AI service.");
-      else response.destroy();
+      else if (forwarding.signal.reason === GRANT_ENDED && !response.headersSent) {
+        refuse(response, 503, managedModelLaunchRefusal(root) ?? "Bud's AI access is not ready on this computer.");
+      } else if (!response.headersSent) refuse(response, forwarding.signal.aborted ? 504 : 502, "Bud's AI connection could not reach the AI service.");
+      else if (forwarding.signal.reason === IDLE && streaming && !response.writableEnded && !response.destroyed) {
+        // A stream ends with an error event the worker's SDK raises, not a silent cut.
+        response.end(`data: ${JSON.stringify({ error: { message: STALLED, type: "realbud_relay_refused" } })}\n\n`);
+      } else response.destroy();
     } finally {
       clearTimeout(timer);
+      clearTimeout(idleTimer);
       inflight.delete(forwarding);
+      admittedUnder.delete(forwarding);
+      capability?.inflight.delete(forwarding);
       response.off("close", abandon);
     }
   }
@@ -399,9 +521,12 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
     await writePrivateJson(overlayPath, overlay);
     if (process.platform !== "win32") { chmodSync(overlayPath, OVERLAY_FILE_MODE); chmodSync(overlayDir, OVERLAY_DIR_MODE); }
   } catch (error) { server.close(); throw error; }
-  const current: ActiveRelay = { url, token: tokenText, home, overlayDir, overlayPath, overlayBody: JSON.stringify(overlay), compromised: false, onTamper: options.onTamper };
+  const current: ActiveRelay = { url, home, overlayDir, overlayPath, overlayBody: JSON.stringify(overlay), compromised: false, onTamper: options.onTamper, capabilities: new Map() };
   relay = current;
   active = current;
+  const stopAccessWatch = onWorkerModelAccessChange(() => {
+    for (const [controller, admitted] of admittedUnder) if (!grantHolds(admitted)) controller.abort(GRANT_ENDED);
+  });
 
   let closed = false;
   return {
@@ -411,6 +536,9 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       if (closed) return;
       closed = true;
       if (active === current) active = null;
+      stopAccessWatch();
+      for (const capability of current.capabilities.values()) { capability.scope.revoked = true; capability.issued.clear(); }
+      current.capabilities.clear();
       for (const controller of inflight) controller.abort();
       server.closeAllConnections();
       await new Promise<void>(done => server.close(() => done()));

@@ -79,8 +79,19 @@ export function applyManagedModelLaunchEnv(env: NodeJS.ProcessEnv, root?: string
  * model launch solely because a provisioning receipt still says active.
  */
 let workerModelAccessCurrent: Record<string, string> = {};
+const workerModelAccessListeners = new Set<() => void>();
 export function setWorkerModelAccessSnapshot(access: Record<string, string>): void {
   workerModelAccessCurrent = { ...access };
+  for (const listener of workerModelAccessListeners) {
+    try { listener(); } catch { /* one listener never blocks the rest */ }
+  }
+}
+/** Called synchronously after every snapshot change (applied, replaced,
+ * withdrawn, cleared), so holders of the old key can stop using it. Returns
+ * the unsubscribe. */
+export function onWorkerModelAccessChange(listener: () => void): () => void {
+  workerModelAccessListeners.add(listener);
+  return () => { workerModelAccessListeners.delete(listener); };
 }
 export function workerModelAccessSnapshot(): Record<string, string> {
   return { ...workerModelAccessCurrent };

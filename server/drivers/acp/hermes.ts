@@ -251,7 +251,7 @@ const support: AcpSupport = {
   // servers would bypass RealBud's explicit connection boundary.
   // Strip first, then point Ask at RealBud's loopback model relay, and only
   // while the profile still names the granted endpoint. The worker gets the
-  // relay's per-process token, never the office key; the relay holds the key
+  // relay's execution-scoped token, never the office key; the relay holds the key
   // and applies the office's reasoning effort (server/ask-model-relay.ts).
   // A custom (development) CLI never refuses here; it simply gets no access.
   transformEnv: (env) => {
