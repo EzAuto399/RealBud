@@ -18,6 +18,9 @@ export interface MailMessage {
   direction: 'incoming' | 'outgoing' | 'unknown';
   from: string; to: string; subject: string; body: string; bodyTruncated: boolean;
   attachments: { id: string; name: string; mimeType: string; size: number | null }[];
+  /** Raw Reply-To header, only when the message has one, so digests of
+   * messages without it are unchanged. Sender-routing evidence, never identity. */
+  replyTo?: string;
 }
 export interface MailThread {
   id: string; messages: MailMessage[]; historyComplete: boolean;
@@ -145,7 +148,8 @@ export function parseMailScanResult(value: unknown, request: MailScanRequest, ac
     const messages: MailMessage[] = row.messages.map(m => {
       if (!record(m) || !gmailThreadId(m.id) || m.threadId !== row.id || messageIds.has(m.id) || !Number.isSafeInteger(m.at) || Number(m.at) < 0 || Number(m.at) >= request.windowEndAt ||
         !['incoming', 'outgoing', 'unknown'].includes(String(m.direction)) || !bounded(m.from, 2048) || !bounded(m.to, 2048) || !bounded(m.subject, 2048) || !bounded(m.body, 12_000) ||
-        typeof m.bodyTruncated !== 'boolean' || !Array.isArray(m.attachments) || m.attachments.length > 100 || ++count > request.maxMessages) return bad();
+        typeof m.bodyTruncated !== 'boolean' || !Array.isArray(m.attachments) || m.attachments.length > 100 || (m.replyTo !== undefined && (!bounded(m.replyTo, 2048) || !m.replyTo)) ||
+        ++count > request.maxMessages) return bad();
       messageIds.add(m.id);
       const attachments = m.attachments.map(a => {
         if (!record(a) || !bounded(a.id, 512) || !a.id || !bounded(a.name, 255) || !bounded(a.mimeType, 120) ||
@@ -153,7 +157,7 @@ export function parseMailScanResult(value: unknown, request: MailScanRequest, ac
         return { id: a.id, name: a.name, mimeType: a.mimeType, size: a.size as number | null };
       });
       return { id: m.id, threadId: String(row.id), at: Number(m.at), direction: m.direction as MailMessage['direction'], from: m.from, to: m.to,
-        subject: m.subject, body: m.body, bodyTruncated: m.bodyTruncated, attachments };
+        subject: m.subject, body: m.body, bodyTruncated: m.bodyTruncated, attachments, ...(m.replyTo === undefined ? {} : { replyTo: m.replyTo as string }) };
     });
     return { id: row.id, messages: messages.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)), historyComplete: row.historyComplete };
   });

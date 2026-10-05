@@ -27,14 +27,15 @@ describe('supplier directory', () => {
     expect(directory.suppliers).toEqual([
       { reference: 'FIC-PLUMB', description: 'Fictional Plumbing', emails: ['accounts@fictional-plumbing.example', 'jobs@fictional-plumbing.example'] },
       { reference: 'FIC-ELEC', description: 'Fictional Electrical', emails: ['office@fictional-electrical.example'] },
+      { reference: 'FIC-BAD', description: 'Bad email only', emails: [] },
       { reference: 'FIC-MIX', description: 'Mixed, Pty Ltd', emails: ['mix@fictional-mix.example'] },
       { reference: 'FIC-DUPE', description: 'Claims plumbing address', emails: ['accounts@fictional-plumbing.example'] },
     ]);
-    expect(rejected.map(r => r.row)).toEqual([4, 5, 5, 6, 8]);
+    expect(rejected.map(r => r.row)).toEqual([4, 5, 6, 8]);
     expect(rejected[0]!.reason).toBe('Row 4 has no supplier reference.');
-    expect(rejected[2]!.reason).toBe('Row 5 (FIC-BAD) has no valid email address.');
-    expect(rejected[3]!.reason).toContain('"broken@" is not a valid email address');
-    expect(rejected[4]!.reason).toContain('repeats supplier reference FIC-ELEC');
+    expect(rejected[1]!.reason).toContain('(FIC-BAD): "not-an-email" is not a valid email address');
+    expect(rejected[2]!.reason).toContain('"broken@" is not a valid email address');
+    expect(rejected[3]!.reason).toContain('repeats supplier reference FIC-ELEC');
     expect(conflicts).toEqual([{ email: 'accounts@fictional-plumbing.example', supplierRefs: ['FIC-DUPE', 'FIC-PLUMB'] }]);
     expect((await store.read()).rejected).toEqual(rejected);
   });
@@ -61,6 +62,29 @@ describe('supplier directory', () => {
     expect(matchSender(again.directory, 'jobs@fictional-plumbing.example')).toEqual({ kind: 'unlisted' });
     const removed = await store.removeAlias({ reference: 'FIC-ELEC', email: 'invoices@fictional-sparky.example', expectedRevision: 3 });
     expect(matchSender(removed, 'invoices@fictional-sparky.example')).toEqual({ kind: 'unlisted' });
+  });
+
+  it('imports the REI Cloud Suppliers export: any column order, quoted cells, blank and multiple emails, shared emails as conflicts', async () => {
+    const rei = [
+      '\uFEFFReference,Description,Phone,Phone A/H,Mobile,Fax,E-mail,Address,Category',
+      'FIC-ROOF,"Fictional Roofing, Pty Ltd",07 0000 0001,,0400 000 001,,"accounts@fictional-roofing.example; jobs@fictional-roofing.example","1 Fictional Rd, Synthetic QLD",Roofing',
+      'FIC-LOCK,Fictional Locks,07 0000 0002,,,,,"2 Fictional St",Locksmith',
+      'FIC-GARDEN,Fictional Gardens,,,,,"mow@fictional-gardens.example, accounts@fictional-roofing.example",,Gardening',
+      '"FIC-PEST","Fictional ""Bug"" Busters",,,,,"  Pests@Fictional-Pests.example ",,Pest control',
+    ].join('\r\n');
+    const { directory, rejected, conflicts } = await fresh().importCsv({ csv: rei, expectedRevision: 0 });
+    expect(directory.suppliers).toEqual([
+      { reference: 'FIC-ROOF', description: 'Fictional Roofing, Pty Ltd', emails: ['accounts@fictional-roofing.example', 'jobs@fictional-roofing.example'] },
+      { reference: 'FIC-LOCK', description: 'Fictional Locks', emails: [] },
+      { reference: 'FIC-GARDEN', description: 'Fictional Gardens', emails: ['mow@fictional-gardens.example', 'accounts@fictional-roofing.example'] },
+      { reference: 'FIC-PEST', description: 'Fictional "Bug" Busters', emails: ['pests@fictional-pests.example'] },
+    ]);
+    expect(rejected).toEqual([]);
+    expect(conflicts).toEqual([{ email: 'accounts@fictional-roofing.example', supplierRefs: ['FIC-GARDEN', 'FIC-ROOF'] }]);
+    expect(matchSender(directory, 'accounts@fictional-roofing.example')).toEqual({ kind: 'conflict', supplierRefs: ['FIC-GARDEN', 'FIC-ROOF'] });
+    // A supplier with no email imports but never matches anything by email.
+    expect(matchSender(directory, '')).toEqual({ kind: 'unlisted' });
+    expect(matchSender(directory, 'locks@fictional-locks.example')).toEqual({ kind: 'unlisted' });
   });
 
   it('refuses a stale revision and a list with no usable rows', async () => {

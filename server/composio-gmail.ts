@@ -335,7 +335,7 @@ function projectThread(data: ObjectValue, id: string, from: number, until: numbe
     if (at < from * 1000 || at >= until * 1000) continue;
     if (!record(message.payload) || !Array.isArray(message.payload.headers) || message.payload.headers.length > 200) fail("the returned message format was unsupported.", 502);
     const headers: Record<string, string> = {};
-    for (const header of message.payload.headers) if (record(header) && typeof header.name === "string" && ["from", "to", "cc", "subject", "date"].includes(header.name.toLowerCase())) headers[header.name.toLowerCase()] = safeText(header.value, 2048);
+    for (const header of message.payload.headers) if (record(header) && typeof header.name === "string" && ["from", "reply-to", "to", "cc", "subject", "date"].includes(header.name.toLowerCase())) headers[header.name.toLowerCase()] = safeText(header.value, 2048);
     let parts = 0, bodyTruncated = false;
     const text: string[] = [];
     const visit = (part: unknown, depth: number) => {
@@ -532,11 +532,11 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
       if (at >= request.windowEndAt) { thread.historyComplete = false; gap(MAIL_CONVERSATION_GAPS.conversationChanged); continue; }
       if (!record(rawMessage.payload) || !Array.isArray(rawMessage.payload.headers) || rawMessage.payload.headers.length > 200) fail('a message payload was incomplete.', 502);
       const headers: Record<string, string> = {};
-      for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string' && ['from', 'to', 'subject'].includes(h.name.toLowerCase())) headers[h.name.toLowerCase()] = clean(h.value, 2048);
+      for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string' && ['from', 'reply-to', 'to', 'subject'].includes(h.name.toLowerCase())) headers[h.name.toLowerCase()] = clean(h.value, 2048);
       const labels = rawMessage.labelIds;
       const direction = !Array.isArray(labels) || labels.some(l => typeof l !== 'string') || labels.includes('DRAFT') ? 'unknown' : labels.includes('SENT') ? 'outgoing' : 'incoming';
       if (direction === 'unknown') gap(MAIL_CONVERSATION_GAPS.directionUnknown);
-      const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [] };
+      const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [], ...(headers['reply-to'] ? { replyTo: headers['reply-to'] } : {}) };
       let parts = 0; const plain: string[] = [], html: string[] = [];
       const visit = (part: unknown, depth: number) => {
         if (!record(part) || ++parts > 200 || depth > 8) fail('a message exceeded the supported MIME limits.', 502);

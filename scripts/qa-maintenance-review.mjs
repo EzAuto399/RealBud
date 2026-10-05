@@ -34,10 +34,10 @@ async function openRegister() {
   return new SourceBillRegister(new WorkflowDatabase({ dir: data }), { dataDir: data });
 }
 let seq = 0;
-function seed({ property, from, number, date, cents, work, ref = null, at, subject, kind = 'Maintenance', vendor = 'Fictional Plumbing' }) {
+function seed({ property, from, replyTo, number, date, cents, work, ref = null, at, subject, kind = 'Maintenance', vendor = 'Fictional Plumbing' }) {
   const id = createHash('sha256').update(`fictional-${++seq}`).digest('hex').slice(0, 16);
   const source = { accountId: 'fictional-maintenance', receiptId: 'fictional-receipt', threadId: `thread${id}`,
-    message: { id, at: at ?? Date.parse(`${date}T00:30:00Z`), from, subject, body: `Fictional invoice ${number} for ${work}.`, bodyTruncated: false, attachments: [] } };
+    message: { id, at: at ?? Date.parse(`${date}T00:30:00Z`), from, subject, body: `Fictional invoice ${number} for ${work}.`, bodyTruncated: false, attachments: [], ...(replyTo ? { replyTo } : {}) } };
   const facts = { propertyId: property, kind, vendor, amountCents: cents, currency: 'AUD', invoiceDate: date, dueDate: null, note: '',
     invoiceNumber: number, invoiceVersion: null, supplierReference: ref, workDescription: work };
   const body = { expectedSourceDigest: '', sourceReviewed: true, facts, reviewReason: 'Fictional QA review' };
@@ -196,6 +196,49 @@ try {
   assert.equal(review.findings.find(f => f.finding.senderEmail === 'new@fictional-sparks.example').state, 'dismissed');
   pass('A third distinct invoice updates the same monthly finding, raises exactly one new alert and leaves the unchanged dismissed finding alone');
 
+  // REI Suppliers export through the panel's import control: a blank-email supplier, a Xero-billing
+  // supplier, and one email shared by two supplier records.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const reiCsv = ['Reference,Description,Phone,Phone A/H,Mobile,Fax,Email,Address,Category',
+    'FIC-PLUMB,Fictional Plumbing,07 0000 0001,,,,accounts@fictional-plumbing.example,"1 Fictional Rd, Synthetic",Plumbing',
+    'FIC-ELEC,Fictional Electrical,,,,,office@fictional-electrical.example,,Electrical',
+    'FIC-ROOF,"Fictional Roofing, Pty Ltd",,,,,"accounts@fictional-roofing.example; jobs@fictional-roofing.example",,Roofing',
+    'FIC-LOCK,Fictional Locks,07 0000 0004,,,,,,Locksmith',
+    'FIC-DUPE,Fictional Duplicate Electrical,,,,,office@fictional-electrical.example,,Electrical'].join('\r\n');
+  await panel.getByLabel('Import REI suppliers (CSV)').setInputFiles({ name: 'fictional-rei-suppliers.csv', mimeType: 'text/csv', buffer: Buffer.from(reiCsv) });
+  await panel.getByText('Imported 5 suppliers · 1 without email · 1 conflict.', { exact: true }).waitFor();
+  await panel.getByRole('list', { name: 'Supplier list conflicts' }).getByText('Same email on two suppliers: FIC-DUPE, FIC-ELEC (office@fictional-electrical.example)').waitFor();
+  const directory = await request('/api/supplier-directory');
+  assert.equal(directory.directory.revision, 3); assert.deepEqual(directory.directory.aliases.map(a => a.email), ['jobs@fictional-plumbing.example']);
+  assert.deepEqual(directory.directory.suppliers.find(s => s.reference === 'FIC-LOCK').emails, []);
+  await panel.getByRole('heading', { name: /^Maintenance checks/ }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'supplier-import.png') });
+  pass('The panel imports an REI-format Suppliers CSV with the revision check, shows imported / without-email / conflict counts and names the email shared by two supplier records');
+
+  const xero = 'Fictional Roofing via Xero <messaging-service@post.xero.com>';
+  for (const entry of [
+    seed({ property: pine, from: xero, replyTo: 'Ben <accounts@fictional-roofing.example>', number: 'INV-4001', date: '2026-09-22', cents: 52000, work: 'Fictional roof leak sealed', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4001 via Xero' }),
+    seed({ property: elm, from: xero, replyTo: 'ben@fictional-roofing-billing.example', number: 'INV-4002', date: '2026-09-23', cents: 61000, work: 'Fictional gutter replacement', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4002 via Xero' }),
+    seed({ property: pine, from: xero, number: 'INV-4003', date: '2026-09-24', cents: 33000, work: 'Fictional ridge cap repair', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4003 via Xero' }),
+  ]) await accept(entry);
+  const fourth = await launch();
+  assert.match(fourth.detail, /3 new or changed/, fourth.detail);
+  review = await request('/api/maintenance-review');
+  const senders = review.findings.filter(f => f.finding.kind === 'sender-verification' && f.state !== 'dismissed');
+  const invoiceOf = number => senders.filter(f => f.finding.invoices.some(i => i.invoiceNumber === number));
+  assert.equal(invoiceOf('INV-4001').length, 0, 'listed Reply-To on a Xero relay must not be flagged');
+  assert.deepEqual(invoiceOf('INV-4002').map(f => [f.finding.senderEmail, f.finding.notes.includes('Sent via Xero for ben@fictional-roofing-billing.example.')]), [['ben@fictional-roofing-billing.example', true]]);
+  assert.deepEqual(invoiceOf('INV-4003').map(f => f.finding.senderEmail), [`unclear sender: ${xero}`.toLowerCase()]);
+  assert.deepEqual(invoiceOf('INV-2001').map(f => [f.finding.senderEmail, f.finding.reasons, f.finding.supplierRef]), [['office@fictional-electrical.example', ['conflicting-sender', 'supplier-unresolved'], null]]);
+  assert.ok(review.lastRun.gaps.includes('Same email on two suppliers: FIC-DUPE, FIC-ELEC. Correct the supplier list.'));
+  pass('A Xero relay is checked on its Reply-To: a listed Reply-To raises nothing, an unlisted or missing Reply-To is flagged with a "Sent via Xero" note, and an invoice from the email shared by two suppliers is flagged as a conflict');
+  await panel.getByRole('listitem', { name: 'Sender needs checking · Fictional Elm Street' }).filter({ hasText: 'Sent via Xero for ben@fictional-roofing-billing.example.' }).waitFor();
+  await panel.screenshot({ path: join(output, 'xero-and-conflict-findings.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'horizontal scroll at 390px after import');
+  pass('The panel shows the Xero note on the finding and still fits 390px');
+
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(base + '/#/schedule');
   await page.getByText('Maintenance checks', { exact: false }).first().waitFor();
@@ -211,6 +254,7 @@ finally {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure,
     layer: 'Actual local HTTP app + built UI from source; fictional supplier list and reviewed bills; not live Gmail/customer/Windows proof', checks, errors,
     limits: ['Reviewed bills were seeded through SourceBillRegister.accept in the QA process, not through Gmail collection and the Bills review form.',
+      'Reply-To on the Xero-relayed bills was seeded on the saved message; Gmail header collection is unit-tested only.',
       'No weekly bills review result exists, so coverage is partial by design; complete-coverage wording is unit-tested only.',
       'Daily weekdays 08:30, the calendar-month/invoice-date rule and the in-app alert destination are pending Sherry.',
       'Fictional data; Mac browser rendering only; no packaged build, Windows or customer acceptance.'],

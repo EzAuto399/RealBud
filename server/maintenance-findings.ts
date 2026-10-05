@@ -18,6 +18,8 @@ export interface MaintenanceInvoice {
   receivedDate: string; // YYYY-MM-DD
   amountCents: number | null;
   description: string;
+  /** How the sender was read, e.g. "Sent via Xero for a@b.example." Shown as a finding note. */
+  senderNote?: string;
 }
 
 export interface MaintenanceCoverage {
@@ -208,6 +210,7 @@ function sharedNotes(entries: Entry[], coverage: MaintenanceCoverage): string[] 
   }
   for (const e of entries) {
     if (e.dateFallback) notes.push(`No invoice date found on ${e.view.sourceIds.join(", ")}; the received date was used.`);
+    for (const note of new Set(e.records.map((r) => r.senderNote).filter((n): n is string => !!n))) notes.push(note);
     if (e.view.unresolvedRevision) {
       notes.push(`Invoice ${e.view.invoiceNumber} appears with different amounts and no newer version; check which is current.`);
     }

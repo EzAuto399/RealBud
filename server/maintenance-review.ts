@@ -173,20 +173,30 @@ export function senderAddress(from: string): string {
   if (angles.length > 1) return '';
   if (angles.length === 1) {
     const display = from.slice(0, from.indexOf('<'));
-    if (display.includes('@')) return '';
+    // A second address after the angle (e.g. "<a@b>, c@d") is ambiguous too.
+    if (display.includes('@') || from.slice(from.indexOf('>') + 1).includes('@')) return '';
     return normalizeSupplierEmail(angles[0]!.slice(1, -1)) ?? '';
   }
   return normalizeSupplierEmail(from) ?? '';
 }
 
+/** Invoicing services that send on a supplier's behalf, by exact sender
+ * domain → name shown. Their From address is the service, never the supplier,
+ * so the supplier check uses the Reply-To address instead. */
+export const INVOICE_RELAYS: ReadonlyMap<string, string> = new Map([['post.xero.com', 'Xero']]);
+
 /** Reviewed, uncancelled bills that belong to maintenance, as findings input.
  * Supplier identity comes from the reviewed supplier reference or an exact
- * directory match, never from the vendor label or the email domain. */
+ * directory match, never from the vendor label or the email domain. A relayed
+ * invoice is matched on its single Reply-To address (same parsing rules as
+ * From); without one it stays unlisted. */
 export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: SupplierDirectory, timeZone: string): MaintenanceInvoice[] {
   const invoices: MaintenanceInvoice[] = [];
   for (const bill of bills) {
     if (bill.state === 'cancelled') continue;
-    const email = senderAddress(bill.source.message.from), match = matchSender(directory, email);
+    const from = senderAddress(bill.source.message.from), relay = INVOICE_RELAYS.get(from.slice(from.lastIndexOf('@') + 1));
+    const email = relay ? senderAddress(bill.source.message.replyTo ?? '') : from, match = matchSender(directory, email);
+    const senderNote = !relay ? undefined : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`;
     const reviewed = bill.facts.supplierReference?.trim() || null;
     // ponytail: the kind keyword list decides "maintenance" for bills with no supplier
     // reference and an unlisted sender. Upgrade: a reviewed maintenance flag on bill facts.
@@ -196,7 +206,7 @@ export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: Su
     if (match.kind === 'conflict') { supplierRef = reviewed && match.supplierRefs.includes(reviewed) ? reviewed : null; senderMatch = 'conflict'; }
     // ponytail: a forwarded copy is judged by the forwarding address; original-sender
     // evidence is not extracted yet, so it stays a sender finding for Sherry to check.
-    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(bill.source.message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch,
+    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(bill.source.message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
       invoiceNumber: bill.facts.invoiceNumber ?? null, invoiceVersion: bill.facts.invoiceVersion ?? null, invoiceDate: bill.facts.invoiceDate,
       receivedDate: billDateInZone(bill.source.message.at, timeZone), amountCents: bill.facts.amountCents,
       description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) });
@@ -235,7 +245,8 @@ export async function runMaintenanceReview(run: LoopRun, deps: MaintenanceReview
   const imported = directory.suppliers.length > 0;
   if (!imported) gaps.unshift('Import the supplier list to check senders. Sender checks were skipped.');
   const conflicts = supplierEmailConflicts(directory);
-  if (conflicts.length) gaps.push(`${conflicts.length} email ${conflicts.length === 1 ? 'address belongs' : 'addresses belong'} to more than one supplier. Correct the supplier list.`);
+  for (const c of conflicts.slice(0, 10)) gaps.push(`Same email on two suppliers: ${c.supplierRefs.join(', ')}. Correct the supplier list.`);
+  if (conflicts.length > 10) gaps.push(`${conflicts.length - 10} more email addresses belong to more than one supplier. Correct the supplier list.`);
   // An empty directory would make every sender "unlisted"; that is a missing input, not a finding.
   const findings = computeMaintenanceFindings({ invoices, coverage: { ...coverage, complete: coverage.complete && imported }, rule: state.rule })
     .filter(f => imported || f.kind !== 'sender-verification');
@@ -289,7 +300,8 @@ export function createMaintenanceReviewApi(host: MaintenanceApiHost) {
         }
       }
       return { status: 200, body: { revision: state.revision, rule: state.rule, ruleRevision: state.ruleRevision ?? 0, ruleHistory: state.ruleHistory ?? [], lastRun: state.lastRun, findings: shown, properties, suppliers, sources,
-        directory: { revision: directory.revision, suppliers: directory.suppliers.length, importedAt: directory.importedAt }, loop: host.loop() ?? null } };
+        directory: { revision: directory.revision, suppliers: directory.suppliers.length, withoutEmail: directory.suppliers.filter(s => !s.emails.length).length,
+          importedAt: directory.importedAt, conflicts: supplierEmailConflicts(directory) }, loop: host.loop() ?? null } };
     }
     if (path === '/api/maintenance-review/findings' && method === 'PATCH') {
       const state = await host.store.decide({ id: input.id, action: input.action, expectedRevision: input.expectedRevision });

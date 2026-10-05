@@ -41,14 +41,16 @@ const headerKey = (h: string) => h.toLowerCase().replace(/[\s_-]+/g, '');
 const HEADERS = {
   reference: ['reference', 'ref', 'supplierreference', 'supplierref', 'code'],
   description: ['description', 'name', 'suppliername'],
-  email: ['email', 'emails', 'emailaddress', 'emailaddresses'],
+  email: ['email', 'emails', 'emailaddress', 'emailaddresses', 'mail'],
 };
 
-/** Turns a parsed CSV table (header row first) into suppliers. Nothing is
- * dropped silently: a row without a reference, without any valid email, or
- * repeating an earlier reference is rejected with a reason, and so is each
- * unusable email in an otherwise accepted row. Throws a sentence for a list
- * that cannot be read at all. */
+/** Turns a parsed CSV table (header row first, e.g. the REI Cloud Suppliers
+ * export: Reference, Description, Phone, …, Email, Address, Category in any
+ * order) into suppliers. Nothing is dropped silently: a row without a
+ * reference or repeating an earlier reference is rejected with a reason, and so
+ * is each unusable email. A supplier with no usable email is still imported; it
+ * can never match a sender by email. Throws a sentence for a list that cannot
+ * be read at all. */
 export function normalizeSupplierRows(table: string[][]): { suppliers: Supplier[]; rejected: SupplierRejection[] } {
   const [header, ...rows] = table;
   if (!header) throw new Error('The supplier list is empty. Export the Suppliers list from REI Cloud and try again.');
@@ -70,7 +72,6 @@ export function normalizeSupplierRows(table: string[][]): { suppliers: Supplier[
       if (!email) rejected.push({ row, reason: `Row ${row} (${reference}): "${clean(part).slice(0, 80)}" is not a valid email address.` });
       else if (!emails.includes(email)) emails.push(email);
     }
-    if (!emails.length) return void rejected.push({ row, reason: `Row ${row} (${reference}) has no valid email address.` });
     if (emails.length > MAX_EMAILS) return void rejected.push({ row, reason: `Row ${row} (${reference}) has more than ${MAX_EMAILS} email addresses.` });
     seen.add(reference);
     suppliers.push({ reference, description: desc < 0 ? '' : clean(cells[desc] ?? '').slice(0, MAX_DESCRIPTION), emails });
@@ -119,7 +120,7 @@ export function readSupplierDirectory(v: unknown): SupplierDirectory {
   const refs = new Set<string>();
   for (const s of v.suppliers) {
     if (!object(s) || !exact(s, 'reference,description,emails') || !text(s.reference, MAX_REFERENCE) || !s.reference || s.reference !== s.reference.trim() ||
-        refs.has(s.reference) || !text(s.description, MAX_DESCRIPTION) || !Array.isArray(s.emails) || !s.emails.length ||
+        refs.has(s.reference) || !text(s.description, MAX_DESCRIPTION) || !Array.isArray(s.emails) ||
         s.emails.length > MAX_EMAILS || !s.emails.every(validEmail) || new Set(s.emails).size !== s.emails.length) return bad();
     refs.add(s.reference);
   }

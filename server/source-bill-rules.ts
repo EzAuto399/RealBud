@@ -44,7 +44,10 @@ export function previewBillSource(value: BillMailSource): BillSourceEvidence {
   const canonical = { accountId, threadId, message: { id: text(message.id, 200), at: at(message.at),
     from: text(message.from, 2048, true), subject: text(message.subject, 2048, true), body: text(message.body, 12000, true),
     bodyTruncated: message.bodyTruncated ?? false, attachments } };
-  return { ...canonical, receiptId, digest: hash(canonical), identity: hash([accountId, threadId, canonical.message.id]) };
+  // Reply-To is sender-routing evidence for the maintenance supplier check. It stays
+  // outside the digest so saved proposals replay and existing digests are unchanged.
+  const replyTo = message.replyTo === undefined ? {} : { replyTo: text(message.replyTo, 2048) };
+  return { ...canonical, message: { ...canonical.message, ...replyTo }, receiptId, digest: hash(canonical), identity: hash([accountId, threadId, canonical.message.id]) };
 }
 function facts(value: unknown): BillFacts {
   const f = object(value, ['propertyId', 'kind', 'vendor', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'note', 'invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription']);

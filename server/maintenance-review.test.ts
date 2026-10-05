@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DATA_DIR } from './config.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createMaintenanceReviewApi, createMaintenanceReviewStore, maintenanceCoverage, maintenanceInvoices, readMaintenanceReview, runMaintenanceReview, senderAddress } from './maintenance-review.ts';
+import { computeMaintenanceFindings } from './maintenance-findings.ts';
+import { previewBillSource } from './source-bills.ts';
 import type { SourceBillOccurrence } from '../shared/source-bills.ts';
 import type { RoutineResult } from '../shared/routine-result.ts';
 import type { LoopRun } from '../shared/contracts.ts';
@@ -12,13 +15,13 @@ let n = 0;
 const NOW = Date.parse('2026-10-05T00:00:00Z');
 const CSV = 'Reference,Description,Email\nFIC-PLUMB,Fictional Plumbing,accounts@fictional-plumbing.example\nFIC-ELEC,Fictional Electrical,office@fictional-electrical.example';
 
-interface BillInput { id: string; property?: string; from?: string; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state'] }
+interface BillInput { id: string; property?: string; from?: string; replyTo?: string; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state'] }
 const bill = (b: BillInput): SourceBillOccurrence => ({
   id: `source-bill:${b.id.padEnd(64, '0')}`, state: b.state ?? 'received',
   facts: { propertyId: b.property ?? 'fictional-property-a', kind: b.kind ?? 'Maintenance', vendor: 'Fictional label', amountCents: b.amount ?? 12000, currency: 'AUD',
     invoiceDate: b.date ?? '2026-09-10', dueDate: null, note: '', invoiceNumber: b.number === undefined ? `INV-${b.id}` : b.number, workDescription: b.work ?? 'Fictional tap repair', supplierReference: b.ref ?? null },
   source: { accountId: 'fictional', receiptId: 'r', threadId: 't', digest: 'd', identity: 'i',
-    message: { id: 'm', at: Date.parse(`${b.date ?? '2026-09-10'}T01:00:00Z`), from: b.from ?? 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: `Fictional invoice ${b.id}`, body: '', attachments: [] } },
+    message: { id: 'm', at: Date.parse(`${b.date ?? '2026-09-10'}T01:00:00Z`), from: b.from ?? 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: `Fictional invoice ${b.id}`, body: '', attachments: [], ...(b.replyTo === undefined ? {} : { replyTo: b.replyTo }) } },
 } as unknown as SourceBillOccurrence);
 const run = (id: string) => ({ id, loopId: 'maintenance-review' } as LoopRun);
 
@@ -40,7 +43,65 @@ describe('maintenance review inputs', () => {
     expect(senderAddress('"Fictional Plumbing <accounts@fictional-plumbing.example>" <scam@fictional-evil.example>')).toBe('');
     expect(senderAddress('accounts@fictional-plumbing.example <scam@fictional-evil.example>')).toBe('');
     expect(senderAddress('<accounts@fictional-plumbing.example> <scam@fictional-evil.example>')).toBe('');
+    expect(senderAddress('<accounts@fictional-plumbing.example>, scam@fictional-evil.example')).toBe('');
+    expect(senderAddress('accounts@fictional-plumbing.example, scam@fictional-evil.example')).toBe('');
     expect(senderAddress('not an address')).toBe('');
+  });
+
+  it('checks a Xero-relayed invoice by its Reply-To address, never by the relay, display name or domain', async () => {
+    const { directory } = await rig();
+    await directory.importCsv({ csv: `${CSV}\nFIC-HANDY,Fictional Handyman,fictional.handyman@hotmail.example`, expectedRevision: 1 });
+    const d = await directory.read();
+    const xero = 'Fictional Plumbing via Xero <messaging-service@post.xero.com>';
+    const rows = maintenanceInvoices([
+      bill({ id: 'x1', from: xero, replyTo: 'Ben <Accounts@Fictional-Plumbing.example>' }),
+      bill({ id: 'x2', from: xero, replyTo: 'ben@fictional-plumbing-billing.example' }),
+      bill({ id: 'x3', from: xero }),
+      bill({ id: 'x4', from: xero, replyTo: 'accounts@fictional-plumbing.example, scam@fictional-evil.example' }),
+      bill({ id: 'x5', from: 'Fictional Handyman <fictional.handyman@hotmail.example>' }),
+      bill({ id: 'x6', from: 'Fictional Plumbing <accounts@fictional-plumbing.example>', replyTo: 'scam@fictional-evil.example' }),
+      bill({ id: 'x7', from: 'accounts@post.xero.com.fictional-evil.example', replyTo: 'accounts@fictional-plumbing.example' }),
+    ], d, 'Australia/Brisbane');
+    expect(rows.map(r => [r.sourceId.slice(12, 14), r.supplierRef, r.senderMatch, r.senderEmail, r.senderNote])).toEqual([
+      ['x1', 'FIC-PLUMB', 'listed', 'accounts@fictional-plumbing.example', 'Sent via Xero for accounts@fictional-plumbing.example.'],
+      ['x2', null, 'unlisted', 'ben@fictional-plumbing-billing.example', 'Sent via Xero for ben@fictional-plumbing-billing.example.'],
+      ['x3', null, 'unlisted', `unclear sender: ${xero}`, 'Sent via Xero with no single Reply-To address, so the supplier could not be checked.'],
+      ['x4', null, 'unlisted', `unclear sender: ${xero}`, 'Sent via Xero with no single Reply-To address, so the supplier could not be checked.'],
+      ['x5', 'FIC-HANDY', 'listed', 'fictional.handyman@hotmail.example', undefined],
+      // Not a relay: From decides, Reply-To is ignored.
+      ['x6', 'FIC-PLUMB', 'listed', 'accounts@fictional-plumbing.example', undefined],
+      // A look-alike domain is not the relay.
+      ['x7', null, 'unlisted', 'accounts@post.xero.com.fictional-evil.example', undefined],
+    ]);
+    const findings = computeMaintenanceFindings({ invoices: rows, coverage: { from: '2026-09-01', to: '2026-10-05', complete: true } });
+    const flagged = findings.filter(f => f.kind === 'sender-verification');
+    expect(flagged.map(f => f.invoices[0]!.sourceIds[0]!.slice(12, 14)).sort()).toEqual(['x2', 'x3', 'x4', 'x7']);
+    expect(flagged.find(f => f.invoices[0]!.sourceIds[0]!.includes('x2'))!.notes).toContain('Sent via Xero for ben@fictional-plumbing-billing.example.');
+  });
+
+  it('carries Reply-To on bill evidence without changing any source digest', () => {
+    const message = { id: 'fictional-m1', at: NOW, from: 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: 'Fictional invoice', body: 'Fictional', bodyTruncated: false, attachments: [] };
+    const source = { accountId: 'fictional', receiptId: 'r', threadId: 't', message };
+    const plain = previewBillSource(source), relayed = previewBillSource({ ...source, message: { ...message, replyTo: 'ben@fictional-plumbing.example' } });
+    // The digest formula is unchanged: sha256 of the canonical source without receipt or Reply-To.
+    expect(plain.digest).toBe(createHash('sha256').update(JSON.stringify({ accountId: 'fictional', threadId: 't', message })).digest('hex'));
+    expect(plain.message).not.toHaveProperty('replyTo');
+    expect(relayed.digest).toBe(plain.digest);
+    expect(relayed.message.replyTo).toBe('ben@fictional-plumbing.example');
+    expect(() => previewBillSource({ ...source, message: { ...message, replyTo: 'x'.repeat(2049) } })).toThrow();
+  });
+
+  it('flags an invoice from an email shared by two supplier records and reports the conflict', async () => {
+    const { directory, store, deps, set } = await rig();
+    await directory.importCsv({ csv: `${CSV}\nFIC-DUPE,Fictional Duplicate,accounts@fictional-plumbing.example`, expectedRevision: 1 });
+    set([bill({ id: 'd1' })]);
+    await runMaintenanceReview(run('dupe-1'), deps);
+    const state = await store.read();
+    expect(state.findings.map(f => [f.finding.kind, (f.finding as { reasons?: string[] }).reasons, f.finding.supplierRef])).toEqual([['sender-verification', ['conflicting-sender', 'supplier-unresolved'], null]]);
+    expect(state.lastRun!.gaps).toContain('Same email on two suppliers: FIC-DUPE, FIC-PLUMB. Correct the supplier list.');
+    const api = createMaintenanceReviewApi({ store, directory, recovery: () => false, propertyLabel: () => undefined, bill: () => undefined, loop: () => undefined });
+    expect((await api(new URL('https://127.0.0.1/api/maintenance-review'), 'GET'))!.body).toMatchObject({
+      directory: { suppliers: 3, withoutEmail: 0, conflicts: [{ email: 'accounts@fictional-plumbing.example', supplierRefs: ['FIC-DUPE', 'FIC-PLUMB'] }] } });
   });
 
   it('matches by exact email or reviewed reference and skips cancelled and non-maintenance bills', async () => {

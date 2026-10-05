@@ -13,8 +13,9 @@ interface Review {
   lastRun: { finishedAt: number; checkedBills: number; coverage: { from: string; to: string; complete: boolean }; gaps: string[] } | null;
   properties: Record<string, string>; suppliers: Record<string, string>;
   sources: Record<string, { subject: string; from: string; receivedAt: number }>;
-  directory: { suppliers: number };
+  directory: { revision: number; suppliers: number; withoutEmail?: number; conflicts?: { email: string; supplierRefs: string[] }[] };
 }
+interface Imported { directory: { suppliers: { emails: string[] }[] }; rejected: unknown[]; conflicts: unknown[] }
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const money = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' });
@@ -82,12 +83,39 @@ export function MaintenanceFindingsPanel() {
       else setMessage(status ? (error as Error).message : 'We could not confirm that change. Refresh to check before trying again.');
     } finally { setBusy(false); }
   };
+  // REI Cloud Suppliers export → the supplier directory. The server checks the revision; a stale one is a 409.
+  const importSuppliers = async (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    if (!review || !file) return;
+    setBusy(true); setMessage('');
+    try {
+      const result = await api('/api/supplier-directory/import', { method: 'POST', body: JSON.stringify({ csv: await file.text(), expectedRevision: review.directory.revision }) }) as Imported;
+      const suppliers = result.directory.suppliers, withoutEmail = suppliers.filter(s => !s.emails.length).length;
+      setMessage(`Imported ${suppliers.length} suppliers · ${withoutEmail} without email · ${result.conflicts.length} ${result.conflicts.length === 1 ? 'conflict' : 'conflicts'}${result.rejected.length ? ` · ${result.rejected.length} rows or emails skipped` : ''}.`);
+      await load().catch(() => {});
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 409) { setMessage('The supplier list changed. It has been refreshed; import the file again.'); await load().catch(() => {}); }
+      else setMessage(status ? (error as Error).message : 'We could not confirm the import. Refresh to check before trying again.');
+    } finally { setBusy(false); input.value = ''; }
+  };
   if (!review) return message ? <p role="alert" className="text-sm text-hold">{message}</p> : null;
+  const conflicts = review.directory.conflicts ?? [];
   const open = review.findings.filter(f => f.state !== 'dismissed'), dismissed = review.findings.filter(f => f.state === 'dismissed');
   const run = review.lastRun;
   return <section aria-label="Maintenance checks" className="space-y-2 text-sm">
     <h4 className="font-medium">Maintenance checks{run ? ` · ${open.length} to review` : ''}</h4>
     {message && <p role="status">{message}</p>}
+    <div className="flex flex-wrap items-center gap-2">
+      <label className={`${button} inline-flex cursor-pointer items-center focus-within:outline-2 focus-within:outline-agency${busy ? ' pointer-events-none opacity-50' : ''}`}>
+        Import REI suppliers (CSV)
+        <input type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={event => void importSuppliers(event.currentTarget)} />
+      </label>
+      {review.directory.suppliers > 0 && <span className="text-[13px] text-ink-secondary">{review.directory.suppliers} suppliers{review.directory.withoutEmail ? ` · ${review.directory.withoutEmail} without email` : ''}</span>}
+    </div>
+    {conflicts.length > 0 && <ul aria-label="Supplier list conflicts" className="list-disc rounded-lg border border-hold/40 p-2 pl-6 text-hold">
+      {conflicts.map(c => <li key={c.email} className="break-words">Same email on two suppliers: {c.supplierRefs.join(', ')} ({c.email})</li>)}
+    </ul>}
     {!run ? <p className="text-ink-secondary">{review.directory.suppliers ? 'Maintenance checks have not run yet. Turn them on or run them from Schedule.' : 'Import the supplier list, then turn on Maintenance checks in Schedule.'}</p> : <>
       <p className="text-ink-secondary break-words">{run.checkedBills} reviewed maintenance bills checked · {new Date(run.finishedAt).toLocaleString()}</p>
       {!run.coverage.complete && <div role="status" className="rounded-lg border border-hold/40 p-2">
