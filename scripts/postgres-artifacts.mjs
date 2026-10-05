@@ -27,12 +27,14 @@ export const POSTGRES_MAJOR = 16;
  * @property {readonly string[]} architectures Architectures the archive must contain for the target.
  */
 
-/** Official EDB binary archives published for bundling into another installer. */
+/** Official EDB binary archives published for bundling into another installer.
+ * EDB's getfile.jsp ids began returning 404 on 5 Oct 2026; the same archive
+ * (same SHA-256, verified) is served from its classic download host. */
 /** @type {Record<string, PostgresArtifact>} */
 export const POSTGRES_ARTIFACTS = {
   'darwin-arm64': {
     file: 'postgresql-16.15-3-osx-binaries.zip',
-    url: 'https://sbp.enterprisedb.com/getfile.jsp?fileid=1260512',
+    url: 'https://get.enterprisedb.com/postgresql/postgresql-16.15-3-osx-binaries.zip',
     sha256: 'b2cd6a98df1fe0bd84fc9c76109c168a9c018c36a2dca93e542b417237e6eece',
     bytes: 443850485,
     // Universal binary; arm64 must be present so we never ship Rosetta silently.
@@ -40,7 +42,7 @@ export const POSTGRES_ARTIFACTS = {
   },
   'win32-x64': {
     file: 'postgresql-16.15-3-windows-x64-binaries.zip',
-    url: 'https://sbp.enterprisedb.com/getfile.jsp?fileid=1260494',
+    url: 'https://get.enterprisedb.com/postgresql/postgresql-16.15-3-windows-x64-binaries.zip',
     sha256: '5e8afffe67daf949aeeb03b74951f1ec2324e1888f73fbd036ab0e567ab004d9',
     bytes: 333048048,
     architectures: ['x64'],
