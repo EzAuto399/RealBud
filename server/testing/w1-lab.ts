@@ -2,7 +2,10 @@
 // host drives the FICTIONAL REI-style portal (fictional-rei-portal.ts) through
 // the real BrowserRuntime, broker and recipe runner instead of the person's
 // browser. POST /api/w1/lab plays the person's side: sign in, process the
-// receipts in REI, or make the next preview/upload misbehave. A pass proves
+// receipts in REI, or make the next preview/upload misbehave. "handover" turns
+// on the real sign-in handover (browser-sign-in.ts) over a tab that follows the
+// portal's address, so a signed-out run waits for "sign-in" and carries on by
+// itself; without it sign-in stays a stop the person continues. A pass proves
 // RealBud's wiring and guards, never REI Cloud behaviour.
 // The bank feed is a FICTIONAL provider over a local fake Redbark that speaks
 // the live REST shapes (REALBUD_TEST_REDBARK_BASE, loopback http only), read
@@ -11,7 +14,9 @@ import { join } from "node:path";
 import { restBankProvider, type BankProvider } from "../bank-provider.ts";
 import { createRedbarkClient, REDBARK_API_BASE, type RedbarkClientOptions } from "../redbark-source.ts";
 import { BrowserRuntime } from "../browser-runtime.ts";
-import { FICTIONAL_REI_ORIGIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./fictional-rei-portal.ts";
+import { openForSignIn, siteFromMap, type SignInSite } from "../browser-sign-in.ts";
+import type { W1HostDeps } from "../w1-host.ts";
+import { FICTIONAL_REI_ORIGIN, FICTIONAL_REI_SIGNIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./fictional-rei-portal.ts";
 
 /** Redbark REST calls go to the loopback fake instead of api.redbark.com. */
 export function labRedbarkFetch(base: string, real: RedbarkClientOptions["fetch"] = globalThis.fetch): RedbarkClientOptions["fetch"] {
@@ -40,14 +45,19 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   await runtime.connect(); await runtime.select("work");
   // After sign-in the address carries no reicid; the business is the top-bar code.
   const dashboard = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
-  return {
+  const signInSites: SignInSite[] = [siteFromMap("rei-cloud", { origin: FICTIONAL_REI_ORIGIN, signIn: { host: new URL(FICTIONAL_REI_SIGNIN).host }, scope: { urlParam: "reicid" } })!];
+  // The sign-in tab reads only the portal's address, as the real handover does.
+  const signInTab = { openSignInTab: async () => "fictional-rei-sign-in", signInTabUrl: async () => mock.url() };
+  const lab = {
     provider,
     runtime,
     load: async () => fictionalReiPack(),
     browserId: async () => "work",
+    openForSignIn: undefined as W1HostDeps["openForSignIn"],
     async handle(body: unknown) {
       const action = (body as { action?: unknown } | null)?.action;
-      if (action === "sign-in") { mock.signIn(); await mock.command(["navigate", dashboard]); }
+      if (action === "handover") lab.openForSignIn = input => openForSignIn(input, { runtime: signInTab, sites: signInSites, pollMs: 50 });
+      else if (action === "sign-in") { mock.signIn(); await mock.command(["navigate", dashboard]); }
       else if (action === "mismatch") options.previewEdit = rows => rows.map((row, index) => index === 0 ? [...row.slice(0, 4), (Number(row[4]) + 10).toFixed(2), row[5]] : row);
       // The portal never accepted the file: nothing pending, nothing receipted.
       else if (action === "lost-reply") options.unknownUpload = "before";
@@ -63,4 +73,5 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       return { uploads, effects: [...mock.effects], receipts: mock.receipts().length, pending: Boolean(mock.pendingUpload()) };
     },
   };
+  return lab;
 }

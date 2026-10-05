@@ -98,9 +98,9 @@ export interface W1HostDeps {
   /** True while a saved sign-in handover holds browser work (default: the shared human-handoffs record, as Ask checks). */
   signInHolding?: () => boolean;
   /** Opens the work browser at the site's sign-in page for the person and resolves when they are done (server/browser-sign-in.ts). Without it, sign-in stays a stop with a message. */
-  openForSignIn?: (input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string }) => Promise<{ outcome: "signed_in" | "stopped" | "timed_out" | "wrong_account"; origin: string }>;
-  /** Test lab hooks (server/testing/w1-lab.ts); null in production. */
-  lab?: { handle(body: unknown): Promise<unknown> } | null;
+  openForSignIn?: (input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string; threadId?: string }) => Promise<{ outcome: "signed_in" | "stopped" | "timed_out" | "wrong_account"; origin: string }>;
+  /** Test lab hooks (server/testing/w1-lab.ts); null in production. Its openForSignIn, once the lab turns it on, stands in for the one above. */
+  lab?: { handle(body: unknown): Promise<unknown>; openForSignIn?: W1HostDeps["openForSignIn"] } | null;
   pollMs?: number;
 }
 
@@ -135,6 +135,8 @@ export function createW1Host(deps: W1HostDeps) {
   const stops = new Map<string, AbortController>();
   /** Attempts whose file REI shows pending and unposted (found by inspect). */
   const pendingFound = new Set<string>();
+  /** Runs waiting for the person to sign in to REI → the handover's thread (GET /api/browser/sign-in?threadId=…). */
+  const signingIn = new Map<string, string>();
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), NO_HANDOFF_HOST).isHolding());
   let today = "";
   const note = (text: string) => { const ctx = context.getStore(); if (ctx) notes.set(ctx.runId, text.slice(0, 600)); };
@@ -312,19 +314,25 @@ export function createW1Host(deps: W1HostDeps) {
         if (run.reason === "sign-in" || run.reason === "choose-tab") return { kind: "needs_sign_in" };
         return fail(502, `REI could not be checked${run.detail ? `: ${run.detail}` : "."}`);
       };
+      const signIn = deps.openForSignIn ?? deps.lab?.openForSignIn;
       // Cold start: open the work browser first. Only a failed open refuses; a
       // browser that is still not ready goes straight to the sign-in handover.
       if (!(await deps.browserId())) {
         if (context.getStore()!.signal.aborted) return fail(409, STOPPED);
         if (signInHolding()) return fail(409, SIGN_IN_HOLD);
         try { await deps.runtime.connect?.(); } catch { return fail(409, NO_BROWSER); }
-        if (!(await deps.browserId()) && !deps.openForSignIn) return fail(409, NO_BROWSER);
+        if (!(await deps.browserId()) && !signIn) return fail(409, NO_BROWSER);
       }
       const first: W1Session = (await deps.browserId()) ? await check() : { kind: "needs_sign_in" };
-      if (first.kind !== "needs_sign_in" || !deps.openForSignIn) return first;
+      if (first.kind !== "needs_sign_in" || !signIn) return first;
       // Self-serve sign-in: the person signs in on REI's own page; Bud never sees credentials or codes.
-      const signal = context.getStore()!.signal;
-      const opened = await deps.openForSignIn({ site: W1_REI_PORTAL, reason: "Import bank receipts", signal, ...(office.rei.urlValue ? { account: office.rei.urlValue } : {}) });
+      // The run waits here as long as the handover lasts; other loops are not held. Status names the
+      // handover so Schedule shows it (with Done and Stop) instead of "Working".
+      const { signal, runId } = context.getStore()!, threadId = `w1-${runId}`;
+      signingIn.set(runId, threadId);
+      let opened: Awaited<ReturnType<typeof signIn>>;
+      try { opened = await signIn({ site: W1_REI_PORTAL, reason: "Import bank receipts", signal, threadId, ...(office.rei.urlValue ? { account: office.rei.urlValue } : {}) }); }
+      finally { signingIn.delete(runId); }
       if (opened.outcome === "wrong_account") return { kind: "wrong_account" };
       if (opened.outcome !== "signed_in") { if (signal.aborted) return fail(409, STOPPED); return first; }
       // Signed in is not proof of the account: the same read-only check runs again.
@@ -403,7 +411,7 @@ export function createW1Host(deps: W1HostDeps) {
     const busy = new Set(working.keys());
     const run = await latest(), office = await readW1Settings(deps.dataDir);
     return { settings: office, run, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
-      readback: run ? readbacks.get(run.id) ?? null : null, handoff: run ? handoffs.get(run.id) ?? null : null };
+      readback: run ? readbacks.get(run.id) ?? null : null, handoff: run ? handoffs.get(run.id) ?? null : null, signIn: run ? signingIn.get(run.id) ?? null : null };
   }
   const revisionOf = (body: unknown) => keys(body, ["expectedRevision"]) && Number.isSafeInteger(body.expectedRevision) ? Number(body.expectedRevision) : fail(400, "Send the bank import's current revision.");
 

@@ -14,7 +14,7 @@ import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/moc
 import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), temp=mkdtempSync(join(realpathSync(tmpdir()),'rb-morning-'));
 const data=join(temp,'data'), output=resolve(process.env.QA_OUTPUT??join(root,'outputs/morning-mail-2026-09-21')); mkdirSync(data,{mode:0o700});mkdirSync(output,{recursive:true});
-const wait=ms=>new Promise(r=>setTimeout(r,ms)), checks=[],errors=[]; let child,childClosed,browser,logs='',scanCalls=0,revoked=false;
+const wait=ms=>new Promise(r=>setTimeout(r,ms)), checks=[],errors=[]; let child,childClosed,browser,page,logs='',scanCalls=0,revoked=false;
 const historyPages=[],historyWindows=new Map();
 const credential=`rbc_${'b'.repeat(64)}`;
 const connector=createServer(async(req,res)=>{
@@ -65,7 +65,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const networkGuard=join(temp,'network-guard.mjs');
   writeFileSync(networkGuard,`const realFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(url.origin!==${JSON.stringify(endpoint)})throw new Error('QA denied non-connector fetch');return realFetch(input,init);};`,{mode:0o600});
   // This private-workspace fixture uses a synthetic grant, never a live model.
-  child=spawn(process.execPath,['--import',networkGuard,join(root,'server/bootstrap.ts')],{cwd:root,env:{...serviceSmokeEnv({executable:process.execPath,home:temp,data,scratch:temp,port}),REALBUD_MANAGED_SERVICE:'0',REALBUD_HERMES_CLI:worker,REALBUD_TEST_LAB:'1',OMB_STATIC_DIR:process.env.OMB_STATIC_DIR??join(root,'dist')},stdio:['ignore','pipe','pipe']});
+  child=spawn(process.execPath,['--import',networkGuard,join(root,'server/bootstrap.ts')],{cwd:root,env:{...serviceSmokeEnv({executable:process.execPath,home:temp,data,scratch:temp,port}),REALBUD_MANAGED_SERVICE:'0',REALBUD_HERMES_CLI:worker,REALBUD_TEST_LAB:'1',OMB_STATIC_DIR:process.env.OMB_STATIC_DIR??process.env.REALBUD_UI_DIR??join(root,'dist')},stdio:['ignore','pipe','pipe']});
   childClosed=new Promise((resolve,reject)=>{child.once('close',resolve);child.once('error',reject);});
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{logs=(logs+b).slice(-30000);});
   let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null||child.signalCode)break;try{if((await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json()).pid===child.pid){ready=true;break;}}catch{}await wait(100);}assert.ok(ready,logs);
@@ -204,7 +204,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const before=scanCalls;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   revoked=true;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   checks.push('Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources');
-  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await primeBrowserSession(context,base,token);await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');
+  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await primeBrowserSession(context,base,token);await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
   await page.locator('.desk-options > summary').click();
   await page.getByRole('button',{name:'Customize desk',exact:true}).click();
@@ -222,4 +222,4 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
       'The history coverage group composes production service seams in process; it does not prove the app server history trigger end to end.',
       'No packaged, Electron, Windows or backup/restore evidence; the history checkpoint is not carried by backup.',
       'Coverage is acquisition progress only: no bill records, no recurrence detection and no schedule activation follow from it.']},null,2));console.log(JSON.stringify({output,checks},null,2));
-}catch(e){writeFileSync(join(output,'failure.log'),logs);throw e;}finally{await browser?.close();if(child?.exitCode===null&&!child.signalCode){child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),4000);try{await childClosed;}finally{clearTimeout(force);}}await new Promise(r=>connector.close(r));rmSync(temp,{recursive:true,force:true});}
+}catch(e){writeFileSync(join(output,'failure.log'),logs);await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}finally{await browser?.close();if(child?.exitCode===null&&!child.signalCode){child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),4000);try{await childClosed;}finally{clearTimeout(force);}}await new Promise(r=>connector.close(r));rmSync(temp,{recursive:true,force:true});}

@@ -116,7 +116,8 @@ try{
   await page.getByText('Review version 1',{exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:join(out,'03-retained-earlier-review.png')});
   record('Both versions remain reachable with distinct byte-checked downloads and an earlier-version warning');
-  await stop();await start();await page.reload();
+  // The session token is per boot: re-prime the tab after the restart, as staff would reconnect.
+  await stop();await start();await primeBrowserSession(page.context(),base,token);await page.reload();
   await page.getByRole('button',{name:'Open job: Bank reference review',exact:true}).click();
   await page.getByText('Earlier reviews',{exact:true}).click();
   await page.getByLabel('Saved reviews',{exact:true}).selectOption(secondId);
