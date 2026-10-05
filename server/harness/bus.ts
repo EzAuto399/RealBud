@@ -33,8 +33,10 @@ export class EventBus {
 
   publish(event: RuntimeEvent) {
     try {
-      // An approval card's record path is for the local card only; the log keeps the page's origin.
-      appendFileSync(join(EVENTS_DIR, `${event.threadId}.ndjson`), JSON.stringify(redactSecrets(withPageOrigin(event))) + "\n");
+      // An approval card's record path is for the local card only; the log keeps the page's origin. A tool's
+      // fingerprint (a digest of its real arguments) is for the in-memory repeat watchdog only.
+      const { toolFingerprint: _digest, ...logged } = event as RuntimeEvent & { toolFingerprint?: string };
+      appendFileSync(join(EVENTS_DIR, `${event.threadId}.ndjson`), JSON.stringify(redactSecrets(withPageOrigin(logged))) + "\n");
     } catch {
       /* logging must never take down the stream */
     }

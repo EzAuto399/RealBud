@@ -42,7 +42,6 @@ import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts
 import { portalMapForSites } from "../../portal-recipe-task.ts";
 import { portalRecipeControls } from "../../portal-recipe-runner.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
-import { pageOriginsIn } from "../../browser-authority.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
@@ -171,21 +170,28 @@ type AcpHttpMcpServer = {
 type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
 
 /** A call to RealBud's work browser or sign-in server, by the name Hermes ACP puts first in a tool call's title:
- * mcp__<server>__<tool>, or mcp_<server>_<tool> in older releases ("sign-in" is written sign_in). */
-const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})_`, "i");
-const pageToolCall = (title: unknown): boolean => typeof title === "string" && PAGE_TOOL.test(title);
-/** Such a call as the private native log keeps it: every page address in its title and model-written arguments
- * (rawInput, and a start's content, which is the same arguments as text) is pageOrigin; a result and every other message
- * are unchanged. The log is a debugging tee only (server/drivers/native.ts): nothing recovers or replays from it. */
-function withPageToolOrigins(message: any): any {
+ * mcp__<server>__<tool>, or mcp_<server>_<tool> in older releases ("sign-in" is written sign_in). Its arguments carry
+ * page addresses, field values and file names, so no sink but the local card and approval record sees them. */
+const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})__?([a-z\\d_]*)`, "i");
+const PAGE_TOOL_LABEL: Record<string, string> = {
+  browser_tabs: "Checked the open tabs", browser_borrow: "Borrowed a tab", browser_read: "Read a page",
+  browser_navigate: "Opened a page", browser_fill: "Filled a field", browser_click_semantic: "Clicked a control",
+  browser_press: "Pressed a key", browser_select: "Chose an option", browser_download: "Downloaded a file",
+  browser_upload: "Uploaded a file", browser_release: "Stopped browser work", open_for_sign_in: "Opened the sign-in page",
+};
+const pageTool = (title: unknown): string | null => typeof title === "string" ? PAGE_TOOL.exec(title)?.[1]?.toLowerCase() ?? null : null;
+/** A page tool call's title for the event log and the Work activity line: a fixed label per tool, never its arguments. */
+const pageToolLabel = (tool: string): string => PAGE_TOOL_LABEL[tool] ?? "Used the work browser";
+/** A page tool call (a start, update or permission request) as the private native log keeps it: the tool name and its
+ * argument keys, no values. Every other message is unchanged. */
+function withoutPageToolValues(message: any): any {
   const key = message?.params?.update ? "update" : message?.params?.toolCall ? "toolCall" : null;
   const call = key ? message.params[key] : null;
-  if (!call || typeof call !== "object" || !pageToolCall(call.title)) return message;
-  const origins = (value: unknown): unknown => typeof value === "string" ? pageOriginsIn(value)
-    : Array.isArray(value) ? value.map(origins)
-      : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([name, child]) => [name, origins(child)])) : value;
-  const args = ["title", "rawInput", ...(call.sessionUpdate === "tool_call_update" ? [] : ["content"])].filter(name => name in call);
-  return { ...message, params: { ...message.params, [key!]: { ...call, ...Object.fromEntries(args.map(name => [name, origins(call[name])])) } } };
+  const tool = pageTool(call?.title);
+  if (tool === null) return message;
+  const { sessionUpdate, toolCallId, kind, status, rawInput } = call;
+  const argumentKeys = rawInput && typeof rawInput === "object" ? Object.keys(rawInput) : [];
+  return { ...message, params: { ...message.params, [key!]: { sessionUpdate, toolCallId, kind, status, tool, argumentKeys } } };
 }
 
 /** Hermes' own browser and credential-vault tools (`browser_navigate`,
@@ -835,15 +841,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             case "tool_call": {
               run.sawTool = true;
               run.answerText = "";
-              const title = String(update.rawInput?.command ?? update.title ?? "tool");
+              const tool = pageTool(update.title);
               emit({
                 ...eventBase(run),
                 type: "item.started",
                 itemType: "tool",
                 itemId: update.toolCallId,
-                // The event log and the Work activity line keep a browser call's pages as their origin; the
-                // fingerprint (a digest) still tells two pages apart for the repeat watchdog.
-                title: (pageToolCall(update.title) ? pageOriginsIn(title) : title).slice(0, 80),
+                // A page tool call shows only its label; the fingerprint (a digest of the real arguments, kept off
+                // the event log) still tells two pages apart for the repeat watchdog.
+                title: tool !== null ? pageToolLabel(tool) : String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
@@ -883,7 +889,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: withPageToolOrigins(message) });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: withoutPageToolValues(message) });
             if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
               const pending = rpcPending.get(message.id);
               if (pending) {

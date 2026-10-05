@@ -147,13 +147,6 @@ export const UNKNOWN_PAGE = "unknown page";
 export function pageOrigin(address: string | URL, base?: string | URL): string {
   try { const origin = new URL(address, base).origin; return /^https?:\/\//.test(origin) ? origin : UNKNOWN_PAGE; } catch { return UNKNOWN_PAGE; }
 }
-/** A page address written in free text: scheme://…, //… (either slash may be a backslash), or a bare host.name followed
- * by a path, query or fragment; each runs to the next space, double quote or angle bracket. */
-const PAGE_ADDRESS = /\b[a-z][a-z\d+.-]*:[/\\]{2}[^\s"<>]*|[/\\]{2}[^\s"<>]+|\b(?:[a-z\d-]+\.)+[a-z][a-z\d-]+(?::\d*)?[/\\?#][^\s"<>]*/gi;
-/** Free text (a work-browser or sign-in tool call's title or argument) with every page address in it as pageOrigin;
- * every other word unchanged. */
-export const pageOriginsIn = (text: string): string => text.replace(PAGE_ADDRESS, address =>
-  pageOrigin(/^[a-z][a-z\d+.-]*:[/\\]{2}/i.test(address) ? address : `https://${address.replace(/^[/\\]{2}/, "")}`));
 /** An approval request (request.opened) as the thread's event log keeps it (server/harness/bus.ts): params.url as
  * pageOrigin and the card's page dropped (its site stays). The broker (an event with a fence) writes params.url as
  * approvalUrl and its one path-bearing summary (navigate) as host + approvalPath, so that exact text becomes the host.
