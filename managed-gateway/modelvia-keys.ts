@@ -336,6 +336,15 @@ export interface ModelviaCustomerAdmin {
 }
 export type ModelviaOperatorClient = ModelviaClient & ModelviaCustomerAdmin;
 
+/** How long to wait before repeating a GET Modelvia answered 429: its
+ * `Retry-After` in whole seconds (`rate-limit.ts`, `http.ts`), 5 s when absent
+ * or unreadable, never more than 30 s. */
+export function modelviaRetryAfterMs(header: string | null): number {
+  const value = (header ?? '').trim();
+  return Math.min(/^\d{1,6}$/.test(value) ? Number(value) : 5, 30) * 1000;
+}
+export const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
 export function modelviaOrigin(raw: string): string {
   let url: URL; try { url = new URL(raw); } catch { throw new GatewayError('modelvia_base_invalid', 503); }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
@@ -398,6 +407,8 @@ export function modelviaKeyClient(options: {
   fetch: HttpTransport;
   /** Injected clock: the minted token's window must match Modelvia's. */
   now?: () => number;
+  /** The wait before repeating a rate-limited GET; injected by tests. */
+  sleep?: (ms: number) => Promise<void>;
 }): ModelviaOperatorClient & ModelviaTermsClient {
   const base = modelviaOrigin(options.serviceOrigin);
   requireThat(ACCOUNT_ID.test(options.clientId), 'modelvia_client_id_invalid', 503);
@@ -418,15 +429,23 @@ export function modelviaKeyClient(options: {
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
    * and only for control flow — an upstream body is never surfaced. */
   const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; conflictStatus?: number; body?: unknown; serverNow?: number }> => {
-    const bearerToken = token();
-    let response: Response;
-    try {
-      response = await options.fetch(`${base}${path}`, method === 'GET'
-        ? { method, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'cache-control': 'no-cache' } }
-        : { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
-          body: JSON.stringify(body) });
-    } catch { throw new GatewayError('modelvia_unreachable', 502); }
+    const send = async () => {
+      const bearerToken = token();
+      try {
+        return await options.fetch(`${base}${path}`, method === 'GET'
+          ? { method, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'cache-control': 'no-cache' } }
+          : { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+            headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
+            body: JSON.stringify(body) });
+      } catch { throw new GatewayError('modelvia_unreachable', 502); }
+    };
+    let response = await send();
+    // A read is safe to repeat, once, after Modelvia's bounded Retry-After. A write never is.
+    if (response.status === 429 && method === 'GET') {
+      await response.body?.cancel().catch(() => {});
+      await (options.sleep ?? pause)(modelviaRetryAfterMs(response.headers.get('retry-after')));
+      response = await send();
+    }
     if (response.redirected) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_redirected', 502); }
     if ((response.status === 409 || response.status === 404 || response.status === 403) && conflicts.length) {
       let code: unknown;
@@ -596,7 +615,9 @@ export function modelviaKeyClient(options: {
       requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
       requireThat(ACCOUNT_ID.test(environment), 'modelvia_environment_invalid');
       const body = await read(`/v1/operator/keys?${new URLSearchParams({ projectId, environment })}`);
-      requireThat(record(body) && Object.keys(body).length === 1 && Array.isArray(body.keys) && body.keys.length <= 1000, 'modelvia_unreadable', 502);
+      // Only `keys` is read, so a field Modelvia adds never breaks resume or rotation;
+      // a listing that says it is partial is still no evidence for cleanup.
+      requireThat(record(body) && Array.isArray(body.keys) && body.keys.length <= 1000 && body.nextCursor == null && body.hasMore !== true, 'modelvia_unreadable', 502);
       const keys = (body.keys as unknown[]).map(entry => {
         requireThat(record(entry) && typeof entry.id === 'string' && KEY_ID.test(entry.id) && (entry.label === undefined || typeof entry.label === 'string')
           && optionalTime(entry.expiresAt) && optionalTime(entry.revokedAt), 'modelvia_unreadable', 502);
