@@ -22,6 +22,7 @@ import { startCuaControl } from "./cua-control.mjs";
 import { finishSpeech, speechSupported, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { retireIncompatibleService, serviceCompatible } from "./update-service-handoff.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const require = createRequire(import.meta.url);
@@ -417,7 +418,11 @@ function createWindow() {
         if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
         let found = null;
         try {
-          found = await findRunningService(serviceIdentity(realbudDataDir()));
+          // Only a service running this version may fill the window; an older one
+          // is retired by the start path, never loaded.
+          const identity = serviceIdentity(realbudDataDir());
+          found = await findRunningService(identity);
+          if (found && !serviceCompatible(found.body, identity)) found = null;
         } catch {
           found = null;
         }
@@ -697,8 +702,9 @@ officeIpc.handle("service:status", officeServiceStatus);
 officeIpc.handle("service:retry", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   serviceStopRequested = false;
-  const before = await findRunningService(serviceIdentity(realbudDataDir()));
-  if (before) {
+  const identity = serviceIdentity(realbudDataDir());
+  const before = await findRunningService(identity);
+  if (before && serviceCompatible(before.body, identity)) {
     // Already answering. Record the port, so a window created after this (macOS
     // re-activate) loads the app rather than the recovery page.
     SERVER_PORT = before.port;
@@ -1197,8 +1203,25 @@ async function startOrAdoptOfficeServiceOnce() {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
 
+  // An office service from an older version is never adopted: this window was
+  // built for its own runtime. Retire it through the update handoff, or stop here
+  // and name the reason; never start a second service beside it.
+  /** @returns {Promise<"adopt" | "retired" | "blocked">} */
+  const settle = async (found) => {
+    const outcome = await retireIncompatibleService(found, { dataDirectory, identity, verifyWindowsPrivacy: windowsKeyPrivacy });
+    if (outcome.adopt) return "adopt";
+    if (outcome.problem) {
+      serviceStartProblem = outcome.problem;
+      slog(`an older office service answers on port ${found.port} and was not stopped (${outcome.problem}); not adopting it`);
+      return "blocked";
+    }
+    slog(`stopped the older office service on port ${found.port}; starting this version`);
+    return "retired";
+  };
   const running = await findRunningService(identity);
-  if (running) {
+  const runningOutcome = running ? await settle(running) : null;
+  if (runningOutcome === "blocked") return false;
+  if (runningOutcome === "adopt") {
     SERVER_PORT = running.port;
     serverEverStarted = true;
     serviceAdopted = true;
@@ -1208,8 +1231,10 @@ async function startOrAdoptOfficeServiceOnce() {
   // A busy service (a long Recheck, a backup pause) can miss the quick probe
   // while it holds its port. Ask each bound port again, patiently, before any
   // child is abandoned or spawned.
-  const busy = await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
-  if (busy) {
+  const busy = runningOutcome ? null : await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
+  const busyOutcome = busy ? await settle(busy) : null;
+  if (busyOutcome === "blocked") return false;
+  if (busyOutcome === "adopt") {
     SERVER_PORT = busy.port;
     serverEverStarted = true;
     serviceAdopted = true;
@@ -1388,7 +1413,9 @@ function startServiceWatchdog() {
     observe: async () => {
       const dataDirectory = realbudDataDir();
       const identity = serviceIdentity(dataDirectory);
-      const running = await findRunningService(identity);
+      // An older service is not ours to adopt or load (see startOrAdoptOfficeServiceOnce).
+      const found = await findRunningService(identity);
+      const running = found && serviceCompatible(found.body, identity) ? found : null;
       // The watchdog can observe healthy on the SAME port, which is not an
       // adoption or restart. Recover exhausted fallback windows in that case too.
       if (running && !serviceStopRequested && !appQuitting()) {

@@ -43,7 +43,7 @@ describe("startup problems with a known cause", () => {
   });
 
   it("names the cause and one action on each page, with no retry promise", () => {
-    for (const problem of ["disk-full", "no-access", "ports-taken"]) {
+    for (const problem of ["disk-full", "no-access", "ports-taken", "old-service", "old-service-busy"]) {
       const html = decode(startProblemPage(problem, options));
       expect(html).toMatch(/reopen RealBud/);
       expect(html).not.toMatch(/Waiting|next few minutes|keeps checking/i);

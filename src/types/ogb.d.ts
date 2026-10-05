@@ -159,4 +159,6 @@ export interface UpdaterState {
   version?: string;
   percent?: number;
   message?: string;
+  /** Set while a downloaded update waits for the office service: Bud busy, the service still stopping, or not stoppable. */
+  deferred?: "busy" | "cannot-stop" | "still-running";
 }

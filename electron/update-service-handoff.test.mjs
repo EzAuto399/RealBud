@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { APP_VERSION, prepareServiceForUpdate, serviceCompatible } from "./update-service-handoff.mjs";
+import { APP_VERSION, prepareServiceForUpdate, retireIncompatibleService, serviceCompatible } from "./update-service-handoff.mjs";
 import { servicePidPath } from "./service-lifecycle.mjs";
 
 const INSTANCE = "a".repeat(32);
@@ -88,5 +88,34 @@ describe("adopting only a compatible service", () => {
   });
   it.each([[{ version: "0.0.1-old" }], [{ version: undefined }], [{ instanceId: "b".repeat(32) }]])("refuses %j", (over) => {
     expect(serviceCompatible(health(over), IDENTITY)).toBe(false);
+  });
+});
+
+describe("an older service found at launch", () => {
+  it("adopts a service already running this app's version without asking it to stop", async () => {
+    const { state, options } = office();
+    expect(await retireIncompatibleService({ body: { app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION } }, options)).toEqual({ adopt: true });
+    expect(state.stops).toEqual([]);
+  });
+
+  it("stops an idle older service through its control route so the matching one can start", async () => {
+    const { dir, state, options } = office();
+    expect(await retireIncompatibleService({ body: { app: "realbud", static: true, instanceId: INSTANCE, version: "0.0.1-old" } }, options)).toEqual({ adopt: false, problem: null });
+    expect(state.stops).toEqual([expect.objectContaining({ ifIdle: true })]);
+    expect(state.up).toBe(false);
+    expect(existsSync(servicePidPath(dir))).toBe(false);
+  });
+
+  it("leaves a busy older service working and reports it", async () => {
+    const { state, options } = office({ busy: true });
+    expect(await retireIncompatibleService({ body: { instanceId: INSTANCE, version: "0.0.1-old" } }, options)).toEqual({ adopt: false, problem: "old-service-busy" });
+    expect(state.stops).toEqual([]);
+    expect(state.up).toBe(true);
+  });
+
+  it("reports an older service it cannot stop, never signalling it", async () => {
+    const { state, options } = office({ recorded: false });
+    expect(await retireIncompatibleService({ body: { instanceId: INSTANCE } }, options)).toEqual({ adopt: false, problem: "old-service" });
+    expect(state.up).toBe(true);
   });
 });

@@ -61,3 +61,20 @@ export async function prepareServiceForUpdate({ dataDirectory, identity, fetchIm
   }
   return { ready: false, reason: "still-running" };
 }
+
+/**
+ * Launch with a service of this office already answering: adopt it only when it
+ * runs this app's version. An older one goes through the same handoff as an
+ * update (idle check, authenticated stop, proof it is gone), so the matching
+ * service can start; one that is busy or cannot be stopped is left alone and
+ * named, never adopted and never started beside.
+ * @param {{ body: unknown }} running
+ * @param {Parameters<typeof prepareServiceForUpdate>[0] & { version?: string }} options
+ * @returns {Promise<{ adopt: true } | { adopt: false, problem: null | 'old-service' | 'old-service-busy' }>}
+ */
+export async function retireIncompatibleService(running, { version, ...options }) {
+  if (serviceCompatible(running.body, options.identity, version)) return { adopt: true };
+  const handoff = await prepareServiceForUpdate(options);
+  if (handoff.ready) return { adopt: false, problem: null };
+  return { adopt: false, problem: handoff.reason === "busy" ? "old-service-busy" : "old-service" };
+}
