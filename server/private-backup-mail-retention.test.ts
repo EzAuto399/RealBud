@@ -16,7 +16,7 @@ import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { mailEvidenceHash } from './mail-workspace-integrity.ts';
 import type { PrivateWorkspaceBackup } from '../shared/private-workspace-backup.ts';
 import type { MailScanReceipt } from '../shared/mail-ingestion.ts';
-import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const roots: string[] = [], services: ReturnType<typeof createMailIngestionService>[] = [];
 const phrase = 'Fictional retained mail backup passphrase', at = Date.parse('2026-09-21T00:00:00Z');
@@ -78,7 +78,8 @@ async function expectRefusalUnchanged(target: Awaited<ReturnType<typeof fixture>
 }
 
 describe('normalized mail retention through private backup', () => {
-  it('roundtrips over 2,000 tasks and 1,000 receipts, old source/manual decisions and overwritten prepared input under a different key', async () => {
+  // 249 private-object admissions measured (21 collects at nine each, plus seeding, export and restore).
+  it('roundtrips over 2,000 tasks and 1,000 receipts, old source/manual decisions and overwritten prepared input under a different key', { timeout: 60_000, ...windowsAdmissionTimeout(250) }, async () => {
     const from = await fixture(), to = await fixture(), originals = await seedLegacy(from, 1000);
     await writeJson(from.directory, 'agency-setup.json', { version: 1, workspaceId: from.workspaceId, revision: 1, updatedAt: at,
       settings: from.legacy.settings, reviews: { 'morning-priorities': { settingsRevision: 1, evidenceDigest: 'a'.repeat(64), reviewedAt: at, actorId: from.workspaceId } } });
@@ -120,7 +121,7 @@ describe('normalized mail retention through private backup', () => {
     expect(Object.values(loops.state).every(value => !(value as { enabled: boolean }).enabled)).toBe(true);
     const sourceEnvelope = JSON.parse(await readFile(join(to.directory, 'company-installation/private', `mail-scan-${from.legacy.receipt.id}.json`), 'utf8'));
     expect(() => decryptJson(from.key, sourceEnvelope)).toThrow();
-  }, 60_000);
+  });
 
   it('restores normalized records from a fresh workspace with no legacy private mail files', async () => {
     const from = await fixture(), to = await fixture(), source = mail(from).service;

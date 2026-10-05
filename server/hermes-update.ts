@@ -104,10 +104,12 @@ export function startRuntimeUpdate(options: {
   return startBootstrapInstall({
     timeoutMs: options.timeoutMs, release,
     run: async opts => {
+      // Admit the lock folder before the lock creates it: a plain mkdir would
+      // inherit an unprotected Windows ACL that this admission then refuses.
+      await privateDirectory(lockHome);
       const unlock = acquireWorkerSetupLock(lockHome);
       try {
         opts.signal.throwIfAborted();
-        await privateDirectory(lockHome);
         if (bootstrapChildRunning(lockHome)) throw new BootstrapError("An earlier agent setup is still running. Wait for it to stop before starting a new installation.");
         const completed = completedRuntime(await readPrivateJson(completedPath, 2_000));
         if (completed && completed.commit === release.commit && completed.product === release.product && completed.tag === release.tag &&

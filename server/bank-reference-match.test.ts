@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { removeFixture } from "./testing/private-fixture.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowDatabase } from "./workflow-database.ts";
@@ -183,10 +184,12 @@ describe("first pass over a fictional bank-feed (Redbark) batch", () => {
 });
 
 describe("saved ANZ review", () => {
-  it("returns the first pass with each read, saves the reviewed copy and passes saved-review validation", () => {
+  it("returns the first pass with each read, saves the reviewed copy and passes saved-review validation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bud-anz-"));
+    let db: WorkflowDatabase | undefined;
     try {
-      const store = new BankReferenceStore(new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) }));
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const store = new BankReferenceStore(db);
       const created = store.create(upload());
       expect(created.firstPass?.summary).toEqual({ rows: 27, matched: 13, invoice: 2, exception: 9, notRent: 3, carried: 0 });
       expect(created.value.batch).not.toHaveProperty("firstPass");
@@ -194,6 +197,6 @@ describe("saved ANZ review", () => {
       expect(reviewed.value.result?.changes).toHaveLength(8);
       expect(store.get(created.id).firstPass?.summary.matched).toBe(13);
       expect(store.importArtifact(created.id).summary).toEqual({ rows: 27, import: 13, hold: 11, exclude: 3 });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { db?.close(); await removeFixture(dir); }
   });
 });

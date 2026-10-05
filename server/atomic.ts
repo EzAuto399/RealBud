@@ -28,10 +28,18 @@ export function assertOwnPrivate(stat: Stats, kind: "file" | "directory"): void 
  * descriptor is what the caller reads or writes, so a later swap cannot
  * redirect it. ENOENT passes through for the caller. */
 export function openPrivateFileSync(path: string, flags: number = constants.O_RDONLY): number {
+  // Windows has no O_NOFOLLOW: open follows a link and fstat then describes
+  // its target. Refuse a link by name first, then require the descriptor to be
+  // that same object, so a swap between the two checks is refused too.
+  const named = NOFOLLOW ? undefined : lstatSync(path, { bigint: true });
+  if (named?.isSymbolicLink()) unsafe();
   // Non-blocking: a FIFO planted under the name must not hold this process
   // open; the descriptor's type is checked before anything is read.
   const fd = openSync(path, flags | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
-  try { assertOwnPrivate(fstatSync(fd), "file"); } catch (error) { closeSync(fd); throw error; }
+  try {
+    assertOwnPrivate(fstatSync(fd), "file");
+    if (named) { const opened = fstatSync(fd, { bigint: true }); if (opened.ino !== named.ino || opened.dev !== named.dev) unsafe(); }
+  } catch (error) { closeSync(fd); throw error; }
   return fd;
 }
 /** Largest private text file the host reads whole (notes, logs, reference sheets). */
@@ -63,6 +71,7 @@ export function keepPrivateFileSync(path: string, mode = 0o600): void {
 }
 /** Owner-only mode on the folder itself, which must be a real folder of ours. */
 export function keepPrivateDirSync(path: string, mode = 0o700): void {
+  if (!NOFOLLOW && lstatSync(path).isSymbolicLink()) unsafe(); // Windows: no O_NOFOLLOW (see openPrivateFileSync)
   const fd = openSync(path, constants.O_RDONLY | NOFOLLOW | DIRECTORY);
   try {
     assertOwnPrivate(fstatSync(fd), "directory");

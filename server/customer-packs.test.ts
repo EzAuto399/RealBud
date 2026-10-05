@@ -323,14 +323,16 @@ describe('planted entries in pending/skills', () => {
     await writeFile(protectedFile, JSON.stringify({ id: 'aaaa1111', subsystem: 'skills', action: 'edit', summary: 'planted', origin: 'background_review', created_at: '2026-09-21T00:00:00Z', payload: {} }));
     await symlink(protectedFile, join(folder, 'aaaa1111.json'));
     await link(protectedFile, join(folder, 'bbbb2222.json'));
-    execFileSync('mkfifo', [join(folder, 'cccc3333.json')]);
+    // FIFOs are POSIX-only; Windows still proves the link and the alias.
+    const fifo = process.platform !== 'win32', planted = fifo ? ['aaaa1111', 'bbbb2222', 'cccc3333'] : ['aaaa1111', 'bbbb2222'];
+    if (fifo) execFileSync('mkfifo', [join(folder, 'cccc3333.json')]);
     await stage(f.root, improved);
     const started = Date.now();
     const review = await f.service.proposals();
     expect(Date.now() - started).toBeLessThan(5_000);
-    expect(review.proposals.map(item => [item.id, item.state])).toEqual([['1234abcd', 'reviewable'], ['aaaa1111', 'unsupported'], ['bbbb2222', 'unsupported'], ['cccc3333', 'unsupported']]);
+    expect(review.proposals.map(item => [item.id, item.state])).toEqual([['1234abcd', 'reviewable'], ...planted.map(id => [id, 'unsupported'])]);
     for (const item of review.proposals.slice(1)) expect(item.proposed).toBeNull();
-    for (const id of ['aaaa1111', 'bbbb2222', 'cccc3333']) await expect(f.service.reviewProposal({ id, pendingDigest: 'x', currentDigest: 'x', decision: 'reject' })).rejects.toThrow();
+    for (const id of planted) await expect(f.service.reviewProposal({ id, pendingDigest: 'x', currentDigest: 'x', decision: 'reject' })).rejects.toThrow();
     const proposal = review.proposals[0];
     await f.service.reviewProposal({ id: proposal.id, pendingDigest: proposal.pendingDigest, currentDigest: proposal.currentDigest, decision: 'approve' });
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);

@@ -365,7 +365,7 @@ describe('learning auto-keep setting', () => {
     expectError(await f.service.handle(MEMORY_LEARNING_API, 'PUT', { autoKeep: true }), 'invalid', 404);
     expectError(await f.service.handle(MEMORY_LEARNING_API, 'GET', undefined, new URLSearchParams('profileDirectory=%2Fcaller')), 'invalid', 400);
     expect((await f.setAutoKeep(true))?.body).toEqual({ version: 1, autoKeep: true, policyVersion: 1, kept: [] });
-    expect((await stat(f.file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect((await stat(f.file)).mode & 0o777).toBe(0o600); // POSIX mode bits; Windows privacy is the ACL check
     expect(JSON.parse(await readFile(f.file, 'utf8'))).toMatchObject({ workspaceId: context().workspaceId, profileId: context().profileId, autoKeep: true });
     expect(f.invoke).not.toHaveBeenCalled();
   });
@@ -375,7 +375,7 @@ describe('learning auto-keep setting', () => {
     await f.setAutoKeep(true);
     const file = join(DATA_DIR, 'memory-learning', context().workspaceId, context().profileId, 'auto-keep.json');
     expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ autoKeep: true });
-    expect((await stat(file)).mode & 0o777).toBe(0o600); expect((await stat(join(file, '..'))).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') { expect((await stat(file)).mode & 0o777).toBe(0o600); expect((await stat(join(file, '..'))).mode & 0o777).toBe(0o700); }
     expect(await readdir(profile)).toEqual([]);
   });
   it('holds a damaged or foreign setting file instead of replacing it', async () => {
@@ -484,7 +484,8 @@ describe('learning auto-review pass', () => {
   });
   it('runs on its own interval and stops it on shutdown', async () => {
     const f = await learningFixture({ autoReviewIntervalMs: 15 }); f.stage('00000010', benign); await f.setAutoKeep(true);
-    for (let i = 0; i < 100 && !f.s.receipts.size; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    // Windows admits each private write with a PowerShell launch, so a pass takes seconds there.
+    for (const until = Date.now() + (process.platform === 'win32' ? 45_000 : 1_000); Date.now() < until && !f.s.receipts.size;) await new Promise(resolve => setTimeout(resolve, 10));
     expect(f.s.memory).toContain(benign);
     await f.service.close(); const calls = f.invoke.mock.calls.length;
     f.stage('00000020', 'Use Australian spelling in letters');

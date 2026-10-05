@@ -19,13 +19,15 @@ checks.push("Installed resources include native helpers, speech helper, SDK, ser
 // resources. That proof requires real fresh-profile startup and privacy, not
 // this resource inventory or service health alone.
 checks.push("Installed resources include private-profile provisioning code and shipped property safeguards");
-const browser = join(resources, "browser");
+// The Hermes native engine replaced BrowserSkill; the retired helper must not ship.
+const browser = join(resources, "browser", "hermes-native");
 const browserManifest = JSON.parse(readFileSync(join(browser, "runtime.json"), "utf8"));
-assert.equal(browserManifest.version, "0.3.1");
+assert.equal(browserManifest.engine, "hermes-agent-browser"); assert.equal(browserManifest.version, "0.26.0");
 assert.equal(browserManifest.platform, "win32"); assert.equal(browserManifest.arch, "x64");
-assert.equal(createHash("sha256").update(readFileSync(join(browser, "bsk.exe"))).digest("hex"), browserManifest.sha256);
-assert.equal(execFileSync(join(browser, "bsk.exe"), ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }).trim(), "bsk 0.3.1");
-checks.push("Installed BrowserSkill executable matches its manifest and runs at the pinned version");
+assert.equal(createHash("sha256").update(readFileSync(join(browser, "agent-browser.exe"))).digest("hex"), browserManifest.sha256);
+assert.equal(execFileSync(join(browser, "agent-browser.exe"), ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }).trim(), "agent-browser 0.26.0");
+for (const retired of ["bsk.exe", "runtime.json"]) assert.ok(!existsSync(join(resources, "browser", retired)), `retired browser helper packaged: ${retired}`);
+checks.push("Installed Hermes browser engine matches its manifest and runs at the pinned version");
 const postgres = join(resources, "postgres");
 const pgManifest = JSON.parse(readFileSync(join(postgres, "runtime.json"), "utf8"));
 assert.equal(pgManifest.schema, 2); assert.equal(pgManifest.platform, "win32"); assert.equal(pgManifest.architecture, "x64");

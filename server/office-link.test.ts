@@ -607,7 +607,8 @@ describe("zero-touch provisioning through the website link", () => {
     else {
       await desk.app.beginBrowserLink({ label: "Repaired browser desk" });
       await desk.app.browserLinkStatus();
-      await vi.waitFor(async () => expect((await desk.app.status()).provisioned).toBe(true));
+      // Background provisioning makes several private writes; each costs a Windows admission launch.
+      await vi.waitFor(async () => expect((await desk.app.status()).provisioned).toBe(true), process.platform === "win32" ? { timeout: 30_000, interval: 100 } : undefined);
     }
     const current = await desk.app.status();
     expect(current).toMatchObject({ state: "linked", provisioned: true });
