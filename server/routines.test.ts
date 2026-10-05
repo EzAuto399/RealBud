@@ -369,7 +369,8 @@ describe("LoopManager runs", () => {
 
   it("Supplier list check: off until enabled, Monday 08:15, says what it waits for, then awaits approval or ends quietly", async () => {
     let finish!: (result: { ok: boolean; status: "awaiting-approval" | "completed"; detail: string; quiet?: boolean }) => void;
-    const manager = track(new LoopManager({ file: tempFile(), runDeadlineMs: 20, execute: (loop, run) => {
+    // A deadline far away: saying what it waits for is what releases the clock for other loops.
+    const manager = track(new LoopManager({ file: tempFile(), runDeadlineMs: 60_000, execute: (loop, run) => {
       if (loop.id !== "rei-supplier-check") return Promise.resolve({ ok: true, detail: "" });
       manager.noteRun(run.id, "Waiting for you to sign in to REI Cloud.");
       return new Promise((resolve) => { finish = resolve; });
@@ -378,8 +379,8 @@ describe("LoopManager runs", () => {
     expect(check).toMatchObject({ available: true, enabled: false, nextRunAt: null, name: "Supplier list check", schedule: { time: "08:15", weekdays: [1] } });
     expect(check.description).toMatch(/added or removed suppliers .* for you to approve/);
     const run = manager.runNow("rei-supplier-check")!;
-    // The wait outlasts the run deadline and still says what it waits for; other loops carry on.
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    // The run keeps saying what it waits for; other loops carry on.
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(manager.listRuns().find((row) => row.id === run.id)).toMatchObject({ status: "running", detail: "Waiting for you to sign in to REI Cloud." });
     const other = manager.runNow("owner-letter")!;
     await manager.tick();

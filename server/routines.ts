@@ -279,6 +279,8 @@ export class LoopManager {
   private readonly hostTz: string;
   private recoveryDetail: string | null = null;
   private executing = new Set<LoopId>();
+  /** Releases the clock from a running run that said what it waits for (noteRun). */
+  private parking = new Map<string, () => void>();
   private ledger?: ExecutionHistory<LoopRun, Omit<LoopsFile, "version" | "runs">>;
 
   constructor(options: LoopManagerOptions) {
@@ -567,6 +569,8 @@ export class LoopManager {
     if (this.recovery.active || !run || run.status !== "running" || run.detail === detail) return;
     this.commit(() => { run.detail = redactSecretsInText(detail).slice(0, 500); });
     this.emitRun(run);
+    // It may wait days for the person: other loops do not wait with it. Its own lock stays until it settles.
+    this.parking.get(id)?.();
   }
 
   get busy() { return this.ticking || this.executing.size > 0; }
@@ -671,18 +675,20 @@ export class LoopManager {
     });
     this.emitRun(run);
     this.executing.add(loop.id);
+    const deadlineMarker = Symbol("deadline");
+    const parked = new Promise<typeof deadlineMarker>((resolve) => this.parking.set(run.id, () => resolve(deadlineMarker)));
     let work: Promise<LoopExecuteResult>;
     try { work = Promise.resolve(this.options.execute(cloneLoop(loop), { ...run })); }
     catch (error) { work = Promise.reject(error); }
     const outcome: Promise<ExecutionOutcome> = work.then((result) => ({ result }), (error) => ({ error }));
-    const deadlineMarker = Symbol("deadline");
     let timer!: ReturnType<typeof setTimeout>;
     const deadline = new Promise<typeof deadlineMarker>((resolve) => {
       timer = setTimeout(() => resolve(deadlineMarker), this.options.runDeadlineMs ?? RUN_DEADLINE_MS);
       timer.unref?.();
     });
-    const first = await Promise.race([outcome, deadline]);
+    const first = await Promise.race([outcome, deadline, parked]);
     clearTimeout(timer);
+    this.parking.delete(run.id);
     if (first === deadlineMarker) {
       // The deadline does not cancel the executor. Keep the receipt and lock
       // running while other loops proceed; the eventual result settles this ID.
