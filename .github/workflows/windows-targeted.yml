@@ -2,13 +2,8 @@ name: Windows targeted tests
 
 # Fast Windows iteration on a few test files instead of the full three-shard
 # matrix. Evidence for those files only; the full CI run stays the gate.
-# Dispatch resolves only once this file is on the default branch; until then a
-# push to the Windows CI branch runs the files listed in
-# .github/windows-targeted-files.txt (temporary, removed before merge).
+# Dispatch resolves only once this file is on the default branch.
 on:
-  push:
-    branches: [claude/windows-ci]
-    paths: [.github/windows-targeted-files.txt]
   workflow_dispatch:
     inputs:
       files:
@@ -53,12 +48,10 @@ jobs:
         shell: bash
         env:
           FILES: ${{ inputs.files }}
-          LIST: .github/windows-targeted-files.txt
           NODE_OPTIONS: --max-old-space-size=6144
         # The list arrives through the environment, never interpolated into the
         # script; only repository test paths are accepted.
         run: |
-          if [[ -z "$FILES" && -f "$LIST" ]]; then FILES=$(tr '\n' ' ' < "$LIST"); fi
           read -r -a files <<< "$FILES"
           (( ${#files[@]} > 0 )) || { echo "No test files named"; exit 1; }
           for f in "${files[@]}"; do [[ "$f" =~ ^(server|electron|shared|src|scripts)/[A-Za-z0-9._/-]+\.test\.(ts|tsx|mjs)$ ]] || { echo "Refused test path: $f"; exit 1; }; done

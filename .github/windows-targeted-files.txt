@@ -1,9 +1,0 @@
-server/gmail-setup-api.test.ts
-server/w1-workflow.test.ts
-server/hermes-update.test.ts
-server/w1-host.test.ts
-server/worker-auto-setup.test.ts
-server/service-entitlement-install.test.ts
-server/atomic.test.ts
-server/vault.test.ts
-server/office-link.test.ts
