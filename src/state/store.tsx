@@ -908,7 +908,9 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     // A hung service must surface as a failure the PM can retry, never as a
     // permanent "Saving…". Callers with a known budget pass it; worker calls
     // (Recheck can take a minute) keep the default of no client-side limit.
-    const signal = init?.signal ?? (opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined);
+    // A caller's cancel signal and the time budget both apply.
+    const timeout = opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined;
+    const signal = init?.signal && timeout ? AbortSignal.any([init.signal, timeout]) : init?.signal ?? timeout;
     const response = await fetch(path, { ...init, headers, signal });
     administratorRequestToken = headers.get("x-realbud-service-admin");
     refreshServiceAdminExpiry(headers.get("x-realbud-service-admin"), response.headers.get("x-realbud-service-admin-expires"));
@@ -1054,6 +1056,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       for (let attempt = 0; attempt < 120; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 750));
         if (turnPolls.get(botId) !== generation) return;
+        // A live stream already delivers the turn (and a reconnect reloads
+        // everything), so full transcripts are fetched only while it is down.
+        const current = stateRef.current;
+        if (current.connected) {
+          if (!current.bots.find((candidate) => candidate.id === botId)?.busy) break;
+          continue;
+        }
         try {
           const { bots, groups } = await api("/api/bots");
           rawDispatch({ type: "hydrate", bots, groups: groups ?? [] });
