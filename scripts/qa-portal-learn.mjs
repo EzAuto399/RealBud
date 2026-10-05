@@ -6,10 +6,10 @@
 // pack's placeholder (lab action "rename-reports"), so:
 //   1. Refresh tenant list from REI fails first: the export's place is not mapped;
 //   2. the person asks Bud in Work to find how to export the tenant list; the
-//      browser task card → Start; Bud (a scripted ACP worker, no model) opens
-//      REI's Reports menu with no card (the pack's map says it is read-safe),
-//      and the person allows the report, the Export Only choice and the
-//      download once each;
+//      browser task card → Start; the person confirms the REI account once;
+//      Bud (a scripted ACP worker, no model) opens REI's Reports menu and the
+//      report link with no card (the pack's map and the task's read scope),
+//      and the person allows the Export Only choice and the download once each;
 //   3. Bud proposes the path it took; the "Bud found how to export…" card shows
 //      the exact steps; the person allows it and it is saved;
 //   4. Refresh tenant list from REI now follows the learned path: the report
@@ -70,7 +70,7 @@ lines.on('line', line => { void (async () => {
   const { id, method, params } = JSON.parse(line);
   if (method === 'initialize') return out({ jsonrpc: '2.0', id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] } });
   if (method === 'session/new' || method === 'session/load') {
-    browser = (params?.mcpServers ?? []).find(s => s.name === 'browser' && typeof s.url === 'string') ?? null;
+    browser = (params?.mcpServers ?? []).find(s => s.name === 'workbrowser' && typeof s.url === 'string') ?? null;
     return out({ jsonrpc: '2.0', id, result: { sessionId: 'fictional-portal-learn', modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }] } } });
   }
   if (method === 'session/prompt') {
@@ -148,33 +148,35 @@ try {
   await card.getByRole('button', { name: 'Start this task', exact: true }).click();
   pass('Work shows the browser task card for rei-mock.fictional.test; the person pressed Start this task');
 
-  // ── 3. Map-aware exploration: only the steps the map does not cover ask ──
-  const allow = page.getByRole('button', { name: 'Allow once', exact: true });
+  // ── 3. Account once, then only the steps the map and the task's read scope do not cover ask ──
+  const allow = page.getByRole('button', { name: /^(Allow once|Continue in this account)$/ });
   const cards = [];
   for (let i = 0; i < 6; i++) {
     await allow.first().waitFor({ timeout: 60_000 });
     const pending = page.getByText('Pending approval', { exact: true }).last().locator('xpath=ancestor::div[contains(@class, "rounded-t-2xl")][1]');
-    const text = (await pending.innerText()).replace(/\s+/g, ' ');
-    cards.push(text);
-    if (/Bud found how to export/.test(text)) break;
-    await shot(`3-ask-${i + 1}`, allow.first());
-    await allow.first().click(); await wait(300);
+    const text = (await pending.innerText().catch(() => page.locator('body').innerText())).replace(/\s+/g, ' ');
+    const kind = /Check the account/.test(text) ? 'account' : /Bud found how to export/.test(text) ? 'proposal' : 'step';
+    cards.push({ kind, text: text.slice(0, 400) });
+    if (kind === 'proposal') break;
+    await shot(`3-${kind}-${i + 1}`, allow.first());
+    await page.getByRole('button', { name: kind === 'account' ? 'Continue in this account' : 'Allow once', exact: true }).first().click(); await wait(300);
   }
-  const proposal = cards.at(-1);
+  assert.deepEqual(cards.map(card => card.kind), ['account', 'step', 'step', 'proposal'], JSON.stringify(cards));
+  assert.match(cards[0].text, /Signed in to rei-mock\.fictional\.test as FICT1\. Continue in this account\?/);
+  const proposal = cards[3].text;
   assert.match(proposal, new RegExp(`Bud found how to export the Tenants list: Reports → ${REPORT.replace(/[()]/g, '\\$&')} → Export Only → Export\\. Use this for Refresh from REI\\?`), proposal);
-  const explored = cards.slice(0, -1);
-  assert.equal(explored.length, 3, `three asks before the proposal: ${JSON.stringify(explored)}`);
-  assert.ok(explored.every(text => !/link "Reports"/.test(text)), `no card for the Reports menu: ${JSON.stringify(explored)}`);
-  assert.match(explored[0], new RegExp(REPORT.replace(/[()]/g, '\\$&')));
-  assert.match(explored[2], /Download/i);
-  const reportsClick = workerLog().find(entry => entry.tool === 'browser_click_semantic');
-  assert.ok(reportsClick && !reportsClick.isError, JSON.stringify(workerLog()));
+  const explored = cards.filter(card => card.kind === 'step').map(card => card.text);
+  assert.ok(explored.every(text => !/Reports"|Tenant Contact/.test(text)), `no card for the Reports menu or the report link: ${JSON.stringify(explored)}`);
+  assert.match(explored[0], /Export Only/);
+  assert.match(explored[1], /Download/i);
+  const clicks = workerLog().filter(entry => entry.tool === 'browser_click_semantic');
+  assert.ok(clicks.length === 2 && clicks.every(entry => !entry.isError), JSON.stringify(workerLog()));
   assert.ok(workerLog().some(entry => entry.tools?.includes('portal_propose_path')), 'the propose tool is offered on a mapped Ask task');
-  pass(`REI's Reports menu opened with no card (the pack's map); the person allowed ${explored.length} unmapped steps once each: the report, the Export Only choice and the download`);
+  pass(`The REI account (FICT1) was confirmed once; REI's Reports menu and the "${REPORT}" link opened with no card; the person allowed ${explored.length} steps once each: the Export Only choice and the download`);
 
   // ── 4. The proposal card → Allow → saved ──
   await shot('4-proposal-card', allow.first());
-  await allow.first().click();
+  await page.getByRole('button', { name: 'Allow once', exact: true }).first().click();
   await page.getByText(/Saved as the tenant-list path \(version 1\)/).first().waitFor({ timeout: 60_000 });
   const saved = JSON.parse(readFileSync(join(demo.data, 'portal-path-overrides.json'), 'utf8')).slots['rei-cloud/tenant-list'];
   assert.equal(saved.current, 1);
