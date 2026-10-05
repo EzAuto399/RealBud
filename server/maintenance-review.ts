@@ -163,10 +163,20 @@ type DirectoryStore = ReturnType<typeof createSupplierDirectory>;
 
 const MAINTENANCE_KIND = /maint|repair|plumb|electric|trade|handyman|garden|pest|lock|roof|glaz|hot water|appliance/i;
 
-/** Sender address from a From header ("Name <a@b>" or "a@b"). */
+/** Sender address from a From header ("Name <a@b>" or "a@b"). A header with
+ * more than one angle address, or an address-looking display name, is
+ * ambiguous: mail clients deliver from the last address while a naive parse
+ * reads the first, so a spoofed display name could pass as a listed supplier.
+ * Ambiguous headers return '' and stay unlisted (sender needs checking). */
 export function senderAddress(from: string): string {
-  const inner = from.match(/<([^<>]+)>/)?.[1] ?? from;
-  return normalizeSupplierEmail(inner) ?? inner.trim().toLowerCase();
+  const angles = from.match(/<[^<>]*>/g) ?? [];
+  if (angles.length > 1) return '';
+  if (angles.length === 1) {
+    const display = from.slice(0, from.indexOf('<'));
+    if (display.includes('@')) return '';
+    return normalizeSupplierEmail(angles[0]!.slice(1, -1)) ?? '';
+  }
+  return normalizeSupplierEmail(from) ?? '';
 }
 
 /** Reviewed, uncancelled bills that belong to maintenance, as findings input.
@@ -186,7 +196,7 @@ export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: Su
     if (match.kind === 'conflict') { supplierRef = reviewed && match.supplierRefs.includes(reviewed) ? reviewed : null; senderMatch = 'conflict'; }
     // ponytail: a forwarded copy is judged by the forwarding address; original-sender
     // evidence is not extracted yet, so it stays a sender finding for Sherry to check.
-    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email, senderMatch,
+    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(bill.source.message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch,
       invoiceNumber: bill.facts.invoiceNumber ?? null, invoiceVersion: bill.facts.invoiceVersion ?? null, invoiceDate: bill.facts.invoiceDate,
       receivedDate: billDateInZone(bill.source.message.at, timeZone), amountCents: bill.facts.amountCents,
       description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) });

@@ -36,6 +36,11 @@ describe('maintenance review inputs', () => {
   it('reads the address from a From header', () => {
     expect(senderAddress('Fictional Plumbing <Accounts@Fictional-Plumbing.example>')).toBe('accounts@fictional-plumbing.example');
     expect(senderAddress('office@fictional-electrical.example')).toBe('office@fictional-electrical.example');
+    // Spoofs: a listed address in the display name or a second angle address never counts as that supplier.
+    expect(senderAddress('"Fictional Plumbing <accounts@fictional-plumbing.example>" <scam@fictional-evil.example>')).toBe('');
+    expect(senderAddress('accounts@fictional-plumbing.example <scam@fictional-evil.example>')).toBe('');
+    expect(senderAddress('<accounts@fictional-plumbing.example> <scam@fictional-evil.example>')).toBe('');
+    expect(senderAddress('not an address')).toBe('');
   });
 
   it('matches by exact email or reviewed reference and skips cancelled and non-maintenance bills', async () => {
