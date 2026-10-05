@@ -30,7 +30,7 @@ afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
 /** Modelvia's client-key routes: `/billing` (the only invoice list), one
  * finalized invoice with its payment summary, client-scope analytics and,
  * optionally, the margin report. */
-function fakeModelvia(options: { marginReport?: Row[]; customerCheckout?: string | null } = {}) {
+function fakeModelvia(options: { marginReport?: Row[]; unsettledRequests?: number; customerCheckout?: string | null } = {}) {
   const invoices = new Map<string, Row>();
   const usage = new Map<string, { grossNano: string; pending?: number }>();
   const analytics = new Map<string, { customerNet: string | null; platformNet: string; pending?: number }>();
@@ -57,7 +57,10 @@ function fakeModelvia(options: { marginReport?: Row[]; customerCheckout?: string
         money: { currency: 'AUD', customerGrossNanoAud: a.customerNet, customerCreditsNanoAud: '0', customerNetNanoAud: a.customerNet, unknownCustomerPriceRequests: 0,
           platformGrossNanoAud: a.platformNet, platformCreditsNanoAud: '0', platformNetNanoAud: a.platformNet, commercialSnapshotRequests: 1 } } });
     }
-    if (path === '/v1/client/margin-report' && options.marginReport) return Response.json({ period: u.searchParams.get('period'), customers: options.marginReport });
+    // Modelvia `managed-gateway/margin-report.ts:134-144` (4be5c37): the client-scope report envelope.
+    if (path === '/v1/client/margin-report' && options.marginReport) return Response.json({ schemaVersion: 1, period: u.searchParams.get('period'), generatedAt: Date.parse('2026-10-01T00:00:00Z'),
+      scope: { role: 'client', clientId: CLIENT }, filters: { period: u.searchParams.get('period') }, currency: 'AUD', gstInclusive: true, rows: options.marginReport,
+      totals: {}, unsettledRequests: options.unsettledRequests ?? 0, semantics: { periodBasis: 'request_admission_brisbane_month' } });
     return Response.json({ error: 'not_found' }, { status: 404 });
   };
   const finalize = (id: string, period: string, totalCents: string, gstCents: string, override: Row = {}) =>
@@ -227,11 +230,25 @@ test('margin view: AI retail, Modelvia cost, markup, care, total and margin per 
   assert.match(csv[1], /^2026-09,company-a,Fictional Agency A,resale,1\.30,1\.00,0\.30,125\.00,126\.30,125\.30,RB-000001,closed,1\.30,CI-00000021,analytics,,30\.00,,not_synced$/);
   assert.match(csv[2], /^2026-09,company-owner,"Owner, ""Office"" =HQ",client_funded,0\.00,0\.20,-0\.20,0\.00,0\.00,-0\.20,,not_closed,0\.00,,analytics,/);
   assert.equal(csv[3], '2026-09,,Total,,1.30,1.20,0.10,125.00,126.30,125.10,,,,,,,,,');
-  // The margin report, once Modelvia serves it, replaces analytics without a RealBud change.
-  const reported = fakeModelvia({ marginReport: [{ customerId: CUSTOMER, customerNetNanoAud: '2600000000', platformNetNanoAud: '2000000000' }] });
+  // The margin report replaces analytics: one row per customer × client-funded
+  // flag, summed per customer; a row with no customer (the client's own usage) is skipped.
+  // Rows as Modelvia `managed-gateway/margin-report.ts:121-133` (MarginAmounts & MarginRow, 4be5c37) serves them.
+  const marginRow = (customerId: string | null, clientFunded: boolean, retail: string | null, wholesale: string, markup: string | null): Row => ({
+    key: `customer:${customerId}`, clientId: CLIENT, customerId, clientFunded, usedBy: { kind: 'customer', customerId, displayName: 'Fictional Agency A', projectId: null },
+    requests: 2, customerRetailNanoAud: retail, customerRetailExGstNanoAud: null, unknownCustomerPriceRequests: retail === null ? 1 : 0,
+    wholesaleNanoAud: wholesale, wholesaleExGstNanoAud: '0', platformFeeNanoAud: '0', clientMarkupNanoAud: markup, clientMarkupExGstNanoAud: null, clientMarginBasisPoints: null });
+  const rows = [marginRow(CUSTOMER, false, '2600000000', '2000000000', '600000000'), marginRow(CUSTOMER, true, '0', '500000000', '0'), marginRow(null, false, '9990000000', '7770000000', '2220000000')];
+  const reported = fakeModelvia({ marginReport: rows });
   const fromReport = await officeMargins({ billing, modelvia: reported.client, clientFundedCompanies: new Set() }, '2026-09');
-  assert.deepEqual([fromReport.rows[0].modelviaSource, fromReport.rows[0].aiRetailCents, fromReport.rows[0].markupCents], ['margin_report', '260', '60']);
+  assert.deepEqual([fromReport.rows[0].modelviaSource, fromReport.rows[0].aiRetailCents, fromReport.rows[0].modelviaCostCents, fromReport.rows[0].markupCents, fromReport.rows[0].note],
+    ['margin_report', '260', '250', '10', null]);
   assert.ok(!reported.calls.some(c => c.includes('/v1/client/analytics?') && c.includes(CUSTOMER)), 'no analytics read for a reported customer');
+  // An unknown price on either row, or unsettled requests in the period, is provisional.
+  for (const options of [{ marginReport: [rows[0], marginRow(CUSTOMER, false, null, '1', null)] }, { marginReport: rows, unsettledRequests: 3 }]) {
+    const provisional = await officeMargins({ billing, modelvia: fakeModelvia(options).client, clientFundedCompanies: new Set() }, '2026-09');
+    assert.equal(provisional.rows[0].modelviaSource, 'margin_report');
+    assert.match(provisional.rows[0].note!, /provisional/);
+  }
   // No client key: care still shows, Modelvia columns are empty and say why.
   const bare = await officeMargins({ billing, clientFundedCompanies: new Set() }, '2026-09');
   assert.deepEqual([bare.rows[0].careCents, bare.rows[0].aiRetailCents, bare.rows[0].modelviaSource], ['12500', null, 'unavailable']);
@@ -380,4 +397,68 @@ test('a close that loses a race to another process reports already_closed, and t
   const closed = await closeOfficeMonth({ ...options, modelvia: racing }, 'company-a', '2026-09', 'care-v1');
   assert.equal(closed.ai, 'already_closed');
   assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length, 1);
+});
+
+// Modelvia `managed-gateway/http.ts:111-116` (4be5c37): a rate-limited answer is 429
+// `{error, retryAfterSeconds}` with a `Retry-After` header in whole seconds.
+const limited = (retryAfter?: string) => new Response(JSON.stringify({ error: 'rate_limited', retryAfterSeconds: Number(retryAfter) || 1 }),
+  { status: 429, headers: { 'content-type': 'application/json', ...(retryAfter === undefined ? {} : { 'retry-after': retryAfter }) } });
+/** The fake's routes, answered first by any queued faults; waits are recorded, never slept. */
+function withFaults(m: ReturnType<typeof fakeModelvia>, faults: Response[]) {
+  const waits: number[] = [], methods: string[] = [];
+  const fetchLike: HttpTransport = async (url, init) => { methods.push(String(init.method)); return faults.shift() ?? m.fetchLike(url, init); };
+  return { waits, methods, client: modelviaClientBilling({ serviceOrigin: 'https://api.modelvia.dev', clientId: CLIENT, clientKey: () => CLIENT_KEY, fetch: fetchLike, sleep: async ms => { waits.push(ms); } }) };
+}
+
+test('a 429 waits Modelvia\'s bounded Retry-After (5 s default, 30 s cap) and repeats the GET once', async () => {
+  const m = fakeModelvia(); m.finalize('CI-00000031', '2026-09', '130', '12');
+  for (const [header, wait] of [['2', 2000], [undefined, 5000], ['120', 30000], ['soon', 5000]] as const) {
+    const f = withFaults(m, [limited(header)]);
+    assert.equal((await f.client.customerInvoice(CUSTOMER, 'CI-00000031')).id, 'CI-00000031');
+    assert.deepEqual(f.waits, [wait]); assert.deepEqual(f.methods, ['GET', 'GET']);
+  }
+  const twice = withFaults(m, [limited('1'), limited('1')]);
+  await assert.rejects(twice.client.customerInvoice(CUSTOMER, 'CI-00000031'), /modelvia_rate_limited/);
+  assert.equal(twice.methods.length, 2, 'one repeat only');
+});
+
+test('a 404 keeps Modelvia\'s own meaning: a foreign or missing customer is not a missing invoice', async () => {
+  const m = fakeModelvia();
+  // Modelvia `managed-gateway/accounts.ts:151` and `customer-invoices.ts:145` (4be5c37), sent as `{error}` by `http.ts:711`.
+  for (const [body, code] of [[{ error: 'account_not_found' }, /modelvia_account_not_found/], [{ error: 'customer_invoice_not_found' }, /modelvia_customer_invoice_not_found/],
+    // `platform-admin.ts:281`: an unknown route, not a record the office lost.
+    [{ error: 'not_found' }, /modelvia_rejected/], ['not json', /modelvia_rejected/]] as const) {
+    const f = withFaults(m, [new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 404 })]);
+    await assert.rejects(f.client.customerInvoice(CUSTOMER, 'CI-00000032'), code);
+  }
+});
+
+test('the requests CSV backs off on 429 while paging analytics, and never fails the export or exceeds one page budget', async () => {
+  // Modelvia `managed-gateway/customer-invoices.ts:499-501` (4be5c37): the requests CSV.
+  const csv = 'invoice_id,request_id,usage_period,usage_date,model,line,amount_nano_aud,amount_cents,gst_cents\r\n'
+    + 'CI-00000041,req:1,2026-08,,deepseek-v4.1-flash,0,10000000,1,0\r\nCI-00000041,req:2,2026-09,,deepseek-v4.1-flash,0,10000000,1,0\r\n';
+  // `usage-analytics.ts:81-84`: one page of `recentRequests` and its `recentRequestsPage`.
+  const page = (period: string, ids: string[], nextCursor: string | null) => Response.json({ schemaVersion: 1, period,
+    recentRequests: ids.map(requestId => ({ requestId, createdAt: Date.parse(`${period}-02T00:00:00Z`), projectId: null, model: 'deepseek-v4.1-flash',
+      tokens: { input: '10', output: '2', totalInput: '10' }, usedBy: { kind: 'customer', customerId: CUSTOMER, displayName: 'Fictional Agency A', projectId: null } })),
+    recentRequestsPage: { limit: 500, cursor: null, nextCursor } });
+  const run = async (answer: (period: string, cursor: string | null) => Response) => {
+    const waits: number[] = []; let analytics = 0;
+    const client = modelviaClientBilling({ serviceOrigin: 'https://api.modelvia.dev', clientId: CLIENT, clientKey: () => CLIENT_KEY, sleep: async ms => { waits.push(ms); },
+      fetch: async url => { const u = new URL(url); if (u.pathname.endsWith('/requests.csv')) return new Response(csv, { headers: { 'content-type': 'text/csv' } });
+        analytics++; return answer(u.searchParams.get('period')!, u.searchParams.get('requestsCursor')); } });
+    return { rows: await client.customerInvoiceRequests!(CUSTOMER, 'CI-00000041'), waits, analytics: () => analytics };
+  };
+  let limitedOnce = true;
+  const backedOff = await run(period => period === '2026-09' && limitedOnce ? (limitedOnce = false, limited('1')) : page(period, [period === '2026-08' ? 'req:1' : 'req:2'], null));
+  assert.deepEqual(backedOff.rows.map(r => [r.requestId, r.usedBy, r.tokensIn]), [['req:1', 'Fictional Agency A', '10'], ['req:2', 'Fictional Agency A', '10']]);
+  assert.deepEqual(backedOff.waits, [1000]);
+  // Still limited after the one repeat: the money rows stand, unenriched where analytics was not read.
+  const stillLimited = await run(period => period === '2026-09' ? limited('1') : page(period, ['req:1'], null));
+  assert.deepEqual(stillLimited.rows.map(r => [r.requestId, r.amountCents, r.usedBy ?? null]), [['req:1', '1', 'Fictional Agency A'], ['req:2', '1', null]]);
+  // Endless pages that never find a row stop at one budget for the whole export,
+  // below Modelvia's 600 API reads a minute per key (`rate-limit.ts:45`), read one at a time (`rate-limit.ts:216`).
+  const endless = await run((period, cursor) => page(period, [], String(Number(cursor ?? 0) + 1)));
+  assert.equal(endless.analytics(), 400);
+  assert.equal(endless.rows.length, 2);
 });
