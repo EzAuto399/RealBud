@@ -1,4 +1,6 @@
 import { appVersion } from "./app-version.ts";
+import { errorReply } from "./http-error-reply.ts";
+import { sweepStaleTempFiles } from "./temp-sweep.ts";
 import { LiveStreamRecovery } from "../shared/live-stream.ts";
 import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
@@ -391,6 +393,7 @@ async function defaultSelection() {
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 let bootSelection = { instanceId: "", model: "" };
+sweepStaleTempFiles(DATA_DIR);
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -409,10 +412,7 @@ if (PRODUCT_MODE) {
       : undefined,
   );
 }
-for (const bot of store.bots) {
-  const threadIds = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
-  for (const threadId of threadIds) store.settleOpenRequests(threadId);
-}
+store.settleAllOpenRequests();
 
 const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   ...bot,
@@ -3117,6 +3117,8 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
+/** Work an update must not cut short: a turn, a browser task, a held workspace operation. */
+function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0; }
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -3179,6 +3181,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (websiteWorkSettingsMutation(path, method)) websiteAuthorityEpoch++;
     if (path === "/api/service/stop" && method === "POST") {
       if (!SERVICE_CONTROL.accepts(req, await readBody(req))) return json(res, 403, { error: "This desktop does not control the current office service." });
+      if ((await readBody(req)).ifIdle === true && serviceBusy()) return json(res, 409, { error: "Bud is still working. Try again when it finishes.", code: "service_busy" });
       res.once("finish", () => { setImmediate(() => process.emit("SIGTERM")); });
       return json(res, 200, { stopping: true });
     }
@@ -3200,7 +3203,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     if (path === "/api/service/status" && method === "GET") {
       res.setHeader("cache-control", "no-store");
-      return json(res, 200, managedService.status());
+      return json(res, 200, { ...managedService.status(), askStore: store.recoveryStatus() });
     }
     if (path.startsWith("/api/company/")) {
       res.setHeader("cache-control", "no-store");
@@ -5378,7 +5381,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id });
+      return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
+        busy: serviceBusy() });
     }
 
     // ── provider instances (model picker) ──
@@ -5705,10 +5709,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
 
     return json(res, 404, { error: `no route: ${method} ${path}` });
   } catch (e) {
-    const status = (e as { status?: number })?.status ?? 500;
-    const code = typeof (e as { code?: unknown })?.code === "string" ? (e as { code: string }).code : undefined;
-    const error = e instanceof Error ? e.message : String(e);
-    return json(res, status, code ? { error, code } : { error });
+    const reply = errorReply(e);
+    return json(res, reply.status, reply.body);
   } finally {
     if (countedPrivateRequest) privateBackupRequests--;
   }
@@ -6118,6 +6120,9 @@ const askModelRelay = await startAskModelRelay({
   oplog("boot", `Ask model relay unavailable: ${error instanceof Error ? error.message : String(error)}`);
   return null;
 });
+// A client whose event loop stalled past Node's 5 s default reuses a socket we
+// already closed and sees a reset instead of our answer (e.g. a 507).
+server.keepAliveTimeout = 65_000;
 server.listen(PORT, "127.0.0.1", () => {
   if (!privateRestoreLocked) loops?.start();
   // An approved window that was never confirmed is still missing coverage, so a

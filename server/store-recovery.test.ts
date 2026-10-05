@@ -24,12 +24,14 @@ vi.mock("./atomic.ts", async original => {
   return { ...actual, writeFileAtomic: (...args: Parameters<typeof actual.writeFileAtomic>) => {
     const mode = args[0] === state.failWritePath ? state.writeFailure : "";
     if (mode === "before") throw new Error("fictional private path: disk write refused");
+    if (mode === "full") throw Object.assign(new Error("ENOSPC: fictional private path"), { code: "ENOSPC", syscall: "write" });
     actual.writeFileAtomic(...args);
     if (mode === "after") throw new Error("fictional private path: publication reply unavailable");
   } };
 });
 
 const { Store, StoreRecoveryError } = await import("./store.ts");
+const { DiskFullError } = await import("./private-json.ts");
 const selection = (): ModelSelection => ({ instanceId: "hermes", model: "default" });
 const threadId = "fictional-recovery-thread";
 const transcript = () => join(state.dir, `messages-${threadId}.json`);
@@ -43,6 +45,16 @@ const recovery = (work: () => unknown) => {
   expect(error).toBeInstanceOf(StoreRecoveryError);
   expect(error).toMatchObject({ status: 503, code: "store_recovery_required", message: expect.stringContaining("need recovery") });
   expect(String(error)).not.toContain("fictional private");
+};
+
+/** A damaged catalog opens a restricted store instead of stopping boot. */
+const held = () => {
+  const store = new Store(selection);
+  expect(store.recoveryStatus().held).toBe(true);
+  recovery(() => store.createBot());
+  recovery(() => store.createGroup("blocked", []));
+  expect(store.bots).toEqual([]); expect(store.groups).toEqual([]);
+  return store;
 };
 
 beforeEach(() => {
@@ -63,7 +75,7 @@ it("treats missing catalogs and transcripts as fresh and persists their first re
 it.each(["bots.json", "groups.json"])("preserves malformed %s and allows a clean retry only after correction", name => {
   const path = join(state.dir, name), raw = "{fictional interrupted catalog";
   writeFileSync(path, raw);
-  recovery(() => new Store(selection)); recovery(() => new Store(selection));
+  held(); held().seedIfEmpty();
   expect(readFileSync(path, "utf8")).toBe(raw);
   writeFileSync(path, "[]");
   expect(new Store(selection).bots).toEqual([]);
@@ -79,7 +91,7 @@ it.each([
 ] as const)("preserves structurally invalid %s: %j", (name, value) => {
   const path = join(state.dir, name), raw = JSON.stringify(value);
   writeFileSync(path, raw);
-  recovery(() => new Store(selection));
+  held();
   expect(readFileSync(path, "utf8")).toBe(raw);
 });
 
@@ -87,7 +99,7 @@ it("checks both catalogs before writing any legacy metadata migration", () => {
   const botsPath = join(state.dir, "bots.json"), groupsPath = join(state.dir, "groups.json");
   const original = JSON.stringify([{ ...bot(), chiefOfStaff: true, hidden: true }]);
   writeFileSync(botsPath, original); writeFileSync(groupsPath, "{interrupted");
-  recovery(() => new Store(selection));
+  held();
   expect(readFileSync(botsPath, "utf8")).toBe(original);
   expect(readFileSync(groupsPath, "utf8")).toBe("{interrupted");
 });
@@ -126,7 +138,7 @@ it.each(["EACCES", "EIO", "ENOTDIR", "EISDIR"])("preserves unreadable catalogs a
     writeFileSync(path, raw);
     const store = new Store(selection);
     state.deniedPath = path; state.code = code;
-    const read = name.startsWith("messages-") ? () => store.messagesFor(threadId) : () => new Store(selection);
+    const read = name.startsWith("messages-") ? () => store.messagesFor(threadId) : () => new Store(selection).createGroup("probe", []);
     recovery(read); recovery(read);
     expect(state.attempts).toBeGreaterThanOrEqual(2);
     state.deniedPath = "";
@@ -181,4 +193,59 @@ it("does not mistake an existing directory for a missing transcript", () => {
   const store = new Store(selection); mkdirSync(transcript());
   recovery(() => store.appendMessage(threadId, { role: "user", kind: "text", text: "blocked" }));
   expect(existsSync(transcript())).toBe(true); expect(readdirSync(transcript())).toEqual([]);
+});
+
+it("reports a full disk before publication as 507 with nothing changed, and a retry appends exactly once", () => {
+  const store = new Store(selection);
+  store.appendMessage(threadId, { role: "user", kind: "text", text: "confirmed history" });
+  const original = readFileSync(transcript(), "utf8");
+  state.failWritePath = transcript(); state.writeFailure = "full";
+  let error: unknown;
+  try { store.appendMessage(threadId, { role: "bot", kind: "text", text: "answer while full" }); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(DiskFullError);
+  expect(error).toMatchObject({ status: 507, code: "disk_full", committed: false });
+  expect(readFileSync(transcript(), "utf8")).toBe(original);
+  expect(store.activePath(threadId).map(row => row.text)).toEqual(["confirmed history"]);
+  state.writeFailure = "";
+  store.appendMessage(threadId, { role: "bot", kind: "text", text: "answer while full" });
+  expect(new Store(selection).activePath(threadId).map(row => row.text)).toEqual(["confirmed history", "answer while full"]);
+});
+
+it("marks a save that landed despite the error as committed so it is never re-appended", () => {
+  const store = new Store(selection);
+  state.failWritePath = transcript(); state.writeFailure = "after";
+  let error: unknown;
+  try { store.appendMessage(threadId, { role: "user", kind: "text", text: "landed once" }); } catch (caught) { error = caught; }
+  expect(error).toMatchObject({ status: 503, committed: true });
+  state.writeFailure = "";
+  expect(store.messagesFor(threadId).map(row => row.text)).toEqual(["landed once"]);
+});
+
+it("puts the catalog back when a full disk refuses a bot save, keeping live objects and transient state", () => {
+  writeFileSync(join(state.dir, "bots.json"), JSON.stringify([bot()]));
+  const store = new Store(selection), live = store.bot("bud")!;
+  store.patchBot("bud", { busy: true });
+  state.failWritePath = join(state.dir, "bots.json"); state.writeFailure = "full";
+  expect(() => store.patchBot("bud", { title: "refused while full" })).toThrow(DiskFullError);
+  expect(() => store.createBot()).toThrow(DiskFullError);
+  expect(store.bots).toHaveLength(1);
+  expect(store.bot("bud")).toBe(live);
+  expect(live).toMatchObject({ title: "", busy: true });
+  state.writeFailure = "";
+  store.patchBot("bud", { unread: true });
+  expect(JSON.parse(readFileSync(join(state.dir, "bots.json"), "utf8"))).toMatchObject([{ id: "bud", title: "", unread: true }]);
+});
+
+it("boots past a damaged inactive transcript, preserves its bytes and holds only that task", () => {
+  const inactive = "fictional-damaged-task", raw = "{fictional interrupted transcript";
+  writeFileSync(join(state.dir, "bots.json"), JSON.stringify([{ ...bot(), tasks: [...bot().tasks, { threadId: inactive, title: "Old task", createdAt: 1, resumeCursors: {} }] }]));
+  writeFileSync(transcript(), JSON.stringify([{ ...message(), role: "bot", kind: "options", card: { title: "Allow?", subtitle: "", options: [], requestId: "r1" } }]));
+  writeFileSync(join(state.dir, `messages-${inactive}.json`), raw);
+  const store = new Store(selection);
+  store.settleAllOpenRequests();
+  expect(store.recoveryStatus()).toEqual({ held: false, threads: [inactive] });
+  expect(store.messagesFor(threadId)[0]?.card).toMatchObject({ answered: "deny", dismissed: true });
+  recovery(() => store.appendMessage(inactive, { role: "user", kind: "text", text: "blocked" }));
+  expect(readFileSync(join(state.dir, `messages-${inactive}.json`), "utf8")).toBe(raw);
+  store.appendMessage(threadId, { role: "user", kind: "text", text: "the active task still works" });
 });

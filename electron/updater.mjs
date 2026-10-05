@@ -9,7 +9,10 @@
 // the packaged app ships no node_modules.
 import { app, ipcMain } from "electron";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { runUpdaterAction } from "./updater-action.mjs";
+import { serviceIdentity } from "./service-instance.mjs";
+import { prepareServiceForUpdate } from "./update-service-handoff.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -53,14 +56,39 @@ export function registerUpdaterIpc() {
       (e) => setState({ status: "error", message: String(e?.message ?? e) }),
     );
   });
-  ipcMain.handle("update:install", () => {
-    // isSilent, isForceRunAfter — relaunch straight into the new version
-    try {
-      autoUpdater?.quitAndInstall(true, true);
-    } catch (e) {
-      setState({ status: "error", message: String(e?.message ?? e) });
+  ipcMain.handle("update:install", () => install());
+}
+
+// The detached office service would otherwise keep running the old version
+// under the new window. Install only once it is idle and provably stopped;
+// while Bud is working, wait and try again by itself.
+const DEFER_RETRY_MS = 30_000;
+let installing = null;
+let deferTimer = null;
+const DEFERRED = {
+  busy: "Bud is still working. RealBud will restart to update when the work finishes.",
+  "cannot-stop": "RealBud could not stop the office service for this update. Stop it in Settings & help, then restart to update.",
+  "still-running": "The office service is still stopping. RealBud will try the update again shortly.",
+};
+function install() {
+  if (installing) return installing;
+  installing = (async () => {
+    if (!autoUpdater) return;
+    clearTimeout(deferTimer);
+    // Same rule as realbudDataDir() in main.mjs: the service identity is its data directory.
+    const dataDirectory = process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || join(app.getPath("home"), ".realbud");
+    const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory) });
+    if (!handoff.ready) {
+      setState({ status: "downloaded", deferred: handoff.reason, message: DEFERRED[handoff.reason] });
+      if (handoff.reason !== "cannot-stop") deferTimer = setTimeout(() => void install(), DEFER_RETRY_MS);
+      deferTimer?.unref?.();
+      return;
     }
-  });
+    // isSilent, isForceRunAfter — relaunch straight into the new version
+    autoUpdater.quitAndInstall(true, true);
+  })().catch((e) => setState({ status: "error", message: String(e?.message ?? e) }))
+    .finally(() => { installing = null; });
+  return installing;
 }
 
 export function startUpdater(mainWindow) {
@@ -89,7 +117,7 @@ export function startUpdater(mainWindow) {
     setState({ status: "downloading", percent: Math.round(p?.percent ?? 0) }),
   );
   autoUpdater.on("update-downloaded", (info) =>
-    setState({ status: "downloaded", version: info?.version }),
+    setState({ status: "downloaded", version: info?.version, deferred: undefined, message: undefined }),
   );
   autoUpdater.on("error", reportError);
 

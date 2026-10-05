@@ -350,7 +350,11 @@ describe("Store", () => {
     store.createBot();
     writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
 
-    expect(() => new Store(selection)).toThrow(/need recovery/);
+    const held = new Store(selection);
+    held.seedIfEmpty();
+    expect(held.recoveryStatus().held).toBe(true);
+    expect(held.bots).toEqual([]);
+    expect(() => held.createBot()).toThrow(/need recovery/);
     expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe("{not json");
   });
 
