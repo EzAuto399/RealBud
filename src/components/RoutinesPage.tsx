@@ -20,6 +20,8 @@ import { buildScheduleRows, RECOVERY_NOTICE, stableOrder, type ScheduleRow } fro
 import { filterScheduleRows, scheduleRowSection, type ScheduleFilter } from "@/lib/schedule-presentation";
 import { acknowledgeActivity, JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
+import { AustinPackCard, AustinPlanDetail, parseAustinPackView } from "./schedule/AustinPackCard";
+import type { AustinPackView } from "@shared/austin-pack";
 import { JobRunFeed } from "./desk/JobRunFeed";
 import { ExecutionHistory } from "./schedule/ExecutionHistory";
 import { FlaggedReceipt, JobDrawer, LoopDetail, type LoopTimingChange } from "./schedule/JobDrawer";
@@ -45,6 +47,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [austin, setAustin] = useState<AustinPackView | null>(null);
   const [busy, setBusy] = useState<LoopId | null>(null);
   const [error, setError] = useState("");
   const [pauseNotice, setPauseNotice] = useState("");
@@ -80,6 +83,10 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
       dispatch({ type: "jobRuns", runs: receipts.runs ?? [] });
       setRecipes(jobs.recipes ?? []);
       setJobsError("");
+      // The Austin checklist is extra: its failure never hides the jobs.
+      void api("/api/austin-pack", undefined, { timeoutMs: 15_000 }).then(parseAustinPackView).then(
+        (view) => { if (mounted.current && request === refreshFlight.current) setAustin(view); },
+        () => { if (mounted.current && request === refreshFlight.current) setAustin(null); });
     } catch (cause) {
       if (!mounted.current || request !== refreshFlight.current) return;
       setJobsError(cause instanceof Error ? cause.message : "Saved jobs could not load. Try again.");
@@ -487,7 +494,12 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
 
   let drawerBody: ReactNode = null;
   if (drawer?.mode === "create") drawerBody = workspace;
-  else if (drawer?.mode === "packs") drawerBody = <WorkflowPacksCard onInstalled={refreshSchedule} className="mb-0 border-0 bg-transparent p-0" />;
+  else if (drawer?.mode === "packs") drawerBody = (
+    <>
+      <AustinPackCard view={austin} loops={state.loops} onChanged={(view) => { setAustin(view); void refreshSchedule().catch(() => {}); }} className="mb-4" />
+      <WorkflowPacksCard onInstalled={refreshSchedule} className="mb-0 border-0 bg-transparent p-0" />
+    </>
+  );
   else if (drawer?.mode === "archive") {
     drawerBody = (
       <div className="space-y-3">
@@ -548,6 +560,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           onOpenSetup={() => changeDrawer({ mode: "packs" })}
           onOpenDesk={openDesk}
           registerCloseGuard={registerCloseGuard}
+          about={<AustinPlanDetail view={austin} loopId={loop.id} />}
         />
         </>
       );
@@ -596,6 +609,9 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
             <p className="text-[14px] text-ink-secondary">No jobs yet.</p>
             <button type="button" onClick={openCreate} className="pm-control mt-2 rounded border border-line px-3 text-[13px] text-ink hover:bg-selected">Add a job</button>
           </div>
+        ) : null}
+        {austin?.installed && austin.checklist.some((item) => !item.done) ? (
+          <AustinPackCard view={austin} loops={state.loops} onChanged={setAustin} className="mb-3" />
         ) : null}
         {visibleRows.length ? (
           <>

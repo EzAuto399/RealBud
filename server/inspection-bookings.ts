@@ -120,6 +120,17 @@ export async function planBase(properties: HistoryProperty[], history: Inspectio
   };
 }
 
+/** The monthly Inspection draft loop: refreshes the saved draft from Desk, history
+ * and rules (accepted and moved visits stay pinned) and says it is ready. Books nothing. */
+export async function runInspectionDraft(host: { bookings: InspectionBookingsStore; history: InspectionHistoryStore; rules: InspectionRulesStore;
+  properties: () => HistoryProperty[]; today: () => Promise<string> }): Promise<{ ok: true; status: 'awaiting-approval' | 'completed'; detail: string }> {
+  const base = await planBase(host.properties(), host.history, host.rules);
+  if (!base.properties.length) return { ok: true, status: 'completed', detail: 'No properties to plan yet. Add properties on Desk; the next draft includes them.' };
+  const { plan } = (await host.bookings.draft({ planStart: await host.today(), base })).draft!;
+  const toAccept = plan.appointments.filter(a => a.status === 'draft').length;
+  return { ok: true, status: 'awaiting-approval', detail: `New inspection draft ready to review: ${toAccept} to accept, ${plan.holds.length} held. Nothing is booked.` };
+}
+
 /** /api/inspections*. Called only behind the desktop session check. */
 export function createInspectionsApi(host: { bookings: InspectionBookingsStore; history: InspectionHistoryStore; rules: InspectionRulesStore;
   properties: () => HistoryProperty[]; recovery: () => boolean; today: () => string }) {

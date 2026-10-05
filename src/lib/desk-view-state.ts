@@ -38,6 +38,11 @@ export function openDeskTasks() {
   Object.assign(view, { mode: "cases", hermios: false, otherWork: null, filter: "now", selectedId: null, query: "", caseKind: "all", taskScope: null });
   emit();
 }
+/** Opens Bills (expected bills and Maintenance checks) from a setup link. */
+export function openDeskBills() {
+  Object.assign(view, { mode: "cases", hermios: false, otherWork: "bills" });
+  emit();
+}
 /** Return to the queue with one case selected, so leaving Ask lands back on the
  *  case the operator was working rather than on an arbitrary row. Filter and
  *  search are cleared because the case may sit outside the current filter. */

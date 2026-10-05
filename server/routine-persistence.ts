@@ -47,6 +47,7 @@ export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFil
       if (!validCalendarCadence(clock as CalendarCadence)) invalid();
       schedule = { time: clock.time, weekdays: [...new Set(clock.weekdays as number[])].sort((a, b) => a - b), ...(typeof clock.timezone === 'string' ? { timezone: clock.timezone } : {}) };
       if (clock.intervalDays !== undefined) Object.assign(schedule, { intervalDays: clock.intervalDays, anchorDate: clock.anchorDate });
+      if (clock.monthly !== undefined) Object.assign(schedule, { monthly: clock.monthly });
     }
     state[id] = { enabled: value.enabled, handledThrough: value.handledThrough, ...(schedule ? { schedule } : {}), ...(value.revision === undefined ? {} : { revision: Number(value.revision) }) };
   }

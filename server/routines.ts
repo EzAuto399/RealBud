@@ -84,7 +84,7 @@ export function coverageFromUncoveredHeld(
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
 /** Off until an office turns them on, and runnable from Schedule while off. */
-const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check'];
+const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
 /** Ceiling on one run. Generous next to the worker's own 20s timeout — this
@@ -154,13 +154,16 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     description:
       "Collects your reviewed Gmail scope, prepares priorities with Bud and keeps your saved task decisions. Starts only after agency setup and plan review.",
     available: true,
-    schedule: { type: "daily", time: "08:00", weekdays: WEEKDAYS },
+    // The time is when collection starts, not when the list is finished:
+    // starting 07:30 aims for priorities ready by about 08:00 (decision 2026-10-01).
+    schedule: { type: "daily", time: "07:30", weekdays: WEEKDAYS },
     evaluatorId: "inbound-triage",
     evaluatorVersion: 1,
   },
   {
-    id: 'bank-references', name: 'Bank reference review', available: false,
-    description: 'Every two days: export the selected bank account, review references and reconcile the REI preview. Account mapping and original/corrected examples still need qualification.',
+    // Off until the office reviews it and turns it on. A run without saved bank and REI accounts holds with a plain reason (server/w1-host.ts).
+    id: 'bank-references', name: 'Bank reference review', available: true,
+    description: 'Every two days: gets the ANZ rows (from Redbark when connected, otherwise from a CSV you add in the bank review), adds REI tenant references, waits until you sign in to REI, then asks before uploading. Needs a bank source and the REI tenant list saved.',
     schedule: { type: 'daily', time: '08:00', weekdays: [0,1,2,3,4,5,6], intervalDays: 2, anchorDate: '2026-10-02' },
     evaluatorId: 'bank-references', evaluatorVersion: 1,
   },
@@ -181,8 +184,16 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     // Off until an office enables it. Reads REI in the work browser up to a preview; saving needs the person.
     id: 'rei-supplier-check', name: 'Supplier list check', available: true,
     description: "Checks REI's supplier list for added or removed suppliers and shows changes for you to approve.",
-    schedule: { type: 'daily', time: '08:15', weekdays: [1] },
+    // Fortnightly, Mondays 08:15, from the first Monday after the owner's 6 October design.
+    schedule: { type: 'daily', time: '08:15', weekdays: [0,1,2,3,4,5,6], intervalDays: 14, anchorDate: '2026-10-12' },
     evaluatorId: 'rei-supplier-check', evaluatorVersion: 1,
+  },
+  {
+    // Off until an office enables it. Refreshes the saved draft only; nothing is booked (server/inspection-bookings.ts).
+    id: 'inspection-draft', name: 'Inspection draft', available: true,
+    description: 'On the first weekday of each month, refreshes the six-month inspection draft from your rules and history and tells you it is ready to review. Nothing is booked.',
+    schedule: { type: 'daily', time: '09:00', weekdays: WEEKDAYS, monthly: 'first-weekday' },
+    evaluatorId: 'inspection-draft', evaluatorVersion: 1,
   },
 ];
 
@@ -235,7 +246,7 @@ export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?:
   // Up to seven cycles covers an interval restricted to selected weekdays.
   // Start at the anchor when it lies beyond the normal search horizon.
   const start = schedule.anchorDate ? Math.max(after, Date.parse(`${schedule.anchorDate}T00:00:00Z`) - 2 * 86_400_000) : after;
-  const horizon = Math.max(8, (schedule.intervalDays ?? 1) * 7 + 2);
+  const horizon = schedule.monthly ? 40 : Math.max(8, (schedule.intervalDays ?? 1) * 7 + 2);
   if (!timeZone) {
     for (let offset = 0; offset <= horizon; offset++) {
       const d = new Date(start);
@@ -446,13 +457,14 @@ export class LoopManager {
     const nextCadence: CalendarCadence = patch.intervalDays === null ? {} : {
       intervalDays: patch.intervalDays ?? loop.schedule.intervalDays,
       anchorDate: patch.anchorDate ?? loop.schedule.anchorDate,
+      ...(loop.schedule.monthly ? { monthly: loop.schedule.monthly } : {}),
     };
     if (!validCalendarCadence(nextCadence)) throw Object.assign(new Error('Choose an interval of 1–31 calendar days and a valid first date.'), { status: 400 });
     // compare by content: catalog arrays are shared references
     const nextDays = (patch.weekdays ?? currentOverride?.weekdays ?? loop.schedule.weekdays).slice().sort((a, b) => a - b);
     const clockChanged =
       nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(",") || nextZone !== loop.schedule.timezone ||
-      nextCadence.intervalDays !== loop.schedule.intervalDays || nextCadence.anchorDate !== loop.schedule.anchorDate;
+      nextCadence.intervalDays !== loop.schedule.intervalDays || nextCadence.anchorDate !== loop.schedule.anchorDate || nextCadence.monthly !== loop.schedule.monthly;
     if (!clockChanged && !wantsEnable) return cloneLoop(loop);
     this.commit(() => {
       if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays, ...(nextZone ? { timezone: nextZone } : {}), ...nextCadence });
@@ -484,10 +496,10 @@ export class LoopManager {
     return this.patchClock(id, { enabled });
   }
 
-  /** A loop the catalog declares unavailable (bank-references) becomes
-   * runnable once the office opts in, here: its bank account and REI account
-   * are saved (server/w1-host.ts). It still runs only after the office turns
-   * it on; its saved on/off choice is kept while it is unavailable. */
+  /** A loop the catalog declares unavailable becomes runnable once the office
+   * opts in. No catalog loop is unavailable today: bank-references is available
+   * and holds with a plain reason until its accounts are saved, so the W1
+   * startup hook's call is a no-op. Its saved on/off choice is kept. */
   setAvailable(id: LoopId, available: boolean): void {
     const loop = this.loops.find((candidate) => candidate.id === id);
     const declared = LOOP_CATALOG.find((item) => item.id === id);

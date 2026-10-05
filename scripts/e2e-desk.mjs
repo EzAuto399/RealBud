@@ -144,7 +144,7 @@ try {
   const inbound = loops?.loops?.find((l) => l.id === "inbound-triage");
   check(
     "five named loops; inbound is available but disabled until agency setup enables it",
-    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review,rei-supplier-check" &&
+    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review,rei-supplier-check,inspection-draft" &&
       loops.loops[0].available === true && loops.loops[1].available === true &&
       inbound?.available === true && inbound?.enabled === false && inbound?.nextRunAt === null,
     `inbound available=${inbound?.available} enabled=${inbound?.enabled} nextRunAt=${inbound?.nextRunAt}`,

@@ -56,7 +56,8 @@ import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanc
 import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
 import { createPropertyReferenceApi, createPropertyReferenceStore } from './property-bill-references.ts';
 import { createInspectionHistoryStore } from './inspection-history.ts';
-import { createInspectionBookingsStore, createInspectionsApi } from './inspection-bookings.ts';
+import { createInspectionBookingsStore, createInspectionsApi, runInspectionDraft } from './inspection-bookings.ts';
+import { createAustinPack } from './austin-pack.ts';
 import { bindWorkflowSettings } from './workflow-settings-broker.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createLoopChatCards } from './loop-chat-cards.ts';
@@ -2486,7 +2487,7 @@ function emitLoopAndPulse(payload: unknown) {
   void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check'].includes(rec.run.loopId)) return;
+  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'].includes(rec.run.loopId)) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2527,6 +2528,10 @@ loops = new LoopManager({
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
     if (loop.id === 'rei-supplier-check') return (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail));
     // W4: reads saved reviewed bills only; no mail, model or browser call.
+    // W5: refreshes the saved inspection draft monthly; nothing is booked.
+    if (loop.id === 'inspection-draft') return runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
+      properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })),
+      today: async () => (await import('./redbark-source.ts')).localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined) });
     if (loop.id === 'maintenance-review') return runMaintenanceReview(run, { store: maintenanceReview, directory: supplierDirectory,
       bills: () => { const today = new Date().toISOString().slice(0, 10); return sourceBills().snapshot({ from: today, to: today }).occurrences; },
       weekly: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
@@ -3506,7 +3511,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {
@@ -3918,6 +3923,14 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
       const result = await maintenanceReviewApi(url, method, method === 'GET' ? undefined : await readBody(req, 2_100_000));
       return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown maintenance check action.' });
+    }
+    if (path === '/api/austin-pack' || path === '/api/austin-pack/install') {
+      res.setHeader('cache-control', 'no-store');
+      if (path === '/api/austin-pack' && method === 'GET') return json(res, 200, await austinPack.view());
+      if (path !== '/api/austin-pack/install' || method !== 'POST') return json(res, 405, { error: 'Use GET for the Austin pack and POST to install it.' });
+      if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) return json(res, 503, { error: 'Recover the private book and schedule before installing the Austin pack.' });
+      return json(res, 200, await austinPack.install());
     }
     if (path === '/api/inspection-rules') {
       res.setHeader('cache-control', 'no-store');
@@ -5936,9 +5949,22 @@ const inspectionRulesApi = createInspectionRulesApi({ store: inspectionRules, re
 const propertyReferencesApi = createPropertyReferenceApi({ store: createPropertyReferenceStore(), recovery: () => desk.recovery.active || privateRestoreLocked,
   properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address, ...(p.propertyCode ? { propertyCode: p.propertyCode } : {}) })) });
 // W5 inspection history + saved plan (accepted bookings, moves). Nothing is booked in Property Inspect.
-const inspectionsApi = createInspectionsApi({ rules: inspectionRules, history: createInspectionHistoryStore(), bookings: createInspectionBookingsStore(),
+const inspectionHistory = createInspectionHistoryStore(), inspectionBookings = createInspectionBookingsStore();
+const inspectionsApi = createInspectionsApi({ rules: inspectionRules, history: inspectionHistory, bookings: inspectionBookings,
   properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })), recovery: () => desk.recovery.active || privateRestoreLocked,
   today: () => new Date().toLocaleDateString('en-CA') });
+// Austin pack: six workflows with Brisbane schedules and plain plans, installed off; office edits are kept (server/austin-pack.ts).
+const austinPack = createAustinPack({ loops: { listLoops: () => loops!.listLoops(), patchClock: (id, patch) => loops!.patchClock(id, patch) },
+  officeTimeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null,
+  maintenance: maintenanceReview, inspection: inspectionRules,
+  signals: async () => {
+    const gmail = connectedAppAccess.status(connectedAppsConfigured(cfg)).services.gmail;
+    let tenants = 0, suppliers = 0;
+    try { tenants = (await import('./tenant-directory.ts')).createTenantDirectoryStore(workflowDatabase()).read().directory?.tenants.length ?? 0; } catch { /* its recovery shows in Bank reference review */ }
+    try { suppliers = (await supplierDirectory.read()).suppliers.length; } catch { /* its recovery shows in Maintenance checks */ }
+    return { gmail: Boolean(gmail?.connected) || Boolean(gmailReadOnlyMode(cfg) && gmailReadOnlyBinding(cfg)?.accountId), redbark: w1Lab ? true : (await redbark.connector.state().catch(() => null))?.status === 'connected', tenants, suppliers };
+  } });
+onSignInSettled(event => { if (event.outcome === 'signed_in' && event.site === 'REI Cloud') void austinPack.noteReiSignedIn().catch(() => {}); });
 /** A changed agency setup clears its workflow reviews, so its mail work stops until they are reviewed again. */
 function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),

@@ -30,6 +30,14 @@ it('notifies once when the weekly supplier check finds a change, and stays quiet
   notifyRoutineRun(run); notifyRoutineRun({ ...run, id: 'fictional-supplier-unchanged', status: 'completed', seenAt: 1 });
   expect(notices).toEqual([{ title: 'Supplier list check', options: expect.objectContaining({ body: 'Supplier list changed in REI: 1 added — review.' }) }]);
 });
+it('tells the property manager once when the monthly inspection draft is ready', () => {
+  const notices: unknown[] = [];
+  class FakeNotification { static permission = 'granted'; constructor(title: unknown, options: unknown) { notices.push({ title, options }); } }
+  vi.stubGlobal('Notification', FakeNotification);
+  const run = { id: 'fictional-inspection-draft', loopId: 'inspection-draft', loopName: 'Inspection draft', status: 'awaiting-approval', detail: 'New inspection draft ready to review: 4 to accept, 1 held. Nothing is booked.' } as LoopRun;
+  notifyRoutineRun(run); notifyRoutineRun(run);
+  expect(notices).toEqual([{ title: 'Inspection draft', options: expect.objectContaining({ body: expect.stringMatching(/^New inspection draft ready to review/) }) }]);
+});
 it('notifies once while a run waits at REI sign-in, once more for the midday reminder, never for a restart\'s same line, and for the miss', () => {
   const notices: Array<{ options: { body: string } }> = [];
   class FakeNotification { static permission = 'granted'; onclick: unknown = null; constructor(_title: unknown, options: { body: string }) { notices.push({ options }); } }

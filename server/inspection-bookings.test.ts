@@ -3,7 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createInspectionBookingsStore, createInspectionsApi, type PlanBase } from './inspection-bookings.ts';
+import { createInspectionBookingsStore, createInspectionsApi, planBase, runInspectionDraft, type PlanBase } from './inspection-bookings.ts';
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionRulesStore, defaultInspectionRules } from './inspection-rules.ts';
 import { removeFixture } from './testing/private-fixture.ts';
@@ -72,5 +72,30 @@ describe('inspections api', () => {
     expect((await api('/api/inspections/draft', 'GET'))!.status).toBe(405);
     recovery = true;
     await expect(api('/api/inspections/draft', 'POST', {})).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe('inspection draft loop', () => {
+  it('refreshes the saved draft, keeps accepted visits and says it is ready without booking', async () => {
+    const d = await dir();
+    const rules = createInspectionRulesStore({ file: join(d, 'r.json') });
+    await rules.save({ expectedRevision: 0, rules: { ...defaultInspectionRules(), inspectors: ['fictional-inspector-A'] } });
+    const history = createInspectionHistoryStore({ file: join(d, 'h.json') });
+    await history.importCsv({ expectedRevision: 0, csv: 'id,area,last completed\nSYN-P01,Northvale,2026-05-10', properties: portfolio.properties });
+    const bookings = createInspectionBookingsStore({ file: join(d, 'b.json') });
+    const properties = () => portfolio.properties.map((p: { id: string; address: string }) => ({ id: p.id, address: p.address }));
+    const host = { bookings, history, rules, properties, today: async () => '2026-10-05' };
+    const first = await runInspectionDraft(host);
+    expect(first).toMatchObject({ ok: true, status: 'awaiting-approval' });
+    expect(first.detail).toMatch(/^New inspection draft ready to review: 1 to accept, \d+ held\. Nothing is booked\.$/);
+    const saved = await bookings.read();
+    const visit = saved.draft!.plan.appointments[0]!;
+    await bookings.accept({ ids: [visit.id], expectedRevision: saved.revision, base: await planBase(properties(), history, rules) });
+    const again = await runInspectionDraft({ ...host, today: async () => '2026-11-02' });
+    const rerun = (await bookings.read()).draft!;
+    expect(rerun.planStart).toBe('2026-11-02');
+    expect(rerun.plan.appointments.find(a => a.id === visit.id)).toMatchObject({ date: visit.date, time: visit.time, status: 'accepted' });
+    expect(again.detail).toMatch(/0 to accept/);
+    expect(await runInspectionDraft({ ...host, properties: () => [] })).toMatchObject({ status: 'completed', detail: expect.stringMatching(/No properties/) });
   });
 });

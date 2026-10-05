@@ -204,7 +204,7 @@ export function LoopTiming({
   const [interval, setIntervalDays] = useState(loop.schedule.intervalDays ?? 0);
   const [anchor, setAnchor] = useState(loop.schedule.anchorDate ?? '');
   useEffect(() => { setIntervalDays(loop.schedule.intervalDays ?? 0); setAnchor(loop.schedule.anchorDate ?? ''); }, [loop.schedule.intervalDays, loop.schedule.anchorDate]);
-  const cadenceEditable = ['weekly-bills', 'bank-references'].includes(loop.id);
+  const cadenceEditable = ['weekly-bills', 'bank-references', 'rei-supplier-check'].includes(loop.id);
   const dirty = time !== loop.schedule.time || days.join(",") !== savedDays || interval !== (loop.schedule.intervalDays ?? 0) || anchor !== (loop.schedule.anchorDate ?? '');
   const toggleDay = (day: number) =>
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
@@ -230,7 +230,7 @@ export function LoopTiming({
           aria-label={`${loop.name} time of day`}
           className="pm-control rounded-lg border border-line bg-sheet px-2 text-[13px] text-ink"
         />
-        {interval === 0 && <div className="flex min-w-0 flex-wrap items-center gap-1" role="group" aria-label={`${loop.name} days`}>
+        {interval === 0 && !loop.schedule.monthly && <div className="flex min-w-0 flex-wrap items-center gap-1" role="group" aria-label={`${loop.name} days`}>
           {WEEKDAYS_MON_FIRST.map((day) => {
             const name = DAY_NAMES[day];
             const active = days.includes(day);
@@ -292,8 +292,11 @@ export function LoopDetail({
   onOpenSetup,
   onOpenDesk,
   registerCloseGuard,
+  about,
 }: {
   loop: Loop;
+  /** What the job does, from an installed pack (AustinPlanDetail). */
+  about?: ReactNode;
   /** This job's clock receipts, newest first. */
   runs: readonly LoopRun[];
   /** Shown at the top of the drawer by FlaggedReceipt; not repeated here. */
@@ -378,6 +381,7 @@ export function LoopDetail({
         </p>
       ) : null}
       {activeRun?.detail ? <p role="status" className="text-[13px] text-hold">{activeRun.detail}</p> : null}
+      {about}
 
       {/* TODO(phase 4): Change with Bud — Ask cannot apply schedule changes yet (server/schedule-intent.ts redirects). */}
       {manualOnly ? null : agencyTimed ? (

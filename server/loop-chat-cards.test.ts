@@ -33,6 +33,13 @@ describe('loop chat cards', () => {
     expect(h.broadcasts).toEqual([{ kind: 'message', threadId: 'thread-active', message: h.appended[0].message }]);
   });
 
+  it('posts the monthly inspection draft as one card', async () => {
+    const h = harness();
+    await h.post(run({ id: 'r-inspection', loopId: 'inspection-draft', loopName: 'Inspection draft', status: 'awaiting-approval', detail: 'New inspection draft ready to review: 4 to accept, 1 held. Nothing is booked.' }));
+    expect(h.appended).toHaveLength(1);
+    expect(h.appended[0].message.card).toMatchObject({ title: 'Inspection draft', options: ['Open'], opens: 'desk' });
+  });
+
   it('stays quiet for seen, unsettled or other-loop runs', async () => {
     const h = harness();
     await h.post(run({ seenAt: 5 }));

@@ -94,7 +94,7 @@ try {
 
   // ── 1. Off until enabled; turn on in Schedule; Run now waits at REI sign-in and says so; other loops keep running ──
   let loop = (await request('/api/loops')).loops.find(l => l.id === 'rei-supplier-check');
-  assert.deepEqual([loop.enabled, loop.available, loop.schedule.time, loop.schedule.weekdays, loop.nextRunAt], [false, true, '08:15', [1], null]);
+  assert.deepEqual([loop.enabled, loop.available, loop.schedule.time, loop.schedule.intervalDays, loop.schedule.anchorDate, loop.nextRunAt], [false, true, '08:15', 14, '2026-10-12', null]);
   await page.goto(`${demo.base}/#/desk`);
   await page.getByRole('button', { name: /^Schedule\b/ }).first().click();
   await page.getByRole('button', { name: 'Open job: Supplier list check', exact: true }).click();

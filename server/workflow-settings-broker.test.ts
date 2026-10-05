@@ -71,7 +71,7 @@ describe("working rules broker", () => {
     expect(result.structuredContent.settings).toMatchObject({
       maintenance_month_rule: { revision: 0, values: { basis: "invoiceDate", span: "calendarMonth" }, previous: [] },
       inspection_rules: { revision: 0, values: { cycleMonths: 6, cycleBasis: "completed" }, previous: [] },
-      morning_priorities: { revision: 0, values: { localTime: "08:00", weekdays: [1, 2, 3, 4, 5], followUpAfterDays: 3 }, previous: null },
+      morning_priorities: { revision: 0, values: { localTime: "07:30", weekdays: [1, 2, 3, 4, 5], followUpAfterDays: 3 }, previous: null },
     });
     expect(cards).toEqual([]);
     expect(approve).not.toHaveBeenCalled();
@@ -83,8 +83,8 @@ describe("working rules broker", () => {
     expect(await call("workflow_settings_propose", { target: "maintenance_month_rule", values: { span: "rolling30" }, reason: "Sherry compares the last 30 days." }))
       .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
     expect(cards[0]).toBe("Change maintenance month rule\nComparison window: calendar month → rolling 30 days\nWhy: Sherry compares the last 30 days.");
-    expect(await call("workflow_settings_propose", { target: "morning_priorities", values: { localTime: "07:30", weekdays: [1, 3, 5] }, reason: "Earlier\nstart‮" })).toMatchObject({ isError: true });
-    expect(cards[1]).toBe("Change Morning priorities preferences\nTime: 8:00 am → 7:30 am\nDays: Mon, Tue, Wed, Thu, Fri → Mon, Wed, Fri\nSaving changes the agency setup, so Morning priorities and Weekly bills turn off until their setup is reviewed again.\nWhy: Earlier start");
+    expect(await call("workflow_settings_propose", { target: "morning_priorities", values: { localTime: "07:00", weekdays: [1, 3, 5] }, reason: "Earlier\nstart‮" })).toMatchObject({ isError: true });
+    expect(cards[1]).toBe("Change Morning priorities preferences\nTime: 7:30 am → 7:00 am\nDays: Mon, Tue, Wed, Thu, Fri → Mon, Wed, Fri\nSaving changes the agency setup, so Morning priorities and Weekly bills turn off until their setup is reviewed again.\nWhy: Earlier start");
     // Bud's reason never adds lines of its own to the card.
     expect(cards.map(card => card.split("\n").length)).toEqual([3, 5]);
     expect((await maintenance.read()).revision).toBe(0);
