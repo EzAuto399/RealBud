@@ -304,9 +304,9 @@ function personReferences(messages: ReadonlyArray<unknown>): string[] {
  * a model's text or another thread's file. */
 export async function threadAttachedFiles(dataDir: string, messages: ReadonlyArray<unknown>, otherThreads: ReadonlyArray<ReadonlyArray<unknown>> = []): Promise<Array<{ name: string; path: string }>> {
   let folder: string;
-  // realpathSync, as saveAskAttachment (server/ask-attach.ts) names the copy:
-  // on Windows the native realpath expands 8.3 short names and normalises
-  // case, so it would not match the path written into the thread.
+  // The same (non-native) realpathSync saveAskAttachment uses for the copy's
+  // path. The native realpath expands Windows 8.3 names (RUNNER~1), so the
+  // person's own reference would never match its folder.
   try { folder = realpathSync(join(dataDir, "vault", "ask-uploads")); } catch { return []; }
   const elsewhere = new Set(otherThreads.flatMap(personReferences));
   const found: Array<{ name: string; path: string }> = []; const names = new Set<string>();

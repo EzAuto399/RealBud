@@ -59,7 +59,12 @@ describe("seeded book folders", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rb-vault-seed-")));
     try {
       const book = seedVault(join(root, "vault"));
-      for (const name of [BUD_WORK_FOLDER, "uploads", "properties", "decisions"]) expect(lstatSync(join(book, name)).mode & 0o777).toBe(0o700);
+      for (const name of [BUD_WORK_FOLDER, "uploads", "properties", "decisions"]) {
+        const stat = lstatSync(join(book, name));
+        expect(stat.isDirectory() && !stat.isSymbolicLink()).toBe(true);
+        // Mode bits are POSIX; Windows privacy is the ACL admission seedVault already passed.
+        if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0o700);
+      }
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

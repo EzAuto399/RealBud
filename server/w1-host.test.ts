@@ -2,6 +2,8 @@
 // the real review store and coverage cursor, the durable run, and the FICTIONAL
 // REI-style portal through the real broker and recipe runner (w1-lab.ts).
 // No network, no bank, no REI account: a pass proves wiring and guards only.
+// Timeouts: windowsAdmissionTimeout counts were measured on macOS, where the
+// polling helpers read the saved files more often, so they are a ceiling.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
 import { createW1Host } from "./w1-host.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
+import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 const ACCOUNT = "acct_FictionalTrust0001", CONNECTION = "conn_FictionalAnz0001";
 const TODAY = "2026-10-02";
@@ -86,7 +89,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
 }
 
 describe("W1 host", () => {
-  it("runs pull → review → sign-in → upload preview → person posts → readback → confirm, and the next pull adds nothing", async () => {
+  it("runs pull → review → sign-in → upload preview → person posts → readback → confirm, and the next pull adds nothing", windowsAdmissionTimeout(413), async () => {
     const f = await fixture();
     await expect(f.call("/api/w1/runs/start")).rejects.toThrow(/Choose the bank account/);
     await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
@@ -126,7 +129,7 @@ describe("W1 host", () => {
     expect((await f.host.status()).run).toMatchObject({ step: "review", fetch: { transactionIds: ["txn_fk_w1-late"] } });
   });
 
-  it("after a lost upload reply checks REI before any second upload, and holds a mismatched preview", async () => {
+  it("after a lost upload reply checks REI before any second upload, and holds a mismatched preview", windowsAdmissionTimeout(848), async () => {
     const f = await fixture();
     await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
     await f.lab.handle({ action: "sign-in" });
@@ -164,7 +167,7 @@ describe("W1 host", () => {
     expect(now.run).toMatchObject({ outcome: "abandoned" });
   });
 
-  it("imports a batch with a held debit and an excluded credit: only the import rows go to REI and are confirmed", async () => {
+  it("imports a batch with a held debit and an excluded credit: only the import rows go to REI and are confirmed", windowsAdmissionTimeout(346), async () => {
     const f = await fixture();
     f.bank.rows.push(txn("txn_fk_w1-3", "2026-10-02", 78000, "FT-GOLF"), txn("txn_fk_w1-debit", "2026-10-02", -1500, "FICTIONAL FEE"), txn("txn_fk_w1-unclear", "2026-10-01", 12000, "FICTIONAL UNKNOWN"));
     await f.configure();
@@ -190,7 +193,7 @@ describe("W1 host", () => {
     expect((await f.host.status()).run).toMatchObject({ step: "review", fetch: { transactionIds: ["txn_fk_w1-debit"] } });
   });
 
-  it("after a lost reply whose file reached REI, finds it pending and hands it to the person instead of uploading again", async () => {
+  it("after a lost reply whose file reached REI, finds it pending and hands it to the person instead of uploading again", windowsAdmissionTimeout(432), async () => {
     const f = await fixture();
     await f.configure();
     await f.lab.handle({ action: "sign-in" });
@@ -210,7 +213,7 @@ describe("W1 host", () => {
     expect((await f.lab.handle({ action: "status" })).uploads).toBe(1);
   });
 
-  it("Stop ends the REI stage in flight and starts nothing more; a sign-in handover holds every REI stage", async () => {
+  it("Stop ends the REI stage in flight and starts nothing more; a sign-in handover holds every REI stage", windowsAdmissionTimeout(328), async () => {
     const f = await fixture();
     await f.configure();
     await f.lab.handle({ action: "sign-in" });
@@ -260,7 +263,7 @@ describe("W1 host", () => {
     expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
   });
 
-  it("self-serve REI sign-in: opens REI for the person and continues once signed in; wrong account or a timeout stays put", async () => {
+  it("self-serve REI sign-in: opens REI for the person and continues once signed in; wrong account or a timeout stays put", windowsAdmissionTimeout(312), async () => {
     const outcomes: Array<"signed_in" | "stopped" | "timed_out" | "wrong_account"> = ["timed_out", "wrong_account", "signed_in"];
     const calls: Array<{ site: string; reason: string; signal: boolean }> = [];
     let lab: Awaited<ReturnType<typeof fixture>>["lab"] | null = null;
@@ -285,7 +288,7 @@ describe("W1 host", () => {
     expect(calls).toEqual(Array(3).fill({ site: "rei-cloud", reason: "Import bank receipts", signal: true }));
   });
 
-  it("cold start: opens the work browser, hands REI's sign-in page to the person, then continues", async () => {
+  it("cold start: opens the work browser, hands REI's sign-in page to the person, then continues", windowsAdmissionTimeout(234), async () => {
     const browser = { open: false, connects: 0, signIns: 0 };
     let lab: Awaited<ReturnType<typeof createW1Lab>> | null = null;
     const f = await fixture(made => { lab = made; return {
@@ -319,7 +322,7 @@ describe("W1 host", () => {
     expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
   });
 
-  it("saves the REI account by its top-bar business code with ANZ(csv file) by default; a saved reicid still works", async () => {
+  it("saves the REI account by its top-bar business code with ANZ(csv file) by default; a saved reicid still works", windowsAdmissionTimeout(225), async () => {
     const f = await fixture();
     const saved = await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 }) as unknown as { settings: Record<string, unknown> };
     expect(saved.settings).toMatchObject({ rei: { marker: FICTIONAL_BUSINESS }, bankFormat: "ANZ(csv file)" });
@@ -338,7 +341,7 @@ describe("W1 host", () => {
     expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
   });
 
-  it("reads a pending import only on Bulk Receipting: a pending-import recipe that opens Pending Transactions is never run", async () => {
+  it("reads a pending import only on Bulk Receipting: a pending-import recipe that opens Pending Transactions is never run", windowsAdmissionTimeout(297), async () => {
     const f = await fixture(made => ({ load: async () => {
       const pack = await made.load();
       const recipe = pack.recipes["bulk-receipting-pending"];
@@ -358,7 +361,7 @@ describe("W1 host", () => {
     expect((await f.lab.handle({ action: "status" })).uploads).toBe(1);
   });
 
-  it("a different business in REI's top bar stops the run before anything is uploaded", async () => {
+  it("a different business in REI's top bar stops the run before anything is uploaded", windowsAdmissionTimeout(255), async () => {
     const f = await fixture();
     await f.configure();
     await f.lab.handle({ action: "sign-in" });

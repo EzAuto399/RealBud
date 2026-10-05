@@ -1,17 +1,19 @@
 // The readiness checks read `config.yaml` as Hermes' own parser (PyYAML) will.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyPropertyPack, policyDocument, propertyProfileDir, strictBool, workerLimitsReady } from "./hermes-pack.ts";
+import { privateFixtureRoot, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
-const home = () => { const dir = realpathSync(mkdtempSync(join(tmpdir(), "rb-yaml-"))); dirs.push(dir); return dir; };
+// The profile home must be private on Windows; overwriting config.yaml keeps its ACL.
+const home = () => { const dir = privateFixtureRoot(join(tmpdir(), "rb-yaml-")); dirs.push(dir); return dir; };
 
-describe("policy document", () => {
+describe("policy document", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it("keeps a bare y/n a string as PyYAML does, and counts only canonical true/false as a security switch", () => {
     const doc = policyDocument("a: n\nb: N\nc: y\nd: yes\ne: false\nf: False\ng: true\n");
     expect(doc.toJS()).toEqual({ a: "n", b: "N", c: "y", d: true, e: false, f: false, g: true });

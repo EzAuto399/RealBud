@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { canonicalServiceEntitlementPayload, readServiceEntitlement } from "./se
 import { installReceivedServiceBundle } from "./service-entitlement-install.ts";
 import { createServiceGrantRenewal, SERVICE_GRANT_COPY, SERVICE_GRANT_EARLY_RETRY_MS, SERVICE_GRANT_RETRY_MS, SERVICE_GRANT_SETTLED_RETRY_MS } from "./service-entitlement-renewal.ts";
 import { PINNED_SERVICE_ISSUERS } from "../shared/service-issuer-trust.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 import { parseServiceGrantDelivery, SERVICE_GRANT_REQUEST } from "../shared/office-link.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
@@ -14,7 +15,7 @@ const DAY = 86_400_000;
 const COMPANY = "fictional-office", HOST = "fictional-host";
 const CREDENTIAL = `rbc_${"c".repeat(64)}`;
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) await removeFixture(root); });
 
 function signer(keyId = "fictional-issuer") {
   const keys = generateKeyPairSync("ed25519");
@@ -33,8 +34,8 @@ function delivery(s: Signer, patch: { expiresAt?: number; companyId?: string; ho
       trust: { schema: 1, keys: [{ keyId: s.keyId, publicKeyPem: s.publicKeyPem }] } } };
 }
 function dataDir() {
-  const dir = mkdtempSync(join(tmpdir(), "realbud-grant-renewal-")); roots.push(dir);
-  writeFileSync(join(dir, "service-installation.json"), JSON.stringify({ schema: 1, companyId: COMPANY, hostInstallationId: HOST }), { mode: 0o600 });
+  const dir = privateTempRoot(join(tmpdir(), "realbud-grant-renewal-")); roots.push(dir);
+  plantPrivateFile(join(dir, "service-installation.json"), JSON.stringify({ schema: 1, companyId: COMPANY, hostInstallationId: HOST }));
   return dir;
 }
 const localGrant = (dir: string, now = NOW) => readServiceEntitlement({ managed: true, path: join(dir, "service-entitlement.json"),
@@ -53,7 +54,7 @@ describe("the desktop grant reply contract", () => {
 });
 
 describe("installing a received grant", () => {
-  it("pins the stated digest, binds this computer and never downgrades a longer grant", async () => {
+  it("pins the stated digest, binds this computer and never downgrades a longer grant", windowsAdmissionTimeout(70), async () => {
     const dir = dataDir(), s = signer();
     const first = delivery(s, { expiresAt: NOW + 200 * DAY });
     await expect(installReceivedServiceBundle({ dataDirectory: dir, bundle: first.bundle, expectedPublicKeySha256: "0".repeat(64), now: NOW }, pins(s))).rejects.toThrow();

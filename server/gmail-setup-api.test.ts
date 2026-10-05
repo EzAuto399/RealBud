@@ -91,7 +91,8 @@ async function settledBud() {
 async function authorizeGmail() {
   expect((await api("POST", "/api/bots/bud/messages", { text: "Connect Gmail" })).status).toBe(202);
   const bot = await settledBud();
-  expect(bot.messages.at(-1).text).toContain("https://connect.composio.dev/fixture-consent");
+  // On failure, name the provider calls and the service's own log tail.
+  expect(bot.messages.at(-1).text, `${calls.map(call => `${call.method} ${call.path}`).join("\n")}\n${stderr.slice(-3000)}`).toContain("https://connect.composio.dev/fixture-consent");
   return bot.messages.at(-1).text as string;
 }
 async function loseConsentResponse() {

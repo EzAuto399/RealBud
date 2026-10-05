@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
@@ -257,7 +258,7 @@ describe("full browser actions in RealBud's own work browser", () => {
     const bytes = Buffer.from("%PDF-1.7\nFictional statement\n"); f.download(bytes);
     const body = JSON.parse((await f.request("browser_download", { tab_id: 1, ref: "@e3" })).content[0].text);
     expect(body.attachment.name).toBe("Fictional statement.pdf");
-    expect(body.attachment.path.startsWith(join(await realpath(f.root), "vault", "ask-uploads"))).toBe(true);
+    expect(body.attachment.path.startsWith(join(realpathSync(f.root), "vault", "ask-uploads"))).toBe(true);
     expect(await readFile(body.attachment.path)).toEqual(bytes);
     if (process.platform !== "win32") expect((await stat(body.attachment.path)).mode & 0o777).toBe(0o600);
     await f.request("browser_read", { tab_id: 1 });

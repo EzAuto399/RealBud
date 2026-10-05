@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { removeFixture } from "./testing/private-fixture.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowDatabase } from "./workflow-database.ts";
@@ -231,7 +232,7 @@ describe("REI tenant directory", () => {
     const output = reviewBankReferences(batch, [{ rowId: batch.rows[0].id, action: "import", propertyId: "A31", reason: "Fictional check" }]);
     expect(output.csv).toBe(anzRow("850.00", "PAYMENT FROM ROBIN FICTIONALSON", "ROBIN FICTIONALSON", "", "A31 FICTIONALSON"));
   });
-  it("is used as the directory when a prepare request carries a tenant list", () => {
+  it("is used as the directory when a prepare request carries a tenant list", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bud-tenants-"));
     try {
       const store = new BankReferenceStore(new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) }));
@@ -243,7 +244,7 @@ describe("REI tenant directory", () => {
       // The same bank file with a different list meets the existing review instead of replacing it.
       expect(() => store.create({ ...upload(source, fallback), tenantList: tenants.replace("$850.00", "$900.00") })).toThrow(/different mapping/);
       expect(() => store.create({ ...upload(source, fallback), tenantList: 7 })).toThrow(/tenant list/);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { await removeFixture(dir); }
   });
 });
 
@@ -283,10 +284,12 @@ describe("first pass over a fictional bank-feed (Redbark) batch", () => {
 });
 
 describe("saved ANZ review", () => {
-  it("returns the first pass with each read, saves the reviewed copy and passes saved-review validation", () => {
+  it("returns the first pass with each read, saves the reviewed copy and passes saved-review validation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bud-anz-"));
+    let db: WorkflowDatabase | undefined;
     try {
-      const store = new BankReferenceStore(new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) }));
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const store = new BankReferenceStore(db);
       const created = store.create(upload());
       expect(created.firstPass?.summary).toEqual({ rows: 27, matched: 14, invoice: 2, exception: 8, notRent: 3, carried: 0 });
       expect(created.value.batch).not.toHaveProperty("firstPass");
@@ -294,6 +297,6 @@ describe("saved ANZ review", () => {
       expect(reviewed.value.result?.changes).toHaveLength(9);
       expect(store.get(created.id).firstPass?.summary.matched).toBe(14);
       expect(store.importArtifact(created.id).summary).toEqual({ rows: 27, import: 14, hold: 10, exclude: 3 });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { db?.close(); await removeFixture(dir); }
   });
 });

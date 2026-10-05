@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { plantPrivateFile } from "./testing/private-fixture.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createW1Workflow, type W1BankSource, type W1Inspection, type W1Readback, type W1ReiBridge, type W1Session } from "./w1-workflow.ts";
@@ -163,7 +164,8 @@ describe("W1 durable run", () => {
     const before = t.make();
     let run = await before.start({ account: ACCOUNT, destination: DEST });
     void before.advance(run.id);
-    for (let i = 0; i < 200 && !t.portal.state.uploads.length; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    // Windows admits each saved write through PowerShell, so the run reaches the upload seconds later there.
+    for (const end = Date.now() + 30_000; Date.now() < end && !t.portal.state.uploads.length;) await new Promise(resolve => setTimeout(resolve, 10));
     expect(t.portal.state.uploads).toHaveLength(1);
     // The same process refuses a second concurrent advance.
     await expect(before.advance(run.id)).rejects.toMatchObject({ status: 409 });
@@ -389,9 +391,9 @@ describe("W1 durable run", () => {
 
   it("holds every run when the saved file is damaged and keeps the file", async () => {
     const dir = tempDir();
-    mkdirSync(join(dir, "w1"), { mode: 0o700 });
     const path = join(dir, "w1", "runs.json");
-    writeFileSync(path, JSON.stringify({ version: 1, kind: "w1-runs", runs: [{ id: "broken" }] }), { mode: 0o600 });
+    // A private file the product saved, whose content is damaged.
+    plantPrivateFile(path, JSON.stringify({ version: 1, kind: "w1-runs", runs: [{ id: "broken" }] }));
     const t = setup(dir);
     await expect(t.make().start({ account: ACCOUNT, destination: DEST })).rejects.toMatchObject({ status: 503 });
     expect(readFileSync(path, "utf8")).toContain("broken");

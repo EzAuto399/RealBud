@@ -124,9 +124,9 @@ jobs:
     name: ACL admission probe (windows-latest)
     if: ${{ github.event_name != 'workflow_dispatch' || (inputs.suite != 'retention' && inputs.suite != 'team' && inputs.suite != 'acp' && inputs.suite != 'restricted-startup') }}
     runs-on: windows-latest
-    # The fixture-dependent suites below took about 80 min in failing CI shards
-    # (several slow tests are now skipped or bounded on Windows); allow for that.
-    timeout-minutes: 120
+    # The fixture-dependent suites below took 104 min on 4 Oct and passed 112
+    # min still running on 5 Oct (no failures); allow for that.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0

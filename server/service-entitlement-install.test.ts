@@ -1,21 +1,22 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalServiceEntitlementPayload, readServiceEntitlement } from './service-entitlement.ts';
 import { installDesktopServiceEntitlement } from './service-entitlement-install.ts';
 import { serviceEntitlementInstallLockPath, withServiceEntitlementInstallLock } from './service-entitlement-install-lock.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const NOW = Date.now();
 const DAY = 86_400_000;
 const roots: string[] = [];
 
 function fixture() {
-  const data = mkdtempSync(join(tmpdir(), 'realbud-service-install-'));
+  const data = privateTempRoot(join(tmpdir(), 'realbud-service-install-'));
   roots.push(data);
   const companyId = 'fictional-company', hostInstallationId = 'fictional-installation';
-  writeFileSync(join(data, 'service-installation.json'), JSON.stringify({ schema: 1, companyId, hostInstallationId }), { mode: 0o600 });
+  plantPrivateFile(join(data, 'service-installation.json'), JSON.stringify({ schema: 1, companyId, hostInstallationId }));
   const keys = generateKeyPairSync('ed25519');
   const publicKeyPem = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
   const fingerprint = createHash('sha256').update(keys.publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
@@ -27,21 +28,21 @@ function fixture() {
       signature: sign(null, Buffer.from(payload), keys.privateKey).toString('base64url') },
       trust: { schema: 1, keys: [{ keyId: 'fictional-issuer', publicKeyPem }] } };
   };
-  const save = (bundle: unknown = makeBundle()) => writeFileSync(bundlePath, JSON.stringify(bundle), { mode: 0o600 });
+  const save = (bundle: unknown = makeBundle()) => plantPrivateFile(bundlePath, JSON.stringify(bundle));
   save();
   const install = (expectedPublicKeySha256 = fingerprint, retirePreviousKeys = false) => installDesktopServiceEntitlement({
     dataDirectory: data, bundlePath, expectedPublicKeySha256, retirePreviousKeys, now: NOW + 1000 });
   return { data, companyId, hostInstallationId, fingerprint, bundlePath, makeBundle, save, install };
 }
 
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('local signed service handoff', () => {
   it('installs the verified public envelope and trust file for the already linked host', async () => {
     const f = fixture();
     await expect(f.install()).resolves.toMatchObject({ companyId: f.companyId, hostInstallationId: f.hostInstallationId, expiresAt: NOW + DAY });
     for (const file of ['service-entitlement.json', 'service-trust-keys.json']) {
-      expect(statSync(join(f.data, file)).mode & 0o777).toBe(0o600);
+      if (process.platform !== 'win32') expect(statSync(join(f.data, file)).mode & 0o777).toBe(0o600);
       expect(readFileSync(join(f.data, file), 'utf8')).not.toContain('PRIVATE KEY');
     }
     expect(readServiceEntitlement({ managed: true, path: join(f.data, 'service-entitlement.json'),
@@ -49,7 +50,7 @@ describe('local signed service handoff', () => {
       hostInstallationId: f.hostInstallationId, now: NOW + 1000 }).state).toBe('active');
   });
 
-  it('refuses a wrong fingerprint, wrong host, expired grant and tampered signature without replacing a good install', async () => {
+  it('refuses a wrong fingerprint, wrong host, expired grant and tampered signature without replacing a good install', windowsAdmissionTimeout(70), async () => {
     const f = fixture();
     await f.install();
     const original = readFileSync(join(f.data, 'service-entitlement.json'), 'utf8');
@@ -113,7 +114,7 @@ describe('local signed service handoff', () => {
     expect(readServiceEntitlement({ managed: true, path: join(f.data, 'service-entitlement.json'),
       trustedKeysPath: trustPath, companyId: f.companyId, hostInstallationId: f.hostInstallationId, now: NOW + 1000 }).state).toBe('active');
     const oldPath = join(f.data, 'old-signed-grant.json');
-    writeFileSync(oldPath, oldGrant, { mode: 0o600 });
+    plantPrivateFile(oldPath, oldGrant);
     expect(readServiceEntitlement({ managed: true, path: oldPath, trustedKeysPath: trustPath,
       companyId: f.companyId, hostInstallationId: f.hostInstallationId, now: NOW + 1000 }).state).toBe('invalid');
   });
@@ -138,7 +139,7 @@ describe('local signed service handoff', () => {
   it('leaves a stale crash lock for explicit recovery instead of guessing from a PID', async () => {
     const f = fixture();
     const lock = serviceEntitlementInstallLockPath(f.data);
-    writeFileSync(lock, JSON.stringify({ schema: 1, pid: 1, startedAt: NOW - DAY, nonce: 'fictional-crash' }), { mode: 0o600 });
+    plantPrivateFile(lock, JSON.stringify({ schema: 1, pid: 1, startedAt: NOW - DAY, nonce: 'fictional-crash' }));
     await expect(f.install()).rejects.toThrow(/already in progress/);
     expect(readFileSync(lock, 'utf8')).toContain('fictional-crash');
     unlinkSync(lock); // operator recovery after confirming no installer runs

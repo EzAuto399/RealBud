@@ -19,7 +19,9 @@ class BrowserChild extends EventEmitter {
   stderr = new PassThrough(); signals: string[] = []; ignoresStop = false;
   kill(signal: string) { this.signals.push(signal); if (!this.ignoresStop) queueMicrotask(() => { this.signalCode = signal; this.emit("exit", null, signal); }); return true; }
 }
-async function fixture({ announce = true, version = endpoint, stopTimeoutMs = 30 } = {}) {
+// disconnect() re-verifies the private profile before closing; on Windows each
+// ACL admission launches PowerShell, so 30 ms cannot cover the confirmed close.
+async function fixture({ announce = true, version = endpoint, stopTimeoutMs = process.platform === "win32" ? 5000 : 30 } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-work-host-")); roots.push(root);
   let reportedVersion = version; let launches = 0; const children: BrowserChild[] = [];
   const calls: { executable: string; args: string[]; env: NodeJS.ProcessEnv }[] = [];

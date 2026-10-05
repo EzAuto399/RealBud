@@ -82,11 +82,14 @@ describe("private file helpers", () => {
       writeFileAtomic(note, "replaced", 0o600);
       expect(readPrivateFileSync(note)).toBe("replaced");
       // A FIFO under the name never holds the host: the open is non-blocking and the type is refused at once.
-      const { execFileSync } = await import("node:child_process");
-      execFileSync("mkfifo", [join(dir, "pipe.md")]);
-      const started = Date.now();
-      expect(() => readPrivateFileSync(join(dir, "pipe.md"))).toThrow(UNSAFE_PRIVATE_FILE);
-      expect(Date.now() - started).toBeLessThan(2_000);
+      // FIFOs are POSIX-only.
+      if (process.platform !== "win32") {
+        const { execFileSync } = await import("node:child_process");
+        execFileSync("mkfifo", [join(dir, "pipe.md")]);
+        const started = Date.now();
+        expect(() => readPrivateFileSync(join(dir, "pipe.md"))).toThrow(UNSAFE_PRIVATE_FILE);
+        expect(Date.now() - started).toBeLessThan(2_000);
+      }
       // Reads are bounded.
       writeFileSync(join(dir, "big.md"), "x".repeat(2_048));
       expect(() => readPrivateFileSync(join(dir, "big.md"), 1_024)).toThrow(UNSAFE_PRIVATE_FILE);

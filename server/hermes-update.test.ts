@@ -13,7 +13,7 @@ import { acquireWorkerSetupLock, bootstrapPlan, runWorkerBootstrap } from "./wor
 import * as profileStorage from "./hermes-profile-storage.ts";
 import * as filePrivacy from "./windows-file-privacy.ts";
 
-import { privateFixtureRoot, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
 
 let home: string;
 const mkdtempSync = privateFixtureRoot;
@@ -289,7 +289,7 @@ it("does not reuse an unreceipted candidate or a selected runtime during repair"
 
 it("keeps malformed completion receipts and refuses them before any installer or verifier runs", async () => {
   const runner = vi.fn(run), verify = vi.fn(async () => version);
-  mkdirSync(join(home, ".runtime-install"), { mode: 0o700 });
+  privateFixtureDirectory(join(home, ".runtime-install"));
   const receipt = join(home, ".runtime-install", "completed-runtime.json");
   writePrivateFixtureFile(receipt, JSON.stringify({ version: 1, candidateId: "../../fictional-other" }));
   const before = readFileSync(receipt);

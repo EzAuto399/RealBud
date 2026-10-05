@@ -45,18 +45,17 @@ const run = `${python} -E -s`;
 // Outputs live under bud-work, the only part of the workroom the sandbox lets a script write.
 const out = join(workroom, "bud-work", "report.xlsx");
 const spec = join(workroom, "spec.json");
-// classifyWorkroomCommand always asks on a Windows host (backslash paths and
-// cmd/PowerShell quoting are not mirrored; see "asks on Windows" below), so
-// the tests that expect `auto` only mean something where paths use "/".
-const autoIt = it.skipIf(sep !== "/");
+// The policy fails closed on a Windows host (backslash paths, cmd/PowerShell
+// quoting): every shape that auto-runs on POSIX must still ask there.
+const auto = sep === "/" ? "auto" : "ask";
 const classify = (command: string, runtimeCommit: string | null = commit) =>
   classifyWorkroomCommand({ command, workroom, runtimeHome, runtimeCommit, platform: "darwin" });
 
 describe("classifyWorkroomCommand", () => {
-  autoIt("runs a reviewed document script with workroom paths only", () => {
-    expect(classify(`${run} ${create} ${spec} ${out}`)).toBe("auto");
-    expect(classify(`${run} '${create}' ${spec} --output=${join(workroom, "bud-work", "out", "report.xlsx")}`)).toBe("auto");
-    expect(classify(`${join(venvBin, "python")} -E -s ${edit} ${join(workroom, "a.docx")} -o ${join(workroom, "bud-work", "b.docx")}`)).toBe("auto");
+  it("runs a reviewed document script with workroom paths only", () => {
+    expect(classify(`${run} ${create} ${spec} ${out}`)).toBe(auto);
+    expect(classify(`${run} '${create}' ${spec} --output=${join(workroom, "bud-work", "out", "report.xlsx")}`)).toBe(auto);
+    expect(classify(`${join(venvBin, "python")} -E -s ${edit} ${join(workroom, "a.docx")} -o ${join(workroom, "bud-work", "b.docx")}`)).toBe(auto);
   });
   it("accepts only the absolute venv python with -E -s right before the script", () => {
     expect(classify(`python3 -E -s ${create} ${spec} ${out}`)).toBe("ask");
@@ -80,13 +79,13 @@ describe("classifyWorkroomCommand", () => {
     expect(classify(`${run} ${create} ${spec} ${out}`, null)).toBe("ask");
     expect(classifyWorkroomCommand({ command: `${run} ${create} ${spec} ${out}`, workroom, runtimeHome, platform: "darwin" })).toBe("ask");
   });
-  autoIt("asks when the script, a sibling helper or the directory listing changed", () => {
+  it("asks when the script, a sibling helper or the directory listing changed", () => {
     const common = join(scripts, "docx", "scripts", "docx_common.py");
     const command = `${run} ${edit} ${join(workroom, "a.docx")}`;
     writeFileSync(common, "# tampered\n");
     expect(classify(command)).toBe("ask");
     writeFileSync(common, "# fictional common\n");
-    expect(classify(command)).toBe("auto");
+    expect(classify(command)).toBe(auto);
     const shadow = join(scripts, "docx", "scripts", "docx.py");
     writeFileSync(shadow, "");
     expect(classify(command)).toBe("ask");
@@ -94,7 +93,7 @@ describe("classifyWorkroomCommand", () => {
     writeFileSync(create, "# tampered create\n");
     expect(classify(`${run} ${create} ${spec} ${out}`)).toBe("ask");
     writeFileSync(create, "# fictional create\n");
-    expect(classify(`${run} ${create} ${spec} ${out}`)).toBe("auto");
+    expect(classify(`${run} ${create} ${spec} ${out}`)).toBe(auto);
   });
   it("asks when a path leaves the workroom or is relative", () => {
     expect(classify(`${run} ${create} ${spec} /tmp/report.xlsx`)).toBe("ask");
@@ -124,12 +123,12 @@ describe("classifyWorkroomCommand", () => {
     expect(classify(`/usr/bin/python3 -E -s ${create} ${spec} ${out}`)).toBe("ask");
     expect(classify(`env ${python} -E -s ${create} ${spec} ${out}`)).toBe("ask");
   });
-  autoIt("allows plain reads of workroom files only", () => {
+  it("allows plain reads of workroom files only", () => {
     const notes = join(workroom, "notes.txt");
-    expect(classify(`cat ${notes}`)).toBe("auto");
-    expect(classify(`head -n 20 ${notes}`)).toBe("auto");
-    expect(classify(`head -c 20 ${notes}`)).toBe("auto");
-    expect(classify(`wc -l ${notes}`)).toBe("auto");
+    expect(classify(`cat ${notes}`)).toBe(auto);
+    expect(classify(`head -n 20 ${notes}`)).toBe(auto);
+    expect(classify(`head -c 20 ${notes}`)).toBe(auto);
+    expect(classify(`wc -l ${notes}`)).toBe(auto);
     expect(classify("cat /etc/passwd")).toBe("ask");
     expect(classify(`cat ${join(workroom, "escape", "other.py")}`)).toBe("ask");
     expect(classify("ls")).toBe("ask");
@@ -150,12 +149,12 @@ describe("classifyWorkroomCommand", () => {
 });
 
 describe("document scripts write only under bud-work", () => {
-  autoIt("auto-runs an output under bud-work and an existing input elsewhere, asks for a new file outside bud-work", () => {
+  it("auto-runs an output under bud-work and an existing input elsewhere, asks for a new file outside bud-work", () => {
     mkdirSync(join(workroom, "bud-work"), { recursive: true });
     const input = join(workroom, "spec.json");
     const classifyScript = (args: string) => classifyWorkroomCommand({ command: `${run} ${create} ${args}`, workroom, runtimeHome, runtimeCommit: commit, platform: "darwin" });
-    expect(classifyScript(`${input} ${join(workroom, "bud-work", "report.xlsx")}`)).toBe("auto");
-    expect(classifyScript(`${input} --out=${join(workroom, "bud-work", "deeper", "report.xlsx")}`)).toBe("auto");
+    expect(classifyScript(`${input} ${join(workroom, "bud-work", "report.xlsx")}`)).toBe(auto);
+    expect(classifyScript(`${input} --out=${join(workroom, "bud-work", "deeper", "report.xlsx")}`)).toBe(auto);
     expect(classifyScript(`${input} ${join(workroom, "new-report.xlsx")}`)).toBe("ask");
     expect(classifyScript(`${input} ${join(workroom, "properties", "planted.md")}`)).toBe("ask");
     expect(classifyScript(`${join(workroom, "missing-input.json")} ${join(workroom, "bud-work", "report.xlsx")}`)).toBe("ask");

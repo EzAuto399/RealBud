@@ -104,9 +104,8 @@ export function startRuntimeUpdate(options: {
   return startBootstrapInstall({
     timeoutMs: options.timeoutMs, release,
     run: async opts => {
-      // Create the lock folder private before the lock opens it: a plain
-      // mkdir under the home inherits an unprotected Windows ACL that every
-      // later private read and write of this folder refuses.
+      // Admit the lock folder before the lock creates it: a plain mkdir would
+      // inherit an unprotected Windows ACL that this admission then refuses.
       await privateDirectory(lockHome);
       const unlock = acquireWorkerSetupLock(lockHome);
       try {
