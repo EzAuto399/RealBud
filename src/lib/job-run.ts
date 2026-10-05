@@ -22,6 +22,8 @@ export function loopRunStatusLabel(status: LoopRunStatus): { label: string; tone
       return { label: "Missed", tone: "danger" };
     case "interrupted":
       return { label: "Interrupted", tone: "danger" };
+    case "resumed":
+      return { label: "Resumed after restart", tone: "muted" };
   }
 }
 

@@ -65,7 +65,7 @@ function FindingCard({ saved, review, busy, onDecide }: { saved: Saved; review: 
 export function MaintenanceFindingsPanel() {
   const { state } = useStore();
   const latest = state.loopRuns?.find(run => run.loopId === 'maintenance-review');
-  // The weekly Supplier list check starts the same REI refresh; each change to its run re-reads the refresh below.
+  // The scheduled Supplier list check starts the same REI refresh; each change to its run re-reads the refresh below.
   const check = state.loopRuns?.find(run => run.loopId === 'rei-supplier-check');
   const [review, setReview] = useState<Review | null>(null), [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const load = useCallback(async () => setReview(readReview(await api('/api/maintenance-review'))), []);

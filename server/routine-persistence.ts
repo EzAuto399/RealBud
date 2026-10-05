@@ -19,7 +19,7 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 8_640_000_000_000_000;
 const positiveInteger = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0;
 const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200 && /^[\w-]+$/.test(value);
-const statuses = new Set(["queued", "running", "completed", "partial", "awaiting-approval", "failed", "missed", "interrupted"]);
+const statuses = new Set(["queued", "running", "completed", "partial", "awaiting-approval", "failed", "missed", "interrupted", "resumed"]);
 function invalid(): never { throw new Error("Invalid saved schedule"); }
 
 /** Existing files are never treated as first-run data unless absent. Version

@@ -72,7 +72,9 @@ export type LoopRunStatus =
   | "partial"
   | "failed"
   | "missed"
-  | "interrupted";
+  | "interrupted"
+  /** Interrupted by a restart, and a new run carried its work on (a REI sign-in wait). */
+  | "resumed";
 
 export interface LevyFromRent {
   amountCents: number;

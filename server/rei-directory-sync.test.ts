@@ -154,7 +154,7 @@ describe("supplier list changes", () => {
   });
 });
 
-describe("weekly Supplier list check (fictional portal)", () => {
+describe("scheduled Supplier list check (fictional portal)", () => {
   it("waits for sign-in and the download ask, ends quietly when unchanged, and holds a change for approval", async () => {
     const f = await fixture(), notes: string[] = [];
     await f.lab.handle({ action: "handover" });

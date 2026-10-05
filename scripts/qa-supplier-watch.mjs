@@ -171,7 +171,7 @@ try {
   await changeCard.first().getByRole('button', { name: /Open$/ }).click();
   await openMaintenance();
   const preview = supplierPreview();
-  await preview.getByText("Bud's weekly check found changes in REI's supplier list. Nothing changes here until you approve.", { exact: true }).waitFor();
+  await preview.getByText("Bud's scheduled check found changes in REI's supplier list. Nothing changes here until you approve.", { exact: true }).waitFor();
   await preview.getByRole('list', { name: 'Suppliers added in REI' }).getByText('FS-PAINT · Fictional Painting · paint@fictional-painting.test', { exact: true }).waitFor();
   await preview.getByRole('list', { name: 'Suppliers removed in REI' }).getByText('FS-ROOF · Fictional Roofing · roof@fictional-roofing.test will no longer count as listed', { exact: true }).waitFor();
   await preview.getByRole('list', { name: 'Supplier emails changed in REI' }).getByText('FS-ELEC · Fictional Electrical: jobs@fictional-electrical.test, invoices@fictional-electrical.test → jobs@fictional-electrical.test, billing@fictional-electrical.test', { exact: true }).waitFor();

@@ -2,7 +2,9 @@
 // hands the page to the person, and carries on once they are signed in.
 // Credentials and verification codes stay with the person: Bud takes no action
 // in that tab (the browser broker refuses steps on a site being handed over)
-// and detects sign-in from the tab's address only, or the person's Done.
+// and detects sign-in from the tab's address only, or the person's Done. The
+// one exception: a long (scheduled) wait reloads the sign-in page in place
+// when it has sat unchanged for 10 minutes, so it is never stale.
 // The address comes from a known site (an installed pack's site map or the
 // office's approved sites) or one the person typed in this conversation; never
 // from a page, an email or a tool result.
@@ -23,6 +25,9 @@ export const SIGN_IN_TURN_WAIT_MS = 240_000;
 const POLL_MS = 2000;
 /** A long wait (until a deadline) reads the address every 20 s; Done and Stop still answer at once. */
 const LONG_POLL_MS = 20_000;
+/** A long wait reloads a sign-in page whose address has not changed for this long: REI's sign-in journey failed
+ * after about 15 idle minutes on one page (docs/REI-LOGIN-TEST.md). */
+export const SIGN_IN_REFRESH_MS = 10 * 60_000;
 export const WRONG_ACCOUNT = "This is signed in to a different account than this task allows. Switch account, then press Done.";
 
 export const SIGN_IN_TOOL = {
@@ -35,7 +40,11 @@ export const SIGN_IN_TOOL = {
 
 export interface SignInSite { key: string; name: string; origin: string; loginUrl: string; signInHosts: string[]; postLogin: string[]; accountParam: string | null }
 export type SignInOutcome = "signed_in" | "stopped" | "timed_out" | "wrong_account";
-export interface SignInRuntime { openSignInTab(url: string): Promise<string>; signInTabUrl(targetId: string): Promise<string | null> }
+export interface SignInRuntime {
+  openSignInTab(url: string): Promise<string>; signInTabUrl(targetId: string): Promise<string | null>;
+  /** Loads `url` again in the same tab: never a second tab. Absent: a long wait does not refresh. */
+  reloadSignInTab?(targetId: string, url: string): Promise<void>;
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Installed packs' website maps. A fixed list, never a request. */
@@ -110,6 +119,14 @@ export function signedInAt(site: SignInSite, value: string | null): boolean {
   // ponytail: login-path heuristic for sites without a map; a site map's postLogin paths are exact.
   if (site.postLogin.length) return site.postLogin.some(path => url.pathname.startsWith(path));
   return !LOGIN_PATH.test(url.pathname) && !LOGIN_WORD.test(url.pathname) && (site.signInHosts.length > 0 || url.href !== new URL(site.loginUrl).href);
+}
+
+/** Still on the site's sign-in page, judged from the address alone: its sign-in host (REI's "Member Login" on
+ * b2clogin), or a login path on the site, such as REI's failed sign-in page. */
+export function onSignInPage(site: SignInSite, value: string | null): boolean {
+  if (!value) return false;
+  let url: URL; try { url = new URL(value); } catch { return false; }
+  return site.signInHosts.includes(url.hostname.toLowerCase()) || url.origin === site.origin && (LOGIN_PATH.test(url.pathname) || LOGIN_WORD.test(url.pathname));
 }
 
 export interface SignInHandoverView { id: string; site: string; origin: string; state: "waiting" | "wrong_account" | "signed_in" | "stopped" | "timed_out"; message: string }
@@ -198,17 +215,24 @@ async function begin(site: SignInSite, url: string, input: { reason: string; acc
   };
   signal?.addEventListener("abort", aborted, { once: true });
   void (async () => {
-    let last: string | null = null;
+    let last: string | null = null, since = started;
     while (!ended()) {
       // The address only: no page read and no action in the person's tab.
       const current = await runtime.signInTabUrl(targetId).catch(() => null);
       if (ended()) return;
       // Twice the same address so a redirect still in flight is not taken as signed in.
       const steady = current !== null && current === last; last = current;
+      if (!steady) since = now();
       if (item.done || steady && signedInAt(site, current)) {
         const shown = current && site.accountParam && new URL(current).origin === site.origin ? new URL(current).searchParams.get(site.accountParam) : null;
         if (item.account && shown !== null && shown !== item.account) { item.state = "wrong_account"; item.done = false; }
         else if (!ended()) { settle("signed_in"); return; }
+      } else if (long && runtime.reloadSignInTab && onSignInPage(site, current) && now() - since >= SIGN_IN_REFRESH_MS) {
+        // A fresh sign-in page in the same tab, from the address first opened (a new sign-in journey). Focus and typing
+        // are not visible from the address, so only a page unchanged for 10 minutes reloads.
+        since = now(); last = null;
+        await runtime.reloadSignInTab(targetId, url).catch(() => {});
+        if (ended()) return;
       }
       await new Promise<void>(resolve => { item.nudge = resolve; void sleep(deps.pollMs ?? (long ? LONG_POLL_MS : POLL_MS), signal).then(resolve); });
     }

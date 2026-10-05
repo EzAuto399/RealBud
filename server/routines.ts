@@ -83,6 +83,8 @@ export function coverageFromUncoveredHeld(
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
+/** A run a restart interrupted whose REI sign-in wait a new run carried on (markResumed). */
+export const RESUMED_DETAIL = "Resumed after restart: Bud carried on with this in a new run.";
 /** Off until an office turns them on, and runnable from Schedule while off. */
 const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'];
 const CATCH_UP_MS = 12 * 60 * 60_000;
@@ -292,6 +294,8 @@ export class LoopManager {
   private executing = new Set<LoopId>();
   /** Releases the clock from a running run that said what it waits for (noteRun). */
   private parking = new Map<string, () => void>();
+  /** Per loop, the run this start interrupted (markResumed). */
+  private restartInterrupted = new Map<LoopId, string>();
   private ledger?: ExecutionHistory<LoopRun, Omit<LoopsFile, "version" | "runs">>;
 
   constructor(options: LoopManagerOptions) {
@@ -365,6 +369,8 @@ export class LoopManager {
         this.commit(() => {
           for (const run of this.runs) {
             if (run.status === "queued" || run.status === "running") {
+              // Only a run that was working can have been waiting (at REI sign-in) for a resume to carry on.
+              if (run.status === "running") this.restartInterrupted.set(run.loopId, run.id);
               run.status = "interrupted";
               run.finishedAt = this.now();
               run.detail = "Interrupted on startup — not resumed mid-action. Check saved results before trying again.";
@@ -573,6 +579,16 @@ export class LoopManager {
       this.emitRun(run);
     }
     return { ...run };
+  }
+
+  /** Startup resume of a REI sign-in wait (server/index.ts): once a new run of `id` carries the wait on, the run
+   * this start interrupted reads "Resumed after restart". Without a resume it stays "Interrupted". */
+  markResumed(id: LoopId): void {
+    const run = this.runs.find((item) => item.id === this.restartInterrupted.get(id));
+    if (this.recovery.active || !run || run.status !== "interrupted" || !this.activeRun(id) && !this.executing.has(id)) return;
+    this.restartInterrupted.delete(id);
+    this.commit(() => { run.status = "resumed"; run.detail = RESUMED_DETAIL; });
+    this.emitRun(run);
   }
 
   /** A running run that waits for the person says so in Schedule (the supplier check's sign-in or download ask). */

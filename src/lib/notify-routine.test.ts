@@ -22,7 +22,7 @@ it('notifies Sherry once for new maintenance findings and stays quiet on an unch
   notifyRoutineRun(run); notifyRoutineRun(run); expect(notices).toHaveLength(1);
   notifyRoutineRun({ ...run, id: 'fictional-maintenance-rescan', seenAt: 1 }); expect(notices).toHaveLength(1);
 });
-it('notifies once when the weekly supplier check finds a change, and stays quiet when REI is unchanged', () => {
+it('notifies once when the scheduled supplier check finds a change, and stays quiet when REI is unchanged', () => {
   const notices: unknown[] = [];
   class FakeNotification { static permission = 'granted'; constructor(title: unknown, options: unknown) { notices.push({ title, options }); } }
   vi.stubGlobal('Notification', FakeNotification);

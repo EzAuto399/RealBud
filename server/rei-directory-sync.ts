@@ -18,7 +18,7 @@
 // Nothing is saved until the person presses Save on the preview, with the
 // directory revision they saw; a count that disagrees with REI's footer cannot
 // be saved. Stop ends the run at any step and saves nothing. Cookies and
-// passwords stay in the work browser; Bud never sees them. The weekly check
+// passwords stay in the work browser; Bud never sees them. The scheduled check
 // (a loop run) waits on REI's sign-in page until the end of the office day
 // and survives a restart (owner decision, 6 Oct 2026; server/w1-sign-in-wait.ts).
 import { createHash, randomUUID } from "node:crypto";
@@ -59,7 +59,7 @@ const readOnly = async (): Promise<never> => { throw new Error("Read-only sign-i
 type SignIn = NonNullable<W1HostDeps["openForSignIn"]>;
 type SupplierStore = ReturnType<typeof createSupplierDirectory>;
 export interface ReiDirectorySyncDeps {
-  /** Where the weekly check saves its sign-in wait (server/w1-sign-in-wait.ts; default: the office data folder). */
+  /** Where the scheduled check saves its sign-in wait (server/w1-sign-in-wait.ts; default: the office data folder). */
   dataDir?: string;
   runtime: BrowserSessionRuntime & { connect?: () => Promise<unknown> };
   /** The selected browser when it is ready, else null. */
@@ -75,11 +75,11 @@ export interface ReiDirectorySyncDeps {
   signIn?: () => SignIn | undefined;
   signInHolding?: () => boolean;
   pollMs?: number;
-  /** The office timezone for the weekly check's sign-in deadline (undefined: this computer's). */
+  /** The office timezone for the scheduled check's sign-in deadline (undefined: this computer's). */
   timeZone?: () => Promise<string | undefined>;
-  /** The clock for the weekly check's sign-in wait (the lab moves it). */
+  /** The clock for the scheduled check's sign-in wait (the lab moves it). */
   now?: () => number;
-  /** How often the weekly check's sign-in wait checks for its midday reminder. */
+  /** How often the scheduled check's sign-in wait checks for its midday reminder. */
   waitPollMs?: number;
 }
 
@@ -121,7 +121,7 @@ const WHERE = "Bills and calendar → Maintenance checks";
 type Phase = "working" | "preview" | "saved" | "stopped" | "failed";
 interface Run {
   id: string; kind: ReiDirectoryKind; phase: Phase; startedAt: string; message: string | null;
-  /** Started by the person (Refresh from REI) or by the weekly Supplier list check. */
+  /** Started by the person (Refresh from REI) or by the scheduled Supplier list check. */
   origin: "person" | "schedule";
   ask: { requestId: string; tool: string; summary: string } | null;
   /** The sign-in handover's thread while Bud waits for the person (GET /api/browser/sign-in?threadId=…). */
@@ -200,7 +200,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     return { result, workroom };
   }
 
-  /** `note`: the weekly check's Schedule row, whose run waits on REI's sign-in page until the office day ends. */
+  /** `note`: the scheduled check's Schedule row, whose run waits on REI's sign-in page until the office day ends. */
   async function execute(run: Run, signal: AbortSignal, note?: (detail: string) => void) {
     const account = await deps.account();
     if (!account) return fail(409, "Save the REI business code (Schedule → Bank reference review → Set up bank imports) before refreshing from REI.");
@@ -226,7 +226,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
         return attempt(run, signal, account);
       };
       done = run.origin !== "schedule" ? await handover()
-        // The weekly check: REI's sign-in page stays open until the office day ends, saved so a restart reopens it.
+        // The scheduled check: REI's sign-in page stays open until the office day ends, saved so a restart reopens it.
         : await withReiSignInWait({ waits, loop: "rei-supplier-check", runId: "rei-supplier-check", now, timeZone: await deps.timeZone?.(), note, copy: WAIT_COPY,
           ...(deps.waitPollMs !== undefined ? { pollMs: deps.waitPollMs } : {}), work: handover });
     }
@@ -327,7 +327,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     }
     return { status: 200, body: await status() };
   }
-  /** The weekly Supplier list check (loop rei-supplier-check): the same refresh up to its preview, never saved
+  /** The scheduled Supplier list check (loop rei-supplier-check): the same refresh up to its preview, never saved
    * without the person. Sign-in and every per-run ask wait for the person (`note` tells Schedule); an unchanged
    * list ends quietly; a change, a big drop or a count mismatch waits in Maintenance checks for Approve or Dismiss. */
   async function checkSuppliers(note: (detail: string) => void): Promise<SupplierCheckResult> {

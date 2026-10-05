@@ -131,14 +131,15 @@ describe("dedicated work browser host", () => {
   });
   it("opens an HTTPS sign-in tab through its own CDP endpoint, brings it forward and reads only its address", async () => {
     const f = await fixture();
-    const sent: Array<{ endpoint: string; method: string; params: Record<string, unknown> }> = [];
-    const cdp = async (at: string, method: string, params: Record<string, unknown>) => {
-      sent.push({ endpoint: at, method, params });
+    const sent: Array<{ endpoint: string; method: string; params: Record<string, unknown>; targetId?: string }> = [];
+    const cdp = async (at: string, method: string, params: Record<string, unknown>, targetId?: string) => {
+      sent.push({ endpoint: at, method, params, ...(targetId ? { targetId } : {}) });
       return method === "Target.createTarget" ? { targetId: "FICTIONALTARGET1" }
         : method === "Target.getTargets" ? { targetInfos: [{ targetId: "FICTIONALTARGET1", url: "https://portal.fictional.example/home" }] } : {};
     };
     const host = new WorkBrowserHost({ root: f.root, bundleRoot: "/synthetic/bundle" }, { ...f.dependencies, cdp });
     expect(await host.tabUrl("FICTIONALTARGET1")).toBeNull();
+    await expect(host.navigateTab("FICTIONALTARGET1", "https://portal.fictional.example/")).rejects.toThrow(/closed/);
     await expect(host.openTab("http://portal.fictional.example/")).rejects.toThrow(/HTTPS/);
     expect(f.launches()).toBe(0);
     expect(await host.openTab("https://portal.fictional.example/")).toBe("FICTIONALTARGET1");
@@ -146,6 +147,10 @@ describe("dedicated work browser host", () => {
     expect(sent.map(row => [row.endpoint, row.method])).toEqual([[endpoint, "Target.createTarget"], [endpoint, "Target.activateTarget"]]);
     expect(await host.tabUrl("FICTIONALTARGET1")).toBe("https://portal.fictional.example/home");
     expect(await host.tabUrl("FICTIONALOTHER")).toBeNull();
+    // A long sign-in wait's refresh: the same tab loads the address again, in place, without coming forward.
+    await expect(host.navigateTab("FICTIONALTARGET1", "http://portal.fictional.example/")).rejects.toThrow(/HTTPS/);
+    await host.navigateTab("FICTIONALTARGET1", "https://portal.fictional.example/");
+    expect(sent.filter(row => row.method !== "Target.getTargets").slice(2)).toEqual([{ endpoint, method: "Page.navigate", params: { url: "https://portal.fictional.example/" }, targetId: "FICTIONALTARGET1" }]);
     await host.disconnect();
   });
 });

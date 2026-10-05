@@ -29,6 +29,7 @@ function routineStatusChip(status: LoopRun["status"]): { label: string; classNam
   if (status === "awaiting-approval") return { label: "Needs you", className: "bg-hold/10 text-hold" };
   if (status === "partial") return { label: "Partial", className: "bg-hold/10 text-hold" };
   if (status === "queued" || status === "running") return { label: status === "queued" ? "Queued" : "Running", className: "bg-selected text-agency" };
+  if (status === "resumed") return { label: "Resumed after restart", className: "bg-raised text-ink-muted" };
   return { label: status === "missed" ? "Missed" : status === "interrupted" ? "Interrupted" : "Failed", className: "bg-danger/10 text-danger" };
 }
 

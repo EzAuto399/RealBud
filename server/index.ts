@@ -2649,7 +2649,8 @@ const reiWaitTimeZone = async () => (await agencySetup.getConfiguration()).setti
 async function resumeReiSignInWaits() {
   const { resumableReiWaits } = await import("./w1-sign-in-wait.ts");
   const now = w1Lab ? (await w1Lab).now() : Date.now();
-  for (const loop of await resumableReiWaits(DATA_DIR, now)) { try { loops?.runNow(loop); } catch { /* a run of that loop already holds it */ } }
+  // The run the restart interrupted then reads "Resumed after restart", not "Interrupted".
+  for (const loop of await resumableReiWaits(DATA_DIR, now)) { try { if (loops?.runNow(loop)) loops.markResumed(loop); } catch { /* a run of that loop already holds it */ } }
 }
 // ---- END W1 host ----
 

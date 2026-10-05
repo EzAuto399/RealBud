@@ -11,6 +11,7 @@ import {
   LoopManager,
   nextOccurrence,
   recipeLoopId,
+  RESUMED_DETAIL,
   settleLoopRunStatus,
   type Loop,
   type LoopManagerOptions,
@@ -323,6 +324,28 @@ describe("LoopManager runs", () => {
     const runs = manager.listRuns();
     expect(runs.every((run) => run.status === "interrupted")).toBe(true);
     expect(runs.every((run) => /not resumed/i.test(run.detail ?? ""))).toBe(true);
+  });
+
+  it("a run a restart interrupted reads Resumed after restart once a new run carries it on; without a resume it stays Interrupted", async () => {
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    const running = (id: string, loopId: string) => ({ id, loopId, loopName: loopId, scheduledFor: Date.now() - 1000, status: "running", manual: false, createdAt: Date.now() - 1000 });
+    writeFileSync(file, JSON.stringify({ version: 2, timezone: "Australia/Sydney", state: { "morning-arrears": { enabled: true, handledThrough: Date.now() } },
+      runs: [running("run-waiting", "morning-arrears"), running("run-other", "owner-letter")] }));
+    const options = { file, execute: async () => ({ ok: true, detail: "" }) };
+    const manager = track(new LoopManager(options));
+    const resumedBy = manager.runNow("morning-arrears")!;
+    manager.markResumed("morning-arrears");
+    manager.markResumed("owner-letter"); // nothing carried it on: still a genuine interruption below
+    await manager.tick();
+    const byId = (runs: LoopRun[], id: string) => runs.find((run) => run.id === id)!;
+    expect(byId(manager.listRuns(), "run-waiting")).toMatchObject({ status: "resumed", detail: RESUMED_DETAIL });
+    expect(byId(manager.listRuns(), resumedBy.id).status).not.toBe("interrupted");
+    // Saved: a restart reads "resumed" back, and a second resume never relabels a later interruption.
+    manager.close();
+    const restarted = track(new LoopManager(options));
+    expect(byId(restarted.listRuns(), "run-waiting")).toMatchObject({ status: "resumed", detail: RESUMED_DETAIL });
+    expect(byId(restarted.listRuns(), "run-other").status).toBe("interrupted");
   });
 
   it("schedules through the zone-aware path even when no timezone option is passed", () => {

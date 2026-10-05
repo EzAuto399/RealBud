@@ -17,7 +17,7 @@ type Supplier = { reference: string; description: string; emails: string[] };
 export interface SupplierChanges { added: Supplier[]; removed: Supplier[]; emails: Array<{ reference: string; description: string; before: string[]; after: string[] }>; bigDrop: boolean }
 interface RunView {
   id: string; kind: ReiDirectoryKind; phase: "working" | "preview" | "saved" | "stopped" | "failed"; working: boolean; message: string | null;
-  /** "schedule": started by the weekly Supplier list check, so the preview is a change to approve. */
+  /** "schedule": started by the scheduled Supplier list check, so the preview is a change to approve. */
   origin?: "person" | "schedule";
   ask: { requestId: string; tool: string; summary: string } | null; signIn: string | null; preview: Preview | null;
 }
@@ -113,7 +113,7 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     {preview && <div role="group" aria-label={`REI ${noun.list} preview`} className="space-y-2 rounded-lg border border-line p-2">
       <p className="font-medium">{count(preview.accepted, noun.one, noun.many)} ready to save{preview.rejected.length ? ` · ${preview.rejected.length} skipped` : ""}{preview.withoutEmail ? ` · ${preview.withoutEmail} without email` : ""}</p>
       <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{preview.rows} rows in REI's export{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${preview.footer} records REI lists` : ` · REI lists ${preview.footer} records`}</p>
-      {scheduled && !preview.unchanged && <p className="font-medium">Bud's weekly check found changes in REI's {noun.list}. Nothing changes here until you approve.</p>}
+      {scheduled && !preview.unchanged && <p className="font-medium">Bud's scheduled check found changes in REI's {noun.list}. Nothing changes here until you approve.</p>}
       <p className="text-ink-secondary">{preview.unchanged ? "No changes since the last save." : `${preview.added} new · ${preview.removed} removed · ${preview.changed} changed`}</p>
       {preview.changes && !preview.unchanged && <SupplierChangeList changes={preview.changes} added={preview.added} removed={preview.removed} />}
       {preview.rejected.length > 0 && <details><summary className="min-h-11 cursor-pointer">Skipped rows · {preview.rejected.length}</summary>

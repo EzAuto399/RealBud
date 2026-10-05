@@ -54,7 +54,7 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   // The person's side that outlives a service restart: the handover switch and the clock offset.
   const statePath = join(dataDir, "w1-lab-browser", "lab-state.json");
   const saved = (() => { try { return JSON.parse(readFileSync(statePath, "utf8")) as { handover?: unknown; offsetMs?: unknown }; } catch { return {}; } })();
-  let offsetMs = Number.isSafeInteger(saved.offsetMs) ? Number(saved.offsetMs) : 0, signInTabs = 0;
+  let offsetMs = Number.isSafeInteger(saved.offsetMs) ? Number(saved.offsetMs) : 0, signInTabs = 0, signInReloads = 0;
   const now = () => Date.now() + offsetMs;
   const persist = () => writeFileSync(statePath, JSON.stringify({ handover: lab.openForSignIn !== undefined, offsetMs }), { mode: 0o600 });
   // Ask browser tasks in the lab (server/ask-browser-lab.ts) treat this fictional browser as RealBud's own work
@@ -63,8 +63,9 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   // After sign-in the address carries no reicid; the business is the top-bar code.
   const dashboard = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
   const signInSites: SignInSite[] = [siteFromMap("rei-cloud", { origin: FICTIONAL_REI_ORIGIN, signIn: { host: new URL(FICTIONAL_REI_SIGNIN).host }, scope: { urlParam: "reicid" } })!];
-  // The sign-in tab reads only the portal's address, as the real handover does.
-  const signInTab = { openSignInTab: async () => { signInTabs += 1; return "fictional-rei-sign-in"; }, signInTabUrl: async () => mock.url() };
+  // The sign-in tab reads only the portal's address, as the real handover does; a long wait's refresh is counted.
+  const signInTab = { openSignInTab: async () => { signInTabs += 1; return "fictional-rei-sign-in"; }, signInTabUrl: async () => mock.url(),
+    reloadSignInTab: async () => { signInReloads += 1; } };
   const handover: NonNullable<W1HostDeps["openForSignIn"]> = input => openForSignIn(input, { runtime: signInTab, sites: signInSites, pollMs: 50, now });
   const lab = {
     provider,
@@ -108,7 +109,7 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       // The person processes the pending import in REI (Bud never presses it).
       else if (action === "process") mock.post();
       else if (action !== "status") throw Object.assign(new Error("Unknown lab action."), { status: 400 });
-      return { uploads, effects: [...mock.effects], receipts: mock.receipts().length, pending: Boolean(mock.pendingUpload()), signInTabs, now: new Date(now()).toISOString() };
+      return { uploads, effects: [...mock.effects], receipts: mock.receipts().length, pending: Boolean(mock.pendingUpload()), signInTabs, signInReloads, now: new Date(now()).toISOString() };
     },
   };
   return lab;

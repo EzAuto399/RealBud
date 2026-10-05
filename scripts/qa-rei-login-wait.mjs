@@ -1,6 +1,8 @@
 // REI login wait (owner design, 6 Oct 2026): a scheduled W1 bank import sits
 // on REI Cloud's sign-in page until the person signs in, then carries on by
-// itself; a service restart reopens the page and keeps waiting; the upload
+// itself; a page left unchanged for 10 minutes is reloaded in the same tab;
+// a service restart reopens the page, keeps waiting and shows the earlier run
+// as "Resumed after restart"; the upload
 // still waits for its own approval (denied here: nothing is ever submitted).
 // The Supplier list check does the same up to its preview, stops with the plain
 // mismatch message when REI is signed in to another business, and is missed at
@@ -72,6 +74,8 @@ async function capture(name, locator) {
 const W1_LINE = /^Sign in to REI Cloud so Bud can finish the bank import\. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in \(waiting until 6:00 pm on [A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2}\)\.$/;
 const W1_REMINDER = /^Reminder: sign in to REI Cloud so Bud can finish the bank import\. Bud waits until 6:00 pm on /;
 const SUPPLIER_LINE = /^Sign in to REI Cloud so Bud can check the supplier list\. /;
+const RESUMED = 'Resumed after restart: Bud carried on with this in a new run.';
+const run = id => request('/api/loops').then(body => body.runs.find(r => r.id === id));
 
 try {
   demo = await startAustinDemo({ demoRoot });
@@ -117,6 +121,15 @@ try {
   await capture('w1-waiting-at-rei-sign-in', strip());
   pass(`08:00 loop run ${waiting.id} waits on REI's sign-in page for run ${runId}; Schedule says "${line.detail}"; Done and Stop shown; nothing uploaded`);
 
+  // ── 1b. A long wait keeps REI's sign-in page fresh: 10 minutes unchanged → reloaded in the same tab ──
+  const tabsBefore = portal.signInTabs;
+  assert.equal(portal.signInReloads, 0, 'no reload in the first 10 minutes');
+  await clock('08:11');
+  portal = await until(() => lab('status'), s => s.signInReloads >= 1, 'sign-in page reloaded after 10 unchanged minutes');
+  assert.equal(portal.signInTabs, tabsBefore, 'the reload used the same tab; no second tab');
+  assert.deepEqual([(await run(waiting.id)).status, (await w1()).run.step, portal.uploads], ['running', 'sign_in', 0]);
+  pass(`At 08:11 (lab clock), REI's sign-in page had sat unchanged for 10 minutes, so the wait reloaded it in place (${portal.signInReloads} reload, still ${portal.signInTabs} sign-in tab); the run still waits`);
+
   // ── 2. The morning passes: one midday reminder ──
   await clock('12:01');
   const reminded = await until(() => latest('bank-references'), r => W1_REMINDER.test(r.detail ?? ''), 'midday reminder');
@@ -125,9 +138,9 @@ try {
 
   // ── 3. Service restart mid-wait: the page reopens and the run keeps waiting with the same deadline ──
   await restart();
-  const interrupted = (await request('/api/loops')).runs.find(r => r.id === waiting.id);
-  assert.equal(interrupted.status, 'interrupted');
   const resumed = await until(() => latest('bank-references'), r => r.id !== waiting.id && r.status === 'running' && r.detail === reminded.detail, 'resumed loop run');
+  const earlier = await until(() => run(waiting.id), r => r.status === 'resumed', 'the waiting run reads Resumed after restart, not Interrupted');
+  assert.equal(earlier.detail, RESUMED);
   now = await until(w1, s => s.working && s.signIn && !s.ask, 'W1 still waits after restart');
   assert.deepEqual([now.run.id, now.run.step, now.run.fetch.batchId, now.run.upload], [runId, 'sign_in', batchId, null]);
   assert.equal(now.run.review.importIds.length, decisions.length);
@@ -136,7 +149,13 @@ try {
   await openJob('Bank reference review');
   await strip().getByText('Waiting for you to sign in to REI Cloud', { exact: true }).waitFor();
   await capture('w1-after-restart-still-waiting', strip());
-  pass(`Restart: run ${waiting.id} shows interrupted; ${resumed.id} reopened REI's sign-in page (${portal.signInTabs} tab) and waits with the same line; the pull and review were not redone`);
+  const details = page.getByRole('article', { name: 'Bank reference review details', exact: true });
+  await details.getByText('Earlier results', { exact: true }).click();
+  const history = details.getByText('Resumed after restart', { exact: true });
+  await history.waitFor();
+  assert.equal(await page.getByText('Interrupted', { exact: true }).count(), 0, 'no run shows Interrupted after a resumed restart');
+  await capture('w1-earlier-run-resumed-after-restart', history);
+  pass(`Restart: run ${waiting.id} shows "Resumed after restart" in Schedule, not Interrupted; ${resumed.id} reopened REI's sign-in page (${portal.signInTabs} tab) and waits with the same line; the pull and review were not redone`);
 
   // ── 4. The person signs in (matching business): no press; the run reaches the upload approval, which they deny ──
   await lab('sign-in');
@@ -183,6 +202,7 @@ try {
   await capture('supplier-check-waiting-at-rei-sign-in', drawer);
   await restart();
   const back = await until(() => latest('rei-supplier-check'), r => r.id !== first.id && r.status === 'running' && r.detail === supplierLine.detail, 'supplier check resumed');
+  assert.equal((await until(() => run(first.id), r => r.status === 'resumed', 'the waiting supplier check reads Resumed after restart')).detail, RESUMED);
   await lab('sign-in');
   for (let i = 0; i < 600; i++) {
     const refresh = await request('/api/rei-directory/status');
@@ -193,7 +213,7 @@ try {
   const previewed = await settled(back.id);
   assert.equal(previewed.status, 'awaiting-approval', JSON.stringify(previewed));
   assert.equal((await request('/api/supplier-directory')).directory.revision, before, 'nothing saved without the person');
-  pass(`Supplier check restarted mid-wait (${back.id} resumed with the same line), then after sign-in reached its preview: "${previewed.detail}"; nothing saved`);
+  pass(`Supplier check restarted mid-wait (${first.id} reads Resumed after restart; ${back.id} carried on with the same line), then after sign-in reached its preview: "${previewed.detail}"; nothing saved`);
 
   // ── 7. Nobody signs in: missed at 18:00, and the next scheduled check tries again ──
   const open = await request('/api/rei-directory/status');
@@ -227,7 +247,8 @@ try {
     limits: [
       'Fictional REI-style portal, Gmail connector, Redbark and model: no REI Cloud, Gmail, bank or model evidence.',
       'The sign-in tab is a lab stand-in that reports the portal\'s address; the real work browser tab was not opened, and REI\'s real post-login address was not observed.',
-      'Office time is the lab clock (Brisbane); the 12:00 reminder and 18:00 deadline were reached by moving it, not by waiting.',
+      'Office time is the lab clock (Brisbane); the 10-minute page refresh, the 12:00 reminder and the 18:00 deadline were reached by moving it, not by waiting.',
+      'The refresh is counted on the lab tab; the real work browser\'s in-place reload (CDP Page.navigate in the same tab) is covered by unit tests, not by this run.',
       'Runs were started with Run now and by the startup resume; the 08:00 clock firing is covered by unit tests only.',
       'The person (review, sign-in, approvals) is simulated by this script; the upload was denied, so nothing was submitted.',
       'Chat cards and desktop notifications are covered by unit tests only.',

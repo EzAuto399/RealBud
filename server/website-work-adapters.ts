@@ -47,7 +47,7 @@ export interface WebsiteWorkAdapterOptions {
   execute(recipe: Recipe, key: string, beforeWorker: () => Promise<string>, assertBook: () => void): Promise<unknown>;
 }
 export function websiteRunReceipt(run: JobRun | LoopRun): WebsiteRequestRun {
-  const phase = run.status === 'queued' ? 'running' : run.status === 'awaiting-approval' ? 'needs-review' : run.status === 'missed' ? 'interrupted' : run.status;
+  const phase = run.status === 'queued' ? 'running' : run.status === 'awaiting-approval' ? 'needs-review' : run.status === 'missed' || run.status === 'resumed' ? 'interrupted' : run.status;
   const outcome = phase === 'completed' ? 'prepared' : phase === 'needs-review' ? 'review-required' : phase === 'partial' ? 'partial-results' : phase === 'failed' ? 'execution-failed' : phase === 'interrupted' ? 'execution-interrupted' : phase === 'cancelled' ? 'cancelled' : null;
   return { id: run.id, phase, outcome };
 }

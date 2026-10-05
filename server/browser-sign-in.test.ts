@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  browserSignInRoute, knownSignInSites, onSignInSettled, openForSignIn, signInHandoverBlocks, signInHandovers, signInTarget, signedInAt,
+  browserSignInRoute, knownSignInSites, onSignInPage, onSignInSettled, openForSignIn, SIGN_IN_REFRESH_MS, signInHandoverBlocks, signInHandovers, signInTarget, signedInAt,
   siteFromMap, startSignInBroker, WRONG_ACCOUNT, type SignInSite,
 } from "./browser-sign-in.ts";
 
@@ -144,6 +144,36 @@ describe("sign-in handover", () => {
     clock.now = 5_000;
     expect((await late).outcome).toBe("timed_out");
     expect(signInHandovers("thread-deadline")[0].message).toBe("Sign-in to Fictional Portal was not finished today, so Bud paused. The next scheduled run tries again.");
+  });
+  it("a long wait reloads a sign-in page left unchanged for 10 minutes in the same tab; never a second tab, never once signed in", async () => {
+    expect([onSignInPage(portal, "https://login.fictional-portal.example/b2c"), onSignInPage(portal, "https://app.fictional-portal.example/Account/NewLoginMFA"),
+      onSignInPage(portal, "https://app.fictional-portal.example/customers/dashboard"), onSignInPage(portal, null)]).toEqual([true, true, false, false]);
+    const clock = { now: 1_000 }, opened: string[] = [], reloads: string[][] = [];
+    let address = "https://login.fictional-portal.example/b2c";
+    const tab = { openSignInTab: async (url: string) => { opened.push(url); return "FICTIONALTARGET4"; }, signInTabUrl: async () => address,
+      reloadSignInTab: async (id: string, url: string) => { reloads.push([id, url]); } };
+    const settle = () => new Promise(resolve => setTimeout(resolve, 30));
+    const pending = openForSignIn({ site: "fictional-portal", reason: "Import", threadId: "thread-refresh", until: 100 * SIGN_IN_REFRESH_MS }, { ...fast, runtime: tab, now: () => clock.now });
+    await until(() => signInHandovers("thread-refresh").length > 0); await settle();
+    clock.now += SIGN_IN_REFRESH_MS - 1; await settle();
+    expect(reloads).toEqual([]);
+    clock.now += 1; await until(() => reloads.length > 0);
+    // The address first opened, in the same tab: a fresh sign-in journey.
+    expect(reloads).toEqual([["FICTIONALTARGET4", "https://app.fictional-portal.example/"]]);
+    // The person moving on (a new address) restarts the 10 minutes.
+    clock.now += SIGN_IN_REFRESH_MS / 2; address = "https://login.fictional-portal.example/b2c/next"; await settle();
+    clock.now += SIGN_IN_REFRESH_MS / 2 + 60_000; await settle();
+    expect(reloads).toHaveLength(1);
+    address = "https://app.fictional-portal.example/customers/dashboard"; clock.now += SIGN_IN_REFRESH_MS;
+    expect((await pending).outcome).toBe("signed_in");
+    expect([reloads.length, opened.length]).toEqual([1, 1]);
+    // The attended 15-minute handover never reloads.
+    const attended = openForSignIn({ site: "fictional-portal", reason: "Read", threadId: "thread-attended" }, { ...fast, runtime: { ...tab, signInTabUrl: async () => "https://login.fictional-portal.example/b2c" }, now: () => clock.now });
+    await until(() => signInHandovers("thread-attended").some(item => item.state === "waiting")); await settle();
+    clock.now += SIGN_IN_REFRESH_MS + 60_000; await settle();
+    browserSignInRoute(`/api/browser/sign-in/${signInHandovers("thread-attended").find(item => item.state === "waiting")!.id}/stop`, "POST", new URLSearchParams());
+    expect((await attended).outcome).toBe("stopped");
+    expect(reloads).toHaveLength(1);
   });
   it("refuses an address the person did not give before opening anything", async () => {
     const f = runtime([]);
