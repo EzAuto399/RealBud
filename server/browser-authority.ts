@@ -1015,9 +1015,10 @@ export class BrowserApprovalStore {
     return this.rows;
   }
   private async save(rows: BrowserApprovalRecord[]): Promise<void> {
-    // Near the file cap the oldest decided approvals go first; a pending one, or
-    // one whose dispatch is in flight or unconfirmed, is never dropped.
-    rows = trimOldestToBytes(rows, MAX_BYTES * 0.8, row => row.decision !== "pending" && (row.outcome === "not-dispatched" || row.outcome === "succeeded"));
+    // Near the file cap the oldest settled approvals go first. A pending one, or
+    // a held one (dispatching, unknown, unverified, legacy succeeded), is never
+    // dropped: dropping it would release its hold on repeating the same effect.
+    rows = trimOldestToBytes(rows, MAX_BYTES * 0.8, row => row.decision !== "pending" && !held(row));
     try { await writePrivateJson(this.file, { version: 1, purpose: "browser-approvals", approvals: rows }, { maxBytes: MAX_BYTES, validate: parseStore }); }
     catch (error) { this.rows = null; throw error; }
     this.rows = rows;

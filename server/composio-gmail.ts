@@ -536,7 +536,11 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
         const name = h.name.toLowerCase();
         if (['from', 'reply-to', 'to', 'subject'].includes(name)) headers[name] = clean(h.value, 2048);
         // Only the topmost Authentication-Results is Gmail's own stamp; lower ones came with the message.
-        else if (name === 'authentication-results') headers[name] ??= clean(h.value, 4096).replace(/\s+/g, ' ').trim();
+        // An oversized stamp is dropped (unverified), never shortened: a cut could turn header.i=@supplier.example.evil.example into @supplier.example.
+        else if (name === 'authentication-results' && !(name in headers)) {
+          const value = typeof h.value === 'string' && h.value.length <= 65_536 ? clean(h.value, 65_536).replace(/\s+/g, ' ').trim() : '';
+          headers[name] = value.length <= 4096 ? value : '';
+        }
       }
       const labels = rawMessage.labelIds;
       const direction = !Array.isArray(labels) || labels.some(l => typeof l !== 'string') || labels.includes('DRAFT') ? 'unknown' : labels.includes('SENT') ? 'outgoing' : 'incoming';

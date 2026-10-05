@@ -45,9 +45,14 @@ describe('Gmail Authentication-Results', () => {
     const auth = parseMailAuth(GMAIL);
     expect(mailAuthConfirms(auth, 'post.xero.com')).toBe(true);
     expect(mailAuthConfirms(auth, 'fictional-plumbing.example')).toBe(false);
-    const parent = parseMailAuth('mx.google.com; dkim=pass header.d=xero.com; dmarc=fail header.from=post.xero.com');
+    const parent = parseMailAuth('mx.google.com; dkim=pass header.d=xero.com');
     expect(mailAuthConfirms(parent, 'post.xero.com')).toBe(true);
     expect(mailAuthConfirms(parent, 'notxero.com')).toBe(false);
+    // Gmail's DMARC verdict for the From domain overrules a parent signature (e.g. strict alignment, or a public-suffix signer).
+    expect(mailAuthConfirms(parseMailAuth('mx.google.com; dkim=pass header.d=xero.com; dmarc=fail header.from=post.xero.com'), 'post.xero.com')).toBe(false);
+    expect(mailAuthConfirms(parseMailAuth('mx.google.com; dkim=pass header.i=@com.au; dmarc=fail header.from=fictional-plumbing.com.au'), 'fictional-plumbing.com.au')).toBe(false);
+    // A single-label signer is never read as a domain.
+    expect(mailAuthConfirms(parseMailAuth('mx.google.com; dkim=pass header.d=example'), 'fictional-plumbing.example')).toBe(false);
     // SPF alone, DKIM for another domain, or a failed DMARC never confirm.
     expect(mailAuthConfirms(parseMailAuth('mx.google.com; spf=pass smtp.mailfrom=a@fictional-plumbing.example; dkim=pass header.i=@fictional-evil.example; dmarc=fail header.from=fictional-plumbing.example'), 'fictional-plumbing.example')).toBe(false);
     expect(mailAuthConfirms(null, 'post.xero.com')).toBe(false);

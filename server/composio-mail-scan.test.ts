@@ -230,15 +230,20 @@ describe('host-owned Gmail source acquisition', () => {
 
   it('keeps only the topmost (Gmail-stamped) Authentication-Results header, bounded and on one line', async () => {
     const gmail = 'mx.google.com;\r\n       dkim=pass header.i=@fictional-supplier.example header.s=fictional;\r\n       dmarc=pass (p=NONE) header.from=fictional-supplier.example';
+    // Cut at 4096 characters, this sender-shaped stamp would read as a DKIM pass for fictional-supplier.example.
+    const head = 'mx.google.com; dkim=pass header.i=@fictional-evil.example header.s=', tail = '; dkim=pass header.i=@fictional-supplier.example';
+    const oversized = `${head}${'x'.repeat(4096 - head.length - tail.length)}${tail}.fictional-evil.example`;
     fixture({ thread: id => ({ id, messages: [
       { ...message('aa', id), payload: { ...message().payload, headers: [{ name: 'Authentication-Results', value: gmail }, ...message().payload.headers,
         { name: 'Authentication-Results', value: 'mx.google.com; dmarc=pass header.from=fictional-sender-written.example' }] } },
-      { ...message('ab', id), internalDate: String(end - 500), payload: { ...message().payload, headers: [...message().payload.headers, { name: 'authentication-results', value: `mx.google.com; ${'x'.repeat(5000)}` }] } },
+      { ...message('ab', id), internalDate: String(end - 500), payload: { ...message().payload, headers: [...message().payload.headers, { name: 'authentication-results', value: oversized },
+        { name: 'Authentication-Results', value: 'mx.google.com; dmarc=pass header.from=fictional-sender-written.example' }] } },
       { ...message('ac', id), internalDate: String(end - 400) },
     ] }) });
     const [stamped, long, none] = (await scan()).threads[0].messages;
     expect(stamped.authResults).toBe('mx.google.com; dkim=pass header.i=@fictional-supplier.example header.s=fictional; dmarc=pass (p=NONE) header.from=fictional-supplier.example');
-    expect(long.authResults!.length).toBeLessThanOrEqual(4096);
+    // Dropped, not truncated (a cut could shorten a signing domain), and no lower header takes its place.
+    expect(long).not.toHaveProperty('authResults');
     expect(none).not.toHaveProperty('authResults');
     const data: MailScanResult = { accountId: binding.accountId!, windowStartAt: scope.windowStartAt, windowEndAt: end, pages: 1, paginationComplete: true, gaps: [],
       threads: [{ id: 'abc', historyComplete: true, messages: [{ id: 'aa', threadId: 'abc', at: end - 1, direction: 'incoming', from: 'a@fictional-supplier.example', to: '', subject: 'Fictional invoice', body: 'Fictional', bodyTruncated: false, attachments: [], authResults: stamped.authResults }] }] };

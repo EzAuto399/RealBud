@@ -120,6 +120,19 @@ describe('maintenance review inputs', () => {
     expect(findings.some(f => f.kind === 'multiple-invoices' && f.supplierRef === 'FIC-PLUMB')).toBe(true);
   });
 
+  it('never lets a reviewed supplier reference stand in for sender verification', async () => {
+    const { directory } = await rig();
+    const forged = 'mx.google.com; dkim=none; dmarc=fail header.from=fictional-plumbing.example';
+    const rows = maintenanceInvoices([
+      bill({ id: 'r1', from: 'Fictional Plumbing <accounts@fictional-plumbing.example>', auth: forged, ref: 'FIC-PLUMB' }),
+      bill({ id: 'r2', from: 'scam@fictional-evil.example', ref: 'FIC-PLUMB' }),
+    ], await directory.read(), 'Australia/Brisbane');
+    expect(rows.map(r => [r.sourceId.slice(12, 14), r.supplierRef, r.senderMatch])).toEqual([['r1', 'FIC-PLUMB', 'unverified'], ['r2', 'FIC-PLUMB', 'unlisted']]);
+    const reasons = computeMaintenanceFindings({ invoices: rows, coverage: { from: '2026-09-01', to: '2026-10-05', complete: true } })
+      .filter(f => f.kind === 'sender-verification').map(f => (f as { reasons: string[] }).reasons);
+    expect(reasons).toEqual(expect.arrayContaining([['unverified-sender'], ['unlisted-sender']]));
+  });
+
   it('carries Reply-To and Authentication-Results on bill evidence without changing any source digest', () => {
     const message = { id: 'fictional-m1', at: NOW, from: 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: 'Fictional invoice', body: 'Fictional', bodyTruncated: false, attachments: [] };
     const source = { accountId: 'fictional', receiptId: 'r', threadId: 't', message };

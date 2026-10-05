@@ -67,10 +67,12 @@ export function parseMailAuth(header: string | undefined): MailAuth | null {
 
 /** Gmail confirmed the mail came from `domain`: DMARC passed for that From
  * domain, or a DKIM signature passed for it or a parent domain. SPF alone
- * never counts, because it checks the envelope sender, not the From address. */
+ * never counts, because it checks the envelope sender, not the From address.
+ * A DMARC result other than pass for that domain is final: Gmail's alignment
+ * check (which knows public suffixes) overrules a parent-domain signature. */
 export function mailAuthConfirms(auth: MailAuth | null, domain: string): boolean {
   const d = domain.toLowerCase();
-  if (!auth || !d) return false;
+  if (!auth || !d || (auth.dmarc?.domain === d && auth.dmarc.result !== 'pass')) return false;
   return (auth.dmarc?.result === 'pass' && auth.dmarc.domain === d) ||
     auth.dkim.some(k => k.result === 'pass' && !!k.domain && (k.domain === d || d.endsWith(`.${k.domain}`)));
 }

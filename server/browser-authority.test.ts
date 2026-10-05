@@ -692,4 +692,20 @@ describe("browser approval records", () => {
     await expect(store.create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending")).rejects.toThrow(/waiting for you to check/);
     expect(await new BrowserApprovalStore({ file }).list()).toHaveLength(500);
   });
+
+  it("trims settled approvals by size but keeps a held legacy acknowledgement", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-approvals-")); cleanup.push(() => removeFixture(root));
+    const file = join(root, "approvals.json");
+    const auth = authorizeBrowserAction(grant(), PAY_PAGE, "browser_click_semantic", { ref: "@e1" }, { now: 10 });
+    if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
+    const row = { ...auth.draft, version: 1, purpose: "browser-approval", grantId: grant().id, runId: RUN, threadId: "thread-fictional", createdAt: 1, decidedAt: 1, decision: "approved" };
+    const id = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    // The oldest row is a pressed payment saved as "succeeded" (an acknowledgement, held); the rest are settled and large.
+    const settled = Array.from({ length: 450 }, (_, i) => ({ ...row, id: id(i + 1), outcome: "confirmed", facts: [{ label: "Note", value: "f".repeat(7000) }] }));
+    plantPrivateFile(file, JSON.stringify({ version: 1, purpose: "browser-approvals", approvals: [{ ...row, id: id(0), outcome: "succeeded" }, ...settled] }));
+    await new BrowserApprovalStore({ file }).create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending");
+    const after = await new BrowserApprovalStore({ file }).list();
+    expect(after.length).toBeLessThan(452);
+    expect(await new BrowserApprovalStore({ file }).unresolved(auth.draft.fingerprint, auth.draft.effect)).toMatchObject({ id: id(0), outcome: "succeeded" });
+  });
 });
