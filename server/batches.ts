@@ -143,8 +143,10 @@ export class BatchService {
   }
   control(id: string, action: unknown, revision: unknown, propertyId?: unknown): WorkBatch {
     const batch = this.get(id);
-    if (revision !== batch.revision) return fail("Batch progress changed. Refresh and try that action again.", 409);
+    // An action Bud never allows (e.g. "send") is refused the same way whatever
+    // the batch's progress, before the revision check.
     if (!["pause", "resume", "retry-failed", "review"].includes(String(action))) return fail("Unknown batch action.");
+    if (revision !== batch.revision) return fail("Batch progress changed. Refresh and try that action again.", 409);
     if (action === "review") {
       const item = batch.items.find(i => i.propertyId === propertyId);
       if (!item || !["ready", "needs-review"].includes(item.status)) return fail("Only a prepared result can be marked reviewed.", 409);
