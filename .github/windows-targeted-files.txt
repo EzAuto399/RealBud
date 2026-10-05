@@ -1,0 +1,3 @@
+server/gmail-setup-api.test.ts
+server/hermes-memory-approval-http.test.ts
+server/ask-model-relay.test.ts
