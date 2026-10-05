@@ -110,4 +110,13 @@ describe('consequential browser approval card', () => {
     expect(actions(value)).toContain('>Send this message</button>');
     expect(actions(value)).toContain('Decline message');
   });
+
+  it('shows the record the step acts on, and warns when the button name had unusual text', () => {
+    const plain = panel(pending(pay()));
+    expect(plain).not.toContain('unusual text');
+    const top = panel(pending(pay({ page: 'portal.fictional-strata.example/levies/LEVY-1042', unusualName: true })));
+    expect(top).toContain('Button “Pay now” on portal.fictional-strata.example/levies/LEVY-1042');
+    expect(top).toContain('This button’s name had unusual text, which is not shown here. Check the page before approving.');
+    expect(approveButton(actions(pending(pay({ unusualName: true }))))).not.toContain('disabled=""');
+  });
 });

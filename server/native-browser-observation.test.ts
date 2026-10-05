@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nativeBrowserObservation } from "./native-browser-observation.ts";
-import { browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, shownPath, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
+import { approvalPath, browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, shownPath, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 import { createHash } from "node:crypto";
 
@@ -235,5 +235,18 @@ describe("a link's address never reaches the model or a label", () => {
     expect(shownPath("https://fictional.example/customers/reconciliation/bankreconciliation")).toBe("/customers/reconciliation/bankreconciliation");
     expect(shownPath("https://fictional.example/Reports/Tenant%20List/123?page=2")).toBe("/Reports/Tenant List/123");
     expect(shownPath("https://fictional.example/r/%3Ftoken%3D1/%E0%A4%A/%2541")).toBe("/r/:id/:id/:id");
+  });
+
+  // Security review of 21be00b9 (approval-ui-integrity): ":id" on a card hid which record a step acts on.
+  it("shows an approval card's page with its record ids, and only token-like segments as :token", () => {
+    expect(approvalPath("https://user:pass@fictional.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e/a%40b.example/T-1042/fictional-tenant-2026-unit-12/Tenant%20List?token=SYNTHETIC-TOKEN#frag"))
+      .toBe("/tenants/0f8fad5b-d9cb-469f-a165-70867728950e/a@b.example/T-1042/fictional-tenant-2026-unit-12/Tenant List");
+    for (const token of ["deadbeefcafebabe0123456789abcdef", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY", "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9%2FvW1xY==",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWN0aW9uYWwifQ.c2lnbmF0dXJlLWZpY3Rpb25hbA", "sk-ant-fictionalfictionalfictional"]) {
+      expect(approvalPath(`https://fictional.example/share/${token}/view`), token).toBe("/share/:token/view");
+    }
+    // A path parameter or an encoded query keeps its key only; a bidi or control character stays encoded.
+    expect(approvalPath("https://fictional.example/x;jsessionid=SYNTHETIC/r/%3Fpage%3D2/%3Ftoken%3DSYNTHETIC/k=SYNTHETIC/%E2%80%AEfdp.exe/a%2Fb/%E0%A4%A"))
+      .toBe("/x;:token/r/?:token/:token/k=:token/%E2%80%AEfdp.exe/a%2Fb/%E0%A4%A");
   });
 });

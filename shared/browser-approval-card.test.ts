@@ -37,6 +37,9 @@ describe("browser approval card", () => {
     ["a duplicated fact", (card: ReturnType<typeof pay>) => { card.facts[3] = { ...card.facts[0] }; }],
     ["a control character", (card: ReturnType<typeof pay>) => { card.control = "Pay\nnow"; }],
     ["another version", (card: ReturnType<typeof pay>) => { (card as { version: number }).version = 2; }],
+    ["a page on another site", (card: ReturnType<typeof pay>) => Object.assign(card, { page: "evil.example/levies" })],
+    ["a page with a control character", (card: ReturnType<typeof pay>) => Object.assign(card, { page: "portal.fictional-strata.example/levies\n1" })],
+    ["an unusual-name flag that is not true", (card: ReturnType<typeof pay>) => Object.assign(card, { unusualName: false })],
   ])("rejects %s", (_name, damage) => {
     const card = pay(); damage(card);
     expect(() => parseBrowserApprovalCard(card)).toThrow(/incomplete or damaged/);
@@ -47,5 +50,11 @@ describe("browser approval card", () => {
     const send = { ...pay(), kind: "send", facts: [{ name: "to", value: "owner@fictional.example", confirmed: true }, { name: "bodyHash", value: null, confirmed: true }] };
     expect(parseBrowserApprovalCard(send).facts[1]).toEqual({ name: "bodyHash", value: null, confirmed: true });
     expect(readBrowserApprovalCard({ ...send, facts: [send.facts[0], { name: "bodyHash", value: "a".repeat(64), confirmed: true }] })).toBeNull();
+  });
+
+  it("carries the page with its record and the unusual-name warning when present", () => {
+    expect(parseBrowserApprovalCard({ ...pay(), page: "portal.fictional-strata.example/levies/LEVY-1042", unusualName: true }))
+      .toMatchObject({ page: "portal.fictional-strata.example/levies/LEVY-1042", unusualName: true });
+    expect(parseBrowserApprovalCard(pay())).not.toHaveProperty("page");
   });
 });

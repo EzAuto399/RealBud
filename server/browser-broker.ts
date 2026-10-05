@@ -29,6 +29,7 @@ import {
   withoutLinkDestinations,
   jobBrowserUrl,
   observationRefs,
+  approvalPath,
   shownPath,
   type BrowserApprovalStore,
   type BrowserAuthorization,
@@ -121,8 +122,9 @@ const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "obje
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
 const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
 const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
-/** An address as an approval card's params (and the event log) carry it: origin and redacted path, never the query. */
-const shownUrl = (url: string) => `${new URL(url).origin}${shownPath(url)}`;
+/** An address as an approval card's params (and the event log) carry it: origin and the path with its record ids, so the
+ * person sees which record a step acts on; never the query or a token-like segment (approvalPath). Evidence keeps shownPath. */
+const shownUrl = (url: string) => `${new URL(url).origin}${approvalPath(url)}`;
 type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
 /** The type the bytes must show for a download to become a readable workroom attachment. */
 const ATTACHABLE: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
@@ -390,7 +392,7 @@ export async function startBrowserBroker(options: {
   const approveConsequential = async (name: string, tabId: number, url: string, ref: string, label: string, args: BrowserJson, signal: AbortSignal) => {
     await observe(tabId, signal);
     const fresh = snapshots.get(tabId);
-    if (!fresh || fresh.refs.get(ref) !== label) throw problem(CHANGED);
+    if (!fresh || fresh.url !== url || fresh.refs.get(ref) !== label) throw problem(CHANGED);
     const auth = authorize(name, url, args, fresh.text);
     const ownerIds = { grantId: grant.id, runId: options.runId, threadId: options.threadId };
     if (auth.decision !== "ask" || !auth.draft) {
@@ -409,7 +411,7 @@ export async function startBrowserBroker(options: {
     const timer = setTimeout(() => expiry.abort(), Math.max(0, saved.expiresAt - now())); timer.unref?.();
     let approved = false;
     try {
-      approved = await options.approve(name, { url: saved.url, label, approval: { id: saved.id, kind: saved.kind, facts: saved.facts, expiresAt: saved.expiresAt } },
+      approved = await options.approve(name, { url: saved.url, label, approval: { id: saved.id, kind: saved.kind, facts: saved.facts, expiresAt: saved.expiresAt, ...(saved.unusualName ? { unusualName: true } : {}) } },
         saved.summary, AbortSignal.any([signal, expiry.signal]), { fence: auth.fence, approvalPolicy: "once" });
     } catch { approved = false; } finally { clearTimeout(timer); }
     const decidedAt = now();
@@ -425,10 +427,10 @@ export async function startBrowserBroker(options: {
     if (closed || signal.aborted || !options.isActive()) return refuse("stopped", STOPPED);
     if (!approved) return refuse("denied", NOT_APPROVED);
     try { check(signal); } catch (error) { return refuse("stopped", STOPPED, error); }
-    // The approval is for the facts the person saw, not whatever replaced them.
+    // The approval is for the page, control and facts the person saw, not whatever replaced them.
     try { await observe(tabId, signal); } catch (error) { return refuse("changed", "The page changed after approval. Nothing was pressed.", error); }
     const again = snapshots.get(tabId);
-    const recheck = again && again.refs.get(ref) === label ? authorize(name, url, args, again.text) : null;
+    const recheck = again && again.url === url && again.refs.get(ref) === label ? authorize(name, url, args, again.text) : null;
     if (!recheck || recheck.decision !== "ask" || recheck.draft?.fingerprint !== saved.fingerprint) {
       return refuse("changed", `The ${noun} details or control changed after approval. Nothing was pressed. Read the page and prepare a new step.`);
     }
@@ -436,9 +438,10 @@ export async function startBrowserBroker(options: {
     await approvals.update(saved.id, { decision: "approved", decidedAt });
     return { id: saved.id, noun, host };
   };
-  /** Same class, action and kind: a step that changed while waiting is not the step that was approved. */
+  /** Same class, action, kind and name warning: a step that changed while waiting is not the step that was approved. */
   const sameStep = (a: BrowserClassification, b: BrowserClassification) => a.class === b.class &&
-    ("action" in a ? a.action : "") === ("action" in b ? b.action : "") && ("kind" in a ? a.kind : "") === ("kind" in b ? b.kind : "");
+    ("action" in a ? a.action : "") === ("action" in b ? b.action : "") && ("kind" in a ? a.kind : "") === ("kind" in b ? b.kind : "") &&
+    ("unusualName" in a && a.unusualName) === ("unusualName" in b && b.unusualName);
   const VERBS: Record<string, string> = { browser_press: "key press", browser_select: "dropdown choice", browser_download: "download", browser_upload: "upload" };
   const actionNote = (record: Omit<BrowserActionRecord, "outcome">, saved?: BrowserDownloadReceipt) => {
     const host = new URL(record.origin).hostname;
@@ -554,7 +557,7 @@ export async function startBrowserBroker(options: {
           // An approval is for the observed control and step, not whatever replaced them while waiting.
           await observe(tabId, signal);
           const fresh = snapshots.get(tabId);
-          if (!fresh || fresh.refs.get(target) !== label) throw problem(CHANGED);
+          if (!fresh || fresh.url !== url || fresh.refs.get(target) !== label) throw problem(CHANGED);
           const again = authorize(name, url, args, fresh.text, taskScope);
           if (runtime.readOnly && !browserReadOnlyAction(grant, { url, text: fresh.text }, name, args, portal)) throw problem("The page no longer confirms this as a read-only step.");
           if (again.decision === "deny") throw problem(again.reason);

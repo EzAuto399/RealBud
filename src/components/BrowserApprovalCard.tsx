@@ -130,7 +130,13 @@ export function BrowserApprovalFacts({ approval, now, status, title }: {
       </div>
       <h3 className="mt-1 break-words text-[16px] font-semibold leading-snug text-ink">{title ?? browserApprovalTitle(approval)}</h3>
       {approval ? (
-        <p className="mt-1 break-words text-[13px] text-ink-muted">Button “{approval.control}” on {approval.site}</p>
+        <p className="mt-1 break-words text-[13px] text-ink-muted">Button “{approval.control}” on {approval.page ?? approval.site}</p>
+      ) : null}
+      {approval?.unusualName ? (
+        <p className="mt-1 inline-flex items-start gap-1 text-[13px] text-hold">
+          <CircleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+          This button’s name had unusual text, which is not shown here. Check the page before approving.
+        </p>
       ) : null}
       {approval ? (
         <dl aria-label="Details confirmed on the page" className="mt-2 divide-y divide-line border-y border-line">

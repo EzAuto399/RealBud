@@ -13,6 +13,7 @@ import {
   consequentialKind,
   accountMarkerShown,
   legacyBrowserGrant,
+  UNUSUAL_NAME,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
@@ -707,5 +708,62 @@ describe("browser approval records", () => {
     const after = await new BrowserApprovalStore({ file }).list();
     expect(after.length).toBeLessThan(452);
     expect(await new BrowserApprovalStore({ file }).unresolved(auth.draft.fingerprint, auth.draft.effect)).toMatchObject({ id: id(0), outcome: "succeeded" });
+  });
+});
+
+// Security review of 21be00b9 (approval-ui-integrity, authorization-classification-bypass): the shown label drops what
+// follows a control's name when it is not a flag, an attribute or one link address (linkTail), and plain text at its
+// first url=. Risk words in that dropped text were never classified, and the card named only the trimmed label. Now every
+// classifier reads the whole line, the label never shows the dropped text, such a control always asks with a warning,
+// and an approval binds the page (record ids shown) and the exact label its card showed.
+describe("a control whose label is not its whole name", () => {
+  const NATIVE = (line: string, url = "https://portal.example/tenants") => page(`@native-ax 1\nrootwebarea\n  @e9 button "MOCK-OFFICE"\n  @e1 ${line}`, url);
+  const reading: BrowserPortalControls = { origin: "https://portal.example", readSafe: ["View report", "Search"], menu: [], pagination: [], consequential: [], signInHosts: [] };
+  const task = () => explicitTask({ route: "ask", browser: { id: "fictional-work", accountMarker: null }, actions: ["read", "navigate", "click", "fill", "keys"], expiresAt: 2_000_000, budget: 50 });
+  const scope = (t: BrowserTaskGrant) => ({ grantId: t.id, runId: t.runId, requestHash: t.request.sha256, browserId: "fictional-work", tabId: 1, origin: "https://portal.example", accountMarker: null, readOnly: true as const });
+  const click = (observed: BrowserObservation, portal = reading) =>
+    authorizeBrowserAction(task(), observed, "browser_click_semantic", { tab_id: 1, ref: "@e1" }, { now: 1_000_000, taskScope: scope(task()), portal });
+
+  it.each([
+    ["plain text cut at url=", page('Tenants\n@e1 button "View report url= Delete all tenants"')],
+    ["words after a structured name", NATIVE('button "View report" Delete all tenants')],
+    ["words after a link address", NATIVE('link "View report" url="/reports" Remove tenant')],
+    ["a name past 1000 characters", NATIVE(`button "View report ${"x".repeat(1000)} Delete all tenants"`)],
+  ])("classifies risk words in the dropped text: %s", (_, observed) => {
+    const classified = classifyBrowserAction(task(), observed, "browser_click_semantic", { ref: "@e1" }, reading);
+    expect(classified).toMatchObject({ class: "consequential", unusualName: true });
+    expect("label" in classified && classified.label).not.toMatch(/Delete|Remove/);
+    // The label cannot name the item, so a deletion with no on-page question stays with the person.
+    expect(click(observed)).toMatchObject({ decision: "deny" });
+  });
+
+  it("asks with a warning, once, and never by the task scope or a rule, for an unusual name with no risk word", () => {
+    const observed = NATIVE('button "View report" extra words');
+    expect(click(NATIVE('button "View report"'))).toMatchObject({ decision: "allow" });
+    expect(click(observed)).toMatchObject({ decision: "ask", once: true, fence: { ruleOffer: null } });
+    expect(click(observed)).toMatchObject({ summary: expect.stringContaining(UNUSUAL_NAME) });
+    expect(JSON.stringify(click(observed))).not.toContain("extra words");
+    const rules = [{ key: "portal:prefill:portal.example", decision: "allow" as const }];
+    const fill = (line: string) => authorizeBrowserAction(grant(), page(line), "browser_fill", { ref: "@e1", value: "FICT-1" }, { rules });
+    expect(fill('@e1 textbox "Property code"')).toMatchObject({ decision: "allow" });
+    expect(fill('@e1 textbox "Property code url= extra"')).toMatchObject({ decision: "ask", once: true, summary: expect.stringContaining(UNUSUAL_NAME) });
+    // A grant still needs the step's own class: an unusual Save is still a submit.
+    expect(authorizeBrowserAction(task(), NATIVE('button "Save" extra'), "browser_click_semantic", { ref: "@e1" }, { now: 1_000_000 })).toMatchObject({ decision: "deny" });
+  });
+
+  it("warns on the approval card and binds the page, its record ids and the exact label", () => {
+    const pay = 'Pay a bill\nPayee: Fictional Plumbing Pty Ltd\nAmount: AUD 480.00\n@e1 button "Pay now"';
+    const at = (path: string) => page(pay, `https://portal.example${path}?session=SYNTHETIC-SESSION`);
+    const draft = (observed: BrowserObservation, label = 'button "Pay now"') => browserApprovalDraft("pay", observed, "@e1", label, 1_000);
+    const first = draft(at("/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay"));
+    expect(first.url).toBe("https://portal.example/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay");
+    expect(first.unusualName).toBeUndefined(); expect(first.summary).not.toContain(UNUSUAL_NAME);
+    // Another record, or another label, is another approval; the same effect still holds against repeats.
+    const other = draft(at("/bills/7c9e6679-7425-40de-944b-e07fc1f90ae7/pay"));
+    expect(other.fingerprint).not.toBe(first.fingerprint); expect(other.effect).toBe(first.effect);
+    expect(draft(at("/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay"), 'button "Pay now" [focused]').fingerprint).not.toBe(first.fingerprint);
+    const odd = draft(page(pay.replace('"Pay now"', '"Pay now" url= extra'), "https://portal.example/bills/1"));
+    expect(odd).toMatchObject({ unusualName: true, summary: expect.stringContaining(UNUSUAL_NAME) });
+    expect(draft(page(pay.replace('"Pay now"', '"Pay now" url= other'), "https://portal.example/bills/1")).fingerprint).not.toBe(odd.fingerprint);
   });
 });

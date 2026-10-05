@@ -15,7 +15,7 @@ describe("browser approval card from the broker's record", () => {
   it("carries kind, site, control, each fact with its confirmation, and the expiry", () => {
     const card = browserApprovalCardFrom(brokerParams("pay", PAY_PAGE))!;
     expect(card).toEqual({
-      version: 1, purpose: "browser-approval-card", id: ID, kind: "pay", site: "portal.fictional-strata.example", control: "Pay now",
+      version: 1, purpose: "browser-approval-card", id: ID, kind: "pay", site: "portal.fictional-strata.example", page: "portal.fictional-strata.example/levies", control: "Pay now",
       facts: [
         { name: "recipient", value: "Fictional Strata Pty Ltd", confirmed: true },
         { name: "amount", value: "1240.00", confirmed: true },
@@ -46,6 +46,14 @@ describe("browser approval card from the broker's record", () => {
     const reference = browserApprovalCardFrom(params)!.facts.find(fact => fact.name === "reference")!;
     expect(reference.confirmed).toBe(false);
     expect(reference.value).not.toContain("sk-fictionalfictional");
+  });
+
+  it("shows the record's page and warns when the control's name had unusual text", () => {
+    const text = PAY_PAGE.replace('"Pay now"', '"Pay now" url= extra');
+    const draft = browserApprovalDraft("pay", { url: "https://portal.fictional-strata.example/levies/LEVY-1042/pay?session=SYNTHETIC", text }, "@e1", 'button "Pay now"', 1_000);
+    const card = browserApprovalCardFrom({ url: draft.url, label: 'button "Pay now"', approval: { id: ID, kind: draft.kind, facts: draft.facts, expiresAt: draft.expiresAt, unusualName: draft.unusualName } })!;
+    expect(card).toMatchObject({ page: "portal.fictional-strata.example/levies/LEVY-1042/pay", unusualName: true, control: "Pay now" });
+    expect(JSON.stringify(card)).not.toMatch(/SYNTHETIC|extra/);
   });
 
   it("is absent for an ordinary step and refuses a consequential one it cannot show", () => {

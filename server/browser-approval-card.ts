@@ -34,13 +34,18 @@ export function browserApprovalCardFrom(params: unknown): BrowserApprovalCard | 
     throw new Error("This approval's details are unavailable.");
   }
   const control = shown(params.label.match(/"([^"]{1,120})"/)?.[1] ?? params.label.slice(0, 120));
+  // params.url is the record's origin and approvalPath (server/browser-authority.ts): shown as written, not re-encoded.
+  // An overlong path leaves the card on the site alone, as before.
+  const page = new URL(params.url); const path = params.url.startsWith(page.origin) ? params.url.slice(page.origin.length) : "";
   return parseBrowserApprovalCard({
     version: BROWSER_APPROVAL_CARD_VERSION,
     purpose: BROWSER_APPROVAL_CARD_PURPOSE,
     id: approval.id,
     kind: approval.kind,
-    site: new URL(params.url).hostname,
+    site: page.hostname,
+    ...(path.startsWith("/") && path.length <= 2000 ? { page: redactSecretsInText(`${page.hostname}${path}`) } : {}),
     control: control.value?.slice(0, 120),
+    ...(approval.unusualName === true ? { unusualName: true } : {}),
     facts: approval.facts.map(item => {
       const fact = record(item) ? item : {};
       const name = fact.name as BrowserApprovalFactName;
@@ -58,7 +63,7 @@ export function browserApprovalCardFrom(params: unknown): BrowserApprovalCard | 
 export function sanitizeBrowserApprovalCard(value: unknown): BrowserApprovalCard | null {
   try {
     const card = parseBrowserApprovalCard(value);
-    return parseBrowserApprovalCard({ ...card, control: redactSecretsInText(card.control), facts: card.facts.map(fact => {
+    return parseBrowserApprovalCard({ ...card, control: redactSecretsInText(card.control), ...(card.page ? { page: redactSecretsInText(card.page) } : {}), facts: card.facts.map(fact => {
       const value = fact.value === null ? null : redactSecretsInText(fact.value);
       return { ...fact, value, confirmed: fact.confirmed && value === fact.value };
     }) });

@@ -9,7 +9,7 @@ import { isIP } from "node:net";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { readPrivateJson, trimOldestToBytes, writePrivateJson } from "./private-json.ts";
-import { redactSecretsInText } from "./redact.ts";
+import { containsCredential, redactSecretsInText } from "./redact.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
 import {
   BROWSER_CONSEQUENTIAL_POLICY,
@@ -80,6 +80,7 @@ const KEY_SPEC = "Use one key, such as Enter, Tab, Escape or an arrow key, with 
 const CHOICES = "Choose one to twenty option values from the observed list.";
 const UPLOAD_NOT_GRANTED = "Only files given to this task can be uploaded. Ask the person to add the file to the task.";
 const ASK_ONCE = "Bud asks before this step, once, with the details shown on the page.";
+export const UNUSUAL_NAME = "This control's name had unusual text, which is not shown here. Check the page before allowing.";
 
 // ── page and URL helpers (shared with the broker) ────────────────────────
 export const browserLoginFields = (text: string): boolean => text.split("\n").some(line => /\b(input|textbox|password|editable)\b/i.test(line) && /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b/i.test(line));
@@ -95,17 +96,48 @@ export function jobBrowserUrl(value: unknown, origins: readonly string[]): URL |
     return allowed ? url : null;
   } catch { return null; }
 }
+const REF_LINE = /^\s*(?:[-│├└─ ]*)?(@e\d+)\s+(.+)$/;
 export function observationRefs(text: string): Map<string, string> {
   const refs = new Map<string, string>();
   const structured = isStructuredBrowserObservation(text);
   for (const line of text.split("\n")) {
-    const match = line.match(/^\s*(?:[-│├└─ ]*)?(@e\d+)\s+(.+)$/);
+    const match = line.match(REF_LINE);
     // A link's destination (url="…") is the authority's metadata, never part of the control's label (shownLine).
-    if (match && !refs.has(match[1])) refs.set(match[1], shownLine(match[2], structured).slice(0, 1000));
+    if (match && !refs.has(match[1])) refs.set(match[1], shownLine(match[2], structured).kept.slice(0, 1000));
   }
   return refs;
 }
-/** A page address as task evidence, a learned path's provenance, an approval card or a log line keeps it: the
+/** The first line for `ref`, as observationRefs reads it: its label, and the whole line when the label is not all of it
+ * (shownLine dropped more than one link address, or the label was cut at 1000 characters). Every risk classifier reads
+ * that whole line, and such a control always asks with a warning (classifyBrowserAction): its label alone could
+ * misname what is pressed. */
+function controlLine(text: string, ref: string): { label: string; whole: string | null } | undefined {
+  const structured = isStructuredBrowserObservation(text);
+  for (const line of text.split("\n")) {
+    const match = line.match(REF_LINE);
+    if (match?.[1] !== ref) continue;
+    const { kept, unusual } = shownLine(match[2], structured);
+    return { label: kept.slice(0, 1000), whole: unusual || kept.length > 1000 ? match[2] : null };
+  }
+  return undefined;
+}
+/** A page address as an approval card, its record and its summary show it, so the person sees which record the step
+ * acts on: every path segment decoded as the site wrote it, record ids and numbers included. Never the query, fragment
+ * or sign-in. A segment that looks like a credential (24+ characters of hex, or of mixed-case base64 with a digit; a
+ * JWT-like a.b.c; a known secret shape) shows as ":token", and so does whatever follows a ;, =, ? or # in a segment
+ * (a path parameter or an encoded query). A control character, slash or backslash stays percent-encoded, so a segment
+ * never reads as something else. Evidence, provenance and logs keep shownPath. */
+export function approvalPath(address: string | URL): string {
+  let path: string; try { path = new URL(address).pathname; } catch { return ""; }
+  return path.split("/").map(raw => {
+    let decoded = raw; try { decoded = decodeURIComponent(raw); } catch { /* shown as the site wrote it */ }
+    const tokenLike = decoded.length >= 24 && (/^[\da-f]+$/i.test(decoded) && /\d/.test(decoded) && /[a-f]/i.test(decoded) ||
+      /^[\w+/-]+={0,2}$/.test(decoded) && /\d/.test(decoded) && /[a-z]/.test(decoded) && /[A-Z]/.test(decoded)) ||
+      /^[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}$/.test(decoded) || containsCredential(decoded);
+    return tokenLike ? ":token" : decoded.replace(/([;=?#]).*$/s, "$1:token").replace(/[\p{C}/\\]/gu, char => encodeURIComponent(char));
+  }).join("/");
+}
+/** A page address as task evidence, a learned path's provenance or a log line keeps it (cards use approvalPath): the
  * percent-decoded path only (never the query, fragment or sign-in), with any segment that may be a record id or a
  * token (an email, a UUID or long hex, anything of 16+ characters with a digit, anything holding query, encoding or
  * control characters) shown as ":id". */
@@ -177,12 +209,14 @@ export function browserChoices(value: unknown): string[] | null {
 
 // ── classification ───────────────────────────────────────────────────────
 export type BrowserStep = "list" | "borrow" | "read" | "navigate" | "fill" | "click" | "press" | "select" | "download" | "upload" | "release";
+/** `unusualName`: the control's label is not its whole observed line (controlLine). It was classified on the whole
+ * line, never runs without asking, and every card for it carries UNUSUAL_NAME. */
 export type BrowserClassification =
-  | { class: "routine"; step: BrowserStep; action: BrowserActionClass; label?: string }
-  | { class: "consequential"; step: BrowserStep; kind: BrowserConsequentialKind; label?: string; reason: string }
+  | { class: "routine"; step: BrowserStep; action: BrowserActionClass; label?: string; unusualName?: true }
+  | { class: "consequential"; step: BrowserStep; kind: BrowserConsequentialKind; label?: string; reason: string; unusualName?: true }
   | { class: "credential"; step: BrowserStep; reason: string }
   | { class: "out-of-scope"; step: BrowserStep | null; reason: string }
-  | { class: "unknown"; step: BrowserStep; label: string; reason: string };
+  | { class: "unknown"; step: BrowserStep; label: string; reason: string; unusualName?: true };
 export interface BrowserObservation { url: string; text?: string }
 type Args = Record<string, unknown>;
 
@@ -329,7 +363,7 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
  * unknown controls and form submissions even if a broader grant exists. */
 export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: BrowserObservation, tool: string, args: Args, portal?: BrowserPortalControls): boolean {
   const classified = classifyBrowserAction(grant, observation, tool, args, portal);
-  if (classified.class !== "routine") return false;
+  if (classified.class !== "routine" || classified.unusualName) return false;
   if (classified.action === "read") return true;
   if (classified.action === "navigate") return readOnlyAddress(jobBrowserUrl(args.url, grant.sites), jobBrowserUrl(observation.url, grant.sites));
   if (!classified.label || !observation.text || !isStructuredBrowserObservation(observation.text) || typeof args.ref !== "string") return false;
@@ -414,6 +448,15 @@ function pagerControl(portal: BrowserPortalControls, node: VomNode): boolean {
 }
 
 export function classifyBrowserAction(grant: BrowserTaskGrant, observation: BrowserObservation | null, tool: string, args: Args, portal?: BrowserPortalControls): BrowserClassification {
+  const classification = classifyNamed(grant, observation, tool, args, portal);
+  if (classification.class === "credential" || classification.class === "out-of-scope" || !("label" in classification) || typeof args.ref !== "string") return classification;
+  const control = controlLine(observation?.text ?? "", args.ref);
+  if (!control?.whole) return classification;
+  // Its label is not its whole line: everything above read the whole line (classifyStep), which is never shown (it may
+  // hold an address); the label is, with a warning, and the step always asks (browserReadOnlyAction, authorizeBrowserAction).
+  return { ...classification, label: control.label, unusualName: true };
+}
+function classifyNamed(grant: BrowserTaskGrant, observation: BrowserObservation | null, tool: string, args: Args, portal?: BrowserPortalControls): BrowserClassification {
   const step = browserStep(tool);
   if (!step) return { class: "out-of-scope", step: null, reason: "This browser tool or its arguments are not available." };
   if (step === "list" || step === "release") return { class: "routine", step, action: "read" };
@@ -446,15 +489,17 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   }
   const text = observation?.text ?? "";
   const ref = typeof args.ref === "string" ? args.ref : "";
-  const label = /^@e\d+$/.test(ref) ? observationRefs(text).get(ref) : undefined;
-  if (!label) return { class: "out-of-scope", step, reason: STALE_CONTROL };
+  const observed = /^@e\d+$/.test(ref) ? controlLine(text, ref) : undefined;
+  if (!observed?.label) return { class: "out-of-scope", step, reason: STALE_CONTROL };
+  // Risk words anywhere on the control's line count, also those its shown label dropped (classifyBrowserAction restores the label).
+  const label = observed.whole ?? observed.label;
   const markerShown = (marker: string) => browserAccountMarkerShown(text, marker, portal ?? undefined);
   if (grant.browser.accountMarker && !markerShown(grant.browser.accountMarker)) {
     return { class: "out-of-scope", step, reason: "The verified account label is no longer visible. Check the account and page before continuing." };
   }
   if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
   // A declared read-safe control reads on its portal, even on a page that mentions a bank.
-  const readSafe = portal !== null && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
+  const readSafe = portal !== null && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
   const financial = !readSafe && FINANCIAL_PAGE.test(`${text} ${observation.url}`);
   const kind = consequentialKind(label);
   if (step === "fill") {
@@ -559,19 +604,21 @@ export interface BrowserApprovalFact { name: BrowserFactName; value: string | nu
 export interface BrowserApprovalDraft {
   kind: BrowserConsequentialKind;
   origin: string;
-  /** Origin and path only; a query can carry tokens. */
+  /** Origin and path as the card shows it (approvalPath): record ids shown, never the query or a token-like segment. */
   url: string;
   control: { ref: string; label: string };
   facts: BrowserApprovalFact[];
   unconfirmed: BrowserFactName[];
   observationHash: string;
-  /** Binds the approval to the kind, site, control and confirmed facts. */
+  /** Binds the approval to what its card shows: the kind, this page, the control's exact label and the confirmed facts. */
   fingerprint: string;
   /** Kind, site and confirmed facts only: an unknown outcome blocks the same
    * effect through any control, key or dropdown, not just the one pressed. */
   effect: string;
   expiresAt: number;
   summary: string;
+  /** The control's label is not its whole name (controlLine): its card warns, and the label never names the item. */
+  unusualName?: true;
 }
 export const BROWSER_APPROVAL_TTL_MS = 120_000;
 
@@ -673,18 +720,22 @@ function linkTail(tail: string): { kept: string; url: string | null } {
   return { kept: tail, url: null };
 }
 /** One observation line as the model and a control label read it: a node keeps its head and what linkTail keeps.
- * Plain text, a header or a layer line is cut at the start of its first word holding "url=". */
-function shownLine(line: string, structured: boolean): string {
+ * Plain text, a header or a layer line is cut at the start of its first word holding "url=". `unusual`: what was cut
+ * is more than the one link address linkTail accepts, so the kept text may not be the control's whole name. */
+function shownLine(line: string, structured: boolean): { kept: string; unusual: boolean } {
   const head = structured && !/^(?:@(?:vom|native-ax|view|layers)\b|L\d+\s+\S)/.test(line) ? line.match(LINE_NODE)?.[0] : undefined;
-  if (head !== undefined) return head + linkTail(line.slice(head.length)).kept;
-  const at = line.search(/url=/i); if (at < 0) return line;
+  if (head !== undefined) {
+    const tail = line.slice(head.length); const { kept, url } = linkTail(tail);
+    return { kept: head + kept, unusual: url === null && kept.length < tail.length };
+  }
+  const at = line.search(/url=/i); if (at < 0) return { kept: line, unusual: false };
   let start = at; while (start > 0 && !/\s/.test(line[start - 1])) start--;
-  return line.slice(0, start).trimEnd();
+  return { kept: line.slice(0, start).trimEnd(), unusual: true };
 }
 /** The observation as the model reads it: link destinations stay with RealBud's authority (an address can carry a token). */
 export function withoutLinkDestinations(text: string): string {
   const structured = isStructuredBrowserObservation(text);
-  return text.split("\n").map(line => shownLine(line, structured)).join("\n");
+  return text.split("\n").map(line => shownLine(line, structured).kept).join("\n");
 }
 const unescapeVom = (text: string) => text.replace(/\\(.)/g, "$1");
 function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
@@ -883,10 +934,11 @@ function messageFacts(pairs: Pair[]): BrowserApprovalFact[] {
   const excerpt: BrowserApprovalFact[] = body.value === null ? [] : [{ name: "bodyExcerpt", value: redactSecretsInText(body.value).slice(0, 200), confirmed: true }];
   return [fact("to", to.value), ...(subject.present ? [fact("subject", subject.value)] : []), fact("bodyHash", body.value === null ? null : sha256(body.value)), ...excerpt];
 }
-function targetFacts(text: string, label: string, kind: BrowserConsequentialKind): BrowserApprovalFact[] {
+/** `label` null: the control's label is not its whole name (unusualName), so only the page's own question can name the item. */
+function targetFacts(text: string, label: string | null, kind: BrowserConsequentialKind): BrowserApprovalFact[] {
   const asked = [...new Set([...text.matchAll(/are you sure you want to ([^?\n"]{3,200})\?/gi)].map(match => match[1].trim()))];
   const pattern = CONSEQUENTIAL_ACTIONS.find(row => row.kind === kind)!.pattern;
-  const rest = label.replace(/^\s*(button|link|menuitem)\s+/i, "").replace(/"/g, "").replace(new RegExp(pattern.source, "gi"), "").replace(/\b(now|it|this|all|the)\b/gi, "").trim();
+  const rest = (label ?? "").replace(/^\s*(button|link|menuitem)\s+/i, "").replace(/"/g, "").replace(new RegExp(pattern.source, "gi"), "").replace(/\b(now|it|this|all|the)\b/gi, "").trim();
   const target = asked.length === 1 ? asked[0] : asked.length === 0 && /[A-Za-z0-9]{2,}/.test(rest) ? rest : null;
   return [fact("target", target)];
 }
@@ -899,14 +951,18 @@ function controlName(label: string): string {
 /** `via` names a key or dropdown choice; without it the control is pressed. */
 export function browserApprovalDraft(kind: BrowserConsequentialKind, observation: BrowserObservation, ref: string, label: string, now = Date.now(), via?: string): BrowserApprovalDraft {
   const text = observation.text ?? "";
+  const line = controlLine(text, ref); const unusual = !!line?.whole;
   const source = factSource(text, ref, kind);
   const facts = kind === "pay" ? paymentFacts(source)
     : kind === "sign" || kind === "notice" ? documentFacts(text, source)
       : kind === "send" ? messageFacts(source.pairs)
-        : targetFacts(source.text, label, kind);
+        : targetFacts(source.text, unusual ? null : label, kind);
   const url = new URL(observation.url);
   const host = hostOf(url);
   const control = controlName(label);
+  // What the card shows is what the approval binds: this page (approvalPath), this exact label (and, when it is not the
+  // control's whole line, that line, hashed) and the confirmed facts. A different record, label or tail is a new approval.
+  const page = `${url.origin}${approvalPath(url)}`; const named = line?.whole ?? label;
   const value = (name: BrowserFactName) => facts.find(item => item.name === name)?.value ?? "?";
   const has = (name: BrowserFactName) => facts.some(item => item.name === name);
   const what = kind === "pay" ? `Pay ${value("currency")} ${value("amount")} to ${value("recipient")}${has("reference") ? ` (reference ${value("reference")})` : ""}`
@@ -918,15 +974,16 @@ export function browserApprovalDraft(kind: BrowserConsequentialKind, observation
   return {
     kind,
     origin: url.origin,
-    url: `${url.origin}${shownPath(url)}`,
+    url: page,
     control: { ref, label: control },
     facts,
     unconfirmed: facts.filter(item => !item.confirmed).map(item => item.name),
     observationHash: sha256(text),
-    fingerprint: sha256(JSON.stringify(via ? [kind, url.origin, control, confirmed, via] : [kind, url.origin, control, confirmed])),
+    fingerprint: sha256(JSON.stringify(via ? [kind, page, named, confirmed, via] : [kind, page, named, confirmed])),
     effect: sha256(JSON.stringify([kind, url.origin, confirmed])),
     expiresAt: now + BROWSER_APPROVAL_TTL_MS,
-    summary: `${what} by ${via ?? `pressing '${control}'`} on ${host}. This approval is for this one ${NOUNS[kind]} and expires in 2 minutes.`,
+    summary: `${what} by ${via ?? `pressing '${control}'`} on ${host}. This approval is for this one ${NOUNS[kind]} and expires in 2 minutes.${unusual ? ` ${UNUSUAL_NAME}` : ""}`,
+    ...(unusual ? { unusualName: true as const } : {}),
   };
 }
 const shownChoices = (values: unknown) => (browserChoices(values) ?? []).map(value => `'${redactSecretsInText(value).slice(0, 60)}'`).join(", ");
@@ -1007,7 +1064,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
         : classification.step === "download" ? `Download the file from ${label} on ${host}.`
           : classification.step === "upload" ? `Upload the file '${String(args.file)}' to ${url.origin} through ${label}. This sends the file to that site.` : `Use ${label} on ${host}.`;
     return { decision: "ask", classification, once: true, draft: null, fence: { surface: classification.step === "upload" ? "portal-prefill" : "portal-read", origin: site, ruleOffer: null },
-      summary: `${what} ${classification.reason} This approval applies once.` };
+      summary: `${what} ${classification.reason}${classification.unusualName ? ` ${UNUSUAL_NAME}` : ""} This approval applies once.` };
   }
   const { action, step } = classification;
   if (!grant.actions.includes(action)) return deny(missingAction(action));
@@ -1033,14 +1090,16 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     // falls through to the once-only prompt below rather than running here.
   }
   // Standing rules retain their earlier scope: keys, dropdowns and uploads ask.
-  const rulable = step === "borrow" || step === "read" || step === "navigate" || step === "fill" || step === "download";
+  // A control whose label is not its whole name is never allowed by a rule, and asks once with a warning.
+  const unusual = classification.unusualName === true;
+  const rulable = !unusual && (step === "borrow" || step === "read" || step === "navigate" || step === "fill" || step === "download");
   if (rulable && surface !== "portal-submit" && ruleAllows(options.rules, surface, site, url)) {
     return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by rule · ${portalRuleLabel(surface, site)}` };
   }
   const target = step === "navigate" ? jobBrowserUrl(args.url, grant.sites) : null;
   const summary = step === "borrow" ? `Use the existing tab on ${url.hostname} for this saved job. The browser will also ask for confirmation.`
     : step === "read" ? `Read the current page on ${url.hostname} for this job.`
-      : step === "navigate" ? `Open ${target!.hostname}${shownPath(target!)} in this job's borrowed tab.`
+      : step === "navigate" ? `Open ${target!.hostname}${approvalPath(target!)} in this job's borrowed tab.`
         : step === "fill" ? `Prepare the field ${classification.label} on ${url.hostname}.`
           : step === "press" ? (action === "submit" ? `Bud wants to press ${key} in '${label}' on ${site}. Check the form in the browser first.` : `Press ${key} in ${classification.label} on ${url.hostname}.`)
             : step === "select" ? `Choose ${shownChoices(args.values)} in ${classification.label} on ${url.hostname}.`
@@ -1049,7 +1108,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
                   : action === "submit" ? submitPressSummary(label, site) : `Use ${classification.label} on ${url.hostname}.`;
   return {
     // An upload sends a file out: each instance is its own approval.
-    decision: "ask", classification, once: step === "upload", draft: null, summary,
+    decision: "ask", classification, once: step === "upload" || unusual, draft: null, summary: unusual ? `${summary} ${UNUSUAL_NAME}` : summary,
     fence: { surface, origin: site, ruleOffer: rulable && surface !== "portal-submit" ? { surface, origin: site, label: portalRuleLabel(surface, site) } : null },
   };
 }
