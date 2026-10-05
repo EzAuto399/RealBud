@@ -5,7 +5,8 @@
 // receipts in REI, or make the next preview/upload misbehave. "handover" turns
 // on the real sign-in handover (browser-sign-in.ts) over a tab that follows the
 // portal's address, so a signed-out run waits for "sign-in" and carries on by
-// itself; without it sign-in stays a stop the person continues. A pass proves
+// itself; without it sign-in stays a stop the person continues. The same portal
+// serves the REI directory refresh (server/rei-directory-sync.ts). A pass proves
 // RealBud's wiring and guards, never REI Cloud behaviour.
 // The bank feed is a FICTIONAL provider over a local fake Redbark that speaks
 // the live REST shapes (REALBUD_TEST_REDBARK_BASE, loopback http only), read
@@ -63,7 +64,9 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       else if (action === "lost-reply") options.unknownUpload = "before";
       // The portal accepted the file (it stays pending in Bulk receipting) but the reply is lost.
       else if (action === "lost-reply-after") options.unknownUpload = "after";
-      else if (action === "clear") delete options.previewEdit;
+      else if (action === "clear") { delete options.previewEdit; delete options.directoryRows; }
+      // The next tenant or supplier list export drops its first row (it disagrees with REI's own record count).
+      else if (action === "short-export") options.directoryRows = rows => rows.slice(1);
       // The person switches REI to another business (top-bar code FICT2), then back.
       else if (action === "switch-business") mock.setBusiness("FICT2");
       else if (action === "restore-business") mock.setBusiness();

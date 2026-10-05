@@ -171,7 +171,7 @@ describe("bank reference preparation", () => {
       expect(() => store.review(saved.id, saved.revision, review(saved.value.batch))).toThrow(/changed/);
       // Simulate a concurrent winner without permitting a preflight read to
       // decide correctness: create-or-read returns the differently mapped row.
-      const race = new BankReferenceStore({ transaction: <T>(run: () => T) => run(), create: () => saved } as unknown as WorkflowDatabase);
+      const race = new BankReferenceStore({ transaction: <T>(run: () => T) => run(), create: () => saved, get: () => undefined } as unknown as WorkflowDatabase);
       expect(() => race.create(changed)).toThrow(/different mapping/);
     } finally { db.close(); }
   });

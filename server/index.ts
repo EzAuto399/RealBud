@@ -2605,6 +2605,22 @@ function w1Host() {
 void import("./w1-host.ts").then(({ readW1Settings }) => readW1Settings(DATA_DIR)).then(settings => loops?.setAvailable("bank-references", Boolean(settings))).catch(() => {});
 // ---- END W1 host ----
 
+// ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
+// Bud reads the list in the work browser under a host-issued read-only grant; the person saves the preview. Same lab as W1.
+let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
+function reiDirectorySync() {
+  return reiDirectoryPromise ??= (async () => {
+    const [{ createReiDirectorySync }, { createTenantDirectoryStore }, { readW1Settings }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts"), import("./w1-host.ts")]);
+    const lab = w1Lab ? await w1Lab : null;
+    return createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+      browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
+      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
+      signIn: () => lab ? lab.openForSignIn : openForSignIn });
+  })().catch(error => { reiDirectoryPromise = undefined; throw error; });
+}
+// ---- END REI directory refresh ----
+
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
 // Room messages go to the configured default responder unless the user
@@ -3749,6 +3765,17 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, result.status, result.body);
     }
     // ---- END Redbark bank source + W1 run ----
+    // ---- BEGIN REI directory refresh routes (server/rei-directory-sync.ts) ----
+    if (path === "/api/rei-directory" || path.startsWith("/api/rei-directory/")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      res.setHeader("cache-control", "no-store");
+      if (!["GET", "HEAD"].includes(method) && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      if (path.endsWith("/save") && (desk.recovery.active || privateRestoreLocked)) return json(res, 503, { error: "Recover the private book before saving a directory." });
+      const result = await (await reiDirectorySync()).handle(path, method, () => readBody(req, 8192));
+      return json(res, result.status, result.body);
+    }
+    // ---- END REI directory refresh routes ----
     if (path === '/api/job-runs/history' && method === 'GET') {
       return json(res, 200, jobRuns.history({
         cursor: url.searchParams.get('cursor') ?? undefined,

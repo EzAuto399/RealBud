@@ -10,7 +10,7 @@
   "siteMapSha256": "b5c06b566c2167e15ee556458a02977c392ef6e6f8f3fe7b54bcfa3ac841bdef",
   "referencesSha256": {
     "references/task-recipes.md": "457a33cc77aa6480a0a61873aa25f9df0eb6cd97583c8d8b153df5be1669b92b",
-    "references/website-map.md": "0ea0dbf2845159a1c71e239f211a63bb581437f0c45c2824d6ba925c21e84810"
+    "references/website-map.md": "f2f12793e342e48712fda86d16686a6b4260e7c4de1c8394ca08e2626f566eb2"
   },
   "bindingPath": "workflow-support/rei-cloud-navigation/SKILL.md",
   "allowedReuse": "Navigation guidance for browser tasks in the person's selected signed-in REI Cloud session. Grants no authority: the RealBud portal fence (server/portal-fence.ts, server/browser-runtime.ts) decides account scope, task permission, per-instance approval and Stop.",

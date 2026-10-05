@@ -8,6 +8,7 @@ import type { AgencySetupView } from "../../../shared/agency-setup";
 import { bankReviewVersion, type BankReviewAmendment as Amendment, type BankReviewSuccessor } from '../../../shared/bank-review';
 import { BankReviewAmendment } from './BankReviewAmendment';
 import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
+import { ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
 
 const request = <T,>(method: string, path: string, body?: unknown): Promise<T> => api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -70,6 +71,9 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
   const [dateFormat, setDateFormat] = useState("DD/MM/YYYY");
   const [directory, setDirectory] = useState("");
   const [tenantList, setTenantList] = useState<{ filename: string; csv: string } | null>(null), tenantRead = useRef(0);
+  /** Tenants in the REI tenant list saved with Refresh from REI: the default directory for every new batch. */
+  const [savedTenants, setSavedTenants] = useState(0);
+  useEffect(() => { void request<{ tenants?: { count?: unknown } }>("GET", "/api/rei-directory/status").then(value => { if (typeof value.tenants?.count === "number") setSavedTenants(value.tenants.count); }).catch(() => {}); }, []);
   const [page, setPage] = useState(0);
   const [saved, setSaved] = useState<Saved | null>(null);
   const [history, setHistory] = useState<BankHistoryPage | null>(null);
@@ -174,6 +178,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
       <p className="mt-1 text-xs text-ink-muted">Pull from the bank feed or choose a bank CSV. The last bank mapping and property references are reused for the next file. Original dates, amounts and order stay intact.</p></div>
     <W1RunPanel accounts={bank.accounts} error={bank.error} onLoadAccounts={() => void bank.load()} onOpenBatch={id => perform(() => open(id))}
       reviewReady={batchId => Boolean(saved?.value.result && !saved.value.supersededBy && saved.id.split(":").slice(0, 2).join(":") === batchId.split(":").slice(0, 2).join(":"))} />
+    <ReiDirectoryRefresh kind="tenants" onSaved={next => setSavedTenants(next.tenants.count)} />
     <details onToggle={event => { if (event.currentTarget.open) { setPullOpens(count => count + 1); void bank.load(); } }}><summary className="pm-control flex cursor-pointer items-center text-sm">Prepare a new export</summary><div className="mt-3 space-y-3">
       <BankPullSource key={pullOpens} accounts={bank.accounts} error={bank.error} disabled={busy || unsaved} onPulled={id => perform(async () => { await open(id); await refreshIfOpen(); })} />
       <label className="block text-sm">Bank CSV <input className={`block mt-1 ${control}`} type="file" accept=".csv,text/csv" disabled={busy || unsaved} onChange={e => {
@@ -212,8 +217,8 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
         })().then(csv => { if (mounted.current && current === tenantRead.current) setTenantList({ filename: file.name, csv }); })
           .catch(cause => { if (mounted.current && current === tenantRead.current) setError(cause instanceof Error ? cause.message : "The tenant list could not be read."); });
       }} /></label>
-      <p className="text-xs text-ink-muted">{tenantList ? `Using ${tenantList.filename}: each tenant's REI reference goes in the last column. Directory lines above fill in properties it does not list.` : "Export Tenants from REI to put each tenant's REI reference in the last column and check payments against the rent."}</p>
-      <button className={control} disabled={busy || unsaved || readingFile || !source || (!directory.trim() && !tenantList)} onClick={() => void perform(async () => {
+      <p className="text-xs text-ink-muted">{tenantList ? `Using ${tenantList.filename}: each tenant's REI reference goes in the last column. Directory lines above fill in properties it does not list.` : savedTenants ? `Using the REI tenant list saved from REI (${savedTenants} tenants): each tenant's REI reference goes in the last column. Choose a file only to use a different list.` : "Export Tenants from REI to put each tenant's REI reference in the last column and check payments against the rent."}</p>
+      <button className={control} disabled={busy || unsaved || readingFile || !source || (!directory.trim() && !tenantList && !savedTenants)} onClick={() => void perform(async () => {
         if (unsaved) return;
         const rules = directory.split(/\r?\n/).filter(line => line.trim()).map(line => { const [propertyId, reference, aliases, tenant, extra] = line.split("|").map(s => s.trim()); if (!propertyId || !reference || !aliases || tenant === "" || extra !== undefined) throw new Error("Use property | reference | payer aliases | REI tenant (optional) for each directory line."); return { propertyId, reference, aliases: aliases.split(";").map(s => s.trim()).filter(Boolean), ...(tenant ? { tenant } : {}) }; });
         const prepared = await request<Saved>("POST", "/api/bank-reference", { source, columns: mapping, dateFormat, rules, ...(tenantList ? { tenantList: tenantList.csv } : {}) });

@@ -55,6 +55,8 @@ export interface PortalRecipeResult {
   filters: Record<string, string>;
   table: "rows" | "empty" | "unread";
   pages: number;
+  /** The grid footer's "N records" count when the table was read, if the page shows one. */
+  footer?: number;
   controls?: string[];
   /** stop_before labels present on the last page: reached, never pressed. */
   stopBefore: string[];
@@ -443,6 +445,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           else {
             const table = await waitTable();
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
+            if (table.count !== null) result.footer = table.count;
           }
           break;
         }

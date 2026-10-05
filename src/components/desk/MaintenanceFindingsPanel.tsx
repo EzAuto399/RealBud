@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, useStore } from '@/state/store';
+import { ReiDirectoryRefresh } from '../ReiDirectoryRefresh';
 
 // W4 maintenance checks. Server shape: server/maintenance-review.ts (GET /api/maintenance-review).
 interface FindingInvoice { invoiceNumber: string | null; invoiceDate: string | null; receivedDate: string; amountsCents: number[]; description: string; sourceIds: string[]; unresolvedRevision: boolean }
@@ -114,6 +115,7 @@ export function MaintenanceFindingsPanel() {
       </label>
       {review.directory.suppliers > 0 && <span className="text-[13px] text-ink-secondary">{review.directory.suppliers} suppliers{review.directory.withoutEmail ? ` · ${review.directory.withoutEmail} without email` : ''}</span>}
     </div>
+    <ReiDirectoryRefresh kind="suppliers" onSaved={() => void load().catch(() => {})} />
     {conflicts.length > 0 && <ul aria-label="Supplier list conflicts" className="list-disc rounded-lg border border-hold/40 p-2 pl-6 text-hold">
       {conflicts.map(c => <li key={c.email} className="break-words">Same email on two suppliers: {c.supplierRefs.join(', ')} ({c.email})</li>)}
     </ul>}
