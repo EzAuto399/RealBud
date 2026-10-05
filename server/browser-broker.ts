@@ -26,6 +26,7 @@ import {
   browserAccountMarkerShown,
   browserReadOnlyAction,
   portalAccountName,
+  withoutLinkDestinations,
   jobBrowserUrl,
   observationRefs,
   type BrowserApprovalStore,
@@ -244,8 +245,9 @@ export async function startBrowserBroker(options: {
   // An Ask task on a mapped portal works in one account: the name the portal shows where its map says
   // (REI's top-bar business code). One the office confirmed before is used without a question; any other
   // asks once, and every later read must still show it. A task already bound to an account keeps that check.
+  // Only the portal's own origin shows its account: a page of another granted site is never read as one.
   const accountMap = askTask && options.learn && !checkpoint && !grant.browser.accountMarker
-    ? { portal: options.learn.portal, where: { ...options.learn.pack.account.pageMarker } } : undefined;
+    ? { portal: options.learn.portal, origin: new URL(options.learn.pack.origin).origin, where: { ...options.learn.pack.account.pageMarker } } : undefined;
   const accounts = accountMap ? options.accounts ?? portalAccounts() : undefined;
   let confirmedAccount: string | null = null;
   const tools = [...BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
@@ -321,14 +323,14 @@ export async function startBrowserBroker(options: {
       throw problem(SIGN_IN_NEEDED);
     }
     if (marker && !browserAccountMarkerShown(data.text, marker, portal)) { broker.close(); throw problem("The verified account label is no longer visible in its expected place. This step stopped. Check the account and page before continuing."); }
-    if (accountMap) {
+    if (accountMap && new URL(String(after.url)).origin === accountMap.origin) {
       if (!confirmedAccount) await confirmAccount(String(after.url), data.text, signal);
       else if (portalAccountName(data.text, accountMap.where) !== confirmedAccount) {
         broker.close(); throw problem(`This page is no longer in ${confirmedAccount}, the account this task works in. Bud stopped; nothing more was done. Switch back in the site, then ask again.`);
       }
     }
     snapshots.set(tabId, { refs: observationRefs(data.text), at: now(), url: String(after.url), text: data.text });
-    return { text: data.text, truncated: data.truncated, source: new URL(String(after.url)).origin };
+    return { text: withoutLinkDestinations(data.text), truncated: data.truncated, source: new URL(String(after.url)).origin };
   };
   /** Which account this task works in, read from the page where the portal's map says it shows. The one
    * the office confirmed before continues; otherwise the person confirms it once (or Stop ends the task).
@@ -519,7 +521,8 @@ export async function startBrowserBroker(options: {
       let action: BrowserSessionAction;
       let taskAllowed = false;
       if (name === "browser_navigate") {
-        if (checkpoint || grant.browser.accountMarker || portal?.accountMarker) await observe(tabId, signal, true);
+        // The account is checked (and, on a mapped portal, confirmed) on the page Bud leaves before it navigates.
+        if (checkpoint || grant.browser.accountMarker || portal?.accountMarker || accountMap) await observe(tabId, signal, true);
         const auth = authorize(name, url, args, snapshots.get(tabId)?.text, taskScope);
         taskAllowed = !!taskScope && auth.decision === "allow";
         if (runtime.readOnly && !browserReadOnlyAction(grant, { url, text: snapshots.get(tabId)?.text }, name, args, portal)) throw problem("This work browser cannot navigate to a link that may change records.");

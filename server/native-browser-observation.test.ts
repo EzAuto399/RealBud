@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nativeBrowserObservation } from "./native-browser-observation.ts";
-import { browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, isVomObservation, observationRefs, type BrowserPortalControls } from "./browser-authority.ts";
+import { browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 import { createHash } from "node:crypto";
 
@@ -74,5 +74,37 @@ describe("native accessibility observation boundary", () => {
     expect(text).toContain('@e1 heading "Invoices" [level=1]');
     expect(text).toContain('@e2 combobox "Status" [expanded=false] value="Open"');
     expect(observationRefs(text).size).toBe(4);
+  });
+  it("keeps each link's address on its own link for the authority, never in its label or in what the model reads", () => {
+    const raw = `- banner:\n  - button "MOCK-OFFICE" [ref=e9]\n- main:\n  - link "Tenant 123" [ref=e1]:\n    - /url: /tenants/123/delete\n  - link "Tenant 124" [ref=e2]:\n    - img "Avatar"\n    - /url: "/tenants/124"\n  - button "Open" [ref=e3]:\n    - /url: /tenants/125\n  - link "Tenant 126" [ref=e4]\n  - list:\n    - listitem:\n      - link "Tenant 127" [ref=e5]\n  - /url: /stray`;
+    const observed = page(raw);
+    expect(observed.text).toContain('@e1 link "Tenant 123" url="/tenants/123/delete"');
+    expect(observed.text).toContain('@e2 link "Tenant 124" url="/tenants/124"');
+    expect(observed.text).toContain('@e3 button "Open"\n'); // only a link carries an address
+    expect(observed.text).not.toMatch(/stray|Tenant 12[67]" url=/); // an address with no open link above it is dropped
+    expect(observationRefs(observed.text).get("@e1")).toBe('link "Tenant 123"');
+    expect(withoutLinkDestinations(observed.text)).not.toContain("url=");
+    const click = (ref: string) => browserReadOnlyAction(grant, observed, "browser_click_semantic", { ref });
+    // A harmless label does not make a deleting address read-only; a reading address of the same site does.
+    expect(click("@e1")).toBe(false); expect(click("@e2")).toBe(true);
+    for (const ref of ["@e3", "@e4", "@e5"]) expect(click(ref), ref).toBe(false);
+  });
+  it("never lets a pack's read-safe name override the consequential classifier", () => {
+    // A damaged or careless map that names pay, sign, send, notice, delete and process as read-safe still asks for each.
+    const names = ["Pay rent", "Sign lease", "Send statement", "Issue notice", "Delete tenant", "Process"];
+    // "Process" is not in the global table: the pack's list (REI's has it) and the record-changing verbs both keep it out.
+    const careless: BrowserPortalControls = { ...portal, readSafe: names, menu: names, consequential: [] };
+    const name = (ref: string) => names[(Number(ref.slice(2)) - 1) % 10];
+    const raw = `- banner:\n  - button "MOCK-OFFICE" [ref=e20]\n- main:\n${names.map((name, i) => `  - button "${name}" [ref=e${i + 1}]\n  - link "${name}" [ref=e${i + 11}]:\n    - /url: /invoices`).join("\n")}`;
+    for (const ref of names.flatMap((_, i) => [`@e${i + 1}`, `@e${i + 11}`])) {
+      expect(browserReadOnlyAction(grant, page(raw), "browser_click_semantic", { ref }, careless), ref).toBe(false);
+      if (name(ref) !== "Process") expect(classifyBrowserAction(grant, page(raw), "browser_click_semantic", { ref }, careless).class, ref).toBe("consequential");
+    }
+    // Alone on a page (nothing else there that changes records), "Process" is still not read-safe.
+    for (const control of ['button "Process" [ref=e1]', 'link "Process" [ref=e1]:\n    - /url: /invoices', 'button "Reconcile" [ref=e1]']) {
+      const alone = page(`- banner:\n  - button "MOCK-OFFICE" [ref=e20]\n- main:\n  - ${control}`);
+      expect(browserReadOnlyAction(grant, alone, "browser_click_semantic", { ref: "@e1" }, { ...careless, readSafe: ["Process", "Reconcile"] }), control).toBe(false);
+    }
+    for (const ref of ["@e6", "@e16"]) expect(classifyBrowserAction(grant, page(raw), "browser_click_semantic", { ref }, { ...careless, consequential: ["Process"] }).class, ref).toBe("unknown");
   });
 });

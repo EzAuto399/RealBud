@@ -7,9 +7,10 @@
 //   1. Refresh tenant list from REI fails first: the export's place is not mapped;
 //   2. the person asks Bud in Work to find how to export the tenant list; the
 //      browser task card → Start; the person confirms the REI account once;
-//      Bud (a scripted ACP worker, no model) opens REI's Reports menu and the
-//      report link with no card (the pack's map and the task's read scope),
-//      and the person allows the Export Only choice and the download once each;
+//      Bud (a scripted ACP worker, no model) opens REI's Reports menu with no
+//      card (the pack's map); the report link opens a popup, so the page shows
+//      no address to check and it asks, as do the Export Only choice and the
+//      download; the person allows each once;
 //   3. Bud proposes the path it took; the "Bud found how to export…" card shows
 //      the exact steps; the person allows it and it is saved;
 //   4. Refresh tenant list from REI now follows the learned path: the report
@@ -161,18 +162,19 @@ try {
     await shot(`3-${kind}-${i + 1}`, allow.first());
     await page.getByRole('button', { name: kind === 'account' ? 'Continue in this account' : 'Allow once', exact: true }).first().click(); await wait(300);
   }
-  assert.deepEqual(cards.map(card => card.kind), ['account', 'step', 'step', 'proposal'], JSON.stringify(cards));
+  assert.deepEqual(cards.map(card => card.kind), ['account', 'step', 'step', 'step', 'proposal'], JSON.stringify(cards));
   assert.match(cards[0].text, /Signed in to rei-mock\.fictional\.test as FICT1\. Continue in this account\?/);
-  const proposal = cards[3].text;
+  const proposal = cards[4].text;
   assert.match(proposal, new RegExp(`Bud found how to export the Tenants list: Reports → ${REPORT.replace(/[()]/g, '\\$&')} → Export Only → Export\\. Use this for Refresh from REI\\?`), proposal);
   const explored = cards.filter(card => card.kind === 'step').map(card => card.text);
-  assert.ok(explored.every(text => !/Reports"|Tenant Contact/.test(text)), `no card for the Reports menu or the report link: ${JSON.stringify(explored)}`);
-  assert.match(explored[0], /Export Only/);
-  assert.match(explored[1], /Download/i);
+  assert.ok(explored.every(text => !/Reports"/.test(text)), `no card for the Reports menu: ${JSON.stringify(explored)}`);
+  assert.ok(explored[0].includes(REPORT), explored[0]);
+  assert.match(explored[1], /Export Only/);
+  assert.match(explored[2], /Download/i);
   const clicks = workerLog().filter(entry => entry.tool === 'browser_click_semantic');
   assert.ok(clicks.length === 2 && clicks.every(entry => !entry.isError), JSON.stringify(workerLog()));
   assert.ok(workerLog().some(entry => entry.tools?.includes('portal_propose_path')), 'the propose tool is offered on a mapped Ask task');
-  pass(`The REI account (FICT1) was confirmed once; REI's Reports menu and the "${REPORT}" link opened with no card; the person allowed ${explored.length} steps once each: the Export Only choice and the download`);
+  pass(`The REI account (FICT1) was confirmed once; REI's Reports menu opened with no card; the person allowed ${explored.length} steps once each: the "${REPORT}" link (no address on the page to check), the Export Only choice and the download`);
 
   // ── 4. The proposal card → Allow → saved ──
   await shot('4-proposal-card', allow.first());

@@ -6,8 +6,9 @@
 //   2. Start opens REI and waits on the tab's address (sign-in strip); the
 //      person signs in on REI (the lab plays that); no page picking, no labels;
 //   3. Bud (a scripted ACP worker, no model) works in that tab: the account
-//      REI shows is confirmed once, then the map's menu and the report link
-//      read with no card; only the unmapped Output choice and the download ask;
+//      REI shows is confirmed once, then the map's menu reads with no card; the
+//      report link asks (it opens a popup, so the page shows no address to check),
+//      and so do the unmapped Output choice and the download;
 //   4. the "Bud found how to export…" card is allowed and saved;
 //   5. a consequential control (REI's arrears Notice) still asks with its exact
 //      details, and is declined; nothing is pressed in REI;
@@ -174,16 +175,16 @@ try {
   // ── 3–5. Account once, then only the asks the rules require, the proposal, and a consequential Notice ──
   const seen = await answerCards(async kind => kind === 'consequential', kind => kind === 'account' ? 'Continue in this account' : kind === 'consequential' ? (/^Decline/) : 'Allow once');
   const steps = seen.filter(item => item.kind === 'step');
-  assert.deepEqual(seen.map(item => item.kind), ['account', 'step', 'step', 'proposal', 'consequential'], JSON.stringify(seen));
+  assert.deepEqual(seen.map(item => item.kind), ['account', 'step', 'step', 'step', 'proposal', 'consequential'], JSON.stringify(seen));
   assert.match(seen[0].text, /Signed in to rei-mock\.fictional\.test as FICT1\. Continue in this account\?/);
-  assert.match(steps[0].text, /Export Only/); assert.match(steps[1].text, /Download/i);
-  assert.match(seen[3].text, new RegExp(`Bud found how to export the Tenants list: Reports → ${REPORT.replace(/[()]/g, '\\$&')} → Export Only → Export\\.`));
-  assert.match(seen[4].text, /Arrears/);
+  assert.ok(steps[0].text.includes(REPORT), steps[0].text); assert.match(steps[1].text, /Export Only/); assert.match(steps[2].text, /Download/i);
+  assert.match(seen[4].text, new RegExp(`Bud found how to export the Tenants list: Reports → ${REPORT.replace(/[()]/g, '\\$&')} → Export Only → Export\\.`));
+  assert.match(seen[5].text, /Arrears/);
   const clicks = workerLog().filter(entry => entry.tool === 'browser_click_semantic' && !entry.isError).map(entry => entry.text);
   assert.equal(clicks.length, 2, JSON.stringify(workerLog()));
-  pass(`After sign-in: the account (FICT1) was confirmed once; REI's Reports menu and the "${REPORT}" link opened with no card; only the Output choice and the download asked (${steps.length} step asks); the "Bud found how to export…" card was allowed`);
+  pass(`After sign-in: the account (FICT1) was confirmed once; REI's Reports menu opened with no card; the "${REPORT}" link (no address on the page to check), the Output choice and the download asked (${steps.length} step asks); the "Bud found how to export…" card was allowed`);
   await page.getByText(/The arrears Notice was not pressed/).first().waitFor({ timeout: 60_000 });
-  pass(`The arrears Notice still asked with its exact details ("${seen[4].text.match(/Issue the notice[^?]*\?/)?.[0] ?? 'notice'}") and was declined: not pressed`);
+  pass(`The arrears Notice still asked with its exact details ("${seen[5].text.match(/Issue the notice[^?]*\?/)?.[0] ?? 'notice'}") and was declined: not pressed`);
   const progress = page.getByRole('region', { name: 'Browser task', exact: true }).last().getByLabel('Progress');
   await progress.waitFor();
   const progressText = await progress.innerText();

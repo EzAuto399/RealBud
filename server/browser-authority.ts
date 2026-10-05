@@ -99,7 +99,8 @@ export function observationRefs(text: string): Map<string, string> {
   const refs = new Map<string, string>();
   for (const line of text.split("\n")) {
     const match = line.match(/^\s*(?:[-│├└─ ]*)?(@e\d+)\s+(.+)$/);
-    if (match && !refs.has(match[1])) refs.set(match[1], match[2].slice(0, 1000));
+    // A link's destination (url="…", last on its line) is the authority's metadata, not part of the control's label.
+    if (match && !refs.has(match[1])) refs.set(match[1], match[2].replace(LINK_DESTINATION, "").slice(0, 1000));
   }
   return refs;
 }
@@ -289,7 +290,10 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
       (ancestorsOf(group).some(node => TABLE_ROLE.has(node.role)) || (group.parent?.children ?? []).some(sibling => sibling !== group && TABLE_ROLE.has(sibling.role)));
   } else if (portal.menu.includes(name) && (target.role === "link" || target.role === "menuitem") && group?.role === "navigation") {
     allowed = true; menuLink = true;
-  } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name);
+  // A read-safe name (a pack's, or a plain link's) never outranks the consequential classifiers: the global table,
+  // the pack's own list, and the record-changing verbs a same-site address is refused for ("Process", "Approve").
+  // A menu name above is a destination in the navigation landmark, as before.
+  } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name) && !WRITE_ROUTE.test(name);
   if (!allowed) return false;
   // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
   // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
@@ -316,10 +320,8 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
   if (classified.class !== "routine") return false;
   if (classified.action === "read") return true;
   if (classified.action === "navigate") {
-    const target = jobBrowserUrl(args.url, grant.sites); if (!target) return false;
-    let route: string; try { route = decodeURIComponent(target.pathname + target.search); } catch { return false; }
-    // Native adoption cannot follow a write disguised as same-site GET.
-    return !/(?:^|[^a-z])(?:api|graphql|save|submit|create|update|delete|remove|archive|process|finali[sz]e|reconcile|dismiss|toggle|enable|disable|cancel|confirm|accept|approve|reject|send|pay|execute)(?:[^a-z]|$)/i.test(route);
+    const target = jobBrowserUrl(args.url, grant.sites);
+    return !!target && readOnlyRoute(target);
   }
   if (!classified.label || !observation.text || !isStructuredBrowserObservation(observation.text) || typeof args.ref !== "string") return false;
   const current = jobBrowserUrl(observation.url, grant.sites); if (!current) return false;
@@ -328,8 +330,10 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
   // A plain link opens another page of the granted site, so it reads on the same
   // proof as a reviewed read-safe control (nothing in its form, group, landmark or
   // page changes records). Never a button, a confirming name ("Continue", "Next")
-  // or a name the pack or the global table calls consequential.
-  const link = classified.step === "click" && roleOf(classified.label) === "link" && !SUBMIT_CONTROL.test(label) && !AFFIRMATIVE.test(label);
+  // or a name the pack or the global table calls consequential, and only where the
+  // page shows where it goes and that address would also be opened read-only (plainLink).
+  const link = classified.step === "click" && roleOf(classified.label) === "link" && !SUBMIT_CONTROL.test(label) && !AFFIRMATIVE.test(label) &&
+    plainLink(observation.url, observation.text, args.ref, grant.sites);
   if (declared) return readSafeControl(declared, observation.text, args.ref, classified.label) ||
     link && readSafeControl({ ...declared, readSafe: [label], pagination: [] }, observation.text, args.ref, classified.label);
   // A site without a reviewed map gets only a plain link or a plainly named
@@ -344,6 +348,27 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
     if (!key || key.spec === "Enter" && TEXT_ROLE.test(roleOf(classified.label))) return false;
   }
   return classified.action === "fill" || classified.action === "click" || classified.action === "keys";
+}
+/** A same-site address that may still write: an API, or a record-changing verb in its path or query. */
+const WRITE_ROUTE = /(?:^|[^a-z])(?:api|graphql|save|submit|create|update|delete|remove|archive|process|finali[sz]e|reconcile|dismiss|toggle|enable|disable|cancel|confirm|accept|approve|reject|send|pay|execute)(?:[^a-z]|$)/i;
+/** Opening this address only reads: no write disguised as a same-site GET (?action=delete, /process), and nothing the global table calls consequential (/logout). */
+function readOnlyRoute(target: URL): boolean {
+  let route: string; try { route = decodeURIComponent(target.pathname + target.search); } catch { return false; }
+  return !WRITE_ROUTE.test(route) && consequentialKind(route) === null;
+}
+/** A link Bud may open without asking: exactly one visible `link` node (never a button), in no form or
+ * dialog, whose observed destination is an https page of the current origin that readOnlyRoute passes.
+ * No destination (an onclick-only link), `#`, javascript:, data:, another origin or subdomain: it asks.
+ * ponytail: an onclick handler on a link that also has a real address is invisible in the accessibility
+ * tree; the scope checks in readSafeControl still apply. Dispatching such links as a navigate to the
+ * checked address would close that gap. */
+function plainLink(pageUrl: string, text: string, ref: string, sites: readonly string[]): boolean {
+  const found = parseVom(text).nodes.filter(node => node.ref === ref);
+  const node = found.length === 1 ? found[0] : undefined;
+  if (!node || node.role !== "link" || !node.url || node.url.includes("#") || ancestorsOf(node).some(at => FORM_ROLE.has(at.role))) return false;
+  let href: string; try { href = new URL(node.url, pageUrl).href; } catch { return false; }
+  const target = jobBrowserUrl(href, sites); const current = jobBrowserUrl(pageUrl, sites);
+  return !!target && !!current && target.origin === current.origin && readOnlyRoute(target);
 }
 /** A pack or global consequential label, as a whole phrase anywhere in the name ("Finalise period?"). */
 function consequentialName(portal: BrowserPortalControls, name: string): boolean {
@@ -595,12 +620,17 @@ function headings(text: string): string[] {
 // values) inside the form, dialog or table row that holds the pressed control.
 // A name that is not shown (a group's aria-label, a button's name) and hidden
 // nodes never confirm a fact; another form, dialog or row never supplies one.
-interface VomNode { indent: number; ref: string | null; role: string; name: string | null; value: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
+interface VomNode { indent: number; ref: string | null; role: string; name: string | null; value: string | null; url: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
 export const isVomObservation = (text: string): boolean => /^\s*@vom\s+\d+[^\S\n]*(?:\n|$)/.test(text);
 export const isStructuredBrowserObservation = (text: string): boolean => isVomObservation(text) || isNativeBrowserObservation(text);
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
 const VOM_NODE = new RegExp(String.raw`^(?:(@e\d+)\s+)?([A-Za-z][\w-]*)(?:\s+${QUOTED})?(.*)$`);
 const VOM_VALUE = new RegExp(String.raw`(?:^|\s)value=${QUOTED}`);
+/** A link's observed destination, last on its line (server/native-browser-observation.ts). Names and values
+ * escape their quotes, so an unescaped `url="` can only be this attribute. */
+const LINK_DESTINATION = new RegExp(String.raw`\s+url=${QUOTED}$`);
+/** The observation as the model reads it: link destinations stay with RealBud's authority (an address can carry a token). */
+export const withoutLinkDestinations = (text: string): string => text.split("\n").map(line => line.replace(LINK_DESTINATION, "")).join("\n");
 const unescapeVom = (text: string) => text.replace(/\\(.)/g, "$1");
 function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
   const nodes: VomNode[] = []; const stack: VomNode[] = []; let focus: string | null = null;
@@ -613,12 +643,14 @@ function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
     const match = layer ? null : body.match(VOM_NODE);
     if (!layer && !match) continue;
     while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-    const rest = match?.[4] ?? "";
+    const destination = (match?.[4] ?? "").match(LINK_DESTINATION);
+    const rest = (match?.[4] ?? "").replace(LINK_DESTINATION, "");
     const value = rest.match(VOM_VALUE);
     const node: VomNode = {
       indent, ref: match?.[1] ?? null, role: layer ? "layer" : match![2].toLowerCase(),
       name: layer ? layer[1] : match![3] === undefined ? null : unescapeVom(match![3]),
       value: value ? unescapeVom(value[1]) : /\[empty\]/i.test(rest) ? "" : null,
+      url: destination ? unescapeVom(destination[1]) : null,
       flags: [...rest.replace(VOM_VALUE, " ").matchAll(/\[([A-Za-z-]+)[^\]]*\]/g)].map(flag => flag[1].toLowerCase()),
       parent: stack.at(-1) ?? null, children: [],
     };
