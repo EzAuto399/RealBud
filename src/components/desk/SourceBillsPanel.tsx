@@ -3,7 +3,7 @@ import { api } from '@/state/store';
 import type { InvoiceReview } from '@shared/accounts-review';
 import type { AgencySetupView } from '@shared/agency-setup';
 import type { MailThread, MailWorkItem, MailWorkspaceMetadata, MailTaskPage, MailScanReceipt } from '@shared/mail-ingestion';
-import type { BillRecurrenceSeries, BillSourceEvidence, SourceBillOccurrence, SourceBillState, SourceBillsWorkspace, SourceBillPage, BillCalendarEntry, BillDuplicateCheck } from '@shared/source-bills';
+import type { BillRecurrenceSeries, BillSourceEvidence, SourceBillOccurrence, SourceBillState, SourceBillsWorkspace, SourceBillPage, BillCalendarEntry, BillDuplicateCheck, BillReferenceKind, PropertyBillReferenceMatch, PropertyBillReferenceView, PropertyBillReferenceEntry } from '@shared/source-bills';
 import { sameBillFacts } from '@shared/source-bills';
 import type { SourceBillOccurrenceResult, SourceBillSeriesResult, SourceBillCurrentSourceResult } from '@shared/source-bills-api';
 import { appendBillPage, billPageUrl, mergeBillRows } from '@/lib/source-bill-pages';
@@ -77,6 +77,70 @@ export function BillDuplicateReview({ check, loading, error, checked, disabled, 
   </aside>;
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const periodLabel = (period: string) => `${MONTH_NAMES[Number(period.slice(5)) - 1] ?? '?'} ${period.slice(0, 4)}`;
+/** Maps a reviewed bill kind label to the imported reference kind, if any. */
+export function referenceKind(kind: string): BillReferenceKind | null {
+  const k = kind.toLowerCase();
+  return /levy|strata|body corporate|owners corporation/.test(k) ? 'levy' : /water/.test(k) ? 'water' : /council|rates?\b/.test(k) ? 'council' : null;
+}
+/** What the REI list showed, labelled as unconfirmed. */
+export function reiObservation(rei: PropertyBillReferenceEntry['rei']): string | null {
+  if (!rei) return null;
+  return `REI showed ${rei.status ?? 'no status'}${rei.period ? ` for ${periodLabel(rei.period)}` : ''}. This is the imported list, not confirmed paid status.`;
+}
+
+export function PropertyRateNumbersSummary({ view, label }: { view: PropertyBillReferenceView; label: (id: string) => string }) {
+  const reasons = new Map<string, number>();
+  for (const row of view.rejected) reasons.set(row.reason, (reasons.get(row.reason) ?? 0) + 1);
+  const months = new Map<string, number>();
+  for (const s of view.suggestions) months.set(s.nextAround, (months.get(s.nextAround) ?? 0) + 1);
+  return <div className="space-y-2 text-sm">
+    <p>{view.counts.properties} properties · {view.counts.refs.council} council · {view.counts.refs.water} water · {view.counts.refs.levy} levy numbers</p>
+    {view.counts.rejected > 0 && <details><summary className="min-h-11 cursor-pointer">Not imported ({view.counts.rejected})</summary><ul className="list-disc pl-5">{[...reasons].map(([reason, n]) => <li key={reason}>{n} × {reason}</li>)}</ul>
+      <ul className="list-disc pl-5 text-ink-secondary">{view.rejected.map((row, i) => <li key={i} className="break-words">{row.code} · {row.kind} · {row.raw}</li>)}</ul></details>}
+    {view.counts.shared > 0 && <div role="status" className="text-hold"><p>{view.counts.shared} number{view.counts.shared === 1 ? ' is' : 's are'} on more than one property. Bills with these numbers are held for you to choose.</p>
+      <ul className="list-disc pl-5">{view.shared.map(row => <li key={`${row.kind}:${row.digits}`} className="break-words">{row.kind} {row.digits}: {row.message}</li>)}</ul></div>}
+    {view.counts.held > 0 && <details><summary className="min-h-11 cursor-pointer">Rows not matched to a Desk property ({view.counts.held})</summary><ul className="list-disc pl-5">{view.held.map((row, i) => <li key={i} className="break-words">{row.code || row.street} · {row.reason}</li>)}</ul></details>}
+    {view.suggestions.length > 0 && <details><summary className="min-h-11 cursor-pointer">Suggested from REI: quarterly arrivals ({view.suggestions.length})</summary>
+      <p className="text-ink-secondary">Approve a pattern from the first matching bill you review. Until then these are suggestions, not expected bills.</p>
+      <ul className="list-disc pl-5">{[...months].sort().map(([month, n]) => <li key={month}>{n} next around {periodLabel(month)}</li>)}</ul>
+      <ul className="list-disc pl-5 text-ink-secondary">{view.suggestions.slice(0, 200).map(s => <li key={`${s.propertyId}:${s.kind}`} className="break-words">{label(s.propertyId)} · {s.kind} · {s.message}</li>)}</ul></details>}
+  </div>;
+}
+
+export function PropertyRateNumbers({ view, label, onChange }: { view: PropertyBillReferenceView | null; label: (id: string) => string; onChange: (view: PropertyBillReferenceView) => void }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importFile = async (file: File) => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const next: PropertyBillReferenceView = await write('/api/bill-references', 'PUT', { csv: await file.text(), expectedRevision: view?.revision ?? 0 });
+      onChange(next); setNotice('Imported. Numbers propose a property on bill reviews; you still choose it.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The rate numbers could not be imported.'); }
+    finally { setBusy(false); if (fileInput.current) fileInput.current.value = ''; }
+  };
+  return <details className="rounded-lg border border-line p-3" aria-label="Property rate numbers">
+    <summary className="min-h-11 cursor-pointer font-medium">Property rate numbers{view?.counts.properties ? ` (${view.counts.properties} properties)` : ''}</summary>
+    <p className="text-sm text-ink-secondary">Council, water and levy numbers from the REI property list match each bill to its property by number, never by address.</p>
+    <label className={`${button} my-2 inline-flex cursor-pointer items-center`}>Import property rate numbers (CSV)<input ref={fileInput} type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={e => { const file = e.target.files?.[0]; if (file) void importFile(file); }} /></label>
+    {busy && <p role="status" className="text-sm">Importing…</p>}{error && <p role="alert" className="text-sm text-hold">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
+    {view && view.revision > 0 ? <PropertyRateNumbersSummary view={view} label={label} /> : <p className="text-sm text-ink-secondary">No rate numbers imported yet.</p>}
+  </details>;
+}
+
+export function BillReferenceMatchNotice({ match, label, selected, disabled, onUse }: { match: PropertyBillReferenceMatch | null; label: (id: string) => string; selected: string; disabled: boolean; onUse: (propertyId: string) => void }) {
+  if (!match || match.state === 'none') return null;
+  if (match.state === 'ambiguous') return <p role="alert" aria-label="Rate number match" className="rounded border border-hold p-3 text-sm text-hold">{match.evidence} Held: {match.propertyIds.map(label).join(' or ')}.</p>;
+  const rei = reiObservation(match.rei);
+  return <aside aria-label="Rate number match" className="rounded border border-line p-3 space-y-1 text-sm">
+    <p className="break-words"><span className="font-medium">{label(match.propertyId)}</span> · {match.evidence}.</p>
+    {rei && <p className="text-ink-secondary">{rei}</p>}
+    {selected === match.propertyId ? <p className="text-ink-secondary">This property is chosen below. Check it against the bill before accepting.</p>
+      : <button type="button" className={button} disabled={disabled} onClick={() => onUse(match.propertyId)}>Use this property</button>}
+  </aside>;
+}
+
 export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => void; initialBillId?: string }) {
   const [snapshot, setSnapshot] = useState<SourceBillsWorkspace | null>(null);
   const [agency, setAgency] = useState<AgencySetupView | null>(null), [mail, setMail] = useState<MailWorkspaceMetadata | null>(null);
@@ -96,6 +160,7 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   const [reason, setReason] = useState(''), [confirmed, setConfirmed] = useState(false), [limited, setLimited] = useState(false);
   const [seriesId, setSeriesId] = useState(''), [arrivalDate, setArrivalDate] = useState(''), [pattern, setPattern] = useState<PatternEdit | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null), [proposalPending, setProposalPending] = useState(false);
+  const [rateNumbers, setRateNumbers] = useState<PropertyBillReferenceView | null>(null), [referenceMatch, setReferenceMatch] = useState<PropertyBillReferenceMatch | null>(null);
   const [reviews, setReviews] = useState<BillReviewDraftPage | null>(null), [reviewHistory, setReviewHistory] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null), [reviewState, setReviewState] = useState<BillReviewDraftValue['state']>('editing');
   const [, redrawDraft] = useState(0), [requestHistory, setRequestHistory] = useState<BillProposalHistory | null>(null);
@@ -424,8 +489,9 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     const timer = setTimeout(() => { void loadMailPage(mailQuery.trim()).catch(cause => { if (mounted.current) setError(cause instanceof Error ? cause.message : 'Saved conversations could not be searched. Your bill draft is kept.'); }); }, 250);
     return () => clearTimeout(timer);
   }, [mailQuery, editorOpen]);
+  const patternSuggestion = (bill: SourceBillOccurrence) => rateNumbers?.suggestions.find(s => s.propertyId === bill.facts.propertyId && s.kind === referenceKind(bill.facts.kind));
   const editPattern = (bill: SourceBillOccurrence, original: BillRecurrenceSeries | null = null) => setPattern({
-    original, bill, intervalMonths: original?.intervalMonths ?? 1, anchorDate: original?.anchorDate ?? billDateInZone(bill.source.message.at, timeZone),
+    original, bill, intervalMonths: original?.intervalMonths ?? (patternSuggestion(bill) ? 3 : 1), anchorDate: original?.anchorDate ?? billDateInZone(bill.source.message.at, timeZone),
     windowBeforeDays: original?.windowBeforeDays ?? 3, windowAfterDays: original?.windowAfterDays ?? 3,
     timeZone: original?.timeZone ?? timeZone, active: original?.active ?? true, reason: '',
   });
@@ -452,6 +518,16 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     }, 200);
     return () => { window.clearTimeout(timer); matchGeneration.current++; };
   }, [editorOpen, evidence?.accountId, draft.propertyId, draft.kind, draft.vendor, editing?.seriesId, matchRefresh]);
+  useEffect(() => { void api('/api/bill-references').then(view => { if (mounted.current) setRateNumbers(view); }).catch(() => {}); }, []);
+  // A number in the bill proposes a property; the person still chooses it.
+  const referenceText = editorOpen && evidence && rateNumbers?.counts.properties ? [evidence.message.subject, evidence.message.body, draft.supplierReference ?? '', ...(proposal?.attachmentReads?.map(pdf => pdf.text) ?? [])].join('\n').slice(0, 400_000) : '';
+  useEffect(() => {
+    setReferenceMatch(null);
+    if (!referenceText) return;
+    let live = true;
+    const timer = window.setTimeout(() => { void write('/api/bill-references/match', 'POST', { text: referenceText }).then(match => { if (live && mounted.current) setReferenceMatch(match); }).catch(() => {}); }, 300);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [referenceText, rateNumbers?.revision]);
   const records = snapshot?.occurrences.items ?? [];
   const invoiceReviews = reviews?.items.filter(row => !row.hasFinancialReview) ?? [];
   const pendingInvoiceReviews = billReviewDrafts.list(workspaceId).filter(row => row.dirty && !row.value.financialReview);
@@ -460,6 +536,7 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
   const needsLimited = Boolean(evidence?.message.bodyTruncated || evidence?.message.attachments.length);
   return <section aria-label="Source-linked bills and calendar" className="space-y-4" aria-busy={busy}>
     <BillRoutineStatus />
+    <PropertyRateNumbers view={rateNumbers} label={label} onChange={setRateNumbers} />
     <div className={`grid items-start gap-4 ${mail?.latestScan ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]' : ''}`}><div className="space-y-3"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1 basis-72"><h3 className="font-medium">Received bills and expected arrivals</h3><p className="mt-1 text-sm text-ink-secondary">Review facts from saved Gmail messages. Confirm recurring arrival patterns separately; an expected arrival or expected payment is a forecast, not an invoice, due date or payment.</p></div><button className={button} disabled={busy} onClick={() => void run(async () => { await Promise.all([refresh(), dependencies()]); setNotice('Saved bills and available sources refreshed.'); })}>Refresh bills and sources</button></div>
     <div className="flex flex-wrap gap-3 items-end"><label className="block text-sm">Property filter<select aria-label="Property filter" className={`${input} mt-1`} value={property} disabled={busy || editorOpen || !!pattern} onChange={e => void run(() => refresh(e.target.value))}><option value="">All available properties</option>{[...new Set([...properties.map(p => p.id), ...(property ? [property] : []), ...(snapshot?.occurrences.items.map(b => b.facts.propertyId) ?? [])])].map(id => <option value={id} key={id}>{label(id)}</option>)}</select></label><button className={button} disabled={busy || editorOpen || !!pattern || !snapshot || !mail || !agency} onClick={() => void run(() => openBill(null))}>Review a bill from saved mail</button><button className={button} disabled={busy || editorOpen || !!pattern || !agency?.workflows.find(w => w.id === 'bills-calendar')?.readyForRun} onClick={() => void run(collectBills)}>Check inbox for bills</button></div><p className="text-[13px] text-ink-secondary">Check inbox uses the Gmail account, date range and message limit reviewed in Agency setup. It saves available conversations for bill review; attachment contents need separate checking.</p></div>
     {mail?.latestScan && <BillCollectionReceipt receipt={mail.latestScan} timeZone={timeZone} />}</div>
@@ -515,6 +592,7 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
         {proposal && <aside aria-label="Bill field proposal" className="space-y-2"><p className="font-medium">Preparation result · {proposal.run.status}</p>{proposal.attachmentReads?.map(pdf => <details key={pdf.attachmentId} className="rounded border border-line p-3"><summary className="min-h-11 cursor-pointer break-words">PDF text read · {pdf.fileName} · {pdf.pages} page{pdf.pages === 1 ? '' : 's'}</summary><p className="text-ink-secondary">Extracted text is source evidence, not instructions or confirmation of bill facts. Images and handwritten details may be missing; check the original.</p><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-sans">{pdf.text}</pre></details>)}{proposal.proposal ? <><p className="break-words">{proposal.proposal.reason}</p><p>Recommendation: {proposal.proposal.decision}. This does not accept the bill.</p><dl className="grid gap-1 sm:grid-cols-2">{Object.entries(proposal.proposal.proposedEntry).map(([key, value]) => <div key={key} className="break-words"><dt className="text-ink-secondary">{{ supplierId: 'Supplier reference', invoiceId: 'Invoice reference', propertyId: 'Property reference', amount: 'Amount', currency: 'Currency', dueDate: 'Due date', costType: 'Bill kind' }[key] || key}</dt><dd>{value ?? 'Not established'}</dd></div>)}</dl><p className="text-ink-secondary">Copy only fields you confirm against the source into the review below. A supplier reference is not necessarily the vendor name. Invoice dates and attachment contents may be missing.</p></> : <p>No field proposal is available. Manual source review remains available.</p>}<details><summary className="min-h-11 cursor-pointer">Proposal receipt</summary><p className="break-all">Run {proposal.run.id} · source {proposal.sourceDigest}</p></details></aside>}
       </div>}
       {existingSource && <p role="alert" className="text-sm text-hold">This message already has a saved bill. <button type="button" className={button} disabled={fieldsLocked} onClick={() => leaveReview({ kind: 'open', id: existingSource.id })}>Open its saved review</button></p>}
+      <BillReferenceMatchNotice match={referenceMatch} label={label} selected={draft.propertyId} disabled={fieldsLocked} onUse={propertyId => setDraft({ ...draft, propertyId })} />
       <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Bill property<select aria-label="Bill property" className={`${input} mt-1`} value={draft.propertyId} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, propertyId: e.target.value })}><option value="">Choose a property…</option>{properties.map(p => <option value={p.id} key={p.id}>{p.label}</option>)}</select></label><label className="block text-sm">Bill kind<input className={`${input} mt-1`} maxLength={80} value={draft.kind} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="Water, council or levy" /></label><label className="block text-sm">Vendor<input className={`${input} mt-1`} maxLength={160} value={draft.vendor} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, vendor: e.target.value })} /></label><label className="block text-sm">Supplier reference, if listed<input className={`${input} mt-1`} maxLength={120} value={draft.supplierReference ?? ''} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, supplierReference: e.target.value })} placeholder="From your supplier list. Leave blank when unsure" /></label><label className="block text-sm">Invoice number, if confirmed<input className={`${input} mt-1`} maxLength={120} value={draft.invoiceNumber ?? ''} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceNumber: e.target.value })} placeholder="From the invoice, not the property or payment reference" /></label><label className="block text-sm">Invoice version, if shown<input className={`${input} mt-1`} maxLength={80} value={draft.invoiceVersion ?? ''} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceVersion: e.target.value })} placeholder="Leave blank when not shown" /></label><label className="block text-sm">Amount (AUD)<input className={`${input} mt-1`} inputMode="decimal" value={draft.amount} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, amount: e.target.value })} placeholder="Unknown — leave blank" /></label><label className="block text-sm">Invoice date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.invoiceDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, invoiceDate: e.target.value })} /></label><label className="block text-sm">Actual due date, if confirmed<input type="date" className={`${input} mt-1`} value={draft.dueDate} disabled={fieldsLocked} onChange={e => setDraft({ ...draft, dueDate: e.target.value })} /></label></div>
       {editing && <label className="block text-sm">Bill review status<select aria-label="Bill review status" className={`${input} mt-1`} value={billState} disabled={fieldsLocked} onChange={e => setBillState(e.target.value as SourceBillState)}>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
       {(matchedPatterns.length > 0 || seriesId) && <div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Match an approved arrival pattern<select aria-label="Match an approved arrival pattern" className={`${input} mt-1`} value={seriesId} disabled={fieldsLocked} onChange={e => { setSeriesId(e.target.value); setArrivalDate(''); }}><option value="">No pattern link</option>{seriesId && !matchedPatterns.some(series => series.id === seriesId) && <option value={seriesId} disabled>Existing pattern · check matching facts</option>}{matchedPatterns.map(series => <option key={series.id} value={series.id}>{series.kind} · {series.vendor}{series.active ? '' : ' · paused (existing link)'}</option>)}</select></label>{seriesId && <label className="block text-sm">Which expected arrival date?<input type="date" className={`${input} mt-1`} value={arrivalDate} disabled={fieldsLocked} onChange={e => setArrivalDate(e.target.value)} /></label>}</div>}
@@ -534,7 +612,7 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
       const fields = { intervalMonths: pattern.intervalMonths, anchorDate: pattern.anchorDate, windowBeforeDays: pattern.windowBeforeDays, windowAfterDays: pattern.windowAfterDays, timeZone: pattern.timeZone, reviewReason: pattern.reason };
       await write(pattern.original ? `/api/bill-series/${pattern.original.id}` : '/api/bill-series', pattern.original ? 'PUT' : 'POST', pattern.original ? { ...fields, expectedRevision: pattern.original.revision, active: pattern.active } : { ...fields, occurrenceId: pattern.bill.id, expectedOccurrenceRevision: pattern.bill.revision });
       await refresh(); setPattern(null); setNotice('The arrival pattern was saved with your review. Invoice due dates remain separate.'); onSaved?.();
-    }); }}><h4 className="font-medium">{pattern.original ? 'Review arrival pattern' : 'Approve recurring arrivals'} · {label(pattern.bill.facts.propertyId)} · {pattern.bill.facts.kind}</h4><p className="text-sm text-ink-secondary">Confirm the pattern you expect from this received bill. The anchor window must include its actual source arrival. An end-of-month anchor stays at month end. These dates predict arrivals, not invoice due dates.</p><div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Arrival frequency<select aria-label="Arrival frequency" className={`${input} mt-1`} disabled={busy} value={pattern.intervalMonths} onChange={e => setPattern({ ...pattern, intervalMonths: Number(e.target.value) as 1 | 3 | 12 })}><option value={1}>Monthly</option><option value={3}>Quarterly</option><option value={12}>Yearly</option></select></label><label className="block text-sm">Observed anchor date<input type="date" className={`${input} mt-1`} disabled={busy} value={pattern.anchorDate} onChange={e => setPattern({ ...pattern, anchorDate: e.target.value })} /></label><label className="block text-sm">Days before anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowBeforeDays} onChange={e => setPattern({ ...pattern, windowBeforeDays: Number(e.target.value) })} /></label><label className="block text-sm">Days after anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowAfterDays} onChange={e => setPattern({ ...pattern, windowAfterDays: Number(e.target.value) })} /></label></div><label className="block text-sm">Arrival timezone<input className={`${input} mt-1`} disabled={busy} value={pattern.timeZone} onChange={e => setPattern({ ...pattern, timeZone: e.target.value })} placeholder="Australia/Brisbane" /></label><label className="block text-sm">Reason for this arrival pattern<input className={`${input} mt-1`} maxLength={1000} disabled={busy} value={pattern.reason} onChange={e => setPattern({ ...pattern, reason: e.target.value })} /></label>{pattern.original && <label className="flex min-h-11 gap-2 items-center text-sm"><input type="checkbox" checked={pattern.active} disabled={busy} onChange={e => setPattern({ ...pattern, active: e.target.checked })} />Pattern is active</label>}<div className="flex flex-wrap gap-2"><button type="submit" className={button} disabled={busy || !pattern.reason.trim()}>{pattern.original ? 'Save arrival pattern revision' : 'Approve arrival pattern'}</button><button type="button" className={button} disabled={busy} onClick={() => setPattern(null)}>Cancel pattern review</button></div></form>}
+    }); }}><h4 className="font-medium">{pattern.original ? 'Review arrival pattern' : 'Approve recurring arrivals'} · {label(pattern.bill.facts.propertyId)} · {pattern.bill.facts.kind}</h4><p className="text-sm text-ink-secondary">Confirm the pattern you expect from this received bill. The anchor window must include its actual source arrival. An end-of-month anchor stays at month end. These dates predict arrivals, not invoice due dates.</p>{!pattern.original && patternSuggestion(pattern.bill) && <p className="text-sm">{patternSuggestion(pattern.bill)!.message}. Quarterly is preselected; check it against this bill.</p>}<div className="grid gap-3 sm:grid-cols-2"><label className="block text-sm">Arrival frequency<select aria-label="Arrival frequency" className={`${input} mt-1`} disabled={busy} value={pattern.intervalMonths} onChange={e => setPattern({ ...pattern, intervalMonths: Number(e.target.value) as 1 | 3 | 12 })}><option value={1}>Monthly</option><option value={3}>Quarterly</option><option value={12}>Yearly</option></select></label><label className="block text-sm">Observed anchor date<input type="date" className={`${input} mt-1`} disabled={busy} value={pattern.anchorDate} onChange={e => setPattern({ ...pattern, anchorDate: e.target.value })} /></label><label className="block text-sm">Days before anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowBeforeDays} onChange={e => setPattern({ ...pattern, windowBeforeDays: Number(e.target.value) })} /></label><label className="block text-sm">Days after anchor<input type="number" min={0} max={14} className={`${input} mt-1`} disabled={busy} value={pattern.windowAfterDays} onChange={e => setPattern({ ...pattern, windowAfterDays: Number(e.target.value) })} /></label></div><label className="block text-sm">Arrival timezone<input className={`${input} mt-1`} disabled={busy} value={pattern.timeZone} onChange={e => setPattern({ ...pattern, timeZone: e.target.value })} placeholder="Australia/Brisbane" /></label><label className="block text-sm">Reason for this arrival pattern<input className={`${input} mt-1`} maxLength={1000} disabled={busy} value={pattern.reason} onChange={e => setPattern({ ...pattern, reason: e.target.value })} /></label>{pattern.original && <label className="flex min-h-11 gap-2 items-center text-sm"><input type="checkbox" checked={pattern.active} disabled={busy} onChange={e => setPattern({ ...pattern, active: e.target.checked })} />Pattern is active</label>}<div className="flex flex-wrap gap-2"><button type="submit" className={button} disabled={busy || !pattern.reason.trim()}>{pattern.original ? 'Save arrival pattern revision' : 'Approve arrival pattern'}</button><button type="button" className={button} disabled={busy} onClick={() => setPattern(null)}>Cancel pattern review</button></div></form>}
     {snapshot && <BillMonthCalendar entries={calendar} month={calendarMonth} today={today} busy={busy} actionsDisabled={busy || editorOpen || !!pattern} label={label}
       selectedDay={calendarDay} onSelectDay={setCalendarDay} onOpenBill={billId => void run(() => openBill(billId))} onOpenPattern={seriesId => void run(() => openPattern(seriesId))}
       onMonth={step => void run(async () => { await refresh(property, billMonthRange(step === 'current' ? today.slice(0, 7) : shiftBillMonth(calendarMonth, step === 'next' ? 1 : -1))); setCalendarDay(null); })}

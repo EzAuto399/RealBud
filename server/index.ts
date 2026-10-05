@@ -54,6 +54,7 @@ import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
 import { runWeeklyBillsWorkflow } from './weekly-bills-workflow.ts';
 import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanceReview } from './maintenance-review.ts';
 import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
+import { createPropertyReferenceApi, createPropertyReferenceStore } from './property-bill-references.ts';
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionBookingsStore, createInspectionsApi } from './inspection-bookings.ts';
 import { bindWorkflowSettings } from './workflow-settings-broker.ts';
@@ -3853,6 +3854,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const result = await inspectionRulesApi(path, method, method === 'GET' ? undefined : await readBody(req, 100_000));
       return json(res, result!.status, result!.body);
     }
+    if (path === '/api/bill-references' || path === '/api/bill-references/match') {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await propertyReferencesApi(path, method, method === 'GET' ? undefined : await readBody(req, 1_100_000));
+      return json(res, result!.status, result!.body);
+    }
     if (/^\/api\/inspections(?:\/|$)/.test(path)) {
       res.setHeader('cache-control', 'no-store');
       if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
@@ -5839,6 +5846,9 @@ const maintenanceReviewApi = createMaintenanceReviewApi({ store: maintenanceRevi
 // W5 inspection rules: private revisioned JSON with the last 10 replaced versions.
 const inspectionRules = createInspectionRulesStore();
 const inspectionRulesApi = createInspectionRulesApi({ store: inspectionRules, recovery: () => desk.recovery.active || privateRestoreLocked });
+// W2 rate and levy reference numbers per property (REI property list CSV). A number only proposes a property.
+const propertyReferencesApi = createPropertyReferenceApi({ store: createPropertyReferenceStore(), recovery: () => desk.recovery.active || privateRestoreLocked,
+  properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address, ...(p.propertyCode ? { propertyCode: p.propertyCode } : {}) })) });
 // W5 inspection history + saved plan (accepted bookings, moves). Nothing is booked in Property Inspect.
 const inspectionsApi = createInspectionsApi({ rules: inspectionRules, history: createInspectionHistoryStore(), bookings: createInspectionBookingsStore(),
   properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })), recovery: () => desk.recovery.active || privateRestoreLocked,

@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { BillDuplicateCheck } from '@shared/source-bills';
 import type { MailScanReceipt } from '@shared/mail-ingestion';
-import { BillCollectionReceipt, BillDuplicateReview, billCollectionNotice } from './SourceBillsPanel';
+import { BillCollectionReceipt, BillDuplicateReview, BillReferenceMatchNotice, PropertyRateNumbersSummary, billCollectionNotice, referenceKind } from './SourceBillsPanel';
+import type { PropertyBillReferenceView } from '@shared/source-bills';
 
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
 const check: BillDuplicateCheck = { version: 1, sourceDigest: 'a'.repeat(64), reviewDigest: 'b'.repeat(64), complete: true, candidates: [{ billId: `source-bill:${'e'.repeat(64)}`, revision: 3, matchedRevision: 1, sourceDigest: 'c'.repeat(64), subject: '<script>invoice</script>', receivedAt: 1,
@@ -93,5 +94,39 @@ describe('bill mail collection feedback', () => {
     expect(billCollectionNotice(null)).toContain('No bill mail collection receipt is available');
     expect(billCollectionNotice(null)).toContain('Refresh saved sources');
     expect(billCollectionNotice(null)).not.toContain('scope was collected');
+  });
+});
+
+describe('property rate numbers', () => {
+  const view: PropertyBillReferenceView = { version: 1, purpose: 'property-bill-references', revision: 1, updatedAt: 1,
+    entries: [], held: [{ code: 'SYN99', street: '9 Fictional Pl', reason: 'No Desk property with this code or street.', refs: 1 }],
+    rejected: [{ code: 'SYN01', kind: 'levy', raw: 'NIL', reason: 'Marked NIL, so there is no number to match.' }],
+    shared: [{ kind: 'council', digits: '111222333', propertyIds: ['a', 'b'], message: 'Shared by SYN01 and SYN02 — confirm' }],
+    suggestions: [{ propertyId: 'a', kind: 'council', intervalMonths: 3, lastPeriod: '2026-07', nextAround: '2026-10', message: 'Suggested from REI: quarterly, next around Oct 2026' }],
+    counts: { properties: 2, refs: { council: 2, water: 1, levy: 0 }, rejected: 1, held: 1, shared: 1 } };
+  it('shows counts, rejected reasons, shared numbers, held rows and suggestions', () => {
+    const html = renderToStaticMarkup(createElement(PropertyRateNumbersSummary, { view, label: () => 'Sample property' }));
+    expect(html).toContain('2 properties · 2 council · 1 water · 0 levy numbers');
+    expect(html).toContain('1 × Marked NIL');
+    expect(html).toContain('Shared by SYN01 and SYN02 — confirm');
+    expect(html).toContain('Rows not matched to a Desk property (1)');
+    expect(html).toContain('1 next around Oct 2026');
+  });
+  it('shows matched-by-number evidence with the REI observation labelled unconfirmed, and holds ambiguous matches', () => {
+    const html = renderToStaticMarkup(createElement(BillReferenceMatchNotice, { label: () => 'Sample property', selected: '', disabled: false, onUse: vi.fn(),
+      match: { state: 'matched', propertyId: 'a', kind: 'council', digits: '111222333', how: 'whole', evidence: 'Matched by council rate number 111 222 333', rei: { period: '2026-07', status: 'Waiting' } } }));
+    expect(html).toContain('Matched by council rate number 111 222 333');
+    expect(html).toContain('REI showed Waiting for Jul 2026. This is the imported list, not confirmed paid status.');
+    expect(html).toContain('Use this property');
+    const held = renderToStaticMarkup(createElement(BillReferenceMatchNotice, { label: id => `Property ${id}`, selected: '', disabled: false, onUse: vi.fn(),
+      match: { state: 'ambiguous', propertyIds: ['a', 'b'], evidence: 'The council rate number 1 belongs to more than one property. Choose the property.' } }));
+    expect(held).toContain('Held: Property a or Property b');
+    expect(held).not.toContain('Use this property');
+  });
+  it('maps bill kind labels to reference kinds', () => {
+    expect(referenceKind('Council rates')).toBe('council');
+    expect(referenceKind('Water')).toBe('water');
+    expect(referenceKind('Strata levy')).toBe('levy');
+    expect(referenceKind('Plumbing')).toBeNull();
   });
 });

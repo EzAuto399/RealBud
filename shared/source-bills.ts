@@ -108,3 +108,30 @@ export interface SourceBillsWorkspace {
   range: { from: string; to: string }; propertyId: string | null;
   occurrences: SourceBillPage<SourceBillOccurrence>; series: SourceBillPage<BillRecurrenceSeries>; calendar: SourceBillCalendarPage;
 }
+
+/** Office-imported rate and levy reference numbers per property (e.g. from the
+ * REI property list). A matching number proposes a property; a person still
+ * chooses it. `rei` is what the spreadsheet showed, never verified paid status. */
+export type BillReferenceKind = 'council' | 'water' | 'levy';
+export interface PropertyBillReference { kind: BillReferenceKind; digits: string; raw: string }
+export interface PropertyBillReferenceEntry {
+  propertyId: string; code: string; refs: PropertyBillReference[];
+  rei: { period: string | null; status: string | null } | null;
+}
+export interface PropertyBillReferenceRejected { code: string; kind: BillReferenceKind; raw: string; reason: string }
+export interface PropertyBillReferenceHeld { code: string; street: string; reason: string; refs: number }
+export interface PropertyBillReferenceShared { kind: BillReferenceKind; digits: string; propertyIds: string[]; message: string }
+/** Suggested from the REI period only; approving it still needs a reviewed bill. */
+export interface PropertyBillPatternSuggestion { propertyId: string; kind: BillReferenceKind; intervalMonths: 3; lastPeriod: string; nextAround: string; message: string }
+export interface PropertyBillReferenceDirectory {
+  version: 1; purpose: 'property-bill-references'; revision: number; updatedAt: number | null;
+  entries: PropertyBillReferenceEntry[]; held: PropertyBillReferenceHeld[]; rejected: PropertyBillReferenceRejected[];
+}
+export interface PropertyBillReferenceView extends PropertyBillReferenceDirectory {
+  shared: PropertyBillReferenceShared[]; suggestions: PropertyBillPatternSuggestion[];
+  counts: { properties: number; refs: Record<BillReferenceKind, number>; rejected: number; held: number; shared: number };
+}
+export type PropertyBillReferenceMatch =
+  | { state: 'matched'; propertyId: string; kind: BillReferenceKind; digits: string; how: 'whole' | 'within'; evidence: string; rei: PropertyBillReferenceEntry['rei'] }
+  | { state: 'ambiguous'; propertyIds: string[]; evidence: string }
+  | { state: 'none' };
