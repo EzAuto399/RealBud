@@ -1,8 +1,9 @@
 // Learned portal paths. In an attended Ask task Bud explores a mapped portal
 // (REI Cloud) in the work browser; the broker records each step it dispatched
-// (control role and name, URL path, outcome: never page text, field values or
-// query strings). At the end Bud may propose the path it found for one known
-// recipe slot (tenant-list, supplier-list) through portal_propose_path. The
+// (control role and name, the pack's declared route the page was on or else its
+// origin, outcome: never page text, field values, a raw path or a query). At
+// the end Bud may propose the path it found for one known recipe slot
+// (tenant-list, supplier-list) through portal_propose_path. The
 // proposal is checked here against that task's own record (a step Bud did not
 // actually take is refused), against the pack's consequential and forbidden
 // labels, and against the recipe schema; the person allows it on an approval
@@ -19,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { consequentialKind } from "./browser-authority.ts";
+import { consequentialKind, pageOrigin } from "./browser-authority.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parsePortalRecipePack, type PortalRecipePack, type PortalRecipeStep } from "./portal-recipe.ts";
@@ -44,7 +45,7 @@ export interface PortalObservedStep {
   tool: PortalStepTool;
   /** The control's role and accessible name; empty for a navigation. Never a field's value. */
   role: string; label: string;
-  /** Decoded path only, ids and tokens as ":id" (shownPath, server/browser-authority.ts): a query or a path segment can carry tokens. */
+  /** The route template the pack's site map declares for this page (portalRoute), else the page's origin: never a raw path. */
   path: string;
   /** For a dropdown choice: sha256 of the chosen option values, never the values. */
   valuesHash?: string;
@@ -58,6 +59,15 @@ export function observedControl(line: string): { role: string; label: string } {
   return { role, label: redactSecretsInText(name).slice(0, 120) };
 }
 export const choiceHash = (values: readonly string[]) => sha256(JSON.stringify(values));
+/** A page as learned-path evidence keeps it: the route template the pack's site map declares for it (its WHATWG
+ * pathname equal to one of pack.routes, on the pack's origin), recorded as that template; anything else, or no mapped
+ * pack, is the page's origin only. A raw path can name a person or carry a record id, so it is never kept. */
+export function portalRoute(pack: Pick<PortalRecipePack, "origin" | "routes"> | undefined, address: string | URL): string {
+  const origin = pageOrigin(address);
+  if (!pack || origin !== pack.origin) return origin;
+  const path = new URL(address).pathname;
+  return Object.values(pack.routes).find(route => route === path) ?? origin;
+}
 
 const MAX_TASKS = 50, MAX_STEPS = 200, EVIDENCE_BYTES = 2_000_000;
 type EvidenceFile = { version: 1; purpose: "portal-path-evidence"; tasks: Array<{ grantId: string; steps: PortalObservedStep[] }> };
@@ -131,7 +141,9 @@ export function checkPortalPathProposal(pack: PortalRecipePack, input: { slot: u
   const steps = pathSteps(pack, input.steps);
   const done = observed.filter(step => step.outcome === "succeeded");
   const urls = new Set<string>();
-  const saw = (match: (step: PortalObservedStep) => boolean) => { const hit = done.find(match); if (hit) urls.add(hit.path); return Boolean(hit); };
+  // Provenance keeps declared route templates only; anything else recorded (an older record's path) is the pack's origin.
+  const routes = new Set(Object.values(pack.routes));
+  const saw = (match: (step: PortalObservedStep) => boolean) => { const hit = done.find(match); if (hit) urls.add(routes.has(hit.path) ? hit.path : pack.origin); return Boolean(hit); };
   for (const step of steps) {
     const menu = step.verb === "nav" ? step.label.split(" › ") : [step.label];
     const ok = step.verb === "nav"

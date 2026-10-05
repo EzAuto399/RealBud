@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { EVENTS_DIR } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, RuntimeEventListener } from "../contracts.ts";
 import { redactSecrets } from "../redact.ts";
-import { withShownPagePath } from "../browser-authority.ts";
+import { withPageOrigin } from "../browser-authority.ts";
 
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
@@ -33,8 +33,8 @@ export class EventBus {
 
   publish(event: RuntimeEvent) {
     try {
-      // An approval card's record path is for the local card only; the log keeps shownPath.
-      appendFileSync(join(EVENTS_DIR, `${event.threadId}.ndjson`), JSON.stringify(redactSecrets(withShownPagePath(event))) + "\n");
+      // An approval card's record path is for the local card only; the log keeps the page's origin.
+      appendFileSync(join(EVENTS_DIR, `${event.threadId}.ndjson`), JSON.stringify(redactSecrets(withPageOrigin(event))) + "\n");
     } catch {
       /* logging must never take down the stream */
     }

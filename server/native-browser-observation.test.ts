@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nativeBrowserObservation } from "./native-browser-observation.ts";
-import { approvalPath, browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, shownPath, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
+import { approvalPath, browserAccountMarkerShown, browserReadOnlyAction, authorizeBrowserAction, classifyBrowserAction, isVomObservation, observationRefs, withoutLinkDestinations, type BrowserPortalControls } from "./browser-authority.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 import { createHash } from "node:crypto";
 
@@ -227,14 +227,6 @@ describe("a link's address never reaches the model or a label", () => {
   it("cuts plain text at its first url=, and leaves other text alone", () => {
     expect(withoutLinkDestinations(`Welcome\nOpen url="${href}" now\nPage 2`)).toBe("Welcome\nOpen\nPage 2");
     expect(withoutLinkDestinations("Tenants (12)\nPage 2 of 3")).toBe("Tenants (12)\nPage 2 of 3");
-  });
-
-  it("keeps a page address for evidence and cards as its decoded path, with ids and tokens as :id and no query", () => {
-    expect(shownPath("https://user:pass@fictional.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e/a%40b.example/deadbeefcafebabe/SYNTHETICb64Token123/x;jsessionid=AB12?token=SYNTHETIC-TOKEN#frag"))
-      .toBe("/tenants/:id/:id/:id/:id/:id");
-    expect(shownPath("https://fictional.example/customers/reconciliation/bankreconciliation")).toBe("/customers/reconciliation/bankreconciliation");
-    expect(shownPath("https://fictional.example/Reports/Tenant%20List/123?page=2")).toBe("/Reports/Tenant List/123");
-    expect(shownPath("https://fictional.example/r/%3Ftoken%3D1/%E0%A4%A/%2541")).toBe("/r/:id/:id/:id");
   });
 
   // Security review of 21be00b9 (approval-ui-integrity): ":id" on a card hid which record a step acts on.

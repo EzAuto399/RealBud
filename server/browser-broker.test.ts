@@ -7,7 +7,7 @@ import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type Browser
 import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, onBrowserSignIn, browserToolsFor, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
 import { grantedBrowserTools } from "./attended-run.ts";
 import { openForSignIn, signInHandovers, signInStop } from "./browser-sign-in.ts";
-import { BrowserApprovalStore, legacyBrowserGrant, type BrowserPortalControls } from "./browser-authority.ts";
+import { approvalPath, approvalUrl, BrowserApprovalStore, legacyBrowserGrant, type BrowserPortalControls } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { PortalEvidenceStore } from "./portal-path-overrides.ts";
@@ -573,7 +573,7 @@ describe("keys, dropdowns, downloads and uploads", () => {
     expect(result.isError).not.toBe(true);
     expect(dispatched(f, "press")).toEqual([["press", "Shift+Tab", "--ref", "@e1", "--session", "owned", "--tab-id", "1"]]);
     expect(f.approve.mock.calls.at(-1)!.slice(0, 3)).toEqual(["browser_press", { url: "https://portal.example/work", label: 'textbox "Property code"', key: "Shift+Tab" }, 'Press Shift+Tab in textbox "Property code" on portal.example.']);
-    expect(logged(seen)).toEqual([{ grantId: "grant-fictional-1", tool: "browser_press", origin: "https://portal.example", path: "/work", label: 'textbox "Property code"', class: "routine", decision: "approved", outcome: "succeeded", key: "Shift+Tab" }]);
+    expect(logged(seen)).toEqual([{ grantId: "grant-fictional-1", tool: "browser_press", origin: "https://portal.example", label: 'textbox "Property code"', class: "routine", decision: "approved", outcome: "succeeded", key: "Shift+Tab" }]);
     // Enter on a button presses it: without the click class, no key is a way round.
     expect((await f.request("browser_read", { tab_id: 1 })).isError).not.toBe(true);
     expect((await f.request("browser_press", { tab_id: 1, ref: "@e5", key: "Enter" })).content[0].text).toBe("This task does not include that browser step. Ask again with the step you need.");
@@ -753,9 +753,9 @@ describe("explicit grants and exact tool lists", () => {
 
 // Security review of 8ce3e6c9: a link's address and the tab's query carry tokens. Neither reaches what the model reads,
 // an approval card's params (also written to the thread's event log), the run's evidence, or the learned-path record.
-// Security review of 21be00b9: a card shows the record ids in its page path (approvalPath); evidence keeps ":id".
+// Security review of 21be00b9: a card shows the record ids in its page path (approvalPath); evidence keeps the origin only.
 describe("addresses stay out of what is read, shown and kept", () => {
-  it("never shows a link's address or the tab's query, and keeps id-like path segments out of evidence", async () => {
+  it("never shows a link's address or the tab's query, and keeps every path out of evidence", async () => {
     const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
     const root = privateTempRoot(join(tmpdir(), "rb-broker-evidence-")); cleanup.push(() => removeFixture(root));
     const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
@@ -770,14 +770,16 @@ describe("addresses stay out of what is read, shown and kept", () => {
       expect((await f.request(name, { tab_id: 1, ...args })).isError, name).not.toBe(true);
     }
     const steps = await evidence.steps("grant-fictional-1");
-    expect(steps.map(step => [step.tool, step.label, step.path])).toEqual([["click", "foo url=", "/tenants/:id"], ["press", "Reference", "/tenants/:id"], ["navigate", "", "/tenants"]]);
+    // No mapped pack declares these routes, so learned-path evidence keeps the origin only.
+    expect(steps.map(step => [step.tool, step.label, step.path])).toEqual([["click", "foo url=", "https://portal.example"], ["press", "Reference", "https://portal.example"], ["navigate", "", "https://portal.example"]]);
     const cardUrls = f.approve.mock.calls.map(call => (call[1] as { url?: string }).url);
     expect(new Set(cardUrls)).toEqual(new Set(["https://portal.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e", "https://portal.example/tenants"])); expect(cardUrls.at(-1)).toBe("https://portal.example/tenants");
     expect(f.approve.mock.calls.at(-1)![2]).toBe("Open portal.example/tenants in this job's borrowed tab.");
     expect(JSON.stringify(f.approve.mock.calls)).not.toMatch(/SYNTHETIC/);
     const kept = JSON.stringify({ read, seen, steps, kept: await readFile(join(root, "evidence.json"), "utf8") });
-    expect(kept).not.toMatch(/SYNTHETIC|0f8fad5b/);
-    expect(seen.some(event => event.action?.path === "/tenants/:id")).toBe(true);
+    expect(kept).not.toMatch(/SYNTHETIC|0f8fad5b|\/tenants/);
+    expect(seen.filter(event => event.action).map(event => event.action!.origin)).toEqual(["https://portal.example"]);
+    expect(seen.map(event => event.entry.note)).toContain("Opened a page on portal.example.");
   });
 });
 
@@ -819,56 +821,69 @@ describe("an approval is for the record and control its card showed", () => {
   });
 });
 
-// Security review of b7fceb50 (sensitive-data-exposure): the record path a card shows (approvalPath) may hold a name, an
-// email or a record id. It stays on this computer's card and the private approval record; the thread's event log keeps
-// shownPath, and the model, evidence, the phone relay and website receipts never see it.
+// Security review of b7fceb50 (sensitive-data-exposure), and the reviews of its masked log path after it: the record path
+// a card shows (approvalPath) may hold a name, an email or a record id, in any spelling. It stays on this computer's card
+// and the private approval record; the thread's event log, decision events and evidence keep the page's origin only, and
+// the model, the phone relay and website receipts never see it.
 describe("a card's record path stays on the local card and approval record", () => {
-  const RECORD = "https://portal.example/tenants/jane.doe@example.com/TEN-2026-000048213/remove";
-  const STATEMENT = "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement";
-  const PRIVATE = /jane\.doe|000048213|SYNTHETIC/;
+  const PRIVATE = /jane|smith|000048213|t\/42|%6A|SYNTHETIC|\/owners|\/tenants/i;
+  const ROWS: ReadonlyArray<[string, string]> = [
+    ["https://portal.example/tenants/jane.doe@example.com/TEN-2026-000048213/remove", "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement"],
+    ["https://portal.example/owners/jane-smith/remove", "https://portal.example/owners/jane-smith/statement"],
+    ["https://portal.example/t/42/remove", "https://portal.example/t/42/statement"],
+    ["https://portal.example/tenants/%6A%61ne%20smith/remove", "https://portal.example/owners/%6A%61ne%20smith/statement"],
+    ["https://portal.example\\owners\\jane-smith\\remove", "https://portal.example\\owners\\jane-smith\\statement"],
+    ["HTTPS://PORTAL.EXAMPLE:443/Owners/Jane-Smith/remove?name=jane#smith", "HTTPS://PORTAL.EXAMPLE/Owners/Jane-Smith/statement?name=jane"],
+  ];
 
-  it("shows it on the card and keeps it in the record, and nowhere else", async () => {
+  it.each(ROWS)("shows %s on the card and keeps it in the record, and nowhere else", async (record, statement) => {
     const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
     const root = privateTempRoot(join(tmpdir(), "rb-broker-record-path-")); cleanup.push(() => removeFixture(root));
     const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
     const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click"] }, evidence });
-    f.url(`${RECORD}?session=SYNTHETIC-SESSION`); f.page('Are you sure you want to delete Fictional Tenant?\n@e1 button "Delete"'); await f.ready();
+    f.url(record.includes("?") ? record : `${record}?session=SYNTHETIC-SESSION`); f.page('Are you sure you want to delete Fictional Tenant?\n@e1 button "Delete"'); await f.ready();
     // Denied, then approved and pressed, then a page opened: what each returns to the model is checked below.
     f.approve.mockResolvedValueOnce(false);
     const results = [await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })];
     await f.request("browser_read", { tab_id: 1 });
     results.push(await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }));
     await f.request("browser_read", { tab_id: 1 });
-    results.push(await f.request("browser_navigate", { tab_id: 1, url: `${STATEMENT}?session=SYNTHETIC-NAV` }));
+    results.push(await f.request("browser_navigate", { tab_id: 1, url: statement.includes("?") ? statement : `${statement}?session=SYNTHETIC-NAV` }));
     expect(results.map(result => result.isError === true)).toEqual([true, false, false]);
 
-    // This computer's card and the private approval record show the record.
+    // This computer's card and the private approval record show the record, normalised once (approvalUrl).
+    const recordUrl = approvalUrl(record), target = new URL(statement);
     const calls = f.approve.mock.calls as unknown as Array<[string, BrowserJson, string, AbortSignal, { fence: unknown; approvalPolicy?: string }]>;
     const cards = calls.map(([tool, params, summary, , projection]) => ({ tool, params, summary, projection, card: browserApprovalCardFrom(params) }));
     const deleted = cards.find(card => card.card)!; const opened = cards.find(card => card.tool === "browser_navigate")!;
-    expect(deleted.params.url).toBe(RECORD); expect(deleted.card!.page).toBe(RECORD.replace("https://", ""));
-    expect(opened.summary).toBe(`Open ${STATEMENT.replace("https://", "")} in this job's borrowed tab.`);
-    expect((await f.approvals.list()).map(row => row.url)).toEqual([RECORD, RECORD]);
+    expect(deleted.params.url).toBe(recordUrl); expect(deleted.card!.page).toBe(recordUrl.replace("https://", ""));
+    expect(opened.params.url).toBe(approvalUrl(target));
+    expect(opened.summary).toBe(`Open ${target.hostname}${approvalPath(target)} in this job's borrowed tab.`);
+    expect((await f.approvals.list()).map(row => row.url)).toEqual([recordUrl, recordUrl]);
     expect(JSON.stringify(cards)).not.toMatch(/SYNTHETIC/);
 
-    // The thread's event log (each card as the host emits it) keeps shownPath.
+    // The thread's event log (each card as the host emits it) keeps the page's origin only.
     ensureDirs();
-    const bus = new EventBus();
+    const bus = new EventBus(); const thread = `thread-record-path-${ROWS.findIndex(row => row[0] === record)}`;
     for (const { tool, params, summary, projection, card } of cards) {
-      bus.publish({ eventId: `ev-${tool}`, provider: "hermesAgent", threadId: "thread-record-path", createdAt: new Date(0).toISOString(), type: "request.opened",
+      bus.publish({ eventId: `ev-${tool}`, provider: "hermesAgent", threadId: thread, createdAt: new Date(0).toISOString(), type: "request.opened",
         requestType: "permission", tool, params, summary, fence: projection.fence as never, ...(card ? { browserApproval: card, approvalPolicy: "once" as const } : {}) });
     }
-    const log = await readFile(join(EVENTS_DIR, "thread-record-path.ndjson"), "utf8");
-    expect(log).not.toMatch(PRIVATE);
-    expect(log).toContain("portal.example/tenants/:id/:id/remove"); expect(log).toContain("Open portal.example/owners/:id/:id/statement in this job's borrowed tab.");
+    const log = (await readFile(join(EVENTS_DIR, `${thread}.ndjson`), "utf8")).trim().split("\n").map(line => JSON.parse(line) as { params: { url?: string }; summary: string; browserApproval?: { page?: string } });
+    expect(JSON.stringify(log)).not.toMatch(PRIVATE);
+    expect(log.map(event => event.params.url).filter(Boolean).every(url => url === "https://portal.example")).toBe(true);
+    expect(log.some(event => event.browserApproval && event.browserApproval.page === undefined)).toBe(true);
+    expect(log.map(event => event.summary)).toContain("Open portal.example in this job's borrowed tab.");
 
-    // What the model reads, the run's evidence, the phone relay and a website receipt never hold it.
-    const thread = [{ id: "card", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: opened.summary, options: ["Allow", "Deny"], browserApproval: deleted.card } },
+    // What the model reads, decision events, the run's evidence, the phone relay and a website receipt never hold it.
+    const messages = [{ id: "card", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: opened.summary, options: ["Allow", "Deny"], browserApproval: deleted.card } },
       { id: "reply", role: "bot", kind: "text", text: "The tenant was removed.", at: 2 }];
-    const phone = { productBud: () => ({ threadId: "bud", busy: false }), activePath: () => thread } as unknown as Store;
+    const phone = { productBud: () => ({ threadId: "bud", busy: false }), activePath: () => messages } as unknown as Store;
     const relayed = [buildHandoffPayload(phone, { mode: "summary" }), buildHandoffPayload(phone, { mode: "result" })];
     expect(relayed.every(item => item.ok)).toBe(true);
-    const kept = JSON.stringify({ results, seen, steps: await evidence.steps("grant-fictional-1"), evidence: await readFile(join(root, "evidence.json"), "utf8"), relayed,
+    const steps = await evidence.steps("grant-fictional-1");
+    expect(steps.map(step => step.path)).toEqual(["https://portal.example", "https://portal.example"]);
+    const kept = JSON.stringify({ results, seen, steps, evidence: await readFile(join(root, "evidence.json"), "utf8"), relayed,
       receipt: websiteRunReceipt({ id: "run-1", status: "awaiting-approval", detail: opened.summary } as never) });
     expect(kept).not.toMatch(PRIVATE);
   });

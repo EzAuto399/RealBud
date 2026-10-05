@@ -29,8 +29,8 @@ import {
   withoutLinkDestinations,
   jobBrowserUrl,
   observationRefs,
-  approvalPath,
-  shownPath,
+  approvalUrl,
+  pageOrigin,
   type BrowserApprovalStore,
   type BrowserAuthorization,
   type BrowserClassification,
@@ -44,7 +44,7 @@ import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { managedService } from "./managed-service.ts";
-import { checkPortalPathProposal, choiceHash, observedControl, portalEvidence, portalPaths, LEARNABLE_SLOTS, PORTAL_PROPOSE_TOOL,
+import { checkPortalPathProposal, choiceHash, observedControl, portalEvidence, portalPaths, portalRoute, LEARNABLE_SLOTS, PORTAL_PROPOSE_TOOL,
   type PortalEvidenceStore, type PortalObservedStep, type PortalPathStore, type PortalStepTool } from "./portal-path-overrides.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
@@ -105,9 +105,8 @@ const WRONG_BROWSER = "This tab is in a different browser from the one this task
 export interface BrowserActionRecord {
   grantId: string;
   tool: string;
+  /** The page's origin only (pageOrigin): a path or query can name a person or carry a token. */
   origin: string;
-  /** Decoded path only, ids and tokens as ":id" (shownPath): a query or a path segment can carry tokens. */
-  path: string;
   label: string;
   class: BrowserClassification["class"];
   decision: "allowed" | "approved";
@@ -122,10 +121,6 @@ const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "obje
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
 const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
 const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
-/** An address as an approval card's params carry it: origin and the path with its record ids, so the person sees which
- * record a step acts on; never the query or a token-like segment (approvalPath). The event log (withShownPagePath),
- * evidence and provenance keep shownPath. */
-const shownUrl = (url: string) => `${new URL(url).origin}${approvalPath(url)}`;
 type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
 /** The type the bytes must show for a download to become a readable workroom attachment. */
 const ATTACHABLE: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
@@ -302,7 +297,9 @@ export async function startBrowserBroker(options: {
     if (signInHandoverBlocks(row.url)) throw problem(SIGN_IN_HANDOVER);
     return row;
   };
-  /** Routine steps: allow (grant or site rule), ask, or deny, exactly as decided. */
+  /** Routine steps: allow (grant or site rule), ask, or deny, exactly as decided. A card's params.url is approvalUrl (the
+   * record path, for the local card and the private approval record only); the event log (withPageOrigin), decision
+   * notes and run evidence keep pageOrigin, and learned-path evidence a declared route (portalRoute). */
   const gate = async (tool: string, auth: BrowserAuthorization, params: BrowserJson, signal: AbortSignal, presentAs = tool) => {
     check(signal);
     if (auth.decision === "deny") { publish("denied", fenceDenialNote(tool, auth.reason)); throw problem(auth.reason); }
@@ -353,7 +350,7 @@ export async function startBrowserBroker(options: {
     publish("asked", `Asked you to confirm the account ${shown} on ${host}.`);
     const summary = saved ? `${host} is signed in to ${shown}, not ${saved}, the account you confirmed before. Continue in ${shown}? Bud then uses ${shown} here until you confirm another.`
       : `Signed in to ${host} as ${shown}. Continue in this account? Bud remembers it, and asks again if a later task finds a different account.`;
-    if (!await options.approve(BROWSER_ACCOUNT_CONFIRM_TOOL, { url: shownUrl(url), account: shown }, summary, signal, { fence: { surface: "portal-read", origin: host, ruleOffer: null }, approvalPolicy: "once" })) {
+    if (!await options.approve(BROWSER_ACCOUNT_CONFIRM_TOOL, { url: approvalUrl(url), account: shown }, summary, signal, { fence: { surface: "portal-read", origin: host, ruleOffer: null }, approvalPolicy: "once" })) {
       broker.close(); throw problem(`The account ${shown} was not confirmed, so Bud stopped and did nothing on ${host}.`);
     }
     check(signal);
@@ -510,7 +507,7 @@ export async function startBrowserBroker(options: {
           publish("denied", fenceDenialNote(name, WRONG_BROWSER)); throw problem(WRONG_BROWSER);
         }
         check(signal);
-        await gate(name, authorize(name, url, args, undefined, taskScope), { url: shownUrl(url) }, signal, "browser_read");
+        await gate(name, authorize(name, url, args, undefined, taskScope), { url: approvalUrl(url) }, signal, "browser_read");
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
         receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
         await runtime.claimTab(owner, tabId, signal);
@@ -520,7 +517,7 @@ export async function startBrowserBroker(options: {
       }
       if (name === "browser_read") {
         const auth = authorize(name, url, args, undefined, taskScope);
-        await gate(name, auth, { url: shownUrl(url) }, signal);
+        await gate(name, auth, { url: approvalUrl(url) }, signal);
         const observed = await observe(tabId, signal, true);
         if (taskScope && auth.decision === "allow" && (snapshots.get(tabId)?.url !== url || authorize(name, url, args, observed.text, taskScope).decision !== "allow")) throw problem(CHANGED);
         return text(observed);
@@ -536,8 +533,8 @@ export async function startBrowserBroker(options: {
         const target = auth.decision === "deny" ? null : jobBrowserUrl(args.url, sites);
         if (!target) { await gate(name, auth, {}, signal); throw problem("Open this page yourself."); }
         action = { kind: "navigate", tabId, url: target.href };
-        await gate(name, auth, { url: shownUrl(target.href) }, signal);
-        observed = { tool: "navigate", role: "", label: "", path: shownPath(target) };
+        await gate(name, auth, { url: approvalUrl(target.href) }, signal);
+        observed = { tool: "navigate", role: "", label: "", path: portalRoute(learn?.pack, target) };
       } else {
         const snap = snapshots.get(tabId); const target = typeof args.ref === "string" ? args.ref : "";
         const label = snap?.refs.get(target);
@@ -551,7 +548,7 @@ export async function startBrowserBroker(options: {
         if (auth.classification.class === "consequential" && (auth.decision === "ask" || auth.decision === "deny" && auth.draft)) {
           approval = await approveConsequential(name, tabId, url, target, label, args, signal);
         } else {
-          const page = shownUrl(url);
+          const page = approvalUrl(url);
           const shown = name === "browser_fill" ? { url: page, label, value: args.value } : name === "browser_press" ? { url: page, label, key: browserKey(args.key)?.spec }
             : name === "browser_select" ? { url: page, label, values: args.values } : upload ? { url: page, label, file: upload.name } : { url: page, label };
           await gate(name, auth, shown, signal);
@@ -574,10 +571,10 @@ export async function startBrowserBroker(options: {
         else action = { kind: "click", tabId, ref: target };
         const tool = ({ browser_click_semantic: "click", browser_select: "select", browser_download: "download", browser_fill: "fill", browser_press: "press" } as Record<string, PortalStepTool>)[name];
         const values = name === "browser_select" ? browserChoices(args.values) : null;
-        if (tool) observed = { tool, ...observedControl(label), path: shownPath(url), ...(values ? { valuesHash: choiceHash(values) } : {}) };
+        if (tool) observed = { tool, ...observedControl(label), path: portalRoute(learn?.pack, url), ...(values ? { valuesHash: choiceHash(values) } : {}) };
         if (Object.hasOwn(TASK_TOOLS, name)) {
-          const at = new URL(url); const choices = browserChoices(args.values);
-          logged = { grantId: grant.id, tool: name, origin: at.origin, path: shownPath(at), label: redactSecretsInText(label).slice(0, 200),
+          const choices = browserChoices(args.values);
+          logged = { grantId: grant.id, tool: name, origin: pageOrigin(url), label: redactSecretsInText(label).slice(0, 200),
             class: auth.classification.class, decision: approval || auth.decision !== "allow" ? "approved" : "allowed",
             ...(name === "browser_press" ? { key: browserKey(args.key)!.spec } : {}),
             ...(name === "browser_select" && choices ? { valuesHash: hash(JSON.stringify(choices)) } : {}),
@@ -603,9 +600,9 @@ export async function startBrowserBroker(options: {
       // unverified, and held against repeats, until a person records its result.
       operations.finish(receipt, "succeeded"); receipt = undefined;
       await capture(observed, "succeeded");
-      // The task card's progress line: what an Ask task opened (a click or a page of the site), by name only.
+      // The task card's progress line: what an Ask task opened (a click or a page of the site), by name only, never its path.
       if (askTask && observed && !logged && (observed.tool === "click" || observed.tool === "navigate")) {
-        publish("action", `Opened ${observed.label || observed.path} on ${new URL(url).hostname}.`);
+        publish("action", `Opened ${observed.label || "a page"} on ${new URL(url).hostname}.`);
       }
       if (claim && approval) {
         claim = undefined; await approvals.update(approval.id, { outcome: "unverified" });

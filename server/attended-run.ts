@@ -168,8 +168,8 @@ const EVIDENCE_NOTE_MAX = 500;
 const SHA256 = /^[0-9a-f]{64}$/;
 /** The run's receipt of one browser action the broker dispatched: its sentence,
  * then its record (tool, class, decision, outcome, key, value and file hashes,
- * page origin and path, control name, grant). Field values, file contents and
- * file paths are never kept; the record is kept whole and the sentence shortened. */
+ * page origin, control name, grant). Field values, file contents, file paths and
+ * page paths are never kept; the record is kept whole and the sentence shortened. */
 export function browserActionEvidence(entry: JobRunEvidence, action: BrowserActionRecord): JobRunEvidence {
   const token = (value: string, max: number) => redactSecretsInText(value).replace(/\s+/g, "_").slice(0, max);
   const hash = (value: string | undefined) => value !== undefined && SHA256.test(value) ? value : undefined;
@@ -186,7 +186,7 @@ export function browserActionEvidence(entry: JobRunEvidence, action: BrowserActi
     ["file-id-sha256", hash(action.upload?.fileIdHash)],
     ["bytes", Number.isSafeInteger(size) ? size : undefined],
     ["type", action.download ? token(action.download.contentType, 60) : undefined],
-    ["page", token(`${action.origin}${action.path}`, 100)],
+    ["page", token(action.origin, 100)],
     ["control", control === undefined ? undefined : JSON.stringify(redactSecretsInText(control).slice(0, 48))],
     ["grant", token(action.grantId, 48)],
   ];

@@ -12,7 +12,7 @@ import { authorizeBrowserAction, BrowserApprovalStore } from "./browser-authorit
 import { startBrowserBroker, type BrowserBroker } from "./browser-broker.ts";
 import { BrowserRuntime, browserRuntime, type BrowserJson } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { checkPortalPathProposal, PortalEvidenceStore, PortalPathStore, PORTAL_PROPOSE_TOOL } from "./portal-path-overrides.ts";
+import { checkPortalPathProposal, PortalEvidenceStore, PortalPathStore, portalRoute, PORTAL_PROPOSE_TOOL } from "./portal-path-overrides.ts";
 import { portalRecipeControls } from "./portal-recipe-runner.ts";
 import { loadPortalRecipePack, portalMapForSites } from "./portal-recipe-task.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
@@ -202,6 +202,29 @@ describe("proposing and approving a learned path", () => {
     expect(() => checkPortalPathProposal(pack, { slot: "arrears-review", steps: [{ verb: "download", label: "Export" }] }, seen)).toThrow(/only propose a path for: tenant-list, supplier-list/);
     // An unknown-outcome step is not a step Bud took.
     expect(() => checkPortalPathProposal(pack, { slot: "tenant-list", steps: [{ verb: "nav", label: "Reports" }, { verb: "download", label: "Export" }] }, seen.map(s => s.tool === "download" ? { ...s, outcome: "unknown" as const } : s))).toThrow(/did not download from 'Export'/);
+  });
+});
+
+// Learned-path evidence and provenance keep a route template the pack's site map declares, never a raw path.
+describe("what a learned path keeps of a page", () => {
+  it("keeps a declared route as its template, and only the origin for anything else", () => {
+    const pack = fictionalReiPack(); const at = (path: string) => `${FICTIONAL_REI_ORIGIN}${path}`;
+    expect(portalRoute(pack, at("/report/reportlist?reicid=fictional-reicid-1#top"))).toBe("/report/reportlist");
+    expect(portalRoute(pack, at("/customers/arrears/"))).toBe("/customers/arrears/");
+    expect(portalRoute(pack, new URL(at("/customers/./tenant")))).toBe("/customers/tenant");
+    for (const address of [at("/customers/owner/details?ownerid=4821"), at("/customers/owner/jane-smith"), at("/customers/tenant/jane.doe@example.com"),
+      at("/t/42"), at("/customers/%74enant"), at("/Customers/Tenant"), at("/customers/arrears"), `${FICTIONAL_REI_ORIGIN}\\customers\\owner\\jane-smith`]) {
+      expect(portalRoute(pack, address), address).toBe(FICTIONAL_REI_ORIGIN);
+    }
+    expect(portalRoute(pack, "https://other.fictional.test/report/reportlist")).toBe("https://other.fictional.test");
+    expect(portalRoute(undefined, at("/report/reportlist"))).toBe(FICTIONAL_REI_ORIGIN);
+    expect(portalRoute(pack, "not a page")).toBe("unknown page");
+  });
+
+  it("keeps only declared templates in a saved path's provenance, even from an older record's raw path", () => {
+    const pack = fictionalReiPack();
+    const seen = SEEN.map(step => step.label === REPORT ? { ...step, path: "/customers/owner/jane-smith" } : step);
+    expect(checkPortalPathProposal(pack, { slot: "tenant-list", steps: PATH }, seen).urls.sort()).toEqual([FICTIONAL_REI_ORIGIN, "/customers/dashboard", "/report/reportlist"].sort());
   });
 });
 

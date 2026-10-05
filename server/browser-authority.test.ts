@@ -14,7 +14,11 @@ import {
   accountMarkerShown,
   legacyBrowserGrant,
   UNUSUAL_NAME,
-  withShownPagePath,
+  UNKNOWN_PAGE,
+  approvalPath,
+  approvalUrl,
+  pageOrigin,
+  withPageOrigin,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
@@ -769,17 +773,62 @@ describe("a control whose label is not its whole name", () => {
   });
 });
 
-// Security review of b7fceb50 (sensitive-data-exposure): the thread's event log keeps shownPath wherever a card shows
-// the record path (approvalPath). Only a request with a web address in params.url changes.
-describe("an approval request as the event log keeps it", () => {
-  it("masks the record path in params.url, the summary and the card's page, and leaves everything else alone", () => {
-    const url = "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement";
-    const opened = { type: "request.opened", tool: "browser_navigate", params: { url, label: "x" }, summary: "Open portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement in this job's borrowed tab.",
-      browserApproval: { site: "portal.example", page: "portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement", control: "Delete" } };
-    expect(withShownPagePath(opened)).toEqual({ ...opened, params: { url: "https://portal.example/owners/:id/:id/statement", label: "x" },
-      summary: "Open portal.example/owners/:id/:id/statement in this job's borrowed tab.", browserApproval: { ...opened.browserApproval, page: "portal.example/owners/:id/:id/statement" } });
-    for (const other of [{ type: "request.resolved", params: { url } }, { type: "request.opened", params: { url: "file:///synthetic/jane.doe" } }, { type: "request.opened", summary: url }]) {
-      expect(withShownPagePath(other)).toBe(other);
+// Repeated reviews of the masked path kept off the card (sensitive-data-exposure / parser differential): masking a
+// path always misses a shape. Off-card sinks keep pageOrigin only; the local card and the private approval record keep
+// approvalUrl, both from one WHATWG parse. [address, base, pageOrigin, approvalUrl or null when there is no web page].
+const TRICKY: ReadonlyArray<[string, string | undefined, string, string | null]> = [
+  ["https://portal.example/owners/jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://portal.example/tenants/jane.doe@example.com/remove", undefined, "https://portal.example", "https://portal.example/tenants/jane.doe@example.com/remove"],
+  ["https://portal.example/t/42", undefined, "https://portal.example", "https://portal.example/t/42"],
+  ["https://portal.example/r/%6A%61ne%20smith/%2F..%2Fadmin", undefined, "https://portal.example", "https://portal.example/r/jane smith/%2F..%2Fadmin"],
+  ["../owners/jane-smith?token=SYNTHETIC-TOKEN", "https://portal.example/tenants/list", "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["//other.example/owners/jane-smith", "https://portal.example/tenants", "https://other.example", "https://other.example/owners/jane-smith"],
+  ["https://portal.example\\owners\\jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://jane:SYNTHETIC-PASS@portal.example/owners/jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://b\u00fccher.example/owners/jane-smith", undefined, "https://xn--bcher-kva.example", "https://xn--bcher-kva.example/owners/jane-smith"],
+  ["HTTPS://PORTAL.EXAMPLE:443/Owners/Jane-Smith?name=jane#smith", undefined, "https://portal.example", "https://portal.example/Owners/Jane-Smith"],
+  ["https://portal.example:8443/owners/jane-smith", undefined, "https://portal.example:8443", "https://portal.example:8443/owners/jane-smith"],
+  ["owners/jane-smith", undefined, UNKNOWN_PAGE, null],
+  ["javascript:alert('jane-smith')", undefined, UNKNOWN_PAGE, null],
+  ["file:///synthetic/jane-smith", undefined, UNKNOWN_PAGE, null],
+  ["data:text/html,jane-smith", undefined, UNKNOWN_PAGE, null],
+];
+const PRIVATE = /jane|smith|42|SYNTHETIC|owners|tenants|admin/i;
+
+describe("a page as every sink keeps it", () => {
+  it("keeps only the origin off the card, and the card's real path on it, from one parse", () => {
+    for (const [address, base, origin, card] of TRICKY) {
+      expect(pageOrigin(address, base), address).toBe(origin);
+      expect(pageOrigin(address, base), address).not.toMatch(PRIVATE);
+      if (card) expect(approvalUrl(new URL(address, base)), address).toBe(card);
+    }
+  });
+
+  it("logs an approval request with its page's origin only, whatever the address or summary", () => {
+    for (const [address, base, origin, card] of TRICKY) {
+      // As the broker emits a navigate card (params.url and summary from approvalUrl), and as a model's own request would.
+      const url = card ? new URL(address, base) : null;
+      const opened = url ? { type: "request.opened", tool: "browser_navigate", fence: { surface: "portal-read" }, params: { url: card, label: 'link "Statement"' },
+        summary: `Open ${url.hostname}${approvalPath(url)} in this job's borrowed tab.`, browserApproval: { site: url.hostname, page: `${url.hostname}${approvalPath(url)}`, control: "Delete" } }
+        : { type: "request.opened", tool: "web_fetch", params: { url: address }, summary: `Fetch ${address}` };
+      const logged = withPageOrigin(opened) as typeof opened & { browserApproval?: Record<string, unknown> };
+      expect(logged.params.url, address).toBe(origin);
+      expect(JSON.stringify({ ...logged, params: { ...logged.params, label: "" } }), address).not.toMatch(PRIVATE);
+      if (url) {
+        expect(logged.summary).toBe(`Open ${url.hostname} in this job's borrowed tab.`);
+        expect(logged.browserApproval).toEqual({ site: url.hostname, control: "Delete" });
+      } else expect(logged.summary).toBe(`Approval asked on ${UNKNOWN_PAGE}.`);
+    }
+    // A summary that writes the page another way, or comes from outside the broker, is replaced whole.
+    const page = "https://portal.example/r/jane smith";
+    for (const opened of [
+      { type: "request.opened", fence: {}, params: { url: page }, summary: "Open portal.example/r/jane%20smith now." },
+      { type: "request.opened", fence: {}, params: { url: page }, summary: "Open /r/jane smith on portal.example." },
+      { type: "request.opened", params: { url: page }, summary: "Fetch the page with jane%20smith." },
+    ]) expect(withPageOrigin(opened)).toEqual({ ...opened, params: { url: "https://portal.example" }, summary: "Approval asked on portal.example." });
+    // Only a request carrying a page address changes.
+    for (const other of [{ type: "request.resolved", params: { url: page } }, { type: "request.opened", summary: page }, { type: "turn.started" }]) {
+      expect(withPageOrigin(other)).toBe(other);
     }
   });
 });

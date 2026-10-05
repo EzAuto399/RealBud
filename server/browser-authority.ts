@@ -121,12 +121,13 @@ function controlLine(text: string, ref: string): { label: string; whole: string 
   }
   return undefined;
 }
-/** A page address as an approval card, its record and its summary show it, so the person sees which record the step
- * acts on: every path segment decoded as the site wrote it, record ids and numbers included. Never the query, fragment
- * or sign-in. A segment that looks like a credential (24+ characters of hex, or of mixed-case base64 with a digit; a
- * JWT-like a.b.c; a known secret shape) shows as ":token", and so does whatever follows a ;, =, ? or # in a segment
- * (a path parameter or an encoded query). A control character, slash or backslash stays percent-encoded, so a segment
- * never reads as something else. Evidence, provenance and logs keep shownPath. */
+/** A page address as the local approval card, its private record and its summary show it, so the person sees which
+ * record the step acts on: every path segment decoded as the site wrote it, record ids and numbers included. Never the
+ * query, fragment or sign-in. A segment that looks like a credential (24+ characters of hex, or of mixed-case base64
+ * with a digit; a JWT-like a.b.c; a known secret shape) shows as ":token", and so does whatever follows a ;, =, ? or #
+ * in a segment (a path parameter or an encoded query). A control character, slash or backslash stays percent-encoded,
+ * so a segment never reads as something else. Only the card and the 0600 approval record keep it: everything else
+ * (event log, evidence, decision notes) keeps pageOrigin, and learned-path provenance a declared route template. */
 export function approvalPath(address: string | URL): string {
   let path: string; try { path = new URL(address).pathname; } catch { return ""; }
   return path.split("/").map(raw => {
@@ -137,30 +138,36 @@ export function approvalPath(address: string | URL): string {
     return tokenLike ? ":token" : decoded.replace(/([;=?#]).*$/s, "$1:token").replace(/[\p{C}/\\]/gu, char => encodeURIComponent(char));
   }).join("/");
 }
-/** A page address as task evidence, a learned path's provenance or a log line keeps it (cards use approvalPath): the
- * percent-decoded path only (never the query, fragment or sign-in), with any segment that may be a record id or a
- * token (an email, a UUID or long hex, anything of 16+ characters with a digit, anything holding query, encoding or
- * control characters) shown as ":id". */
-export function shownPath(address: string | URL): string {
-  let path: string; try { path = new URL(address).pathname; } catch { return ""; }
-  return path.split("/").map(raw => {
-    let segment: string; try { segment = decodeURIComponent(raw); } catch { return ":id"; }
-    return /[@?#&=;%+\p{C}]/u.test(segment) || /^[\da-f-]{16,}$/i.test(segment) || segment.length >= 16 && /\d/.test(segment) ? ":id" : segment;
-  }).join("/");
+/** The one address the local card and the private approval record keep: origin + approvalPath. */
+export const approvalUrl = (address: string | URL): string => `${new URL(address).origin}${approvalPath(address)}`;
+export const UNKNOWN_PAGE = "unknown page";
+/** A page as every off-card sink keeps it (event log, run evidence, decision notes, learned-path evidence): its
+ * origin (scheme, host, port) from the same WHATWG parse the authority uses, never a path, query or sign-in.
+ * Anything without a web origin (unparseable, relative without a base, file:, data:, javascript:) is UNKNOWN_PAGE. */
+export function pageOrigin(address: string | URL, base?: string | URL): string {
+  try { const origin = new URL(address, base).origin; return /^https?:\/\//.test(origin) ? origin : UNKNOWN_PAGE; } catch { return UNKNOWN_PAGE; }
 }
-/** An approval request (request.opened) as the thread's event log keeps it (server/harness/bus.ts): the record path its
- * local card shows (approvalPath, in params.url, the navigate summary and a consequential card's page) as shownPath.
- * The broker writes params.url as origin + approvalPath, so the summary's host + approvalPath is replaced exactly. */
-export function withShownPagePath<T>(event: T): T {
-  const e = event as { type?: unknown; params?: unknown; summary?: unknown; browserApproval?: unknown };
+/** An approval request (request.opened) as the thread's event log keeps it (server/harness/bus.ts): params.url as
+ * pageOrigin and the card's page dropped (its site stays). The broker (an event with a fence) writes params.url as
+ * approvalUrl and its one path-bearing summary (navigate) as host + approvalPath, so that exact text becomes the host.
+ * Any other summary beside a page address (not the broker's, or still holding the path or text after host/) is
+ * replaced whole: no path survives a differently written summary. */
+export function withPageOrigin<T>(event: T): T {
+  const e = event as { type?: unknown; params?: unknown; summary?: unknown; browserApproval?: unknown; fence?: unknown };
   const params = e.params && typeof e.params === "object" ? e.params as Record<string, unknown> : null;
   if (e.type !== "request.opened" || typeof params?.url !== "string") return event;
-  let page: URL; try { page = new URL(params.url); } catch { return event; }
-  if (page.protocol !== "https:" && page.protocol !== "http:") return event;
-  const shown = shownPath(page), real = params.url.slice(page.origin.length);
-  const card = e.browserApproval && typeof e.browserApproval === "object" && "page" in e.browserApproval ? { browserApproval: { ...e.browserApproval, page: `${page.hostname}${shown}` } } : {};
-  const summary = typeof e.summary === "string" && real ? { summary: e.summary.split(`${page.hostname}${real}`).join(`${page.hostname}${shown}`) } : {};
-  return { ...event, params: { ...params, url: `${page.origin}${shown}` }, ...summary, ...card };
+  const origin = pageOrigin(params.url);
+  const logged: Record<string, unknown> = { params: { ...params, url: origin } };
+  if (e.browserApproval && typeof e.browserApproval === "object") {
+    const { page: _page, ...site } = e.browserApproval as Record<string, unknown>; logged.browserApproval = site;
+  }
+  if (typeof e.summary === "string") {
+    const host = origin === UNKNOWN_PAGE ? UNKNOWN_PAGE : new URL(origin).hostname;
+    const path = params.url.startsWith(origin) ? params.url.slice(origin.length) : params.url;
+    const kept = path ? e.summary.split(`${host}${path}`).join(host) : e.summary;
+    logged.summary = e.fence && origin !== UNKNOWN_PAGE && !kept.includes(`${host}/`) && !(path.length > 1 && kept.includes(path)) ? kept : `Approval asked on ${host}.`;
+  }
+  return { ...event, ...logged };
 }
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const hostOf = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, "");
@@ -618,7 +625,7 @@ export interface BrowserApprovalFact { name: BrowserFactName; value: string | nu
 export interface BrowserApprovalDraft {
   kind: BrowserConsequentialKind;
   origin: string;
-  /** Origin and path as the card shows it (approvalPath): record ids shown, never the query or a token-like segment. */
+  /** Origin and path as the local card shows it (approvalUrl): record ids shown, never the query or a token-like segment. */
   url: string;
   control: { ref: string; label: string };
   facts: BrowserApprovalFact[];
@@ -976,7 +983,7 @@ export function browserApprovalDraft(kind: BrowserConsequentialKind, observation
   const control = controlName(label);
   // What the card shows is what the approval binds: this page (approvalPath), this exact label (and, when it is not the
   // control's whole line, that line, hashed) and the confirmed facts. A different record, label or tail is a new approval.
-  const page = `${url.origin}${approvalPath(url)}`; const named = line?.whole ?? label;
+  const page = approvalUrl(url); const named = line?.whole ?? label;
   const value = (name: BrowserFactName) => facts.find(item => item.name === name)?.value ?? "?";
   const has = (name: BrowserFactName) => facts.some(item => item.name === name);
   const what = kind === "pay" ? `Pay ${value("currency")} ${value("amount")} to ${value("recipient")}${has("reference") ? ` (reference ${value("reference")})` : ""}`

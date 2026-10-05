@@ -138,13 +138,13 @@ describe("fence evidence identity", () => {
 });
 
 describe("browser action records in the run's evidence", () => {
-  const base: BrowserActionRecord = { grantId: "legacy-0123456789abcdef0123456789abcdef", tool: "browser_press", origin: "https://portal.example", path: "/levies/pay",
+  const base: BrowserActionRecord = { grantId: "legacy-0123456789abcdef0123456789abcdef", tool: "browser_press", origin: "https://portal.example",
     label: 'textbox "Amount (AUD)" value="1,240.00"', class: "consequential", decision: "approved", outcome: "succeeded", key: "Enter" };
   const entry = (note: string) => ({ at: 7, kind: "action" as const, note });
 
   it("keeps the record's identifiers and hashes, never a field value or a file path", () => {
     const pressed = browserActionEvidence(entry('Pressed Enter in textbox "Amount (AUD)" value="1,240.00" on portal.example.'), base);
-    expect(pressed).toEqual({ at: 7, kind: "action", note: 'Pressed Enter in textbox "Amount (AUD)" on portal.example. Action record: tool=browser_press class=consequential decision=approved outcome=succeeded key=Enter page=https://portal.example/levies/pay control="Amount (AUD)" grant=legacy-0123456789abcdef0123456789abcdef' });
+    expect(pressed).toEqual({ at: 7, kind: "action", note: 'Pressed Enter in textbox "Amount (AUD)" on portal.example. Action record: tool=browser_press class=consequential decision=approved outcome=succeeded key=Enter page=https://portal.example control="Amount (AUD)" grant=legacy-0123456789abcdef0123456789abcdef' });
     expect(pressed.note).not.toContain("1,240.00");
     const typed = browserActionEvidence(entry('Pressed Shift+q in textbox "Notes" on portal.example.'), { ...base, key: "Shift+q", class: "routine", decision: "allowed", label: 'textbox "Notes"' });
     expect(typed.note).toMatch(/^Pressed a character in textbox "Notes" on portal\.example\. Action record: .* key=character /);
@@ -165,7 +165,7 @@ describe("browser action records in the run's evidence", () => {
 
   it("stays within the evidence note limit, redacted, and keeps the record whole", async () => {
     const long = browserActionEvidence(entry(`Pressed Enter with api_key=fictionalfictional123 ${"filler ".repeat(120)}`),
-      { ...base, path: `/${"p".repeat(300)}`, grantId: `g${"1".repeat(199)}`, label: `button "${"L".repeat(300)}"` });
+      { ...base, grantId: `g${"1".repeat(199)}`, label: `button "${"L".repeat(300)}"` });
     expect(long.note.length).toBeLessThanOrEqual(500);
     expect(long.note).not.toContain("fictionalfictional123");
     expect(long.note).toMatch(/… Action record: tool=browser_press .* grant=g1{47}$/);
