@@ -9,7 +9,9 @@ import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeo
 import { validateSkillJournalRoot, validateSkillOverride, skillHistoryHash, skillArchivePath, isSkillArchivePath, validateSkillHistoryArchive } from './customer-pack-skill-history.ts';
 const control=vi.hoisted(()=>{const root=`${process.env.TMPDIR??'/tmp'}/rb-skill-history-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=root;return {root,fault:undefined as undefined|((path:string,value:any,stage:'before'|'after')=>void)};});
 vi.mock('./private-json.ts',async original=>{const actual=await original<typeof import('./private-json.ts')>();return {...actual,writePrivateJson:async(...args:Parameters<typeof actual.writePrivateJson>)=>{control.fault?.(args[0],args[1],'before');await actual.writePrivateJson(...args);control.fault?.(args[0],args[1],'after');}};});
-const {createCustomerPackService}=await import('./customer-packs.ts');
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
+const {createCustomerPackService:createPackService}=await import('./customer-packs.ts');
+const createCustomerPackService=withFictionalPublisher(createPackService);
 const {loadRecipes}=await import('./recipes.ts');
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(control.root,{recursive:true});await rm(join(control.root,'recipes.json'),{force:true});});

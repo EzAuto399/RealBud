@@ -8,11 +8,13 @@ import type { CustomerPack } from '../shared/customer-packs.ts';
 import { agencyRecipeRole } from '../shared/agency-workflow-packs.ts';
 import { DEPARTMENT_CONFIGURATION_MAX_BYTES, normalizeDepartmentConfiguration, type DepartmentConfiguration } from '../shared/department-configuration.ts';
 import { departmentStarterCustomerPack } from './department-starter-pack.ts';
-import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
+import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
 import { assertDepartmentWorkRecipe, departmentWorkRecipe } from './department-work-plan.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+const createCustomerPackService = withFictionalPublisher(createPackService);
 
 const directory = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows', 'department-starters');
 const expectedIds = ['accounts-invoice', 'accounts-admin', 'accounts-bank', 'pm-property', 'pm-maintenance'];

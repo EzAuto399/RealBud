@@ -17,9 +17,11 @@ import { COMPANY_EXECUTION_PURPOSE, type BeginCompanyExecution, type CompanyExec
 import type { DepartmentWorkPrepare } from '../shared/department-work.ts';
 import type { Recipe } from '../shared/contracts.ts';
 import type { CustomerPack } from '../shared/customer-packs.ts';
-import { createCustomerPackService } from './customer-packs.ts';
+import { createCustomerPackService as createPackService } from './customer-packs.ts';
+import { withFictionalPublisher } from './testing/pack-publisher.ts';
 import { departmentStarterCustomerPack } from './department-starter-pack.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+const createCustomerPackService = withFictionalPublisher(createPackService);
 
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await cleanup();});

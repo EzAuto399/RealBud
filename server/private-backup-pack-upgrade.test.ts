@@ -17,6 +17,7 @@ import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2, PRIVATE_RESTORE_V2_STAGE_FILE } from './private-backup-cold-restore.ts';
 import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
+import { signFictionalPack, withFictionalPublisher } from './testing/pack-publisher.ts';
 
 // The real recipe writer uses process-local DATA_DIR. Each simulated restart
 // imports fresh modules with its own disposable installation path; persistence,
@@ -62,7 +63,7 @@ async function openPack(directory: string) {
   const recipes = await import('./recipes.ts'), packs = await import('./customer-packs.ts');
   const options = { directory, profileDirectory: () => join(directory, 'profile'), workroomDirectory: () => join(directory, 'vault'),
     activeRecipeIds: () => [], learningStatus: () => ({ supported: true, policyReady: true, enabled: true }) };
-  return { recipes, options, service: packs.createCustomerPackService(options), create: packs.createCustomerPackService };
+  return { recipes, options, service: withFictionalPublisher(packs.createCustomerPackService)(options), create: withFictionalPublisher(packs.createCustomerPackService) };
 }
 function initialPack(): CustomerPack {
   const recipe: CustomerPack['recipes'][number] = { id: mainId, title: 'Fictional source review', description: 'Published operating note.',
@@ -337,7 +338,7 @@ async function verifyArchivedRestore(source: Fixture, target: Fixture, expected:
   expect(page).toMatchObject({ packId: expected.initial.id, head: status.archivedHistory!.head, cursor: status.archivedHistory!.head, nextCursor: null });
   expect(page.history.map(row => row.installationRevision)).toEqual([1, 2, 3, 4, 5, 6]);
   expect(await restored.service.handle(packRoute('archived-history'), 'POST', { head: page.head, cursor: page.cursor })).toEqual(browse);
-  expect(await restored.service.handle(packRoute('history-export'), 'POST', { installationRevision: 1 })).toEqual({ status: 200, body: expected.initial });
+  expect(await restored.service.handle(packRoute('history-export'), 'POST', { installationRevision: 1 })).toEqual({ status: 200, body: signFictionalPack(expected.initial) });
   await expect(restored.service.assertReadyForRecipe(oldId)).rejects.toThrow(/retired/);
   expect(await restored.service.handle(packRoute('repair'), 'POST', { expectedDigest: expected.journal.installs[expected.initial.id].digest }))
     .toMatchObject({ status: 200, body: { localReady: true, revision: 10, installationRevision: 10 } });
@@ -364,7 +365,7 @@ async function verifyArchivedRestore(source: Fixture, target: Fixture, expected:
   const restarted = await openPack(target.directory);
   expect(await restarted.service.rollback(body)).toEqual(complete);
   expect(await journalAt(target.directory)).toEqual(completedJournal); expect(restarted.recipes.loadRecipes(true)).toEqual(completedRecipes);
-  expect(await restarted.service.handle(packRoute('history-export'), 'POST', { installationRevision: 1 })).toEqual({ status: 200, body: expected.initial });
+  expect(await restarted.service.handle(packRoute('history-export'), 'POST', { installationRevision: 1 })).toEqual({ status: 200, body: signFictionalPack(expected.initial) });
   expect(await readFile(join(target.directory, expected.archivePath))).toEqual(expected.archiveBytes);
   expect(await readFile(join(target.directory, 'desk.json'))).toEqual(deskBytes);
   expect(await readFile(join(target.directory, 'vault/properties/fictional-property.md'))).toEqual(expected.businessNote);

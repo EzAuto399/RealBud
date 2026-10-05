@@ -2,12 +2,15 @@ import { createHash } from 'node:crypto';
 import { departmentStarterCustomerPack } from './department-starter-pack.ts';
 import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
-import type { Recipe } from '../shared/contracts.ts';
+import type { CsvColumnMapping, LoopSchedule, Recipe } from '../shared/contracts.ts';
+import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
+import { PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
+import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
-import { austinCustomerPack } from './customer-pack-definition.ts';
+import { austinCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { assertOwnPrivate, readPrivateFileSync, writeFileAtomic, fsyncDir } from './atomic.ts';
 import { lstatSync, unlinkSync } from 'node:fs';
@@ -47,19 +50,52 @@ function text(value: unknown, max: number): string {
   return value;
 }
 const safeId = (value: unknown) => typeof value === 'string' && ids.test(value) ? value : fail('Pack and skill identifiers must be portable names, not paths.');
+const plain = (value: unknown, max: number) => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+/** Allowlisted office setup only; every loop arrives off. */
+function validateOfficeSettings(value: unknown): CustomerPackOfficeSettings {
+  const s = fields(value, ['version', 'kind', 'rei', 'csvColumnMapping', 'loops']);
+  if (s.version !== 1 || s.kind !== 'office-settings' || !Array.isArray(s.loops) || s.loops.length > 50) return fail('The office settings in this pack are not supported.');
+  if (s.rei !== undefined && !plain(fields(s.rei, ['businessCode']).businessCode, 100)) return fail('The REI business code in this pack is not valid.');
+  if (s.csvColumnMapping !== undefined && Object.values(fields(s.csvColumnMapping, ['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'])).some(column => !plain(column, 200))) return fail('A column mapping in this pack is not valid.');
+  for (const raw of s.loops) {
+    const loop = fields(raw, ['id', 'enabled', 'schedule']), schedule = fields(loop.schedule, ['type', 'time', 'weekdays', 'timezone', 'intervalDays', 'anchorDate']);
+    safeId(loop.id);
+    if (loop.enabled !== false) return fail('Loop schedules in a pack must arrive switched off.');
+    if (schedule.type !== 'daily' || typeof schedule.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.time) || !Array.isArray(schedule.weekdays) || schedule.weekdays.some(day => !Number.isInteger(day) || Number(day) < 0 || Number(day) > 6) ||
+      (schedule.timezone !== undefined && !plain(schedule.timezone, 64)) || (schedule.intervalDays !== undefined && (!Number.isSafeInteger(schedule.intervalDays) || Number(schedule.intervalDays) < 1 || Number(schedule.intervalDays) > 31)) ||
+      (schedule.anchorDate !== undefined && (typeof schedule.anchorDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(schedule.anchorDate)))) return fail('A loop schedule in this pack is not valid.');
+  }
+  return s as unknown as CustomerPackOfficeSettings;
+}
+function validatePackFiles(value: unknown): CustomerPack['files'] {
+  const files = fields(value, [...CUSTOMER_PACK_FILES]), out: NonNullable<CustomerPack['files']> = {};
+  for (const path of CUSTOMER_PACK_FILES) {
+    const content = files[path];
+    if (content === undefined) continue;
+    let parsed: unknown;
+    try { if (typeof content !== 'string' || content.length > 100_000) throw new Error(); parsed = JSON.parse(content); } catch { return fail('A file in this pack is damaged or too large.'); }
+    if (path === 'rei/recipes.json') { try { if (parsePortalRecipePack(parsed).portal !== 'rei-cloud') throw new Error(); } catch { return fail('The REI recipes in this pack are damaged or from another version.'); } }
+    if (path === 'rei/site-map.json') { const map = parsed as Record<string, unknown> | null; if (!map || typeof map !== 'object' || map.schema !== 'realbud.portal-map.v1' || map.portal !== 'rei-cloud') return fail('The REI site map in this pack is damaged or from another version.'); }
+    if (path === 'office/settings.json') validateOfficeSettings(parsed);
+    out[path] = content as string;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 export function validateCustomerPack(value: unknown): CustomerPack {
   const serialized = JSON.stringify(value);
   if (!serialized || Buffer.byteLength(serialized) > 500_000) return fail('Choose a customer pack smaller than 500 KB.');
+  // The signature is checked by shape below; random base64 is not a credential.
+  const { signature: rawSignature, ...unsigned } = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { signature: undefined };
   // Inspect original strings: JSON escaping turns a preceding newline into the
   // letter n, which can hide a token from word-boundary credential detection.
-  const values: unknown[] = [value];
+  const values: unknown[] = [unsigned];
   while (values.length) {
     const item = values.pop();
     if (typeof item === 'string' && containsCredential(item)) return fail('Remove credentials and credential-shaped values before importing or sharing a pack.');
     if (item && typeof item === 'object') values.push(...Object.values(item));
   }
-  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|\bsk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|access[_-]?token|password)\s*[=:]\s*["']?[A-Za-z0-9_+\/-]{12,}|(?:\/Users\/|\/home\/|\b[A-Za-z]:[\\/])/i.test(serialized)) return fail('Remove credentials and machine-specific paths before sharing a pack.');
-  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies']);
+  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|\bsk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|access[_-]?token|password)\s*[=:]\s*["']?[A-Za-z0-9_+\/-]{12,}|(?:\/Users\/|\/home\/|\b[A-Za-z]:[\\/])/i.test(JSON.stringify(unsigned))) return fail('Remove credentials and machine-specific paths before sharing a pack.');
+  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies', 'files', 'signature']);
   if (row.format !== 'realbud-customer-pack' || row.version !== 1 || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1) return fail('Unsupported customer pack format or revision.');
   const dependencies = fields(row.dependencies, ['runtime', 'mode', 'schedules', 'permissions']);
   if (dependencies.runtime !== 'hermes-property' || dependencies.mode !== 'supplied-source-preparation' || dependencies.schedules !== 'off' || dependencies.permissions !== 'local-review-required') return fail('This importer accepts preparation plans only. Schedules and new execution permissions cannot be imported.');
@@ -86,7 +122,16 @@ export function validateCustomerPack(value: unknown): CustomerPack {
     return { id, title: text(w.title, 120), recipeIds: w.recipeIds as string[], checks: w.checks as CustomerPackCheckId[] };
   });
   if (recipes.some(recipe => !workflows.some(workflow => workflow.recipeIds.includes(recipe.id)))) return fail('Every recipe must belong to a named business workflow.');
-  return { format: 'realbud-customer-pack', version: 1, id: safeId(row.id), revision: Number(row.revision), title: text(row.title, 120), recipes, skills, workflows, dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' } };
+  const files = row.files === undefined ? undefined : validatePackFiles(row.files);
+  let signature: CustomerPack['signature'];
+  if (rawSignature !== undefined) {
+    const sig = fields(rawSignature, ['algorithm', 'keyId', 'value']);
+    if (sig.algorithm !== 'ed25519' || typeof sig.keyId !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(sig.keyId) || typeof sig.value !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(sig.value)) return fail(UNSIGNED_PACK_MESSAGE);
+    signature = { algorithm: 'ed25519', keyId: sig.keyId, value: sig.value };
+  }
+  // A pack without files or a signature keeps its exact earlier bytes and digest.
+  return { format: 'realbud-customer-pack', version: 1, id: safeId(row.id), revision: Number(row.revision), title: text(row.title, 120), recipes, skills, workflows, dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' },
+    ...(files ? { files } : {}), ...(signature ? { signature } : {}) };
 }
 
 type Upgrade = { skillId: string; fromDigest: string; target: SkillVersion; recipes: { id: string; revision: number }[]; pendingId?: string; pendingDigest?: string; scope?:string; revertReceipt?:SkillRevertReceipt };
@@ -140,6 +185,37 @@ export interface CustomerPackServiceOptions {
   learningStatus?: () => { supported: boolean; policyReady: boolean; enabled: boolean };
   /** Host-authoritative queued/running jobs; instruction changes cannot race them. */
   activeRecipeIds?: () => string[];
+  /** Publisher keys a signed pack must verify against. Defaults to the pinned keys; tests inject fictional ones. */
+  trustedKeys?: readonly PackPublisherKey[];
+  /** This office's setup for a per-client export. Only allowlisted fields are copied out. */
+  officeSettings?: () => Promise<{ businessCode?: string; csvColumnMapping?: CsvColumnMapping; loops: { id: string; schedule: LoopSchedule }[] }>;
+}
+/** Packs generated from files inside the signed app bundle. Trusted as shipped:
+ * the digest is computed from the current app files, never pinned. */
+const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': austinCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
+/** A pack from outside the app must carry a valid RealBud signature. */
+function admitPack(value: unknown, keys: readonly PackPublisherKey[]): CustomerPack {
+  const pack = validateCustomerPack(value);
+  if (pack.signature) verifyPackSignature(pack, keys);
+  else if (!Object.hasOwn(builtInPacks, pack.id) || hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(UNSIGNED_PACK_MESSAGE);
+  return pack;
+}
+/** Per-client export: the validated installed pack (validation is itself a field
+ * allowlist), the bundled REI recipes and site map, and office settings copied
+ * field by field. No records, accounts, sessions, ledgers, approvals, local plan
+ * edits or tokens; loops always leave switched off. Unsigned until
+ * `scripts/sign-pack.mjs` signs it. */
+export function clientExportPack(installed: CustomerPack, office: Awaited<ReturnType<NonNullable<CustomerPackServiceOptions['officeSettings']>>> | undefined): CustomerPack {
+  const { signature: _signature, files: installedFiles, ...pack } = installed;
+  const rei = installedFiles?.['rei/recipes.json'] && installedFiles['rei/site-map.json'] ? { 'rei/recipes.json': installedFiles['rei/recipes.json'], 'rei/site-map.json': installedFiles['rei/site-map.json'] }
+    : pack.skills.some(skill => skill.id === 'rei-cloud-navigation') ? austinReiFiles() : {};
+  const mapping = office?.csvColumnMapping, recipeLoops = new Set(pack.recipes.map(recipe => `recipe-${recipe.id}`));
+  const settings: CustomerPackOfficeSettings = { version: 1, kind: 'office-settings',
+    ...(office?.businessCode ? { rei: { businessCode: office.businessCode } } : {}),
+    ...(mapping ? { csvColumnMapping: Object.fromEntries((['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'] as const).flatMap(key => mapping[key] ? [[key, mapping[key]]] : [])) } : {}),
+    loops: (office?.loops ?? []).filter(loop => !loop.id.startsWith('recipe-') || recipeLoops.has(loop.id)).map(({ id, schedule }) => ({ id, enabled: false, schedule: { type: 'daily', time: schedule.time, weekdays: [...schedule.weekdays],
+      ...(schedule.timezone ? { timezone: schedule.timezone } : {}), ...(schedule.intervalDays ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate ? { anchorDate: schedule.anchorDate } : {}) } })) };
+  return validateCustomerPack({ ...pack, files: { ...rei, 'office/settings.json': JSON.stringify(settings) } });
 }
 async function safeAncestors(target: string) {
   const absolute = resolve(target), root = parse(absolute).root;
@@ -170,6 +246,7 @@ function nativeInstruction(pack: CustomerPack, skill: CustomerPack['skills'][num
 }
 export function createCustomerPackService(options: CustomerPackServiceOptions) {
   const listRecipes = options.listRecipes ?? (() => loadRecipes(true));
+  const admit = (value: unknown) => admitPack(value, options.trustedKeys ?? PACK_PUBLISHER_KEYS);
   const saveRecipes = options.saveRecipes ?? saveRecipesAtomically;
   const resetApprovals = options.resetRecipeApprovals ?? resetRecipeApprovalsAtomically;
   const assertIdle = (entry: Journal) => { if ((options.activeRecipeIds?.() ?? []).some(id => entry.pack.recipes.some(recipe => recipe.id === id))) fail('Wait for this pack’s queued or running work to finish before changing instructions.', 409); };
@@ -535,7 +612,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     const input=fields(body,action==='upgrade' ? ['pack','expectedInstalledDigest','expectedInstalledRevision','expectedDigest','expectedPreviewDigest'] : ['packId','installationRevision','expectedInstalledDigest','expectedInstalledRevision','expectedDigest','expectedPreviewDigest']);
     if (![input.expectedInstalledDigest,input.expectedDigest,input.expectedPreviewDigest].every(v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)) ||
         !Number.isSafeInteger(input.expectedInstalledRevision) || Number(input.expectedInstalledRevision)<1 || action==='rollback'&&(!Number.isSafeInteger(input.installationRevision)||Number(input.installationRevision)<1)) return fail('Preview the exact installed and target pack versions before applying this change.',400);
-    const supplied=action==='upgrade' ? validateCustomerPack(input.pack) : null, id=supplied?.id ?? safeId(input.packId);
+    const supplied=action==='upgrade' ? admit(input.pack) : null, id=supplied?.id ?? safeId(input.packId);
     const requestDigest=packChangeHash({action,id,from:input.expectedInstalledDigest,generation:input.expectedInstalledRevision,target:input.expectedDigest,preview:input.expectedPreviewDigest,
       ...(action==='rollback' ? {rollback:input.installationRevision} : {})});
     if(supplied&&hash(JSON.stringify(supplied))!==input.expectedDigest) return fail('The target pack changed. Preview it again.',409);
@@ -866,8 +943,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
   }
 
   return {
-    preview, install,
-    async previewUpgrade(value:unknown) { return (await changePreview(value)).preview; },
+    preview: async (value: unknown) => preview(admit(value)), install: async (value: unknown, expectedDigest: string) => install(admit(value), expectedDigest),
+    async previewUpgrade(value:unknown) { return (await changePreview(admit(value))).preview; },
     upgrade:(body:unknown)=>changePack(body,'upgrade'), rollback:(body:unknown)=>changePack(body,'rollback'),
     proposals, reviewProposal, revertSkill, skillHistory, skillRevertPreview, archiveSkill,
     async skillArchivePreview(packId:string,skillId:string){const entry=(await journals())[safeId(packId)];if(!entry)fail('The installed pack was not found.',404);return skillArchivePreview(entry,safeId(skillId));},
@@ -886,6 +963,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       }
     },
     async list() { const entries = await journals(); return { installations: await Promise.all(Object.values(entries).map(status)) }; },
+    async clientExport(packId: string) { const entry = (await journals())[safeId(packId)]; if (!entry) return fail('The installed pack was not found.', 404); return clientExportPack(entry.pack, await options.officeSettings?.()); },
     async handle(route: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
       if (!route.startsWith('/api/customer-packs')) return null;
       if (route === '/api/customer-packs' && method === 'GET') return { status: 200, body: await this.list() };
@@ -932,11 +1010,13 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       }
       const recover = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/recover-instructions$/);
       if (recover && method === 'POST') return exclusive(async () => { const input = fields(body, ['expectedDigest']); const entries = await journals(), entry = entries[recover[1]]; if (!entry || entry.digest !== input.expectedDigest) return fail('Refresh this pack before recovering instructions.', 409); return { status: 200, body: await finishUpgrade(entries, entry) }; });
+      const clientExport = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/client-export$/);
+      if (clientExport && method === 'GET') return { status: 200, body: await this.clientExport(clientExport[1]) };
       if (route === '/api/customer-packs/austin-office/export' && method === 'GET') return { status: 200, body: validateCustomerPack(austinCustomerPack()) };
       if (route === '/api/customer-packs/department-starters/export' && method === 'GET') return { status: 200, body: validateCustomerPack(departmentStarterCustomerPack()) };
       if (route === '/api/customer-packs/office-core/export' && method === 'GET') return { status: 200, body: validateCustomerPack(officeCoreCustomerPack()) };
-      if (route === '/api/customer-packs/preview' && method === 'POST') { const input = fields(body, ['pack']); return { status: 200, body: await preview(input.pack) }; }
-      if (route === '/api/customer-packs/install' && method === 'POST') { const input = fields(body, ['pack', 'expectedDigest']); return { status: 200, body: await install(input.pack, String(input.expectedDigest)) }; }
+      if (route === '/api/customer-packs/preview' && method === 'POST') { const input = fields(body, ['pack']); return { status: 200, body: await preview(admit(input.pack)) }; }
+      if (route === '/api/customer-packs/install' && method === 'POST') { const input = fields(body, ['pack', 'expectedDigest']); return { status: 200, body: await install(admit(input.pack), String(input.expectedDigest)) }; }
       const repair = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/repair$/);
       if (repair && method === 'POST') { const input = fields(body, ['expectedDigest']); const entry = (await journals())[repair[1]]; if (!entry) return fail('Pack installation was not found.', 404); return { status: 200, body: await install(entry.pack, String(input.expectedDigest)) }; }
       return { status: 404, body: { error: 'Unknown customer pack action.' } };

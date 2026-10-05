@@ -9,10 +9,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = join(root, 'outputs/customer-pack-2026-09-21'); mkdirSync(output, { recursive: true });
+const output = join(root, 'outputs/customer-pack-2026-10-06'); mkdirSync(output, { recursive: true });
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'rb-pack-ui-'));
 const data = join(temp, 'data'); mkdirSync(data, { mode: 0o700 });
 const profile = join(data, 'hermes/profiles/property');
@@ -38,6 +39,7 @@ try {
     const result = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(result)}`); return result;
   };
   checks.push('Read and mutation routes reject unauthenticated requests');
+  await completeFictionalOnboarding(request); // First run is a server receipt now, not only a browser flag.
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   await primeBrowserSession(context, origin, token);
@@ -100,11 +102,25 @@ try {
   assert.equal(readFileSync(skill, 'utf8'), baseline);
   assert.equal((await request('/api/agency-setup')).state.settings.workflowPackId, null);
   checks.push('Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes');
+  const exported = await request('/api/customer-packs/austin-office/client-export');
+  assert.deepEqual(Object.keys(exported.files).sort(), ['office/settings.json', 'rei/recipes.json', 'rei/site-map.json']);
+  assert.equal(exported.signature, undefined);
+  assert.ok(JSON.parse(exported.files['office/settings.json']).loops.every(loop => loop.enabled === false));
+  assert.ok(!JSON.stringify(exported).includes(token) && !JSON.stringify(exported).includes(temp));
+  const unsigned = "This pack isn't signed by RealBud, so it wasn't installed.";
+  const refused = await fetch(origin + '/api/customer-packs/preview', { method: 'POST', headers: { 'x-realbud-session': token, 'content-type': 'application/json' }, body: JSON.stringify({ pack: exported }) });
+  assert.equal(refused.status, 400); assert.equal((await refused.json()).error, unsigned);
+  await card.locator('input[type=file]').setInputFiles({ name: 'realbud-austin-office-client.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported)) });
+  await card.getByText(unsigned, { exact: true }).waitFor();
+  assert.equal(await card.getByRole('group', { name: 'Review customer pack import', exact: true }).count(), 0);
+  await card.getByText(unsigned, { exact: true }).scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'unsigned-pack-refused-desktop.png') });
+  checks.push('Per-client export carries workflows, REI recipes, site map and office settings with loops off and no session or machine path; the unsigned export is refused over HTTP and in the rendered file preview with the plain message');
   await page.setViewportSize({ width: 390, height: 844 }); await card.scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'pack-setup-mobile.png') });
   assert.deepEqual(errors, []); checks.push('Reload and repeat import preserve revisions; 390 px view has no horizontal overflow or browser errors');
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'actual local HTTP server and rendered browser with fictional pending proposal; no live worker/model/account proof', checks, errors, installed: { id: installed.id, revision: installed.revision, localReady: installed.localReady, checks: installed.checks.map(({ id, state }) => ({ id, state })) }, skillRevisions: history.revisions.map(({ revision, active, reason }) => ({ revision, active, reason })) }, null, 2));
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'actual local HTTP server and rendered browser with fictional pending proposal; no live worker/model/account proof',
+    limits: ['Source run, not a packaged or installed app.', 'No RealBud publisher key is pinned yet: a signed install is proven only by unit tests with a fictional key, not over HTTP.', 'Office settings come from an empty fictional office (no REI business code saved).'], checks, errors, installed: { id: installed.id, revision: installed.revision, localReady: installed.localReady, checks: installed.checks.map(({ id, state }) => ({ id, state })) }, skillRevisions: history.revisions.map(({ revision, active, reason }) => ({ revision, active, reason })) }, null, 2));
   console.log(JSON.stringify({ output, checks, errors }, null, 2));
 } finally {
   await browser?.close();

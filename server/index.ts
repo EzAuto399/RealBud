@@ -5795,6 +5795,11 @@ const customerPacks = createCustomerPackService({ directory: DATA_DIR,
     loops!.setEnabled('weekly-bills', false);
   },
   activeRecipeIds: () => jobRuns.list().filter(run => run.status === 'queued' || run.status === 'running').map(run => run.jobId),
+  // Per-client export reads the REI business code and loop clocks; the export keeps allowlisted fields only and turns every loop off.
+  officeSettings: async () => {
+    const w1 = await (await import('./w1-host.ts')).readW1Settings(DATA_DIR);
+    return { businessCode: w1?.rei.marker, loops: (loops?.listLoops() ?? []).map(loop => ({ id: loop.id, schedule: loop.schedule })) };
+  },
   profileDirectory: () => propertyProfileDir(), workroomDirectory: () => join(DATA_DIR, 'vault'),
   readiness: async () => {
     const worker = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
