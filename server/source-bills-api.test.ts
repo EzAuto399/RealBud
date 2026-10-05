@@ -245,15 +245,17 @@ describe('private source-bill host API', () => {
   });
 
   it('keeps the 501st saved bill and 101st arrival pattern addressable without a full-register API projection', async () => {
-    const f = fixture(), saved = [], patterns = [];
-    for (let i = 0; i < 501; i++) {
+    const f = fixture(), saved: ReturnType<typeof f.store.accept>[] = [], patterns: ReturnType<typeof f.store.approveSeries>[] = [];
+    // One commit for the setup: each accept still runs in full, but a hosted
+    // Windows runner pays ~0.1 s of durable-commit flushing per transaction.
+    f.db.transaction(() => { for (let i = 0; i < 501; i++) {
       const source = { ...f.source, threadId: (1000+i).toString(16), message: { ...f.source.message, id: (2000+i).toString(16) } };
       const row = f.store.accept({ expectedSourceDigest: previewBillSource(source).digest, sourceReviewed: true,
         facts: { ...facts, vendor: `Fictional vendor ${i}` }, reviewReason: 'Reviewed synthetic source.' }, source, 'private-local-reviewer');
       saved.push(row);
       if (i < 101) patterns.push(f.store.approveSeries({ occurrenceId: row.id, expectedOccurrenceRevision: row.revision,
         intervalMonths: 1, anchorDate: '2026-09-21', windowBeforeDays: 0, windowAfterDays: 0, timeZone: 'Australia/Brisbane', reviewReason: 'Reviewed fictional monthly arrival.' }, 'private-local-reviewer'));
-    }
+    } });
     const snapshot = vi.spyOn(f.store,'snapshot').mockImplementation(() => { throw new Error('Unbounded snapshot is forbidden in production APIs.'); });
     vi.spyOn(f.store,'expectedRows').mockImplementation(() => { throw new Error('Unbounded projection is forbidden in production APIs.'); });
     const workspace = (await f.call('/api/bill-register?limit=20&from=2026-09-01&to=2026-12-31'))!.body as import('../shared/source-bills.ts').SourceBillsWorkspace;
