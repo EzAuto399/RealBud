@@ -40,6 +40,9 @@ import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { managedService } from "./managed-service.ts";
+import { checkPortalPathProposal, choiceHash, observedControl, portalEvidence, portalPaths, LEARNABLE_SLOTS, PORTAL_PROPOSE_TOOL,
+  type PortalEvidenceStore, type PortalObservedStep, type PortalPathStore, type PortalStepTool } from "./portal-path-overrides.ts";
+import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 import type { JobRunEvidence } from "../shared/contracts.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -62,6 +65,11 @@ export const BROWSER_TOOLS = [
   { name: "browser_upload", description: "Upload one file given to this task into an observed file control after review. Only the task's listed files are available; you never supply a path.", inputSchema: props({ tab_id: tab, ref, file: { type: "string", description: "The name of a file listed for this task." } }, ["tab_id", "ref", "file"]) },
   { name: "browser_release", description: "Stop browser work and return borrowed tabs to the person. This session cannot be reused.", inputSchema: props({}) },
 ];
+/** Offered only to an Ask task on a mapped portal (server/portal-path-overrides.ts). */
+const proposeTool = (slots: string[]) => ({ name: PORTAL_PROPOSE_TOOL,
+  description: "At the end of exploring, propose the path you found for one of the portal's recipe slots, as ordered steps using only control names you actually used in this task (nav for a menu or page, click, select with its option, and the final download). A step you did not take, or a control that changes records, is refused. The person approves it on a card before RealBud saves it; it changes nothing in the portal.",
+  inputSchema: props({ slot: { type: "string", enum: slots }, steps: { type: "array", minItems: 1, maxItems: 12, items: props({
+    verb: { type: "string", enum: ["nav", "click", "select", "download"] }, label: { type: "string", maxLength: 120 }, option: { type: "string", maxLength: 120 } }, ["verb", "label"]) } }, ["slot", "steps"]) });
 /** Tools a saved job never had: offered only by an explicit task grant with their action class. */
 const TASK_TOOLS: Record<string, BrowserActionClass> = { browser_press: "keys", browser_select: "fill", browser_download: "download", browser_upload: "upload" };
 /** The action class each tool needs; the same table the worker's instructions use (server/attended-run.ts). */
@@ -194,6 +202,12 @@ export async function startBrowserBroker(options: {
   portal?: BrowserPortalControls;
   /** Data folder whose workroom receives readable downloads as attachments (default DATA_DIR); null keeps them in the task folder only. */
   attachRoot?: string | null;
+  /** An Ask task on a mapped portal (from the host, never a model): Bud may propose the path it found for one of the
+   * pack's learnable recipe slots, checked against this task's recorded steps and saved only after the person allows it. */
+  learn?: { portal: string; pack: PortalRecipePack };
+  /** Where an Ask task's dispatched steps are recorded, and learned paths saved (server/portal-path-overrides.ts). */
+  evidence?: PortalEvidenceStore;
+  paths?: PortalPathStore;
 }): Promise<BrowserBroker> {
   const runtime = options.runtime ?? browserRuntime;
   const operations = options.operations ?? connectedAppOperations;
@@ -212,9 +226,14 @@ export async function startBrowserBroker(options: {
   const sites = grant.sites;
   const workroom = options.workroom ?? browserTaskWorkroom(runtime.root, grant.id);
   const allowed = new Set(browserToolsFor(grant).filter(name => runtime.supportedActions.includes(TOOL_CLASSES[name])));
-  const tools = BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
+  // Only an Ask task's own steps are recorded and can become a learned path; a saved job or a recipe run never.
+  const askTask = grant.route === "ask" && !grant.origin;
+  const evidence = options.evidence ?? portalEvidence();
+  const learn = askTask && options.learn && Object.keys(LEARNABLE_SLOTS[options.learn.pack.portal] ?? {}).length ? structuredClone(options.learn) : undefined;
+  const tools = [...BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
-      properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } });
+      properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } }),
+    ...(learn ? [proposeTool(Object.keys(LEARNABLE_SLOTS[learn.pack.portal]))] : [])];
   const rules = options.rules ?? (() => context.rules ?? loadRules());
   let closed = false; let session: string | null = null; let busy = false;
   // A task continuing after sign-in keeps what it already spent.
@@ -375,13 +394,33 @@ export async function startBrowserBroker(options: {
       : record.upload ? `Uploaded the task's file (sha256 ${record.upload.sha256.slice(0, 12)}) on ${host}. Read the page back to confirm it is attached.`
         : record.key ? `Pressed ${record.key} in ${record.label} on ${host}.` : `Chose an option in ${record.label} on ${host}.`);
   };
+  /** Records a dispatched Ask step for learning: role, name, path and outcome only. Never fails the step. */
+  const capture = async (step: Omit<PortalObservedStep, "outcome" | "at"> | undefined, outcome: PortalObservedStep["outcome"]) => {
+    if (!askTask || !step) return;
+    try { await evidence.record(grant.id, { ...step, outcome, at: now() }); } catch { /* evidence is best effort; a proposal without it is refused */ }
+  };
+  /** Bud proposes the path it found; only steps this task recorded count, and the person allows it before it is saved. */
+  const propose = async (args: BrowserJson, signal: AbortSignal) => {
+    if (!learn) throw problem("This browser tool or its arguments are not available.");
+    const checked = checkPortalPathProposal(learn.pack, { slot: args.slot, steps: args.steps }, await evidence.steps(grant.id));
+    check(signal);
+    publish("asked", `Asked you to approve the ${checked.slot} path Bud found on ${new URL(learn.pack.origin).hostname}.`);
+    const site = new URL(learn.pack.origin).hostname;
+    if (!await options.approve(PORTAL_PROPOSE_TOOL, { slot: checked.slot, steps: checked.steps as unknown as BrowserJson[] }, checked.summary, signal,
+      { fence: { surface: "portal-read", origin: site, ruleOffer: null }, approvalPolicy: "once" })) throw problem("The path was not saved. Nothing changed.");
+    check(signal);
+    const saved = await (options.paths ?? portalPaths()).save(learn.portal, checked, { grantId: grant.id, runId: options.runId, threadId: options.threadId }, now());
+    publish("action", `Saved the ${checked.slot} path Bud found on ${site} (version ${saved.revision}) with your approval.`);
+    return text(`Saved as the ${checked.slot} path (version ${saved.revision}). The earlier path is kept and can be restored. RealBud still asks before each download.`);
+  };
   const call = async (name: string, args: BrowserJson, signal: AbortSignal) => {
     check(signal);
     const definition = tools.find(t => t.name === name);
     if (!definition || Object.keys(args).some(key => !(key in definition.inputSchema.properties)) || definition.inputSchema.required.some(key => !(key in args))) throw problem("This browser tool or its arguments are not available.");
     if (name === "browser_release") { broker.close(); await broker.released(); return text("Browser work stopped. Check your browser and review the page to confirm the job's result."); }
     if (busy) throw problem("Finish the current browser step before starting another.");
-    busy = true; let receipt: string | undefined; let claim: string | undefined;
+    if (name === PORTAL_PROPOSE_TOOL) { busy = true; try { return await propose(args, signal); } finally { busy = false; } }
+    busy = true; let receipt: string | undefined; let claim: string | undefined; let observed: Omit<PortalObservedStep, "outcome" | "at"> | undefined;
     let approval: { id: string; noun: string; host: string } | undefined;
     let staged: string | undefined; let logged: Omit<BrowserActionRecord, "outcome"> | undefined;
     try {
@@ -439,6 +478,7 @@ export async function startBrowserBroker(options: {
         if (!target) { await gate(name, auth, {}, signal); throw problem("Open this page yourself."); }
         action = { kind: "navigate", tabId, url: target.href };
         await gate(name, auth, { url: target.href }, signal);
+        observed = { tool: "navigate", role: "", label: "", path: target.pathname };
       } else {
         const snap = snapshots.get(tabId); const target = typeof args.ref === "string" ? args.ref : "";
         const label = snap?.refs.get(target);
@@ -472,6 +512,9 @@ export async function startBrowserBroker(options: {
         else if (name === "browser_download") { staged = await browserDownloadTarget(workroom); action = { kind: "download", tabId, ref: target, path: staged }; }
         else if (upload) action = { kind: "upload", tabId, ref: target, path: await grantedUploadPath(workroom, upload) };
         else action = { kind: "click", tabId, ref: target };
+        const tool = ({ browser_click_semantic: "click", browser_select: "select", browser_download: "download", browser_fill: "fill", browser_press: "press" } as Record<string, PortalStepTool>)[name];
+        const values = name === "browser_select" ? browserChoices(args.values) : null;
+        if (tool) observed = { tool, ...observedControl(label), path: new URL(url).pathname, ...(values ? { valuesHash: choiceHash(values) } : {}) };
         if (Object.hasOwn(TASK_TOOLS, name)) {
           const at = new URL(url); const choices = browserChoices(args.values);
           logged = { grantId: grant.id, tool: name, origin: at.origin, path: at.pathname, label: redactSecretsInText(label).slice(0, 200),
@@ -499,6 +542,7 @@ export async function startBrowserBroker(options: {
       // A click acknowledgement proves dispatch only. The approved effect stays
       // unverified, and held against repeats, until a person records its result.
       operations.finish(receipt, "succeeded"); receipt = undefined;
+      await capture(observed, "succeeded");
       if (claim && approval) {
         claim = undefined; await approvals.update(approval.id, { outcome: "unverified" });
         publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Its result is not confirmed; check the site. RealBud will not repeat it.`);
@@ -519,7 +563,7 @@ export async function startBrowserBroker(options: {
         if (receipt) publish("note", `The approved ${approval.noun} on ${approval.host} has an unknown result. RealBud will not repeat it; check the site.`);
       }
       if (receipt && logged) publish("note", `The ${VERBS[logged.tool]} on ${new URL(logged.origin).hostname} has an unknown result. RealBud will not repeat it; check the page.`, { ...logged, outcome: "unknown" });
-      if (receipt) { operations.finish(receipt, "unknown"); broker.close(); }
+      if (receipt) { await capture(observed, "unknown"); operations.finish(receipt, "unknown"); broker.close(); }
       throw error;
     } finally {
       busy = false;

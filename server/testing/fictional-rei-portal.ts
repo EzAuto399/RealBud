@@ -238,6 +238,8 @@ export interface FictionalReiOptions {
   previewEdit?: (rows: string[][]) => string[][];
   /** Alters the rows of the next tenant or supplier list export (to rehearse an export that disagrees with its grid). */
   directoryRows?: (rows: string[][]) => string[][];
+  /** Report names for the tenant and supplier list exports instead of the pack's placeholders (rehearses a path learned in the portal). */
+  reports?: { tenants?: string; suppliers?: string };
   /** Receipts already in REI before this run; defaults to FICTIONAL_HISTORY. */
   receipts?: FictionalReceipt[];
 }
@@ -257,7 +259,9 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
   /** The report whose parameters popup is open. */
   let report = "";
-  const TENANT_REPORT = exportReport("tenant-list"), SUPPLIER_REPORT = exportReport("supplier-list");
+  // The pack's names unless renamed (`reports`), read at each use so a test can rename them mid-run.
+  const TENANT_DEFAULT = exportReport("tenant-list"), SUPPLIER_DEFAULT = exportReport("supplier-list");
+  const tenantReport = () => options.reports?.tenants ?? TENANT_DEFAULT, supplierReport = () => options.reports?.suppliers ?? SUPPLIER_DEFAULT;
   // Portal-side state that survives page loads: the pending import and the receipt ledger.
   let pending: PendingUpload | null = null; let uploads = 0;
   const receipts: FictionalReceipt[] = structuredClone([...(options.receipts ?? FICTIONAL_HISTORY)]);
@@ -360,7 +364,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       if (path === "/report/reportlist") {
         lines.push('      table "Results"');
         if (loading > 0) lines.push("        row", '          cell "Loading…"');
-        else for (const name of ["Receipt Register", "Receipt Register - Reversals", "Arrears Report", "Owner Statement", TENANT_REPORT, SUPPLIER_REPORT].filter(r => !field("Search") || r.toLowerCase().includes(field("Search").toLowerCase()))) {
+        else for (const name of ["Receipt Register", "Receipt Register - Reversals", "Arrears Report", "Owner Statement", tenantReport(), supplierReport()].filter(r => !field("Search") || r.toLowerCase().includes(field("Search").toLowerCase()))) {
           reportsListed = true; lines.push("        row", `          ${ref({ role: "link", name, action: "report" })} link ${q(name)}`);
         }
       } else if (table) {
@@ -394,7 +398,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         .map(([name, effect]) => `      ${ref({ role: "button", name, action: `effect:${effect}` })} button ${q(name)}`));
       if (modal) {
         // Live REI opens a parameters popup (#reportParameterOwnerList_popup) before any output.
-        lines.push('      dialog "Report parameters"', `        heading ${q(report || "Receipt Register")}`, ...(report === TENANT_REPORT || report === SUPPLIER_REPORT ? [] : [
+        lines.push('      dialog "Report parameters"', `        heading ${q(report || "Receipt Register")}`, ...(report === tenantReport() || report === supplierReport() ? [] : [
           `        ${ref({ role: "radio", name: "Current Period", action: "radio" })} radio "Current Period"`,
           `        ${ref({ role: "radio", name: "Date Range", action: "radio" })} radio "Date Range"`,
           `        ${ref({ role: "textbox", name: "From Date", action: "field:From Date" })} textbox "From Date" value=${q(field("From Date"))}`,
@@ -466,8 +470,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "download") {
       control(args);
       // A directory export: the list's Active rows (what its grid shows by default), every column.
-      const directory = report === TENANT_REPORT ? { cols: FICTIONAL_TENANT_COLUMNS, rows: FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
-        : report === SUPPLIER_REPORT ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
+      const directory = report === tenantReport() ? { cols: FICTIONAL_TENANT_COLUMNS, rows: FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
+        : report === supplierReport() ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
       if (directory) {
         const rows = (options.directoryRows ?? (rows => rows))(directory.rows.filter(row => row.status === "Active").map(row => [...row.cells]));
         await writeFile(args[args.indexOf("--out") + 1], [directory.cols, ...rows].map(csvLine).join("\r\n") + "\r\n");

@@ -38,6 +38,9 @@ import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
 import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
 import { browserRuntime } from "../../browser-runtime.ts";
+import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts";
+import { portalMapForSites } from "../../portal-recipe-task.ts";
+import { portalRecipeControls } from "../../portal-recipe-runner.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
@@ -937,10 +940,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!browser.grant) throw new Error("This browser work has no saved permission, so nothing was opened. Start it again.");
             // An Ask task's grant is bound to the browser selected when the person started it.
             // (A saved job's checked sign-in page keeps its own browser check in the broker.)
-            if (browser.grant.origin !== BROWSER_LEGACY_JOB_ORIGIN && browser.grant.browser.id && (await browserRuntime.status()).selectedBrowserId !== browser.grant.browser.id) {
+            const askTask = browser.grant.origin !== BROWSER_LEGACY_JOB_ORIGIN;
+            const runtime = askTask ? askBrowserRuntime() : browserRuntime;
+            if (askTask && browser.grant.browser.id && (await runtime.status()).selectedBrowserId !== browser.grant.browser.id) {
               throw new Error("The selected browser changed after this task was started. Start the task again from Ask.");
             }
+            // A task on a mapped portal (REI) gets the pack's declared read-safe controls, so its menus and
+            // listed reports read without a card while everything else asks as before, and Bud may propose
+            // the path it found. Without a map (or if it cannot be read) the task runs exactly as before.
+            const map = askTask && browser.grant.route === "ask" ? await portalMapForSites(browser.grant.sites, askPortalPackLoader()).catch(() => null) : null;
+            const controls = map ? portalRecipeControls(map.pack) : undefined;
+            // The pack's account location only binds a task that chose an account; it never blocks one that did not.
+            if (controls && !browser.grant.browser.accountMarker) delete controls.accountMarker;
             browserBroker = await startBrowserBroker({
+              runtime, ...(map && controls ? { portal: controls, learn: map } : {}),
               threadId, runId: browser.runId,
               checkpoint: browser.checkpoint,
               context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },

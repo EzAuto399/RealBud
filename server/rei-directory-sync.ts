@@ -28,6 +28,7 @@ import { parseCsvTable } from "./csv-ledger.ts";
 import { HumanHandoffs } from "./human-handoffs.ts";
 import { answerPortalRecipeAsk, loadPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PortalRunResult } from "./portal-recipe-runner.ts";
+import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { createSupplierDirectory } from "./supplier-directory.ts";
 import { parseTenantList, type TenantDirectoryStore, type TenantEntry, type TenantRejection } from "./tenant-directory.ts";
@@ -58,6 +59,8 @@ export interface ReiDirectorySyncDeps {
   tenants: TenantDirectoryStore;
   suppliers: SupplierStore;
   load?: PackLoader;
+  /** Paths Bud learned and the person allowed (server/portal-path-overrides.ts): the current one replaces the repo's export steps. */
+  paths?: PortalPathStore;
   /** The sign-in handover (server/browser-sign-in.ts), read at each use (the test lab turns its own on later). */
   signIn?: () => SignIn | undefined;
   signInHolding?: () => boolean;
@@ -109,7 +112,8 @@ function endedBecause(kind: ReiDirectoryKind, run: PortalRunResult, marker: stri
 }
 
 export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
-  const load = deps.load ?? loadPortalRecipePack;
+  // A learned export path wins over the repo's placeholder; with none, the repo recipe runs unchanged.
+  const load: PackLoader = async portal => (deps.paths ?? portalPaths()).apply(await (deps.load ?? loadPortalRecipePack)(portal));
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), { release: readOnly, verify: readOnly }).isHolding());
   let current: Run | null = null;
   let parsed: Parsed | null = null;

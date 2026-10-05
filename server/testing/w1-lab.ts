@@ -28,6 +28,9 @@ export function labRedbarkFetch(base: string, real: RedbarkClientOptions["fetch"
 /** Synthetic key the fake Redbark accepts; it is never stored. */
 export const FICTIONAL_REDBARK_KEY = "rbk_live_fictional_w1_simulation_0000";
 
+/** FICTIONAL report names for the "rename-reports" lab action. */
+export const FICTIONAL_LEARNED_REPORTS = { tenants: "Tenant Contact Export (fictional)", suppliers: "Supplier Contact Export (fictional)" } as const;
+
 export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string; fetch?: RedbarkClientOptions["fetch"] } = {}) {
   const base = bank.redbarkBase ?? process.env.REALBUD_TEST_REDBARK_BASE;
   const provider: BankProvider | null = bank.fetch || base
@@ -44,6 +47,9 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   };
   const runtime = new BrowserRuntime({ root: join(dataDir, "w1-lab-browser"), command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
   await runtime.connect(); await runtime.select("work");
+  // Ask browser tasks in the lab (server/ask-browser-lab.ts) treat this fictional browser as RealBud's own work
+  // browser, as the native one is, so the task-local read allowance applies; saved jobs and recipe runs ignore it.
+  Object.defineProperty(runtime, "ownsProfile", { value: true });
   // After sign-in the address carries no reicid; the business is the top-bar code.
   const dashboard = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
   const signInSites: SignInSite[] = [siteFromMap("rei-cloud", { origin: FICTIONAL_REI_ORIGIN, signIn: { host: new URL(FICTIONAL_REI_SIGNIN).host }, scope: { urlParam: "reicid" } })!];
@@ -65,6 +71,8 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       // The portal accepted the file (it stays pending in Bulk receipting) but the reply is lost.
       else if (action === "lost-reply-after") options.unknownUpload = "after";
       else if (action === "clear") { delete options.previewEdit; delete options.directoryRows; }
+      // REI's tenant and supplier list exports carry names other than the pack's placeholders (a path Bud learns in Ask).
+      else if (action === "rename-reports") options.reports = { tenants: FICTIONAL_LEARNED_REPORTS.tenants, suppliers: FICTIONAL_LEARNED_REPORTS.suppliers };
       // The next tenant or supplier list export drops its first row (it disagrees with REI's own record count).
       else if (action === "short-export") options.directoryRows = rows => rows.slice(1);
       // The person switches REI to another business (top-bar code FICT2), then back.

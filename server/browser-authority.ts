@@ -286,9 +286,12 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
     allowed = true; menuLink = true;
   } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name);
   if (!allowed) return false;
+  // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
+  // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
+  const sibling = (node: VomNode) => !(menuLink && (node.role === "link" || node.role === "menuitem"));
   const changes = (scope: VomNode) => {
     const inside = descendants(scope);
-    return inside.some(node => node !== target && !hiddenNode(node) && (node.ref !== null || FORM_ROLE.has(node.role)) && consequentialName(portal, node.name ?? "")) ||
+    return inside.some(node => node !== target && !hiddenNode(node) && sibling(node) && (node.ref !== null || FORM_ROLE.has(node.role)) && consequentialName(portal, node.name ?? "")) ||
       pageConsequentialKind(nodeLines(inside)) !== null;
   };
   if (form) return !changes(form);
@@ -363,6 +366,11 @@ export function classifyBrowserAction(grant: BrowserTaskGrant, observation: Brow
   const declared = portalControlsFor(grant, portal, current);
   const classification = classifyStep(grant, observation!, current, step, args, declared);
   if (declared && classification.class === "routine" && classification.label && declared.consequential.includes(controlName(classification.label))) {
+    return { class: "unknown", step, label: classification.label, reason: PACK_CONSEQUENTIAL };
+  }
+  // A read-safe dropdown is read-safe for its reading choices only: an option the pack calls consequential ("Email Only") asks once.
+  const values = step === "select" ? browserChoices(args.values) : null;
+  if (declared && classification.class === "routine" && classification.label && values?.some(value => consequentialName(declared, value))) {
     return { class: "unknown", step, label: classification.label, reason: PACK_CONSEQUENTIAL };
   }
   return classification;

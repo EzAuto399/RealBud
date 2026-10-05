@@ -192,6 +192,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
+import { askBrowserRuntime, useAskBrowserLab } from "./ask-browser-lab.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
 import { legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
@@ -2580,6 +2581,11 @@ loops = new LoopManager({
 // setBankProvider in server/bank-provider.ts; until then bank routes answer 409 bank_not_connected.
 const w1Lab = process.env.REALBUD_TEST_LAB === "1" && process.env.REALBUD_TEST_W1_FICTIONAL_REI === "1"
   ? import("./testing/w1-lab.ts").then(({ createW1Lab }) => createW1Lab(DATA_DIR)) : null;
+// Lab only: Ask browser tasks use the same fictional portal (useAskBrowserLab refuses outside a lab process).
+const askLab = w1Lab?.then(lab => useAskBrowserLab({ runtime: lab.runtime, load: lab.load }));
+askLab?.catch(() => {}); // a failed lab start is answered on the next Ask browser request
+/** Ask's browser runtime: the work browser, or in the lab its fictional portal once the lab is up. */
+async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
 async function currentBankProvider() { return w1Lab ? (await w1Lab).provider : (await import("./bank-provider.ts")).connectedBankProvider(); }
 let w1HostPromise: Promise<import("./w1-host.ts").W1Host> | undefined;
 // One coverage tracker per process: separate instances on the same file would
@@ -4098,7 +4104,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const threadId = url.searchParams.get("threadId") ?? "";
       const bud = store.productBud();
       if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
-      const [tasks, browser] = await Promise.all([browserTasks().list(threadId), browserRuntime.status()]);
+      const [tasks, browser] = await Promise.all([browserTasks().list(threadId), askRuntime().then(runtime => runtime.status())]);
       const chosen = browser.browsers.find((item) => item.id === browser.selectedBrowserId);
       return json(res, 200, {
         tasks: tasks.map(browserTaskCardView),
@@ -4160,8 +4166,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         // Start: the thread is free, the browser is connected, and the grant is saved before any browser work.
         if (fenceContextFor(threadId)) return json(res, 409, { error: "Other browser work is running in this conversation. Stop it first." });
         if (signInHandoffs().isHolding()) return json(res, 409, { error: "Finish the saved sign-in handover before starting more browser work." });
-        let browser = await browserRuntime.status();
-        if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await browserRuntime.connect(); } catch { /* answered below */ } }
+        const runtime = await askRuntime();
+        let browser = await runtime.status();
+        if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await runtime.connect(); } catch { /* answered below */ } }
         if (browser.state !== "ready" || !browser.selectedBrowserId) return json(res, 409, { error: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then press Start again.", code: "browser_not_connected" });
         const started = await browserTasks().start(taskId, { threadId, browserId: browser.selectedBrowserId, site: body.site });
         const grant = started.grant;

@@ -477,7 +477,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
 
   it("installs the staged upstream optional skills byte for byte beside RealBud's own", () => {
     const staged = ["decision-questionnaire", "domain-intel", "one-three-one-rule", "rss-feeds", "simple-english"];
-    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", "working-rules", ...staged].sort());
+    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", "portal-explore", "working-rules", ...staged].sort());
     const home = mkdtempSync(join(tmpdir(), "realbud-optional-skills-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     for (const name of staged) {
