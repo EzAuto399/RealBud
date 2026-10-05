@@ -6,7 +6,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, vi } from "vitest";
-import { SANDBOX_TEST_WRITABLE } from "../worker-network-sandbox.ts";
+import { SANDBOX_TEST_WRITABLE } from "../worker-sandbox-test-writable.ts";
 
 // vi.waitFor gives up after 1 s by default. The suite waits on background
 // work (fsync'd private writes, child servers, approval cards) that a loaded

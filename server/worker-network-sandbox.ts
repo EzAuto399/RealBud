@@ -128,9 +128,7 @@ export const NETWORK_ISOLATION_UNAVAILABLE =
 
 /** Credential and private-data locations under the person's home that no
  * worker may read, whatever its job. */
-/** Test-only: extra writable roots for the fakes' evidence files. Honoured
- * only under vitest; production never reads it. */
-export const SANDBOX_TEST_WRITABLE: string[] = [];
+export { SANDBOX_TEST_WRITABLE } from "./worker-sandbox-test-writable.ts";
 
 export const PRIVATE_HOME_PATHS = [
   ".ssh", ".aws", ".config/gcloud", ".config/gh", ".gnupg", ".netrc", ".kube", ".docker",
