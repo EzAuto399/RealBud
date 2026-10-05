@@ -5,7 +5,7 @@ import { api, useStore } from '@/state/store';
 interface FindingInvoice { invoiceNumber: string | null; invoiceDate: string | null; receivedDate: string; amountsCents: number[]; description: string; sourceIds: string[]; unresolvedRevision: boolean }
 interface Finding {
   id: string; kind: 'sender-verification' | 'multiple-invoices'; propertyId: string; supplierRef: string | null;
-  senderEmail?: string; windowKey?: string; windowStart?: string; windowEnd?: string; invoices: FindingInvoice[]; notes: string[];
+  senderEmail?: string; reasons?: string[]; windowKey?: string; windowStart?: string; windowEnd?: string; invoices: FindingInvoice[]; notes: string[];
 }
 interface Saved { finding: Finding; state: 'new' | 'seen' | 'dismissed' }
 interface Review {
@@ -29,7 +29,8 @@ function readReview(v: unknown): Review {
   return r;
 }
 
-const reason = (f: Finding) => f.kind === 'sender-verification' ? 'Sender needs checking'
+// A listed sender Gmail did not confirm (possible forgery) reads differently from an unknown one.
+const reason = (f: Finding) => f.kind === 'sender-verification' ? (f.reasons?.length && f.reasons.every(r => r === 'unverified-sender') ? 'Sender not verified' : 'Sender needs checking')
   : f.windowKey?.includes('rolling30') ? 'Several invoices within 30 days' : 'Several invoices this month';
 
 function FindingCard({ saved, review, busy, onDecide }: { saved: Saved; review: Review; busy: boolean; onDecide: (action: 'seen' | 'dismissed' | 'new') => void }) {

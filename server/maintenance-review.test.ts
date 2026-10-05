@@ -15,14 +15,20 @@ let n = 0;
 const NOW = Date.parse('2026-10-05T00:00:00Z');
 const CSV = 'Reference,Description,Email\nFIC-PLUMB,Fictional Plumbing,accounts@fictional-plumbing.example\nFIC-ELEC,Fictional Electrical,office@fictional-electrical.example';
 
-interface BillInput { id: string; property?: string; from?: string; replyTo?: string; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state'] }
-const bill = (b: BillInput): SourceBillOccurrence => ({
+// Gmail's own stamp confirming the From domain (fictional). `auth: null` leaves it off, as on older saved bills.
+const pass = (domain: string) => `mx.google.com; dkim=pass header.i=@${domain} header.s=fictional header.b=FICTIONAL; spf=pass (google.com: fictional) smtp.mailfrom=bounce@${domain}; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=${domain}`;
+interface BillInput { id: string; property?: string; from?: string; replyTo?: string; auth?: string | null; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state'] }
+const bill = (b: BillInput): SourceBillOccurrence => {
+  const from = b.from ?? 'Fictional Plumbing <accounts@fictional-plumbing.example>', auth = b.auth === undefined ? pass(from.replace(/^.*@|>.*$/g, '')) : b.auth;
+  return {
   id: `source-bill:${b.id.padEnd(64, '0')}`, state: b.state ?? 'received',
   facts: { propertyId: b.property ?? 'fictional-property-a', kind: b.kind ?? 'Maintenance', vendor: 'Fictional label', amountCents: b.amount ?? 12000, currency: 'AUD',
     invoiceDate: b.date ?? '2026-09-10', dueDate: null, note: '', invoiceNumber: b.number === undefined ? `INV-${b.id}` : b.number, workDescription: b.work ?? 'Fictional tap repair', supplierReference: b.ref ?? null },
   source: { accountId: 'fictional', receiptId: 'r', threadId: 't', digest: 'd', identity: 'i',
-    message: { id: 'm', at: Date.parse(`${b.date ?? '2026-09-10'}T01:00:00Z`), from: b.from ?? 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: `Fictional invoice ${b.id}`, body: '', attachments: [], ...(b.replyTo === undefined ? {} : { replyTo: b.replyTo }) } },
-} as unknown as SourceBillOccurrence);
+    message: { id: 'm', at: Date.parse(`${b.date ?? '2026-09-10'}T01:00:00Z`), from, subject: `Fictional invoice ${b.id}`, body: '', attachments: [],
+      ...(b.replyTo === undefined ? {} : { replyTo: b.replyTo }), ...(auth === null ? {} : { authResults: auth }) } },
+  } as unknown as SourceBillOccurrence;
+};
 const run = (id: string) => ({ id, loopId: 'maintenance-review' } as LoopRun);
 
 async function rig(options: { csv?: boolean; weekly?: RoutineResult | null } = {}) {
@@ -79,7 +85,42 @@ describe('maintenance review inputs', () => {
     expect(flagged.find(f => f.invoices[0]!.sourceIds[0]!.includes('x2'))!.notes).toContain('Sent via Xero for ben@fictional-plumbing-billing.example.');
   });
 
-  it('carries Reply-To on bill evidence without changing any source digest', () => {
+  it('trusts a listed sender only when Gmail confirmed the From domain', async () => {
+    const { directory } = await rig();
+    const d = await directory.read();
+    const plumb = 'Fictional Plumbing <accounts@fictional-plumbing.example>', xero = 'Fictional Plumbing via Xero <messaging-service@post.xero.com>';
+    const forged = 'mx.google.com; dkim=none; spf=softfail (google.com: fictional) smtp.mailfrom=scam@fictional-evil.example; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=fictional-plumbing.example';
+    const rows = maintenanceInvoices([
+      bill({ id: 'v1', from: plumb, auth: forged }),
+      bill({ id: 'v2', from: plumb }),
+      bill({ id: 'v3', from: xero, replyTo: 'accounts@fictional-plumbing.example', auth: 'mx.google.com; dkim=pass header.i=@post.xero.com header.s=fictional; spf=pass smtp.mailfrom=bounce@post.xero.com' }),
+      bill({ id: 'v4', from: xero, replyTo: 'accounts@fictional-plumbing.example', auth: 'mx.google.com; dkim=pass header.i=@fictional-evil.example; spf=pass smtp.mailfrom=a@post.xero.com; dmarc=fail header.from=post.xero.com' }),
+      // An Authentication-Results header written by someone other than Gmail is ignored.
+      bill({ id: 'v5', from: plumb, auth: 'mail.fictional-evil.example; dkim=pass header.d=fictional-plumbing.example; dmarc=pass header.from=fictional-plumbing.example' }),
+      bill({ id: 'v6', from: plumb, auth: null }),
+    ], d, 'Australia/Brisbane');
+    expect(rows.map(r => [r.sourceId.slice(12, 14), r.supplierRef, r.senderMatch, r.senderNote])).toEqual([
+      ['v1', 'FIC-PLUMB', 'unverified', 'Mail server did not confirm this sender, so it could be forged (DMARC fail, DKIM none).'],
+      ['v2', 'FIC-PLUMB', 'listed', undefined],
+      ['v3', 'FIC-PLUMB', 'listed', 'Sent via Xero for accounts@fictional-plumbing.example.'],
+      ['v4', 'FIC-PLUMB', 'unverified', "Sent via Xero for accounts@fictional-plumbing.example. Claims to be sent via Xero but Xero's signature was not confirmed (DMARC fail, DKIM pass)."],
+      ['v5', 'FIC-PLUMB', 'unverified', 'Mail server did not confirm this sender, so it could be forged (no Gmail authentication result).'],
+      ['v6', 'FIC-PLUMB', 'unverified', 'Sender not verified (mail authentication not available for this message).'],
+    ]);
+    const findings = computeMaintenanceFindings({ invoices: rows, coverage: { from: '2026-09-01', to: '2026-10-05', complete: true } });
+    const flagged = findings.filter(f => f.kind === 'sender-verification');
+    const of = (id: string) => flagged.find(f => f.invoices[0]!.sourceIds.some(s => s.includes(id)));
+    expect(of('v1')).toMatchObject({ reasons: ['unverified-sender'], supplierRef: 'FIC-PLUMB', senderEmail: 'accounts@fictional-plumbing.example' });
+    expect(of('v1')!.notes).toContain('Mail server did not confirm this sender, so it could be forged (DMARC fail, DKIM none).');
+    expect(of('v2')).toBeUndefined();
+    expect(of('v3')).toBeUndefined();
+    expect(of('v4')!.reasons).toEqual(['unverified-sender']);
+    expect(of('v6')!.notes).toContain('Sender not verified (mail authentication not available for this message).');
+    // The sender finding is independent: FIC-PLUMB's several invoices are still compared.
+    expect(findings.some(f => f.kind === 'multiple-invoices' && f.supplierRef === 'FIC-PLUMB')).toBe(true);
+  });
+
+  it('carries Reply-To and Authentication-Results on bill evidence without changing any source digest', () => {
     const message = { id: 'fictional-m1', at: NOW, from: 'Fictional Plumbing <accounts@fictional-plumbing.example>', subject: 'Fictional invoice', body: 'Fictional', bodyTruncated: false, attachments: [] };
     const source = { accountId: 'fictional', receiptId: 'r', threadId: 't', message };
     const plain = previewBillSource(source), relayed = previewBillSource({ ...source, message: { ...message, replyTo: 'ben@fictional-plumbing.example' } });
@@ -89,6 +130,10 @@ describe('maintenance review inputs', () => {
     expect(relayed.digest).toBe(plain.digest);
     expect(relayed.message.replyTo).toBe('ben@fictional-plumbing.example');
     expect(() => previewBillSource({ ...source, message: { ...message, replyTo: 'x'.repeat(2049) } })).toThrow();
+    const stamped = previewBillSource({ ...source, message: { ...message, replyTo: 'ben@fictional-plumbing.example', authResults: 'mx.google.com; dmarc=pass header.from=fictional-plumbing.example' } });
+    expect(stamped.digest).toBe(plain.digest);
+    expect(stamped.message.authResults).toBe('mx.google.com; dmarc=pass header.from=fictional-plumbing.example');
+    expect(() => previewBillSource({ ...source, message: { ...message, authResults: 'x'.repeat(4097) } })).toThrow();
   });
 
   it('flags an invoice from an email shared by two supplier records and reports the conflict', async () => {

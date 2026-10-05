@@ -198,6 +198,8 @@ try {
     await repeat.waitFor();
     for (const text of ['FIC-PLUMB', 'Invoice INV-1001', 'Invoice INV-1002']) assert.ok((await repeat.innerText()).includes(text), `finding shows ${text}`);
     await panel.getByRole('listitem', { name: /^Sender needs checking/ }).first().waitFor();
+    // Seeded supplier mail carries Gmail's DMARC/DKIM pass stamp, so no listed sender reads as unverified.
+    assert.equal(await panel.getByRole('listitem', { name: /^Sender not verified/ }).count(), 0, 'Gmail-confirmed supplier mail must not show as unverified');
     await panel.scrollIntoViewIfNeeded(); await shot('w4-findings');
     return `run: ${run.detail}; chat card opened Desk; repeat-supplier and sender findings shown`;
   });

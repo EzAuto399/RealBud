@@ -45,7 +45,7 @@ export function validateOccurrence(value: unknown): SourceBillOccurrence {
     if (row.id !== `source-bill:${(row.history[0] ?? row).source.identity}`) recovery();
     for (const v of [...row.history, row]) {
       exact(v.source, ['accountId', 'threadId', 'message', 'receiptId', 'digest', 'identity']);
-      exact(v.source.message, ['id', 'at', 'from', 'subject', 'body', 'bodyTruncated', 'attachments', ...(Object.hasOwn(v.source.message, 'replyTo') ? ['replyTo'] : [])]);
+      exact(v.source.message, ['id', 'at', 'from', 'subject', 'body', 'bodyTruncated', 'attachments', ...['replyTo', 'authResults'].filter(k => Object.hasOwn(v.source.message, k))]);
       if (v.source.accountId !== row.source.accountId || (v.seriesId !== null && !seriesId(v.seriesId))) recovery();
     }
     return row;

@@ -532,11 +532,17 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
       if (at >= request.windowEndAt) { thread.historyComplete = false; gap(MAIL_CONVERSATION_GAPS.conversationChanged); continue; }
       if (!record(rawMessage.payload) || !Array.isArray(rawMessage.payload.headers) || rawMessage.payload.headers.length > 200) fail('a message payload was incomplete.', 502);
       const headers: Record<string, string> = {};
-      for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string' && ['from', 'reply-to', 'to', 'subject'].includes(h.name.toLowerCase())) headers[h.name.toLowerCase()] = clean(h.value, 2048);
+      for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string') {
+        const name = h.name.toLowerCase();
+        if (['from', 'reply-to', 'to', 'subject'].includes(name)) headers[name] = clean(h.value, 2048);
+        // Only the topmost Authentication-Results is Gmail's own stamp; lower ones came with the message.
+        else if (name === 'authentication-results') headers[name] ??= clean(h.value, 4096).replace(/\s+/g, ' ').trim();
+      }
       const labels = rawMessage.labelIds;
       const direction = !Array.isArray(labels) || labels.some(l => typeof l !== 'string') || labels.includes('DRAFT') ? 'unknown' : labels.includes('SENT') ? 'outgoing' : 'incoming';
       if (direction === 'unknown') gap(MAIL_CONVERSATION_GAPS.directionUnknown);
-      const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [], ...(headers['reply-to'] ? { replyTo: headers['reply-to'] } : {}) };
+      const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [], ...(headers['reply-to'] ? { replyTo: headers['reply-to'] } : {}),
+        ...(headers['authentication-results'] ? { authResults: headers['authentication-results'] } : {}) };
       let parts = 0; const plain: string[] = [], html: string[] = [];
       const visit = (part: unknown, depth: number) => {
         if (!record(part) || ++parts > 200 || depth > 8) fail('a message exceeded the supported MIME limits.', 502);

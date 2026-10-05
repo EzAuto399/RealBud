@@ -5,6 +5,8 @@ export interface BillMailSource {
     attachments: { id: string; name: string; mimeType: string; size: number | null }[];
     /** Raw Reply-To header when present. Kept outside the evidence digest. */
     replyTo?: string;
+    /** Gmail's Authentication-Results header when present. Kept outside the evidence digest. */
+    authResults?: string;
   };
 }
 export interface BillSourceEvidence extends BillMailSource { digest: string; identity: string }

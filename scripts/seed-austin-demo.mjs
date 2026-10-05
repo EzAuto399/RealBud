@@ -48,7 +48,7 @@ export function billFacts(bill, today = localDate()) {
 
 function mailbox(today) {
   const sentAt = daysAgo => Date.parse(`${addDays(today, -daysAgo)}T00:00:00Z`) + 9 * 3_600_000 - 10 * 3_600_000; // 9am Brisbane
-  const message = (t, body) => ({ id: t.messageId, threadId: t.threadId, at: Math.min(sentAt(t.daysAgo), Date.now() - 60_000), direction: 'incoming', from: t.from, to: seed.office.gmail.address, subject: t.subject, body, bodyTruncated: false, attachments: [] });
+  const message = (t, body) => ({ id: t.messageId, threadId: t.threadId, at: Math.min(sentAt(t.daysAgo), Date.now() - 60_000), direction: 'incoming', from: t.from, to: seed.office.gmail.address, subject: t.subject, body, bodyTruncated: false, attachments: [], ...(t.authResults ? { authResults: t.authResults } : {}) });
   const billBody = b => {
     const { invoiceDate, dueDate } = billFacts(b, today);
     const facts = `Fictional ${b.kind.toLowerCase()} invoice for ${b.property} ${property(b.property).address}. Invoice number ${b.invoiceId}. Supplier: ${b.vendor}. Kind: ${b.kind}. Invoice date ${invoiceDate}. Amount AUD ${money(b.amountCents)}. Due ${dueDate}. No payment is recorded.`;
@@ -277,7 +277,7 @@ async function seedMaintenanceHistory(data, ids, today) {
     for (const inv of seed.mailbox.maintenance.invoices) {
       const date = day(inv.dayOfLastMonth), id = createHash('sha256').update(`austin-showcase-${count}`).digest('hex').slice(0, 16);
       const source = { accountId: seed.office.gmail.accountId, receiptId: 'fictional-showcase-receipt', threadId: `thread${id}`,
-        message: { id, at: Date.parse(`${inv.receivedDayOfLastMonth ? day(inv.receivedDayOfLastMonth) : date}T00:30:00Z`), from: inv.from, subject: inv.subject, body: `SYNTHETIC. Fictional invoice ${inv.number} for ${inv.work}.`, bodyTruncated: false, attachments: [] } };
+        message: { id, at: Date.parse(`${inv.receivedDayOfLastMonth ? day(inv.receivedDayOfLastMonth) : date}T00:30:00Z`), from: inv.from, subject: inv.subject, body: `SYNTHETIC. Fictional invoice ${inv.number} for ${inv.work}.`, bodyTruncated: false, attachments: [], ...(inv.authResults ? { authResults: inv.authResults } : {}) } };
       const facts = { propertyId: ids[inv.property], kind: inv.kind ?? 'Maintenance', vendor: inv.vendor, amountCents: inv.cents, currency: 'AUD', invoiceDate: date, dueDate: null, note: 'Synthetic showcase history',
         invoiceNumber: inv.number, invoiceVersion: null, supplierReference: inv.ref ?? null, workDescription: inv.work };
       const body = { expectedSourceDigest: previewBillSource(source).digest, sourceReviewed: true, facts, reviewReason: 'Fictional earlier review (showcase seed)' };

@@ -9,6 +9,7 @@ import { DATA_DIR } from './config.ts';
 import { readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
 import { redactSecretsInText } from './redact.ts';
 import { billDateInZone } from '../shared/bill-dates.ts';
+import { mailAuthConfirms, mailAuthWords, parseMailAuth } from '../shared/mail-auth.ts';
 import { matchSender, normalizeSupplierEmail, supplierEmailConflicts, type SupplierDirectory } from '../shared/supplier-directory.ts';
 import type { SourceBillOccurrence } from '../shared/source-bills.ts';
 import type { RoutineResult } from '../shared/routine-result.ts';
@@ -189,26 +190,35 @@ export const INVOICE_RELAYS: ReadonlyMap<string, string> = new Map([['post.xero.
  * Supplier identity comes from the reviewed supplier reference or an exact
  * directory match, never from the vendor label or the email domain. A relayed
  * invoice is matched on its single Reply-To address (same parsing rules as
- * From); without one it stays unlisted. */
+ * From); without one it stays unlisted. From and Reply-To can be forged, so a
+ * directory match counts as listed only when Gmail's Authentication-Results
+ * confirm the From domain (the relay's domain for a relayed invoice); otherwise
+ * it is 'unverified' and still raises a sender finding. */
 export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: SupplierDirectory, timeZone: string): MaintenanceInvoice[] {
   const invoices: MaintenanceInvoice[] = [];
   for (const bill of bills) {
     if (bill.state === 'cancelled') continue;
-    const from = senderAddress(bill.source.message.from), relay = INVOICE_RELAYS.get(from.slice(from.lastIndexOf('@') + 1));
-    const email = relay ? senderAddress(bill.source.message.replyTo ?? '') : from, match = matchSender(directory, email);
-    const senderNote = !relay ? undefined : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`;
+    const message = bill.source.message, from = senderAddress(message.from), fromDomain = from.slice(from.lastIndexOf('@') + 1), relay = INVOICE_RELAYS.get(fromDomain);
+    const email = relay ? senderAddress(message.replyTo ?? '') : from, match = matchSender(directory, email);
+    const auth = parseMailAuth(message.authResults), confirmed = !!from && mailAuthConfirms(auth, fromDomain);
+    const notes = [!relay ? '' : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`];
+    // An unlisted sender is already a finding; the verification note matters when a match would be trusted.
+    if (!confirmed && match.kind !== 'unlisted') notes.push(!message.authResults ? 'Sender not verified (mail authentication not available for this message).'
+      : relay ? `Claims to be sent via ${relay} but ${relay}'s signature was not confirmed (${mailAuthWords(auth)}).`
+      : `Mail server did not confirm this sender, so it could be forged (${mailAuthWords(auth)}).`);
+    const senderNote = notes.filter(Boolean).join(' ') || undefined;
     const reviewed = bill.facts.supplierReference?.trim() || null;
     // ponytail: the kind keyword list decides "maintenance" for bills with no supplier
     // reference and an unlisted sender. Upgrade: a reviewed maintenance flag on bill facts.
     if (!reviewed && match.kind === 'unlisted' && !MAINTENANCE_KIND.test(`${bill.facts.kind} ${bill.facts.workDescription ?? ''}`)) continue;
     let supplierRef: string | null = reviewed, senderMatch: MaintenanceInvoice['senderMatch'] = 'unlisted';
-    if (match.kind === 'listed') { supplierRef = reviewed ?? match.supplierRef; senderMatch = reviewed && reviewed !== match.supplierRef ? 'conflict' : 'listed'; }
+    if (match.kind === 'listed') { supplierRef = reviewed ?? match.supplierRef; senderMatch = reviewed && reviewed !== match.supplierRef ? 'conflict' : confirmed ? 'listed' : 'unverified'; }
     if (match.kind === 'conflict') { supplierRef = reviewed && match.supplierRefs.includes(reviewed) ? reviewed : null; senderMatch = 'conflict'; }
     // ponytail: a forwarded copy is judged by the forwarding address; original-sender
     // evidence is not extracted yet, so it stays a sender finding for Sherry to check.
-    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(bill.source.message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
+    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
       invoiceNumber: bill.facts.invoiceNumber ?? null, invoiceVersion: bill.facts.invoiceVersion ?? null, invoiceDate: bill.facts.invoiceDate,
-      receivedDate: billDateInZone(bill.source.message.at, timeZone), amountCents: bill.facts.amountCents,
+      receivedDate: billDateInZone(message.at, timeZone), amountCents: bill.facts.amountCents,
       description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) });
   }
   return invoices;

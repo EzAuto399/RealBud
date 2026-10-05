@@ -4,7 +4,8 @@
 // independent finding kinds Sherry reviews.
 import { createHash } from "node:crypto";
 
-export type SenderMatch = "listed" | "unlisted" | "conflict";
+/** "unverified": in the supplier list, but Gmail did not confirm the From domain, so it could be forged. */
+export type SenderMatch = "listed" | "unlisted" | "conflict" | "unverified";
 
 export interface MaintenanceInvoice {
   sourceId: string;
@@ -47,7 +48,7 @@ export interface FindingInvoice {
   unresolvedRevision: boolean;
 }
 
-export type SenderReason = "unlisted-sender" | "conflicting-sender" | "supplier-unresolved";
+export type SenderReason = "unlisted-sender" | "conflicting-sender" | "supplier-unresolved" | "unverified-sender";
 
 interface FindingBase {
   id: string;
@@ -245,6 +246,7 @@ export function computeMaintenanceFindings(input: MaintenanceFindingsInput): Mai
         const reasons: SenderReason[] = [];
         if (r.senderMatch === "unlisted") reasons.push("unlisted-sender");
         if (r.senderMatch === "conflict") reasons.push("conflicting-sender");
+        if (r.senderMatch === "unverified") reasons.push("unverified-sender");
         if (supplierRef === null) reasons.push("supplier-unresolved");
         if (!reasons.length) continue;
         const sender = r.senderEmail.trim().toLowerCase();

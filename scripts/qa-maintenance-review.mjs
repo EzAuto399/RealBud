@@ -34,10 +34,13 @@ async function openRegister() {
   return new SourceBillRegister(new WorkflowDatabase({ dir: data }), { dataDir: data });
 }
 let seq = 0;
-function seed({ property, from, replyTo, number, date, cents, work, ref = null, at, subject, kind = 'Maintenance', vendor = 'Fictional Plumbing' }) {
+// Gmail's own Authentication-Results stamp confirming the From domain (fictional selector, signature and IP).
+const gmailPass = domain => `mx.google.com; dkim=pass header.i=@${domain} header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@${domain} designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@${domain}; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=${domain}`;
+function seed({ property, from, replyTo, auth, number, date, cents, work, ref = null, at, subject, kind = 'Maintenance', vendor = 'Fictional Plumbing' }) {
   const id = createHash('sha256').update(`fictional-${++seq}`).digest('hex').slice(0, 16);
+  const authResults = auth === undefined ? gmailPass(from.replace(/^.*@|>.*$/g, '')) : auth;
   const source = { accountId: 'fictional-maintenance', receiptId: 'fictional-receipt', threadId: `thread${id}`,
-    message: { id, at: at ?? Date.parse(`${date}T00:30:00Z`), from, subject, body: `Fictional invoice ${number} for ${work}.`, bodyTruncated: false, attachments: [], ...(replyTo ? { replyTo } : {}) } };
+    message: { id, at: at ?? Date.parse(`${date}T00:30:00Z`), from, subject, body: `Fictional invoice ${number} for ${work}.`, bodyTruncated: false, attachments: [], ...(replyTo ? { replyTo } : {}), ...(authResults ? { authResults } : {}) } };
   const facts = { propertyId: property, kind, vendor, amountCents: cents, currency: 'AUD', invoiceDate: date, dueDate: null, note: '',
     invoiceNumber: number, invoiceVersion: null, supplierReference: ref, workDescription: work };
   const body = { expectedSourceDigest: '', sourceReviewed: true, facts, reviewReason: 'Fictional QA review' };
@@ -126,7 +129,7 @@ try {
   pass('The same supplier\'s invoice for Pine Street stays separate and raises nothing on its own');
   assert.ok(!review.findings.some(f => f.finding.invoices.some(i => i.invoiceNumber === 'INV-2001')));
   assert.ok(!sender.some(f => ['accounts@fictional-plumbing.example', 'office@fictional-electrical.example'].includes(f.finding.senderEmail)));
-  pass('Listed addresses (FIC-PLUMB, FIC-ELEC) match their suppliers and raise no sender finding');
+  pass('Listed addresses (FIC-PLUMB, FIC-ELEC) that Gmail confirmed (DMARC/DKIM pass) match their suppliers and raise no sender finding');
   assert.deepEqual(sender.map(f => f.finding.senderEmail).sort(), ['new@fictional-sparks.example', 'office@fictional-agency.example']);
   assert.equal(sender.find(f => f.finding.senderEmail === 'new@fictional-sparks.example').finding.supplierRef, null);
   pass('An unlisted sender creates a sender-verification finding; the forwarder of a copy is flagged, not trusted');
@@ -220,9 +223,12 @@ try {
     seed({ property: pine, from: xero, replyTo: 'Ben <accounts@fictional-roofing.example>', number: 'INV-4001', date: '2026-09-22', cents: 52000, work: 'Fictional roof leak sealed', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4001 via Xero' }),
     seed({ property: elm, from: xero, replyTo: 'ben@fictional-roofing-billing.example', number: 'INV-4002', date: '2026-09-23', cents: 61000, work: 'Fictional gutter replacement', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4002 via Xero' }),
     seed({ property: pine, from: xero, number: 'INV-4003', date: '2026-09-24', cents: 33000, work: 'Fictional ridge cap repair', vendor: 'Fictional Roofing', subject: 'Fictional invoice INV-4003 via Xero' }),
+    // Forged: the listed FIC-PLUMB From address, but Gmail's stamp says DMARC failed and nothing was signed.
+    seed({ property: elm, from: plumb, number: 'INV-5001', date: '2026-09-26', cents: 87000, work: 'Fictional urgent pipe replacement', subject: 'Fictional invoice INV-5001 (new bank details)',
+      auth: 'mx.google.com; dkim=none; spf=softfail (google.com: domain of transitioning scam@fictional-evil.example does not designate 198.51.100.7 as permitted sender) smtp.mailfrom=scam@fictional-evil.example; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=fictional-plumbing.example' }),
   ]) await accept(entry);
   const fourth = await launch();
-  assert.match(fourth.detail, /3 new or changed/, fourth.detail);
+  assert.match(fourth.detail, /4 new or changed/, fourth.detail);
   review = await request('/api/maintenance-review');
   const senders = review.findings.filter(f => f.finding.kind === 'sender-verification' && f.state !== 'dismissed');
   const invoiceOf = number => senders.filter(f => f.finding.invoices.some(i => i.invoiceNumber === number));
@@ -231,13 +237,19 @@ try {
   assert.deepEqual(invoiceOf('INV-4003').map(f => f.finding.senderEmail), [`unclear sender: ${xero}`.toLowerCase()]);
   assert.deepEqual(invoiceOf('INV-2001').map(f => [f.finding.senderEmail, f.finding.reasons, f.finding.supplierRef]), [['office@fictional-electrical.example', ['conflicting-sender', 'supplier-unresolved'], null]]);
   assert.ok(review.lastRun.gaps.includes('Same email on two suppliers: FIC-DUPE, FIC-ELEC. Correct the supplier list.'));
+  assert.deepEqual(invoiceOf('INV-5001').map(f => [f.finding.senderEmail, f.finding.reasons, f.finding.supplierRef, f.finding.notes.includes('Mail server did not confirm this sender, so it could be forged (DMARC fail, DKIM none).')]),
+    [['accounts@fictional-plumbing.example', ['unverified-sender'], 'FIC-PLUMB', true]]);
+  pass('A forged From of the listed FIC-PLUMB address (Gmail: DMARC fail, no DKIM) is not trusted: it raises a "Sender not verified" finding naming the failed check');
   pass('A Xero relay is checked on its Reply-To: a listed Reply-To raises nothing, an unlisted or missing Reply-To is flagged with a "Sent via Xero" note, and an invoice from the email shared by two suppliers is flagged as a conflict');
   await panel.getByRole('listitem', { name: 'Sender needs checking · Fictional Elm Street' }).filter({ hasText: 'Sent via Xero for ben@fictional-roofing-billing.example.' }).waitFor();
+  const forgedCard = panel.getByRole('listitem', { name: 'Sender not verified · Fictional Elm Street' });
+  await forgedCard.waitFor();
+  assert.ok((await forgedCard.innerText()).includes('could be forged (DMARC fail, DKIM none)'));
   await panel.screenshot({ path: join(output, 'xero-and-conflict-findings.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await panel.scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'horizontal scroll at 390px after import');
-  pass('The panel shows the Xero note on the finding and still fits 390px');
+  pass('The panel shows the Xero note and the "Sender not verified" finding, and still fits 390px');
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(base + '/#/schedule');
@@ -254,7 +266,7 @@ finally {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure,
     layer: 'Actual local HTTP app + built UI from source; fictional supplier list and reviewed bills; not live Gmail/customer/Windows proof', checks, errors,
     limits: ['Reviewed bills were seeded through SourceBillRegister.accept in the QA process, not through Gmail collection and the Bills review form.',
-      'Reply-To on the Xero-relayed bills was seeded on the saved message; Gmail header collection is unit-tested only.',
+      'Reply-To and Gmail Authentication-Results headers were seeded on the saved messages (fictional values); Gmail header collection is unit-tested only, and real Gmail stamps are not checked here.',
       'No weekly bills review result exists, so coverage is partial by design; complete-coverage wording is unit-tested only.',
       'Daily weekdays 08:30, the calendar-month/invoice-date rule and the in-app alert destination are pending Sherry.',
       'Fictional data; Mac browser rendering only; no packaged build, Windows or customer acceptance.'],
