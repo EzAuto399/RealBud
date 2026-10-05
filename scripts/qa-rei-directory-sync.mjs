@@ -164,15 +164,18 @@ try {
   const supplierPreview = suppliersPanel().getByRole('group', { name: 'REI supplier list preview', exact: true });
   await supplierPreview.getByText('5 suppliers ready to save · 1 skipped · 2 without email', { exact: true }).waitFor();
   await supplierPreview.getByText("5 rows in REI's export · matches the 5 records REI lists", { exact: true }).waitFor();
+  // Every seeded supplier is gone from REI's list: a big drop, saved only when the person confirms it.
+  await supplierPreview.getByRole('alert').getByText('REI returned far fewer suppliers than before — check the export before approving.', { exact: true }).waitFor();
+  await supplierPreview.getByRole('list', { name: 'Suppliers added in REI' }).getByText('FS-PLUMB · Fictional Plumbing Co · accounts@fictional-plumbing.test', { exact: true }).waitFor();
   await capture('suppliers-preview', suppliersPanel());
-  await supplierPreview.getByRole('button', { name: 'Save supplier list', exact: true }).click();
+  await supplierPreview.getByRole('button', { name: 'Save anyway', exact: true }).click();
   await suppliersPanel().getByText('Saved the supplier list from REI.', { exact: true }).waitFor();
   const directory = (await request('/api/supplier-directory')).directory;
   assert.equal(directory.revision, before.suppliers.revision + 1);
   assert.deepEqual(matchSender(directory, 'accounts@fictional-plumbing.test'), { kind: 'listed', supplierRef: 'FS-PLUMB' });
   assert.deepEqual(matchSender(directory, 'someone@unlisted.fictional.test'), { kind: 'unlisted' });
   await page.getByRole('region', { name: 'Maintenance checks' }).getByText(/^5 suppliers · 2 without email/).waitFor();
-  pass(`Supplier refresh previewed 5 rows = 5 records (1 email skipped, 2 without email); Save stored revision ${directory.revision}; W4's sender check now lists accounts@fictional-plumbing.test as FS-PLUMB`);
+  pass(`Supplier refresh previewed 5 rows = 5 records (1 email skipped, 2 without email) and listed who was added; replacing every seeded supplier was held as a big drop until Save anyway stored revision ${directory.revision}; W4's sender check now lists accounts@fictional-plumbing.test as FS-PLUMB`);
 
   const effects = (await lab('status')).effects;
   assert.deepEqual(effects, [], `Bud pressed nothing in REI: ${effects}`);

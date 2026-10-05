@@ -22,3 +22,11 @@ it('notifies Sherry once for new maintenance findings and stays quiet on an unch
   notifyRoutineRun(run); notifyRoutineRun(run); expect(notices).toHaveLength(1);
   notifyRoutineRun({ ...run, id: 'fictional-maintenance-rescan', seenAt: 1 }); expect(notices).toHaveLength(1);
 });
+it('notifies once when the weekly supplier check finds a change, and stays quiet when REI is unchanged', () => {
+  const notices: unknown[] = [];
+  class FakeNotification { static permission = 'granted'; constructor(title: unknown, options: unknown) { notices.push({ title, options }); } }
+  vi.stubGlobal('Notification', FakeNotification);
+  const run = { id: 'fictional-supplier-check', loopId: 'rei-supplier-check', loopName: 'Supplier list check', status: 'awaiting-approval', detail: 'Supplier list changed in REI: 1 added — review.' } as LoopRun;
+  notifyRoutineRun(run); notifyRoutineRun({ ...run, id: 'fictional-supplier-unchanged', status: 'completed', seenAt: 1 });
+  expect(notices).toEqual([{ title: 'Supplier list check', options: expect.objectContaining({ body: 'Supplier list changed in REI: 1 added — review.' }) }]);
+});
