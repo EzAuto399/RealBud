@@ -1,6 +1,7 @@
 import { currentWorkerProfile } from "./hermes-profile.ts";
 // Install the locked `property` profile into a Hermes home. File copy only —
 // we never edit Hermes source or launch Hermes.app.
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,7 +95,78 @@ function ensurePrivateRootAuth(root?: string): void {
   if (pending) writeProfileFiles([pending]);
 }
 
-const PROFILE_FILES = ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env"];
+/** Private record of the SOUL/skill digests RealBud shipped into this profile,
+ * so a later pack replaces only files the office never changed. */
+const SHIPPED_RECORD = ".realbud-shipped.json";
+const PROFILE_FILES = ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env", SHIPPED_RECORD];
+
+/** Bytes shipped before the record existed (every git revision of these files),
+ * so offices installed earlier still upgrade. Files with one revision need none. */
+const LEGACY_SHIPPED: Readonly<Record<string, readonly string[]>> = {
+  "SOUL.md": [
+    "480d8565062a9cd91f90a8069787fbd65d75b63707192f5757ebf03035896ff7", "79fa105a2e33d234cee0fe9ec69a3889874218f100ff3aae961001646eed4025",
+    "87e7cf2b510adff407e3f4ce092bc1f551ae8cc98e891f318abfce1707b0754c", "a66ff693e675383f53103c5233b34a745509968ef4dacc9fde8d39576e4109d6",
+    "ab939a24fd3d4f71d5d68c390b3191950b090acd8610a7b72c19f89eb335e46d", "b0edfaea1858037f65cf2e80b21562d6a505d8a4777a91ea01c3767ad82f890c",
+    "c7dcdea8b878e366db9b82c8663a7db90c7bdc9de1491a0bd41735cea59b1d54", "d98188e07093c803576c1690985573336a5bfbd54edc91d94a960f6638603a9f",
+  ],
+  "skills/morning-arrears/SKILL.md": ["f52e1dc7954e750eada6b35d97e367c3c9a2bb5488947694968c53447e8ba1df"],
+};
+
+const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+type ShippedRecord = { pack: string; files: Record<string, string[]> };
+
+/** A missing or damaged record only means fewer files count as unchanged. */
+function readShippedRecord(bytes: Buffer | null): ShippedRecord {
+  try {
+    const parsed: unknown = JSON.parse(bytes?.toString("utf8") ?? "");
+    if (parsed && typeof parsed === "object" && typeof (parsed as ShippedRecord).pack === "string") {
+      const files: Record<string, string[]> = {};
+      for (const [rel, list] of Object.entries((parsed as ShippedRecord).files ?? {})) {
+        if (Array.isArray(list)) files[rel] = list.filter((d): d is string => typeof d === "string" && /^[0-9a-f]{64}$/.test(d));
+      }
+      return { pack: (parsed as ShippedRecord).pack, files };
+    }
+  } catch { /* fall through */ }
+  return { pack: "", files: {} };
+}
+
+type ShippedFile = { rel: string; from: string; to: string; body: Buffer; digest: string };
+
+/** SOUL.md plus the skill tree, read from the read-only shipped pack. */
+function shippedPack(root?: string): { plan?: SkillPlan; files: ShippedFile[]; digest: string } {
+  const dest = propertyProfileDir(root), skillsFrom = join(PACK_DIR, "skills");
+  const plan: SkillPlan | undefined = existsSync(skillsFrom)
+    ? (() => { const built: SkillPlan = { dirs: [], files: [] }; skillPlan(skillsFrom, join(dest, "skills"), built); return built; })()
+    : undefined;
+  const files = [{ from: join(PACK_DIR, "SOUL.md"), to: join(dest, "SOUL.md") }, ...(plan?.files ?? [])].map(({ from, to }) => {
+    if (lstatSync(from).size > 2 * 1024 * 1024) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
+    const body = readFileSync(from);
+    return { rel: relative(PACK_DIR, from).split(sep).join("/"), from, to, body, digest: sha256(body) };
+  });
+  return { plan, files, digest: sha256(Buffer.from(files.map(f => `${f.rel} ${f.digest}`).join("\n"))) };
+}
+
+/** Add missing shipped files; replace one only when its bytes are something
+ * RealBud shipped before (or `forced`, e.g. SOUL on Repair). Office edits are
+ * kept and named. `existing` is in `files` order, already read under admission. */
+function shippedWrites(dest: string, files: ShippedFile[], existing: Array<Buffer | null>, recordBytes: Buffer | null, pack: string, forced: ReadonlySet<string>) {
+  const record = readShippedRecord(recordBytes);
+  const writes: ProfileFileWrite[] = [], wrote: string[] = [], kept: string[] = [];
+  const next: Record<string, string[]> = { ...record.files };
+  files.forEach((file, index) => {
+    const known = record.files[file.rel] ?? [];
+    next[file.rel] = [...new Set([...known, file.digest])];
+    const current = existing[index] ?? null;
+    if (current === null) writes.push({ path: file.to, bytes: file.body, overwrite: false });
+    else if (sha256(current) === file.digest) return;
+    else if (forced.has(file.rel)) writes.push({ path: file.to, bytes: file.body });
+    else if ([...known, ...(LEGACY_SHIPPED[file.rel] ?? [])].includes(sha256(current))) writes.push({ path: file.to, bytes: file.body, expected: current });
+    else { kept.push(file.rel); return; }
+    wrote.push(file.rel);
+  });
+  const recordWrite: ProfileFileWrite = { path: join(dest, SHIPPED_RECORD), bytes: `${JSON.stringify({ pack, files: next }, null, 2)}\n`, expected: recordBytes };
+  return { writes, wrote, kept, record: recordWrite };
+}
 
 type SkillPlan = { dirs: string[]; files: Array<{ from: string; to: string }> };
 
@@ -108,7 +180,7 @@ type SkillPlan = { dirs: string[]; files: Array<{ from: string; to: string }> };
  * launches of their own. The plan is computed from the read-only shipped pack
  * and names nothing in the destination that is not created under an admitted
  * root, so the protect-the-root-before-creating-descendants rule is unchanged. */
-function prepareProfile(root?: string, skills?: SkillPlan): { dir: string; config: Buffer | null; skills: Array<Buffer | null> } {
+function prepareProfile(root?: string, skills?: SkillPlan): { dir: string; soul: Buffer | null; config: Buffer | null; record: Buffer | null; skills: Array<Buffer | null> } {
   const home = hermesHome(root), dest = propertyProfileDir(root);
   ensureProfileDirectories([home, join(home, "profiles"), dest, ...(skills?.dirs ?? [])]);
   // Existing RealBud-owned policy/credential files are admission-only here.
@@ -119,7 +191,9 @@ function prepareProfile(root?: string, skills?: SkillPlan): { dir: string; confi
   ]);
   return {
     dir: dest,
+    soul: existing[PROFILE_FILES.indexOf("SOUL.md")] ?? null,
     config: existing[PROFILE_FILES.indexOf("config.yaml")] ?? null,
+    record: existing[PROFILE_FILES.indexOf(SHIPPED_RECORD)] ?? null,
     skills: existing.slice(PROFILE_FILES.length),
   };
 }
@@ -137,27 +211,20 @@ function skillPlan(source: string, destination: string, plan: SkillPlan, depth =
   }
 }
 
-/** `existing` is what `prepareProfile` already read for `plan.files`, in order:
- * every destination directory was admitted before any file in it was read, and
- * a linked or foreign one refused before anything was created. */
-function prepareSkillCopies(plan: SkillPlan, existing: Array<Buffer | null>): Array<{ path: string; body: Buffer }> {
-  if (existing.length !== plan.files.length) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
-  const files: Array<{ path: string; body: Buffer }> = [];
-  plan.files.forEach((file, index) => {
-    // Keep locally maintained skills; never replace them as profile repair.
-    if (existing[index] !== null) return;
-    if (lstatSync(file.from).size > 2 * 1024 * 1024 || files.length >= 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
-    files.push({ path: file.to, body: readFileSync(file.from) });
-  });
-  return files;
-}
-
-/** Startup is initialization only. Existing profiles change through Repair. */
-export function ensurePropertyPack(root?: string): { dir: string; wrote: string[] } {
-  if (!packInstalled(root)) return applyPropertyPack(root);
-  prepareProfile(root);
+/** Startup initializes a new profile. For an existing one it only brings
+ * SOUL/skills up to a changed pack where the office left them as shipped;
+ * config and everything else change through Repair. */
+export function ensurePropertyPack(root?: string): { dir: string; wrote: string[]; kept: string[] } {
+  if (!packInstalled(root)) return { ...applyPropertyPack(root), kept: [] };
+  const { dir, record } = prepareProfile(root);
   ensurePrivateRootAuth(root);
-  return { dir: propertyProfileDir(root), wrote: [] };
+  const shipped = shippedPack(root);
+  if (readShippedRecord(record).pack === shipped.digest) return { dir, wrote: [], kept: [] };
+  const { soul, record: recordBytes, skills } = prepareProfile(root, shipped.plan);
+  const sync = shippedWrites(dir, shipped.files, [soul, ...skills], recordBytes, shipped.digest, new Set());
+  writeProfileFiles([...sync.writes, sync.record]);
+  if (sync.kept.length) console.info(`[pack] kept ${sync.kept.length} office-edited Bud file(s): ${sync.kept.join(", ")}`);
+  return { dir, wrote: sync.wrote, kept: sync.kept };
 }
 
 /** Indented YAML map under `key:` (Hermes config style). */
@@ -281,6 +348,11 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
   }
   for (const key of ["skills", "memory"]) result.setIn([key, "write_approval"], true);
+  // Memory size floor: an office's larger limit stays, a smaller or unreadable one rises to the pack's.
+  for (const key of ["memory_char_limit", "user_char_limit"]) {
+    const floor = policy.getIn(["memory", key]), saved = result.getIn(["memory", key]);
+    if (typeof floor === "number" && !(Number.isInteger(saved) && (saved as number) >= floor)) result.setIn(["memory", key], floor);
+  }
   const reopened = new Set(PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS);
   const officeHidden = disabledSkillNames(result.getIn(["skills", "disabled"])).filter(name => !reopened.has(name));
   const disabled = new Set([...officeHidden, ...OFF_SCOPE_BUNDLED_SKILLS]);
@@ -572,21 +644,19 @@ export function stagedLearningEnabled(root?: string): boolean {
 }
 
 export function applyPropertyPack(root?: string): { dir: string; wrote: string[] } {
-  const skillsFrom = join(PACK_DIR, "skills");
   // Plan the skill tree from the read-only shipped pack before anything in the
   // destination is admitted: the plan touches only `PACK_DIR`, so its
   // destination directories and files can share the profile's own admission
   // processes instead of paying for two more cold PowerShell launches.
-  const plan: SkillPlan | undefined = existsSync(skillsFrom)
-    ? (() => { const built: SkillPlan = { dirs: [], files: [] }; skillPlan(skillsFrom, join(propertyProfileDir(root), "skills"), built); return built; })()
-    : undefined;
+  const shipped = shippedPack(root), plan = shipped.plan;
   // `prepareProfile` has already admitted and read `config.yaml`; re-reading it
   // here would only cost another cold PowerShell process on Windows.
-  const { dir: dest, config: existingBytes, skills: existingSkills } = prepareProfile(root, plan);
+  const { dir: dest, soul, config: existingBytes, record, skills: existingSkills } = prepareProfile(root, plan);
   const defaults = policyDocument(readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
   defaults.setIn(["auxiliary", "background_review", "enabled"], stagedLearningSupported(root));
   const config = mergePropertyPolicy(existingBytes?.toString("utf8") ?? "", defaults.toString());
-  const skillCopies = plan ? prepareSkillCopies(plan, existingSkills) : [];
+  // Repair rewrites SOUL as before; skills follow the shipped-unchanged rule.
+  const sync = shippedWrites(dest, shipped.files, [soul, ...existingSkills], record, shipped.digest, new Set(["SOUL.md"]));
   const wrote: string[] = [];
   // Every destination directory here is already admitted and every existing
   // destination file already read, so the whole pack publishes in one batch:
@@ -596,18 +666,17 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
   const auth = pendingRootAuth(root);
   if (auth) entries.push(auth);
 
-  for (const name of ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml"]) {
+  entries.push(...sync.writes);
+  wrote.push("SOUL.md");
+  for (const name of ["config.yaml", "distribution.yaml", "profile.yaml"]) {
     const from = join(PACK_DIR, name);
     if (!existsSync(from)) continue;
-    let body = readFileSync(from, "utf8");
-    if (name === "config.yaml") body = config;
+    const body = name === "config.yaml" ? config : readFileSync(from, "utf8");
     entries.push({ path: join(dest, name), bytes: body, expected: name === "config.yaml" ? existingBytes : undefined });
     wrote.push(name);
   }
-  if (plan) {
-    for (const file of skillCopies) entries.push({ path: file.path, bytes: file.body, overwrite: false });
-    wrote.push("skills/");
-  }
+  if (plan) wrote.push("skills/");
+  entries.push(sync.record);
   writeProfileFiles(entries);
   return { dir: dest, wrote };
 }

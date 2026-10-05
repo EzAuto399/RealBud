@@ -112,6 +112,10 @@ skills:
   write_approval: true
 memory:
   write_approval: true
+  # Hermes defaults are 2200 / 1375 chars, full within weeks. Install and
+  # Repair raise an office's limits to at least these (mergePropertyPolicy).
+  memory_char_limit: 12000
+  user_char_limit: 6000
 auxiliary:
   background_review:
     enabled: false
