@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, writeFile, symlink } from 'node:fs/promises
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceTabsHandler } from './workspace-tabs.ts';
-import { defaultDeskSections, parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { defaultDeskSections, defaultShellLayout, parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
 
 const desk = { sections: defaultDeskSections() };
 import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
@@ -183,5 +183,26 @@ describe('customizable Desk layout', () => {
     expect((await a.call('POST', { expectedRevision: 1, confirm: true }, '/api/workspace-tabs/reset'))?.status).toBe(200);
     const state = (await a.read()).state!;
     expect(state.tabs).toEqual([]); expect(state.desk.sections).toEqual(custom());
+  });
+  it('keeps the side panel layout per workspace and refuses to hide approval or recovery surfaces', async () => {
+    const a = await fixture();
+    expect((await a.read()).state!.shell).toBeUndefined();
+    const shell = { ...defaultShellLayout(), panelWidth: 420 };
+    expect((await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk, shell }))?.status).toBe(200);
+    expect((await a.read()).state!.shell).toEqual(shell);
+    // Bud's version 2 writes and tab-only writes keep the stored panel layout.
+    expect((await a.call('PUT', { version: 2, expectedRevision: 1, tabs: [tab], desk }))?.status).toBe(200);
+    expect((await a.call('PUT', { version: 1, expectedRevision: 2, tabs: [] }))?.status).toBe(200);
+    expect((await a.read()).state!.shell).toEqual(shell);
+    const hidden = { ...shell, panels: shell.panels.map(panel => panel.id === 'approvals' ? { ...panel, visible: false } : panel) };
+    const refused = await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk, shell: hidden });
+    expect(refused?.status).toBe(400);
+    expect((refused?.body as { code: string }).code).toBe('invalid_shell');
+    const noQueue = { sections: defaultDeskSections().map(section => section.id === 'queue' ? { ...section, visible: false } : section) };
+    expect((await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk: noQueue }))?.status).toBe(400);
+    for (const panelWidth of [279, 561, 300.5]) expect((await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk, shell: { ...shell, panelWidth } }))?.status).toBe(400);
+    expect((await a.call('PUT', { version: 1, expectedRevision: 3, tabs: [], shell }))?.status).toBe(400);
+    expect((await a.call('PUT', { version: 2, expectedRevision: 2, tabs: [], desk, shell }))?.status).toBe(409);
+    expect((await a.read()).state!.revision).toBe(3);
   });
 });

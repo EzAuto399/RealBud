@@ -75,8 +75,9 @@ export function useWorkspaceScroll(key: string, ready = true) {
     node.addEventListener("touchstart", settle, { passive: true });
     node.addEventListener("keydown", settle);
     node.addEventListener("pointerdown", settle);
+    // No save on cleanup: by then the leaving view's siblings (side panel, tabs) may
+    // already have reflowed this region and clamped scrollTop. The scroll listener holds the last position.
     return () => {
-      if (!restoring) positions.set(key, node.scrollTop);
       resize.disconnect(); content.disconnect(); window.clearTimeout(timer);
       node.removeEventListener("scroll", save); node.removeEventListener("wheel", settle);
       node.removeEventListener("touchstart", settle); node.removeEventListener("keydown", settle); node.removeEventListener("pointerdown", settle);

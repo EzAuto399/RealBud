@@ -309,11 +309,10 @@ function createWindow() {
       : process.platform === "win32"
         ? {
             titleBarStyle: "hidden",
-            // height MUST match the ChatView/GroupView header strip (px-5 py-3
-            // around a 36px control row = 60). Windows draws the caption buttons
-            // to fill the overlay, so anything shorter leaves a dead band under
-            // them and anything taller overhangs the header.
-            titleBarOverlay: { color: "#070707", symbolColor: "#b5b5b5", height: 60 },
+            // height MUST match .rb-win-titlebar (src/components/shell/shell.css),
+            // the drag strip DesktopShell draws under the caption buttons; colours
+            // are its --color-sheet background and --color-ink symbols.
+            titleBarOverlay: { color: "#fffbf2", symbolColor: "#25231f", height: 40 },
           }
         : {}),
     webPreferences: {

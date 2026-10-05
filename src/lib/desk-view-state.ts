@@ -43,3 +43,9 @@ export function useDeskViewState<K extends keyof DeskViewState>(key: K): [DeskVi
     view[key] = resolved; emit();
   }];
 }
+
+/** Opens the property book filtered to one property (⌘K search). */
+export function openDeskProperty(address: string) {
+  Object.assign(view, { mode: "book", otherWork: null, bookFilter: address, bookExpanded: null, bookGroup: null, bookPage: 0, bookNonce: view.bookNonce + 1 });
+  emit();
+}

@@ -44,6 +44,7 @@ try {
   const page = await context.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const nav = () => page.getByRole('navigation', { name: 'Main navigation', exact: true });
+  const savedNav = () => page.getByRole('navigation', { name: 'Saved views', exact: true });
   const workspace = () => page.locator('aside.rb-sidebar').getByRole('button', { name: 'Workspace', exact: true });
   const managerHeading = () => page.getByRole('heading', { level: 1, name: 'Saved views', exact: true });
   const openSavedViews = async () => {
@@ -88,9 +89,9 @@ try {
   const waitingRow = page.getByRole('region', { name: 'Saved views', exact: true }).getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Waiting for reply', exact: true }) });
   await waitingRow.getByText('Hidden', { exact: true }).waitFor();
   assert.equal(await waitingRow.getByRole('button', { name: 'Open Waiting for reply', exact: true }).isDisabled(), true);
-  assert.equal(await nav().getByRole('button', { name: 'Waiting for reply', exact: true }).count(), 0);
+  assert.equal(await savedNav().getByRole('button', { name: 'Waiting for reply', exact: true }).count(), 0);
   await putViews(tabs => tabs.map(tab => tab.id === 'view-fictional-waiting' ? { ...tab, visible: true } : tab));
-  await refreshViews(); await nav().getByRole('button', { name: 'Waiting for reply', exact: true }).waitFor();
+  await refreshViews(); await savedNav().getByRole('button', { name: 'Waiting for reply', exact: true }).waitFor();
   assert.equal(await waitingRow.getByRole('button', { name: 'Open Waiting for reply', exact: true }).isEnabled(), true);
   assert.deepEqual(await page.getByRole('main').filter({ has: managerHeading() }).getByRole('button').allTextContents(), ['Ask Bud', '', 'Open Bills to review', 'Open Waiting for reply', 'Open Practice jobs'], 'Healthy saved views only offer Ask Bud, Refresh and Open');
   await page.getByRole('button', { name: 'Ask Bud', exact: true }).click();

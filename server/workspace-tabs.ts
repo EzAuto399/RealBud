@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseShellLayout, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 
@@ -102,10 +102,11 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             return save({ ...current.state, revision, ...withDesk(current.state, revision, target.sections) });
           }
           if (!current.state) throw fail(409, 'tabs_recovery_required', 'Saved views need recovery. Reset views before making changes.');
-          // Version 1 bodies change tabs only; version 2 bodies carry the Desk layout too.
-          const input = fields(body, ['expectedRevision', 'version', 'tabs', 'desk']);
+          // Version 1 bodies change tabs only; version 2 bodies carry the Desk layout
+          // and may carry the side panel layout. An omitted shell keeps the stored one.
+          const input = fields(body, ['expectedRevision', 'version', 'tabs', 'desk', 'shell']);
           if (!validWorkspaceRevision(input.expectedRevision)) throw fail(400, 'invalid_tabs', 'Refresh saved views before changing them.');
-          if (input.version !== 1 && input.version !== 2 || (input.version === 1) !== (input.desk === undefined)) throw fail(400, 'invalid_tabs', 'Check the saved view settings.');
+          if (input.version !== 1 && input.version !== 2 || (input.version === 1) !== (input.desk === undefined) || (input.version === 1 && input.shell !== undefined)) throw fail(400, 'invalid_tabs', 'Check the saved view settings.');
           if (input.expectedRevision !== current.state.revision) throw fail(409, 'tabs_changed', 'Saved views changed in another window. Refresh and review your changes again.');
           const revision = current.state.revision + 1;
           let tabs: WorkspaceTabs['tabs'], sections = current.state.desk.sections;
@@ -116,7 +117,12 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             try { if (!record(desk) || Object.keys(desk).join() !== 'sections') throw new Error(); sections = parseDeskSections(desk.sections); }
             catch (cause) { throw fail(400, 'invalid_desk', cause instanceof Error && cause.message ? `${cause.message} No layout was changed.` : 'Check the Desk sections. No layout was changed.'); }
           }
-          return save({ version: 2, revision, tabs, ...withDesk(current.state, revision, sections) });
+          let shell = current.state.shell;
+          if (input.shell !== undefined) {
+            try { shell = parseShellLayout(input.shell); }
+            catch (cause) { throw fail(400, 'invalid_shell', `${cause instanceof Error ? cause.message : 'Check the side panel settings.'} No layout was changed.`); }
+          }
+          return save({ version: 2, revision, tabs, ...withDesk(current.state, revision, sections), ...(shell ? { shell } : {}) });
         });
         return { status: 200, body: result };
       } catch (cause) {
