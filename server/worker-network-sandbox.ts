@@ -54,7 +54,11 @@ export function setWorkerLaunchesHeld(held: boolean): void { launchesHeld = held
 export function trackSandboxedChild<T extends ChildProcess | null>(child: T): T {
   if (!child || child.exitCode !== null || child.signalCode !== null) return child;
   liveChildren.add(child);
-  if (child.pid) recordWorkerCustody(child.pid);
+  // Durable before the caller hands the worker any work. A worker whose
+  // custody could not be saved is stopped rather than left unrecorded.
+  if (child.pid && !recordWorkerCustody(child.pid)) {
+    try { if (process.platform === "win32") child.kill("SIGKILL"); else process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+  }
   // A leader's exit does not prove its process group is gone. Keep ownership
   // until every descendant has stopped, including on ordinary worker exit.
   child.once("exit", () => { void stopSandboxedChild(child, 5_000).catch(() => { /* retained for an explicit stop to retry/refuse */ }); });
@@ -112,7 +116,7 @@ function stopSandboxedChild(child: ChildProcess, deadlineMs: number): Promise<vo
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     liveChildren.delete(child);
-    releaseWorkerCustody(pid);
+    void releaseWorkerCustody(pid);
   })();
   stoppingChildren.set(child, stopped);
   void stopped.finally(() => stoppingChildren.delete(child)).catch(() => {});

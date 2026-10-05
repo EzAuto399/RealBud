@@ -1,8 +1,10 @@
-// Durable custody of the worker process groups RealBud starts. A group is
-// recorded when tracked and released only once its stop is confirmed, so a
-// group whose cleanup was never proved (RealBud died, or a stop timed out)
-// is still on record after a restart. While such a group from an earlier run
-// is alive, or its liveness cannot be read, every new worker launch is
+// Durable custody of the worker process groups RealBud starts. Each group has
+// its own record file, written and fsynced before the tracker returns (so
+// before the caller hands the worker any work) and removed only once its stop
+// is confirmed. A crash before removal leaves the record, never the reverse,
+// so a group whose cleanup was never proved (RealBud died, or a stop timed
+// out) is still on record after a restart. While such a group from an earlier
+// run is alive, or its liveness cannot be read, every new worker launch is
 // refused with a repair message instead of overlapping it.
 //
 // This contains the risk; it does not prove descendant termination. POSIX
@@ -11,113 +13,115 @@
 // whose exit ends its job. A recycled id reads as alive and keeps the hold
 // (safe direction); a person can release it after checking.
 import { randomUUID } from "node:crypto";
-import { open, unlink } from "node:fs/promises";
+import { closeSync, fsyncSync, openSync, readdirSync, unlinkSync, writeSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fsyncDir, mkdirPrivateSync, readPrivateFileSync, renameReplacing } from "./atomic.ts";
+import { fsyncDir, mkdirPrivateSync, readPrivateFileSync } from "./atomic.ts";
 
 export const WORKER_CUSTODY_HELD =
   "Bud may still have work running from before RealBud last closed, so new work was not started. Restart this computer, then try again.";
 export const WORKER_CUSTODY_UNSAVED = "Bud couldn't save its record of running work, so new work was not started. Free some disk space, then try again.";
 export const WORKER_CUSTODY_DAMAGED = "Bud's record of running work needs recovery, so new work was not started. Contact RealBud support.";
 
-type Entry = { pid: number; boot: string; at: string };
+type Entry = { version: 1; pid: number; boot: string; at: string };
 
 // One id per server process: a restarted server can reuse the old pid.
 const BOOT = randomUUID();
-const own = new Map<number, Entry>();
-let earlier: Entry[] | undefined;
+let earlier: Array<Entry & { path: string }> | undefined;
 let damaged = false;
 let unsaved = false;
-let writing: Promise<void> | null = null;
-let again = false;
+/** Record files whose removal failed; removed again before launches resume. */
+const leftover = new Set<string>();
 
 // Resolved at call time: the vitest setup imports the sandbox module before it
 // points HOME at a throwaway folder (see server/config.ts DATA_DIR).
-const dataDir = () => process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? join(homedir(), ".realbud");
-const file = () => join(dataDir(), "worker-custody.json");
+const folder = () => join(process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? join(homedir(), ".realbud"), "worker-custody");
+const recordPath = (boot: string, pid: number) => join(folder(), `${boot}-${pid}.json`);
+const ignoreMissing = (error: unknown) => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; };
 
-function load(): Entry[] {
+/** Disk operations, replaceable by tests to inject failures. A record is a new
+ * file in the private folder, so it carries that folder's owner-only ACL and
+ * Windows starts no PowerShell per record; it holds only a process id. */
+export const custodyIo = {
+  create(path: string, text: string): void {
+    mkdirPrivateSync(folder(), 0o700);
+    const fd = openSync(path, "wx", 0o600);
+    try { writeSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
+    fsyncDir(folder());
+  },
+  remove: (path: string): Promise<void> => unlink(path).catch(ignoreMissing),
+};
+
+function load(): Array<Entry & { path: string }> {
   if (earlier) return earlier;
-  try {
-    const text = readPrivateFileSync(file(), 1_000_000);
-    const value = text === null ? { version: 1, entries: [] } : JSON.parse(text);
-    if (value?.version !== 1 || !Array.isArray(value.entries) || !value.entries.every((e: Entry) =>
-      Number.isSafeInteger(e?.pid) && e.pid > 0 && typeof e.boot === "string" && typeof e.at === "string")) throw new Error("unsupported");
-    earlier = value.entries.filter((e: Entry) => e.boot !== BOOT);
-  } catch {
-    // Kept as it is and never overwritten: a person repairs or removes it.
-    damaged = true;
-    earlier = [];
+  earlier = [];
+  let names: string[];
+  try { names = readdirSync(folder()); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") damaged = true; return earlier; }
+  for (const name of names) {
+    if (name.endsWith(".tmp")) continue;
+    const path = join(folder(), name);
+    try {
+      const value = JSON.parse(readPrivateFileSync(path, 4_096) ?? "null") as Entry;
+      if (value?.version !== 1 || !Number.isSafeInteger(value.pid) || value.pid <= 0 || typeof value.boot !== "string" ||
+        typeof value.at !== "string" || name !== `${value.boot}-${value.pid}.json`) throw new Error("unsupported");
+      if (value.boot !== BOOT) earlier.push({ ...value, path });
+    } catch { damaged = true; /* a torn or foreign file is kept for a person to repair */ }
   }
-  return earlier!;
+  return earlier;
 }
-
-// Off the spawn and stop paths: one coalesced asynchronous writer, temp ->
-// fsync -> rename. A release that has not landed yet leaves the group on
-// record, which only errs toward a hold after a crash.
-// ponytail: the temp file takes the private data folder's owner-only ACL
-// instead of its own (restrictNewSync), so Windows starts no PowerShell per
-// save; the record holds only process ids. Restrict it if it ever holds more.
-async function writeOnce(): Promise<void> {
-  const dir = dataDir(), path = file(), temporary = `${path}.${randomUUID()}.tmp`;
-  mkdirPrivateSync(dir, 0o700);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(JSON.stringify({ version: 1, entries: [...earlier!, ...own.values()] }));
-    await handle.sync(); await handle.close();
-    await renameReplacing(temporary, path); fsyncDir(dir);
-  } finally { await handle.close().catch(() => {}); await unlink(temporary).catch(() => {}); }
-}
-
-function save(): void {
-  if (damaged) return;
-  if (writing) { again = true; return; }
-  writing = (async () => {
-    do {
-      again = false;
-      try { await writeOnce(); unsaved = false; }
-      catch { unsaved = true; /* fails closed: launches stay held until a save lands */ }
-    } while (again);
-  })().finally(() => { writing = null; if (again) save(); });
-}
-
-/** Settles once every custody change made so far is on disk (or failed). */
-export async function workerCustodySaved(): Promise<void> { while (writing) await writing; }
 
 function alive(pid: number): boolean {
   try { process.kill(process.platform === "win32" ? pid : -pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
-/** Record a started worker group (its leader pid) before anything else can lose it. */
-export function recordWorkerCustody(pid: number): void {
-  load();
-  own.set(pid, { pid, boot: BOOT, at: new Date().toISOString() });
-  save();
+/** Off the stop path; until a removal lands, the record (and so the hold
+ * after a crash) stays. A failed removal holds launches until it is retried. */
+function removeLater(path: string): Promise<void> {
+  return custodyIo.remove(path).then(() => { leftover.delete(path); }, () => { leftover.add(path); unsaved = true; });
 }
 
-/** Release a group only after its stop was confirmed. */
-export function releaseWorkerCustody(pid: number): void {
+/** Durably record a started worker group (its leader pid). False when the
+ * record could not be saved: the caller must stop that worker, and launches
+ * stay held until saving works again. */
+export function recordWorkerCustody(pid: number): boolean {
   load();
-  if (own.delete(pid)) save();
+  try {
+    custodyIo.create(recordPath(BOOT, pid), JSON.stringify({ version: 1, pid, boot: BOOT, at: new Date().toISOString() }));
+    return true;
+  } catch { unsaved = true; return false; }
+}
+
+/** Forget a group; call only after its stop was confirmed. */
+export function releaseWorkerCustody(pid: number): Promise<void> {
+  return removeLater(recordPath(BOOT, pid));
 }
 
 /** The refusal for a new worker launch, or null when none is held: a group
  * from an earlier run may still be alive, or custody could not be read or
- * saved. Groups now confirmed gone are released first. */
+ * saved. Earlier groups now confirmed gone are released first. */
 export function workerCustodyRefusal(): string | null {
-  const before = load().length;
-  earlier = earlier!.filter(entry => alive(entry.pid));
-  if (earlier.length !== before || unsaved) save();
+  load();
+  earlier = earlier!.filter(entry => alive(entry.pid) || (void removeLater(entry.path), false));
+  if (unsaved && !damaged) {
+    // Saving works again once a probe record lands and every leftover is gone.
+    try {
+      const probe = join(folder(), `${BOOT}-probe.tmp`);
+      custodyIo.create(probe, "");
+      unlinkSync(probe);
+      for (const path of leftover) { try { unlinkSync(path); } catch (error) { ignoreMissing(error); } leftover.delete(path); }
+      unsaved = false;
+    } catch { /* still held */ }
+  }
   return damaged ? WORKER_CUSTODY_DAMAGED : unsaved ? WORKER_CUSTODY_UNSAVED : earlier.length ? WORKER_CUSTODY_HELD : null;
 }
 
 /** A person checked and accepts that earlier work is gone. A damaged record
  * is not cleared here; it needs recovery. */
-export function resolveWorkerCustody(): void {
+export async function resolveWorkerCustody(): Promise<void> {
   load();
   if (damaged) throw new Error("Bud's worker record needs recovery before it can be cleared.");
-  earlier = [];
-  save();
+  for (const entry of [...earlier!]) { await custodyIo.remove(entry.path); earlier = earlier!.filter(e => e !== entry); }
 }
