@@ -19,7 +19,8 @@ export function nativeBrowserObservation(snapshot: unknown): string {
       const depth = destination[1].length / 2;
       const owner = Number.isInteger(depth) && at.length >= depth ? at[depth - 1] : undefined;
       let url = destination[2].trim();
-      if (url.startsWith('"')) { try { const decoded: unknown = JSON.parse(url); if (typeof decoded === "string") url = decoded; } catch { /* a plain address may begin with a quote */ } }
+      // A quoted address is the engine's escaped form; one JSON cannot read (a \x0b the browser strips) is left out, never kept raw.
+      if (url.startsWith('"')) { try { const decoded: unknown = JSON.parse(url); url = typeof decoded === "string" ? decoded : ""; } catch { url = ""; } }
       // Anything else (not under a link, a second destination, an odd or overlong address) is left out, as before: no url, no shortcut.
       if (owner?.role === "link" && !owner.url && url && url.length <= 2048 && !/[\x00-\x1f]/.test(url)) { out[owner.line] += ` url=${JSON.stringify(url)}`; owner.url = true; }
       continue;

@@ -108,3 +108,62 @@ describe("native accessibility observation boundary", () => {
     for (const ref of ["@e6", "@e16"]) expect(classifyBrowserAction(grant, page(raw), "browser_click_semantic", { ref }, { ...careless, consequential: ["Process"] }).class, ref).toBe("unknown");
   });
 });
+
+// Security review of a9b55fa8: the address RealBud judges must be the one the browser follows. Each case below is a
+// link with a harmless label; the engine's /url line is written as the engine writes it (a YAML-quoted value when needed).
+describe("a link's address is judged where the browser will send it", () => {
+  const link = (url: string) => page(`- banner:\n  - button "MOCK-OFFICE" [ref=e9]\n- main:\n  - link "Tenant 123" [ref=e1]:\n    - /url: ${url}`);
+  const typed = (line: string) => ({ url: "https://fictional.example/invoices", text: `@native-ax 1\nrootwebarea\n  @e9 button "MOCK-OFFICE"\n  @e1 ${line}` });
+  const click = (observed: { url: string; text: string }) => browserReadOnlyAction(grant, observed, "browser_click_semantic", { ref: "@e1" });
+  const navigate = (path: string) => browserReadOnlyAction(grant, page(), "browser_navigate", { url: `https://fictional.example${path}` });
+
+  it("follows a reading address of this site, resolved with WHATWG URL against the tab's address as the browser does", () => {
+    for (const url of ["/tenants/123", "tenants/123", "https:tenants", "https://FICTIONAL.example/tenants", "https://ｆｉｃｔｉｏｎａｌ.example/tenants",
+      "/reports/%2e%2e/tenants", String.raw`"/tenants/1\" url=\"/reports"`]) expect(click(link(url)), url).toBe(true);
+  });
+
+  it.each([
+    ["a C0 control the browser strips, escaped by the engine as \\x0b (it lands on another site)", String.raw`"\x0b//evil.example/tenants"`],
+    ["a C0 control before an absolute address to another site", String.raw`"\x01https://evil.example/"`],
+    ["a double-encoded write word", "/tenants/1/%2564elete"],
+    ["a triple-encoded write word", "/tenants/1/%252570rocess"],
+    ["malformed percent-encoding", "/tenants/1/%E0%A4%A"],
+    ["a write word with a letter the server case-folds (long s)", "/invoices/1/ſubmit"],
+    ["a camelCase write route", "/Tenants/DeleteTenant?id=1"],
+    ["a camelCase write query key", "/tenants?doArchive=1"],
+    ["a capitalised query key and value", "/tenants/1?Action=Delete"],
+    ["a matrix (path) parameter", "/tenants/1;action=delete"],
+    ["an encoded slash and dot segments", "/reports/%2e%2e%2fdelete"],
+    ["backslashes after the scheme", String.raw`https:\\evil.example/tenants`],
+    ["a slash and backslash", String.raw`/\evil.example/tenants`],
+    ["a scheme-relative address", "//evil.example/tenants"],
+    ["userinfo before another host", "https://rei@evil.example/tenants"],
+    ["userinfo on this host", "https://evil.example@fictional.example/tenants"],
+    ["a trailing-dot host", "https://fictional.example./tenants"],
+    ["a look-alike internationalised host", "https://fıctional.example/tenants"],
+    ["a fragment", "/tenants/1#delete"],
+    ["a tab inside the scheme", String.raw`"ht\ttps://fictional.example/tenants"`],
+    ["a tab inside a write word", String.raw`"/tenants/de\tlete"`],
+    ["an overlong address", `/reports/${"a".repeat(3000)}`],
+    ["an address that becomes overlong once encoded", `/reports/${"é".repeat(400)}`],
+    ["a quote that cannot start a second address", String.raw`"/tenants/1/delete\" url=\"/reports"`],
+  ])("asks before a link with %s", (_, url) => expect(click(link(url))).toBe(false));
+
+  it.each([
+    ["two address attributes", 'link "Tenant 123" url="/tenants/1/delete" url="/reports"'],
+    ["an escaped tab the browser strips", String.raw`link "Tenant 123" url="/tenants/de\tlete"`],
+    ["a JSON unicode escape", 'link "Tenant 123" url="/tenants/\\u0064elete"'],
+    ["an address that is not last on its line", 'link "Tenant 123" url="/reports" [hidden]'],
+    ["an address inside the name", String.raw`link "Tenant url=\"/reports\""`],
+  ])("reads the observation strictly: %s gives no shortcut", (_, line) => {
+    expect(click(typed('link "Tenant 123" url="/reports"'))).toBe(true);
+    expect(click(typed(line))).toBe(false);
+    expect(withoutLinkDestinations(typed(line).text)).not.toMatch(/\surl="/);
+  });
+
+  it("browser_navigate is judged on the same reading of an address", () => {
+    expect(navigate("/tenants/123")).toBe(true);
+    for (const path of ["/tenants/1/%2564elete", "/Tenants/DeleteTenant", "/invoices/1/ſubmit", "/tenants/1/%E0%A4%A", "/tenants?doArchive=1"]) expect(navigate(path), path).toBe(false);
+    expect(classifyBrowserAction(grant, page(), "browser_navigate", { url: "https://fictional.example/account/%256Cogout" }).class).toBe("consequential");
+  });
+});
