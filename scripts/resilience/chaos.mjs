@@ -12,6 +12,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FICTIONAL_MODELVIA_KEY, fakeModelvia, severProxy } from "./fakes.mjs";
+import { readSessionToken } from "../local-session.mjs";
 import { DescendantWatch, Owned, ROOT, alive, assertMarked, freePort, http, imagesUnder, markedRoot, processesMentioning, readJsonl, removeRoot, sleep, tempLeftovers, until, writeLoopbackGuard } from "./lib.mjs";
 
 const args = process.argv.slice(2);
@@ -57,7 +58,8 @@ async function startServer(caseDir, dataDir) {
   const t = Date.now();
   const up = await until(async () => { if (child.exitCode !== null) throw new Error("exited"); return (await http(base, "/api/health", { timeout: 1000 })).status === 200; }, 40000, 150);
   if (!up) throw new Error(`server did not become healthy (exit ${child.exitCode}): ${child.log.slice(-1500)}`);
-  const session = (await http(base, "/api/session")).body?.token;
+  // The per-boot token comes from the service's private session file, never over HTTP.
+  const session = await readSessionToken(dataDir);
   const api = (path, method = "GET", body, timeout = 10000) => http(base, path, { method, body, timeout, headers: { "x-realbud-session": session } });
   return { child, base, api, bootMs: Date.now() - t };
 }
