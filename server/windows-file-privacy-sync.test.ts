@@ -11,7 +11,7 @@ vi.mock('node:path', async original => {
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
-  vi.stubEnv('SystemRoot', 'C:\\Windows'); calls.sync.mockReset(); calls.async.mockReset();
+  vi.stubEnv('SystemRoot', 'C:\\Windows'); vi.stubEnv('REALBUD_WINDOWS_PRIVACY_HOST', '0'); calls.sync.mockReset(); calls.async.mockReset();
   calls.async.mockImplementation((...args: unknown[]) => (args.at(-1) as Function)(null, '', ''));
 });
 afterEach(() => { Object.defineProperty(process, 'platform', platform); vi.unstubAllEnvs(); });

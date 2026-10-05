@@ -1,5 +1,5 @@
 import * as nodePath from 'node:path';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -26,10 +26,6 @@ const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
 # No cmdlets: each one auto-loads a module, which costs ~23 s per launch in the
 # installed service's stripped environment and fails outright under some hosts.
-$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
-if ([string]::IsNullOrEmpty($count)) { $count = '1' }
-if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
-$total = [int]$count
 # The innermost exception names the primitive that refused. Never the message,
 # the path, the identity, or a second line.
 function Report($reportStage, $reportIndex, $reportRecord) {
@@ -46,21 +42,15 @@ function Report($reportStage, $reportIndex, $reportRecord) {
   } catch { }
   $fqid = '-'
   try { $fqid = ([string]$reportRecord.FullyQualifiedErrorId) -replace '[^A-Za-z0-9_.,:-]', ''; if ($fqid.Length -gt 120) { $fqid = $fqid.Substring(0, 120) }; if ($fqid.Length -eq 0) { $fqid = '-' } } catch { }
-  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid")
+  $script:detail = "[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid"
 }
-for ($index = 0; $index -lt $total; $index++) {
-[Console]::Out.WriteLine($index)
-$path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
-$kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
-$action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
-if ($index -gt 0) {
-  $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
-  $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
-  $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
-}
-if ([string]::IsNullOrEmpty($path)) { exit 9 }
-if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
-if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
+# One admission; returns its numeric result (0 admitted). Every value it reads
+# is assigned inside this call, so nothing survives into the next operation.
+function Admit($path, $kind, $action, $index) {
+$script:detail = ''
+if ([string]::IsNullOrEmpty($path)) { return 9 }
+if ($kind -ne 'directory' -and $kind -ne 'file') { return 9 }
+if ($action -ne 'restrict' -and $action -ne 'verify') { return 9 }
 $directory = $kind -eq 'directory'
 $acl = $null
 $actual = $null
@@ -76,11 +66,11 @@ while ($true) {
   if ($target) { $stage = 21 } else { $stage = 22 }
   $attrs = [System.IO.File]::GetAttributes($cursor)
   if (($attrs -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint) {
-    if ($target) { exit 6 } else { exit 8 }
+    if ($target) { return 6 } else { return 8 }
   }
   if ($target) {
     $isDir = ($attrs -band [System.IO.FileAttributes]::Directory) -eq [System.IO.FileAttributes]::Directory
-    if ($directory -ne $isDir) { exit 7 }
+    if ($directory -ne $isDir) { return 7 }
     $target = $false
   }
   $stage = 22
@@ -102,7 +92,7 @@ if ($action -eq 'restrict') {
   foreach ($principal in @($sid, $system)) {
     if ($directory) { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
     else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
-    $acl.AddAccessRule($rule)
+    [void]$acl.AddAccessRule($rule)
   }
   $stage = 24
   if ($directory) { ([System.IO.DirectoryInfo]::new($path)).SetAccessControl($acl) }
@@ -112,25 +102,62 @@ $stage = 25
 if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
 else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
 $stage = 26
-if (-not $actual.AreAccessRulesProtected) { exit 5 }
-if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
+if (-not $actual.AreAccessRulesProtected) { return 5 }
+if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { return 2 }
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   # This is a conservative private-storage admission policy, not an effective
   # access calculation over the current token's enabled and deny-only groups.
-  if ($rule.AccessControlType -eq 'Deny') { exit 10 }
+  if ($rule.AccessControlType -eq 'Deny') { return 10 }
   if ($rule.AccessControlType -eq 'Allow') {
-    if ($allowed -notcontains $rule.IdentityReference.Value) { exit 3 }
+    if ($allowed -notcontains $rule.IdentityReference.Value) { return 3 }
     $targetGrant = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
     if ($targetGrant -and $rule.IdentityReference.Value -eq $sid.Value -and (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl)) { $usable = $true }
   }
 }
-if (-not $usable) { exit 4 }
+if (-not $usable) { return 4 }
 } catch {
   # Never emit the exception object: native messages can contain a path or an
   # identity. Only the stage, the index, the type name and numeric codes.
   Report $stage $index $_
-  exit $stage
+  return $stage
 }
+return 0
+}
+if ($env:REALBUD_WINDOWS_FILE_PRIVACY_HOST -eq '1') {
+  # Long-lived host: one request per stdin line, "<id> TAB <kind> TAB <action>
+  # TAB <base64 of the UTF-8 path>"; one reply per line, "<id> TAB <result> TAB
+  # <the Report line or nothing>". The path is decoded as data, never evaluated.
+  # A malformed request or a closed stdin ends the host.
+  while ($true) {
+    $line = [Console]::In.ReadLine()
+    if ($line -eq $null) { exit 0 }
+    $parts = $line.Split([char]9)
+    if ($parts.Count -ne 4 -or $parts[0] -notmatch '^[0-9]{1,9}$') { exit 9 }
+    try { $requested = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[3])) } catch { exit 9 }
+    $result = @(Admit $requested $parts[1] $parts[2] 0)[-1]
+    [Console]::Out.WriteLine($parts[0] + [char]9 + [string]$result + [char]9 + $script:detail)
+    [Console]::Out.Flush()
+  }
+}
+$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
+if ([string]::IsNullOrEmpty($count)) { $count = '1' }
+if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
+$total = [int]$count
+for ($index = 0; $index -lt $total; $index++) {
+  [Console]::Out.WriteLine($index)
+  $path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
+  $kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
+  $action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
+  if ($index -gt 0) {
+    $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
+    $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
+    $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
+  }
+  $result = @(Admit $path $kind $action $index)[-1]
+  if ($result -ne 0) {
+    if ($script:detail) { [Console]::Error.WriteLine($script:detail) }
+    exit $result
+  }
 }
 exit 0
 `;
@@ -263,7 +290,7 @@ function literalPath(path: string): string {
 
 function privacyInvocation(
   operations: WindowsFilePrivacyOperation[],
-): { executable: string; args: string[]; env: NodeJS.ProcessEnv } | null {
+): { executable: string; args: string[]; env: NodeJS.ProcessEnv; literals: string[] } | null {
   if (process.platform !== 'win32') {
     return null;
   }
@@ -271,6 +298,7 @@ function privacyInvocation(
     throw new WindowsFilePrivacyError('invalid-path-or-kind');
   }
   const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_WINDOWS_FILE_PRIVACY_COUNT: String(operations.length) };
+  const literals: string[] = [];
   // The script calls the .NET access-control API directly, so no module has to auto-load; a
   // pinned PSModulePath still keeps Windows PowerShell 5.1 away from PowerShell 7 module roots
   // (hosted runners spend half a minute searching them). Windows environment names are
@@ -291,7 +319,7 @@ function privacyInvocation(
     }
     // Read by name inside the script; never interpolated into a command.
     const suffix = index === 0 ? '' : `_${index}`;
-    env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`] = literal;
+    env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`] = literal; literals.push(literal);
     env[`REALBUD_WINDOWS_FILE_PRIVACY_KIND${suffix}`] = kind;
     env[`REALBUD_WINDOWS_FILE_PRIVACY_ACTION${suffix}`] = action;
   });
@@ -309,7 +337,7 @@ function privacyInvocation(
   return {
     executable: powershell,
     args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED],
-    env,
+    env, literals,
   };
 }
 
@@ -333,6 +361,20 @@ export async function windowsFilePrivacyBatch(operations: WindowsFilePrivacyOper
   const invocation = privacyInvocation(operations);
   const planned = (Array.isArray(operations) ? operations : []).map(({ path, kind, action }) => ({ path, kind, action }));
   if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
+  if (process.env.REALBUD_WINDOWS_PRIVACY_HOST !== '0') {
+    // Same script and policy, one long-lived process: an admission costs the
+    // .NET ACL calls, not a PowerShell launch (about 0.2 s, seconds on a busy PC).
+    for (const [index, operation] of planned.entries()) {
+      const { result, detail } = await hostAdmission(invocation, invocation.literals[index]!, operation.kind, operation.action);
+      if (result !== 0) {
+        throw new WindowsFilePrivacyError(
+          NATIVE_FAILURES[result as keyof typeof NATIVE_FAILURES] ?? 'native-command-failed', result, false,
+          index, planned.length, privacyDetail(detail)?.text ?? null,
+        );
+      }
+    }
+    return planned.map(operation => ({ ...operation, applied: true }));
+  }
   try {
     await execFileAsync(
       invocation.executable,
@@ -350,6 +392,71 @@ export async function windowsFilePrivacyBatch(operations: WindowsFilePrivacyOper
     throw nativeFailure(error, attemptedIndex(failure.stdout, planned.length), planned.length);
   }
   return planned.map(operation => ({ ...operation, applied: true }));
+}
+
+// The long-lived admission host. Requests are answered in order; a reply that
+// is not exactly the next request's, a timeout, a crash or oversized output
+// ends the host and refuses everything in flight (never admits). The next
+// request starts a fresh host. It holds no reference on the event loop while
+// idle, and closing its stdin (process exit) ends it.
+type HostRequest = { id: number; settle: (reply: { result: number; detail: string } | WindowsFilePrivacyError) => void; timer: NodeJS.Timeout };
+type Host = { child: ChildProcess; queue: HostRequest[]; buffer: string; nextId: number };
+let host: Host | null = null;
+const HOST_TIMEOUT_MS = 120_000;
+
+function endHost(target: Host, failure: WindowsFilePrivacyError): void {
+  if (host === target) host = null;
+  for (const request of target.queue.splice(0)) { clearTimeout(request.timer); request.settle(failure); }
+  if (target.child.exitCode === null && target.child.signalCode === null) try { target.child.kill(); } catch { /* already gone */ }
+}
+
+function idleRefs(target: Host): void {
+  const busy = target.queue.length > 0;
+  for (const handle of [target.child, target.child.stdin, target.child.stdout] as Array<{ ref?: () => void; unref?: () => void } | null>) {
+    if (busy) handle?.ref?.(); else handle?.unref?.();
+  }
+}
+
+function startHost(invocation: { executable: string; args: string[]; env: NodeJS.ProcessEnv }): Host {
+  const env: NodeJS.ProcessEnv = {};
+  // Only the stable environment: no operation's path stays in the host's block.
+  for (const [name, value] of Object.entries(invocation.env)) if (!name.startsWith('REALBUD_WINDOWS_FILE_PRIVACY_')) env[name] = value;
+  env.REALBUD_WINDOWS_FILE_PRIVACY_HOST = '1';
+  const child = spawn(invocation.executable, invocation.args, { env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  const started: Host = { child, queue: [], buffer: '', nextId: 1 };
+  child.on('error', error => endHost(started, nativeFailure(error)));
+  child.on('exit', () => endHost(started, nativeFailure({ killed: true })));
+  child.stdin!.on('error', () => endHost(started, nativeFailure({ killed: true })));
+  child.stdout!.setEncoding('utf8');
+  child.stdout!.on('data', (chunk: string) => {
+    started.buffer += chunk;
+    if (started.buffer.length > 16_384) return endHost(started, nativeFailure({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
+    for (let end = started.buffer.indexOf('\n'); end >= 0; end = started.buffer.indexOf('\n')) {
+      const line = started.buffer.slice(0, end).replace(/\r$/, '');
+      started.buffer = started.buffer.slice(end + 1);
+      const reply = /^([0-9]{1,9})\t([0-9]{1,3})\t(.{0,512})$/.exec(line);
+      const request = started.queue[0];
+      if (!reply || !request || Number(reply[1]) !== request.id) return endHost(started, nativeFailure({ killed: true }));
+      started.queue.shift(); clearTimeout(request.timer); idleRefs(started);
+      request.settle({ result: Number(reply[2]), detail: reply[3]! });
+    }
+  });
+  return started;
+}
+
+function hostAdmission(
+  invocation: { executable: string; args: string[]; env: NodeJS.ProcessEnv },
+  literal: string, kind: 'file' | 'directory', action: 'restrict' | 'verify',
+): Promise<{ result: number; detail: string }> {
+  const target = host ??= startHost(invocation);
+  return new Promise((resolve, reject) => {
+    const id = target.nextId++;
+    const timer = setTimeout(() => endHost(target, nativeFailure({ killed: true })), HOST_TIMEOUT_MS);
+    target.queue.push({ id, timer, settle: reply => reply instanceof WindowsFilePrivacyError ? reject(reply) : resolve(reply) });
+    idleRefs(target);
+    // The path travels as base64 data on stdin, never in a command or argument.
+    target.child.stdin!.write(`${id}\t${kind}\t${action}\t${Buffer.from(literal, 'utf8').toString('base64')}\n`);
+  });
 }
 
 /**
