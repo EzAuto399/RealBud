@@ -32,22 +32,24 @@
  *     → client scope, `summary.money`: `customerNetNanoAud` (retail the customer
  *       pays, null when a price is unknown) and `platformNetNanoAud` (wholesale incl.
  *       Modelvia's fee); nano-AUD, GST inclusive. Usage estimates by admission month.
- *   GET /v1/client/margin-report?period=   (feature-detected, see MARGIN_REPORT_PATH)
+ *   GET /v1/client/margin-report?period=   (see MARGIN_REPORT_PATH)
  *
  * Modelvia creates no invoice for a month without customer usage, and finalizes
  * one only by an operator action after the month closes. Error bodies may quote
- * the presented credential, so only a status-derived code is ever reported.
+ * the presented credential, so only a status-derived code, or a 404's own
+ * `{error}` code read for control flow, is ever reported. A 429 is waited out
+ * once (`modelviaRetryAfterMs`) and the GET repeated.
  */
 import { GatewayError, requireThat } from './contracts.ts';
 import type { HttpTransport } from './composio-org.ts';
-import { modelviaOrigin } from './modelvia-keys.ts';
+import { modelviaOrigin, modelviaRetryAfterMs, pause } from './modelvia-keys.ts';
 
 export const MODELVIA_CLIENT_KEY_ENV = 'REALBUD_MODELVIA_CLIENT_KEY';
-/** Modelvia's per-customer margin report, being added in parallel. Tried once per
- * report; a 404/405 or an unrecognised shape falls back to analytics, so the
- * route may appear later without a RealBud change. Accepted shape: `{ customers |
- * rows: [{ customerId, customerNetNanoAud | retailNanoAud, platformNetNanoAud |
- * costNanoAud }] }`. */
+/** Modelvia's client margin report (`margin-report.ts`, 4be5c37): `{ rows:
+ * [{ customerId | null, clientFunded, customerRetailNanoAud | null,
+ * wholesaleNanoAud, … }], unsettledRequests, … }`, one row per customer ×
+ * client-funded flag. Tried once per report; a 404/405 or an unrecognised shape
+ * falls back to analytics. */
 export const MARGIN_REPORT_PATH = '/v1/client/margin-report';
 const CLIENT_KEY = /^mgt_[a-f0-9]{16}_[A-Za-z0-9_-]{43}$/;
 const PATH_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
@@ -57,7 +59,9 @@ const CENTS = /^-?(0|[1-9][0-9]{0,14})$/;
 const NANO = /^-?(0|[1-9][0-9]{0,24})$/;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CSV_BYTES = 32 * 1024 * 1024;
-/** Analytics pages read to enrich one invoice's CSV (500 requests each). */
+/** Analytics pages read, one at a time, to enrich one invoice's CSV (500
+ * requests each): the whole export's budget, inside the 600 API reads a minute
+ * Modelvia allows one key (`rate-limit.ts` RATE_LIMIT_DEFAULTS). */
 const MAX_ANALYTICS_PAGES = 400;
 const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,160}$/;
 const LABEL = /^[^\u0000-\u001f\u007f]{1,300}$/;
@@ -132,6 +136,8 @@ export function modelviaClientBilling(options: {
   /** The client integration key, read per request and never stored or logged. */
   clientKey: () => string | undefined;
   fetch: HttpTransport;
+  /** The wait before repeating a rate-limited GET; injected by tests. */
+  sleep?: (ms: number) => Promise<void>;
 }): ModelviaClientBilling {
   const base = modelviaOrigin(options.serviceOrigin);
   requireThat(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/.test(options.clientId), 'modelvia_client_id_invalid', 503);
@@ -139,15 +145,30 @@ export function modelviaClientBilling(options: {
   const read = async (path: string, missing = false, text = false): Promise<unknown> => {
     const key = (options.clientKey() ?? '').trim();
     requireThat(CLIENT_KEY.test(key), 'modelvia_client_unconfigured', 503);
-    let response: Response;
-    try {
-      response = await options.fetch(`${base}${path}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        headers: { authorization: `Bearer ${key}`, accept: 'application/json' } });
-    } catch { throw new GatewayError('modelvia_unreachable', 502); }
-    if (response.status !== 200) {
+    const send = async () => {
+      try {
+        return await options.fetch(`${base}${path}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          headers: { authorization: `Bearer ${key}`, accept: 'application/json' } });
+      } catch { throw new GatewayError('modelvia_unreachable', 502); }
+    };
+    let response = await send();
+    if (response.status === 429) {
       await response.body?.cancel().catch(() => {});
-      if (missing && (response.status === 404 || response.status === 405)) return undefined;
-      if (response.status === 404) throw new GatewayError('modelvia_customer_invoice_not_found', 404);
+      await (options.sleep ?? pause)(modelviaRetryAfterMs(response.headers.get('retry-after')));
+      response = await send();
+    }
+    if (response.status !== 200) {
+      if (missing && (response.status === 404 || response.status === 405)) { await response.body?.cancel().catch(() => {}); return undefined; }
+      if (response.status === 404) {
+        // Modelvia's own code, read only to tell a customer outside this client
+        // (`accounts.ts`) from a missing invoice (`customer-invoices.ts`).
+        const code = await response.json().then(b => record(b) ? b.error : undefined, () => undefined);
+        if (code === 'account_not_found') throw new GatewayError('modelvia_account_not_found', 404);
+        if (code === 'customer_invoice_not_found') throw new GatewayError('modelvia_customer_invoice_not_found', 404);
+        throw new GatewayError('modelvia_rejected', 502);
+      }
+      await response.body?.cancel().catch(() => {});
+      if (response.status === 429) throw new GatewayError('modelvia_rate_limited', 503);
       throw new GatewayError(response.status === 401 || response.status === 403 ? 'modelvia_client_rejected' : 'modelvia_rejected', 502);
     }
     if (text) {
@@ -177,16 +198,22 @@ export function modelviaClientBilling(options: {
   const marginReport = async (period: string): Promise<Map<string, ModelviaCustomerMargin> | undefined> => {
     let body: unknown;
     try { body = await read(`${MARGIN_REPORT_PATH}?${new URLSearchParams({ period })}`, true); } catch { return undefined; }
-    const rows = record(body) ? (Array.isArray(body.customers) ? body.customers : Array.isArray(body.rows) ? body.rows : undefined) : undefined;
-    if (!rows) return undefined;
+    if (!record(body) || !Array.isArray(body.rows) || !count(body.unsettledRequests)) return undefined;
+    // Requests of the period still pending or unknown are in no row yet.
+    const settled = body.unsettledRequests === 0;
     const found = new Map<string, ModelviaCustomerMargin>();
-    for (const row of rows as unknown[]) {
-      if (!record(row) || typeof row.customerId !== 'string') return undefined;
-      const retail = row.customerNetNanoAud !== undefined ? row.customerNetNanoAud : row.retailNanoAud;
-      const cost = row.platformNetNanoAud !== undefined ? row.platformNetNanoAud : row.costNanoAud;
+    for (const row of body.rows as unknown[]) {
+      if (!record(row) || !(row.customerId === null || typeof row.customerId === 'string')) return undefined;
+      const retail = row.customerRetailNanoAud, cost = row.wholesaleNanoAud;
       if (!(retail === null || str(retail, NANO)) || !str(cost, NANO)) return undefined;
-      found.set(row.customerId, { source: 'margin_report', retailNanoAud: retail as string | null, costNanoAud: cost as string,
-        complete: row.complete === undefined ? retail !== null : row.complete === true && retail !== null });
+      // The client's own usage (no customer) is no office's.
+      if (row.customerId === null) continue;
+      // One row per client-funded flag: the customer's figures are their sum, unknown if either is.
+      const prior = found.get(row.customerId);
+      const add = (a: string | null, b: string | null) => a === null || b === null ? null : (BigInt(a) + BigInt(b)).toString();
+      const retailNanoAud = prior ? add(prior.retailNanoAud, retail as string | null) : retail as string | null;
+      found.set(row.customerId, { source: 'margin_report', retailNanoAud, costNanoAud: prior ? add(prior.costNanoAud, cost as string)! : cost as string,
+        complete: settled && retailNanoAud !== null });
     }
     return found;
   };
@@ -241,13 +268,19 @@ export function modelviaClientBilling(options: {
       requireThat(INVOICE_ID.test(invoiceId), 'invalid_modelvia_invoice');
       const rows = parseRequestsCsv(await read(`${customerPath(customerId)}/invoices/${invoiceId}/requests.csv`, false, true) as string, invoiceId);
       // Date/time, user/project and tokens come from the customer's analytics
-      // rows, paged per usage period until every request is found.
+      // rows, paged per usage period until every request is found. Enrichment
+      // only: a period still rate-limited after read()'s one wait stays
+      // unenriched, and the money rows stand.
       const wanted = new Map(rows.map(r => [r.requestId, r]));
+      let pages = 0;
       for (const period of [...new Set(rows.map(r => r.usagePeriod))].sort()) {
         let cursor: string | null = null;
-        for (let page = 0; page < MAX_ANALYTICS_PAGES; page++) {
+        while (pages < MAX_ANALYTICS_PAGES) {
+          pages++;
           const query = new URLSearchParams({ period, customerId, requestsLimit: '500', ...(cursor ? { requestsCursor: cursor } : {}) });
-          const body = await read(`/v1/client/analytics?${query}`);
+          let body: unknown;
+          try { body = await read(`/v1/client/analytics?${query}`); }
+          catch (error) { if (error instanceof GatewayError && error.code === 'modelvia_rate_limited') break; throw error; }
           requireThat(record(body) && Array.isArray(body.recentRequests), 'modelvia_unreadable', 502);
           for (const entry of body.recentRequests as unknown[]) {
             if (!record(entry) || typeof entry.requestId !== 'string') continue;
