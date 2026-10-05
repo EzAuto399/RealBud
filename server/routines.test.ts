@@ -104,7 +104,7 @@ describe("LoopManager catalog", () => {
   it("declares built mail routines and keeps the unqualified bank routine paused", () => {
     const { manager } = makeManager();
     const loops = manager.listLoops();
-    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills"]);
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
     expect(loops[1]).toMatchObject({ available: true, enabled: true });
     expect(loops[2]).toMatchObject({ available: true, enabled: false });
@@ -146,7 +146,7 @@ describe("LoopManager catalog", () => {
     writeFileSync(file, "not json {{{");
     const manager = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const loops = manager.listLoops();
-    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills"]);
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review"]);
     expect(loops.find((loop) => loop.id === "morning-arrears")?.enabled).toBe(true);
     expect(loops.every((loop) => loop.nextRunAt === null)).toBe(true);
     expect(manager.recovery.active).toBe(true);
@@ -576,6 +576,7 @@ describe("LoopManager recipe loops", () => {
       "inbound-triage",
       "bank-references",
       "weekly-bills",
+      "maintenance-review",
       "recipe-job-1",
     ]);
     const job = loops.find((loop) => loop.id === "recipe-job-1")!;
@@ -662,6 +663,7 @@ describe("LoopManager recipe loops", () => {
       "inbound-triage",
       "bank-references",
       "weekly-bills",
+      "maintenance-review",
     ]);
     expect(manager.listRuns().some((row) => row.id === run.id)).toBe(true);
     expect(manager.runNow("recipe-job-1")).toBeNull();

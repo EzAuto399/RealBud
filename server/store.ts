@@ -35,6 +35,8 @@ export type MausColor =
 export type MausExpression = string;
 
 export interface OptionCardData {
+  /** Bud's loop-result card: "Open" goes to Desk instead of replying in chat. */
+  opens?: "desk";
   approvalPolicy?: ApprovalPolicy;
   memoryReview?: MemoryApprovalReview;
   title: string;

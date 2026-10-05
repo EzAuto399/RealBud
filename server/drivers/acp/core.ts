@@ -49,6 +49,7 @@ import { SIGN_IN_SERVER, startSignInBroker } from "../../browser-sign-in.ts";
 import { HERMIOS_CRM_SERVER, startHermiosCrmBroker } from "../../hermios-crm-broker.ts";
 import { REMINDERS_SERVER, startRemindersBroker } from "../../reminders-broker.ts";
 import { WORKSPACE_VIEWS_SERVER, startWorkspaceViewsBroker } from "../../workspace-views-broker.ts";
+import { WORKFLOW_SETTINGS_SERVER, startWorkflowSettingsBroker } from "../../workflow-settings-broker.ts";
 import { BANK_SOURCE_SERVER, startBankSourceBroker } from "../../bank-source-broker.ts";
 import { MCP_CONNECTORS_SERVER, startMcpConnectorBroker } from "../../mcp-connector-broker.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
@@ -320,6 +321,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (typeof views.read !== "function" || typeof views.save !== "function") throw new Error("Bud’s saved views are unavailable. Start a new request.");
           servers.push({ type: "http", name: WORKSPACE_VIEWS_SERVER, url: "http://127.0.0.1/realbud-workspace-views", headers: [] });
         }
+        const workflowSettings = turn.integrations?.workflowSettings;
+        if (workflowSettings) {
+          if (typeof workflowSettings.read !== "function" || typeof workflowSettings.check !== "function" || typeof workflowSettings.save !== "function") throw new Error("Bud’s working rules are unavailable. Start a new request.");
+          servers.push({ type: "http", name: WORKFLOW_SETTINGS_SERVER, url: "http://127.0.0.1/realbud-workflow-settings", headers: [] });
+        }
         const bank = turn.integrations?.bankSource;
         if (bank) {
           if (typeof bank.listBankAccounts !== "function" || typeof bank.listBankTransactions !== "function") throw new Error("Bud’s bank feed is unavailable. Start a new request.");
@@ -448,6 +454,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let crmBroker: LoopbackToolServer | undefined;
         let remindersBroker: LoopbackToolServer | undefined;
         let viewsBroker: LoopbackToolServer | undefined;
+        let settingsBroker: LoopbackToolServer | undefined;
         let bankBroker: LoopbackToolServer | undefined;
         let connectorsBroker: LoopbackToolServer | undefined;
         const brokerMounts: Array<() => void> = [];
@@ -513,6 +520,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.close();
           remindersBroker?.close();
           viewsBroker?.close();
+          settingsBroker?.close();
           bankBroker?.close();
           connectorsBroker?.close();
           for (const release of brokerMounts.splice(0)) release();
@@ -562,6 +570,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.cancelPending();
           remindersBroker?.cancelPending();
           viewsBroker?.cancelPending();
+          settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
@@ -1034,6 +1043,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (closed) { viewsBroker.close(); throw new Error("Bud’s saved views session stopped."); }
             mcpServers = mcpServers.map(server => server.name === WORKSPACE_VIEWS_SERVER ? viewsBroker!.descriptor : server);
           }
+          if (mcpServers.some(server => server.name === WORKFLOW_SETTINGS_SERVER)) {
+            // Working rules: a read with no card; every change and restore shows the one-time card first.
+            settingsBroker = await startWorkflowSettingsBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              settings: () => actingTurn()?.turn.integrations?.workflowSettings,
+              approve: reviewOnce,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { workflowSettings: receipt } }),
+            });
+            if (closed) { settingsBroker.close(); throw new Error("Bud’s working rules session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === WORKFLOW_SETTINGS_SERVER ? settingsBroker!.descriptor : server);
+          }
           if (mcpServers.some(server => server.name === BANK_SOURCE_SERVER)) {
             // Read-only bank feed; no card. The current turn's binding is used.
             bankBroker = await startBankSourceBroker({
@@ -1181,6 +1201,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.cancelPending();
           remindersBroker?.cancelPending();
           viewsBroker?.cancelPending();
+          settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });

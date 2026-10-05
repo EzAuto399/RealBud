@@ -5,7 +5,7 @@ const delivered = new Set<string>();
 const previousHold = new Map<string, string>();
 /** Only new, settled app results; reconnect snapshots and unchanged runs stay quiet. */
 export function notifyRoutineRun(run: LoopRun): void {
-  if (!['weekly-bills', 'inbound-triage'].includes(run.loopId) || run.seenAt ||
+  if (!['weekly-bills', 'inbound-triage', 'maintenance-review'].includes(run.loopId) || run.seenAt ||
       !['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'].includes(run.status) ||
       typeof Notification === 'undefined' || Notification.permission !== 'granted' || delivered.has(run.id)) return;
   const hold = ['failed', 'missed', 'interrupted'].includes(run.status), signature = `${run.status}:${run.detail}`;

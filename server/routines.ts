@@ -166,6 +166,13 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     schedule: { type: 'daily', time: '08:00', weekdays: [1] },
     evaluatorId: 'weekly-bills', evaluatorVersion: 1,
   },
+  {
+    // Off until an office enables it. Weekdays 08:30 is a placeholder pending Sherry's scan frequency.
+    id: 'maintenance-review', name: 'Maintenance checks', available: true,
+    description: 'Compares reviewed maintenance bills with your supplier list. Flags unknown email addresses and several invoices for one property in a month. Review them in Bills.',
+    schedule: { type: 'daily', time: '08:30', weekdays: WEEKDAYS },
+    evaluatorId: 'maintenance-review', evaluatorVersion: 1,
+  },
 ];
 
 export function hostTimezone(): string {
@@ -301,7 +308,7 @@ export class LoopManager {
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
       // First-run inbox access must be deliberately enabled after scope review.
-      const enabled = loop.available && (['inbound-triage', 'weekly-bills', 'bank-references'].includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
+      const enabled = loop.available && (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -514,7 +521,7 @@ export class LoopManager {
     if (request && loop && request.expectedRevision !== loop.revision) {
       throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
     }
-    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !['inbound-triage', 'weekly-bills', 'bank-references'].includes(id))) return null;
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(id))) return null;
     if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     let run!: LoopRun;
     this.commit(() => {
@@ -615,7 +622,7 @@ export class LoopManager {
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(['inbound-triage', 'weekly-bills', 'bank-references'].includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
           this.commit(() => {
             run.status = "interrupted";
             run.finishedAt = this.now();

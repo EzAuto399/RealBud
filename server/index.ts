@@ -52,6 +52,14 @@ import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
 import { runWeeklyBillsWorkflow } from './weekly-bills-workflow.ts';
+import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanceReview } from './maintenance-review.ts';
+import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
+import { createInspectionHistoryStore } from './inspection-history.ts';
+import { createInspectionBookingsStore, createInspectionsApi } from './inspection-bookings.ts';
+import { bindWorkflowSettings } from './workflow-settings-broker.ts';
+import { createSupplierDirectory } from './supplier-directory.ts';
+import { createLoopChatCards } from './loop-chat-cards.ts';
+import type { LoopRun } from '../shared/contracts.ts';
 import { latestRoutineResult } from './routine-results.ts';
 import { createBillFollowUpsApi } from './bill-followups.ts';
 import { recordMorningResult } from './morning-routine-result.ts';
@@ -217,7 +225,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { coverageFromUncoveredHeld, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { coverageFromUncoveredHeld, hostTimezone, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -397,6 +405,7 @@ async function defaultSelection() {
 let bootSelection = { instanceId: "", model: "" };
 sweepStaleTempFiles(DATA_DIR);
 const store = new Store(() => bootSelection);
+const loopChatCard = createLoopChatCards({ store, broadcast, dataDir: DATA_DIR });
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 const existingProductBud = store.bot(CANONICAL_BUD_ID) ?? store.bots[0] ?? null;
@@ -2111,6 +2120,16 @@ async function startSeatTurn(
               return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body))!;
             },
           };
+          // Working rules (maintenance month rule, inspection rules, Morning priorities)
+          // through the same stores and revision checks as their routes; every change
+          // and restore is shown on the one-time card first.
+          integrations.workflowSettings = bindWorkflowSettings({ maintenance: maintenanceReview, inspection: inspectionRules,
+            agency: { read: () => agencySetup.getConfiguration(), save: async body => {
+              const previous = (await agencySetup.getConfiguration()).revision;
+              try { await agencySetup.save(body); } finally { if ((await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange(); }
+            } },
+            writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
+              : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
           // Read-only bank feed for Ask (Redbark connection); no writes exist.
           const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
           integrations.bankSource = {
@@ -2436,9 +2455,11 @@ function emitLoopAndPulse(payload: unknown) {
   if (!payload || typeof payload !== "object") return;
   const rec = payload as { kind?: string; run?: { loopId?: string; status?: string } };
   if (rec.kind !== "loop.run" || !rec.run?.loopId) return;
+  // Bud tells the person in chat, like a colleague; the saved result stays on Desk.
+  void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references'].includes(rec.run.loopId)) return;
+  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review'].includes(rec.run.loopId)) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2476,6 +2497,11 @@ loops = new LoopManager({
       readProposal: requestId => readBillProposal({ database: workflowDatabase, runs: () => jobRuns.list(), findRunByKey: key => jobRuns.getByIdempotencyKey(key) }, requestId),
       bills: range => sourceBills().snapshot(range),
     })));
+    // W4: reads saved reviewed bills only; no mail, model or browser call.
+    if (loop.id === 'maintenance-review') return runMaintenanceReview(run, { store: maintenanceReview, directory: supplierDirectory,
+      bills: () => { const today = new Date().toISOString().slice(0, 10); return sourceBills().snapshot({ from: today, to: today }).occurrences; },
+      weekly: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
+      timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() });
     if (loop.id === 'inbound-triage') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
       const started = Date.now(); let modelCalls = 0;
       const outcome = await runMorningMailWorkflow(run, {
@@ -3358,7 +3384,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (desk.recovery.active && method !== 'GET') return json(res, 503, { error: 'Recover the private book before changing workflow setup.' });
       const previous = method === 'PUT' ? (await agencySetup.getConfiguration()).revision : undefined;
       const result = await agencySetup.handle(path, method, method === 'GET' ? undefined : await readBody(req, 400_000));
-      if (previous !== undefined && (await agencySetup.getConfiguration()).revision !== previous) { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
+      if (previous !== undefined && (await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange();
       return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown agency setup action.' });
     }
     const mailQuery = path.startsWith('/api/mail-workspace') ? mailWorkspaceQuery(url.searchParams,
@@ -3419,7 +3445,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(['inbound-triage','weekly-bills','bank-references','maintenance-review'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {
@@ -3814,6 +3840,24 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
       const result = await billFollowUpsApi(url, method, method === 'GET' ? undefined : await readBody(req, 10_000));
       return json(res, result.status, result.body);
+    }
+    if (/^\/api\/(?:supplier-directory|maintenance-review)(?:\/|$)/.test(path)) {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await maintenanceReviewApi(url, method, method === 'GET' ? undefined : await readBody(req, 2_100_000));
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown maintenance check action.' });
+    }
+    if (path === '/api/inspection-rules') {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await inspectionRulesApi(path, method, method === 'GET' ? undefined : await readBody(req, 100_000));
+      return json(res, result!.status, result!.body);
+    }
+    if (/^\/api\/inspections(?:\/|$)/.test(path)) {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await inspectionsApi(path, method, method === 'GET' ? undefined : await readBody(req, 4_100_000));
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown inspection plan action.' });
     }
     if (/^\/api\/bill-(?:register|evidence|occurrences|series|scan)(?:\/|$)/.test(path)) {
       const result = await sourceBillsApi(url,method,method === 'GET' ? undefined : await readBody(req,30_000));
@@ -5784,6 +5828,23 @@ const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspac
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
 const billFollowUpsApi = createBillFollowUpsApi({ file: join(DATA_DIR, 'bill-followups.json'),
   latest: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'), recovery: () => desk.recovery.active || privateRestoreLocked });
+// W4 maintenance checks: supplier directory + findings (notify once), both private JSON.
+const supplierDirectory = createSupplierDirectory();
+const maintenanceReview = createMaintenanceReviewStore();
+const maintenanceReviewApi = createMaintenanceReviewApi({ store: maintenanceReview, directory: supplierDirectory,
+  recovery: () => desk.recovery.active || privateRestoreLocked,
+  propertyLabel: id => desk.snapshot().properties.find(p => p.id === id)?.address,
+  bill: id => /^source-bill:[a-f0-9]{64}$/.test(id) ? sourceBills().getOccurrence(id) : undefined,
+  loop: () => loops!.listLoops().find(loop => loop.id === 'maintenance-review') });
+// W5 inspection rules: private revisioned JSON with the last 10 replaced versions.
+const inspectionRules = createInspectionRulesStore();
+const inspectionRulesApi = createInspectionRulesApi({ store: inspectionRules, recovery: () => desk.recovery.active || privateRestoreLocked });
+// W5 inspection history + saved plan (accepted bookings, moves). Nothing is booked in Property Inspect.
+const inspectionsApi = createInspectionsApi({ rules: inspectionRules, history: createInspectionHistoryStore(), bookings: createInspectionBookingsStore(),
+  properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })), recovery: () => desk.recovery.active || privateRestoreLocked,
+  today: () => new Date().toLocaleDateString('en-CA') });
+/** A changed agency setup clears its workflow reviews, so its mail work stops until they are reviewed again. */
+function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),
   timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null });
 if (!privateRestoreLocked) reminders.start();

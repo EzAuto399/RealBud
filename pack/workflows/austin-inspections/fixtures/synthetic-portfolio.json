@@ -1,0 +1,31 @@
+{
+  "synthetic": true,
+  "note": "Fictional portfolio for inspection-plan tests. Not Austin data, not accepted office rules.",
+  "rules": {
+    "planStart": "2026-10-05",
+    "horizonMonths": 6,
+    "cycleMonths": 6,
+    "cycleBasis": "completed",
+    "workingDays": [1, 2, 3, 4, 5],
+    "closedDates": [],
+    "inspectors": ["fictional-inspector-A"],
+    "dayStart": "09:00",
+    "appointmentMinutes": 30,
+    "travelMinutes": 15,
+    "dailyCapacity": 3
+  },
+  "properties": [
+    { "id": "SYN-P01", "address": "1 Fictional Street, Northvale", "area": "Northvale", "lastPlanned": "2026-05-10", "lastCompleted": "2026-05-10" },
+    { "id": "SYN-P02", "address": "2 Fictional Street, Northvale", "area": "Northvale", "lastPlanned": "2026-05-12", "lastCompleted": "2026-05-12" },
+    { "id": "SYN-P03", "address": "3 Fictional Street, Northvale", "area": "Northvale", "lastPlanned": "2026-05-20", "lastCompleted": "2026-05-20" },
+    { "id": "SYN-P04", "address": "4 Fictional Street, Northvale", "area": "Northvale", "lastPlanned": "2026-05-25", "lastCompleted": "2026-05-25" },
+    { "id": "SYN-P05", "address": "5 Example Parade, Bayside", "area": "Bayside", "lastPlanned": "2026-06-13", "lastCompleted": "2026-06-13" },
+    { "id": "SYN-P06", "address": "6 Example Parade, Bayside", "area": "Bayside", "lastPlanned": "2026-06-20", "lastCompleted": "2026-06-20" },
+    { "id": "SYN-P07", "address": "7 Example Parade, Bayside", "area": "Bayside", "lastPlanned": "2026-06-01", "lastCompleted": "2026-06-29" },
+    { "id": "SYN-P08", "address": "8 Sample Road, Hillcrest", "area": "Hillcrest", "lastPlanned": "2026-07-15", "lastCompleted": "2026-07-15" },
+    { "id": "SYN-P09", "address": "9 Sample Road, Hillcrest", "area": "Hillcrest", "lastPlanned": "2026-07-20", "lastCompleted": "2026-07-20" },
+    { "id": "SYN-P10", "address": "10 Sample Road, Hillcrest", "area": "Hillcrest", "lastPlanned": "2026-03-01", "lastCompleted": "2026-03-01" },
+    { "id": "SYN-P11", "address": "11 Example Parade, Bayside", "area": "Bayside" },
+    { "id": "SYN-P12", "address": "12 Sample Road, Hillcrest", "area": "Hillcrest", "lastPlanned": "2026-07-16", "lastCompleted": "2026-07-16", "accessWeekdays": [3], "accessNote": "Fictional tenant: Wednesdays only." }
+  ]
+}

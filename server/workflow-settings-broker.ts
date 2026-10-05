@@ -1,0 +1,228 @@
+// Bud's working-rules tools: the person changes the office's workflow settings by
+// asking Bud. `workflow_settings_read` is a read with no card. Every change and
+// every restore shows RealBud's one-time review card with each field's before →
+// after and Bud's reason, then saves through the setting's own store with its
+// revision check, so an edit made elsewhere while the card was open is a
+// conflict, never overwritten. The stores keep replaced versions so a change can
+// be undone. Mounted per ACP session as a loopback MCP server.
+import { defaultAgencySettings, validateAgencySettings } from "./agency-setup.ts";
+import { validateInspectionRules, type InspectionRulesStore } from "./inspection-rules.ts";
+import { isMaintenanceWindowRule, MAINTENANCE_RULE_MESSAGE, type MaintenanceReviewStore } from "./maintenance-review.ts";
+import { redactSecretsInText } from "./redact.ts";
+import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
+import type { AgencySetupSettings } from "../shared/agency-setup.ts";
+
+export const WORKFLOW_SETTINGS_SERVER = "workflow-settings";
+export const SETTINGS_CONFLICT = "These settings changed since Bud read them — ask again";
+export const WORKFLOW_SETTINGS_TARGETS = ["maintenance_month_rule", "inspection_rules", "morning_priorities"] as const;
+export type WorkflowSettingsTarget = typeof WORKFLOW_SETTINGS_TARGETS[number];
+type Values = Record<string, unknown>;
+export interface WorkflowSettingsSnapshot {
+  revision: number; values: Values;
+  /** Replaced versions, newest first; null when this setting keeps none. */
+  previous: Array<{ values: Values; replacedAt: number }> | null;
+}
+/** One turn's settings, bound by the host. `check` returns clean values or throws
+ * a plain sentence; `save` is compare-and-set and throws `code: "settings_changed"`
+ * on a stale revision. */
+export interface BudWorkflowSettings {
+  read(target: WorkflowSettingsTarget): Promise<WorkflowSettingsSnapshot>;
+  check(target: WorkflowSettingsTarget, values: Values): Values;
+  save(target: WorkflowSettingsTarget, values: Values, expectedRevision: number): Promise<void>;
+}
+export interface WorkflowSettingsReceipt { tool: string; target?: WorkflowSettingsTarget; outcome: "succeeded" | "failed" | "refused" | "declined" | "conflict" }
+
+const TARGETS: Record<WorkflowSettingsTarget, { label: string; fields: Record<string, string>; notice?: string }> = {
+  maintenance_month_rule: { label: "maintenance month rule", fields: { span: "Comparison window", basis: "Compare invoices by" } },
+  inspection_rules: { label: "inspection rules", fields: { cycleMonths: "Inspect every (months)", cycleBasis: "Cycle counts from", horizonMonths: "Plan ahead (months)",
+    workingDays: "Working days", closedDates: "Closed days", inspectors: "Inspectors", dayStart: "Start time", appointmentMinutes: "Visit length (minutes)",
+    travelMinutes: "Travel time (minutes)", dailyCapacity: "Visits per day" } },
+  morning_priorities: { label: "Morning priorities preferences", fields: { localTime: "Time", weekdays: "Days", followUpAfterDays: "Follow up after (days)" },
+    notice: "Saving changes the agency setup, so Morning priorities and Weekly bills turn off until their setup is reviewed again." },
+};
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WORDS: Record<string, string> = { invoiceDate: "invoice date", receivedDate: "date received", calendarMonth: "calendar month", rolling30: "rolling 30 days", completed: "completed date", planned: "planned date" };
+/** Compact values for Bud's read: raw dates and times so a proposal can build on them. */
+const show = (field: string, value: unknown): string => {
+  if (Array.isArray(value)) return value.length ? value.map(item => field === "weekdays" || field === "workingDays" ? DAYS[item as number] ?? String(item) : String(item)).join(" ") : "none";
+  return typeof value === "string" ? WORDS[value] ?? value : String(value);
+};
+const DAY_MS = 86_400_000;
+const isoDay = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? Date.parse(`${value}T00:00:00Z`) : NaN;
+const dayLabel = (ms: number) => { const d = new Date(ms); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+/** "2026-12-24".."2027-01-02" → "24 Dec 2026 – 2 Jan 2027"; runs of consecutive days collapse. */
+export function dateRanges(values: readonly unknown[]): string {
+  const days = values.map(isoDay);
+  if (days.some(Number.isNaN)) return values.map(String).join(", ");
+  const sorted = [...new Set(days)].sort((a, b) => a - b), runs: Array<[number, number]> = [];
+  for (const day of sorted) { const last = runs.at(-1); if (last && day - last[1] === DAY_MS) last[1] = day; else runs.push([day, day]); }
+  return runs.map(([from, to]) => from === to ? dayLabel(from) : `${dayLabel(from)} – ${dayLabel(to)}`).join(", ");
+}
+/** "09:30" → "9:30 am"; anything else is shown as given. */
+export function clockLabel(value: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match || Number(match[1]) > 23) return value;
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "am" : "pm"}`;
+}
+/** Values as an office worker reads them on the review card. */
+export function friendly(field: string, value: unknown): string {
+  if (Array.isArray(value)) {
+    if (!value.length) return "none";
+    if (field === "closedDates") return dateRanges(value);
+    return value.map(item => field === "weekdays" || field === "workingDays" ? DAYS[item as number] ?? String(item) : String(item)).join(", ");
+  }
+  if (typeof value === "string" && (field === "dayStart" || field === "localTime")) return clockLabel(value);
+  return show(field, value);
+}
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const TARGET = { type: "string", enum: [...WORKFLOW_SETTINGS_TARGETS] };
+const REASON = { type: "string", minLength: 1, maxLength: 300, description: "One plain sentence the person will see on the card: why this change." };
+const TOOLS = [
+  { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions. target is optional (all when omitted). Read only, no card.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { target: TARGET } } },
+  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}. The person approves the before → after once on a card; the replaced version is kept.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
+  { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
+];
+const ARGS: Record<string, { required: string[]; optional: string[] }> = {
+  workflow_settings_read: { required: [], optional: ["target"] },
+  workflow_settings_propose: { required: ["target", "values", "reason"], optional: [] },
+  workflow_settings_restore: { required: ["target", "reason"], optional: ["previous"] },
+};
+const text = (value: string, structuredContent?: Record<string, unknown>): LoopbackToolResult => ({ content: [{ type: "text", text: value }], ...(structuredContent ? { structuredContent } : {}) });
+const message = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
+const isTarget = (value: unknown): value is WorkflowSettingsTarget => (WORKFLOW_SETTINGS_TARGETS as readonly unknown[]).includes(value);
+/** Model text shown on a card: one plain line, no controls or direction overrides, no secrets. */
+const plainReason = (value: unknown) => typeof value === "string" ? redactSecretsInText(value.replace(/[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim()).slice(0, 300) : "";
+
+/** Binds the three stores for one turn. `writable` returns a refusal sentence when
+ * the book is in recovery or the member changed; it is checked again after the card. */
+export function bindWorkflowSettings(host: {
+  maintenance: MaintenanceReviewStore;
+  inspection: InspectionRulesStore;
+  agency: { read(): Promise<{ revision: number; settings: AgencySetupSettings }>; save(body: { expectedRevision: number; settings: AgencySetupSettings }): Promise<unknown> };
+  writable(): string | null;
+}): BudWorkflowSettings {
+  const changed = () => Object.assign(new Error(SETTINGS_CONFLICT), { code: "settings_changed" });
+  const guard = () => { const refusal = host.writable(); if (refusal) throw Object.assign(new Error(refusal), { status: 503 }); };
+  return {
+    async read(target) {
+      if (target === "maintenance_month_rule") {
+        const state = await host.maintenance.read();
+        return { revision: state.ruleRevision ?? 0, values: { ...state.rule }, previous: (state.ruleHistory ?? []).map(h => ({ values: { ...h.rule }, replacedAt: h.replacedAt })) };
+      }
+      if (target === "inspection_rules") {
+        const state = await host.inspection.read();
+        return { revision: state.revision, values: { ...state.rules }, previous: state.history.map(h => ({ values: { ...h.rules }, replacedAt: h.replacedAt })) };
+      }
+      const state = await host.agency.read();
+      // ponytail: agency setup keeps no earlier versions (its saved shape lives in shared/agency-setup.ts); add history there to make this restorable.
+      return { revision: state.revision, values: { ...state.settings.morningReview }, previous: null };
+    },
+    check(target, values) {
+      if (target === "maintenance_month_rule") { if (!isMaintenanceWindowRule(values)) throw new Error(MAINTENANCE_RULE_MESSAGE); return { span: values.span, basis: values.basis }; }
+      if (target === "inspection_rules") return validateInspectionRules(values) as unknown as Values;
+      return validateAgencySettings({ ...defaultAgencySettings(), morningReview: values }).morningReview as unknown as Values;
+    },
+    async save(target, values, expectedRevision) {
+      guard();
+      try {
+        if (target === "maintenance_month_rule") { await host.maintenance.setRule({ rule: values, expectedRevision }); return; }
+        if (target === "inspection_rules") { await host.inspection.save({ rules: values, expectedRevision }); return; }
+        const state = await host.agency.read();
+        if (state.revision !== expectedRevision) throw changed();
+        await host.agency.save({ expectedRevision, settings: { ...state.settings, morningReview: values as unknown as AgencySetupSettings["morningReview"] } });
+      } catch (error) {
+        const failure = error as { status?: unknown; code?: unknown };
+        if (failure.code === "settings_changed" || failure.code === "agency_setup_stale" || (target !== "morning_priorities" && failure.status === 409)) throw changed();
+        throw error;
+      }
+    },
+  };
+}
+
+export async function startWorkflowSettingsBroker(options: {
+  /** The current turn's id while it may still act, else null. */
+  turnId(): string | null;
+  /** The current turn's settings binding, else undefined. */
+  settings(): BudWorkflowSettings | undefined;
+  /** RealBud's one-time review card; true only for an explicit allow. */
+  approve(summary: string, signal: AbortSignal): Promise<boolean>;
+  receipt?: (receipt: WorkflowSettingsReceipt) => void;
+}): Promise<LoopbackToolServer> {
+  const note = (receipt: WorkflowSettingsReceipt) => { try { options.receipt?.(receipt); } catch { /* receipts never change the outcome */ } };
+  return startLoopbackToolServer({
+    name: WORKFLOW_SETTINGS_SERVER,
+    serverName: "Bud working rules",
+    tools: TOOLS,
+    maxConcurrent: 1,
+    isActive: () => options.turnId() !== null && options.settings() !== undefined,
+    async call(name, args, signal) {
+      const turn = options.turnId(), settings = options.settings();
+      if (!turn || !settings) return toolError("Bud is no longer working on this request. Nothing was changed.");
+      const shape = ARGS[name]!;
+      if (Object.keys(args).some(key => !shape.required.includes(key) && !shape.optional.includes(key)) || shape.required.some(key => args[key] === undefined)) {
+        return toolError(`${name} takes ${[...shape.required, ...shape.optional.map(key => `optional ${key}`)].join(", ")}.`);
+      }
+      if (args.target !== undefined && !isTarget(args.target)) return toolError(`Choose a target: ${WORKFLOW_SETTINGS_TARGETS.join(", ")}. Nothing was changed.`);
+      if (name === "workflow_settings_read") {
+        const targets = args.target ? [args.target as WorkflowSettingsTarget] : [...WORKFLOW_SETTINGS_TARGETS];
+        const rows: Record<string, WorkflowSettingsSnapshot> = {};
+        for (const target of targets) {
+          try { rows[target] = await settings.read(target); } catch (error) { return toolError(message(error, `The ${TARGETS[target].label} could not be read.`)); }
+        }
+        const lines = targets.map(target => `- ${target} (revision ${rows[target]!.revision}): ${Object.keys(TARGETS[target].fields).map(field => `${field} ${show(field, rows[target]!.values[field])}`).join("; ")}. ` +
+          (rows[target]!.previous === null ? "Earlier versions are not kept." : `${rows[target]!.previous!.length} earlier version(s) kept.`));
+        return text(`Working rules:\n${lines.join("\n")}`, { settings: rows });
+      }
+      const target = args.target as WorkflowSettingsTarget, spec = TARGETS[target];
+      const reason = plainReason(args.reason);
+      if (!reason) return toolError("Give one plain sentence saying why. Nothing was changed.");
+      let current: WorkflowSettingsSnapshot;
+      try { current = await settings.read(target); } catch (error) { return toolError(message(error, `The ${spec.label} could not be checked. Nothing was changed.`)); }
+      let proposed: Values;
+      if (name === "workflow_settings_propose") {
+        const values = args.values;
+        if (!values || typeof values !== "object" || Array.isArray(values)) return toolError("values must be an object of the fields to change. Nothing was changed.");
+        const unknown = Object.keys(values).filter(key => !Object.hasOwn(spec.fields, key));
+        if (unknown.length || !Object.keys(values).length) return toolError(`The ${spec.label} has the fields ${Object.keys(spec.fields).join(", ")}. Nothing was changed.`);
+        proposed = { ...current.values, ...values };
+      } else {
+        if (current.previous === null) return toolError(`Earlier versions of the ${spec.label} are not kept, so there is nothing to restore. Nothing was changed.`);
+        const back = args.previous ?? 1;
+        if (!Number.isInteger(back) || (back as number) < 1 || (back as number) > current.previous.length) {
+          return toolError(current.previous.length ? `Choose previous from 1 to ${current.previous.length}. Nothing was changed.` : `There is no earlier version of the ${spec.label} yet. Nothing was changed.`);
+        }
+        proposed = current.previous[(back as number) - 1]!.values;
+      }
+      let clean: Values;
+      try { clean = settings.check(target, proposed); } catch (error) { note({ tool: name, target, outcome: "refused" }); return toolError(`${message(error, `Check the ${spec.label}.`)} Nothing was changed.`); }
+      const diff = Object.keys(spec.fields).filter(field => !same(current.values[field], clean[field]));
+      if (!diff.length) { note({ tool: name, target, outcome: "refused" }); return toolError(`The ${spec.label} already has those values. Nothing was changed.`); }
+      const verb = name === "workflow_settings_restore" ? "Restore earlier" : "Change";
+      // One line per changed field, then the notice and Bud's reason (already one plain line).
+      const card = [`${verb} ${spec.label}`, ...diff.map(field => `${spec.fields[field]}: ${friendly(field, current.values[field])} → ${friendly(field, clean[field])}`),
+        ...(spec.notice ? [spec.notice] : []), `Why: ${reason}`].join("\n");
+      if (!await options.approve(card, signal)) {
+        note({ tool: name, target, outcome: "declined" });
+        return toolError("The person did not approve this change. Nothing was changed. Do not retry without a new request.");
+      }
+      if (signal.aborted || options.turnId() !== turn || options.settings() !== settings) return toolError("Bud is no longer working on this request. Nothing was changed.");
+      try {
+        // Compare-and-set on the revision read before the card was shown.
+        await settings.save(target, clean, current.revision);
+        note({ tool: name, target, outcome: "succeeded" });
+        const before = diff.map(field => `${spec.fields[field]}: ${friendly(field, current.values[field])}`).join("; ");
+        return text(`Saved the ${spec.label}. ${current.previous === null ? `Earlier versions are not kept; it was: ${before}.` : "The version it replaced is kept and can be restored."}`, { target, values: clean });
+      } catch (error) {
+        if ((error as { code?: unknown }).code === "settings_changed") { note({ tool: name, target, outcome: "conflict" }); return toolError(SETTINGS_CONFLICT); }
+        note({ tool: name, target, outcome: "failed" });
+        // Stores throw plain sentences with a status; anything else stays generic.
+        return toolError(typeof (error as { status?: unknown }).status === "number" ? message(error, "") || "Nothing was changed." : `The ${spec.label} could not be saved. Ask again to check whether it was kept.`);
+      }
+    },
+  });
+}
