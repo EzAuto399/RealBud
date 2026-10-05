@@ -6,14 +6,17 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A fresh module instance stands in for a restarted server process.
-const restart = async () => { vi.resetModules(); return { custody: await import("./worker-custody.ts"), sandbox: await import("./worker-network-sandbox.ts") }; };
+// Pending saves of the previous instance land first, as a real exit would not
+// guarantee; tests that need an unsaved crash say so.
+let current: typeof import("./worker-custody.ts") | undefined;
+const restart = async () => { await current?.workerCustodySaved(); vi.resetModules(); current = await import("./worker-custody.ts"); return { custody: current, sandbox: await import("./worker-network-sandbox.ts") }; };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; } };
 async function waitGone(pid: number) { for (let i = 0; i < 100 && !gone(pid); i++) await pause(20); expect(gone(pid)).toBe(true); }
 const owned: ChildProcess[] = [];
 const ownedPids: number[] = [];
 let dataDir: string;
-beforeEach(() => { dataDir = mkdtempSync(join(tmpdir(), "realbud-custody-")); vi.stubEnv("REALBUD_DATA_DIR", dataDir); });
+beforeEach(() => { current = undefined; dataDir = mkdtempSync(join(tmpdir(), "realbud-custody-")); vi.stubEnv("REALBUD_DATA_DIR", dataDir); });
 afterEach(() => {
   for (const pid of ownedPids.splice(0)) { try { process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL"); } catch { /* already gone */ } }
   for (const child of owned.splice(0)) child.kill("SIGKILL");
@@ -40,6 +43,7 @@ describe("durable worker custody across restart", () => {
     expect(() => launch(after.sandbox)).toThrow(after.custody.WORKER_CUSTODY_HELD);
     worker.kill("SIGKILL"); await waitGone(worker.pid!);
     expect(after.custody.workerCustodyRefusal()).toBeNull();
+    await after.custody.workerCustodySaved();
     expect(JSON.parse(readFileSync(join(dataDir, "worker-custody.json"), "utf8")).entries).toEqual([]);
     expect((await restart()).custody.workerCustodyRefusal()).toBeNull();
   });
@@ -67,25 +71,26 @@ describe("durable worker custody across restart", () => {
     expect(damaged.custody.workerCustodyRefusal()).toBe(damaged.custody.WORKER_CUSTODY_DAMAGED);
     expect(() => damaged.custody.resolveWorkerCustody()).toThrow(/needs recovery/);
     damaged.custody.recordWorkerCustody(worker.pid!);
+    await damaged.custody.workerCustodySaved();
     expect(readFileSync(file, "utf8")).toBe("{not json");
   });
 
   it("fails closed when custody cannot be saved, and recovers once a save lands", async () => {
     let full = true;
-    vi.doMock("./atomic.ts", async original => {
-      const real = await original<typeof import("./atomic.ts")>();
-      return { ...real, writeFileAtomic: (...args: Parameters<typeof real.writeFileAtomic>) => {
-        if (full) throw Object.assign(new Error("fictional full disk"), { code: "ENOSPC" });
-        real.writeFileAtomic(...args);
-      } };
+    vi.doMock("node:fs/promises", async original => {
+      const real = await original<typeof import("node:fs/promises")>();
+      return { ...real, open: (...args: Parameters<typeof real.open>) => full ? Promise.reject(Object.assign(new Error("fictional full disk"), { code: "ENOSPC" })) : real.open(...args) };
     });
     try {
       const { custody, sandbox } = await restart();
       custody.recordWorkerCustody(idleWorker().pid!);
+      await custody.workerCustodySaved();
       expect(() => launch(sandbox)).toThrow(custody.WORKER_CUSTODY_UNSAVED);
       full = false;
+      expect(() => launch(sandbox)).toThrow(custody.WORKER_CUSTODY_UNSAVED);
+      await custody.workerCustodySaved();
       expect(() => launch(sandbox)).not.toThrow();
-    } finally { vi.doUnmock("./atomic.ts"); }
+    } finally { vi.doUnmock("node:fs/promises"); }
   });
 });
 
@@ -101,7 +106,8 @@ setInterval(()=>{},100);`;
     const owner = `import { spawn } from 'node:child_process';
 const { trackSandboxedChild } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "worker-network-sandbox.ts")).href)});
 const leader = trackSandboxedChild(spawn(process.execPath, ['-e', ${JSON.stringify(tree)}], { detached: true, stdio: ['ignore', 'pipe', 'inherit'] }));
-leader.stdout.on('data', chunk => process.stdout.write(chunk));
+const { workerCustodySaved } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "worker-custody.ts")).href)});
+leader.stdout.on('data', async chunk => { await workerCustodySaved(); process.stdout.write(chunk); });
 setInterval(() => {}, 100);`;
     const parent = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", owner], { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, REALBUD_DATA_DIR: dataDir } });
     owned.push(parent);

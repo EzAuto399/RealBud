@@ -11,9 +11,10 @@
 // whose exit ends its job. A recycled id reads as alive and keeps the hold
 // (safe direction); a person can release it after checking.
 import { randomUUID } from "node:crypto";
+import { open, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirPrivateSync, readPrivateFileSync, writeFileAtomic } from "./atomic.ts";
+import { fsyncDir, mkdirPrivateSync, readPrivateFileSync, renameReplacing } from "./atomic.ts";
 
 export const WORKER_CUSTODY_HELD =
   "Bud may still have work running from before RealBud last closed, so new work was not started. Restart this computer, then try again.";
@@ -28,6 +29,8 @@ const own = new Map<number, Entry>();
 let earlier: Entry[] | undefined;
 let damaged = false;
 let unsaved = false;
+let writing: Promise<void> | null = null;
+let again = false;
 
 // Resolved at call time: the vitest setup imports the sandbox module before it
 // points HOME at a throwaway folder (see server/config.ts DATA_DIR).
@@ -50,14 +53,37 @@ function load(): Entry[] {
   return earlier!;
 }
 
+// Off the spawn and stop paths: one coalesced asynchronous writer, temp ->
+// fsync -> rename. A release that has not landed yet leaves the group on
+// record, which only errs toward a hold after a crash.
+// ponytail: the temp file takes the private data folder's owner-only ACL
+// instead of its own (restrictNewSync), so Windows starts no PowerShell per
+// save; the record holds only process ids. Restrict it if it ever holds more.
+async function writeOnce(): Promise<void> {
+  const dir = dataDir(), path = file(), temporary = `${path}.${randomUUID()}.tmp`;
+  mkdirPrivateSync(dir, 0o700);
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify({ version: 1, entries: [...earlier!, ...own.values()] }));
+    await handle.sync(); await handle.close();
+    await renameReplacing(temporary, path); fsyncDir(dir);
+  } finally { await handle.close().catch(() => {}); await unlink(temporary).catch(() => {}); }
+}
+
 function save(): void {
   if (damaged) return;
-  try {
-    mkdirPrivateSync(dataDir(), 0o700);
-    writeFileAtomic(file(), JSON.stringify({ version: 1, entries: [...earlier!, ...own.values()] }), 0o600);
-    unsaved = false;
-  } catch { unsaved = true; /* fails closed: launches stay held until a save lands */ }
+  if (writing) { again = true; return; }
+  writing = (async () => {
+    do {
+      again = false;
+      try { await writeOnce(); unsaved = false; }
+      catch { unsaved = true; /* fails closed: launches stay held until a save lands */ }
+    } while (again);
+  })().finally(() => { writing = null; if (again) save(); });
 }
+
+/** Settles once every custody change made so far is on disk (or failed). */
+export async function workerCustodySaved(): Promise<void> { while (writing) await writing; }
 
 function alive(pid: number): boolean {
   try { process.kill(process.platform === "win32" ? pid : -pid, 0); return true; }
