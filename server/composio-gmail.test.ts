@@ -282,12 +282,13 @@ describe("fixed raw Gmail proxy", () => {
     expect(calls.some(call => call.url.pathname.endsWith(`/execute/${slugs[2]}`))).toBe(false);
     expect(JSON.stringify(result)).not.toMatch(/fictional-header-secret|fictional.invalid|binary_data/);
   });
-  it.each([undefined, '200', 204, 301, 403, 429, 500])("rejects inner status %j despite outer HTTP 200 and does not retry", async status => {
+  it.each([undefined, '200', 204, 301, 403, 429, 500])("rejects inner status %j despite outer HTTP 200 and retries only when asked again", async status => {
     const calls = fixture({ proxy: () => ({ status, data: { id: 'abc', messages: [message()] } }) });
     const c = client(); await c.call(slugs[1]);
     expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
-    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
     expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(1);
+    expect(await c.call(slugs[2], { thread_id: 'abc' })).toMatchObject({ isError: true });
+    expect(calls.filter(call => call.url.pathname.endsWith('/execute/proxy'))).toHaveLength(2);
   });
   it.each([null, [], 'not raw Gmail', { messages: [message()] }, { id: 'def', messages: [message()] }])("rejects an incomplete or foreign raw thread %j", async value => {
     fixture({ proxy: () => ({ status: 200, data: value }) });
@@ -343,8 +344,32 @@ describe("Gmail transport failure and privacy boundaries", () => {
     const calls = fixture({ execute: () => ({ successful: false, error: binding.apiKey, data: { access_token: "fixture-token" } }) });
     const c = client(); const result = await c.call(slugs[0]); expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).not.toContain(binding.apiKey);
-    await c.call(slugs[0]);
     expect(calls.filter(call => call.url.pathname.includes("/execute/"))).toHaveLength(1);
+  });
+  it("evicts only a failed snapshot, so the same session recovers while successful snapshots stay cached", async () => {
+    let profileDown = true, listingDown = true, threadDown = true, metadataDown = true;
+    const calls = fixture({
+      override: call => call.url.pathname.endsWith(`/tools/${slugs[0]}`) && metadataDown ? (metadataDown = false, response({}, 503)) : undefined,
+      execute: slug => {
+        if (slug === slugs[0]) return profileDown ? (profileDown = false, { successful: false, error: "fictional outage", data: {} }) : success({ emailAddress: "work@example.test", messagesTotal: 15, threadsTotal: 10 });
+        if (listingDown) { listingDown = false; return { successful: false, error: "fictional outage", data: {} }; }
+        return success({ threads: [{ id: "abc" }, { id: "def" }], resultSizeEstimate: 2 });
+      },
+      proxy: call => call.body.endpoint.includes("/threads/def") && threadDown ? (threadDown = false, { status: 503, data: {} }) : { status: 200, data: { id: call.body.endpoint.includes("/threads/def") ? "def" : "abc", messages: [{ ...message(), threadId: call.body.endpoint.includes("/threads/def") ? "def" : "abc" }] } },
+    });
+    const count = (suffix: string) => calls.filter(call => call.url.pathname.endsWith(suffix)).length;
+    const c = client();
+    await expect(c.call(slugs[0])).rejects.toThrow(/could not be confirmed/);
+    expect(await c.call(slugs[0])).toMatchObject({ isError: true });
+    expect(data(await c.call(slugs[0])).emailAddress).toBe("work@example.test");
+    expect(await c.call(slugs[1])).toMatchObject({ isError: true });
+    expect(data(await c.call(slugs[1])).threads).toEqual([{ id: "abc" }, { id: "def" }]);
+    expect(data(await c.call(slugs[2], { thread_id: "abc" })).threadId).toBe("abc");
+    expect(await c.call(slugs[2], { thread_id: "def" })).toMatchObject({ isError: true });
+    expect(data(await c.call(slugs[2], { thread_id: "def" })).threadId).toBe("def");
+    // Successful snapshots are served from the cache, not read again.
+    await c.call(slugs[0]); await c.call(slugs[1]); await c.call(slugs[2], { thread_id: "abc" }); await c.call(slugs[2], { thread_id: "def" });
+    expect([count(`/tools/${slugs[0]}`), count(`/execute/${slugs[0]}`), count(`/execute/${slugs[1]}`), count("/execute/proxy")]).toEqual([2, 2, 2, 3]);
   });
   it("does not accept contradictory successful:true plus error", async () => {
     fixture({ execute: () => ({ successful: true, error: "denied", data: {} }) });
