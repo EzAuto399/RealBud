@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { createMailIngestionService, type MailAuthority } from './mail-ingestion.ts';
 import { defaultAgencySettings } from './agency-setup.ts';
@@ -130,9 +131,26 @@ describe('normalized permanent mail retention and process fencing', () => {
     it('retains more than 2000 multilingual tasks and 1000 failed scan receipts without aggregate refusal', async () => {
         const f = await fixture(), a = f.make();
         f.scan.mockRejectedValue(new Error('Synthetic unavailable provider'));
-        for (let scan = 0; scan < 1001; scan++) {
+        // Each failed collect costs five private-file admissions, one PowerShell launch each on
+        // Windows (about 5,200 for 1,001 scans). There the provider-failure path still runs 21
+        // times through the service; the other 980 receipts are copies of a real failed receipt
+        // written through the same record store, so the counts, history and restore below are
+        // unchanged and still sit on more than 1,000 receipts.
+        const realFailures = WINDOWS ? 21 : 1001;
+        for (let scan = 0; scan < realFailures; scan++) {
             await expect(a.service.collect()).rejects.toThrow('Synthetic unavailable provider');
             f.advance();
+            if (scan === 0 && realFailures < 1001) {
+                const storage = new MailStorage({ ...f.options, database: a.db });
+                await storage.ready();
+                storage.run(() => {
+                    const failed = storage.receipt(storage.register().latestScanId!)!;
+                    expect(failed.status).toBe('failed');
+                    for (let copy = 1; copy <= 1001 - realFailures; copy++)
+                        storage.saveReceipt({ ...failed, id: randomUUID(), startedAt: failed.startedAt + copy * 1000, completedAt: failed.completedAt! + copy * 1000, windowStartAt: failed.windowStartAt + copy * 1000, windowEndAt: failed.windowEndAt + copy * 1000 });
+                });
+                f.advance(1000 * (1001 - realFailures));
+            }
         }
         expect((await a.service.scanHistory()).total).toBe(1001);
         let oldestId = '';

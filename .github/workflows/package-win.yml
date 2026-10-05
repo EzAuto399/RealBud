@@ -76,6 +76,13 @@ jobs:
       - name: clean build outputs
         shell: bash
         run: rm -rf dist dist-server release
+      # The pinned PostgreSQL archive comes from EDB's download host, which has
+      # gone away mid-day (HTTP 404 for every file id). prepare-postgres still
+      # verifies the cached bytes against the pinned SHA-256 before use.
+      - uses: actions/cache@v4
+        with:
+          path: .postgres-cache
+          key: postgres-${{ runner.os }}-${{ hashFiles('scripts/postgres-artifacts.mjs') }}
       - run: pnpm package:win
       - name: Install and exercise the packaged Windows runtime
         shell: pwsh

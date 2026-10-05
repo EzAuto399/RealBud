@@ -1,16 +1,17 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstallJob } from "./hermes-bridge.ts";
 import type { HermesStatus } from "./hermes-status.ts";
 import type { WorkerInstallOutcome } from "./hermes-update.ts";
 import { AUTO_SETUP_BACKOFF_MS, AUTO_SETUP_COPY, AUTO_SETUP_FILE, AUTO_SETUP_MAX_ATTEMPTS, createWorkerAutoSetup, type WorkerAutoSetupDeps } from "./worker-auto-setup.ts";
 import * as privateJson from "./private-json.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "realbud-auto-setup-")); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => { dir = privateTempRoot(join(tmpdir(), "realbud-auto-setup-")); });
+afterEach(() => removeFixture(dir));
 
 const status = (patch: { installed?: boolean; compatible?: boolean; ready?: boolean } = {}): HermesStatus => ({
   cli: { installed: patch.installed ?? true, versionText: "fixture", matchesPin: false, compatible: patch.compatible ?? true, probeState: "ok" },
@@ -208,7 +209,7 @@ describe("automatic Bud setup after an approved office link", () => {
   });
 
   it("holds a damaged attempt record rather than overwriting it", async () => {
-    writeFileSync(join(dir, AUTO_SETUP_FILE), "{not json", { mode: 0o600 });
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), "{not json");
     const h = harness();
     const setup = createWorkerAutoSetup(h.deps);
     await setup.ensure("boot");
@@ -307,7 +308,7 @@ describe("automatic setup authority across asynchronous boundaries", () => {
 
   it.each(["ready", "held", "retry"])("does not publish stale %s state after its private save finishes", async outcome => {
     const h = harness();
-    writeFileSync(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: 1, nextRetryAt: null, held: null, stageRetried: false }), { mode: 0o600 });
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: 1, nextRetryAt: null, held: null, stageRetried: false }));
     vi.mocked(h.deps.status).mockImplementation(async () => status({ ready: outcome === "ready" }));
     vi.mocked(h.deps.readinessPing).mockImplementation(async () => {
       if (outcome === "held") throw new Error("fictional readiness failure");

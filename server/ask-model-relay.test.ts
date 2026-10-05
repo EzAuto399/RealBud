@@ -8,6 +8,7 @@ import { existsSync, chmodSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 vi.mock("./managed-service.ts", async (original) => ({
   ...await original<typeof import("./managed-service.ts")>(),
@@ -209,7 +210,8 @@ describe("Ask model relay", () => {
     await expect(gateway.seen[0]!.closed).resolves.toBe(true);
   });
 
-  it("ends a stream that stops arriving with an error event, and stops the upstream", async () => {
+  // Windows: the private setup alone costs several PowerShell launches.
+  it("ends a stream that stops arriving with an error event, and stops the upstream", { timeout: 5_000, ...windowsAdmissionTimeout(30) }, async () => {
     const gateway = await upstream((response) => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write("data: {\"n\":1}\n\n"); // then nothing, connection held open
@@ -222,7 +224,7 @@ describe("Ask model relay", () => {
     expect(text.startsWith("data: {\"n\":1}\n\n")).toBe(true);
     expect(text).toContain("The AI service stopped sending its answer.");
     await expect(gateway.seen[0]!.closed).resolves.toBe(true);
-  }, 5_000);
+  });
 
   it("keeps one idempotency key across an SDK retry of the same body, and a new one for a new request", async () => {
     const root = home(), gateway = await upstream(json({}));

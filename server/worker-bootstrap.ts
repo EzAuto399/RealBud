@@ -1,9 +1,9 @@
 // Run only the reviewed upstream runtime stages. Never run its model wizard,
 // messaging gateway or desktop app installer.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { restrictNewSync, writeFileAtomic } from "./atomic.ts";
+import { mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
@@ -41,7 +41,9 @@ export function bootstrapChildRunning(home: string): boolean {
 }
 /** Shared by installers and runtime selection changes across app processes. */
 export function acquireWorkerSetupLock(home: string) {
-  mkdirSync(home, { recursive: true, mode: 0o700 });
+  // Each level it creates gets its own protected Windows descriptor, so a
+  // later private admission of this folder (runtime updates) accepts it.
+  mkdirPrivateSync(home, 0o700);
   let database: DatabaseSync;
   try {
     database = new DatabaseSync(join(home, ".realbud-bootstrap-lock.sqlite"));

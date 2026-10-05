@@ -1,6 +1,6 @@
 import { readFileSync, rmSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writePrivateJson } from './private-json.ts';
 import * as privateJson from './private-json.ts';
@@ -172,7 +172,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     await writePrivateJson(join(root, 'service-provisioning.json'), legacy);
     const originalWrite = privateJson.writePrivateJson;
     vi.spyOn(privateJson, 'writePrivateJson').mockImplementation(async (path, value, ...rest) => {
-      if (path.endsWith('/worker-model-access.json')) throw new privateJson.DiskFullError({ code: 'ENOSPC' });
+      if (basename(path) === 'worker-model-access.json') throw new privateJson.DiskFullError({ code: 'ENOSPC' });
       return originalWrite(path, value, ...rest);
     });
     const next = { ...provisioning, connector: { ...provisioning.connector, credential: `rbc_${'c'.repeat(64)}` } };

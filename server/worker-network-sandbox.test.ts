@@ -37,11 +37,12 @@ const rule = (profile: string, operation: string) => profile.match(new RegExp(`\
 const w = (root: string) => `(regex #"^${regexLiteral(root)}/")`;
 const writesOf = (profile: string) => { const from = profile.indexOf("(allow file-write* ", profile.indexOf("(deny file-write*)")); return profile.slice(from, profile.indexOf("(allow file-write* (literal")); };
 
-// RealBud ships on macOS and Windows only. These blocks assert those platforms'
-// sandbox profiles and paths (/private/tmp, /bin/sh); on Linux the product
-// correctly refuses to start an unsandboxed worker, so they are not run there.
-const UNSUPPORTED_OS = process.platform === "linux";
-describe.skipIf(UNSUPPORTED_OS)("worker sandbox profile", () => {
+// The Seatbelt profile exists on macOS only (see the module header). Its
+// blocks build real profiles from POSIX programs and paths (/bin/sh, shebang
+// scripts, /private/tmp, symlinks, 0700 modes), so they run on macOS; what
+// other platforms launch is asserted below on every host.
+const SEATBELT = process.platform === "darwin";
+describe.runIf(SEATBELT)("worker sandbox profile", () => {
   it("names only IPv4 loopback ports, deduplicated, and refuses an invalid one", () => {
     const dir = scratch("rb-profile-");
     const profile = workerSandboxProfile("/bin/sh", dir, { loopbackPorts: [4100, 4000, 4100], writable: [] });
@@ -167,7 +168,7 @@ describe.skipIf(UNSUPPORTED_OS)("worker sandbox profile", () => {
 });
 
 describe("sandboxed launch", () => {
-  it("wraps the launch on macOS with a private temp folder and leaves other platforms unchanged", () => {
+  it.runIf(SEATBELT)("wraps the launch on macOS with a private temp folder", () => {
     const profiles: string[] = [];
     const env: Record<string, string | undefined> = { PATH: "/usr/bin" };
     const wrapped = sandboxedLaunch("/bin/sh", ["-p", "property", "acp"], env, { loopbackPorts: [4000], writable: [] }, { platform: "darwin", probe: profile => { profiles.push(profile); return true; } });
@@ -181,6 +182,9 @@ describe("sandboxed launch", () => {
     expect(existsSync(env.TMPDIR!)).toBe(true);
     wrapped.release();
     expect(existsSync(env.TMPDIR!)).toBe(false);
+  });
+
+  it("leaves the launch unchanged on other platforms", () => {
     for (const platform of ["linux", "win32"] as const) {
       const other: Record<string, string | undefined> = {};
       expect(sandboxedLaunch("/synthetic/hermes", ["acp"], other, { loopbackPorts: [4000], writable: [] }, { platform, probe: () => { throw new Error("not probed"); } })).toMatchObject({ command: "/synthetic/hermes", args: ["acp"] });
@@ -188,7 +192,7 @@ describe("sandboxed launch", () => {
     }
   });
 
-  it("refuses to start rather than run unconfined when sandbox-exec is missing or rejects the profile", () => {
+  it.runIf(SEATBELT)("refuses to start rather than run unconfined when sandbox-exec is missing or rejects the profile", () => {
     const env: Record<string, string | undefined> = {};
     expect(() => sandboxedLaunch("/bin/sh", ["-c", "true"], env, { loopbackPorts: [4000], writable: [] }, { platform: "darwin", probe: () => false })).toThrow(NETWORK_ISOLATION_UNAVAILABLE);
     expect(env.TMPDIR).toBeUndefined();
@@ -199,6 +203,7 @@ describe("sandboxed launch", () => {
     const env: Record<string, string | undefined> = { PATH: dir };
     expect(() => sandboxedLaunch("/synthetic/hermes", ["acp"], env, { loopbackPorts: [], writable: [] }, { platform: "darwin", probe: () => true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
     expect(() => sandboxedLaunch("hermes", ["acp"], env, { loopbackPorts: [], writable: [] }, { platform: "darwin", probe: () => true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    if (!SEATBELT) return; // A found program goes on to build the Seatbelt profile.
     script(dir, "hermes", "#!/bin/sh\necho ok\n");
     const launch = sandboxedLaunch("hermes", ["--version"], env, { loopbackPorts: [], writable: [] }, { platform: "darwin", probe: () => true });
     cleanup.push(() => launch.release());
@@ -293,7 +298,19 @@ describe("live sandboxed children", () => {
   });
 });
 
-describe.skipIf(UNSUPPORTED_OS)("Hermes worker sandbox", () => {
+describe("Hermes worker launch off macOS", () => {
+  it("starts the program unchanged, with no Seatbelt profile or temp override", () => {
+    seedVault();
+    const root = scratch("rb-plain-home-");
+    for (const platform of ["linux", "win32"] as const) {
+      const env: Record<string, string | undefined> = { HERMES_HOME: root };
+      expect(hermesNetworkSandbox("/synthetic/hermes", ["acp"], env, [4000], "ask", { platform })).toMatchObject({ command: "/synthetic/hermes", args: ["acp"] });
+      expect(env.TMPDIR).toBeUndefined();
+    }
+  });
+});
+
+describe.runIf(SEATBELT)("Hermes worker sandbox", () => {
   const deps = { platform: "darwin" as const, probe: () => true };
 
   it("takes the Ask relay's port from this process, never from the overlay file", async () => {
@@ -312,7 +329,6 @@ describe.skipIf(UNSUPPORTED_OS)("Hermes worker sandbox", () => {
     const plain = hermesNetworkSandbox(cli, ["acp"], { HERMES_HOME: root, PATH: "/usr/bin" }, [4000], "ask", deps);
     cleanup.push(() => plain.release());
     expect(rule(plain.args[1], "network-outbound")).toEqual(['(allow network-outbound (remote ip4 "localhost:4000"))']);
-    expect(hermesNetworkSandbox("/synthetic/hermes", ["acp"], { HERMES_HOME: root }, [4000], "ask", { platform: "linux" })).toMatchObject({ command: "/synthetic/hermes", args: ["acp"] });
   });
 
   it("lets a turn write the workroom and the profile's own state, never the runtime, policy files or another seat", () => {

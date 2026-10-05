@@ -7,6 +7,7 @@ import {
   DocumentDepsError, DOCUMENT_TOOLS_NEED_REPAIR, DOCUMENT_TOOLS_READY, DOCUMENT_TOOLS_UNSUPPORTED, documentDepsLock, documentToolsStatus, ensureDocumentDeps,
   ownedRuntimeHome, parseDocumentDepsLock, repairDocumentDeps, runtimePython, selectDocumentWheels, type DocumentDepsLock, type PythonRun,
 } from "./hermes-document-deps.ts";
+import { runtimeCli } from "./hermes-paths.ts";
 import { releaseHome, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
 
 const roots: string[] = [];
@@ -163,8 +164,8 @@ describe("repairDocumentDeps", () => {
 
   it("uses the legacy owned runtime and reports a failure without throwing", async () => {
     const home = root();
-    mkdirSync(join(home, "hermes-agent", "venv", "bin"), { recursive: true });
-    writeFileSync(join(home, "hermes-agent", "venv", "bin", "hermes"), "");
+    mkdirSync(dirname(runtimeCli(home)), { recursive: true });
+    writeFileSync(runtimeCli(home), "");
     const ensure = vi.fn(async () => { throw new DocumentDepsError("Couldn’t download document tools."); });
     await expect(repairDocumentDeps(home, ensure)).resolves.toBe(`${DOCUMENT_TOOLS_NEED_REPAIR} Couldn’t download document tools.`);
     expect(ensure).toHaveBeenCalledWith(home);
