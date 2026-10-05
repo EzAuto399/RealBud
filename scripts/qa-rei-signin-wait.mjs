@@ -75,7 +75,10 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   await primeBrowserSession(context, demo.base, demo.token);
-  await context.route('**/*', route => { const origin = new URL(route.request().url()).origin; if (origin === demo.base) return route.continue(); denied.push(origin); return route.abort(); });
+  // The test restart moves the service to a new port (the app keeps a fixed one),
+  // so the previous service origin is still this office, not an outside site.
+  const ownOrigins = new Set([demo.base]);
+  await context.route('**/*', route => { const origin = new URL(route.request().url()).origin; if (origin === demo.base || ownOrigins.has(origin)) return route.continue(); denied.push(origin); return route.abort(); });
   page = await context.newPage(); page.setDefaultTimeout(30_000);
   page.on('pageerror', error => errors.push(error.message));
 
@@ -125,6 +128,7 @@ try {
   // ── 3. Restart the service mid-wait: the run is still there, waiting at sign-in ──
   await demo.stop();
   demo = await startAustinDemo({ demoRoot });
+  ownOrigins.add(demo.base);
   await lab('handover');
   await primeBrowserSession(context, demo.base, demo.token);
   now = await status();
