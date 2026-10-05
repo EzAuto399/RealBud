@@ -1,0 +1,56 @@
+name: Windows targeted tests
+
+# Fast Windows iteration on a few test files instead of the full three-shard
+# matrix. Evidence for those files only; the full CI run stays the gate.
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: Space-separated test files to run on windows-latest
+        type: string
+        required: true
+      sha:
+        description: Optional full commit SHA to test instead of the dispatched branch (A/B against main)
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    name: vitest (windows-latest, targeted)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check the requested commit
+        shell: bash
+        env:
+          SHA: ${{ inputs.sha }}
+        run: '[[ -z "$SHA" || "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha must be a full commit SHA"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compile Windows launchers for native process tests
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
+      - name: Targeted tests
+        shell: bash
+        env:
+          FILES: ${{ inputs.files }}
+          NODE_OPTIONS: --max-old-space-size=6144
+        # The list arrives through the environment, never interpolated into the
+        # script; only repository test paths are accepted.
+        run: |
+          read -r -a files <<< "$FILES"
+          for f in "${files[@]}"; do [[ "$f" =~ ^(server|electron|shared|src|scripts)/[A-Za-z0-9._/-]+\.test\.(ts|tsx|mjs)$ ]] || { echo "Refused test path: $f"; exit 1; }; done
+          pnpm exec vitest run "${files[@]}"

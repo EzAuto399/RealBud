@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+// A loaded hosted Windows runner can take well over 10 s to boot the service.
+const WINDOWS = process.platform === 'win32';
 import type { OptionCardData } from './store.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,8 +45,8 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
   async function bot(): Promise<Bot> {
     return (await api('/api/bots')).body.bots.find((row: Bot) => row.id === botId);
   }
-  async function until<T>(read: () => Promise<T | false>, label: string): Promise<T> {
-    const deadline = Date.now() + 10_000;
+  async function until<T>(read: () => Promise<T | false>, label: string, ms = 10_000): Promise<T> {
+    const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
       if (child && (child.exitCode !== null || child.signalCode)) throw new Error(`Service exited: ${logs}`);
       const result = await read();
@@ -128,9 +130,9 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
     await until(async () => {
       try { return (await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(300) })).json() as { pid?: number }).pid === child?.pid; }
       catch { return false; }
-    }, 'isolated bootstrap');
+    }, 'isolated bootstrap', WINDOWS ? 60_000 : 10_000);
     token = await readSessionToken(data);
-  }, 20_000);
+  }, WINDOWS ? 90_000 : 20_000);
   afterAll(async () => {
     await stop();
     const exited = (pid: number) => {
