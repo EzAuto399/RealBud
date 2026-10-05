@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serviceIdentity, findRunningService } from "../electron/service-instance.mjs";
 import { readServiceHandle, requestServiceStop } from "../electron/service-lifecycle.mjs";
+import { windowsKeyPrivacy } from "../electron/desk-key-custody.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultApp = path.join(root, "release", "mac-arm64", "RealBud.app", "Contents", "MacOS", "RealBud");
@@ -252,7 +253,7 @@ try {
   // disposable installation and must finish shutdown before deleting its data.
   const identity = serviceIdentity(dataDir);
   const service = readServiceHandle(dataDir, identity.instanceId);
-  if (service) await requestServiceStop(service, identity);
+  if (service) await requestServiceStop(service, identity, { dataDirectory: dataDir, verifyWindowsPrivacy: windowsKeyPrivacy });
   for (let attempt = 0; attempt < 50 && await findRunningService(identity); attempt++) await delay(100);
   if (await findRunningService(identity)) {
     succeeded = false;

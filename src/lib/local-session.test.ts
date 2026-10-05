@@ -87,6 +87,21 @@ describe("ordinary local session fetch", () => {
     await expect(session.ensureSession()).rejects.toMatchObject({ code: "local_session_required" });
   });
 
+  it("never lets a late refusal of an older token clear one accepted since", async () => {
+    const { storage } = fakeWindow();
+    session.setBrowserSessionToken(BEFORE);
+    let refuseLate!: (response: Response) => void;
+    fetchMock.mockResolvedValueOnce(json({ error: "session required" }, 401))
+      .mockImplementationOnce(() => new Promise(resolve => { refuseLate = resolve; }));
+    const pending = session.localSessionFetch("/api/tts/speak", { method: "POST" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    session.setBrowserSessionToken(AFTER);
+    refuseLate(json({ error: "session required" }, 401));
+    await pending;
+    expect(storage.get(session.BROWSER_SESSION_KEY)).toBe(AFTER);
+    expect(await session.ensureSession()).toBe(AFTER);
+  });
+
   it.each([
     [402, "Managed service expired"], [403, "Voice is not included"],
     [401, "Provider authentication failed"], [500, "Provider failed"],

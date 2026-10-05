@@ -3124,6 +3124,7 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
+let localSessionPublished = false;
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -5367,6 +5368,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
     if (method === "GET" && path === "/api/health") {
+      if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id });
     }
 
@@ -6107,11 +6109,17 @@ const askModelRelay = await startAskModelRelay({
   oplog("boot", `Ask model relay unavailable: ${error instanceof Error ? error.message : String(error)}`);
   return null;
 });
-// Publish this boot's session token to its owner before listening, so a client
-// that sees this process on /api/health can already read it. Never over HTTP.
-try { await writePrivateJson(localSessionPath(DATA_DIR), { version: 1, pid: process.pid, port: PORT, token: SESSION_TOKEN }); }
-catch (error) { oplog("boot", `Local session file could not be written: ${error instanceof Error ? error.message : String(error)}`); }
 server.listen(PORT, "127.0.0.1", () => {
+  // Publish this boot's session token to its owner only once this process owns
+  // the port (a duplicate start that loses the bind never overwrites the live
+  // service's record), and report healthy only after it is readable. Never over
+  // HTTP. A service nobody can authenticate to must not look healthy.
+  void writePrivateJson(localSessionPath(DATA_DIR), { version: 1, pid: process.pid, port: PORT, token: SESSION_TOKEN })
+    .then(() => { localSessionPublished = true; }, (error: unknown) => {
+      console.error(`Local session file could not be written (${localSessionPath(DATA_DIR)}): ${error instanceof Error ? error.message : String(error)}`);
+      oplog("boot", "Local session file could not be written; stopping so the owner can recover it.");
+      process.exit(1);
+    });
   if (!privateRestoreLocked) loops?.start();
   // An approved window that was never confirmed is still missing coverage, so a
   // restart continues the saved checkpoint under its own authority re-check. It

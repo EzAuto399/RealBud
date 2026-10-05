@@ -42,7 +42,7 @@ async function start({ holdWrite = false } = {}) {
   for (const stream of [child.stdout, child.stderr]) stream.on('data', b => { logs = (logs + b).slice(-80000); });
   let ready = false;
   for (let i = 0; i < 150; i++) { if (child.exitCode !== null || child.signalCode) break; try { if ((await (await fetch(origin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
-  assert.ok(ready, logs); token = await readSessionToken(data);
+  assert.ok(ready, logs); token = await readSessionToken(data); if (context) await primeBrowserSession(context, origin, token);
 }
 async function request(path, method = 'GET', body, expected = 200) {
   const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(35000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });

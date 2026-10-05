@@ -895,12 +895,14 @@ const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;
+  let sentSession = "";
   const unavailable = (cause?: unknown): never => {
     if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
     throw localServiceError(cause);
   };
   const call = async () => {
     const token = await ensureSession().catch(() => "");
+    sentSession = token;
     const headers = new Headers(init?.headers);
     if (/^\/api\//.test(path)) for (const [name, value] of Object.entries(serviceAdminHeaders())) headers.set(name, value);
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
@@ -932,7 +934,7 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     res = await request();
     body = await res.json().catch(() => ({}));
     // Still refused with a fresh token: a browser tab must be reconnected.
-    if (res.status === 401 && body.error === "session required") rejectLocalSession();
+    if (res.status === 401 && body.error === "session required") rejectLocalSession(sentSession);
   }
   if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
   if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();

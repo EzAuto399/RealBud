@@ -37,9 +37,11 @@ export function setBrowserSessionToken(value: string): void {
   try { window.sessionStorage.setItem(BROWSER_SESSION_KEY, value); } catch { /* memory only */ }
 }
 
-/** The service refused the token it was given even after a refresh. The desktop
- * asks main again next time; a browser tab must be reconnected by its owner. */
-export function rejectLocalSession(): void {
+/** The service refused `rejected` even after a refresh. The desktop asks main
+ * again next time; a browser tab must be reconnected by its owner. A late
+ * refusal of an older token never clears one accepted since. */
+export function rejectLocalSession(rejected: string): void {
+  if (sessionToken && rejected !== sessionToken) return;
   sessionToken = "";
   if (!desktopBridge()) try { window.sessionStorage.removeItem(BROWSER_SESSION_KEY); } catch { /* already gone */ }
   required();
@@ -78,8 +80,9 @@ export async function localSessionFetch(path: string, init: RequestInit): Promis
   const sessionRefused = async (response: Response) => response.status === 401 && (await response.clone().json().catch(() => ({}))).error === "session required";
   let response = await request();
   if (await sessionRefused(response)) {
-    response = await request(true);
-    if (await sessionRefused(response)) rejectLocalSession();
+    const retried = await ensureSession(true);
+    response = await request();
+    if (await sessionRefused(response)) rejectLocalSession(retried);
   }
   return response;
 }

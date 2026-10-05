@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 19020 + Math.floor(Math.random() * 400));
@@ -28,7 +29,6 @@ const cuaPath = join(HOME, "cua-connection.json");
 const browserFixture = join(HOME, "browser-fixture.mjs");
 writeFileSync(browserFixture, `import { existsSync } from "node:fs";
 import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server", "browser-runtime.ts")).href)};
-import { readSessionToken } from './local-session.mjs';
 browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
 browserRuntime.resumeConnection = async () => {};
 `);

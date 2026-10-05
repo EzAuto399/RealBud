@@ -14,6 +14,7 @@ import { createCompanyKernel } from '../server/company/index.ts';
 import { createPrivateVault } from '../server/private-vault.ts';
 import { serviceIdentity, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { requestServiceStop } from '../electron/service-lifecycle.mjs';
+import { windowsKeyPrivacy } from '../electron/desk-key-custody.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE || !process.env.REALBUD_DESKTOP_EXECUTABLE) throw new Error('Set PLAYWRIGHT_MODULE and REALBUD_DESKTOP_EXECUTABLE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -35,7 +36,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const alive = () => child && child.exitCode === null && child.signalCode === null;
 async function stopService() {
   if (!alive()) return;
-  await requestServiceStop(handle, identity);
+  await requestServiceStop(handle, identity, { dataDirectory: data, verifyWindowsPrivacy: windowsKeyPrivacy });
   for (let i = 0; i < 50 && alive(); i++) await delay(100);
   if (alive()) { child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(5000)]); }
   if (alive()) { child.kill('SIGKILL'); await once(child, 'exit'); }

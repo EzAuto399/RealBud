@@ -22,12 +22,13 @@ export function LocalSessionGate({ children }: { children: ReactNode }) {
   const connect = async () => {
     if (busy) return;
     setBusy(true); setError("");
+    const offered = token.trim();
     try {
-      setBrowserSessionToken(token.trim());
+      setBrowserSessionToken(offered);
       await api("/api/session", undefined, { timeoutMs: 15_000 });
       setToken(""); setConnected(true); setOpened(true);
     } catch {
-      rejectLocalSession();
+      rejectLocalSession(offered);
       setError("That token was not accepted. Check the office service is running, then copy the token again.");
     } finally { setBusy(false); }
   };

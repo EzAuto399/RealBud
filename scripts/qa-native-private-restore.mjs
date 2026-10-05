@@ -13,6 +13,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { serviceIdentity, findRunningService, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { availableServicePort, readServiceHandle, requestServiceStop } from '../electron/service-lifecycle.mjs';
+import { windowsKeyPrivacy } from '../electron/desk-key-custody.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore', '--welcome-cancel-setup'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore, --welcome-cancel-setup, or --reproduce-welcome-restore-block for expected-defect evidence only.');
@@ -531,7 +533,6 @@ import { readFileSync } from 'node:fs';
 import { WorkflowDatabase } from ${JSON.stringify(pathToFileURL(join(resources, 'server/workflow-database.js')).href)};
 import { createBillProposals } from ${JSON.stringify(pathToFileURL(join(resources, 'server/bill-proposals.js')).href)};
 import { validateSavedBillProposal } from ${JSON.stringify(pathToFileURL(join(resources, 'server/bill-proposal-validation.js')).href)};
-import { readSessionToken } from './local-session.mjs';
 const fixture = ${JSON.stringify(billFixture.proposal)};
 const retainedMail = ${JSON.stringify(billFixture.mail)};
 const database = new WorkflowDatabase({dir:process.env.REALBUD_DATA_DIR,key:Buffer.from(process.env.REALBUD_DESK_KEY,'hex')});
@@ -648,7 +649,7 @@ finally {
   // Stop only the matching service recorded in this disposable directory.
   const handle = readServiceHandle(data, identity.instanceId);
   const uncertainHandle = existsSync(join(data, 'service.json')) && !handle;
-  if (handle) { servicePids.add(handle.pid); await requestServiceStop(handle, identity); }
+  if (handle) { servicePids.add(handle.pid); await requestServiceStop(handle, identity, { dataDirectory: data, verifyWindowsPrivacy: windowsKeyPrivacy }); }
   await browser?.close().catch(() => {}); inspector?.close(); await stopChild(nativeChild); await stopChild(seedChild); await stopChild(sourceChild); await stopChild(targetChild);
   let cleanup = { capturedServicePids: [...servicePids], serviceProcessesExited: false, scratchRemoved: false };
   try {

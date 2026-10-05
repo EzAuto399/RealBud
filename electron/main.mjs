@@ -633,10 +633,16 @@ function officeAppUrl() {
 async function officeSessionToken() {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
-  // Packaged windows load the service itself; development goes through Vite,
-  // which proxies to whichever port this installation's service holds.
-  const running = app.isPackaged ? await probeService(SERVER_PORT) : await findRunningService(identity);
-  if (!running || !isOurService(running.body, identity)) return null;
+  if (app.isPackaged) {
+    const running = await probeService(SERVER_PORT);
+    if (!running || !isOurService(running.body, identity)) return null;
+    return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+  }
+  // Development: Vite proxies to `pnpm dev:server`, which serves no static UI
+  // (so isOurService does not apply). Same installation id, pid and port still.
+  const running = await probeService(Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799));
+  const body = running?.body;
+  if (!body || typeof body !== "object" || body.app !== "realbud" || body.instanceId !== identity.instanceId) return null;
   return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
 }
 ipcMain.handle("local-session:get", async (event) => {
