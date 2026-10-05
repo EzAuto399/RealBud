@@ -14,6 +14,7 @@ import {
   accountMarkerShown,
   legacyBrowserGrant,
   UNUSUAL_NAME,
+  withShownPagePath,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
@@ -765,5 +766,20 @@ describe("a control whose label is not its whole name", () => {
     const odd = draft(page(pay.replace('"Pay now"', '"Pay now" url= extra'), "https://portal.example/bills/1"));
     expect(odd).toMatchObject({ unusualName: true, summary: expect.stringContaining(UNUSUAL_NAME) });
     expect(draft(page(pay.replace('"Pay now"', '"Pay now" url= other'), "https://portal.example/bills/1")).fingerprint).not.toBe(odd.fingerprint);
+  });
+});
+
+// Security review of b7fceb50 (sensitive-data-exposure): the thread's event log keeps shownPath wherever a card shows
+// the record path (approvalPath). Only a request with a web address in params.url changes.
+describe("an approval request as the event log keeps it", () => {
+  it("masks the record path in params.url, the summary and the card's page, and leaves everything else alone", () => {
+    const url = "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement";
+    const opened = { type: "request.opened", tool: "browser_navigate", params: { url, label: "x" }, summary: "Open portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement in this job's borrowed tab.",
+      browserApproval: { site: "portal.example", page: "portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement", control: "Delete" } };
+    expect(withShownPagePath(opened)).toEqual({ ...opened, params: { url: "https://portal.example/owners/:id/:id/statement", label: "x" },
+      summary: "Open portal.example/owners/:id/:id/statement in this job's borrowed tab.", browserApproval: { ...opened.browserApproval, page: "portal.example/owners/:id/:id/statement" } });
+    for (const other of [{ type: "request.resolved", params: { url } }, { type: "request.opened", params: { url: "file:///synthetic/jane.doe" } }, { type: "request.opened", summary: url }]) {
+      expect(withShownPagePath(other)).toBe(other);
+    }
   });
 });

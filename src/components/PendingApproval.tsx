@@ -51,6 +51,14 @@ export function pendingApprovals(messages: Message[]): Pending[] {
     }));
 }
 
+/** What a call says aloud for an approval. Speech is made off this computer, and a browser step's card can show the
+ * record it acts on, so a fenced or browser approval is announced without its details: the card on screen has them. */
+export function spokenApproval(pending: Pending, name: string): string {
+  return pending.fence || pending.browserApproval !== undefined
+    ? "Approval needed in RealBud. Check the card on your screen, then say allow or deny."
+    : `${name} wants to ${pending.tool}. ${pending.detail}. Should I allow it?`;
+}
+
 function payloadText(pending: Pending): string {
   return [pending.detail, pending.held, pending.allowKey, pending.message.card?.title].filter(Boolean).join("\n");
 }

@@ -12,6 +12,12 @@ import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { PortalEvidenceStore } from "./portal-path-overrides.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
+import { browserApprovalCardFrom } from "./browser-approval-card.ts";
+import { buildHandoffPayload } from "./channel-handoff.ts";
+import { EVENTS_DIR, ensureDirs } from "./config.ts";
+import { EventBus } from "./harness/bus.ts";
+import type { Store } from "./store.ts";
+import { websiteRunReceipt } from "./website-work-adapters.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -810,5 +816,60 @@ describe("an approval is for the record and control its card showed", () => {
     const [, params, summary, , projection] = f.approve.mock.calls.at(-1)!;
     expect(summary).toContain("unusual text"); expect(projection).toMatchObject({ approvalPolicy: "once" });
     expect(JSON.stringify(params)).not.toContain("extra");
+  });
+});
+
+// Security review of b7fceb50 (sensitive-data-exposure): the record path a card shows (approvalPath) may hold a name, an
+// email or a record id. It stays on this computer's card and the private approval record; the thread's event log keeps
+// shownPath, and the model, evidence, the phone relay and website receipts never see it.
+describe("a card's record path stays on the local card and approval record", () => {
+  const RECORD = "https://portal.example/tenants/jane.doe@example.com/TEN-2026-000048213/remove";
+  const STATEMENT = "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement";
+  const PRIVATE = /jane\.doe|000048213|SYNTHETIC/;
+
+  it("shows it on the card and keeps it in the record, and nowhere else", async () => {
+    const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
+    const root = privateTempRoot(join(tmpdir(), "rb-broker-record-path-")); cleanup.push(() => removeFixture(root));
+    const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
+    const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click"] }, evidence });
+    f.url(`${RECORD}?session=SYNTHETIC-SESSION`); f.page('Are you sure you want to delete Fictional Tenant?\n@e1 button "Delete"'); await f.ready();
+    // Denied, then approved and pressed, then a page opened: what each returns to the model is checked below.
+    f.approve.mockResolvedValueOnce(false);
+    const results = [await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })];
+    await f.request("browser_read", { tab_id: 1 });
+    results.push(await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }));
+    await f.request("browser_read", { tab_id: 1 });
+    results.push(await f.request("browser_navigate", { tab_id: 1, url: `${STATEMENT}?session=SYNTHETIC-NAV` }));
+    expect(results.map(result => result.isError === true)).toEqual([true, false, false]);
+
+    // This computer's card and the private approval record show the record.
+    const calls = f.approve.mock.calls as unknown as Array<[string, BrowserJson, string, AbortSignal, { fence: unknown; approvalPolicy?: string }]>;
+    const cards = calls.map(([tool, params, summary, , projection]) => ({ tool, params, summary, projection, card: browserApprovalCardFrom(params) }));
+    const deleted = cards.find(card => card.card)!; const opened = cards.find(card => card.tool === "browser_navigate")!;
+    expect(deleted.params.url).toBe(RECORD); expect(deleted.card!.page).toBe(RECORD.replace("https://", ""));
+    expect(opened.summary).toBe(`Open ${STATEMENT.replace("https://", "")} in this job's borrowed tab.`);
+    expect((await f.approvals.list()).map(row => row.url)).toEqual([RECORD, RECORD]);
+    expect(JSON.stringify(cards)).not.toMatch(/SYNTHETIC/);
+
+    // The thread's event log (each card as the host emits it) keeps shownPath.
+    ensureDirs();
+    const bus = new EventBus();
+    for (const { tool, params, summary, projection, card } of cards) {
+      bus.publish({ eventId: `ev-${tool}`, provider: "hermesAgent", threadId: "thread-record-path", createdAt: new Date(0).toISOString(), type: "request.opened",
+        requestType: "permission", tool, params, summary, fence: projection.fence as never, ...(card ? { browserApproval: card, approvalPolicy: "once" as const } : {}) });
+    }
+    const log = await readFile(join(EVENTS_DIR, "thread-record-path.ndjson"), "utf8");
+    expect(log).not.toMatch(PRIVATE);
+    expect(log).toContain("portal.example/tenants/:id/:id/remove"); expect(log).toContain("Open portal.example/owners/:id/:id/statement in this job's borrowed tab.");
+
+    // What the model reads, the run's evidence, the phone relay and a website receipt never hold it.
+    const thread = [{ id: "card", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: opened.summary, options: ["Allow", "Deny"], browserApproval: deleted.card } },
+      { id: "reply", role: "bot", kind: "text", text: "The tenant was removed.", at: 2 }];
+    const phone = { productBud: () => ({ threadId: "bud", busy: false }), activePath: () => thread } as unknown as Store;
+    const relayed = [buildHandoffPayload(phone, { mode: "summary" }), buildHandoffPayload(phone, { mode: "result" })];
+    expect(relayed.every(item => item.ok)).toBe(true);
+    const kept = JSON.stringify({ results, seen, steps: await evidence.steps("grant-fictional-1"), evidence: await readFile(join(root, "evidence.json"), "utf8"), relayed,
+      receipt: websiteRunReceipt({ id: "run-1", status: "awaiting-approval", detail: opened.summary } as never) });
+    expect(kept).not.toMatch(PRIVATE);
   });
 });

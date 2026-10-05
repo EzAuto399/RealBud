@@ -148,6 +148,20 @@ export function shownPath(address: string | URL): string {
     return /[@?#&=;%+\p{C}]/u.test(segment) || /^[\da-f-]{16,}$/i.test(segment) || segment.length >= 16 && /\d/.test(segment) ? ":id" : segment;
   }).join("/");
 }
+/** An approval request (request.opened) as the thread's event log keeps it (server/harness/bus.ts): the record path its
+ * local card shows (approvalPath, in params.url, the navigate summary and a consequential card's page) as shownPath.
+ * The broker writes params.url as origin + approvalPath, so the summary's host + approvalPath is replaced exactly. */
+export function withShownPagePath<T>(event: T): T {
+  const e = event as { type?: unknown; params?: unknown; summary?: unknown; browserApproval?: unknown };
+  const params = e.params && typeof e.params === "object" ? e.params as Record<string, unknown> : null;
+  if (e.type !== "request.opened" || typeof params?.url !== "string") return event;
+  let page: URL; try { page = new URL(params.url); } catch { return event; }
+  if (page.protocol !== "https:" && page.protocol !== "http:") return event;
+  const shown = shownPath(page), real = params.url.slice(page.origin.length);
+  const card = e.browserApproval && typeof e.browserApproval === "object" && "page" in e.browserApproval ? { browserApproval: { ...e.browserApproval, page: `${page.hostname}${shown}` } } : {};
+  const summary = typeof e.summary === "string" && real ? { summary: e.summary.split(`${page.hostname}${real}`).join(`${page.hostname}${shown}`) } : {};
+  return { ...event, params: { ...params, url: `${page.origin}${shown}` }, ...summary, ...card };
+}
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const hostOf = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, "");
 function siteFor(grant: BrowserTaskGrant, url: URL): string {

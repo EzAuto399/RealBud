@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bot, Message } from '@/state/store';
 import { HERMES_MEMORY_APPROVAL, type MemoryApprovalReview } from '@shared/approval-policy';
-import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, type Pending } from './PendingApproval';
+import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, spokenApproval, type Pending } from './PendingApproval';
 import { BROWSER_ACCOUNT_CONFIRM_TOOL } from '@shared/browser-task';
 
 const fixture = vi.hoisted(() => ({ dispatch: vi.fn() }));
@@ -110,5 +110,19 @@ describe('the account a browser task works in', () => {
     expect(rendered.map(button => button.text)).toEqual(['Continue in this account', 'Stop', 'Stop this turn']);
     rendered[0]!.onClick(); expect(fixture.dispatch).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'allow', scope: 'once' }));
     rendered[1]!.onClick(); expect(fixture.dispatch).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'deny' }));
+  });
+});
+
+// Security review of b7fceb50 (sensitive-data-exposure): speech is made off this computer, and a browser step's card
+// can show the record it acts on, so a call announces such an approval without its details.
+describe('an approval read aloud on a call', () => {
+  it('names no page, record or detail for a fenced or browser approval', () => {
+    const detail = 'Open portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement in this job\'s borrowed tab.';
+    const fence = { surface: 'portal-read' as const, origin: 'portal.example', ruleOffer: null };
+    for (const extra of [{ fence }, { browserApproval: null }]) {
+      const spoken = spokenApproval(pending({ tool: 'browser_navigate', detail, ...extra }), 'Bud');
+      expect(spoken).toBe('Approval needed in RealBud. Check the card on your screen, then say allow or deny.');
+    }
+    expect(spokenApproval(pending({ tool: 'Bash', detail: 'git status', approvalPolicy: undefined, memoryReview: undefined }), 'Bud')).toBe('Bud wants to Bash. git status. Should I allow it?');
   });
 });

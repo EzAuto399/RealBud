@@ -122,8 +122,9 @@ const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "obje
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
 const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
 const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
-/** An address as an approval card's params (and the event log) carry it: origin and the path with its record ids, so the
- * person sees which record a step acts on; never the query or a token-like segment (approvalPath). Evidence keeps shownPath. */
+/** An address as an approval card's params carry it: origin and the path with its record ids, so the person sees which
+ * record a step acts on; never the query or a token-like segment (approvalPath). The event log (withShownPagePath),
+ * evidence and provenance keep shownPath. */
 const shownUrl = (url: string) => `${new URL(url).origin}${approvalPath(url)}`;
 type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
 /** The type the bytes must show for a download to become a readable workroom attachment. */

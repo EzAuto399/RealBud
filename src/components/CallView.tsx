@@ -27,7 +27,7 @@ import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { MausAvatar } from "./Avatar";
-import { pendingApprovals } from "./PendingApproval";
+import { pendingApprovals, spokenApproval } from "./PendingApproval";
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -384,7 +384,7 @@ function Call({ bot }: { bot: Bot }) {
     if (approval && askedApproval.current !== approval.requestId && phase !== "speaking") {
       askedApproval.current = approval.requestId;
       spokenIds.current.add(approval.message.id);
-      void sayThenListen(`${bot.name} wants to ${approval.tool}. ${approval.detail}. Should I allow it?`);
+      void sayThenListen(spokenApproval(approval, bot.name));
       return;
     }
     if (

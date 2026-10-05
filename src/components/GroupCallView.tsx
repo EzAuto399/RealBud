@@ -17,7 +17,7 @@ import { useStore, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MausAvatar } from "./Avatar";
 import { CallTargetButton } from "./CallView";
-import { pendingApprovals } from "./PendingApproval";
+import { pendingApprovals, spokenApproval } from "./PendingApproval";
 
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
@@ -296,11 +296,7 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
       askedApproval.current = { requestId: approval.requestId, member };
       spokenIds.current.add(approval.message.id);
       const name = member?.name ?? approval.message.from?.name ?? "A room member";
-      enqueueSpeech(
-        name + " wants to " + approval.tool + ". " + approval.detail + ". Should I allow it?",
-        member,
-        true,
-      );
+      enqueueSpeech(spokenApproval(approval, name), member, true);
     }
 
     if (question?.card?.requestId && askedQuestion.current?.requestId !== question.card.requestId) {
