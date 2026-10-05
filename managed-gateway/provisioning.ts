@@ -26,7 +26,8 @@
 import { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { serialized } from './serialized.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { canonical, exact, GatewayError, id, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import { connectorRegistry, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
@@ -51,20 +52,109 @@ export function physicalPath(path: string): string {
   return join(realpathSync(ancestor), ...tail);
 }
 
+/** File operations behind every durable publication here; tests inject faults
+ * (ENOSPC, a kill) at each boundary. */
+export interface DurableIo {
+  openSync: typeof openSync; writeSync: (fd: number, data: Buffer, offset: number) => number; fsyncSync: typeof fsyncSync;
+  closeSync: typeof closeSync; renameSync: typeof renameSync; linkSync: typeof linkSync; unlinkSync: typeof unlinkSync;
+}
+export const nodeIo: DurableIo = { openSync, writeSync: (fd, data, offset) => writeSync(fd, data, offset), fsyncSync, closeSync, renameSync, linkSync, unlinkSync };
+
+/** Write `data` to a fresh temp file beside `final`, fsync it, then publish it:
+ * `replace` renames over the old file; otherwise a hard link creates the name
+ * only if it is free (EEXIST otherwise). Either way the final name only ever
+ * holds complete, fsynced bytes, and the directory entry is fsynced too. */
+function publishFile(io: DurableIo, final: string, data: string, replace: boolean, temporary = join(dirname(final), `.${basename(final)}.${randomBytes(8).toString('hex')}.tmp`)) {
+  const bytes = Buffer.from(data, 'utf8');
+  let fd: number | undefined = io.openSync(temporary, 'wx', 0o600), published = false;
+  try {
+    for (let offset = 0; offset < bytes.length;) offset += io.writeSync(fd, bytes, offset);
+    io.fsyncSync(fd); io.closeSync(fd); fd = undefined;
+    if (replace) io.renameSync(temporary, final); else io.linkSync(temporary, final);
+    published = true;
+  } finally {
+    if (fd !== undefined) try { io.closeSync(fd); } catch { /* retain original error */ }
+    if (!published || !replace) try { io.unlinkSync(temporary); } catch { /* reconciled at next start */ }
+  }
+  if (process.platform === 'win32') return; // a directory cannot be opened for fsync there
+  try {
+    const directory = io.openSync(dirname(final), 'r');
+    try { io.fsyncSync(directory); } finally { io.closeSync(directory); }
+  } catch (error) {
+    // A new name this call created but could not make durable is withdrawn, so
+    // the caller's failure path (e.g. deleting a project whose key it could not
+    // store) never leaves a value behind it.
+    if (!replace) try { io.unlinkSync(final); } catch { /* retain original error */ }
+    throw error;
+  }
+}
+/** Reconciliation: a temp file is never a published value. One left by a killed
+ * writer (it may hold a secret) is removed, never promoted. */
+function removeOrphanTemps(directory: string, prefix: string) {
+  let names: string[]; try { names = readdirSync(directory); } catch { return; }
+  for (const name of names) if (name.startsWith(`.${prefix}`) && name.endsWith('.tmp')) rmSync(join(directory, name), { force: true });
+}
+
+interface LockOwner { version: 1; host: string; pid: number; token: string }
+function readLockOwner(lock: string): { raw: string; owner?: LockOwner } | undefined {
+  let raw: string;
+  try { raw = readFileSync(lock, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  try {
+    const owner = JSON.parse(raw);
+    if (owner?.version === 1 && typeof owner.host === 'string' && Number.isSafeInteger(owner.pid) && owner.pid > 0 && typeof owner.token === 'string') return { raw, owner };
+  } catch { /* unknown owner */ }
+  return { raw };
+}
+/** Proved dead only on this host: our own pid (updateRegistry is synchronous, so
+ * no holder in this process can be mid-change, and a restarted container often
+ * gets the dead owner's pid back), or a pid the kernel says does not exist.
+ * Another host, an unreadable lock or any live process (EPERM included) is never
+ * proved dead. ponytail: a dead owner's pid reused by an unrelated live process
+ * keeps the lock held for an operator; compare process start times if that is
+ * ever seen in practice. */
+function ownerProvedDead(owner: LockOwner | undefined): boolean {
+  if (!owner || owner.host !== hostname()) return false;
+  if (owner.pid === process.pid) return true;
+  try { process.kill(owner.pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+}
+/** Take the registry lock, recording who holds it. A lock whose owner is proved
+ * dead is moved aside and compared byte-for-byte before it is discarded, so a
+ * live owner's lock is never removed; anything else refuses. */
+function acquireRegistryLock(io: DurableIo, lock: string): string {
+  const token = randomBytes(16).toString('hex');
+  const record = JSON.stringify({ version: 1, host: hostname(), pid: process.pid, token } satisfies LockOwner);
+  for (let attempt = 0; ; attempt++) {
+    try { publishFile(io, lock, record, false, `${lock}.${token}.owner`); return token; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 1) throw error; }
+    const held = readLockOwner(lock);
+    if (!held) continue;
+    if (!ownerProvedDead(held.owner)) throw new Error('Registry is locked by a live or unknown writer.');
+    const aside = `${lock}.${token}.dead`;
+    try { io.renameSync(lock, aside); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+    if (readFileSync(aside, 'utf8') !== held.raw) {
+      // Another recoverer replaced the dead lock first: put its live lock back.
+      try { io.linkSync(aside, lock); } finally { io.unlinkSync(aside); }
+      throw new Error('Registry is locked by a live or unknown writer.');
+    }
+    io.unlinkSync(aside);
+  }
+}
+
 /** Read → change → publish the device registry under an exclusive lock file.
  * `work` proposes the next registry; the proposal is validated (duplicate ids and
  * duplicate credential hashes are rejected here) before the optional `commit`
  * callback runs, so a caller may write its own private artifact — an issued
  * client credential — only once admission is certain and always before the
  * registry publishes its hash. A failed change leaves the previous registry
- * byte-for-byte intact. */
-export function updateRegistry<T>(registry: string, work: (devices: ConnectorDevice[]) => { devices: ConnectorDevice[]; commit?: () => T }): T {
+ * byte-for-byte intact; a killed writer leaves the previous or the next registry,
+ * never a torn one, and its lock is recovered once its owner is proved dead. */
+export function updateRegistry<T>(registry: string, work: (devices: ConnectorDevice[]) => { devices: ConnectorDevice[]; commit?: () => T }, io: DurableIo = nodeIo): T {
   if (typeof registry !== 'string' || !isAbsolute(registry)) throw new Error('Use an explicit absolute registry path.');
   const path = physicalPath(registry);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const lock = `${path}.lock`, lockFd = openSync(lock, 'wx', 0o600);
-  let temporary: string | undefined;
+  const lock = `${path}.lock`, token = acquireRegistryLock(io, lock);
   try {
+    removeOrphanTemps(dirname(path), `${basename(path)}.`);
     let devices: ConnectorDevice[] = [];
     if (existsSync(path)) {
       const bytes = readFileSync(path);
@@ -74,13 +164,11 @@ export function updateRegistry<T>(registry: string, work: (devices: ConnectorDev
     const outcome = work(devices);
     const next = validateConnectorDevices({ version: 1, devices: outcome.devices });
     const result = outcome.commit ? outcome.commit() : (undefined as T);
-    temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
-    writeFileSync(temporary, JSON.stringify({ version: 1, devices: next }, null, 2), { flag: 'wx', mode: 0o600 });
-    renameSync(temporary, path); temporary = undefined;
+    publishFile(io, path, JSON.stringify({ version: 1, devices: next }, null, 2), true);
     return result;
   } finally {
-    if (temporary) try { unlinkSync(temporary); } catch { /* best effort */ }
-    closeSync(lockFd); unlinkSync(lock);
+    // Never remove a lock this call does not hold.
+    if (readLockOwner(lock)?.owner?.token === token) io.unlinkSync(lock);
   }
 }
 
@@ -109,7 +197,7 @@ export function provisionConnector({ registry, deviceFile, clientOutput, endpoin
     // Failed admission leaves an unusable artifact, never a lost secret.
     commit: () => {
       mkdirSync(dirname(clientPath), { recursive: true, mode: 0o700 });
-      writeFileSync(clientPath, JSON.stringify({ version: 1, endpoint: url.origin, credential: credential.token, profile: device.profile }, null, 2), { flag: 'wx', mode: 0o600 });
+      publishFile(nodeIo, clientPath, JSON.stringify({ version: 1, endpoint: url.origin, credential: credential.token, profile: device.profile }, null, 2), false);
       return { deviceId: device.id as string, companyId: device.companyId as string, ...reportedPaths };
     },
   }));
@@ -138,13 +226,16 @@ export interface SecretStore {
  * the service runs next to an operator today; it inherits the trust of whoever
  * owns the filesystem, which is not a substitute for managed custody.
  */
-export function fileSecretStore(directory: string): SecretStore {
+export function fileSecretStore(directory: string, io: DurableIo = nodeIo): SecretStore {
   requireThat(typeof directory === 'string' && isAbsolute(directory), 'gateway_secrets_dir_invalid', 503);
   const path = (name: string) => { requireThat(SECRET_NAME.test(name), 'invalid_connector_secret_reference'); return join(directory, name); };
   const ensure = () => {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') chmodSync(directory, 0o700);
   };
+  // Startup reconciliation: an interrupted write leaves only a temp file, never
+  // an admitted secret.
+  removeOrphanTemps(directory, 'REALBUD_COMPOSIO_PROJECT_');
   return {
     read(name) {
       const file = path(name);
@@ -153,14 +244,19 @@ export function fileSecretStore(directory: string): SecretStore {
       // A loose mode means the value may already have been read by someone else.
       requireThat(stats.isFile() && (process.platform === 'win32' || (stats.mode & 0o077) === 0), 'gateway_secret_permissions', 503);
       requireThat(stats.size <= 8192, 'gateway_secret_unreadable', 503);
-      const value = readFileSync(file, 'utf8').trim();
-      return value || undefined;
+      const raw = readFileSync(file, 'utf8');
+      // Every write ends in a newline; a file without one was cut short (a torn
+      // write from before publication was atomic) and is never admitted.
+      requireThat(raw.endsWith('\n'), 'gateway_secret_unreadable', 503);
+      return raw.trim() || undefined;
     },
     write(name, value) {
       requireThat(typeof value === 'string' && value.trim().length > 0 && value.length <= 8192, 'gateway_secret_unwritable', 503);
       ensure();
-      // `wx`: never silently replace a secret an installation may already use.
-      writeFileSync(path(name), `${value.trim()}\n`, { flag: 'wx', mode: 0o600 });
+      // Never silently replace a secret an installation may already use (EEXIST),
+      // and never expose a partly written one: the name appears only once the
+      // complete value is fsynced.
+      publishFile(io, path(name), `${value.trim()}\n`, false);
     },
     remove(name) { rmSync(path(name), { force: true }); },
   };
