@@ -18,6 +18,7 @@ import {
   approvalPath,
   approvalUrl,
   pageOrigin,
+  pageOriginsIn,
   withPageOrigin,
   type BrowserObservation,
   type BrowserPortalControls,
@@ -802,6 +803,20 @@ describe("a page as every sink keeps it", () => {
       expect(pageOrigin(address, base), address).not.toMatch(PRIVATE);
       if (card) expect(approvalUrl(new URL(address, base)), address).toBe(card);
     }
+  });
+
+  it("keeps every page address written in a browser tool call's text as its origin, and other words as written", () => {
+    for (const [address, base, origin] of TRICKY) {
+      if (!base && origin !== UNKNOWN_PAGE) expect(pageOriginsIn(`Open ${address} now`), address).toBe(`Open ${origin} now`);
+    }
+    for (const [text, kept] of [
+      ["portal.example/tenants/jane.doe@example.com?token=SYNTHETIC-TOKEN", "https://portal.example"],
+      ["portal.example:8443/owners/jane-smith", "https://portal.example:8443"],
+      ["//portal.example/t/42", "https://portal.example"],
+      ['{"url": "https://portal.example/t/42?token=SYNTHETIC-TOKEN", "reason": "Sign in to read the levy notice"}', '{"url": "https://portal.example", "reason": "Sign in to read the levy notice"}'],
+      ["file:///synthetic/jane-smith", UNKNOWN_PAGE],
+    ]) expect(pageOriginsIn(text), text).toBe(kept);
+    for (const text of ["Sign in to read the levy notice", "REI Cloud", "rei-cloud", "lease.pdf", "@e3", "v1.2/beta"]) expect(pageOriginsIn(text)).toBe(text);
   });
 
   it("logs an approval request with its page's origin only, whatever the address or summary", () => {

@@ -42,6 +42,7 @@ import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts
 import { portalMapForSites } from "../../portal-recipe-task.ts";
 import { portalRecipeControls } from "../../portal-recipe-runner.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
+import { pageOriginsIn } from "../../browser-authority.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
@@ -168,6 +169,24 @@ type AcpHttpMcpServer = {
   headers: Array<{ name: string; value: string }>;
 };
 type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
+
+/** A call to RealBud's work browser or sign-in server, by the name Hermes ACP puts first in a tool call's title:
+ * mcp__<server>__<tool>, or mcp_<server>_<tool> in older releases ("sign-in" is written sign_in). */
+const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})_`, "i");
+const pageToolCall = (title: unknown): boolean => typeof title === "string" && PAGE_TOOL.test(title);
+/** Such a call as the private native log keeps it: every page address in its title and model-written arguments
+ * (rawInput, and a start's content, which is the same arguments as text) is pageOrigin; a result and every other message
+ * are unchanged. The log is a debugging tee only (server/drivers/native.ts): nothing recovers or replays from it. */
+function withPageToolOrigins(message: any): any {
+  const key = message?.params?.update ? "update" : message?.params?.toolCall ? "toolCall" : null;
+  const call = key ? message.params[key] : null;
+  if (!call || typeof call !== "object" || !pageToolCall(call.title)) return message;
+  const origins = (value: unknown): unknown => typeof value === "string" ? pageOriginsIn(value)
+    : Array.isArray(value) ? value.map(origins)
+      : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([name, child]) => [name, origins(child)])) : value;
+  const args = ["title", "rawInput", ...(call.sessionUpdate === "tool_call_update" ? [] : ["content"])].filter(name => name in call);
+  return { ...message, params: { ...message.params, [key!]: { ...call, ...Object.fromEntries(args.map(name => [name, origins(call[name])])) } } };
+}
 
 /** Hermes' own browser and credential-vault tools (`browser_navigate`,
  * `browser_vault_fill`, …), named by the leading tool name Hermes ACP puts in a
@@ -813,15 +832,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
               break;
             }
-            case "tool_call":
+            case "tool_call": {
               run.sawTool = true;
               run.answerText = "";
+              const title = String(update.rawInput?.command ?? update.title ?? "tool");
               emit({
                 ...eventBase(run),
                 type: "item.started",
                 itemType: "tool",
                 itemId: update.toolCallId,
-                title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
+                // The event log and the Work activity line keep a browser call's pages as their origin; the
+                // fingerprint (a digest) still tells two pages apart for the repeat watchdog.
+                title: (pageToolCall(update.title) ? pageOriginsIn(title) : title).slice(0, 80),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
@@ -831,6 +853,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               run.toolCount += 1;
               if (wrapUpPoint && run.toolCount >= wrapUpPoint.afterTools) wrapUp(run, "tools");
               break;
+            }
             case "tool_call_update":
               if (update.status === "completed" || update.status === "failed") {
                 emit({
@@ -860,7 +883,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: message });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: withPageToolOrigins(message) });
             if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
               const pending = rpcPending.get(message.id);
               if (pending) {

@@ -14,6 +14,7 @@
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
 //   FAKE_ACP_USAGE_META  report usage in the legacy `_meta` instead of ACP `usage`
+//   FAKE_ACP_UPDATES  a JSON array of session/update payloads streamed as each prompt starts (any mode)
 //   FAKE_ACP_DUMP   path to write {argv, env, mcpServers} as JSON, so a test
 //                   can assert argv shape (agent/stdio flags), env hygiene,
 //                   and the session/new mcpServers list
@@ -256,6 +257,7 @@ function handle(msg: any) {
       }
       promptCount += 1;
       dumpState();
+      for (const update of JSON.parse(process.env.FAKE_ACP_UPDATES ?? "[]")) out({ jsonrpc: "2.0", method: "session/update", params: { update } });
       if (mode === "wrap-up" || mode === "wrap-up-refuse") {
         const calls = Number(process.env.FAKE_ACP_TOOL_CALLS ?? "3");
         for (let i = 1; i <= calls; i++) {
