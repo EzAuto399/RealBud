@@ -7,7 +7,7 @@ import { defaultDeskSections, defaultShellLayout } from '@shared/workspace-tabs'
 vi.hoisted(() => { vi.stubGlobal('window', {}); });
 const store = vi.hoisted(() => ({ state: { connected: true, desk: null as unknown, loops: [] as unknown[] } }));
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: store.state, dispatch: vi.fn() }) }));
-import { clampPanelWidth, deskRunStatus, nextLoopLine, withDeskSection, withShellPanel } from './shell-layout';
+import { clampPanelWidth, deskRunStatus, nextLoop, nextLoopLine, withDeskSection, withShellPanel } from './shell-layout';
 import { tabKeyTarget, AreaTabs } from './AreaTabs';
 import { parseShellBrowser } from './shell-status';
 import { StatusBar } from './StatusBar';
@@ -30,6 +30,8 @@ describe('desktop shell facts', () => {
     const loop = (fields: Record<string, unknown>) => ({ id: 'x', name: 'Morning arrears', available: true, enabled: true, nextRunAt: now + HOUR, ...fields }) as never;
     expect(nextLoopLine([loop({ enabled: false }), loop({ timezonePaused: true }), loop({ nextRunAt: null })], now)).toBe('No loop scheduled');
     expect(nextLoopLine([loop({ name: 'Owner letter', nextRunAt: now + 2 * HOUR }), loop({})], now)).toMatch(/^Next: Morning arrears /);
+    expect(nextLoop([loop({ id: 'owner-letter', nextRunAt: now + 2 * HOUR }), loop({ id: 'morning-arrears' })], now)?.id).toBe('morning-arrears');
+    expect(nextLoop([loop({ enabled: false })], now)).toBeNull();
   });
   it('keeps approval and recovery surfaces visible whatever the caller asks', () => {
     expect(withDeskSection(defaultDeskSections(), 'queue', false).find(section => section.id === 'queue')?.visible).toBe(true);
@@ -66,6 +68,11 @@ describe('desktop shell markup', () => {
     expect(running).toContain('Browser task running · Fictional work profile');
     expect(running).toContain('Stop browser task');
     expect(running).toContain('Spend 12.5% of budget');
+    // Facts with somewhere to go are buttons; the connection state is only a fact.
+    expect(running).toMatch(/<button[^>]*title="Open Desk tasks"[^>]*>.*Sample book/);
+    expect(running).toMatch(/<button[^>]*title="Open Schedule"[^>]*>No loop scheduled<\/button>/);
+    expect(running).toMatch(/<button[^>]*title="Open AI usage in Workspace"[^>]*>Spend 12.5% of budget<\/button>/);
+    expect(running).not.toMatch(/<button[^>]*>[^<]*<span[^>]*><\/span>Connected/);
   });
   it('offers Hide on ordinary cards and no Hide on locked ones', () => {
     const ordinary = renderToStaticMarkup(createElement(CardMenu, { label: 'Morning brief', locked: false, shown: true }));

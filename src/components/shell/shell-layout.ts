@@ -10,6 +10,12 @@ import type { Loop } from "@/lib/routines";
 export const ARRANGE_DESK_EVENT = "realbud:arrange-desk";
 export const openArrangeDesk = () => window.dispatchEvent(new Event(ARRANGE_DESK_EVENT));
 export const LAYOUT_CONFLICT = "This card changed — open it again";
+/** Opens Schedule on one loop's detail drawer: Schedule reads `#job-<id>` once mounted
+ *  (or on hashchange when already open), then clears it. */
+export function openScheduleLoop(loopId: string, showSchedule: () => void) {
+  location.hash = `job-${loopId}`;
+  showSchedule();
+}
 
 export const deskSectionLocked = (id: DeskSectionId) => LOCKED_DESK_SECTIONS.includes(id);
 export const shellPanelLocked = (id: ShellPanelId) => LOCKED_SHELL_PANELS.includes(id);
@@ -48,10 +54,13 @@ export function deskRunStatus(desk: DeskSnapshot | null, now = Date.now()): { la
 }
 
 /** The soonest enabled loop that is actually scheduled; a paused clock is not a next run. */
-export function nextLoopLine(loops: readonly Loop[], now = Date.now()): string {
-  const next = loops
+export function nextLoop(loops: readonly Loop[], now = Date.now()): Loop | null {
+  return loops
     .filter(loop => loop.available && loop.enabled && !loop.timezonePaused && typeof loop.nextRunAt === "number" && loop.nextRunAt >= now - 60_000)
-    .sort((a, b) => a.nextRunAt! - b.nextRunAt!)[0];
+    .sort((a, b) => a.nextRunAt! - b.nextRunAt!)[0] ?? null;
+}
+export function nextLoopLine(loops: readonly Loop[], now = Date.now()): string {
+  const next = nextLoop(loops, now);
   if (!next) return "No loop scheduled";
   const at = new Date(next.nextRunAt!);
   const sameDay = at.toDateString() === new Date(now).toDateString();

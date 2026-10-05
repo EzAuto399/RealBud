@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { openDeskCase, useDeskViewState } from "@/lib/desk-view-state";
+import { openDeskCase, openDeskQueueFilter, useDeskViewState } from "@/lib/desk-view-state";
 import { buildDeskQueue, type DeskQueueItem, type QueueFilter } from "@/lib/desk-queue";
 import { useStore } from "@/state/store";
 
@@ -21,6 +21,7 @@ export function useDeskTabSlot() {
 export function useDeskNav() {
   const { state, dispatch } = useStore();
   const [mode, setMode] = useDeskViewState("mode");
+  const [hermios, setHermios] = useDeskViewState("hermios");
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
   const [filter, setFilter] = useDeskViewState("filter");
   const [, setQuery] = useDeskViewState("query");
@@ -31,23 +32,24 @@ export function useDeskNav() {
   const rows = useMemo<DeskQueueItem[]>(() => (desk ? buildDeskQueue(desk) : []), [desk]);
   const onDesk = state.activeView === "desk";
   const show = () => { if (!onDesk) dispatch({ type: "showDesk" }); };
-  const tab: DeskTabId | null = !onDesk ? null : mode === "book" ? "properties" : otherWork === "bills" ? "bills" : mode === "cases" && !otherWork ? "today" : null;
+  const tab: DeskTabId | null = !onDesk || hermios ? null : mode === "book" ? "properties" : otherWork === "bills" ? "bills" : mode === "cases" && !otherWork ? "today" : null;
   return {
-    rows, tab, filter: onDesk && mode === "cases" && !otherWork && !taskScope ? filter : null, scopeIds: onDesk && mode === "cases" ? taskScope?.ids ?? null : null,
+    rows, tab, filter: onDesk && mode === "cases" && !hermios && !otherWork && !taskScope ? filter : null, scopeIds: onDesk && mode === "cases" ? taskScope?.ids ?? null : null,
     /** The case Desk shows: the chosen row, else the first in Desk's default order. */
     selected: rows.find(row => row.id === selectedId) ?? rows.find(row => row.bucket === "now") ?? null,
     openTab(id: DeskTabId) {
+      setHermios(false);
       if (id === "properties") { setOtherWork(null); setMode("book"); }
       else if (id === "bills") { setMode("cases"); setOtherWork("bills"); }
       else { setOtherWork(null); setMode("cases"); }
       show();
     },
     openFilter(next: QueueFilter) {
-      setOtherWork(null); setMode("cases"); setTaskScope(null); setQuery(""); setCaseKind("all"); setFilter(next);
+      openDeskQueueFilter(next);
       show();
     },
     openProperty(id: string, address: string) {
-      setOtherWork(null); setMode("cases"); setFilter("all"); setCaseKind("all"); setQuery("");
+      setHermios(false); setOtherWork(null); setMode("cases"); setFilter("all"); setCaseKind("all"); setQuery("");
       setTaskScope({ label: address, ids: [id] });
       setSelectedId(rows.find(row => row.propertyId === id)?.id ?? null);
       show();
@@ -55,7 +57,12 @@ export function useDeskNav() {
     openCase(id: string) {
       openDeskCase(id);
       show();
-      window.requestAnimationFrame(() => document.getElementById("desk-case-column")?.scrollIntoView({ block: "nearest" }));
+      // Move focus to the case so the press visibly lands somewhere, even when it was already selected.
+      window.requestAnimationFrame(() => {
+        const column = document.getElementById("desk-case-column");
+        column?.scrollIntoView({ block: "nearest" });
+        column?.focus({ preventScroll: true });
+      });
     },
   };
 }

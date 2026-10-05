@@ -616,7 +616,7 @@ export function Composer({
           </div>
         </div>
       )}
-      <div className={cn("relative mx-auto max-w-[900px]", productAsk && "ask-composer-frame")}>
+      <div className={cn("relative mx-auto", productAsk ? "ask-composer-frame" : "max-w-[900px]")}>
         {readiness}
         {queued && (
           <div role={queuedHeld ? "status" : undefined} className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
@@ -800,7 +800,7 @@ export function Composer({
         )}
         <textarea
           ref={inputRef}
-          rows={productAsk ? 2 : 1}
+          rows={1}
           value={text}
           onChange={(e) => {
             setText(e.target.value);

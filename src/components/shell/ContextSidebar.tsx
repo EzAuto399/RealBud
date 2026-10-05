@@ -2,10 +2,12 @@ import { Bookmark, Building2, CalendarDays, MessageSquare } from "lucide-react";
 import type { ReactNode } from "react";
 import { queueCounts, type QueueFilter } from "@/lib/desk-queue";
 import { useWorkspaceTabs, WORKSPACE_VIEW_LABELS } from "@/lib/workspace-tabs";
+import { useWorkspaceViewState } from "@/lib/workspace-view-state";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { isEmptyOfficeBook } from "../desk/OfficeBookNotice";
 import { useDeskNav } from "./use-desk-nav";
-import { openArrangeDesk } from "./shell-layout";
+import { openArrangeDesk, openScheduleLoop } from "./shell-layout";
 
 const PROPERTY_LIMIT = 8;
 const GROUPS: Array<[QueueFilter, string]> = [["now", "Needs you"], ["next", "Next"], ["waiting", "Waiting"], ["done", "Done today"], ["all", "All tasks"]];
@@ -22,53 +24,69 @@ const Group = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="rb-context-group"><p className="rb-context-label">{label}</p>{children}</div>
 );
 
+const Note = ({ children }: { children: ReactNode }) => <p className="px-3 py-1.5 text-[13px] text-ink-muted">{children}</p>;
+
 function DeskContext() {
   const { state } = useStore();
   const nav = useDeskNav();
   const counts = queueCounts(nav.rows);
-  const properties = state.desk?.properties ?? [];
+  const desk = state.desk;
+  const properties = desk?.properties ?? [];
+  // No tasks: one line that says why (and where to start) instead of five filters that show nothing.
+  const queue = nav.rows.length ? GROUPS.map(([filter, label]) => {
+    const count = filter === "all" ? nav.rows.length : counts[filter];
+    return <Item key={filter} label={label} current={nav.filter === filter} onClick={() => nav.openFilter(filter)}><span className="rb-context-count">{count}</span></Item>;
+  }) : !desk ? <Note>Loading the book…</Note>
+    : isEmptyOfficeBook(desk) ? <Item label="No tasks yet" detail="Add properties to start" current={nav.tab === "properties"} onClick={() => nav.openTab("properties")} />
+    : desk.lastRunAt == null ? <Note>No tasks yet. Check tasks on Desk to fill the queue.</Note>
+    : <Note>No tasks right now.</Note>;
   return (<>
-    <Group label="Queue">
-      {GROUPS.map(([filter, label]) => {
-        const count = filter === "all" ? nav.rows.length : counts[filter];
-        return <Item key={filter} label={label} current={nav.filter === filter} onClick={() => nav.openFilter(filter)}>{count ? <span className="rb-context-count">{count}</span> : null}</Item>;
-      })}
-    </Group>
-    <Group label="Properties">
-      {properties.length ? properties.slice(0, PROPERTY_LIMIT).map(property => (
-        <Item key={property.id} label={property.address.split(",")[0]?.trim() || property.address} detail={property.tenantName || undefined}
-          current={nav.scopeIds?.length === 1 && nav.scopeIds[0] === property.id} onClick={() => nav.openProperty(property.id, property.address)} />
-      )) : <p className="px-3 py-1.5 text-[13px] text-ink-muted">{state.desk ? "No properties on the book yet." : "Loading the book…"}</p>}
-      {properties.length ? <Item label={`All ${properties.length} properties`} current={nav.tab === "properties"} onClick={() => nav.openTab("properties")} /> : null}
-    </Group>
+    <Group label="Queue">{queue}</Group>
+    {properties.length ? (
+      <Group label="Properties">
+        {properties.slice(0, PROPERTY_LIMIT).map(property => (
+          <Item key={property.id} label={property.address.split(",")[0]?.trim() || property.address} detail={property.tenantName || undefined}
+            current={nav.scopeIds?.length === 1 && nav.scopeIds[0] === property.id} onClick={() => nav.openProperty(property.id, property.address)} />
+        ))}
+        <Item label={`All ${properties.length} properties`} current={nav.tab === "properties"} onClick={() => nav.openTab("properties")} />
+      </Group>
+    ) : null}
     <button type="button" className="rb-context-item rb-context-arrange" onClick={openArrangeDesk}>Arrange Desk</button>
   </>);
 }
+
+/** Lands in the Work composer once the thread has rendered. */
+const focusComposer = () => window.requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tell Bud what outcome you need"]')?.focus());
 
 function WorkContext() {
   const { state, dispatch } = useStore();
   const bud = state.bots.find(bot => bot.id === "bud" || bot.name === "Bud") ?? state.bots[0];
   const tasks = bud?.tasks ?? [];
+  const open = (threadId?: string) => {
+    if (bud && threadId && threadId !== bud.threadId) dispatch({ type: "switchTask", botId: bud.id, threadId });
+    dispatch({ type: "showAsk" });
+    focusComposer();
+  };
   return (
     <Group label="Threads">
-      {!bud ? <p className="px-3 py-1.5 text-[13px] text-ink-muted">{state.connected ? "Bud is starting…" : "Connecting…"}</p>
+      {!bud ? <Note>{state.connected ? "Bud is starting…" : "Connecting…"}</Note>
         : tasks.length > 1 ? tasks.map(task => (
-          <Item key={task.threadId} label={task.title || "Conversation"} current={task.threadId === bud.threadId && state.activeView === "ask"}
-            onClick={() => { if (task.threadId !== bud.threadId) dispatch({ type: "switchTask", botId: bud.id, threadId: task.threadId }); dispatch({ type: "showAsk" }); }} />
-        )) : <Item label="Today with Bud" current={state.activeView === "ask"} onClick={() => dispatch({ type: "showAsk" })} />}
+          <Item key={task.threadId} label={task.title || "Conversation"} current={task.threadId === bud.threadId && state.activeView === "ask"} onClick={() => open(task.threadId)} />
+        )) : <Item label="Today with Bud" detail="Write to Bud" current={state.activeView === "ask"} onClick={() => open()} />}
     </Group>
   );
 }
 
 function ScheduleContext() {
   const { state, dispatch } = useStore();
+  const [selected] = useWorkspaceViewState("scheduleSelected");
   const loops = state.loops.filter(loop => loop.available);
   return (
     <Group label="Loops">
       {loops.length ? loops.map(loop => (
         <Item key={loop.id} label={loop.name} detail={!loop.enabled ? "Off" : loop.timezonePaused ? "Paused" : loop.nextRunAt ? `Next ${new Date(loop.nextRunAt).toLocaleString("en-AU", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "On"}
-          onClick={() => dispatch({ type: "showRoutines" })} />
-      )) : <p className="px-3 py-1.5 text-[13px] text-ink-muted">{state.activityLoad.routines === "loading" ? "Loading loops…" : "No loops available yet."}</p>}
+          current={state.activeView === "schedule" && selected === `loop:${loop.id}`} onClick={() => openScheduleLoop(loop.id, () => dispatch({ type: "showRoutines" }))} />
+      )) : <Note>{state.activityLoad.routines === "loading" ? "Loading loops…" : "No loops available yet."}</Note>}
     </Group>
   );
 }

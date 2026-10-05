@@ -90,6 +90,10 @@
 .rb-panel-row:focus-visible, .rb-panel-link:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 1px; }
 .rb-panel-link { display: inline-flex; align-items: center; min-height: 44px; margin-right: 12px; color: var(--color-agency); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
 .rb-panel-more { padding: 4px 16px 12px; }
+.rb-panel-count { min-height: 44px; padding: 6px 4px; border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-sheet); color: var(--color-ink); cursor: pointer; }
+.rb-panel-count:hover { background: var(--color-raised); }
+.rb-panel-count[aria-current="true"] { border-color: var(--color-agency); background: var(--color-selected); }
+.rb-panel-count:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 1px; }
 
 /* ⋯ menus on cards and panels. */
 .rb-card-menu-trigger { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; color: var(--color-ink-muted); }
@@ -109,6 +113,10 @@
 .rb-status-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .rb-status-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; }
 .rb-status-spend { margin-left: auto; }
+/* Facts that open their screen: full bar height (30px, above the 24px minimum target), quiet until hovered. */
+.rb-status-link { min-height: 30px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.rb-status-link:hover { background: var(--color-raised); color: var(--color-ink); }
+.rb-status-link:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
 .rb-status-stop { min-height: 44px; margin-left: 6px; padding: 0 10px; border: 1px solid var(--color-danger); border-radius: 4px; color: var(--color-danger); font-size: 12px; font-weight: 600; background: var(--color-sheet); }
 .rb-status-stop:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
 

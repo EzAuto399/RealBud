@@ -387,7 +387,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
     handoffChecked.current = true;
     if (job) {
       if (jobsLoading || jobsError) return;
-      const row = rowByKey.get(`job:${job[1]}`);
+      // `#job-<id>` names a saved job or a loop (the shell's loop list and status bar).
+      const row = rowByKey.get(`job:${job[1]}`) ?? rows.find((item) => item.loop?.id === job[1]);
       if (row) openRow(row);
       else setError("That job is no longer available. Choose a saved job below.");
     } else if (hash === "bud-job-builder") {
@@ -556,11 +557,13 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
-      <header className="shrink-0 px-4 pb-3 pt-4 min-[720px]:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
+      <header className="shrink-0 px-4 py-1.5 min-[720px]:px-6">
+        {/* One thin line: title, what needs attention (only when something does), actions. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5">
             <CalendarDays size={21} className="text-agency" aria-hidden />
             <h1 className="pm-screen-title text-ink">Schedule</h1>
+            {attentionCount ? <p className="text-[14px] text-hold">{attentionCount} {attentionCount === 1 ? "job needs" : "jobs need"} your attention. Choose a job below to see what it needs.</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => changeDrawer({ mode: "archive" })} className="pm-control inline-flex items-center gap-1.5 rounded px-3 text-[13px] text-ink-muted hover:bg-raised hover:text-ink">
@@ -571,9 +574,6 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
             </button>
           </div>
         </div>
-        <p className="mt-2 text-[14px] leading-relaxed text-ink-muted">
-          {attentionCount ? `${attentionCount} ${attentionCount === 1 ? "job needs" : "jobs need"} your attention. Choose a job below to see what it needs.` : "Review your jobs, check results and choose what happens next."}
-        </p>
         {recovery ? (
           <div role="alert" className="mt-3">
             <RecoveryNotice>{RECOVERY_NOTICE}</RecoveryNotice>

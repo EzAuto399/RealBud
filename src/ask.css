@@ -17,10 +17,10 @@
   --color-field-border: #81897c;
   --color-hold: #825a22;
 }
-.ask-header { min-height: 94px; padding: 20px 24px; gap: 20px; background: var(--color-sheet); }
+/* One thin line: title, status chip and the header actions. */
+.ask-header { min-height: 56px; padding: 6px 24px; gap: 16px; background: var(--color-sheet); }
 .ask-header-title { min-width: 0; }
-.ask-header-title h1 { font-size: 28px; letter-spacing: -.02em; line-height: 1.2; }
-.ask-header-description { margin-top: 5px; font-size: 15px; color: var(--color-ink-muted); }
+.ask-header-title h1 { font-size: 22px; letter-spacing: -.02em; line-height: 1.2; }
 .ask-status { display: inline-flex; align-items: center; gap: 6px; border-width: 1px; border-radius: 20px; padding: 3px 9px; font-size: 13px; font-weight: 500; max-width: 300px; }
 .ask-status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .ask-eyebrow { font-size: 13px; font-weight: 500; color: var(--color-ink-muted); }
@@ -170,11 +170,18 @@
 .ask-next-trailing .pm-control { padding-inline: 8px; }
 .ask-next-actions[open] > summary svg { transform: rotate(180deg); }
 .ask-next-body { max-height: min(32vh, 260px); overflow-y: auto; max-width: none; padding-bottom: 6px; }
-.ask-composer { padding: 6px 24px 12px; flex-shrink: 0; max-height: 52%; overflow-y: auto; }
+.ask-composer { padding: 4px 24px 8px; flex-shrink: 0; max-height: 52%; overflow-y: auto; }
 .ask-context-layout[data-context-open] .ask-composer { max-height: max(180px, 52%); }
-.ask-composer-frame { border: 1px solid var(--color-field-border); border-radius: 8px; background: var(--color-sheet); }
-.ask-composer-input { flex-wrap: wrap; align-items: center; padding: 12px 14px 10px; border: 0; background: transparent; }
-.ask-composer-input textarea { order: -1; flex: 1 0 100%; min-height: 56px; max-height: 144px; padding: 2px 2px 6px; font-size: 15px; line-height: 1.65; border-radius: 2px; }
+/* As wide as the conversation column it sits under; a light hairline that turns agency on focus. */
+.ask-composer-frame { max-width: 1040px; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-sheet); }
+.ask-composer-input { flex-wrap: wrap; align-items: center; padding: 6px 8px 6px 12px; border: 0; background: transparent; }
+.ask-composer-input textarea { order: -1; flex: 1 0 100%; min-height: 44px; max-height: 144px; padding: 10px 2px; font-size: 15px; line-height: 1.6; border-radius: 2px; }
+/* Wide enough: the message and its controls share one row; the textarea still grows upward. */
+@media (min-width: 960px) {
+  .ask-composer-input { flex-wrap: nowrap; align-items: flex-end; }
+  .ask-composer-input textarea { order: 0; flex: 1 1 auto; min-width: 0; }
+  .ask-composer-input .ask-add-control { order: -1; margin-right: 0; }
+}
 .ask-composer-input textarea:focus-visible { outline: none; }
 .ask-composer-frame:has(textarea:focus-visible) { border-color: var(--color-agency); box-shadow: inset 0 0 0 1px var(--color-agency); }
 .ask-add-control { margin-right: auto; }
@@ -194,7 +201,7 @@
   opacity: 1 !important;
   cursor: not-allowed;
 }
-.ask-composer-help { display: flex; justify-content: space-between; gap: 8px; max-width: 900px; margin: 9px auto 0; font-size: 13px; line-height: 1.5; color: var(--color-ink-muted); }
+.ask-composer-help { display: flex; justify-content: space-between; gap: 8px; max-width: 1040px; margin: 4px auto 0; font-size: 12px; line-height: 1.5; color: var(--color-ink-muted); }
 .ask-composer-help > span { display: flex; align-items: center; gap: 5px; }
 .ask-composer-help svg { flex-shrink: 0; }
 .ask-keyboard-hint { white-space: nowrap; }
@@ -305,9 +312,7 @@
 @media (max-width: 800px) {
   .ask-request { max-width: 94%; padding-left: 12px; padding-right: 12px; }
   .ask-message .ask-text-button, .ask-message-editor button { min-height: 44px; min-width: 44px; }
-  .ask-header { padding: 16px; gap: 12px; }
-  .ask-header-title h1 { font-size: 28px; }
-  .ask-header-description { font-size: 15px; }
+  .ask-header { padding: 6px 16px; gap: 12px; }
   .ask-status { font-size: 13px; max-width: 200px; }
   .ask-context-trigger { gap: 5px; padding: 6px; font-size: 14px; }
   .ask-thread { padding: 0 16px; }
@@ -322,10 +327,10 @@
   .ask-task-arrow { display: none; }
 }
 @media (max-height: 760px) {
-  .ask-header { min-height: 78px; padding-top: 12px; padding-bottom: 12px; }
+  .ask-header { min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
   .ask-thread-content { gap: 16px; padding-bottom: 16px; }
   .ask-composer { padding-bottom: 10px; }
-  .ask-composer-input textarea { min-height: 42px; }
+  .ask-composer-input textarea { min-height: 44px; }
   .ask-readiness { padding-top: 10px; padding-bottom: 10px; }
   .ask-welcome-mark { padding-top: 0; }
   .ask-welcome-description { margin-bottom: 8px; }

@@ -61,13 +61,14 @@ function TodayPanel() {
   const { state } = useStore();
   const nav = useDeskNav();
   const counts = queueCounts(nav.rows);
-  // Only what main does not already say: the queue counts and the next loop.
+  // Only what main does not already say: the queue counts (each opens that status) and the next loop.
   return (<>
-    <dl className="grid grid-cols-3 gap-2 text-center">
-      {([["Needs you", counts.now], ["Next", counts.next], ["Waiting", counts.waiting]] as const).map(([label, value]) => (
-        <div key={label} className="rounded border border-line px-1 py-1.5"><dt className="text-[11px] text-ink-muted">{label}</dt><dd className="text-[16px] font-semibold tabular-nums">{value}</dd></div>
+    {!nav.rows.length ? <p className="text-ink-muted">No tasks yet.</p> : <div className="grid grid-cols-3 gap-2 text-center">
+      {([["now", "Needs you"], ["next", "Next"], ["waiting", "Waiting"]] as const).map(([filter, label]) => (
+        <button key={filter} type="button" aria-label={`${label}: ${counts[filter]}`} aria-current={nav.filter === filter ? "true" : undefined} onClick={() => nav.openFilter(filter)}
+          className="rb-panel-count"><span className="block text-[11px] text-ink-muted">{label}</span><span className="block text-[16px] font-semibold tabular-nums">{counts[filter]}</span></button>
       ))}
-    </dl>
+    </div>}
     <p className="mt-2 text-[12px] text-ink-muted">{nextLoopLine(state.loops)}</p>
   </>);
 }

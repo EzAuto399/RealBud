@@ -1425,7 +1425,6 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
               </span>
               {bot.busy && !askWaitingForYou && <Loader2 size={14} className="animate-spin text-ink-muted" />}
             </div>
-            <p className="ask-header-description">Your work with Bud.</p>
           </div>
         ) : (
         <button

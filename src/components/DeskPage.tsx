@@ -98,8 +98,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const [ready, setReady] = useState(state.desk != null);
   const [mode, setDeskMode] = useDeskViewState("mode");
   // Hermios is a Desk tab beside Tasks, not a Desk mode: choosing any mode
-  // leaves it, and a fresh Desk opens on Tasks.
-  const [hermiosOpen, setHermiosOpen] = useState(false);
+  // (here or from the shell's queue shortcuts) leaves it, and a fresh Desk opens on Tasks.
+  const [hermiosOpen, setHermiosOpen] = useDeskViewState("hermios");
+  useEffect(() => () => setHermiosOpen(false), []);
   // Other work replaces the task area while open. Opened surfaces stay mounted
   // (hidden) so their unsaved drafts and request identities survive switching.
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
@@ -610,7 +611,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             reminders={<DeskRemindersDisclosure>{toggle => <RemindersPanel headerAction={toggle} />}</DeskRemindersDisclosure>}
           />
         </div>
-        <div id="desk-case-column" className="desk-case-column" data-empty={!selected ? "true" : undefined} inert={drawerOpen}>
+        <div id="desk-case-column" tabIndex={-1} className="desk-case-column" data-empty={!selected ? "true" : undefined} inert={drawerOpen}>
           <DeskCase
             key={selected?.id ?? "empty"}
             edits={caseEdits}
@@ -977,6 +978,15 @@ const QUEUE_STATUSES: Array<[QueueFilter, string]> = [
   ["all", "All"],
 ];
 
+/** What an empty status says; "now" has its own message with an Open Waiting shortcut. */
+const QUEUE_EMPTY: Record<QueueFilter, string> = {
+  now: "Nothing needs you right now.",
+  next: "Nothing is up next.",
+  waiting: "Nothing is waiting on someone else.",
+  done: "Nothing done today yet.",
+  all: "No tasks yet.",
+};
+
 function QueuePane({
   scope,
   onClearScope,
@@ -1105,7 +1115,7 @@ function QueuePane({
             <p className="px-3 py-4 text-[13px] text-ink-muted">No property tasks yet. Add properties to start your queue.</p>
           ) : filter === "now" ? (
             <div className="space-y-3 px-3 py-4 text-[13px] text-ink-muted">
-              <p>Nothing needs you right now.</p>
+              <p>{QUEUE_EMPTY.now}</p>
               {counts.waiting > 0 ? (
                 <button
                   type="button"
@@ -1117,7 +1127,7 @@ function QueuePane({
               ) : null}
             </div>
           ) : (
-            <p className="px-3 py-4 text-[13px] text-ink-muted">No cases with this status. Choose another status above.</p>
+            <p className="px-3 py-4 text-[13px] text-ink-muted">{QUEUE_EMPTY[filter]}</p>
           )
         ) : (
           pageRows.map((row) => (
