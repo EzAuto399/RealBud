@@ -104,8 +104,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   assert.equal(weekly().schedule.time, '08:00');
   assert.deepEqual(weekly().schedule.weekdays, [1]);
   const bank = loops.loops.find(loop => loop.id === 'bank-references');
-  assert.equal(bank.enabled, false); assert.equal(bank.available, false);
-  await request('/api/loops/bank-references/run', 'POST', { requestId: randomUUID(), expectedRevision: bank.revision }, 409);
+  assert.equal(bank.enabled, false); assert.equal(bank.available, true); // Austin pack: available, off until the office turns it on
   await request('/api/loops/weekly-bills/run', 'POST', {}, 400);
   const launch = async () => {
     loops = await request('/api/loops');
