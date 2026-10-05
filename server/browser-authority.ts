@@ -974,6 +974,8 @@ const OUTCOMES: readonly BrowserApprovalOutcome[] = ["not-dispatched", "dispatch
 /** Outcomes that release the same action: never pressed, or a person checked the site. Everything else is held. */
 const SETTLED: ReadonlySet<BrowserApprovalOutcome> = new Set(["not-dispatched", "confirmed", "not-done"]);
 const held = (row: BrowserApprovalRecord) => !SETTLED.has(row.outcome);
+/** A pressed step whose result no person has recorded yet. */
+export const browserApprovalHeld = held;
 const MAX_RECORDS = 500;
 const MAX_BYTES = 4_000_000;
 const RECOVERY = "Browser approval history needs recovery. Approval-gated browser steps are paused. Check disk space and file access, then restart RealBud.";

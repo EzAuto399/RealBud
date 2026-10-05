@@ -32,6 +32,7 @@ import { REDBARK_CONNECTOR } from './redbark-connection.ts';
 import { REDBARK_LABEL, REDBARK_MCP_URL } from '../shared/redbark-connection.ts';
 import { setBankProvider } from './bank-provider.ts';
 import { browserSignInRoute, onSignInSettled, openForSignIn } from "./browser-sign-in.ts";
+import { recoveryRoute } from "./recovery-holds.ts";
 import { hermiosCrmScope } from './hermios-crm-broker.ts';
 import { personUrls } from './web-research-broker.ts';
 import { HERMIOS_CONNECTION_API, HERMIOS_OAUTH_CALLBACK_PATH } from '../shared/hermios-connection.ts';
@@ -4526,6 +4527,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     { const signIn = browserSignInRoute(path, method, url.searchParams); if (signIn) return json(res, signIn.status, signIn.body); }
+    { const held = await recoveryRoute(path, method, req.headers["content-type"], () => readBody(req)); if (held) return json(res, held.status, held.body); }
     if (path === "/api/browser" && method === "GET") return json(res, 200, await browserRuntime.status());
     if (path.startsWith("/api/browser/") && method === "POST") {
       const body = await readBody(req);
