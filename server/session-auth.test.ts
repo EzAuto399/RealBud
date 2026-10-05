@@ -79,17 +79,32 @@ describe("Ask mutation session boundary", () => {
     expect(sessionOk(req, 8799)).toMatchObject({ ok: false, status: 403 });
   });
 
-  it("preserves existing read-only task views, public health, and internal token routes", () => {
-    for (const method of ["GET", "HEAD", "OPTIONS"]) {
-      for (const path of ["/api/bots", "/api/bots/bud", "/api/bots/bud/tasks", "/api/threads/thread-1"]) {
-        expect(needsSession(path, method)).toBe(false);
+  it("is deny-by-default: only exact independently authenticated routes are exempt", () => {
+    for (const method of ["GET", "HEAD", "OPTIONS", "POST"]) {
+      for (const path of ["/api/bots", "/api/bots/bud", "/api/bots/bud/tasks", "/api/threads/thread-1", "/api/bots-lookalike", "/api/never-existed", "/api/internal/anything"]) {
+        expect(needsSession(path, method), `${method} ${path}`).toBe(true);
       }
     }
-    expect(needsSession("/api/bots")).toBe(false);
     expect(needsSession("/api/health", "GET")).toBe(false);
+    expect(needsSession("/api/health", "POST")).toBe(true);
     expect(needsSession("/api/session", "GET")).toBe(true);
+    expect(needsSession("/api/internal/agents", "GET")).toBe(false);
+    expect(needsSession("/api/internal/agents", "POST")).toBe(true);
     expect(needsSession("/api/internal/ask-bot", "POST")).toBe(false);
-    expect(needsSession("/api/bots-lookalike", "POST")).toBe(false);
+    expect(needsSession("/api/internal/ask-bot", "GET")).toBe(true);
+    // Browser OAuth returns carry only their single-use state.
+    expect(needsSession("/api/hermios/oauth/callback", "GET")).toBe(false);
+    expect(needsSession("/api/connectors/redbark/oauth/callback", "GET")).toBe(false);
+    expect(needsSession("/api/connectors/redbark/oauth/callback", "POST")).toBe(true);
+    expect(needsSession("/assets/index.js", "GET")).toBe(false);
+  });
+
+  it("accepts a token in the URL only for the event stream", () => {
+    const at = (url: string, method = "GET") => sessionOk({ url, method, headers: { host: "127.0.0.1:8799" } } as unknown as IncomingMessage, 8799);
+    const query = `session=${SESSION_TOKEN}`;
+    expect(at(`/api/events?${query}`)).toEqual({ ok: true });
+    for (const url of [`/api/desk?${query}`, `/api/session?${query}`, `/api/events/other?${query}`]) expect(at(url), url).toMatchObject({ ok: false, status: 401 });
+    expect(at(`/api/events?${query}`, "POST")).toMatchObject({ ok: false, status: 401 });
   });
 
   it("keeps connection settings and observations protected independently of method", () => {
@@ -132,7 +147,7 @@ it.each(['/api/bill-register', '/api/bill-evidence', '/api/bill-occurrences', '/
     expect(sessionOk(req, 8799)).toMatchObject({ ok: false, status: 403 });
     req.headers.origin = 'http://127.0.0.1:8799'; req.headers['x-realbud-session'] = 'stale-session';
     expect(sessionOk(req, 8799)).toMatchObject({ ok: false, status: 401 });
-    expect(needsSession(`${path}-lookalike`, 'GET')).toBe(false);
+    expect(needsSession(`${path}-lookalike`, 'GET')).toBe(true);
   });
 
 it('protects the browser link start, status and cancel under the office-link prefix', () => {

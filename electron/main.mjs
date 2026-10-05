@@ -4,7 +4,7 @@ import { findBusyService, findRunningService, isOurService, probeService, servic
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess, WebContentsView } from "electron";
 import { registerHermiosView } from "./hermios-view.mjs";
-import { guardOfficeWindow, openExternalHttps, trustedOfficeSender } from "./external-links.mjs";
+import { guardedIpc, guardOfficeWindow, openExternalHttps, trustedDisplayRequest, trustedOfficePermission, trustedOfficeSender } from "./external-links.mjs";
 import { localSessionFor } from "../shared/local-session.mjs";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
@@ -40,6 +40,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
+// Every native IPC channel answers only the office window's own main frame on
+// the office origin; an off-origin page or subframe keeping the preload gets
+// nothing. Browser permissions follow the same rule.
+const officeWindowContents = (contents) => BrowserWindow.fromWebContents(contents)?.webContents ?? null;
+const trustedOfficeEvent = (event) => trustedOfficeSender(event, officeAppUrl(), officeWindowContents);
+const officeIpc = guardedIpc(ipcMain, trustedOfficeEvent);
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
 // Electron otherwise presents the development binary as "Electron" in the
@@ -497,7 +503,7 @@ function createWindow() {
 
 // "This Mac" screen preview — served from the main process so the Screen
 // Recording permission prompt attributes to the app, never the server
-ipcMain.handle("screen:frame", async () => {
+officeIpc.handle("screen:frame", async () => {
   if (process.platform !== "darwin") return null;
   const sources = await desktopCapturer.getSources({
     types: ["screen"],
@@ -523,7 +529,7 @@ ipcMain.handle("screen:frame", async () => {
 // Copy the engine command, then open a blank terminal. Renderer-controlled
 // text must never become a process argument: the user reviews and pastes it.
 // Returns false when the renderer should show the clipboard fallback.
-ipcMain.handle("engine:open-terminal", async (_event, command) => {
+officeIpc.handle("engine:open-terminal", async (_event, command) => {
   if (typeof command !== "string" || !command.trim()) return false;
   clipboard.writeText(command);
   return openBlankTerminal();
@@ -532,16 +538,16 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
 // Server-issued connection links arrive after an async broker call, so they
 // cannot rely on a browser popup's user-gesture timing. Keep the bridge
 // narrow: only HTTPS links can leave the app, the same rule as the window's.
-ipcMain.handle("external:open", (_event, rawUrl) => openExternalHttps(shell, rawUrl));
+officeIpc.handle("external:open", (_event, rawUrl) => openExternalHttps(shell, rawUrl));
 
 // ---- Hermios view ------------------------------------------------------------
 // The office CRM in a sandboxed view the person signs in to themselves: its own
 // "persist:hermios" partition, no preload, an https allowlist, and IPC accepted
 // only from this window's own page. All of it lives in hermios-view.mjs.
-registerHermiosView({ ipcMain, BrowserWindow, WebContentsView, session, shell }, { log: slog });
+registerHermiosView({ ipcMain: officeIpc, BrowserWindow, WebContentsView, session, shell }, { log: slog });
 // ---- end Hermios view --------------------------------------------------------
 
-ipcMain.handle("perm:status", () => {
+officeIpc.handle("perm:status", () => {
   if (process.platform === "darwin" || process.platform === "win32") {
     return {
       mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
@@ -549,7 +555,7 @@ ipcMain.handle("perm:status", () => {
   }
   return { mic: "unsupported" };
 });
-ipcMain.handle("perm:request-mic", async () => {
+officeIpc.handle("perm:request-mic", async () => {
   if (process.platform === "darwin") {
     try {
       return await systemPreferences.askForMediaAccess("microphone");
@@ -567,7 +573,7 @@ ipcMain.handle("perm:request-mic", async () => {
 });
 
 // Denied permissions only reopen from System Settings / Windows Settings.
-ipcMain.handle("perm:open-settings", async (_event, pane) => {
+officeIpc.handle("perm:open-settings", async (_event, pane) => {
   const candidates = privacySettingsUrls(process.platform, pane);
   if (!candidates.length) return false;
   const { execFile } = await import("node:child_process");
@@ -599,7 +605,7 @@ ipcMain.handle("perm:open-settings", async (_event, pane) => {
   return false;
 });
 
-ipcMain.handle("speech:start", (event, options) => {
+officeIpc.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
   if (!speechSupported()) {
@@ -608,14 +614,14 @@ ipcMain.handle("speech:start", (event, options) => {
   }
   startSpeech(win, options);
 });
-ipcMain.handle("speech:stop", () => {
+officeIpc.handle("speech:stop", () => {
   if (speechSupported()) stopSpeech();
 });
-ipcMain.handle("speech:finish", () => {
+officeIpc.handle("speech:finish", () => {
   if (speechSupported()) finishSpeech();
 });
 
-ipcMain.handle("desktop:capabilities", async () =>
+officeIpc.handle("desktop:capabilities", async () =>
   desktopCapabilities({
     platform: process.platform,
     env: process.env,
@@ -645,9 +651,10 @@ async function officeSessionToken() {
   if (!body || typeof body !== "object" || body.app !== "realbud" || body.instanceId !== identity.instanceId) return null;
   return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
 }
-ipcMain.handle("local-session:get", async (event) => {
-  const trusted = () => trustedOfficeSender(event, officeAppUrl(), sender => BrowserWindow.fromWebContents(sender)?.webContents ?? null);
-  if (!trusted()) throw new Error("This page cannot use the office session.");
+officeIpc.handle("local-session:get", async (event) => {
+  // The wrapper checked the sender; check again after the file read, since the
+  // page can navigate while it runs.
+  const trusted = () => trustedOfficeEvent(event);
   const token = await officeSessionToken();
   // The page can navigate while the file is read; check it again.
   if (!token || !trusted()) throw new Error("The office service is unavailable.");
@@ -686,8 +693,8 @@ async function officeServiceStatus() {
   };
 }
 
-ipcMain.handle("service:status", officeServiceStatus);
-ipcMain.handle("service:retry", async () => {
+officeIpc.handle("service:status", officeServiceStatus);
+officeIpc.handle("service:retry", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   serviceStopRequested = false;
   const before = await findRunningService(serviceIdentity(realbudDataDir()));
@@ -704,7 +711,7 @@ ipcMain.handle("service:retry", async () => {
   return { ok, status: await officeServiceStatus() };
 });
 // Explicitly stop the office service. Closing the window never does this.
-ipcMain.handle("service:stop", async () => {
+officeIpc.handle("service:stop", async () => {
   serviceStopRequested = true;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
@@ -724,7 +731,7 @@ ipcMain.handle("service:stop", async () => {
   }
   return { ok: false, status: await officeServiceStatus() };
 });
-ipcMain.handle("service:start", async () => {
+officeIpc.handle("service:start", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   serviceStopRequested = false;
   const ok = await startOrAdoptOfficeService();
@@ -814,7 +821,7 @@ function desktopOnlySupportReport(desktopLog) {
   ].join("\n");
 }
 
-ipcMain.handle("support:save", async (event) => {
+officeIpc.handle("support:save", async (event) => {
   if (supportSaveInFlight) return { ok: false, error: "A support file is already being saved." };
   supportSaveInFlight = true;
   try {
@@ -1037,8 +1044,8 @@ function servicePersistenceState() {
 }
 
 /** Both settings, what they can do on this build, and what is held right now. */
-ipcMain.handle("service:persistence:get", () => servicePersistenceState());
-ipcMain.handle("service:persistence:set", (_event, patch) => {
+officeIpc.handle("service:persistence:get", () => servicePersistenceState());
+officeIpc.handle("service:persistence:set", (_event, patch) => {
   const request = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
   // scheduleEnabled is a report, not a setting: it never becomes consent.
   if (typeof request.scheduleEnabled === "boolean") recordScheduleFact(request.scheduleEnabled);
@@ -1452,9 +1459,15 @@ app.whenReady().then(async () => {
   // inside the app's own processes — the one capture path macOS reliably
   // attributes to the app (registers it in the Screen Recording pane and
   // prompts). Used by the onboarding "Enable screen preview" button.
+  session.defaultSession.setPermissionRequestHandler((contents, _permission, callback, details) =>
+    callback(trustedOfficePermission(contents, details, officeAppUrl(), officeWindowContents)));
+  session.defaultSession.setPermissionCheckHandler((contents, _permission, _origin, details) =>
+    trustedOfficePermission(contents, details, officeAppUrl(), officeWindowContents));
   if (process.platform === "darwin") {
     session.defaultSession.setDisplayMediaRequestHandler(
-      (_request, callback) => {
+      (request, callback) => {
+        const officeFrame = (frame) => BrowserWindow.getAllWindows().find(win => !win.isDestroyed() && win.webContents.mainFrame === frame)?.webContents ?? null;
+        if (!trustedDisplayRequest(request, officeAppUrl(), officeFrame)) return callback({});
         desktopCapturer
           .getSources({ types: ["screen"] })
           .then((sources) => callback(sources[0] ? { video: sources[0] } : {}))
@@ -1463,9 +1476,9 @@ app.whenReady().then(async () => {
       { useSystemPicker: false },
     );
   }
-  registerCuaIpc();
+  registerCuaIpc(officeIpc);
   cuaControl = await startCuaControl({ release: releaseCuaForHuman, verify: verifyCuaAfterHuman, restore: restoreCuaAfterHuman });
-  registerUpdaterIpc();
+  registerUpdaterIpc(officeIpc);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.

@@ -214,7 +214,7 @@ import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { coverageFromUncoveredHeld, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
-import { needsSession, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
+import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
 import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
@@ -3134,9 +3134,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (needsSession(path, method)) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
-    } else if (path.startsWith("/api/") && path !== "/api/health" && !path.startsWith("/api/internal/")) {
-      const gate = sessionOk(req, PORT);
-      if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
+    } else if (path.startsWith("/api/") && path !== "/api/health" &&
+      (!hostAllowed(req.headers.host, PORT) || !originAllowed(typeof req.headers.origin === "string" ? req.headers.origin : undefined, PORT))) {
+      // The few independently authenticated routes still refuse a rebound or
+      // foreign Host/Origin before their own check runs.
+      return json(res, 403, { error: "refused host or origin" });
     }
     // Staging is an installation-wide barrier. Reads that can recover or
     // refresh business stores also remain held until the cold restore finishes.

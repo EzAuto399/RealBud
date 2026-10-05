@@ -7,7 +7,7 @@
 // signing). In dev it's a no-op so the browser/dev shell is unaffected.
 // electron-updater is vendored (electron/vendor/electron-updater.cjs) because
 // the packaged app ships no node_modules.
-import { app, ipcMain } from "electron";
+import { app } from "electron";
 import { createRequire } from "node:module";
 import { runUpdaterAction } from "./updater-action.mjs";
 
@@ -44,16 +44,17 @@ function reportError(e) {
   setState({ status: "error", message: String(e?.message ?? e) });
 }
 
-export function registerUpdaterIpc() {
-  ipcMain.handle("update:get-state", () => state);
-  ipcMain.handle("update:check", () => check(true));
-  ipcMain.handle("update:download", () => {
+/** `ipc` is main's guarded wrapper: only the office window may call. */
+export function registerUpdaterIpc(ipc) {
+  ipc.handle("update:get-state", () => state);
+  ipc.handle("update:check", () => check(true));
+  ipc.handle("update:download", () => {
     runUpdaterAction(
       () => autoUpdater?.downloadUpdate(),
       (e) => setState({ status: "error", message: String(e?.message ?? e) }),
     );
   });
-  ipcMain.handle("update:install", () => {
+  ipc.handle("update:install", () => {
     // isSilent, isForceRunAfter — relaunch straight into the new version
     try {
       autoUpdater?.quitAndInstall(true, true);

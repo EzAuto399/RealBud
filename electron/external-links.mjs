@@ -53,6 +53,33 @@ export function trustedOfficeSender(event, appUrl, windowContents) {
   return onAppOrigin(frame.url, appUrl);
 }
 
+/** One wrapper for every native IPC channel: a handler runs only for an event
+ * that `trusted(event)` accepts; anything else is refused before it runs. */
+export function guardedIpc(ipcMain, trusted) {
+  return {
+    handle(channel, handler) {
+      ipcMain.handle(channel, (event, ...args) => {
+        if (!trusted(event)) throw new Error("This action is available only to the RealBud office window.");
+        return handler(event, ...args);
+      });
+    },
+  };
+}
+
+/** A browser permission (request or check) for `contents`: only the office
+ * window's own top-level page on the office origin, asking for itself. */
+export function trustedOfficePermission(contents, details, appUrl, windowContents) {
+  if (!contents || details?.isMainFrame !== true || !onAppOrigin(details.requestingUrl, appUrl)) return false;
+  return trustedOfficeSender({ sender: contents, senderFrame: contents.mainFrame }, appUrl, windowContents);
+}
+
+/** A screen-capture request: the office window's main frame, on its origin. */
+export function trustedDisplayRequest(request, appUrl, windowForFrame) {
+  const frame = request?.frame, contents = frame ? windowForFrame(frame) : null;
+  if (!contents || !onAppOrigin(request.securityOrigin, appUrl)) return false;
+  return trustedOfficeSender({ sender: contents, senderFrame: frame }, appUrl, sender => sender);
+}
+
 function scheme(raw) {
   try {
     return new URL(String(raw)).protocol;

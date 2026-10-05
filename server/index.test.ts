@@ -301,6 +301,23 @@ describe("harness HTTP API", () => {
     if (process.platform !== "win32") expect(statSync(join(home, ".realbud", "local-auth", "session.json")).mode & 0o077).toBe(0);
   });
 
+  it("refuses unknown routes, unlisted internal routes and URL tokens outside the event stream", async () => {
+    for (const path of ["/api/never-existed", "/api/internal/never-existed", "/api/bots", "/api/instances"]) {
+      expect((await fetch(`${BASE}${path}`)).status, path).toBe(401);
+    }
+    // The two agents-proxy routes skip the session but still need their own
+    // comms bearer, which the session token is not.
+    expect((await fetch(`${BASE}/api/internal/agents`)).status).toBe(401);
+    expect((await fetch(`${BASE}/api/internal/agents`, { headers: { authorization: `Bearer ${session}` } })).status).toBe(401);
+    expect((await fetch(`${BASE}/api/internal/ask-bot`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await fetch(`${BASE}/api/desk?session=${session}`)).status).toBe(401);
+    expect((await fetch(`${BASE}/api/desk`, { headers: { "x-realbud-session": session } })).status).toBe(200);
+    const stream = new AbortController();
+    const events = await fetch(`${BASE}/api/events?session=${session}`, { signal: stream.signal });
+    expect(events.status).toBe(200);
+    stream.abort();
+  });
+
   it("requires authenticated, current-revision rent settings and never updates payment facts", async () => {
     const before = (await api("GET", "/api/desk")).body;
     const office = { rentWorkflow: { receiptChannels: ["whatsapp", "email"], verificationMethod: "bank-allocation", checkingSteps: "Match the unit and period." } };

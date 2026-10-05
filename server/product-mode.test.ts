@@ -34,7 +34,7 @@ describe("product mode denials", () => {
     expect(needsSession("/api/events")).toBe(true);
     expect(needsSession("/api/health")).toBe(false);
     expect(needsSession("/api/session")).toBe(true);
-    expect(needsSession("/api/bots")).toBe(false);
+    expect(needsSession("/api/bots")).toBe(true);
   });
 
   it("accepts only loopback Host/Origin, including the configured UI port", () => {

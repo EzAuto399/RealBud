@@ -193,7 +193,7 @@ try {
   await page.locator('#bud-job-builder summary').filter({ hasText: /^Edit job details$/ }).click();
   assert.equal(await page.getByRole("textbox", { name: "Job name", exact: true }).inputValue(), "Repair follow-up (fictional)");
   // Carry a fictional saved-result reference into Ask and remove it explicitly.
-  const roster = await (await fetch(`${base}/api/bots`)).json();
+  const roster = await (await fetch(`${base}/api/bots`, { headers: { "x-realbud-session": token } })).json();
   const draftKey = `bot:${roster.bots[0].id}`;
   await page.evaluate(({ draftKey }) => {
     const rows = JSON.parse(localStorage.getItem("omb-draft-attachments") || "{}");

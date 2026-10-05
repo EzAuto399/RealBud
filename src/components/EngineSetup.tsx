@@ -14,6 +14,7 @@ import { useState } from "react";
 import { Check, Copy, ExternalLink, Loader2 } from "lucide-react";
 import type { EngineInstall, InstanceInfo } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { localSessionFetch } from "@/lib/local-session";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -57,7 +58,7 @@ function CommandRow({ command, instanceId }: { command: string; instanceId: stri
   const allow = async () => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/setup`, {
+      const res = await localSessionFetch(`/api/instances/${encodeURIComponent(instanceId)}/setup`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",

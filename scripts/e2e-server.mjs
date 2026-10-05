@@ -1,7 +1,7 @@
 // End-to-end check of a running RealBud harness server — the exact
 // flows the app drives, over the same HTTP API. No deps; Node 22+.
 //
-//   node scripts/e2e-server.mjs [--port 8799] [--with-box]
+//   node scripts/e2e-server.mjs --data <that server's data directory> [--port 8799] [--with-box]
 //
 // Covered: server up + SSE hello, instance snapshots, a claude turn with a
 // streamed reply, the permission broker (allow AND deny), interrupt, a
@@ -12,6 +12,7 @@
 //
 // Exits non-zero on the first hard failure; soft notes print as "skip".
 
+import { readSessionToken } from "./local-session.mjs";
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const opt = (n, d) => {
@@ -20,6 +21,11 @@ const opt = (n, d) => {
 };
 const PORT = Number(opt("--port", process.env.OMB_PORT ?? 8799));
 const BASE = `http://127.0.0.1:${PORT}`;
+// Every /api route needs the session token, read from the server's own private
+// data directory. Name it explicitly: never assume the real ~/.realbud.
+const DATA_DIR = opt("--data", process.env.REALBUD_DATA_DIR);
+if (!DATA_DIR) throw new Error("Pass --data <data directory> (or REALBUD_DATA_DIR) for the server under test.");
+const SESSION = await readSessionToken(DATA_DIR);
 const WITH_BOX = flag("--with-box");
 const KEEP_BOTS = flag("--keep-bots");
 const BOX_TOKEN = process.env.OMB_E2E_BOX_TOKEN ?? "";
@@ -35,8 +41,8 @@ const fail = (msg) => {
 
 async function api(path, init) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "content-type": "application/json" },
     ...init,
+    headers: { "content-type": "application/json", "x-realbud-session": SESSION, ...(init?.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}: ${body.error ?? "?"}`);
@@ -118,7 +124,7 @@ async function main() {
 
   // ── SSE hello ──
   const ctrl = new AbortController();
-  const sse = await fetch(`${BASE}/api/events`, { signal: ctrl.signal });
+  const sse = await fetch(`${BASE}/api/events?session=${encodeURIComponent(SESSION)}`, { signal: ctrl.signal });
   const reader = sse.body.getReader();
   const hello = await Promise.race([
     reader.read().then(({ value }) => new TextDecoder().decode(value)),

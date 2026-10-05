@@ -14,7 +14,7 @@
 // The resulting connection descriptor is written to
 // <userData>/cua-connection.json for the harness server to hand to drivers.
 
-import { app, ipcMain } from "electron";
+import { app } from "electron";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -298,7 +298,8 @@ export async function restoreCuaAfterHuman() {
   }
 }
 
-export function registerCuaIpc() {
-  ipcMain.handle("cua:connection", () => connectionStore.get());
-  ipcMain.handle("cua:permissions", () => cuaPermissionsStatus());
+/** `ipc` is main's guarded wrapper: only the office window may call. */
+export function registerCuaIpc(ipc) {
+  ipc.handle("cua:connection", () => connectionStore.get());
+  ipc.handle("cua:permissions", () => cuaPermissionsStatus());
 }
