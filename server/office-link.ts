@@ -13,6 +13,7 @@ import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { currentUsagePeriod, isProvisioningSkipReasonText, isProvisioningSkipped, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
 import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkCancelInput, type LinkRequestInput, type LinkStatus, type LinkStatusInput } from "../shared/installation-link.ts";
+import { PrivateStorageError } from "./private-json.ts";
 
 /** CLI diagnostics include local paths and update notices; only the product
  * version belongs in the website report. */
@@ -324,10 +325,12 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   }
   async function preflightProvisioning(installationId: string) {
     try { await options.provisioning?.preflight?.(installationId); }
-    catch {
+    catch (error) {
       // Local recovery errors may contain paths or credential-bearing parser
-      // text. Keep one actionable message rather than echoing the cause.
-      throw Object.assign(new Error("This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup."),
+      // text. Only a private-storage refusal, which is plain and path-free by
+      // construction, is passed through; otherwise keep one actionable message.
+      const reason = error instanceof Error && error.cause instanceof PrivateStorageError ? error.cause : error instanceof PrivateStorageError ? error : undefined;
+      throw Object.assign(new Error(reason ? `${reason.message} Your work is kept.` : "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup."),
         { status: 503, code: "service_provisioning_local_recovery" });
     }
   }

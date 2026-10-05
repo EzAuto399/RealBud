@@ -1,5 +1,5 @@
 // Encrypted Desk store. On-disk authority is V3 after open; Desk mutates a V2 working copy.
-import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { DeskSnapshot, LedgerFacts, Property, RecoveryState } from "../shared/contracts.ts";
@@ -16,7 +16,7 @@ import { idleRecovery } from "./desk-v3-recovery.ts";
 import { ensureDemoBreadth } from "./desk-v3-demo-breadth.ts";
 import { syncWorkingV2IntoV3 } from "./desk-v3-sync.ts";
 import { validateDeskV3 } from "./desk-v3-decode.ts";
-import { findRestorableQuarantine, restoreQuarantineToDesk } from "./desk-auto-restore.ts";
+import { findRestorableBackup, findRestorableQuarantine, listDeskBackups, restoreBackupToDesk, restoreQuarantineToDesk } from "./desk-auto-restore.ts";
 
 export type { DeskFileV2 };
 
@@ -135,13 +135,9 @@ export class DeskStore {
     let restoredOnce = false;
     for (;;) {
       if (!existsSync(this.file)) {
-        if (!restoredOnce) {
-          const candidate = findRestorableQuarantine(this.keyInfo.key, this.file);
-          if (candidate) {
-            restoreQuarantineToDesk(candidate, this.file);
-            restoredOnce = true;
-            continue;
-          }
+        if (!restoredOnce && this.autoRestore()) {
+          restoredOnce = true;
+          continue;
         }
         const fresh = emptyV2(book);
         const v3 = ensureDemoBreadth(migrateV2ToV3(fresh, Date.now()), Date.now());
@@ -168,13 +164,9 @@ export class DeskStore {
             /* already gone */
           }
         }
-        if (!restoredOnce) {
-          const candidate = findRestorableQuarantine(this.keyInfo.key, this.file, quarantined);
-          if (candidate) {
-            restoreQuarantineToDesk(candidate, this.file);
-            restoredOnce = true;
-            continue;
-          }
+        if (!restoredOnce && this.autoRestore(quarantined)) {
+          restoredOnce = true;
+          continue;
         }
         const empty = emptyV2({ properties: [], ledger: [] });
         empty.mode = "live";
@@ -195,6 +187,19 @@ export class DeskStore {
       }
       return { data: projectWorkingV2(opened), v3: opened, recovery: idleRecovery(), key: this.keyInfo };
     }
+  }
+
+  /** Newest quarantine the key opens, else the newest backup it opens. */
+  private autoRestore(quarantined: string[] = []): boolean {
+    const quarantine = findRestorableQuarantine(this.keyInfo.key, this.file, quarantined);
+    if (quarantine) {
+      restoreQuarantineToDesk(quarantine, this.file);
+      return true;
+    }
+    const backup = findRestorableBackup(this.keyInfo.key, this.file);
+    if (!backup) return false;
+    restoreBackupToDesk(backup, this.file);
+    return true;
   }
 
   persist(): void {
@@ -381,12 +386,13 @@ export class DeskStore {
       mkdirSync(this.backupDir, { recursive: true, mode: 0o700 });
       const dest = join(this.backupDir, `desk-${this.data.revision}.json`);
       writeFileAtomic(dest, readFileSync(this.file, "utf8"), 0o600);
-      const files = readdirSync(this.backupDir)
-        .filter((name) => name.startsWith("desk-"))
-        .sort();
-      while (files.length > MAX_BACKUPS) {
-        const oldest = files.shift();
-        if (oldest) renameSync(join(this.backupDir, oldest), join(this.backupDir, `purged-${oldest}`));
+      // Numeric order: a text sort froze the kept set from revision 10 on.
+      for (const { path } of listDeskBackups(this.backupDir).slice(MAX_BACKUPS)) unlinkSync(path);
+      // Older builds renamed extras to purged-desk-N.json and never deleted them.
+      for (const name of readdirSync(this.backupDir)) {
+        if (!/^purged-desk-\d+\.json$/.test(name)) continue;
+        const path = join(this.backupDir, name);
+        if (lstatSync(path).isFile()) unlinkSync(path);
       }
     } catch {
       /* backup is best-effort */

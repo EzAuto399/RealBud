@@ -8,10 +8,11 @@
 // request pauses it instead: the same grant, with its remaining time and
 // steps, continues once the person has signed in, and never after it expired.
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { readPrivateJson, trimOldestToBytes, writePrivateJson } from "./private-json.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { normalizeOrigin } from "./recipes.ts";
 import { grantedBrowserTools, portalBrowserPolicy } from "./attended-run.ts";
@@ -282,7 +283,10 @@ function personReferences(messages: ReadonlyArray<unknown>): string[] {
  * a model's text or another thread's file. */
 export async function threadAttachedFiles(dataDir: string, messages: ReadonlyArray<unknown>, otherThreads: ReadonlyArray<ReadonlyArray<unknown>> = []): Promise<Array<{ name: string; path: string }>> {
   let folder: string;
-  try { folder = await realpath(join(dataDir, "vault", "ask-uploads")); } catch { return []; }
+  // realpathSync, as saveAskAttachment (server/ask-attach.ts) names the copy:
+  // on Windows the native realpath expands 8.3 short names and normalises
+  // case, so it would not match the path written into the thread.
+  try { folder = realpathSync(join(dataDir, "vault", "ask-uploads")); } catch { return []; }
   const elsewhere = new Set(otherThreads.flatMap(personReferences));
   const found: Array<{ name: string; path: string }> = []; const names = new Set<string>();
   for (const path of personReferences(messages)) {
@@ -290,7 +294,7 @@ export async function threadAttachedFiles(dataDir: string, messages: ReadonlyArr
     if (elsewhere.has(path) || !isAbsolute(path) || dirname(path) !== folder || !name || name.endsWith(".inspection.json") || !browserTaskUploadName(name) || names.has(name.toLowerCase())) continue;
     try {
       const stat = await lstat(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES || await realpath(path) !== path) continue;
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES || realpathSync(path) !== path) continue;
       if (process.platform !== "win32" && ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())) continue;
     } catch { continue; }
     names.add(name.toLowerCase()); found.push({ name, path });
@@ -346,6 +350,9 @@ export class BrowserTaskStore {
     return rows;
   }
   private async save(rows: BrowserTaskRecord[]): Promise<void> {
+    // Evidence makes tasks large: near the file cap the oldest settled tasks go
+    // first; a proposed, running or paused task is never dropped.
+    rows = trimOldestToBytes(rows, MAX_BYTES * 0.8, row => !holding(row) && row.status !== "proposed");
     try { await writePrivateJson(this.file, { version: 1, purpose: "browser-tasks", tasks: rows }, { maxBytes: MAX_BYTES, validate: parseStore }); }
     catch (error) { this.rows = null; throw error; }
     this.rows = rows;

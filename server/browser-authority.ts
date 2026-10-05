@@ -8,7 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { readPrivateJson, trimOldestToBytes, writePrivateJson } from "./private-json.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
 import {
@@ -1015,6 +1015,9 @@ export class BrowserApprovalStore {
     return this.rows;
   }
   private async save(rows: BrowserApprovalRecord[]): Promise<void> {
+    // Near the file cap the oldest decided approvals go first; a pending one, or
+    // one whose dispatch is in flight or unconfirmed, is never dropped.
+    rows = trimOldestToBytes(rows, MAX_BYTES * 0.8, row => row.decision !== "pending" && (row.outcome === "not-dispatched" || row.outcome === "succeeded"));
     try { await writePrivateJson(this.file, { version: 1, purpose: "browser-approvals", approvals: rows }, { maxBytes: MAX_BYTES, validate: parseStore }); }
     catch (error) { this.rows = null; throw error; }
     this.rows = rows;

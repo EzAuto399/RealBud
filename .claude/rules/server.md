@@ -13,7 +13,7 @@ Authority
 - Re-verify identity and permission after every `await` that crosses a lock or host boundary (pattern: `server/company-execution-client.ts`). A UI filter or an enqueue-time check alone is not access control. Never hand a `pg` Pool or its credentials to a worker.
 
 Private storage and revisions
-- Use `readPrivateJson`/`writePrivateJson` (`server/private-json.ts`): symlinks, hardlinks, loose modes and foreign uids fail closed as "needs recovery"; damaged files are preserved and hold mutations, never cleared. Writes are temp → fsync → rename at 0600.
+- Use `readPrivateJson`/`writePrivateJson` (`server/private-json.ts`). A loose-permission folder never blocks a customer: on POSIX a real folder owned by this account that is only too open is tightened to 0700 (one `[storage]` line) and admitted. A too-open private FILE stays refused, because its secrets may already have been read; `ensureDirs` does this for the data folder at launch. Symlinks, hardlinks, wrong types and foreign uids still fail closed with a plain, path-free `PrivateStorageError` naming the folder role (office-link passes it through); Windows ACL checks are unchanged. Damaged files are preserved and hold mutations, never cleared. Writes are temp → fsync → rename at 0600.
 - Vault entries (`server/private-vault.ts`) are encrypted envelopes whose name must match; a missing key with a non-empty directory is a hard failure. Workspace identity (`server/workspace-identity.ts`) is immutable; membership changes never alter it.
 - Optimistic concurrency is a caller-supplied `expectedRevision` compared inside the lock, answered with 409 and a reload message. Company revisions are decimal strings bounded to int64, not numbers.
 

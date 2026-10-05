@@ -5,7 +5,7 @@ import {
   MAX_CLOSED_REMINDERS, MAX_OPEN_REMINDERS, REMINDERS_API, REMINDER_CONFLICT, isOpenReminder, parseReminder, reminderDueAt, reminderNote,
   reminderStateAt, reminderTitle, sortReminders, validReminderId, validReminderRevision, validTimeZone, type Reminder, type RemindersResponse,
 } from '../shared/reminders.ts';
-import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
+import { privateDirectory, readPrivateJson, readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
 import { redactSecretsInText } from './redact.ts';
 
 /** One-off reminders on RealBud's own schedule, kept per workspace and member
@@ -67,7 +67,7 @@ export function createRemindersService(options: RemindersServiceOptions) {
   async function read(path: string, member: string): Promise<Reminder[]> {
     await privateDirectory(directory);
     let value: unknown;
-    try { value = await readPrivateJson(path, MAX_BYTES); }
+    try { value = await readPrivateJsonWithFallback(path, MAX_BYTES, existing => { if (!parseFile(existing, member)) throw new Error('invalid'); }); }
     catch { throw fail(503, 'reminders_recovery_required', 'Saved reminders need recovery. Nothing was changed.'); }
     if (value === undefined) return [];
     const reminders = parseFile(value, member);
@@ -89,7 +89,7 @@ export function createRemindersService(options: RemindersServiceOptions) {
     const open = reminders.filter(isOpenReminder);
     const closed = reminders.filter(reminder => !isOpenReminder(reminder)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CLOSED_REMINDERS);
     const file: ReminderFile = { version: 1, workspaceId: options.workspaceId, memberKey: member, reminders: sortReminders([...open, ...closed]) };
-    await writePrivateJson(path, file, { maxBytes: MAX_BYTES, validate: existing => { if (!parseFile(existing, member)) throw fail(503, 'reminders_recovery_required', 'Saved reminders need recovery. Nothing was changed.'); } });
+    await writePrivateJson(path, file, { maxBytes: MAX_BYTES, keepPrevious: true, validate: existing => { if (!parseFile(existing, member)) throw fail(503, 'reminders_recovery_required', 'Saved reminders need recovery. Nothing was changed.'); } });
     return file.reminders;
   }
   /** Marks passed reminders due; returns whether anything changed. */
@@ -171,8 +171,17 @@ export function createRemindersService(options: RemindersServiceOptions) {
     /** Marks anything missed while the app was closed, then keeps checking. */
     start(): void {
       if (timer) return;
-      void service.tick().catch(() => {});
-      timer = setInterval(() => { void service.tick().catch(() => {}); }, options.intervalMs ?? DEFAULT_INTERVAL_MS);
+      // One sweep at a time: on Windows each private read and write runs an
+      // ACL check that can outlast the interval, and overlapping sweeps would
+      // queue without bound behind it.
+      let sweeping = false;
+      const sweep = () => {
+        if (sweeping) return;
+        sweeping = true;
+        void service.tick().catch(() => {}).finally(() => { sweeping = false; });
+      };
+      sweep();
+      timer = setInterval(sweep, options.intervalMs ?? DEFAULT_INTERVAL_MS);
       timer.unref?.();
     },
     close(): void { if (timer) clearInterval(timer); timer = null; },

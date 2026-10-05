@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { classifyWorkroomCommand, PINNED_SCRIPTS } from "./workroom-command-policy.ts";
@@ -45,11 +45,15 @@ const run = `${python} -E -s`;
 // Outputs live under bud-work, the only part of the workroom the sandbox lets a script write.
 const out = join(workroom, "bud-work", "report.xlsx");
 const spec = join(workroom, "spec.json");
+// classifyWorkroomCommand always asks on a Windows host (backslash paths and
+// cmd/PowerShell quoting are not mirrored; see "asks on Windows" below), so
+// the tests that expect `auto` only mean something where paths use "/".
+const autoIt = it.skipIf(sep !== "/");
 const classify = (command: string, runtimeCommit: string | null = commit) =>
   classifyWorkroomCommand({ command, workroom, runtimeHome, runtimeCommit, platform: "darwin" });
 
 describe("classifyWorkroomCommand", () => {
-  it("runs a reviewed document script with workroom paths only", () => {
+  autoIt("runs a reviewed document script with workroom paths only", () => {
     expect(classify(`${run} ${create} ${spec} ${out}`)).toBe("auto");
     expect(classify(`${run} '${create}' ${spec} --output=${join(workroom, "bud-work", "out", "report.xlsx")}`)).toBe("auto");
     expect(classify(`${join(venvBin, "python")} -E -s ${edit} ${join(workroom, "a.docx")} -o ${join(workroom, "bud-work", "b.docx")}`)).toBe("auto");
@@ -76,7 +80,7 @@ describe("classifyWorkroomCommand", () => {
     expect(classify(`${run} ${create} ${spec} ${out}`, null)).toBe("ask");
     expect(classifyWorkroomCommand({ command: `${run} ${create} ${spec} ${out}`, workroom, runtimeHome, platform: "darwin" })).toBe("ask");
   });
-  it("asks when the script, a sibling helper or the directory listing changed", () => {
+  autoIt("asks when the script, a sibling helper or the directory listing changed", () => {
     const common = join(scripts, "docx", "scripts", "docx_common.py");
     const command = `${run} ${edit} ${join(workroom, "a.docx")}`;
     writeFileSync(common, "# tampered\n");
@@ -120,7 +124,7 @@ describe("classifyWorkroomCommand", () => {
     expect(classify(`/usr/bin/python3 -E -s ${create} ${spec} ${out}`)).toBe("ask");
     expect(classify(`env ${python} -E -s ${create} ${spec} ${out}`)).toBe("ask");
   });
-  it("allows plain reads of workroom files only", () => {
+  autoIt("allows plain reads of workroom files only", () => {
     const notes = join(workroom, "notes.txt");
     expect(classify(`cat ${notes}`)).toBe("auto");
     expect(classify(`head -n 20 ${notes}`)).toBe("auto");
@@ -146,7 +150,7 @@ describe("classifyWorkroomCommand", () => {
 });
 
 describe("document scripts write only under bud-work", () => {
-  it("auto-runs an output under bud-work and an existing input elsewhere, asks for a new file outside bud-work", () => {
+  autoIt("auto-runs an output under bud-work and an existing input elsewhere, asks for a new file outside bud-work", () => {
     mkdirSync(join(workroom, "bud-work"), { recursive: true });
     const input = join(workroom, "spec.json");
     const classifyScript = (args: string) => classifyWorkroomCommand({ command: `${run} ${create} ${args}`, workroom, runtimeHome, runtimeCommit: commit, platform: "darwin" });

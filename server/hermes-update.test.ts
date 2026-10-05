@@ -11,6 +11,7 @@ import { readRuntimeSelection, releaseHome, resetRuntimeSelectionForTests, saveR
 import { runtimeCli } from "./hermes-paths.ts";
 import { acquireWorkerSetupLock, bootstrapPlan, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import * as profileStorage from "./hermes-profile-storage.ts";
+import * as filePrivacy from "./windows-file-privacy.ts";
 
 import { privateFixtureRoot, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
 
@@ -46,6 +47,23 @@ it("privately admits a previously absent home before launching first-install boo
   expect(runner).toHaveBeenCalledOnce();
   expect(installStatus().state).toBe("done");
   expect(existsSync(join(propertyProfileDir(absent), "config.yaml"))).toBe(true);
+});
+
+it("creates the installer lock folder private, so a Windows ACL check admits it on first install", async () => {
+  // Windows semantics: a folder made by a plain mkdir inherits an unprotected
+  // ACL, so verifying it refuses; only a folder restricted at birth passes.
+  const restricted = new Set([home]);
+  const admit = (path: string, kind: string, restrict: boolean) => {
+    if (kind !== "directory" || !path.startsWith(home)) return;
+    if (restrict) restricted.add(path);
+    else if (!restricted.has(path)) throw new Error("windows-acl:inheritance-not-protected");
+  };
+  vi.spyOn(filePrivacy, "windowsFilePrivacy").mockImplementation(async (path, kind, restrict = false) => admit(path, kind, restrict));
+  vi.spyOn(filePrivacy, "windowsFilePrivacyBatchSync").mockImplementation(operations => operations.map(op => { admit(op.path, op.kind, op.action === "restrict"); return { ...op, applied: op.action === "restrict" }; }));
+  start({ firstInstall: true }); await waitForBootstrapStop();
+  expect(installStatus().error).toBeNull();
+  expect(installStatus().state).toBe("done");
+  expect(restricted.has(join(home, ".runtime-install"))).toBe(true);
 });
 
 it("refuses an existing unverified home before installer or verification work starts", () => {
