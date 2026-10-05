@@ -165,7 +165,7 @@ describe("weekly Supplier list check (fictional portal)", () => {
     await f.answer(true);
     // First check against an empty directory: every supplier is new, nothing saved until Approve.
     expect(await first).toEqual({ ok: true, status: "awaiting-approval", detail: "Supplier list changed in REI: 5 added — review in Bills and calendar → Maintenance checks." });
-    expect(notes).toEqual(expect.arrayContaining([expect.stringMatching(/^Waiting for you to sign in to REI Cloud/), expect.stringMatching(/^Waiting for you to allow the download of REI's supplier list/)]));
+    expect(notes).toEqual(expect.arrayContaining([expect.stringMatching(/^Sign in to REI Cloud so Bud can check the supplier list/), expect.stringMatching(/^Waiting for you to allow the download of REI's supplier list/)]));
     expect((await f.suppliers.read()).revision).toBe(0);
     await f.save(0);
     // Unchanged in REI: quiet, and no new revision.

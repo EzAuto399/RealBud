@@ -62,6 +62,26 @@ describe('loop chat cards', () => {
     expect(second.appended).toHaveLength(0);
   });
 
+  it('posts a run waiting at REI sign-in once, its midday reminder once, nothing for a restart, and its miss', async () => {
+    const h = harness();
+    const line = 'Sign in to REI Cloud so Bud can finish the bank import. (waiting until 6:00 pm on Tue, 6 Oct).';
+    const reminder = 'Reminder: sign in to REI Cloud so Bud can finish the bank import. Bud waits until 6:00 pm on Tue, 6 Oct.';
+    const bank = (over: Partial<LoopRun>) => run({ loopId: 'bank-references' as LoopRun['loopId'], loopName: 'Bank reference review', status: 'running', ...over });
+    await h.post(bank({ id: 'w', detail: line }));
+    await h.post(bank({ id: 'w', detail: line }));
+    await h.post(bank({ id: 'w', detail: 'Reading REI. Nothing in REI changes.' }));
+    await h.post(bank({ id: 'w', detail: reminder }));
+    // After a restart the resumed run says the same reminder: quiet, from the saved state.
+    const restarted = harness(h.dataDir);
+    await restarted.post(bank({ id: 'w2', detail: reminder }));
+    await restarted.post(bank({ id: 'w2', status: 'missed', detail: "Missed: REI Cloud wasn't signed in today, so the bank import is waiting." }));
+    expect([...h.appended, ...restarted.appended].map(item => item.message.card.subtitle)).toEqual([line, reminder, "Missed: REI Cloud wasn't signed in today, so the bank import is waiting."]);
+    // The supplier check's wait ends in its result, which still posts.
+    await restarted.post(run({ id: 's', loopId: 'rei-supplier-check', status: 'running', detail: 'Sign in to REI Cloud so Bud can check the supplier list.' }));
+    await restarted.post(run({ id: 's', loopId: 'rei-supplier-check', status: 'awaiting-approval', detail: 'Supplier list changed in REI: 1 added.' }));
+    expect(restarted.appended.map(item => item.message.card.subtitle).slice(-2)).toEqual(['Sign in to REI Cloud so Bud can check the supplier list.', 'Supplier list changed in REI: 1 added.']);
+  });
+
   it('creates a plainly named thread when Bud has none', async () => {
     const h = harness(undefined, false);
     await h.post(run());

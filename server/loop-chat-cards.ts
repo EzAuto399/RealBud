@@ -4,6 +4,7 @@
 // so a restart or reconnect never posts the same run twice.
 import { join } from 'node:path';
 import type { LoopRun } from '../shared/contracts.ts';
+import { reiWaitNotice } from '../shared/rei-sign-in-wait.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import type { Message, OptionCardData, Store } from './store.ts';
 
@@ -17,12 +18,15 @@ export interface LoopChatState { delivered: string[]; holds: Record<string, stri
 
 /** Pure: whether this run earns a card, and the state to save if it does. */
 export function loopChatCardDecision(run: LoopRun, state: LoopChatState): LoopChatState | null {
-  if (!LOOPS.includes(run.loopId) || run.seenAt || !SETTLED.includes(run.status) || state.delivered.includes(run.id)) return null;
-  const hold = HOLDS.includes(run.status), signature = `${run.status}:${run.detail ?? ''}`;
+  // A run waiting at REI sign-in posts while it runs, as a hold (shared/rei-sign-in-wait.ts).
+  const rei = reiWaitNotice(run), waiting = rei === 'waiting';
+  if (!(LOOPS.includes(run.loopId) && SETTLED.includes(run.status) || rei) || run.seenAt || state.delivered.includes(run.id)) return null;
+  const hold = waiting || HOLDS.includes(run.status), signature = `${run.status}:${run.detail ?? ''}`;
   if (hold && state.holds[run.loopId] === signature) return null;
   const holds = { ...state.holds };
   if (hold) holds[run.loopId] = signature; else delete holds[run.loopId];
-  return { delivered: [...state.delivered, run.id].slice(-KEEP), holds };
+  // A waiting run is not delivered yet: its reminder and its result still post.
+  return { delivered: waiting ? state.delivered : [...state.delivered, run.id].slice(-KEEP), holds };
 }
 
 function savedState(raw: unknown): LoopChatState {

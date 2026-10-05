@@ -18,11 +18,14 @@
 // Nothing is saved until the person presses Save on the preview, with the
 // directory revision they saw; a count that disagrees with REI's footer cannot
 // be saved. Stop ends the run at any step and saves nothing. Cookies and
-// passwords stay in the work browser; Bud never sees them.
+// passwords stay in the work browser; Bud never sees them. The weekly check
+// (a loop run) waits on REI's sign-in page until the end of the office day
+// and survives a restart (owner decision, 6 Oct 2026; server/w1-sign-in-wait.ts).
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { browserTaskWorkroom } from "./browser-runtime.ts";
+import { DATA_DIR } from "./config.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HumanHandoffs } from "./human-handoffs.ts";
@@ -33,6 +36,7 @@ import { redactSecretsInText } from "./redact.ts";
 import type { createSupplierDirectory } from "./supplier-directory.ts";
 import { parseTenantList, type TenantDirectoryStore, type TenantEntry, type TenantRejection } from "./tenant-directory.ts";
 import type { W1HostDeps } from "./w1-host.ts";
+import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-in-wait.ts";
 import { workflowDatabase } from "./workflow-services.ts";
 import { normalizeSupplierRows, type Supplier } from "../shared/supplier-directory.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
@@ -46,11 +50,17 @@ const ALLOWED: readonly BrowserActionClass[] = ["read", "navigate", "click", "fi
 const STOPPED = "Stopped. Nothing was saved.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
 const NO_BROWSER = "The work browser could not be opened. Check that Chrome or Edge is installed, then try again.";
+const WAIT_COPY = (until: string): ReiWaitCopy => ({
+  first: `Sign in to REI Cloud so Bud can check the supplier list. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in (waiting until ${until}).`,
+  reminder: `Reminder: sign in to REI Cloud so Bud can check the supplier list. Bud waits until ${until}, then the next scheduled check tries again.` });
+export const SUPPLIER_MISSED = "Missed: REI Cloud wasn't signed in today, so the supplier list wasn't checked. The next scheduled check tries again.";
 const readOnly = async (): Promise<never> => { throw new Error("Read-only sign-in hold check."); };
 
 type SignIn = NonNullable<W1HostDeps["openForSignIn"]>;
 type SupplierStore = ReturnType<typeof createSupplierDirectory>;
 export interface ReiDirectorySyncDeps {
+  /** Where the weekly check saves its sign-in wait (server/w1-sign-in-wait.ts; default: the office data folder). */
+  dataDir?: string;
   runtime: BrowserSessionRuntime & { connect?: () => Promise<unknown> };
   /** The selected browser when it is ready, else null. */
   browserId: () => Promise<string | null>;
@@ -65,6 +75,12 @@ export interface ReiDirectorySyncDeps {
   signIn?: () => SignIn | undefined;
   signInHolding?: () => boolean;
   pollMs?: number;
+  /** The office timezone for the weekly check's sign-in deadline (undefined: this computer's). */
+  timeZone?: () => Promise<string | undefined>;
+  /** The clock for the weekly check's sign-in wait (the lab moves it). */
+  now?: () => number;
+  /** How often the weekly check's sign-in wait checks for its midday reminder. */
+  waitPollMs?: number;
 }
 
 export interface ReiDirectoryPreview {
@@ -100,7 +116,7 @@ export function supplierChanges(saved: readonly Supplier[], next: readonly Suppl
 }
 export const SUPPLIER_BIG_DROP = "REI returned far fewer suppliers than before — check the export before approving.";
 /** What the Schedule run says while the supplier check waits or after it ends. */
-export interface SupplierCheckResult { ok: boolean; status: "completed" | "awaiting-approval" | "failed"; detail: string; quiet?: boolean }
+export interface SupplierCheckResult { ok: boolean; status: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }
 const WHERE = "Bills and calendar → Maintenance checks";
 type Phase = "working" | "preview" | "saved" | "stopped" | "failed";
 interface Run {
@@ -143,6 +159,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
   // A learned export path wins over the repo's placeholder; with none, the repo recipe runs unchanged.
   const load: PackLoader = async portal => (deps.paths ?? portalPaths()).apply(await (deps.load ?? loadPortalRecipePack)(portal));
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), { release: readOnly, verify: readOnly }).isHolding());
+  const waits = reiSignInWaits(deps.dataDir ?? DATA_DIR), now = deps.now ?? Date.now;
   let current: Run | null = null;
   let parsed: Parsed | null = null;
   let stop: AbortController | null = null;
@@ -183,7 +200,8 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     return { result, workroom };
   }
 
-  async function execute(run: Run, signal: AbortSignal) {
+  /** `note`: the weekly check's Schedule row, whose run waits on REI's sign-in page until the office day ends. */
+  async function execute(run: Run, signal: AbortSignal, note?: (detail: string) => void) {
     const account = await deps.account();
     if (!account) return fail(409, "Save the REI business code (Schedule → Bank reference review → Set up bank imports) before refreshing from REI.");
     // Cold start: open the work browser first; a browser that is still not ready goes to the sign-in handover.
@@ -195,15 +213,22 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     if ((!done || done.result.outcome === "handover" && ["sign-in", "choose-tab"].includes(done.result.reason ?? "")) && signIn) {
       // The person signs in on REI's own page in the work browser; Bud never sees credentials or codes.
       const threadId = `rei-dir-${run.id}`;
-      run.signIn = threadId;
-      let opened: Awaited<ReturnType<SignIn>>;
-      try { opened = await signIn({ site: PORTAL, reason: `Refresh the ${LIST[run.kind]} from REI`, signal, threadId, ...(account.urlValue ? { account: account.urlValue } : {}) }); }
-      finally { run.signIn = null; }
-      if (signal.aborted) return fail(409, STOPPED);
-      if (opened.outcome === "wrong_account") return fail(409, `REI is signed in to a different account than ${account.marker}. Switch account in REI, then refresh again. Nothing was saved.`);
-      if (opened.outcome !== "signed_in") return fail(409, "Sign in to REI Cloud in the work browser, then refresh again. Nothing was saved.");
-      // Signed in is not proof of the account: the same read runs again and checks it.
-      done = await attempt(run, signal, account);
+      /** One handover, then the same read (signed in is not proof of the account). */
+      const handover = async (until?: number) => {
+        run.signIn = threadId;
+        let opened: Awaited<ReturnType<SignIn>>;
+        try { opened = await signIn({ site: PORTAL, reason: `Refresh the ${LIST[run.kind]} from REI`, signal, threadId, ...(account.urlValue ? { account: account.urlValue } : {}), ...(until === undefined ? {} : { until }) }); }
+        finally { run.signIn = null; }
+        if (signal.aborted) return fail(409, STOPPED);
+        if (opened.outcome === "wrong_account") return fail(409, `REI is signed in to a different account than ${account.marker}. Switch account in REI, then refresh again. Nothing was saved.`);
+        if (opened.outcome === "timed_out" && until !== undefined) return fail(409, SUPPLIER_MISSED);
+        if (opened.outcome !== "signed_in") return fail(409, "Sign in to REI Cloud in the work browser, then refresh again. Nothing was saved.");
+        return attempt(run, signal, account);
+      };
+      done = run.origin !== "schedule" ? await handover()
+        // The weekly check: REI's sign-in page stays open until the office day ends, saved so a restart reopens it.
+        : await withReiSignInWait({ waits, loop: "rei-supplier-check", runId: "rei-supplier-check", now, timeZone: await deps.timeZone?.(), note, copy: WAIT_COPY,
+          ...(deps.waitPollMs !== undefined ? { pollMs: deps.waitPollMs } : {}), work: handover });
     }
     if (!done) return fail(409, NO_BROWSER);
     const { result, workroom } = done;
@@ -238,13 +263,13 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       : run.preview.countMatches === null ? "REI's record count could not be read, so the row count was not compared." : null;
   }
 
-  function start(kind: unknown, origin: Run["origin"] = "person"): Run {
+  function start(kind: unknown, origin: Run["origin"] = "person", note?: (detail: string) => void): Run {
     if (kind !== "tenants" && kind !== "suppliers") return fail(400, "Choose the tenant list or the supplier list.");
     if (working) return fail(409, "A refresh from REI is already running. Stop it or wait.");
     const run: Run = { id: `reidir_${randomUUID()}`, kind, origin, phase: "working", startedAt: new Date().toISOString(), message: null, ask: null, signIn: null, preview: null, saved: null };
     const controller = new AbortController();
     current = run; parsed = null; stop = controller;
-    const job = execute(run, controller.signal).catch(error => {
+    const job = execute(run, controller.signal, note).catch(error => {
       run.phase = controller.signal.aborted ? "stopped" : "failed";
       run.message = controller.signal.aborted ? STOPPED : redactSecretsInText(message(error)).slice(0, 600);
       run.preview = null; parsed = null;
@@ -307,17 +332,21 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
    * list ends quietly; a change, a big drop or a count mismatch waits in Maintenance checks for Approve or Dismiss. */
   async function checkSuppliers(note: (detail: string) => void): Promise<SupplierCheckResult> {
     let run: Run;
-    try { run = start("suppliers", "schedule"); }
+    try { run = start("suppliers", "schedule", note); }
     catch (error) { return { ok: false, status: "failed", detail: `${message(error)} The supplier check did not start.` }; }
     let said = "";
     while (working) {
       const ask = run.ask?.tool === "browser_download" ? "the download of REI's supplier list" : run.ask?.tool === "browser_select" ? "Export Only on REI's report" : "a step in REI";
-      const detail = run.signIn ? `Waiting for you to sign in to REI Cloud. Continue in ${WHERE}.`
-        : run.ask ? `Waiting for you to allow ${ask}. Answer in ${WHERE}.` : "Reading REI's supplier list. Nothing in REI changes.";
-      if (detail !== said) { said = detail; note(detail); }
+      // While it waits for sign-in the wait itself tells Schedule (once, and at most one midday reminder).
+      if (run.signIn) said = "";
+      else {
+        const detail = run.ask ? `Waiting for you to allow ${ask}. Answer in ${WHERE}.` : "Reading REI's supplier list. Nothing in REI changes.";
+        if (detail !== said) { said = detail; note(detail); }
+      }
       await Promise.race([working, new Promise(resolve => setTimeout(resolve, deps.pollMs ?? 250))]);
     }
     const preview = run.preview;
+    if (run.message === SUPPLIER_MISSED) return { ok: false, status: "missed", detail: SUPPLIER_MISSED };
     if (run.phase !== "preview" || !preview) return { ok: false, status: "failed", detail: run.message ?? "The supplier check could not finish. Nothing was saved." };
     if (preview.countMatches === false) return { ok: true, status: "awaiting-approval", detail: `${run.message} Dismiss it in ${WHERE}.` };
     if (preview.unchanged) {

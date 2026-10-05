@@ -127,6 +127,24 @@ describe("sign-in handover", () => {
     expect(browserSignInRoute(`/api/browser/sign-in/${id}/done`, "POST", new URLSearchParams())?.status).toBe(409);
     off();
   });
+  it("a scheduled wait lasts until its deadline: a failed REI sign-in page is not signed in, Done answers at once, then it times out", async () => {
+    // REI's failed sign-in lands back on the app at /Account/NewLoginMFA: not signed in.
+    expect(signedInAt(portal, "https://app.fictional-portal.example/Account/NewLoginMFA")).toBe(false);
+    const f = runtime(["https://login.fictional-portal.example/b2c"]);
+    // No pollMs: the long wait's own 20 s poll; Done must not wait for it.
+    const pending = openForSignIn({ site: "fictional-portal", reason: "Import", threadId: "thread-long", until: Date.now() + 60_000 }, { sites, runtime: f.runtime });
+    await until(() => signInHandovers("thread-long").length > 0);
+    const started = Date.now();
+    browserSignInRoute(`/api/browser/sign-in/${signInHandovers("thread-long")[0].id}/done`, "POST", new URLSearchParams());
+    expect((await pending).outcome).toBe("signed_in");
+    expect(Date.now() - started).toBeLessThan(2000);
+    const clock = { now: 1_000 };
+    const late = openForSignIn({ site: "fictional-portal", reason: "Import", threadId: "thread-deadline", until: 5_000 }, { ...fast, runtime: runtime(["https://login.fictional-portal.example/b2c"]).runtime, now: () => clock.now });
+    await until(() => signInHandovers("thread-deadline").length > 0);
+    clock.now = 5_000;
+    expect((await late).outcome).toBe("timed_out");
+    expect(signInHandovers("thread-deadline")[0].message).toBe("Sign-in to Fictional Portal was not finished today, so Bud paused. The next scheduled run tries again.");
+  });
   it("refuses an address the person did not give before opening anything", async () => {
     const f = runtime([]);
     await expect(openForSignIn({ site: "", url: "https://evil.fictional.example/", reason: "Read" }, { ...fast, runtime: f.runtime })).rejects.toThrow(/typed in this conversation/);

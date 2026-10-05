@@ -103,15 +103,15 @@ try {
   await drawer.getByRole('button', { name: 'Resume', exact: true }).click();
   loop = await until(async () => (await request('/api/loops')).loops.find(l => l.id === 'rei-supplier-check'), l => l.enabled && l.nextRunAt, 'loop turned on');
   await drawer.getByRole('button', { name: 'Run now', exact: true }).click();
-  const first = await until(latestRun, r => r?.status === 'running' && /Waiting for you to sign in to REI Cloud/.test(r.detail ?? ''), 'check waits for sign-in');
-  assert.equal(first.detail, `Waiting for you to sign in to REI Cloud. Continue in ${WHERE}.`);
+  const first = await until(latestRun, r => r?.status === 'running' && /^Sign in to REI Cloud so Bud can check the supplier list/.test(r.detail ?? ''), 'check waits for sign-in');
+  assert.match(first.detail, /^Sign in to REI Cloud so Bud can check the supplier list\. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in \(waiting until .+\)\.$/);
   await drawer.getByRole('status').filter({ hasText: first.detail }).waitFor();
   await capture('schedule-waiting-sign-in', drawer);
   const maintenance = await request('/api/loops/maintenance-review/run', 'POST', { requestId: randomUUID(), expectedRevision: (await request('/api/loops')).loops.find(l => l.id === 'maintenance-review').revision }, 201);
   const other = await checkRun(maintenance.run.id);
   assert.ok(['completed', 'awaiting-approval', 'partial'].includes(other.status), JSON.stringify(other));
   assert.equal((await latestRun()).status, 'running');
-  pass(`Supplier list check is off until enabled (Monday 08:15); turned on in Schedule; Run now waits at the REI sign-in handover and Schedule says "${first.detail}"; Maintenance checks still ran (${other.status})`);
+  pass(`Supplier list check is off until enabled (fortnightly, Monday 08:15); turned on in Schedule; Run now waits at the REI sign-in handover and Schedule says "${first.detail}"; Maintenance checks still ran (${other.status})`);
 
   // ── 2. Sign in → the download ask waits for the person in Maintenance checks ──
   await lab('sign-in');
@@ -164,7 +164,8 @@ try {
   const chatCards = page.locator('div.rounded-2xl').filter({ hasText: /^Supplier list check/ });
   const changeCard = chatCards.filter({ hasText: cardText });
   await changeCard.first().waitFor();
-  assert.equal(await chatCards.count(), 2, 'cards for the held big drop and the change; none for the quiet run');
+  assert.equal(await chatCards.count(), 3, 'cards for the sign-in wait, the held big drop and the change; none for the quiet run');
+  assert.equal(await chatCards.filter({ hasText: 'Sign in to REI Cloud so Bud can check the supplier list' }).count(), 1, 'one card while it waited at REI sign-in');
   assert.equal(await chatCards.filter({ hasText: 'has not changed' }).count(), 0);
   await capture('chat-card', changeCard.first());
   await changeCard.first().getByRole('button', { name: /Open$/ }).click();
@@ -176,7 +177,7 @@ try {
   await preview.getByRole('list', { name: 'Supplier emails changed in REI' }).getByText('FS-ELEC · Fictional Electrical: jobs@fictional-electrical.test, invoices@fictional-electrical.test → jobs@fictional-electrical.test, billing@fictional-electrical.test', { exact: true }).waitFor();
   await preview.getByRole('button', { name: 'Dismiss', exact: true }).waitFor();
   await capture('change-to-approve', suppliersPanel());
-  pass(`REI's change awaited approval: Bud posted "${cardText}" in Work (2 cards in all, none for the quiet run), and Maintenance checks listed FS-PAINT added, FS-ROOF removed and FS-ELEC's address change with Approve and Dismiss`);
+  pass(`REI's change awaited approval: Bud posted "${cardText}" in Work (3 cards in all: the sign-in wait, the big drop and the change; none for the quiet run), and Maintenance checks listed FS-PAINT added, FS-ROOF removed and FS-ELEC's address change with Approve and Dismiss`);
 
   // ── 6. Approve → W4 recognises the new sender and no longer lists the removed one ──
   await preview.getByRole('button', { name: 'Approve', exact: true }).click();
@@ -207,7 +208,7 @@ try {
       'Fictional REI-style portal: no REI Cloud evidence. The REI export location in the pack is a placeholder until the real one is mapped.',
       'The sign-in tab is a lab stand-in that reports the portal\'s address; the real work browser tab was not opened.',
       'The person (sign-in, approvals, Approve) is simulated by this script; the desktop notification is covered by unit tests only.',
-      'Runs were started with Run now; the Monday 08:15 clock firing is covered by unit tests only.',
+      'Runs were started with Run now; the fortnightly Monday 08:15 clock firing is covered by unit tests only.',
       'Source service only: no packaged, installed or Windows evidence.'],
     ...(failure ? { failure, serviceLog: logs.slice(-8000) } : {}) }, null, 2) + '\n');
 }

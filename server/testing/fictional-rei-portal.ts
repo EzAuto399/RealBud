@@ -503,7 +503,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     pending = null;
     return created;
   };
-  return { command, calls, effects, url: () => url, signIn: () => { signedIn = true; }, post, pendingUpload: () => pending && structuredClone(pending), receipts: () => structuredClone(receipts),
+  return { command, calls, effects, url: () => url, signIn: () => { signedIn = true; }, signOut: () => { signedIn = false; load(url); }, post, pendingUpload: () => pending && structuredClone(pending), receipts: () => structuredClone(receipts),
     /** The person switches the top-bar business (undefined: back to FICT1). */
     setBusiness: (code?: string) => { if (code === undefined) delete options.business; else options.business = code; } };
 }

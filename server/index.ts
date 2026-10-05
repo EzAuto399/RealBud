@@ -2490,7 +2490,7 @@ loops = new LoopManager({
     if (privateRestoreLocked) return {ok:false,detail:'Private restore is staged; restart the service before running work.'};
     jobRuns.sweepQueuedAttended();
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
-    if (loop.id === 'bank-references') return (await w1Host()).runLoop(); // W1 host (see BEGIN W1 host)
+    if (loop.id === 'bank-references') return (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)); // W1 host (see BEGIN W1 host)
     if (loop.id === 'weekly-bills') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
       database: workflowDatabase, workspaceId: workspaceIdentity.id, drafts: billDraftStore,
       authorize: async () => { await checkWebsiteExecution(); await authorizeBillWorkflow(); },
@@ -2607,10 +2607,20 @@ function w1Host() {
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       // Self-serve REI sign-in: opens REI's own sign-in page and resumes when signed in.
       ...(lab ? {} : { openForSignIn }),
+      // A loop run's REI sign-in wait lasts until 18:00 office time (server/w1-sign-in-wait.ts); the lab moves its clock.
+      timeZone: reiWaitTimeZone, ...(lab ? { now: lab.now, waitPollMs: 100 } : {}),
       onSettings: settings => loops?.setAvailable("bank-references", Boolean(settings)) });
   })().catch(error => { w1HostPromise = undefined; throw error; });
 }
 void import("./w1-host.ts").then(({ readW1Settings }) => readW1Settings(DATA_DIR)).then(settings => loops?.setAvailable("bank-references", Boolean(settings))).catch(() => {});
+const reiWaitTimeZone = async () => (await agencySetup.getConfiguration()).settings.timeZone || undefined;
+/** Startup (owner decision, 6 Oct 2026): each W1 or Supplier list check run saved waiting at REI sign-in, still inside
+ * its deadline, runs again: it reopens REI's sign-in page in the work browser and keeps waiting with the same deadline. */
+async function resumeReiSignInWaits() {
+  const { resumableReiWaits } = await import("./w1-sign-in-wait.ts");
+  const now = w1Lab ? (await w1Lab).now() : Date.now();
+  for (const loop of await resumableReiWaits(DATA_DIR, now)) { try { loops?.runNow(loop); } catch { /* a run of that loop already holds it */ } }
+}
 // ---- END W1 host ----
 
 // ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
@@ -2624,7 +2634,8 @@ function reiDirectorySync() {
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
       tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
-      signIn: () => lab ? lab.openForSignIn : openForSignIn });
+      signIn: () => lab ? lab.openForSignIn : openForSignIn,
+      dataDir: DATA_DIR, timeZone: reiWaitTimeZone, ...(lab ? { now: lab.now, waitPollMs: 100 } : {}) });
   })().catch(error => { reiDirectoryPromise = undefined; throw error; });
 }
 // ---- END REI directory refresh ----
@@ -6240,6 +6251,7 @@ server.listen(PORT, "127.0.0.1", () => {
   // restart continues the saved checkpoint under its own authority re-check. It
   // reads nothing when no window is pending.
   if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
+  if (!privateRestoreLocked) void resumeReiSignInWaits().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
   setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));

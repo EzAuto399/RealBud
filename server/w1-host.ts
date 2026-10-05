@@ -10,7 +10,9 @@
 // person once for the upload and for the register download; those asks are
 // answered only through POST /api/w1/runs/:id/answer. Bud never posts: the
 // person processes the receipts in REI and reports it. The clock (runLoop)
-// never opens a browser: it only pulls, waits for review, and confirms.
+// pulls, waits for review, and once the review is done waits on REI's sign-in
+// page until the end of the office day (owner decision, 6 Oct 2026;
+// server/w1-sign-in-wait.ts), then carries on to the upload ask by itself.
 //
 // Every REI stage refuses while a saved sign-in handover holds (the same hold
 // Ask's browser tasks respect) and takes the run's AbortSignal: POST
@@ -44,6 +46,7 @@ import { amountCents, isoDate, reconcilePreview, type W1PreviewReconciliation, t
 import { assertW1ReiBatch, awaitPosting, captureBaseline, preview, readback, W1_REI_PORTAL, w1ImportProof, w1ReiAccountKey, w1ReiGrantNeeds, type W1ImportProof, type W1PreviewOutcome, type W1ReiBatch, type W1ReiContext } from "./w1-rei-workflow.ts";
 import { isActive, serializeFile, W1StateStore, W1_DESTINATION, type W1Preview, type W1ReadbackFound, type W1Run } from "./w1-state.ts";
 import { createW1Workflow, type W1BankSource, type W1Inspection, type W1ReiBridge, type W1Readback, type W1Session } from "./w1-workflow.ts";
+import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-in-wait.ts";
 import { REDBARK_ACCOUNT_ID } from "../shared/bank-source.ts";
 import { bankReviewVersion } from "../shared/bank-review.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
@@ -98,20 +101,32 @@ export interface W1HostDeps {
   /** True while a saved sign-in handover holds browser work (default: the shared human-handoffs record, as Ask checks). */
   signInHolding?: () => boolean;
   /** Opens the work browser at the site's sign-in page for the person and resolves when they are done (server/browser-sign-in.ts). Without it, sign-in stays a stop with a message. */
-  openForSignIn?: (input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string; threadId?: string }) => Promise<{ outcome: "signed_in" | "stopped" | "timed_out" | "wrong_account"; origin: string }>;
+  openForSignIn?: (input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string; threadId?: string; until?: number }) => Promise<{ outcome: "signed_in" | "stopped" | "timed_out" | "wrong_account"; origin: string }>;
   /** Test lab hooks (server/testing/w1-lab.ts); null in production. Its openForSignIn, once the lab turns it on, stands in for the one above. */
   lab?: { handle(body: unknown): Promise<unknown>; openForSignIn?: W1HostDeps["openForSignIn"] } | null;
   pollMs?: number;
+  /** The office timezone for a scheduled sign-in wait's deadline (undefined: this computer's). */
+  timeZone?: () => Promise<string | undefined>;
+  /** The clock for a scheduled sign-in wait (the lab moves it). */
+  now?: () => number;
+  /** How often a scheduled sign-in wait checks for its midday reminder. */
+  waitPollMs?: number;
 }
 
 type Ask = { requestId: string; tool: string; summary: string; at: string };
-type RunContext = { runId: string; unattended: boolean; signal: AbortSignal };
+/** `unattended`: a loop run, which waits on REI's sign-in page until the office day ends; `note` tells its Schedule row what it waits for. */
+type RunContext = { runId: string; unattended: boolean; signal: AbortSignal; note?: (detail: string) => void };
 /** The read-only pending-import recipe. Only the fictional pack has it so far (see the header). */
 const PENDING_RECIPE = "bulk-receipting-pending";
 const BULK_RECEIPTING_ROUTE = "/customers/importbanklink/index";
 const PENDING_HANDOFF = "Your earlier upload is waiting in REI. Process or delete it there.";
 const STOPPED = "Stopped. Bud did nothing more in REI. Check the import before continuing.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
+const WAIT_COPY = (until: string): ReiWaitCopy => ({
+  first: `Sign in to REI Cloud so Bud can finish the bank import. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in (waiting until ${until}).`,
+  reminder: `Reminder: sign in to REI Cloud so Bud can finish the bank import. Bud waits until ${until}, then the next scheduled run tries again.` });
+export const W1_MISSED = "Missed: REI Cloud wasn't signed in today, so the bank import is waiting. The next scheduled run tries again.";
+const ASK_LINE: Record<string, string> = { browser_upload: "Waiting for your approval to upload the reviewed bank file to REI", browser_download: "Waiting for you to allow the download of REI's Receipt Register" };
 const NO_BROWSER = "The work browser could not be opened. Check that Chrome or Edge is installed, then try again.";
 /** The hold check only lists saved handoffs; it never releases or verifies anything. */
 const readOnly = async (): Promise<never> => { throw new Error("Read-only sign-in hold check."); };
@@ -138,6 +153,7 @@ export function createW1Host(deps: W1HostDeps) {
   /** Runs waiting for the person to sign in to REI → the handover's thread (GET /api/browser/sign-in?threadId=…). */
   const signingIn = new Map<string, string>();
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), NO_HANDOFF_HOST).isHolding());
+  const waits = reiSignInWaits(deps.dataDir), now = deps.now ?? Date.now;
   let today = "";
   const note = (text: string) => { const ctx = context.getStore(); if (ctx) notes.set(ctx.runId, text.slice(0, 600)); };
 
@@ -246,7 +262,8 @@ export function createW1Host(deps: W1HostDeps) {
     const grant: BrowserTaskGrant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id, runId: `w1-${ctx.runId}`, route: "schedule",
       request: { text, sha256: createHash("sha256").update(text).digest("hex") }, sites: needs.sites, browser: { id: browserId, accountMarker: marker },
       actions: needs.actions, consequential: "ask-each", uploads, expiresAt: Date.now() + 30 * 60_000, budget: null });
-    const approve = portalRecipeApprovalChannel(`w1:${ctx.runId}`, ask => { asks.set(ctx.runId, { requestId: ask.requestId, tool: ask.tool, summary: ask.summary.slice(0, 600), at: new Date().toISOString() }); },
+    const approve = portalRecipeApprovalChannel(`w1:${ctx.runId}`, ask => { asks.set(ctx.runId, { requestId: ask.requestId, tool: ask.tool, summary: ask.summary.slice(0, 600), at: new Date().toISOString() });
+      ctx.note?.(`${ASK_LINE[ask.tool] ?? "Waiting for you to allow a step in REI"}. Answer in Schedule → Bank reference review.`); },
       requestId => { if (asks.get(ctx.runId)?.requestId === requestId) asks.delete(ctx.runId); });
     return { grant, runtime: deps.runtime, threadId: `w1-${ctx.runId}-${id}`, approve, workroom, load, signal: ctx.signal, ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}) };
   }
@@ -301,7 +318,6 @@ export function createW1Host(deps: W1HostDeps) {
   }
   const rei: W1ReiBridge = {
     async session({ destination }) {
-      if (context.getStore()?.unattended) return fail(409, "Waiting for you to continue the bank import in Schedule.");
       const office = await settings();
       if (destinationOf(office) !== destination) return { kind: "wrong_account" };
       const check = async (): Promise<W1Session> => {
@@ -328,15 +344,24 @@ export function createW1Host(deps: W1HostDeps) {
       // Self-serve sign-in: the person signs in on REI's own page; Bud never sees credentials or codes.
       // The run waits here as long as the handover lasts; other loops are not held. Status names the
       // handover so Schedule shows it (with Done and Stop) instead of "Working".
-      const { signal, runId } = context.getStore()!, threadId = `w1-${runId}`;
-      signingIn.set(runId, threadId);
-      let opened: Awaited<ReturnType<typeof signIn>>;
-      try { opened = await signIn({ site: W1_REI_PORTAL, reason: "Import bank receipts", signal, threadId, ...(office.rei.urlValue ? { account: office.rei.urlValue } : {}) }); }
-      finally { signingIn.delete(runId); }
-      if (opened.outcome === "wrong_account") return { kind: "wrong_account" };
-      if (opened.outcome !== "signed_in") { if (signal.aborted) return fail(409, STOPPED); return first; }
-      // Signed in is not proof of the account: the same read-only check runs again.
-      return check();
+      const ctx = context.getStore()!, { signal, runId } = ctx, threadId = `w1-${runId}`;
+      /** One handover, then the same read-only check (signed in is not proof of the account). */
+      const handover = async (until?: number): Promise<W1Session> => {
+        signingIn.set(runId, threadId);
+        let opened: Awaited<ReturnType<typeof signIn>>;
+        try { opened = await signIn({ site: W1_REI_PORTAL, reason: "Import bank receipts", signal, threadId, ...(office.rei.urlValue ? { account: office.rei.urlValue } : {}), ...(until === undefined ? {} : { until }) }); }
+        finally { signingIn.delete(runId); }
+        if (opened.outcome === "wrong_account") return { kind: "wrong_account" };
+        if (signal.aborted) return fail(409, STOPPED);
+        if (opened.outcome === "stopped") { note(STOPPED); return first; }
+        if (opened.outcome === "timed_out") { if (until !== undefined) note(W1_MISSED); return first; }
+        return check();
+      };
+      // A person's Continue: the attended 15-minute handover.
+      if (!ctx.unattended) return handover();
+      // A loop run: REI's sign-in page stays open until the end of the office day, saved so a restart reopens it.
+      return withReiSignInWait({ waits, loop: "bank-references", runId, now, timeZone: await deps.timeZone?.(), note: ctx.note, copy: WAIT_COPY,
+        ...(deps.waitPollMs !== undefined ? { pollMs: deps.waitPollMs } : {}), work: handover });
     },
     async uploadPreview({ attemptId, destination, batchId, artifactDigest }) {
       let prepared: Awaited<ReturnType<typeof batchFor>>, ctx: W1ReiContext;
@@ -382,7 +407,7 @@ export function createW1Host(deps: W1HostDeps) {
 
   /** One execution slot per run: its Stop and its "working" entry are registered
    * synchronously, before any await, so a Stop during setup is never missed. */
-  function advance(id: string, unattended: boolean): Promise<W1Run> {
+  function advance(id: string, unattended: boolean, noteRun?: (detail: string) => void): Promise<W1Run> {
     const stop = new AbortController();
     stops.set(id, stop);
     const job = (async () => {
@@ -392,7 +417,7 @@ export function createW1Host(deps: W1HostDeps) {
         // Stopped while setting up: no stage starts.
         if (stop.signal.aborted) return fail(409, STOPPED);
         notes.delete(id);
-        return await context.run({ runId: id, unattended, signal: stop.signal }, () => workflow.advance(id));
+        return await context.run({ runId: id, unattended, signal: stop.signal, ...(noteRun ? { note: noteRun } : {}) }, () => workflow.advance(id));
       } finally { if (stops.get(id) === stop) stops.delete(id); }
     })();
     const slot: Promise<void> = job.then(() => {}, () => {}).finally(() => { if (working.get(id) === slot) working.delete(id); });
@@ -487,10 +512,11 @@ export function createW1Host(deps: W1HostDeps) {
     return { status: 200, body: await status() };
   }
 
-  /** The bank-references loop: start a run when none is open, then pull and
-   * confirm on the clock. It never opens a browser or waits for an approval;
-   * everything in REI continues from Schedule with the person there. */
-  async function runLoop(): Promise<{ ok: boolean; status?: "completed" | "awaiting-approval" | "failed"; detail: string }> {
+  /** The bank-references loop: start a run when none is open, pull, wait for
+   * the review, then wait on REI's sign-in page (until the office day ends)
+   * and carry on to the upload ask, which waits for the person. `noteRun`
+   * tells the Schedule row what the run waits for. */
+  async function runLoop(noteRun: (detail: string) => void = () => {}): Promise<{ ok: boolean; status?: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }> {
     await ready;
     const office = await readW1Settings(deps.dataDir);
     if (!office) return { ok: false, status: "failed", detail: "Choose the bank account and REI account for bank imports first." };
@@ -498,14 +524,17 @@ export function createW1Host(deps: W1HostDeps) {
     try { run ??= await workflow.start({ account: office.account, destination: destinationOf(office) }); }
     catch (error) { return { ok: false, status: "failed", detail: message(error) }; }
     const waiting = { ok: true, status: "awaiting-approval" as const, detail: "A bank import is waiting for you in Schedule → Bank reference review." };
-    if (working.has(run.id) || !["fetch", "review", "confirm"].includes(run.step)) return waiting;
-    try { run = await advance(run.id, true); } catch { return waiting; }
-    if (run.outcome === "nothing_new") return { ok: true, status: "completed", detail: "No new bank transactions since the last import." };
+    if (working.has(run.id) || !["fetch", "review", "sign_in", "confirm"].includes(run.step)) return waiting;
+    const id = run.id;
+    try { run = await advance(id, true, noteRun); }
+    catch (error) { return message(error) === STOPPED ? { ok: false, status: "failed", detail: STOPPED } : waiting; }
+    if (run.outcome === "nothing_new") return { ok: true, status: "completed", detail: "No new bank transactions since the last import.", quiet: true };
     if (run.outcome === "imported") return { ok: true, status: "completed", detail: `Bank import confirmed through ${run.confirm?.coveredThrough ?? "today"}.` };
-    if (run.attention?.reason === "fetch_failed") return { ok: false, status: "failed", detail: notes.get(run.id) ?? run.attention.message };
-    return run.step === "review"
-      ? { ok: true, status: "awaiting-approval", detail: `Pulled ${run.fetch?.transactionIds.length ?? 0} bank transactions. Review them in Schedule → Bank reference review.` }
-      : waiting;
+    if (run.attention?.reason === "fetch_failed") return { ok: false, status: "failed", detail: notes.get(id) ?? run.attention.message };
+    if (notes.get(id) === W1_MISSED) return { ok: false, status: "missed", detail: W1_MISSED };
+    if (notes.get(id) === STOPPED) return { ok: false, status: "failed", detail: STOPPED };
+    if (run.step === "review") return { ok: true, status: "awaiting-approval", detail: `Pulled ${run.fetch?.transactionIds.length ?? 0} bank transactions. Review them in Schedule → Bank reference review.` };
+    return run.attention ? { ok: true, status: "awaiting-approval", detail: `${run.attention.message} Continue in Schedule → Bank reference review.` } : waiting;
   }
 
   return { handle, runLoop, status, workflow, store, importProof: currentProof };

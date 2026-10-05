@@ -28,7 +28,7 @@ export const parseHistoricalLoopRun = parseHistoryLoopRun;
 
 export interface LoopExecuteResult {
   ok: boolean;
-  status?: "completed" | "partial" | "awaiting-approval" | "failed";
+  status?: "completed" | "partial" | "awaiting-approval" | "failed" | "missed";
   detail: string;
   covered?: number;
   uncovered?: number;

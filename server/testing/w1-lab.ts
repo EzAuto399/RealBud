@@ -6,11 +6,15 @@
 // on the real sign-in handover (browser-sign-in.ts) over a tab that follows the
 // portal's address, so a signed-out run waits for "sign-in" and carries on by
 // itself; without it sign-in stays a stop the person continues. The same portal
-// serves the REI directory refresh (server/rei-directory-sync.ts). A pass proves
+// serves the REI directory refresh (server/rei-directory-sync.ts). "clock" moves
+// the lab's clock for scheduled sign-in waits (server/w1-sign-in-wait.ts); the
+// handover and the clock survive a service restart, as the person's browser and
+// time would, while the portal starts signed out again. A pass proves
 // RealBud's wiring and guards, never REI Cloud behaviour.
 // The bank feed is a FICTIONAL provider over a local fake Redbark that speaks
 // the live REST shapes (REALBUD_TEST_REDBARK_BASE, loopback http only), read
 // through redbark-source.ts's validating client with a synthetic key.
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { restBankProvider, type BankProvider } from "../bank-provider.ts";
 import { createRedbarkClient, REDBARK_API_BASE, type RedbarkClientOptions } from "../redbark-source.ts";
@@ -47,6 +51,12 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   };
   const runtime = new BrowserRuntime({ root: join(dataDir, "w1-lab-browser"), command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
   await runtime.connect(); await runtime.select("work");
+  // The person's side that outlives a service restart: the handover switch and the clock offset.
+  const statePath = join(dataDir, "w1-lab-browser", "lab-state.json");
+  const saved = (() => { try { return JSON.parse(readFileSync(statePath, "utf8")) as { handover?: unknown; offsetMs?: unknown }; } catch { return {}; } })();
+  let offsetMs = Number.isSafeInteger(saved.offsetMs) ? Number(saved.offsetMs) : 0, signInTabs = 0;
+  const now = () => Date.now() + offsetMs;
+  const persist = () => writeFileSync(statePath, JSON.stringify({ handover: lab.openForSignIn !== undefined, offsetMs }), { mode: 0o600 });
   // Ask browser tasks in the lab (server/ask-browser-lab.ts) treat this fictional browser as RealBud's own work
   // browser, as the native one is, so the task-local read allowance applies; saved jobs and recipe runs ignore it.
   Object.defineProperty(runtime, "ownsProfile", { value: true });
@@ -54,18 +64,28 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
   const dashboard = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
   const signInSites: SignInSite[] = [siteFromMap("rei-cloud", { origin: FICTIONAL_REI_ORIGIN, signIn: { host: new URL(FICTIONAL_REI_SIGNIN).host }, scope: { urlParam: "reicid" } })!];
   // The sign-in tab reads only the portal's address, as the real handover does.
-  const signInTab = { openSignInTab: async () => "fictional-rei-sign-in", signInTabUrl: async () => mock.url() };
+  const signInTab = { openSignInTab: async () => { signInTabs += 1; return "fictional-rei-sign-in"; }, signInTabUrl: async () => mock.url() };
+  const handover: NonNullable<W1HostDeps["openForSignIn"]> = input => openForSignIn(input, { runtime: signInTab, sites: signInSites, pollMs: 50, now });
   const lab = {
     provider,
     runtime,
     signInTab,
     load: async () => fictionalReiPack(),
     browserId: async () => "work",
-    openForSignIn: undefined as W1HostDeps["openForSignIn"],
+    openForSignIn: saved.handover === true ? handover : undefined as W1HostDeps["openForSignIn"],
+    now,
     async handle(body: unknown) {
       const action = (body as { action?: unknown } | null)?.action;
-      if (action === "handover") lab.openForSignIn = input => openForSignIn(input, { runtime: signInTab, sites: signInSites, pollMs: 50 });
+      if (action === "handover") { lab.openForSignIn = handover; persist(); }
+      // The lab's clock jumps to `at` (an ISO time) and runs on from there.
+      else if (action === "clock") {
+        const at = Date.parse(String((body as { at?: unknown }).at));
+        if (!Number.isFinite(at)) throw Object.assign(new Error("Give the lab clock an ISO time."), { status: 400 });
+        offsetMs = at - Date.now(); persist();
+      }
       else if (action === "sign-in") { mock.signIn(); await mock.command(["navigate", dashboard]); }
+      // The REI session ends (as it does overnight): the portal shows its sign-in page again.
+      else if (action === "sign-out") mock.signOut();
       else if (action === "mismatch") options.previewEdit = rows => rows.map((row, index) => index === 0 ? [...row.slice(0, 4), (Number(row[4]) + 10).toFixed(2), row[5]] : row);
       // The portal never accepted the file: nothing pending, nothing receipted.
       else if (action === "lost-reply") options.unknownUpload = "before";
@@ -88,7 +108,7 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
       // The person processes the pending import in REI (Bud never presses it).
       else if (action === "process") mock.post();
       else if (action !== "status") throw Object.assign(new Error("Unknown lab action."), { status: 400 });
-      return { uploads, effects: [...mock.effects], receipts: mock.receipts().length, pending: Boolean(mock.pendingUpload()) };
+      return { uploads, effects: [...mock.effects], receipts: mock.receipts().length, pending: Boolean(mock.pendingUpload()), signInTabs, now: new Date(now()).toISOString() };
     },
   };
   return lab;
