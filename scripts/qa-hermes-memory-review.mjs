@@ -16,6 +16,7 @@ import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { createServiceAdminPasswordVerifier } from '../server/service-admin.ts';
 import { prepareInterruptedMemoryFixture } from '../server/testing/memory-prepared-fixture.mjs';
 import { provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const memoryProposals = process.argv.includes('--memory-proposals');
@@ -104,7 +105,7 @@ async function start() {
   for (let attempt = 0; attempt < 150; attempt++) {
     if (spawnError) throw spawnError;
     assert.ok(child.exitCode === null && child.signalCode === null, `The owned bootstrap exited before readiness: ${logs}`);
-    try { const response = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }); const health = await response.json(); if (health.app === 'realbud' && health.pid === child.pid) { token = (await (await fetch(base + '/api/session')).json()).token; assert.ok(typeof token === 'string' && token.length > 0); return; } } catch {}
+    try { const response = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }); const health = await response.json(); if (health.app === 'realbud' && health.pid === child.pid) { token = await readSessionToken(data); assert.ok(typeof token === 'string' && token.length > 0); return; } } catch {}
     await wait(100);
   }
   throw new Error('The owned bootstrap did not become ready.');
@@ -330,6 +331,7 @@ try {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, base, token);
   await context.route('**/*', route => { const url = new URL(route.request().url()); if (url.origin === base) return route.continue(); blockedNetwork.push({ origin: url.origin, method: route.request().method() }); return route.abort(); });
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { const url = new URL(request.url()); if (url.origin === base && request.headers()['x-realbud-service-admin']) adminHeadersSeen++; if (url.origin === base && url.pathname.startsWith(`${api}/`) && url.pathname.endsWith('/decision') && request.method() === 'POST') decisions.push({ path: url.pathname, body: request.postDataJSON() }); if (url.origin === base && url.pathname.startsWith(`${recoveryApi}/`) && url.pathname.endsWith('/close') && request.method() === 'POST') closures.push({ path: url.pathname, body: request.postDataJSON() }); });

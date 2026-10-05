@@ -14,6 +14,7 @@ import { departmentConfigurationReviewMaterial } from '../shared/department-conf
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { createDepartmentWorkerFixture, departmentWorkerFixtureKey } from './testing/department-worker-fixture.mjs';
 import { parse, stringify } from 'yaml';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 if(!process.env.PLAYWRIGHT_MODULE||!process.env.REALBUD_DEPARTMENT_TEST_RUNTIME)throw new Error('Set PLAYWRIGHT_MODULE and REALBUD_DEPARTMENT_TEST_RUNTIME.');
 const { chromium }=await import(process.env.PLAYWRIGHT_MODULE);
@@ -32,7 +33,7 @@ async function start(){
   closed=new Promise((done,reject)=>{child.once('close',done);child.once('error',reject);});
   for(const stream of[child.stdout,child.stderr])stream.on('data',part=>{logs=(logs+part).slice(-60_000);});
   await eventually(async()=>{if(child.exitCode!==null)throw new Error(logs);try{return (await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json()).pid===child.pid;}catch{return false;}});
-  token=(await(await fetch(base+'/api/session')).json()).token;
+  token=await readSessionToken(data);
 }
 async function app(path,body,expected=200,method=body===undefined?'GET':'POST',allowStarting=false){
   const response=await fetch(base+path,{method,headers:{'content-type':'application/json','x-realbud-session':token,'x-realbud-member-session':ownerToken},...(body===undefined?{}:{body:JSON.stringify(body)})});
@@ -84,7 +85,7 @@ try{
   assert.equal(captures.length,0);
   pass('Owner explicitly configures the approved case-only workflow through the authoritative API; the catalogue is empty before configuration and configuration itself starts no worker.');
   browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});
-  const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.addInitScript(value=>{localStorage.setItem('realbud.first-run-done','1');sessionStorage.setItem('realbud.company-member-session',value);},ownerToken);
+  const context=await browser.newContext({viewport:{width:1440,height:1000}});await primeBrowserSession(context,base,token);await context.addInitScript(value=>{localStorage.setItem('realbud.first-run-done','1');sessionStorage.setItem('realbud.company-member-session',value);},ownerToken);
   page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   async function open(){
     await page.goto(base+'/#/you');

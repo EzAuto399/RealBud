@@ -11,6 +11,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 import { startCuaControl } from "../electron/cua-control.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -277,7 +278,7 @@ const restartServer = async (extraEnv = {}) => {
   stderr = "";
   child = spawnServer(extraEnv);
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
 };
 
 const getBud = async () => {
@@ -389,7 +390,7 @@ const saveJob = async (id, extras = {}) => {
 try {
   child = spawnServer();
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("session issued", Boolean(session));
 
   // ── A. Session + product fences ──

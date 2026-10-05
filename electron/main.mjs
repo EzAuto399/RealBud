@@ -4,13 +4,14 @@ import { findBusyService, findRunningService, isOurService, probeService, servic
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess, WebContentsView } from "electron";
 import { registerHermiosView } from "./hermios-view.mjs";
-import { guardOfficeWindow, openExternalHttps } from "./external-links.mjs";
+import { guardOfficeWindow, openExternalHttps, trustedOfficeSender } from "./external-links.mjs";
+import { localSessionFor } from "../shared/local-session.mjs";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { focusedWindowAction, headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
-import { resolveDeskKey } from "./desk-key-custody.mjs";
+import { resolveDeskKey, windowsKeyPrivacy } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -320,7 +321,7 @@ function createWindow() {
   // Popups never open; https links go to the browser, nothing else leaves, and
   // the window stays on the office page it was given (the port can change).
   guardOfficeWindow(win.webContents, {
-    appUrl: () => (app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL),
+    appUrl: officeAppUrl,
     shell,
     log: slog,
   });
@@ -342,9 +343,8 @@ function createWindow() {
               throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
             }
             const health = await healthResponse.json();
-            const sessionResponse = await fetch("/api/session");
-            if (!sessionResponse.ok) throw new Error("local desktop session is unavailable");
-            const { token } = await sessionResponse.json();
+            const token = await window.ogb.getLocalSession().catch(() => null);
+            if (!token) throw new Error("local desktop session is unavailable");
             const companyResponse = await fetch("/api/company/status", { headers: { "x-realbud-session": token } });
             if (!companyResponse.ok) throw new Error("company setup status is unavailable");
             const company = await companyResponse.json();
@@ -379,7 +379,7 @@ function createWindow() {
         // because a driver that never settles must still not hang the smoke.
         await settledWithin(cuaReady, 10_000, "computer use start");
         if (smokeMode && serviceHandle) {
-          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()));
+          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacy });
         }
         win.close();
         if (smokeMode) app.quit();
@@ -624,6 +624,30 @@ ipcMain.handle("desktop:capabilities", async () =>
   }),
 );
 
+// The local API token never travels over unauthenticated HTTP. Main reads it
+// from the service's private file and answers only the office window's own top
+// frame on the office origin, for the service this installation recognises.
+function officeAppUrl() {
+  return app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL;
+}
+async function officeSessionToken() {
+  const dataDirectory = realbudDataDir();
+  const identity = serviceIdentity(dataDirectory);
+  // Packaged windows load the service itself; development goes through Vite,
+  // which proxies to whichever port this installation's service holds.
+  const running = app.isPackaged ? await probeService(SERVER_PORT) : await findRunningService(identity);
+  if (!running || !isOurService(running.body, identity)) return null;
+  return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+}
+ipcMain.handle("local-session:get", async (event) => {
+  const trusted = () => trustedOfficeSender(event, officeAppUrl(), sender => BrowserWindow.fromWebContents(sender)?.webContents ?? null);
+  if (!trusted()) throw new Error("This page cannot use the office session.");
+  const token = await officeSessionToken();
+  // The page can navigate while the file is read; check it again.
+  if (!token || !trusted()) throw new Error("The office service is unavailable.");
+  return token;
+});
+
 // Service lifecycle for the renderer. This is intentionally IPC rather than an
 // HTTP route: when the service is not running it cannot answer /api/*, so the
 // only truthful source for "is my office running" is this process.
@@ -679,7 +703,7 @@ ipcMain.handle("service:stop", async () => {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  if (!await requestServiceStop(handle, identity)) {
+  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacy })) {
     return { ok: false, status: await officeServiceStatus() };
   }
   // Wait for the port to be released so the next start is not racing a dying service.
@@ -744,9 +768,8 @@ async function officeSupportReport(desktopLog) {
   if (!running) return null;
   const base = `http://127.0.0.1:${running.port}`;
   try {
-    const sessionResponse = await fetch(`${base}/api/session`, { signal: AbortSignal.timeout(5_000) });
-    const token = sessionResponse.ok ? (await sessionResponse.json().catch(() => null))?.token : null;
-    if (typeof token !== "string" || !token) return null;
+    const token = await localSessionFor(realbudDataDir(), running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+    if (!token) return null;
     const response = await fetch(`${base}/api/support/bundle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-realbud-session": token },

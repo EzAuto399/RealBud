@@ -1,5 +1,6 @@
 // A disposable local service proves that the complete HTTP boundary, including
 // app-session authentication, guards graceful shutdown. No live providers.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
@@ -50,7 +51,7 @@ beforeAll(async () => {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   health = await (await fetch(base + '/api/health')).json() as typeof health;
-  session = ((await (await fetch(base + '/api/session')).json()) as { token: string }).token;
+  session = await readSessionToken(data);
 }, 25_000);
 
 afterAll(async () => {

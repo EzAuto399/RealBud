@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,13 +39,14 @@ try {
   assert.ok(ready, logs.slice(-1500));
   // First run is a server receipt, not the old browser flag: record it for this
   // disposable fictional workspace so the welcome screen does not block Workspace.
-  const session = (await (await fetch(origin + '/api/session')).json()).token;
+  const session = await readSessionToken(data);
   await completeFictionalOnboarding(async (path, method = 'GET', body) => {
     const response = await fetch(origin + path, { method, headers: { 'content-type': 'application/json', 'x-realbud-session': session }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await response.json(); assert.equal(response.status, 200, `${path}: ${JSON.stringify(result)}`); return result;
   });
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 } });
+  await primeBrowserSession(context, origin, session);
   const page = await context.newPage(); const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#you-office');

@@ -10,6 +10,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSy
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 import { DatabaseSync } from "node:sqlite";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -97,7 +98,7 @@ async function boot(name, existing) {
   for (const stream of [office.child.stdout, office.child.stderr]) stream.on("data", chunk => { office.logs = (office.logs + sanitize(chunk)).slice(-120_000); });
   const deadline = Date.now() + 35_000;
   while (true) { if (office.child.exitCode !== null) throw new Error(`${name} service exited: ${office.logs}`); if (await fetch(office.base + "/api/health").then(r => r.ok, () => false)) break; if (Date.now() > deadline) throw new Error(`${name} service timeout: ${office.logs}`); await delay(100); }
-  office.token = (await api(office, "GET", "/api/session")).body.token;
+  office.token = await readSessionToken(data);
   requireCheck(`${name}: loopback service issued a session`, Boolean(office.token)); return office;
 }
 async function stop(office) {

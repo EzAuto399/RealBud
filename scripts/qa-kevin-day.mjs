@@ -28,6 +28,7 @@ const cuaPath = join(HOME, "cua-connection.json");
 const browserFixture = join(HOME, "browser-fixture.mjs");
 writeFileSync(browserFixture, `import { existsSync } from "node:fs";
 import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server", "browser-runtime.ts")).href)};
+import { readSessionToken } from './local-session.mjs';
 browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
 browserRuntime.resumeConnection = async () => {};
 `);
@@ -348,7 +349,7 @@ try {
   await startComposioStub();
   child = spawnServer();
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("08:00 session", Boolean(session));
 
   // ── 1. Open office / book ──

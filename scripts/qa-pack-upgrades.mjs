@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 if (process.platform === 'win32' || process.getuid?.() === 0) throw new Error('This filesystem fault fixture needs a non-root POSIX account.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -45,7 +46,8 @@ async function start({ holdArchiveWrite = false } = {}) {
   let ready = false;
   for (let n = 0; n < 150; n++) { if (child.exitCode !== null || child.signalCode) break;
     try { if ((await (await fetch(origin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
-  assert.ok(ready, 'Fixture service did not become ready'); token = (await (await fetch(origin + '/api/session')).json()).token;
+  assert.ok(ready, 'Fixture service did not become ready'); token = await readSessionToken(data);
+  if (context) await primeBrowserSession(context, origin, token);
 }
 const installation = async () => (await request('/api/customer-packs')).installations.find(p => p.id === 'office-core');
 const recipes = async () => (await request('/api/recipes')).recipes;
@@ -92,6 +94,7 @@ syncBuiltinESMExports();
   assert.equal((await fetch(origin + '/api/customer-packs/upgrade', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await primeBrowserSession(context, origin, token);
   await context.route('**/*', route => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === origin) return route.continue();

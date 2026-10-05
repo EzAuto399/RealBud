@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 // Explicit installed mode cannot fall back to the checkout or a local Node.
 const packaged=process.env.REALBUD_QA_RESOURCES!==undefined||process.env.REALBUD_QA_EXECUTABLE!==undefined;
@@ -47,7 +48,7 @@ async function start(){child=spawn(executable,[bootstrap],{cwd:serviceCwd,env:{.
  // Windows admits every file the service creates through PowerShell before content,
  // so a fresh boot takes several seconds longer there than on macOS or Linux.
  const startedAt=Date.now(),budget=process.platform==='win32'?90_000:15_000;
- while(Date.now()-startedAt<budget){if(spawnError)throw spawnError;if(child.exitCode!==null||child.signalCode)break;try{const health=await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json();if(health.app==='realbud'&&health.pid===child.pid){token=(await(await fetch(base+'/api/session')).json()).token;return;}}catch{}await pause(100);}
+ while(Date.now()-startedAt<budget){if(spawnError)throw spawnError;if(child.exitCode!==null||child.signalCode)break;try{const health=await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json();if(health.app==='realbud'&&health.pid===child.pid){token=await readSessionToken(data);return;}}catch{}await pause(100);}
  throw new Error(`Service failed to start after ${Date.now()-startedAt} ms (exit ${child.exitCode??'none'}${child.signalCode?`, signal ${child.signalCode}`:''})${logs?`: ${logs.slice(-3000)}`:''}`);}
 // Windows admits each private file through PowerShell, so a restore that checks the
 // whole workspace takes far longer there; the slowest call is kept as evidence.

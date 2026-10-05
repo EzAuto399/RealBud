@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Explicit package selection never falls back to source modules or dist UI.
 const packaged = process.env.REALBUD_QA_RESOURCES !== undefined || process.env.REALBUD_QA_EXECUTABLE !== undefined;
@@ -32,7 +33,7 @@ for (const directory of [source, target, output]) mkdirSync(directory, { recursi
 for (const directory of [source, target]) writeFileSync(join(directory, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
 const wait = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [];
 const pass = text => { checks.push(text); console.log(`PASS ${text}`); };
-let browser, page, child, logs = '', failure, token, base, port;
+let browserContext, browser, page, child, logs = '', failure, token, base, port;
 let runtime = { node: process.versions.node, electron: process.versions.electron ?? null };
 const stop = async () => { if (child?.exitCode === null && !child.signalCode) { child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), wait(5000)]); if (child.exitCode === null && !child.signalCode) { child.kill('SIGKILL'); await once(child, 'exit'); } } };
 const start = async directory => {
@@ -41,7 +42,8 @@ const start = async directory => {
   for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-20000); });
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) { if (spawnError) throw spawnError; if (child.exitCode !== null || child.signalCode) break; try { const health = await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })).json(); if (health.app === 'realbud' && health.pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
-  assert.ok(ready, logs); token = (await (await fetch(base + '/api/session')).json()).token;
+  assert.ok(ready, logs); token = await readSessionToken(directory);
+  if (browserContext) await primeBrowserSession(browserContext, base, token);
   // A browser flag no longer completes first run; record the server receipt for
   // this disposable fictional workspace (fixture setup, not welcome-screen proof).
   await completeFictionalOnboarding(request);
@@ -71,6 +73,7 @@ try {
   const before = await request('/api/private-backup'); assert.equal(before.canRestore, false); assert.equal(before.bootstrap, true);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });
+  browserContext = context; await primeBrowserSession(context, base, token);
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/you');

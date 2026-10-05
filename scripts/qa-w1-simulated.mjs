@@ -35,6 +35,7 @@ if (process.argv.includes('--live-redbark')) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { serviceSmokeEnv } = await import(join(root, 'scripts/service-smoke-env.mjs'));
 const { completeFictionalOnboarding } = await import(join(root, 'scripts/qa-onboarding.mjs'));
+const { readSessionToken, primeBrowserSession } = await import(join(root, 'scripts/local-session.mjs'));
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const { createServer: createViteServer } = await import('vite');
@@ -172,7 +173,7 @@ try {
   let ready = false;
   for (let i = 0; i < 150 && child.exitCode === null; i++) { if ((await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }).then(r => r.json()).catch(() => null))?.pid === child.pid) { ready = true; break; } await wait(100); }
   assert.ok(ready, 'Disposable source service starts');
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   assert.equal((await fetch(base + '/api/w1/status')).status, 401);
   pass('W1 routes need the session');
   await completeFictionalOnboarding(request);
@@ -186,6 +187,7 @@ try {
   await vite.listen();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, uiBase, token);
   await context.route('**/*', route => { const origin = new URL(route.request().url()).origin; if (origin === uiBase) return route.continue(); deniedOrigins.push(origin); return route.abort(); });
   page = await context.newPage(); page.setDefaultTimeout(20_000);
   page.on('pageerror', error => errors.push(error.message));

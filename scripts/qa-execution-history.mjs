@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud history QA '));
 const output = resolve(process.env.QA_OUTPUT || join(root, 'outputs/execution-history-2026-09-21')); mkdirSync(output, { recursive: true });
@@ -33,7 +34,7 @@ try {
   for (let i = 0; i < 100; i++) { if (child.exitCode !== null) break; try { const health = await (await fetch(origin + '/api/health', { signal: AbortSignal.timeout(500) })).json(); if (health.pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
   assert.ok(ready, logs);
   for (const path of ['/api/job-runs/history', '/api/loops/history']) assert.equal((await fetch(origin + path)).status, 401);
-  const token = (await (await fetch(origin + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
   const request = (path, init = {}) => fetch(origin + path, { ...init, headers: { ...init.headers, 'x-realbud-session': token } });
   assert.equal((await request('/api/job-runs/history?cursor=invalid')).status, 400);
   assert.equal((await request('/api/job-runs/history?limit=10000')).status, 400);
@@ -43,6 +44,7 @@ try {
   pass('Authenticated history migrates all55legacy job receipts and pages them without loss or duplicates; malformed requests fail');
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1024 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, origin, token);
   await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
   // Welcome completion belongs to this workspace. A browser-local flag no
   // longer skips it; advance this fictional fixture through the scoped API.

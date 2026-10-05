@@ -2,7 +2,7 @@ import type { ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
 import { budStatusObserverRevision, hasBudStatusObservers } from "@/lib/bud-status-monitor";
-import { ensureSession } from "@/lib/local-session";
+import { ensureSession, rejectLocalSession } from "@/lib/local-session";
 import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
 import type { ServiceAdminStatus } from "../../shared/service-admin";
@@ -931,6 +931,8 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     await ensureSession(true).catch(() => "");
     res = await request();
     body = await res.json().catch(() => ({}));
+    // Still refused with a fresh token: a browser tab must be reconnected.
+    if (res.status === 401 && body.error === "session required") rejectLocalSession();
   }
   if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
   if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
@@ -1587,6 +1589,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const connect = async (forceSession = false) => {
       let token = "";
       try {
+        // EventSource cannot report why it failed. A browser tab's token cannot
+        // refresh itself, so check it once; a rejection asks its owner again.
+        if (forceSession && !window.ogb?.getLocalSession) await api("/api/session").catch(() => {});
         token = await ensureSession(forceSession);
       } catch {
         scheduleReconnect();

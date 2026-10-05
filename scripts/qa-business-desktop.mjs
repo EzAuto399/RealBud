@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 import { startCompanyPostgresFixture } from '../server/company/testing-postgres.ts';
 import { createCompanyKernel } from '../server/company/index.ts';
 import { createPrivateVault } from '../server/private-vault.ts';
@@ -85,7 +86,7 @@ try {
     await delay(150);
   }
   assert.ok(ready, 'Packaged service must start');
-  const session = (await (await fetch(origin + '/api/session')).json()).token;
+  const session = await readSessionToken(data);
   const signedIn = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': session }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(signedIn.status, 200);
   const memberToken = (await signedIn.json()).memberToken;
@@ -233,6 +234,7 @@ try {
   // Narrow browser layout uses the same packaged server, real database and built assets.
   mobileBrowser = await chromium.launch({ headless: true });
   const mobile = await mobileBrowser.newPage({ viewport: { width: 390, height: 844 } });
+  await primeBrowserSession(mobile.context(), origin, session);
   await mobile.addInitScript(init, memberToken); await mobile.goto(origin);
   await openOffice(mobile); await expand(mobile, 'Departments and access');
   await mobile.getByRole('button', { name: 'Manage Accounts', exact: true }).click();

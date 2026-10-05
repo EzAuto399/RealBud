@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud screen QA '));
@@ -37,10 +38,12 @@ try {
     await wait(100);
   }
   assert.ok(ready, logs);
+  const token = await readSessionToken(data);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const createContext = async () => {
     const context = await browser.newContext({ viewport: { width: 1365, height: 1024 }, reducedMotion: 'reduce' });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    await primeBrowserSession(context, origin, token);
     return context;
   };
   // Welcome belongs to the workspace, so exercise it before saving completion.

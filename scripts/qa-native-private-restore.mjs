@@ -103,7 +103,7 @@ async function api(path, method = 'GET', body, status = 200, sourceRequest = fal
   const value = await response.json(); assert.equal(response.status, status, `${path}: ${JSON.stringify(value)}`); return value;
 }
 async function sessionToken() {
-  token = (await (await fetch(origin + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   const handle = readServiceHandle(data, identity.instanceId);
   if (handle) servicePids.add(handle.pid);
 }
@@ -145,7 +145,7 @@ async function prepareSourceBackup() {
   sourceChild = spawn(executable, [join(resources, 'server/bootstrap.js')], { cwd: resources, env: { ...serviceSmokeEnv({ executable, home: source, data: source, scratch, port: sourcePort }), REALBUD_DESK_KEY: sourceKey.toString('hex'), OMB_STATIC_DIR: join(resources, 'ui') }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [sourceChild.stdout, sourceChild.stderr]) stream.on('data', b => sourceLog = (sourceLog + b).slice(-15000));
   await until(async () => { if (sourceChild.exitCode !== null) throw new Error(sourceLog); try { return (await (await fetch(sourceOrigin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === sourceChild.pid; } catch { return false; } }, 'source compiled service');
-  sourceToken = (await (await fetch(sourceOrigin + '/api/session')).json()).token;
+  sourceToken = await readSessionToken(source);
   const sourceBook = await api('/api/desk/properties', 'POST', { address: 'Fictional Native Restore Oak Street', tenantName: 'Fictional Tenant', tenantPhone: '0400 000 000', weeklyRentCents: 50000 }, 201, true);
   const propertyId = sourceBook.properties.find(property => property.address === 'Fictional Native Restore Oak Street')?.id;
   assert.ok(propertyId);
@@ -531,6 +531,7 @@ import { readFileSync } from 'node:fs';
 import { WorkflowDatabase } from ${JSON.stringify(pathToFileURL(join(resources, 'server/workflow-database.js')).href)};
 import { createBillProposals } from ${JSON.stringify(pathToFileURL(join(resources, 'server/bill-proposals.js')).href)};
 import { validateSavedBillProposal } from ${JSON.stringify(pathToFileURL(join(resources, 'server/bill-proposal-validation.js')).href)};
+import { readSessionToken } from './local-session.mjs';
 const fixture = ${JSON.stringify(billFixture.proposal)};
 const retainedMail = ${JSON.stringify(billFixture.mail)};
 const database = new WorkflowDatabase({dir:process.env.REALBUD_DATA_DIR,key:Buffer.from(process.env.REALBUD_DESK_KEY,'hex')});

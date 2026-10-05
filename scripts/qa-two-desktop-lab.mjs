@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, release } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { readSessionToken } from './local-session.mjs';
 
 const kit = resolve(process.argv[2]);
 const atomicEnrollment = JSON.parse(await readFile(join(kit, 'test-kit.json'), 'utf8')).atomicCredentialEnrollment === true;
@@ -31,7 +32,7 @@ async function start(role) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${role} readiness timed out`)), 30_000); }),
     ]);
   } finally { clearTimeout(timer); }
-  context.appToken = (await request(context, '/api/session')).token;
+  context.appToken = await readSessionToken(join(scratch, role, 'home', '.realbud'));
   return context;
 }
 async function stop(context) {

@@ -8,6 +8,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'vite';
+import { primeBrowserSession } from './local-session.mjs';
+// Fixture-only: the renderer accepts only the 48-hex token shape.
+const FICTIONAL_SESSION = '0'.repeat(48);
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -51,7 +54,7 @@ try {
       const json = (status, body) => { res.statusCode = status; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(body)); };
       try {
         let input = ''; for await (const chunk of req) input += chunk; const body = input ? JSON.parse(input) : undefined;
-        if (path === '/api/session') return json(200, { token: 'fictional-session' });
+        if (path === '/api/session') return json(200, { product: 'RealBud', nonProduction: true });
         if (path.startsWith('/api/agency-setup')) { const result = await agency.handle(path, req.method, body); return json(result.status, result.body); }
         if (path === '/api/mail-workspace') return json(200, await getSnapshot());
         if (path === '/api/mail-workspace/items' && req.method === 'GET') return json(200, await mail.page(mailWorkspaceQuery(new URL(req.url, 'http://127.0.0.1').searchParams, 'tasks')));
@@ -73,6 +76,7 @@ try {
   await server.listen();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const page = await browser.newPage({ viewport: { width: 1400, height: 1050 } }); page.setDefaultTimeout(15_000); page.on('pageerror', error => errors.push(error.message));
+  await primeBrowserSession(page.context(), `http://127.0.0.1:${server.httpServer.address().port}`, FICTIONAL_SESSION);
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__agency-mail-qa`);
   const setup = page.getByRole('region', { name: 'Agency workflow setup', exact: true });
   await setup.getByLabel('Agency name', { exact: true }).fill('Fictional Acacia');
@@ -146,7 +150,7 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'agency-source-mobile.png') });
   assert.deepEqual(errors, []); checks.push('Reload preserves saved agency and mail records; both 390px components have no overflow or browser errors');
-  const saved = await readFile(join(temp, 'agency-setup.json'), 'utf8'); assert.ok(!saved.includes('fictional-session'));
+  const saved = await readFile(join(temp, 'agency-setup.json'), 'utf8'); assert.ok(!saved.includes(FICTIONAL_SESSION));
   await writeFile(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'rendered production React components and actual persisted agency/encrypted mail stores; fictional source and queue adapters; no live account, model or desktop package proof', checks, errors }, null, 2));
   console.log(JSON.stringify({ output, checks, errors }, null, 2));
 } catch (cause) {

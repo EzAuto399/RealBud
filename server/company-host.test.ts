@@ -1,3 +1,4 @@
+import { readSessionToken } from "./testing/local-session.ts";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
@@ -77,7 +78,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     expect(healthy).toBe(true);
-    const session = (await request("GET", "/api/session", undefined, { noAppSession: true, companion })).body.token;
+    const session = await readSessionToken(profile);
     if (companion) companionSession = session; else appSession = session;
   }
 

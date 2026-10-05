@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readSessionToken } from "./testing/local-session.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -247,8 +248,7 @@ beforeAll(async () => {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
     await new Promise((r) => setTimeout(r, 150));
   }
-  const boot = await fetch(`${BASE}/api/session`);
-  session = String(((await boot.json()) as { token?: string }).token ?? "");
+  session = await readSessionToken(join(home, ".realbud"));
 }, 30_000);
 
 afterAll(async () => {
@@ -279,30 +279,26 @@ describe("harness HTTP API", () => {
     expect((await api('POST','/api/website-requests/remote-work/disable',{})).status).toBe(200);
   });
 
-  // /api/session hands out the token guarding the whole local API. It is reached
-  // without the session gate, and hostAllowed/originAllowed treat a missing Origin
-  // as allowed — so a browser fetch started by another site could collect the token.
-  it("refuses the session token to a cross-site browser request but still bootstraps this app", async () => {
-    // Node's fetch sends sec-fetch-mode: cors with no sec-fetch-site. That shape
-    // must keep working: it is this app's own bootstrap, and an earlier version of
-    // this gate refused it.
-    const own = await fetch(`${BASE}/api/session`);
+  // /api/session used to hand the token guarding the whole local API to any
+  // local caller (curl, another user's process, a no-cors page). It is now an
+  // authenticated route; the token exists only in the owner's private file.
+  it("never serves the session token over HTTP and refuses protected routes without it", async () => {
+    for (const headers of [{}, { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" }, { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" }]) {
+      const refused = await fetch(`${BASE}/api/session`, { headers });
+      expect(refused.status).toBe(401);
+      expect(await refused.text()).not.toContain(session);
+    }
+    for (const path of ["/api/desk", "/api/config", "/api/events"]) expect((await fetch(`${BASE}${path}`)).status, path).toBe(401);
+    expect((await fetch(`${BASE}/api/desk`, { headers: { "x-realbud-session": "0".repeat(48) } })).status).toBe(401);
+
+    const own = await fetch(`${BASE}/api/session`, { headers: { "x-realbud-session": session } });
     expect(own.status).toBe(200);
-    const token = ((await own.json()) as { token: string }).token;
-    expect(token.length).toBeGreaterThan(0);
-
-    for (const site of ["cross-site", "same-site"]) {
-      const refused = await fetch(`${BASE}/api/session`, { headers: { "sec-fetch-site": site, "sec-fetch-mode": "cors" } });
-      expect(refused.status, site).toBe(403);
-      expect(JSON.stringify(await refused.json())).not.toContain(token);
-    }
-
-    for (const headers of [
-      { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" },
-      { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" },
-    ]) {
-      expect((await fetch(`${BASE}/api/session`, { headers })).status).toBe(200);
-    }
+    expect(own.headers.get("cache-control")).toBe("no-store");
+    const body = await own.json() as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["nonProduction", "product"]);
+    expect(JSON.stringify(body)).not.toContain(session);
+    // The private file is owner-only.
+    if (process.platform !== "win32") expect(statSync(join(home, ".realbud", "local-auth", "session.json")).mode & 0o077).toBe(0);
   });
 
   it("requires authenticated, current-revision rent settings and never updates payment facts", async () => {

@@ -41,6 +41,18 @@ export function onAppOrigin(raw, appUrl) {
   }
 }
 
+/** Whether an IPC `event` came from a window's own top-level page on the office
+ * origin. A subframe, an embedded view or any page that navigated off-origin
+ * gets nothing, even though the preload bridge may still be attached to it.
+ * `windowContents(sender)` is the webContents of the BrowserWindow that hosts
+ * `sender`, or null. */
+export function trustedOfficeSender(event, appUrl, windowContents) {
+  const sender = event?.sender, frame = event?.senderFrame;
+  if (!sender || !frame || frame !== sender.mainFrame) return false;
+  if (windowContents(sender) !== sender) return false;
+  return onAppOrigin(frame.url, appUrl);
+}
+
 function scheme(raw) {
   try {
     return new URL(String(raw)).protocol;

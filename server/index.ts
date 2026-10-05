@@ -64,6 +64,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join } from "node:path";
 import { askMessageSizeError } from "../shared/ask-message.ts";
 import { serviceInstanceId } from "../shared/service-identity.mjs";
+import { localSessionPath } from "../shared/local-session.mjs";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } from '../shared/approval-policy.ts';
@@ -213,7 +214,7 @@ import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { coverageFromUncoveredHeld, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
-import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
+import { needsSession, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
 import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
@@ -3132,7 +3133,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (needsSession(path, method)) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
-    } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
+    } else if (path.startsWith("/api/") && path !== "/api/health" && !path.startsWith("/api/internal/")) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
     }
@@ -3249,29 +3250,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
 
     if (path === "/api/session" && method === "GET") {
-      const host = typeof req.headers.host === "string" ? req.headers.host : undefined;
-      const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
-      if (!hostAllowed(host, PORT) || !originAllowed(origin, PORT)) {
-        return json(res, 403, { error: "refused host or origin" });
-      }
-      // This route hands out the session token that guards the whole local API, so
-      // it is the one place worth being strict. `originAllowed` treats a missing
-      // Origin as allowed, which is right for the server's own clients but wrong
-      // for a browser request started by another site: `fetch(..., {mode:"no-cors"})`
-      // sends no readable response but still reaches here, and a token obtained
-      // that way would unlock the desk for anything that could read it. Refuse the
-      // browser shapes that are not this app or a top-level navigation to it.
-      const fetchSite = typeof req.headers["sec-fetch-site"] === "string" ? req.headers["sec-fetch-site"] : undefined;
-      const fetchMode = typeof req.headers["sec-fetch-mode"] === "string" ? req.headers["sec-fetch-mode"] : undefined;
-      // Refuse only when the request *affirmatively* says it came from elsewhere.
-      // `sec-fetch-site` is the discriminating header; `sec-fetch-mode` is not,
-      // because Node's own fetch sends `mode: cors` with no `site` at all, and
-      // treating that as cross-site refused this app's own bootstrap.
-      const fromElsewhere = fetchSite === "cross-site" || fetchSite === "same-site";
-      if (fromElsewhere && fetchMode !== "navigate") {
-        return json(res, 403, { error: "refused cross-site session request" });
-      }
-      return json(res, 200, { token: SESSION_TOKEN, product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
+      // Authenticated by the session gate above. The token itself is never served
+      // over HTTP: owners read it from the private data directory, and Electron
+      // hands it to its own window over IPC.
+      res.setHeader("cache-control", "no-store");
+      return json(res, 200, { product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
     }
 
     // ── internal peer-agent comms (localhost + shared token only) ──────
@@ -6124,6 +6107,10 @@ const askModelRelay = await startAskModelRelay({
   oplog("boot", `Ask model relay unavailable: ${error instanceof Error ? error.message : String(error)}`);
   return null;
 });
+// Publish this boot's session token to its owner before listening, so a client
+// that sees this process on /api/health can already read it. Never over HTTP.
+try { await writePrivateJson(localSessionPath(DATA_DIR), { version: 1, pid: process.pid, port: PORT, token: SESSION_TOKEN }); }
+catch (error) { oplog("boot", `Local session file could not be written: ${error instanceof Error ? error.message : String(error)}`); }
 server.listen(PORT, "127.0.0.1", () => {
   if (!privateRestoreLocked) loops?.start();
   // An approved window that was never confirmed is still missing coverage, so a

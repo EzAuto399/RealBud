@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), temp=mkdtempSync(join(realpathSync(tmpdir()),'rb-morning-'));
 const data=join(temp,'data'), output=resolve(process.env.QA_OUTPUT??join(root,'outputs/morning-mail-2026-09-21')); mkdirSync(data,{mode:0o700});mkdirSync(output,{recursive:true});
 const wait=ms=>new Promise(r=>setTimeout(r,ms)), checks=[],errors=[]; let child,childClosed,browser,logs='',scanCalls=0,revoked=false;
@@ -69,7 +70,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{logs=(logs+b).slice(-30000);});
   let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null||child.signalCode)break;try{if((await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json()).pid===child.pid){ready=true;break;}}catch{}await wait(100);}assert.ok(ready,logs);
   assert.equal((await fetch(base+'/api/mail-workspace')).status,401);assert.equal((await fetch(base+'/api/agency-setup')).status,401);
-  const token=(await(await fetch(base+'/api/session')).json()).token;
+  const token=await readSessionToken(data);
   const request=async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json','x-realbud-session':token},...(body===undefined?{}:{body:JSON.stringify(body)})}).catch(error=>{throw new Error(`${method} ${path} failed: ${error.message}`,{cause:error});});const v=await r.json();assert.equal(r.status,expected,`${path}: ${JSON.stringify(v)}`);return v;};
   await completeFictionalOnboarding(request);
   await request('/api/hermes/apply-pack','POST',{});
@@ -203,7 +204,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const before=scanCalls;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   revoked=true;await request('/api/mail-workspace/scan','POST',{},409);assert.equal(scanCalls,before);
   checks.push('Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources');
-  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');
+  if(process.env.PLAYWRIGHT_MODULE){const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000}});await primeBrowserSession(context,base,token);await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():r.abort());const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/#/desk');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
   await page.locator('.desk-options > summary').click();
   await page.getByRole('button',{name:'Customize desk',exact:true}).click();

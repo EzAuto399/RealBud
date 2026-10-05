@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { primeBrowserSession, readSessionToken } from "./local-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/telegram-ask-ux-2026-09-09/browser"));
@@ -36,7 +37,7 @@ const seed = spawnSync(process.execPath, ["--input-type=module", "-e", `
 const finishFirstRun = async base => {
   // First run is a server receipt (/api/onboarding), not a browser flag: walk the
   // profile -> office-rules -> complete stages without seeding the sample desk.
-  const headers = { "content-type": "application/json", "x-realbud-session": (await (await fetch(`${base}/api/session`)).json()).token };
+  const headers = { "content-type": "application/json", "x-realbud-session": await readSessionToken(data) };
   let state = await (await fetch(`${base}/api/onboarding`, { headers })).json();
   for (const stage of ["office-rules", "complete"]) {
     const saved = await fetch(`${base}/api/onboarding`, { method: "PUT", headers, body: JSON.stringify({ expectedScope: state.scope, expectedRevision: state.revision, stage }) });
@@ -61,6 +62,7 @@ try {
   await finishFirstRun(base);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await primeBrowserSession(context, base, await readSessionToken(data));
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   await context.addInitScript(() => {
     window.copyAttempts = []; window.failCopy = false;

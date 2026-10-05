@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fictionalPdf } from '../server/testing/pdf-fixture.ts';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
@@ -159,7 +160,7 @@ console.log(JSON.stringify({summary:'Fictional invoice preparation',evidence:[],
     } finally { restarting = false; }
   };
   assert.equal((await fetch(base + '/api/bill-register')).status, 401);
-  const token = (await (await fetch(base + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
   const request = async (path, method = 'GET', body, expected = 200) => {
     const res = await fetch(base + path, { method, signal: AbortSignal.timeout(60000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const value = await res.json(); assert.equal(res.status, expected, `${path}: ${JSON.stringify(value)}`); return value;

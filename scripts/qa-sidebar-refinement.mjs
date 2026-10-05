@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 assert.ok(Number(process.versions.node.split('.')[0]) >= 24, 'Use Node 24 or later.');
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE to an installed Playwright module.');
@@ -102,13 +103,14 @@ try {
     await wait(100);
   }
   assert.ok(ready, 'The exact disposable service PID becomes healthy');
-  token = (await (await fetch(base + '/api/session')).json()).token;
+  token = await readSessionToken(data);
   vite = await createViteServer({ root, configFile: join(root, 'vite.config.ts'), logLevel: 'warn',
     server: { host: '127.0.0.1', port: uiPort, strictPort: true, proxy: { '/api': { target: base, changeOrigin: true, ws: true } } },
   });
   await vite.listen();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, uiBase, token);
   await context.route('**/*', route => {
     const url = new URL(route.request().url());
     if (url.origin === uiBase) return route.continue();

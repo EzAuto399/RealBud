@@ -87,7 +87,7 @@ describe("Ask mutation session boundary", () => {
     }
     expect(needsSession("/api/bots")).toBe(false);
     expect(needsSession("/api/health", "GET")).toBe(false);
-    expect(needsSession("/api/session", "GET")).toBe(false);
+    expect(needsSession("/api/session", "GET")).toBe(true);
     expect(needsSession("/api/internal/ask-bot", "POST")).toBe(false);
     expect(needsSession("/api/bots-lookalike", "POST")).toBe(false);
   });

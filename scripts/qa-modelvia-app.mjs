@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(process.env.REALBUD_QA_OUT ?? join(root, 'outputs/readiness-gaps-2026-09-23/app', new Date().toISOString().replaceAll(':', '-')));
@@ -187,7 +188,7 @@ try {
       REALBUD_MANAGED_SERVICE: '0', REALBUD_PRODUCTION: '0', REALBUD_TEST_LAB: '1', REALBUD_WEBSITE_ORIGIN: websiteBase, REALBUD_HERMES_CLI: cli, OMB_STATIC_DIR: join(root, 'dist'), PYTHONPATH: join(scratch, 'python-guard'), PYTHONDONTWRITEBYTECODE: '1', QA_SCRATCH: scratch, NO_PROXY: '*' };
     desktop = launch('desktop-service', ['--experimental-strip-types', '--import', join(scratch, 'node-guard.mjs'), 'server/index.ts'], env);
     await until(async () => { assert.equal(desktop.exitCode, null, desktop.qaLog.slice(-2000)); try { return (await call(appBase, '/api/health', { timeout: 500 })).body?.pid === desktop.pid; } catch { return false; } }, 'desktop startup', 45000);
-    session = (await call(appBase, '/api/session')).body.token;
+    session = await readSessionToken(data);
     const status = await api('/api/service-admin/status'); assert.equal(status.body.managed, true); assert.equal(status.body.authenticated, false);
     admin = (await api('/api/service-admin/login', 'POST', { password })).body.token; assert(admin);
     const pack = await api('/api/hermes/apply-pack', 'POST', {}, true); assert.equal(pack.status, 200, `pack ${pack.status}`);

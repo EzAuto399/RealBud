@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readSessionToken } from "./local-session.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18920 + Math.floor(Math.random() * 400));
@@ -331,7 +332,7 @@ try {
   await startComposioStub();
   child = spawnServer();
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
   check("session issued", Boolean(session));
 
   // ── A. Install Austin Phase 1 packs ──
@@ -404,7 +405,7 @@ try {
   stderr = "";
   child = spawnServer();
   await waitForHealth();
-  session = (await api("GET", "/api/session")).body?.token ?? "";
+  session = await readSessionToken(join(HOME, ".realbud"));
 
   const afterWipe = (await api("GET", "/api/workflow-packs")).body?.packs ?? [];
   check("packs uninstalled after wipe", afterWipe.every((p) => !p.installed));

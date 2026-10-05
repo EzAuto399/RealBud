@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { externalHttpsUrl, guardOfficeWindow, onAppOrigin, openExternalHttps } from "./external-links.mjs";
+import { externalHttpsUrl, guardOfficeWindow, onAppOrigin, openExternalHttps, trustedOfficeSender } from "./external-links.mjs";
 
 const UNSAFE = [
   "file:///etc/passwd",
@@ -77,6 +77,35 @@ describe("app origin", () => {
         expect(onAppOrigin(target, app), `${target} on ${app}`).toBe(false);
       }
     }
+  });
+});
+
+describe("local session IPC sender", () => {
+  const APP = "http://127.0.0.1:8799";
+  const office = () => {
+    const mainFrame = { url: `${APP}/#work` };
+    const sender = { mainFrame };
+    return { sender, senderFrame: mainFrame };
+  };
+  const ownWindow = sender => sender;
+
+  it("answers only the office window's own top frame on the office origin", () => {
+    expect(trustedOfficeSender(office(), APP, ownWindow)).toBe(true);
+    // A subframe on the office origin (an embedded document) gets nothing.
+    const sub = office(); sub.senderFrame = { url: `${APP}/frame` };
+    expect(trustedOfficeSender(sub, APP, ownWindow)).toBe(false);
+    // A page that navigated off-origin still has the preload bridge attached.
+    for (const url of ["https://attacker.example/", "http://localhost:8799/", "http://127.0.0.1:5199/", "data:text/html,x", "file:///etc/passwd"]) {
+      const moved = office(); moved.sender.mainFrame.url = url;
+      expect(trustedOfficeSender(moved, APP, ownWindow), url).toBe(false);
+    }
+    // An embedded view or a contents that no office window hosts.
+    expect(trustedOfficeSender(office(), APP, () => null)).toBe(false);
+    expect(trustedOfficeSender(office(), APP, () => ({ mainFrame: {} }))).toBe(false);
+    // A destroyed frame or a malformed event.
+    expect(trustedOfficeSender({ ...office(), senderFrame: null }, APP, ownWindow)).toBe(false);
+    expect(trustedOfficeSender({}, APP, ownWindow)).toBe(false);
+    expect(trustedOfficeSender(undefined, APP, ownWindow)).toBe(false);
   });
 });
 

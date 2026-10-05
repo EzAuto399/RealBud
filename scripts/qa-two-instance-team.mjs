@@ -14,6 +14,7 @@ import { createConnection } from 'node:net';
 import { release, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = {};
@@ -176,7 +177,7 @@ async function start(role) {
   const health = await request(context, '/api/health');
   check(health.app === 'realbud' && Number.isSafeInteger(health.pid) && health.pid > 0 && health.pid !== child.pid, 'A distinct RealBud service must report readiness.');
   context.serverPid = health.pid;
-  context.appToken = (await request(context, '/api/session')).token;
+  context.appToken = await readSessionToken(join(scratch, role, 'home', '.realbud'));
   check(typeof context.appToken === 'string' && context.appToken.length > 20, 'Local application session must exist.');
   await capturePostgres(context);
   return context;

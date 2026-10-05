@@ -101,7 +101,10 @@ export function sessionOk(req: IncomingMessage, listenPort: number): { ok: true 
 }
 
 export function needsSession(path: string, method?: string): boolean {
-  if (path === "/api/health" || path === "/api/session") return false;
+  if (path === "/api/health") return false;
+  // The token reaches its owner through the private data directory, never this
+  // route; /api/session only confirms a held token and reports product mode.
+  if (path === "/api/session") return true;
   if (!path.startsWith("/api/")) return false;
   if (path.startsWith("/api/internal/")) return false;
   // Ask can create a provider sign-in or execute an approved app operation.

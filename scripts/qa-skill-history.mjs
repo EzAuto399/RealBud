@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 if (process.platform === 'win32' || process.getuid?.() === 0) throw new Error('This filesystem fault fixture needs a non-root POSIX account.');
@@ -41,7 +42,7 @@ async function start({ holdWrite = false } = {}) {
   for (const stream of [child.stdout, child.stderr]) stream.on('data', b => { logs = (logs + b).slice(-80000); });
   let ready = false;
   for (let i = 0; i < 150; i++) { if (child.exitCode !== null || child.signalCode) break; try { if ((await (await fetch(origin + '/api/health', { signal: AbortSignal.timeout(500) })).json()).pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
-  assert.ok(ready, logs); token = (await (await fetch(origin + '/api/session')).json()).token;
+  assert.ok(ready, logs); token = await readSessionToken(data);
 }
 async function request(path, method = 'GET', body, expected = 200) {
   const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(35000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -71,7 +72,7 @@ try {
   saved.installs['office-core'].overrides = { [skillId]: { activeRevision: 100, versions } };
   writeFileSync(journalPath, JSON.stringify(saved), { mode: 0o600 }); writeFileSync(native, versions.at(-1).content, { mode: 0o600 });
   await start();
-  browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) }); context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) }); context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }); await primeBrowserSession(context, origin, token);
   await context.route('**/*', r => { if (new URL(r.request().url()).origin === origin) return r.continue(); denied.push(r.request().url()); return r.abort(); });
   page = await context.newPage(); page.setDefaultTimeout(20000); page.on('pageerror', e => errors.push(e.message)); await open();
   const historyCard = () => card().getByRole('article', { name: `${pack.skills[0].name} instruction history`, exact: true });

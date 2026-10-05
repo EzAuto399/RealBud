@@ -1,5 +1,6 @@
 // Real HTTP server and ACP adapter; only external access/worker responses are
 // fictional and delayed. This covers setup before an adapter session exists.
+import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type ServerResponse } from 'node:http';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -147,7 +148,7 @@ globalThis.fetch=(url,init) => { const text=String(url); if(text==='https://back
     child = spawn(process.execPath, ['--import', preload, join(SERVER, 'index.ts')], { cwd: join(SERVER, '..'), env: { PATH: process.env.PATH, VITEST: 'true', HOME: home, USERPROFILE: home, OMB_PORT: String(PORT) }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     child.stderr!.on('data', c => { stderr += c; });
     await waitFor(async () => { try { return (await fetch(BASE + '/api/health')).ok; } catch { return false; } });
-    session = String((await (await fetch(BASE + '/api/session')).json() as { token: string }).token);
+    session = await readSessionToken(join(home, '.realbud'));
     threadId = (await bud()).threadId;
   }, 20_000);
   afterAll(async () => {

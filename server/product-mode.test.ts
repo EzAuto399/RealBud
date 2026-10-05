@@ -33,7 +33,7 @@ describe("product mode denials", () => {
     expect(needsSession("/api/artifacts/art-1")).toBe(true);
     expect(needsSession("/api/events")).toBe(true);
     expect(needsSession("/api/health")).toBe(false);
-    expect(needsSession("/api/session")).toBe(false);
+    expect(needsSession("/api/session")).toBe(true);
     expect(needsSession("/api/bots")).toBe(false);
   });
 

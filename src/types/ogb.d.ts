@@ -84,6 +84,9 @@ declare global {
     ogb?: {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
+      /** This boot's local API session token. Main answers only the office
+       * window's own main frame, and only for its verified office service. */
+      getLocalSession?(): Promise<string>;
       screenFrame(): Promise<string | null>;
       /** Start native dictation. Call mode supplies endpointMs so silence
        * finalizes a turn; composer dictation omits it and remains manual. */

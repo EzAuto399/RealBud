@@ -8,6 +8,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,7 +32,7 @@ try {
   assert.ok(ready, logs.slice(-1500));
   assert.equal((await fetch(origin + '/api/customer-packs')).status, 401);
   assert.equal((await fetch(origin + '/api/customer-packs/install', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
-  const token = (await (await fetch(origin + '/api/session')).json()).token;
+  const token = await readSessionToken(data);
   const request = async (path, method = 'GET', body) => {
     const response = await fetch(origin + path, { method, headers: { 'x-realbud-session': token, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(result)}`); return result;
@@ -39,6 +40,7 @@ try {
   checks.push('Read and mutation routes reject unauthenticated requests');
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+  await primeBrowserSession(context, origin, token);
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#/schedule');

@@ -19,6 +19,7 @@ import { join, dirname, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 // Environment-gated: needs a local PostgreSQL toolchain (initdb/pg_ctl/psql).
 // Without the opt-in it refuses and exits non-zero; a refusal is "not run", never a pass.
 if (process.env.REALBUD_TEST_POSTGRES !== '1') throw new Error('ENVIRONMENT-GATED, NOT RUN (not a pass): qa-installations-ui needs local PostgreSQL. Set REALBUD_TEST_POSTGRES=1 and REALBUD_TEST_POSTGRES_BIN=<directory with initdb, pg_ctl and psql> (default /opt/homebrew/opt/postgresql@16/bin), build website/ first, and set PLAYWRIGHT_MODULE.');
@@ -270,6 +271,7 @@ try {
     start([join(root, 'server/index.ts')], root, { HOME: temp, USERPROFILE: temp, REALBUD_DATA_DIR: data, REALBUD_HERMES_CLI: worker, OMB_PORT: String(desktopPort), OMB_STATIC_DIR: join(root, 'dist'), VITEST: 'true' });
     await ready(desk + '/api/health');
     const appContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await primeBrowserSession(appContext, desk, await readSessionToken(data));
     await appContext.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
     const app = await appContext.newPage(); app.on('pageerror', e => errors.push(e.message));
     await app.goto(desk + '/#/desk');

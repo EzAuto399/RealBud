@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -142,7 +143,7 @@ try {
   }
   assert.ok(ready, `server did not become ready:\n${logs}`);
 
-  const token = (await (await fetch(`${base}/api/session`)).json()).token;
+  const token = await readSessionToken(data);
   const request = async (path, method = 'GET', body, expected = 200) => {
     const res = await fetch(base + path, {
       method,
@@ -191,6 +192,7 @@ try {
   // ── 1. Desk workspace setup is one ordered path of three steps ──────────────
   const context = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
   await onlyLocal(context);
+  await primeBrowserSession(context, uiBase, token);
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   const desk = watch(await context.newPage());
   desk.setDefaultTimeout(30_000);
@@ -394,6 +396,7 @@ try {
   assert.equal(named.book.office.pmUser, SAVED_PERSON);
   const freshContext = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
   await onlyLocal(freshContext);
+  await primeBrowserSession(freshContext, uiBase, token);
   const fresh = watch(await freshContext.newPage());
   fresh.setDefaultTimeout(30_000);
   await fresh.goto(`${uiBase}/#/desk`);
