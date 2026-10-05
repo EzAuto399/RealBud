@@ -214,7 +214,7 @@ describe("hostile email with actual browser tools and authoritative approval", (
     expect(result.isError).not.toBe(true);
     expect(await f.call("browser_click_semantic", args, 100)).toEqual(result);
     expect(f.effects()).toHaveLength(1);
-    expect(await f.approvals()).toMatchObject([{ decision: "approved", outcome: "succeeded" }]);
+    expect(await f.approvals()).toMatchObject([{ decision: "approved", outcome: "unverified" }]);
     f.page(f.paymentPage("Fictional Electrician Pty Ltd", "915.25"));
     await f.call("browser_read", { tab_id: 1 });
     const next = f.call("browser_click_semantic", args);

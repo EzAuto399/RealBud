@@ -328,7 +328,7 @@ export async function startBrowserBroker(options: {
       publish("denied", fenceDenialNote(name, reason)); throw problem(reason);
     }
     const noun = NOUNS[auth.draft.kind]; const host = new URL(url).hostname;
-    if (await approvals.unresolved(auth.draft.fingerprint, now(), auth.draft.effect)) {
+    if (await approvals.unresolved(auth.draft.fingerprint, auth.draft.effect)) {
       const reason = `An earlier approved ${noun} with these details has an unknown result. Check the site yourself; RealBud will not repeat it.`;
       publish("denied", fenceDenialNote(name, reason)); throw problem(reason);
     }
@@ -496,11 +496,12 @@ export async function startBrowserBroker(options: {
           throw error;
         }
       }
-      // A click acknowledgement proves dispatch only. Require a separate fresh read-back.
+      // A click acknowledgement proves dispatch only. The approved effect stays
+      // unverified, and held against repeats, until a person records its result.
       operations.finish(receipt, "succeeded"); receipt = undefined;
       if (claim && approval) {
-        claim = undefined; await approvals.update(approval.id, { outcome: "succeeded" });
-        publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Read the page back to confirm its result.`);
+        claim = undefined; await approvals.update(approval.id, { outcome: "unverified" });
+        publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Its result is not confirmed; check the site. RealBud will not repeat it.`);
       }
       if (logged) publish("action", actionNote(logged, saved), { ...logged, outcome: "succeeded", ...(saved ? { download: saved } : {}) });
       if (saved) {
