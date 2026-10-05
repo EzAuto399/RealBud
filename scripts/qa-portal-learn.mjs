@@ -12,8 +12,9 @@
 //      download once each;
 //   3. Bud proposes the path it took; the "Bud found how to export…" card shows
 //      the exact steps; the person allows it and it is saved;
-//   4. Refresh tenant list from REI now follows the learned path: Export Only
-//      and download cards, a preview whose rows match REI's footer, Save.
+//   4. Refresh tenant list from REI now follows the learned path: the report
+//      (not in the repo map, so it asks every run), Export Only and download
+//      cards, a preview whose rows match REI's footer, Save.
 // The person is simulated by this script. A pass proves RealBud's wiring and
 // guards, never REI Cloud behaviour.
 //
@@ -191,6 +192,10 @@ try {
   await openBankJob();
   await tenantsPanel().getByRole('button', { name: 'Refresh tenant list from REI', exact: true }).click();
   const approval = tenantsPanel().getByRole('group', { name: 'Approval for REI', exact: true });
+  // The learned report is not in the repo map, so allowing the path was not standing permission: it asks on every run.
+  await approval.getByText('Allow this step in REI?', { exact: true }).waitFor();
+  assert.match((await approval.innerText()).replace(/\s+/g, ' '), new RegExp(REPORT.replace(/[()]/g, '\\$&')));
+  await approval.getByRole('button', { name: 'Allow', exact: true }).click();
   await approval.getByText('Allow Bud to choose Export Only on REI\'s report?', { exact: true }).waitFor();
   await approval.getByRole('button', { name: 'Allow', exact: true }).click();
   await approval.getByText("Allow Bud to download REI's tenant list?", { exact: true }).waitFor();
@@ -204,7 +209,7 @@ try {
   await preview.getByRole('button', { name: /^Save/ }).first().click();
   now = await until(status, s => s.run?.phase === 'saved', 'tenant list saved');
   assert.equal(now.tenants.revision, 1);
-  pass(`Refresh from REI followed the learned path to "${REPORT}": Export Only and download still asked, 10 rows matched REI's footer, Save stored revision ${now.tenants.revision}`);
+  pass(`Refresh from REI followed the learned path to "${REPORT}": the report (unmapped, asked every run), Export Only and download still asked, 10 rows matched REI's footer, Save stored revision ${now.tenants.revision}`);
 
   // ── 6. Nothing pressed in REI; no renderer errors; no off-origin requests ──
   assert.deepEqual((await lab('status')).effects, []);

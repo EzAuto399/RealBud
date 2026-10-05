@@ -402,6 +402,8 @@ export async function startBrowserBroker(options: {
   /** Bud proposes the path it found; only steps this task recorded count, and the person allows it before it is saved. */
   const propose = async (args: BrowserJson, signal: AbortSignal) => {
     if (!learn) throw problem("This browser tool or its arguments are not available.");
+    // A proposal is part of the task: once its permission has ended, nothing more is learned from it.
+    if (grant.expiresAt !== null && now() >= grant.expiresAt) throw problem("This browser task's permission has ended. Ask again to continue.");
     const checked = checkPortalPathProposal(learn.pack, { slot: args.slot, steps: args.steps }, await evidence.steps(grant.id));
     check(signal);
     publish("asked", `Asked you to approve the ${checked.slot} path Bud found on ${new URL(learn.pack.origin).hostname}.`);
@@ -409,7 +411,7 @@ export async function startBrowserBroker(options: {
     if (!await options.approve(PORTAL_PROPOSE_TOOL, { slot: checked.slot, steps: checked.steps as unknown as BrowserJson[] }, checked.summary, signal,
       { fence: { surface: "portal-read", origin: site, ruleOffer: null }, approvalPolicy: "once" })) throw problem("The path was not saved. Nothing changed.");
     check(signal);
-    const saved = await (options.paths ?? portalPaths()).save(learn.portal, checked, { grantId: grant.id, runId: options.runId, threadId: options.threadId }, now());
+    const saved = await (options.paths ?? portalPaths()).save(learn.portal, checked, { grantId: grant.id, runId: options.runId, threadId: options.threadId, origin: learn.pack.origin }, now());
     publish("action", `Saved the ${checked.slot} path Bud found on ${site} (version ${saved.revision}) with your approval.`);
     return text(`Saved as the ${checked.slot} path (version ${saved.revision}). The earlier path is kept and can be restored. RealBud still asks before each download.`);
   };

@@ -15,11 +15,13 @@ import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { checkPortalPathProposal, PortalEvidenceStore, PortalPathStore, PORTAL_PROPOSE_TOOL } from "./portal-path-overrides.ts";
 import { portalRecipeControls } from "./portal-recipe-runner.ts";
 import { loadPortalRecipePack, portalMapForSites } from "./portal-recipe-task.ts";
+import type { PortalRecipePack } from "./portal-recipe.ts";
 import { createReiDirectorySync } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { writePrivateJson } from "./private-json.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
 
@@ -39,12 +41,12 @@ async function lab(portal: FictionalReiOptions = {}) {
   return { root, mock, runtime, evidence: new PortalEvidenceStore({ file: join(root, "evidence.json") }), paths: new PortalPathStore({ file: join(root, "paths.json") }) };
 }
 
-async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: boolean; actions?: BrowserActionClass[]; id?: string } = {}) {
-  const pack = fictionalReiPack();
+async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: boolean; actions?: BrowserActionClass[]; id?: string; pack?: PortalRecipePack; expiresAt?: number; now?: () => number } = {}) {
+  const pack = options.pack ?? fictionalReiPack();
   const text = "Find out how to export the tenant list from the fictional REI portal";
   const grant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: options.id ?? "fictional-learn-1", runId: "run-learn-1", route: "ask",
     request: { text, sha256: sha256(text) }, sites: [FICTIONAL_REI_ORIGIN], browser: { id: "work", accountMarker: null },
-    actions: options.actions ?? ["read", "navigate", "click", "fill", "download"], consequential: "ask-each", uploads: [], expiresAt: Date.now() + 30 * 60_000, budget: 40 });
+    actions: options.actions ?? ["read", "navigate", "click", "fill", "download"], consequential: "ask-each", uploads: [], expiresAt: options.expiresAt ?? Date.now() + 30 * 60_000, budget: 40 });
   const controls = portalRecipeControls(pack); delete controls.accountMarker; // as the host does for a task without a chosen account
   const asked: Array<{ tool: string; summary: string; params: BrowserJson }> = [];
   let answer = true;
@@ -52,7 +54,7 @@ async function askTask(f: Awaited<ReturnType<typeof lab>>, options: { map?: bool
   const broker: BrowserBroker = await startBrowserBroker({ threadId: "thread-learn", runId: grant.runId, grant, runtime: f.runtime, isActive: () => true, approve,
     context: { allowedOrigins: grant.sites, capabilities: [] }, assertCapability: () => {}, attachRoot: null,
     operations: new ConnectedAppOperationStore({ file: join(f.root, "operations.json") }), approvals: new BrowserApprovalStore({ file: join(f.root, "approvals.json") }),
-    evidence: f.evidence, paths: f.paths, ...(options.map === false ? {} : { portal: controls, learn: { portal: pack.portal, pack } }) });
+    evidence: f.evidence, paths: f.paths, ...(options.now ? { now: options.now } : {}), ...(options.map === false ? {} : { portal: controls, learn: { portal: pack.portal, pack } }) });
   cleanup.push(async () => { broker.close(); await broker.released(); });
   let id = 0; let page = "";
   const call = async (name: string, args: BrowserJson = {}): Promise<Result> => {
@@ -82,6 +84,12 @@ async function explore(t: Awaited<ReturnType<typeof askTask>>) {
   await t.ok("browser_download", { tab_id: 1, ref: t.ref("button", "Export") });
 }
 const PATH = [{ verb: "nav", label: "Reports" }, { verb: "click", label: REPORT }, { verb: "select", label: "Output", option: "Export Only" }, { verb: "download", label: "Export" }];
+/** What the broker records for that exploration. */
+const SEEN = [
+  { tool: "click" as const, role: "link", label: "Reports", path: "/customers/dashboard", outcome: "succeeded" as const, at: 1 },
+  { tool: "click" as const, role: "link", label: REPORT, path: "/report/reportlist", outcome: "succeeded" as const, at: 2 },
+  { tool: "select" as const, role: "combobox", label: "Output", path: "/report/reportlist", valuesHash: sha256(JSON.stringify(["Export Only"])), outcome: "succeeded" as const, at: 3 },
+  { tool: "download" as const, role: "button", label: "Export", path: "/report/reportlist", outcome: "succeeded" as const, at: 4 }];
 
 describe("map-aware Ask browser tasks", () => {
   it("opens the portal's own menu and lists without a card, and still asks for Email, Generate and anything unmapped", async () => {
@@ -162,15 +170,15 @@ describe("proposing and approving a learned path", () => {
     t.deny();
     expect((await t.call(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH })).content[0].text).toMatch(/not saved/);
     expect(t.asked.at(-1)).toMatchObject({ tool: PORTAL_PROPOSE_TOOL,
-      summary: `Bud found how to export the Tenants list: Reports → ${REPORT} → Export Only → Export. Use this for Refresh from REI? Bud still asks before each download.` });
+      summary: `Bud found how to export the Tenants list: Reports → ${REPORT} → Export Only → Export. Use this for Refresh from REI? Bud still asks before each download and before '${REPORT}' every time.` });
     expect((await f.paths.list("rei-cloud", "tenant-list")).versions).toEqual([]);
     t.allow();
     expect(await t.ok(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH })).toMatch(/version 1/);
     expect(await t.ok(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH })).toMatch(/version 2/);
     const saved = await f.paths.list("rei-cloud", "tenant-list");
     expect(saved.current).toBe(2);
-    expect(saved.versions[0]).toMatchObject({ revision: 1, steps: PATH, readSafe: [REPORT],
-      provenance: { grantId: t.grant.id, runId: t.grant.runId, threadId: "thread-learn", urls: expect.arrayContaining(["/customers/dashboard", "/report/reportlist"]) } });
+    expect(saved.versions[0]).toMatchObject({ revision: 1, steps: PATH, readSafe: [],
+      provenance: { grantId: t.grant.id, runId: t.grant.runId, threadId: "thread-learn", origin: FICTIONAL_REI_ORIGIN, urls: expect.arrayContaining(["/customers/dashboard", "/report/reportlist"]) } });
     await f.paths.restore("rei-cloud", "tenant-list", 1);
     expect((await f.paths.list("rei-cloud", "tenant-list")).current).toBe(1);
     await f.paths.restore("rei-cloud", "tenant-list", null);
@@ -217,25 +225,83 @@ describe("Refresh from REI follows the learned path", () => {
     expect(without.run.message).toMatch(/could not find REI's tenant list export/);
     const learned = await run(refresh(f.paths));
     expect(learned.run.phase, learned.run.message ?? "").toBe("preview");
-    expect(learned.tools.at(-1)).toBe("browser_download"); // the download still asks
+    // The unmapped report asks on this run too (an Allow on the path was not standing permission); the choice and download still ask.
+    expect(learned.tools).toEqual(["browser_click_semantic", "browser_select", "browser_download"]);
     expect(learned.run.preview).toMatchObject({ rows: 10, footer: 10, countMatches: true, accepted: 9 });
     expect(f.mock.effects).toEqual([]);
   });
 
-  it("the repo pack loader applies a saved path; a mapped Ask task finds its pack by the grant's exact origin", async () => {
+  it("a saved path applies only on the origin it was learned on; the repo labels are never widened", async () => {
     const f = await lab();
     const pack = fictionalReiPack();
-    await f.paths.save("rei-cloud", checkPortalPathProposal(pack, { slot: "tenant-list", steps: PATH }, [
-      { tool: "click", role: "link", label: "Reports", path: "/customers/dashboard", outcome: "succeeded", at: 1 },
-      { tool: "click", role: "link", label: REPORT, path: "/report/reportlist", outcome: "succeeded", at: 2 },
-      { tool: "select", role: "combobox", label: "Output", path: "/report/reportlist", valuesHash: sha256(JSON.stringify(["Export Only"])), outcome: "succeeded", at: 3 },
-      { tool: "download", role: "button", label: "Export", path: "/report/reportlist", outcome: "succeeded", at: 4 }]), { grantId: "g", runId: "r", threadId: "t" });
-    const repo = await loadPortalRecipePack("rei-cloud", f.paths);
-    expect(repo.recipes["tenant-list"].steps).toContainEqual({ click: REPORT });
-    expect(repo.recipes["tenant-list"].steps.slice(0, 4)).toEqual([{ nav: ["Tenants"] }, { check: "account" }, { wait: "table" }, { read: "table" }]);
-    expect(repo.labels.readSafe).toContain(REPORT);
-    expect(await portalMapForSites([FICTIONAL_REI_ORIGIN], async () => pack, f.paths)).toMatchObject({ portal: "rei-cloud", pack: { origin: FICTIONAL_REI_ORIGIN } });
+    await f.paths.save("rei-cloud", checkPortalPathProposal(pack, { slot: "tenant-list", steps: PATH }, SEEN), { grantId: "g", runId: "r", threadId: "t", origin: FICTIONAL_REI_ORIGIN });
+    // Learned on the fictional portal: the real REI pack (another origin) keeps its own recipe.
+    const repo = await loadPortalRecipePack("rei-cloud", new PortalPathStore({ file: join(f.root, "none.json") }));
+    expect(await loadPortalRecipePack("rei-cloud", f.paths)).toEqual(repo);
+    const merged = await f.paths.apply(pack);
+    expect(merged.recipes["tenant-list"].steps).toContainEqual({ click: { label: REPORT, ask: "each-run" } });
+    expect(merged.recipes["tenant-list"].steps.slice(0, 4)).toEqual([{ nav: ["Tenants"] }, { check: "account" }, { wait: "table" }, { read: "table" }]);
+    expect(merged.labels).toEqual(pack.labels);
+    expect(await portalMapForSites([FICTIONAL_REI_ORIGIN], async () => pack, f.paths)).toMatchObject({ portal: "rei-cloud", pack: { origin: FICTIONAL_REI_ORIGIN, labels: pack.labels } });
     expect(await portalMapForSites(["https://other.fictional.test"], async () => pack, f.paths)).toBeNull();
+    expect(await portalMapForSites(["https://rei-mock.fictional.test.evil.example", "http://rei-mock.fictional.test"], async () => pack, f.paths)).toBeNull();
+  });
+
+  it("a saved file that was tampered with, or holds a path for another slot or origin, is skipped on load", async () => {
+    const f = await lab();
+    const pack = fictionalReiPack();
+    const file = join(f.root, "tampered.json");
+    const version = (over: Record<string, unknown>) => ({ revision: 1, portal: "rei-cloud", slot: "tenant-list", steps: PATH, readSafe: [],
+      provenance: { grantId: "g", runId: "r", threadId: "t", origin: FICTIONAL_REI_ORIGIN, savedAt: "2026-10-05T00:00:00.000Z", urls: [] }, ...over });
+    const loaded = async (over: Record<string, unknown>) => {
+      await writePrivateJson(file, { version: 1, purpose: "portal-path-overrides", slots: { "rei-cloud/tenant-list": { current: 1, versions: [version(over)] } } });
+      return (await new PortalPathStore({ file }).apply(pack));
+    };
+    expect((await loaded({})).recipes["tenant-list"]).not.toEqual(pack.recipes["tenant-list"]); // the untouched version applies
+    for (const over of [
+      { provenance: { grantId: "g", runId: "r", threadId: "t", origin: "https://other.fictional.test", savedAt: "x", urls: [] } },
+      { provenance: { grantId: "g", runId: "r", threadId: "t", savedAt: "x", urls: [] } }, // saved before origins were recorded
+      { slot: "supplier-list" }, { portal: "other-portal" },
+      { steps: [{ verb: "nav", label: "Process › Payments" }, { verb: "download", label: "Export" }] },
+      { steps: [{ verb: "click", label: "Finalise" }, { verb: "download", label: "Export" }] },
+      { steps: [{ verb: "click", label: REPORT }] },
+      { steps: [{ verb: "download", label: "Export", url: "https://evil.example/x" }] },
+      { steps: "not steps" },
+    ]) expect((await loaded(over)).recipes["tenant-list"], JSON.stringify(over)).toEqual(pack.recipes["tenant-list"]);
+    // A readSafe list in the file grants nothing: the merged labels stay the repo's.
+    expect((await loaded({ readSafe: [REPORT, "Process"] })).labels).toEqual(pack.labels);
+  });
+});
+
+describe("one Allow on a path is not standing permission", () => {
+  it("a later Ask task still asks before the unmapped report the path uses, while the repo's read-safe names stay card-free", async () => {
+    const f = await lab({ reports: { tenants: REPORT } });
+    const first = await askTask(f);
+    await explore(first);
+    await first.ok(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH });
+    first.broker.close(); await first.broker.released();
+    const map = await portalMapForSites([FICTIONAL_REI_ORIGIN], async () => fictionalReiPack(), f.paths);
+    const later = await askTask(f, { id: "fictional-learn-later", pack: map!.pack });
+    await later.start();
+    await later.ok("browser_navigate", { tab_id: 1, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard` }); await later.read(); // closes the earlier task's popup
+    await later.ok("browser_click_semantic", { tab_id: 1, ref: later.ref("link", "Reports") }); await later.read();
+    expect(later.approve).not.toHaveBeenCalled();
+    await later.ok("browser_click_semantic", { tab_id: 1, ref: later.ref("link", REPORT) });
+    expect(later.approve).toHaveBeenCalledTimes(1);
+    expect(later.asked[0].summary).toMatch(new RegExp(REPORT.replace(/[()]/g, "\\$&")));
+  });
+
+  it("a proposal after the task's permission ended is refused before any card", async () => {
+    const f = await lab({ reports: { tenants: REPORT } });
+    let clock = Date.now();
+    const t = await askTask(f, { expiresAt: clock + 60_000, now: () => clock });
+    await explore(t);
+    const asks = t.asked.length;
+    clock += 61_000;
+    const result = await t.call(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/permission has ended/);
+    expect(t.asked.length).toBe(asks);
+    expect((await f.paths.list("rei-cloud", "tenant-list")).versions).toEqual([]);
   });
 });
 

@@ -430,12 +430,14 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           break;
         }
         case "click": {
-          const label = fill(raw); entry.target = label;
+          // A learned step the map does not call read-safe (server/portal-path-overrides.ts) goes to the person on every run.
+          const eachRun = typeof raw === "object" && raw !== null && (raw as Record<string, unknown>).ask === "each-run";
+          const label = fill(eachRun ? (raw as Record<string, unknown>).label : raw); entry.target = label;
           if (stops.has(label)) throw new RunEnd("stopped-before", "consequential-label", label);
-          if (!readSafe.has(label)) throw blocked("not-read-safe", label);
+          if (!eachRun && !readSafe.has(label)) throw blocked("not-read-safe", label);
           const target = control(await current(), ["button", "link", "tab", "menuitem"], label);
           if (!target) throw blocked("control-missing", `No ${label} control on the page.`);
-          await act("browser_click_semantic", { ref: target.ref! }, { name: label });
+          await act("browser_click_semantic", { ref: target.ref! }, { name: label, ...(eachRun ? { recipe: false } : {}) });
           break;
         }
         case "read": {
