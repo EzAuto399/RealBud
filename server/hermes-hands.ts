@@ -172,28 +172,46 @@ export function uncoveredPropertyIds(requested: string[], rows: LedgerFacts[]): 
 }
 
 export function parseLedgerFacts(text: string): LedgerFacts[] | null {
+  return lastJsonBlock(text, parseLedgerRows);
+}
+
+/**
+ * The worker reasons before answering, and that reasoning can quote the
+ * instruction "return [] exactly", so the FIRST bracket is often prose. The
+ * answer is the LAST complete bracketed block that `read` accepts. Starts are
+ * scanned from the end, but an enclosing block wins over one nested inside it:
+ * the last `{` of `[{...},{...}]` is one row, not the answer.
+ */
+export function lastJsonBlock<T>(text: string, read: (raw: string) => T | null): T | null {
   const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
-  // The worker reasons before answering, and that reasoning can quote the
-  // instruction "return [] exactly" — so the FIRST bracket is often prose.
-  // The answer is the LAST bracketed block; try candidates from the end.
-  const starts: number[] = [];
-  for (let i = clean.length - 1; i >= 0; i--) {
-    if (clean[i] === "[" || clean[i] === "{") starts.push(i);
+  let best: { end: number; value: T } | null = null;
+  for (let start = clean.length - 1; start >= 0; start--) {
+    if (clean[start] !== "[" && clean[start] !== "{") continue;
+    const end = blockEnd(clean, start);
+    if (end < 0 || (best && end < best.end)) continue;
+    const value = read(clean.slice(start, end + 1));
+    if (value !== null) best = { end, value };
   }
-  for (const start of starts) {
-    let raw = clean.slice(start).trim();
-    const fence = raw.indexOf("```");
-    if (fence > 0) raw = raw.slice(0, fence).trim();
-    const rows = parseLedgerRows(raw);
-    if (rows) return rows;
-    // Trailing prose after the JSON: retry cut at the matching close bracket.
-    const close = raw.startsWith("[") ? raw.lastIndexOf("]") : raw.startsWith("{") ? raw.lastIndexOf("}") : -1;
-    if (close > 0) {
-      const trimmed = parseLedgerRows(raw.slice(0, close + 1));
-      if (trimmed) return trimmed;
+  return best ? best.value : null;
+}
+
+/** Index of the bracket closing the block opened at `start`, skipping JSON strings; -1 if unclosed. */
+function blockEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "[" || c === "{") depth++;
+    else if (c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) return i;
     }
   }
-  return null;
+  return -1;
 }
 
 function parseLedgerRows(raw: string): LedgerFacts[] | null {
