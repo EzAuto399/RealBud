@@ -37,7 +37,11 @@ const rule = (profile: string, operation: string) => profile.match(new RegExp(`\
 const w = (root: string) => `(regex #"^${regexLiteral(root)}/")`;
 const writesOf = (profile: string) => { const from = profile.indexOf("(allow file-write* ", profile.indexOf("(deny file-write*)")); return profile.slice(from, profile.indexOf("(allow file-write* (literal")); };
 
-describe("worker sandbox profile", () => {
+// RealBud ships on macOS and Windows only. These blocks assert those platforms'
+// sandbox profiles and paths (/private/tmp, /bin/sh); on Linux the product
+// correctly refuses to start an unsandboxed worker, so they are not run there.
+const UNSUPPORTED_OS = process.platform === "linux";
+describe.skipIf(UNSUPPORTED_OS)("worker sandbox profile", () => {
   it("names only IPv4 loopback ports, deduplicated, and refuses an invalid one", () => {
     const dir = scratch("rb-profile-");
     const profile = workerSandboxProfile("/bin/sh", dir, { loopbackPorts: [4100, 4000, 4100], writable: [] });
@@ -289,7 +293,7 @@ describe("live sandboxed children", () => {
   });
 });
 
-describe("Hermes worker sandbox", () => {
+describe.skipIf(UNSUPPORTED_OS)("Hermes worker sandbox", () => {
   const deps = { platform: "darwin" as const, probe: () => true };
 
   it("takes the Ask relay's port from this process, never from the overlay file", async () => {
