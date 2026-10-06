@@ -3,14 +3,11 @@
 // remains with RealBud's browser broker and human approval controls.
 import fs from "node:fs";
 import path from "node:path";
-import { createWindowsCuaHost } from "./cua-windows-host.mjs";
+import { createWindowsCuaHost, CUA_QUIET_ENV } from "./cua-windows-host.mjs";
 
+export { CUA_QUIET_ENV };
 export const CUA_HOST_BUNDLE_ID = "com.realbud.app";
 export const WINDOWS_CUA_LAUNCHER = "RealBud CUA.exe";
-// The bundled driver is pinned (bounded sessions require 0.19.3) and ships
-// inside RealBud, so it must not register a vendor telemetry id or check
-// GitHub for updates from a customer's computer.
-export const CUA_QUIET_ENV = Object.freeze({ CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" });
 const shellLiteral = value => `'${value.replace(/'/g, "'\\''")}'`;
 
 export function existingProfileGrantLauncher(binary, {

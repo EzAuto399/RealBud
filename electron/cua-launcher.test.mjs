@@ -70,6 +70,7 @@ class Fixture {
     string receipt = receiptIndex >= 0 ? args[receiptIndex + 1] : null;
     foreach (string value in args) Console.WriteLine("ARG:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(value)));
     Console.WriteLine("PID:" + Process.GetCurrentProcess().Id);
+    Console.WriteLine("ENV:" + Environment.GetEnvironmentVariable("CUA_DRIVER_RS_TELEMETRY_ENABLED") + "," + Environment.GetEnvironmentVariable("CUA_DRIVER_RS_UPDATE_CHECK"));
     if (Array.IndexOf(args, "--fictional-child") >= 0) {
       var info = new ProcessStartInfo(System.Reflection.Assembly.GetExecutingAssembly().Location, "--fictional-linger");
       info.UseShellExecute = false; info.CreateNoWindow = true;
@@ -116,6 +117,12 @@ describe.skipIf(process.platform !== "win32")("native Windows CUA launcher with 
     expect(result.error).toBeUndefined(); expect(result.status, result.stderr).toBe(37);
     const received = result.stdout.split(/\r?\n/).filter(line => line.startsWith("ARG:")).map(line => Buffer.from(line.slice(4), "base64").toString("utf8"));
     expect(received).toEqual(command === "serve" ? ["serve", "--grant", "existing-profile", ...args] : [command, ...args]);
+  });
+  it("hands the host's telemetry and update-check opt-outs to the driver", () => {
+    const result = spawnSync(launcher, ["serve"], { encoding: "utf8", timeout: 10000, windowsHide: true,
+      env: { SystemRoot: process.env.SystemRoot, CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" } });
+    expect(result.status, result.stderr).toBe(37);
+    expect(result.stdout).toMatch(/^ENV:0,0\r?$/m);
   });
   it.each([
     ["Unicode", Buffer.from("fictional liveness payload 漢字", "utf8")],
