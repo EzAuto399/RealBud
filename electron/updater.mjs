@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { runUpdaterAction } from "./updater-action.mjs";
 import { serviceIdentity } from "./service-instance.mjs";
 import { prepareServiceForUpdate } from "./update-service-handoff.mjs";
-import { windowsKeyPrivacy } from "./desk-key-custody.mjs";
+import { windowsKeyPrivacyAsync } from "./desk-key-custody.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -79,7 +79,7 @@ function install() {
     clearTimeout(deferTimer);
     // Same rule as realbudDataDir() in main.mjs: the service identity is its data directory.
     const dataDirectory = process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || join(app.getPath("home"), ".realbud");
-    const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory), verifyWindowsPrivacy: windowsKeyPrivacy });
+    const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
     if (!handoff.ready) {
       setState({ status: "downloaded", deferred: handoff.reason, message: DEFERRED[handoff.reason] });
       if (handoff.reason !== "cannot-stop") deferTimer = setTimeout(() => void install(), DEFER_RETRY_MS);

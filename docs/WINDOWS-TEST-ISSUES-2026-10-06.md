@@ -23,6 +23,9 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | 11 | Bud's automatic install starts right after linking, while the person is still in onboarding, and competes for CPU (uv, git, node, python, venv, dependencies) | `onLinked → workerAutoSetup.ensure("provisioned")` | Open: decide whether to show progress or defer; it compounds #4 |
 | 12 | Windows Defender used 650–820 CPU-seconds during install and setup | Real-time scanning of every new file (Python and git trees) | Open: measure on x64; document whether a customer exclusion is advisable (owner decision, never automatic) |
 | 13 | Health reports `busy: true` during setup, but the window says "not responding" | The UI treats a slow answer as an outage | Open: tie the copy to busy vs down |
+| 14 | Bud status card shows "Return to Ask" while the service reconnects | Stale copy: Ask was renamed Work | Open |
+| 15 | During each freeze the status bar shows "Offline — reconnecting" and Bud's checklist resets to "Not checked" | Symptom of #4; the UI drops known state while the service stalls | Open: keep the last known state, labelled as stale |
+| 16 | Electron's main process (the window) also ran a synchronous PowerShell check each time it read the local session (seen: `powershell.exe` with RealBud's main process as parent) | `windowsKeyPrivacy` uses `execFileSync`; the session read already awaits its verifier | **Fixed on branch** `claude/windows-issues`: `windowsKeyPrivacyAsync` for every awaited caller. Startup key custody stays synchronous |
 
 ## Test-rig issues (not product, but they slowed testing)
 
