@@ -1094,15 +1094,17 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const host = hostOf(url);
   const label = "label" in classification && classification.label ? controlName(classification.label) : "";
   // A loop's unattended read (route loop-read): nobody is at the screen to ask, so a step is plainly read-only or
-  // refused. Reading, a same-site read-only address, a filter field and a declared read-safe control only; never a
-  // download, upload, submit, consequential or unclassified step, whatever the grant, a rule or the recipe says.
+  // refused. Reading, a same-site read-only address, and a control the pack declares read-safe that browserReadOnlyAction
+  // proves sits apart from anything that changes records; a key is only Tab, never Enter or an arrow that changes a
+  // choice. Never a download, upload, submit, consequential or unclassified step, whatever the grant, a rule or the recipe says.
   if (grant.route === "loop-read") {
     const routine = classification.class === "routine" && !classification.unusualName && (LOOP_READ_ACTIONS as readonly string[]).includes(classification.action) &&
       grant.actions.includes(classification.action) ? classification : null;
+    const tab = routine?.step !== "press" || /^(Shift\+)?Tab$/.test(browserKey(args.key)?.spec ?? "");
     const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" ||
       routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
-      (routine.step === "fill" || routine.step === "select" || routine.step === "press") && (routine.action === "fill" || routine.action === "keys") ||
-      routine.step === "click" && browserReadOnlyAction(grant, observation!, tool, args, options.portal));
+      (routine.step === "click" || routine.step === "fill" || routine.step === "select" || routine.step === "press") && tab && !!options.portal &&
+        browserReadOnlyAction(grant, observation!, tool, args, options.portal));
     return readOnly ? { decision: "allow", classification, fence: { surface: "portal-read", origin: site, ruleOffer: null }, note: "read-only loop" } : deny(LOOP_READ_ONLY);
   }
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.

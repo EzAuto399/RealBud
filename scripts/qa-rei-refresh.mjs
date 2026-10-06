@@ -131,10 +131,12 @@ try {
     const c = await child("slow");
     const good = await c.ask({ op: "refresh" });
     const stamps = good.state.stamps;
-    await c.ask({ op: "portal", set: { delayMs: 40 } }); await c.ask({ op: "timeout", ms: 600 });
+    // Slow enough that the tenants list is read before the timeout ends the run part-way.
+    await c.ask({ op: "portal", set: { delayMs: 10 } }); await c.ask({ op: "timeout", ms: 3000 });
     const slow = await c.ask({ op: "refresh", now: T0 + 24 * H });
-    check("slow REI: the refresh stops at its timeout and says so", /didn't answer in time/.test(slow.result.detail) && ["missed", "partial"].includes(slow.result.status), `${slow.result.status} in ${slow.result.ms}ms: ${slow.result.detail}`);
-    check("no part read during the timeout is stamped fresh", Object.entries(slow.state.stamps).every(([id, at]) => at === stamps[id] || fresh(slow.state).length < 3), JSON.stringify(slow.state.stamps));
+    check("slow REI: the refresh stops at its timeout and says so", /didn't answer in time/.test(slow.result.detail) && slow.result.status === "missed", `${slow.result.status} in ${slow.result.ms}ms: ${slow.result.detail}`);
+    check("every part keeps the stamp it had before the slow run (nothing from the cut-off read applied)",
+      ["src-rei-tenants", "src-rei-arrears", "src-rei-owners"].every((id) => stamps[id] !== undefined && slow.state.stamps[id] === stamps[id]), JSON.stringify({ before: stamps, after: slow.state.stamps, observes: slow.state.portal.observes }));
     await c.ask({ op: "portal", set: { delayMs: null, down: true } }); await c.ask({ op: "timeout", ms: 0 });
     const down = await c.ask({ op: "refresh", now: T0 + 25 * H });
     check("REI down: failed with a plain reason, Desk stamps unchanged", down.result.status === "failed" && JSON.stringify(down.state.stamps) === JSON.stringify(slow.state.stamps), down.result.detail);

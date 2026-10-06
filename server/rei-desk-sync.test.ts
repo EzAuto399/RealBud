@@ -121,6 +121,35 @@ describe("new properties", () => {
   });
 });
 
+describe("one write per read", () => {
+  it("a read with more new properties than one staging allows changes nothing: no stamps, updates or cards", () => {
+    const { desk, file, tick } = liveDesk();
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
+    const many = Array.from({ length: 1001 }, (_, i) => tenantRow([`FT-N${i}`, `New${i}`, "Fictional Tenant", `FN-${i}`, "$400.00 per week", "2026-09-20", "0.00", "0", "0.00"]));
+    const before = desk.snapshot();
+    expect(() => readTenants(desk, [bravo("$540.00 per week", "Fictional Owner One"), ...many], tick(1000))).toThrow(/at most 1000/);
+    const after = new Desk({ file, now: () => T0, key: KEY }).snapshot();
+    expect(after.sources.filter((source) => source.id.startsWith("src-rei-"))).toEqual([]);
+    expect(after.properties).toEqual(before.properties);
+    expect(after.book?.bookProposals ?? []).toEqual([]);
+    expect(desk.snapshot().properties).toEqual(before.properties);
+  });
+});
+
+describe("only parts read whole are applied", () => {
+  it("a partial owners or arrears read changes nothing and holds nothing", () => {
+    const { desk, tick } = liveDesk();
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 54_000 });
+    const before = desk.snapshot().properties;
+    const partialOwners = done("find-record", [{ Name: "Fictional Owner Nobody", Reference: "FO-9", Email: "x" }], { footer: 40 });
+    const partialArrears = done("arrears-review", [{ Name: "Fictional Tenant Bravo", "Paid to": "2026-09-01", "Amount owing": "999.00" }, { Name: "Nobody On Desk", "Paid to": "2026-09-01", "Amount owing": "1.00" }], { footer: 12 });
+    const sync = syncReiReadIntoDesk(desk, { runs: [OWNERS, ARREARS], results: [partialOwners, partialArrears], observedAt: tick(1000) })!;
+    expect(sync).toMatchObject({ held: 0, updated: 0, fresh: [] });
+    expect(desk.snapshot().book?.importIssues ?? []).toEqual([]);
+    expect(desk.snapshot().properties).toEqual(before);
+  });
+});
+
 describe("rows Desk cannot place", () => {
   it("holds unmatched and ambiguous rows as held work and changes nothing for them", () => {
     const { desk, tick } = liveDesk();
@@ -169,6 +198,10 @@ describe("freshness per part", () => {
     expect(snap.sources.some((source) => source.id === "src-rei-arrears")).toBe(false);
     // A grid footer above the rows read is also partial, even when the recipe finished.
     expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [], { footer: 3 })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    // Without the grid's own record count nothing proves the read whole: a footerless empty grid, or page 1 of 2.
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [], { footer: undefined })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [{ Name: "Fictional Tenant Bravo", "Paid to": "2026-09-12", "Amount owing": "540.00" }], { footer: undefined, pages: 1 })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    expect(desk.snapshot().sources.some((source) => source.id === "src-rei-arrears")).toBe(false);
     // A search reads some tenants, never the list.
     expect(syncReiReadIntoDesk(desk, { runs: [{ recipe: "find-record", inputs: { list: "Tenants", query: "Bravo" } }], results: [done("find-record", [bravo()])], observedAt: tick(1000) })!.fresh).toEqual([]);
     // A complete part goes stale a day later.

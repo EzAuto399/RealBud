@@ -623,7 +623,17 @@ export class Desk {
       items = parsed.items;
       unparsed = parsed.unparsed;
     }
-    if ((items?.length ?? 0) > MAX_BOOK_PROPERTIES) {
+    const { created, skipped } = this.stageBookProposals(items ?? [], origin);
+    if (created || skipped) {
+      this.store.persistWithoutBump();
+      this.emit();
+    }
+    return { created, skipped, unparsed };
+  }
+
+  /** Adds book cards in memory only; the caller persists. Throws before any change when there are too many. */
+  private stageBookProposals(items: Array<IntakeItem & { ownerName?: string; rei?: ReiRefs }>, origin: "ask" | "manual" | "rei"): { created: number; skipped: number } {
+    if (items.length > MAX_BOOK_PROPERTIES) {
       throw Object.assign(new Error(`Stage at most ${MAX_BOOK_PROPERTIES} properties at a time.`), { status: 400 });
     }
     const now = this.now();
@@ -665,11 +675,7 @@ export class Desk {
       proposalKeys.add(key);
       created++;
     }
-    if (created || skipped) {
-      this.store.persistWithoutBump();
-      this.emit();
-    }
-    return { created, skipped, unparsed };
+    return { created, skipped };
   }
 
   allowBookProposal(id: string): DeskSnapshot {
@@ -1031,6 +1037,10 @@ export class Desk {
    */
   applyReiRead(read: ReiDeskRead): ReiDeskApplied {
     this.assertWritable();
+    // Checked before anything changes, so a refused read leaves Desk exactly as it was.
+    if (read.proposals.length > MAX_BOOK_PROPERTIES) {
+      throw Object.assign(new Error(`REI shows more than ${MAX_BOOK_PROPERTIES} properties Desk doesn't have; stage at most ${MAX_BOOK_PROPERTIES} at a time. Nothing from this read was applied.`), { status: 400 });
+    }
     const applied: ReiDeskApplied = { updated: 0, differs: 0, proposed: 0, held: 0, fresh: [] };
     const changed = new Set<string>();
     for (const update of read.updates) {
@@ -1071,13 +1081,14 @@ export class Desk {
       applied.fresh.push(part);
     }
     for (const id of changed) this.invalidateCapabilities({ propertyId: id });
+    if (read.proposals.length) {
+      applied.proposed = this.stageBookProposals(read.proposals.map((item) => ({ ...item, tenantPhone: "" })), "rei").created;
+    }
+    // One write for the whole read: stamps, updates, holds and cards land together or not at all.
     // An unchanged value still records when REI last showed it.
-    if (read.updates.length || applied.held || applied.fresh.length) {
+    if (read.updates.length || applied.held || applied.fresh.length || read.proposals.length) {
       this.store.persist();
       this.emit();
-    }
-    if (read.proposals.length) {
-      applied.proposed = this.proposeBook({ items: read.proposals.map((item) => ({ ...item, tenantPhone: "" })) }, "rei").created;
     }
     return applied;
   }

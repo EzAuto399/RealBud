@@ -88,6 +88,11 @@ export function createReiMorningRefresh(deps: ReiMorningRefreshDeps) {
         ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}), ...(deps.workroom ? { workroom: deps.workroom } : {}) });
     } finally { clearTimeout(timer); }
     const timedOut = controller.signal.aborted;
+    // Stopped (the global Stop closed the broker) or out of time: nothing from a cut-off read is applied.
+    if (result.outcome === "stopped" || timedOut) return { ok: false, status: "missed", detail: [timedOut ? "REI didn't answer in time, so the refresh stopped. The next run starts clean." : "Stopped.",
+      "Nothing from REI was applied; Desk keeps its earlier REI facts.", notFresh(staleNow())].filter(Boolean).join(" ") };
+    if (result.outcome === "handover" && result.reason === "choose-tab" && /more than one/i.test(result.detail ?? "")) return { ok: false, status: "missed",
+      detail: [`Missed: more than one REI tab is open (${new URL(pack.origin).host}), so Bud didn't choose one. Close the extra REI tabs, keep one signed in, then run the refresh again. Nothing was read.`, notFresh(staleNow())].filter(Boolean).join(" ") };
     // One apply, after the read: rows of parts read completely are fresh, partial rows still count as REI's but stay stale.
     const sync = syncReiReadIntoDesk(deps.desk, { runs, results: result.results, observedAt: now() })!;
     const tasks = result.results[runs.findIndex(run => run.recipe === "tasks-due")];
@@ -102,15 +107,14 @@ export function createReiMorningRefresh(deps: ReiMorningRefreshDeps) {
     if (result.outcome === "handover" && SIGNED_OUT.has(result.reason ?? "")) return sync.fresh.length
       ? { ok: false, status: "partial", detail: `REI signed out part-way. ${applied} ${freshness} ${REI_SIGN_IN_MISSED} ${SIGN_IN_HOW}` }
       : missed(`REI isn't signed in, so nothing was read. ${SIGN_IN_HOW}`);
-    const why = timedOut ? "REI didn't answer in time, so the refresh stopped. The next run starts clean."
-      : result.outcome === "handover" && result.reason?.startsWith("account-") ? `REI is open in a different business than ${account.marker}. Switch business in REI; nothing from the other business was used.`
+    const why = result.outcome === "handover" && result.reason?.startsWith("account-") ? `REI is open in a different business than ${account.marker}. Switch business in REI; nothing from the other business was used.`
         : `REI couldn't be read (${result.reason ?? result.outcome}).${result.detail ? ` ${result.detail}` : ""}`;
-    return { ok: false, status: sync.fresh.length ? "partial" : timedOut ? "missed" : "failed", detail: redactSecretsInText(`${why} ${applied} ${freshness}`).slice(0, 500) };
+    return { ok: false, status: sync.fresh.length ? "partial" : "failed", detail: redactSecretsInText(`${why} ${applied} ${freshness}`).slice(0, 500) };
   }
 
   /** One refresh at a time in this process; a second start while one runs does nothing. */
   async function run(): Promise<LoopExecuteResult> {
-    if (inFlight) return { ok: false, status: "missed", detail: "Another REI refresh was already running, so this one did not start. Desk changed only once." };
+    if (inFlight) return { ok: false, status: "missed", detail: "Another REI refresh was already running, so this one did not start." };
     inFlight = true;
     try { return await refresh(); }
     catch (error) { return { ok: false, status: "failed", detail: `${redactSecretsInText(error instanceof Error ? error.message : String(error)).slice(0, 300)} ${notFresh(staleNow())}`.trim() }; }

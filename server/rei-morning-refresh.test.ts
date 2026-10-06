@@ -7,7 +7,7 @@ import { copyFileSync, cpSync, existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { startBrowserBroker } from "./browser-broker.ts";
+import { releaseBrowserBrokers, startBrowserBroker } from "./browser-broker.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
 import { Desk } from "./desk.ts";
 import { portalRecipeGrantNeeds, type PortalRunRequest } from "./portal-recipe-runner.ts";
@@ -169,6 +169,40 @@ describe("the REI morning refresh", () => {
     expect(f.mock.calls.some(call => call[0] === "request-help")).toBe(false);
   });
 
+  it("two REI tabs open: says so and names the site, never 'not signed in'", async () => {
+    const f = await fixture({ secondReiTab: true });
+    const result = await f.refresh.run();
+    expect(result.status).toBe("missed");
+    expect(result.detail).toMatch(/more than one REI tab is open \(rei-mock\.fictional\.test\)/);
+    expect(result.detail).not.toMatch(/isn't signed in/);
+    expect(reiStamps(f.desk)).toEqual([]);
+  });
+
+  it("Stop (every browser broker closed) after the tenants read applies nothing and the run says Stopped", async () => {
+    const f = await fixture({ delayMs: 3 });
+    const before = JSON.stringify(f.desk.snapshot().properties);
+    const run = f.refresh.run();
+    while (!f.mock.calls.some(call => call[0] === "navigate" && call[1].includes("/customers/arrears/"))) await new Promise(resolve => setTimeout(resolve, 2));
+    await releaseBrowserBrokers();
+    const result = await run;
+    expect(result.detail).toMatch(/^Stopped\./);
+    expect(result.ok).toBe(false);
+    expect(reiStamps(f.desk)).toEqual([]);
+    expect(JSON.stringify(f.desk.snapshot().properties)).toBe(before);
+    expect(f.desk.snapshot().book?.bookProposals ?? []).toEqual([]);
+  });
+
+  it("stops when an address lands somewhere other than its mapped page, or a dialog is open there", async () => {
+    for (const options of [{ redirects: { "/customers/owner": "/customers/owner/details" } }, { dialogOn: "/customers/owner" }] as FictionalReiOptions[]) {
+      const f = await fixture(options);
+      const result = await f.refresh.run();
+      expect(result.status, JSON.stringify(options)).toBe("partial");
+      expect(result.detail).toMatch(/unexpected-page/);
+      expect(reiStamps(f.desk).map(([id]) => id)).not.toContain("src-rei-owners");
+      expect(f.mock.calls.filter(call => ["fill", "select", "press"].includes(call[0]) && f.mock.calls.indexOf(call) > f.mock.calls.findIndex(c => c[0] === "navigate" && c[1].includes("/customers/owner")))).toEqual([]);
+    }
+  });
+
   it("a page the browser helper cut short is never fresh, even when the cut hides the grid's record count", async () => {
     const f = await fixture({ ...fictionalBook(120), observeChars: 12_000 });
     const result = await f.refresh.run();
@@ -182,6 +216,7 @@ describe("the REI morning refresh", () => {
     const [a, b] = await Promise.all([f.refresh.run(), createReiMorningRefresh(f.deps).run()]);
     expect([a.status, b.status].sort()).toEqual(["completed", "missed"]);
     expect([a, b].find(run => run.status === "missed")!.detail).toMatch(/already running/);
+    expect([a, b].find(run => run.status === "missed")!.detail).not.toMatch(/Desk changed/);
     expect(f.mock.calls.filter(call => call[0] === "tab" && call[1] === "borrow")).toHaveLength(1);
     expect(f.desk.snapshot().book!.bookProposals.filter(card => card.address === "FP-01")).toHaveLength(1);
     // The clock never starts the same loop twice either.

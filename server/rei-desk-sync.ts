@@ -26,9 +26,9 @@ export function reiPartOf(run: PortalRunRequest): { part: ReiPart; whole: boolea
   return null;
 }
 
-/** Every page was read: the run finished the recipe, no page came back cut short, and the grid footer's count (when shown) was reached. */
+/** Every page was read: the run finished the recipe, no page came back cut short, and the grid showed its own record count and every one was read. Without that count nothing proves the read whole. */
 const complete = (result: PortalRecipeResult) =>
-  result.outcome === "completed" && result.table !== "unread" && !result.truncated && (result.footer === undefined || result.rows.length >= result.footer);
+  result.outcome === "completed" && result.table !== "unread" && !result.truncated && result.footer !== undefined && result.rows.length >= result.footer;
 
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function cell(row: Record<string, string>, ...names: string[]): string {
@@ -78,6 +78,9 @@ export function reiDeskRead(properties: Property[], runs: PortalRunRequest[], re
     if (result && result.table !== "unread") parts.set(part.part, [...(parts.get(part.part) ?? []), ...result.rows]);
   });
   read.fresh = [...fresh].filter(([, ok]) => ok).map(([part]) => part);
+  // Only a part read whole is applied: rows of a partial read neither change Desk nor raise holds
+  // (a row missing from a cut-off page is not proof that anything is unmatched).
+  for (const part of [...parts.keys()]) if (!read.fresh.includes(part)) parts.delete(part);
   const hold = (identity: string, kind: "unmatched" | "ambiguous", detail: string) => read.holds.push({ identity, kind, detail });
   /** Owner names this read gives each property (and new ones), so an owners row can find its property in the same read. */
   const ownerOf = new Map<string, string>();

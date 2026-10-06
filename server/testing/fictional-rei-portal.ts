@@ -276,6 +276,12 @@ export interface FictionalReiOptions {
   signOutAfterSteps?: number;
   /** An observation longer than this many characters comes back cut and marked truncated, as the live helper's token cap does. */
   observeChars?: number;
+  /** Path → path: REI sends an address somewhere else (a record page, another list). */
+  redirects?: Record<string, string>;
+  /** A dialog is open as soon as this path loads. */
+  dialogOn?: string;
+  /** The person has a second REI tab open. */
+  secondReiTab?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -314,11 +320,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (options.switchBusinessAfterSteps !== undefined && steps > options.switchBusinessAfterSteps) return "FICT2";
     return (direct ? options.directBusiness : undefined) ?? options.business ?? FICTIONAL_BUSINESS;
   };
-  const load = (next: string) => {
+  const load = (requested: string) => {
+    const redirect = options.redirects?.[new URL(requested).pathname];
+    const next = redirect ? new URL(redirect, FICTIONAL_REI_ORIGIN).href : requested;
     const at = new URL(next);
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
-    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null; report = ""; rendered = block;
+    page = 0; loading = 1; modal = options.dialogOn === new URL(url).pathname; reportsListed = false; uploadError = null; report = ""; rendered = block;
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
@@ -391,11 +399,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     }
     lines.push("    main", `      heading ${q(title)}`);
     {
+      // The page's fields sit in their own region, apart from its record-changing buttons (FICTIONAL layout).
+      if (fields.length) lines.push('      region "Filters"');
       for (const item of fields) {
-        if (item.kind === "textbox") lines.push(`      ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.name)} value=${q(item.value)}`);
+        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.name)} value=${q(item.value)}`);
         else if (item.kind === "combobox") {
-          lines.push(`      ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
-          for (const option of item.options ?? []) lines.push(`        option ${q(option)}`);
+          lines.push(`        ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
+          for (const option of item.options ?? []) lines.push(`          option ${q(option)}`);
         }
       }
       if (path === "/customers/importbanklink/index") lines.push(`      ${ref({ role: "button", name: "Load File", action: "file" })} button "Load File"`, ...(uploadError ? [`      alert ${q(uploadError)}`] : []));
@@ -477,7 +487,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "status") return { daemon_version: BROWSER_VERSION, protocol_version: BROWSER_PROTOCOL, browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: BROWSER_VERSION, extension_protocol_version: BROWSER_PROTOCOL }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "owned", browser_instance_id: "work", interaction }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; return { stopped: ["owned"], failed: [], return_failures: [] }; }
-    if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" }] };
+    if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" },
+      ...(options.secondReiTab ? [{ tab_id: 3, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard`, title: "REI", scope: "user" }] : [])] };
     if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
     if (args[0] === "observe") {
       const text = render(); if (loading > 0) loading -= 1;

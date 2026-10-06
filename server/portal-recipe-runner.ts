@@ -216,7 +216,9 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   if (missing.length) return finish("blocked", "grant-too-narrow", `This task's permission does not include: ${missing.join(", ")}.`);
   if (!jobBrowserUrl(`${pack.origin}/`, grant.sites)) return finish("blocked", "grant-site-missing", "This task's permission does not include the portal's site.");
 
-  const stopped = () => Boolean(options.signal?.aborted) || (options.isActive ? !options.isActive() : false);
+  // Stop reaches a run three ways: its signal, its owner going inactive, or the global Stop closing every broker.
+  let live: BrowserBroker | null = null;
+  const stopped = () => Boolean(options.signal?.aborted) || (options.isActive ? !options.isActive() : false) || Boolean(live?.stopped);
   const tap = tappedRuntime(options.runtime, grant.sites);
   let inflight: { tool: string; name?: string; recipe: boolean } | null = null;
   const approve: PersonApprove = async (tool, params, summary, signal, projection) => {
@@ -240,6 +242,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
       ...(options.now ? { now: options.now } : {}), ...(options.workroom ? { workroom: options.workroom } : {}),
     });
   } catch (error) { return finish("blocked", "broker-refused", error instanceof Error ? error.message : ""); }
+  live = broker;
   const workroom = options.workroom ?? browserTaskWorkroom(options.runtime.root, grant.id);
   const onStop = () => broker.close();
   options.signal?.addEventListener("abort", onStop, { once: true });
@@ -391,6 +394,15 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
               const links = menu ? all(menu, node => node.ref !== null && node.role === "link" && node.name === label) : [];
               if (links.length !== 1) throw blocked("menu-label-missing", `The menu label ${label} was not found once.`);
               await act("browser_click_semantic", { ref: links[0].ref! }, { name: label });
+            }
+          }
+          // A loop's unattended read acts only on the page it meant to open: a redirect elsewhere (a record's edit
+          // form) or a dialog open there ends the run before any field is touched.
+          if (grant.route === "loop-read") {
+            const page = await current();
+            const at = page.url ? new URL(page.url).pathname : null;
+            if (!route || at !== new URL(route, pack.origin).pathname || first(page.root, node => node.role === "dialog" || node.role === "alertdialog")) {
+              throw blocked("unexpected-page", `${path.join(" › ")} did not open its mapped page, or a dialog is open on it.`);
             }
           }
           break;

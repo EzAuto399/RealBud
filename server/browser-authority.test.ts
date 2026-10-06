@@ -886,13 +886,41 @@ describe("a loop's read-only grant (route loop-read)", () => {
     '      @e5 button "Notice"', '      @e6 button "Send"', '      @e7 button "Process Receipts"', '      @e8 button "Export"', '      @e9 button "Load File"', '      @e10 button "Save"',
   ].join("\n"), "https://portal.example/customers/tenant");
   const RULES = [{ key: "portal:read:portal.example", decision: "allow" as const }, { key: "portal:prefill:portal.example", decision: "allow" as const }];
-  const decide = (tool: string, args: Record<string, unknown>, grant = loop()) => authorizeBrowserAction(grant, LIST, tool, args, { portal: PORTAL, rules: RULES });
+  const decide = (tool: string, args: Record<string, unknown>, grant = loop(), observation = LIST) => authorizeBrowserAction(grant, observation, tool, args, { portal: { ...PORTAL, readSafe: [...PORTAL.readSafe, "From day"] }, rules: RULES });
+  /** A list page whose declared filters sit in their own region, apart from the page's record-changing buttons. */
+  const FILTERS = page([
+    "@vom 1", "L1 page", '  RootWebArea "Arrears"', '    navigation "Main"', '      @e1 link "Tenants"', "    main",
+    '      region "Filters"', '        @e2 textbox "Search" value=""', '        @e3 combobox "Status" value="Active"', '          option "All"', '        @e4 textbox "From day" value=""',
+    '      region "Results"', '        table "Results"', "          row", '            cell "Fictional"', '      @e5 button "Notice"',
+  ].join("\n"), "https://portal.example/customers/arrears/");
+  /** A record's edit form: nothing on it is a filter, whatever its fields are called. */
+  const EDIT = page([
+    "@vom 1", "L1 page", '  RootWebArea "Edit tenant"', "    main", '      form "Edit tenant"',
+    '        @e1 textbox "Search notes" value=""', '        @e2 combobox "Tenancy status" value="Active"', '          option "Active"', '          option "Vacated"',
+    '        @e3 textbox "Rent" value="540"', '        @e4 combobox "Frequency" value="Weekly"', '          option "Weekly"', '          option "Monthly"',
+    '        @e5 textbox "Search" value=""', '        @e6 button "Save"',
+  ].join("\n"), "https://portal.example/customers/tenant/details");
 
-  it("allows only reading, same-site read-only navigation, filter fields and declared read-safe controls", () => {
+  it("allows only reading, same-site read-only navigation, declared filters and declared read-safe controls", () => {
     for (const [tool, args] of [["browser_borrow", { tab_id: 1 }], ["browser_read", { tab_id: 1 }], ["browser_navigate", { tab_id: 1, url: "https://portal.example/customers/arrears/" }],
       ["browser_fill", { tab_id: 1, ref: "@e2", value: "" }], ["browser_fill", { tab_id: 1, ref: "@e4", value: "1" }], ["browser_press", { tab_id: 1, ref: "@e4", key: "Tab" }],
       ["browser_select", { tab_id: 1, ref: "@e3", values: ["All"] }]] as const) {
-      expect(decide(tool, { ...args }), tool).toMatchObject({ decision: "allow" });
+      expect(decide(tool, { ...args }, loop(), FILTERS), tool).toMatchObject({ decision: "allow" });
+    }
+  });
+
+  it("refuses typing, choosing and keys anywhere but a declared filter, and Enter even there", () => {
+    for (const [tool, args, observation] of [
+      ["browser_press", { tab_id: 1, ref: "@e1", key: "Enter" }, EDIT], // Enter in a field named like a search
+      ["browser_select", { tab_id: 1, ref: "@e2", values: ["Vacated"] }, EDIT], // an undeclared dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e3", value: "1" }, EDIT], // a record field
+      ["browser_press", { tab_id: 1, ref: "@e4", key: "ArrowDown" }, EDIT], // an arrow changing a dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e5", value: "x" }, EDIT], // a declared name inside a form with Save
+      ["browser_press", { tab_id: 1, ref: "@e2", key: "Enter" }, FILTERS], // Enter on a declared Search filter
+      ["browser_press", { tab_id: 1, ref: "@e3", key: "ArrowDown" }, FILTERS], // an arrow on a declared dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e2", value: "" }, LIST], // a declared name beside Notice, Send and Save
+    ] as const) {
+      expect(decide(tool, { ...args }, loop(), observation).decision, `${tool} ${JSON.stringify(args)} on ${observation.url}`).toBe("deny");
     }
   });
 
