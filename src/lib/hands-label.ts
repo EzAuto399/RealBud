@@ -10,6 +10,18 @@ export function handsChip(hands: HandsSource, detail?: string | null): string {
   return "Demo";
 }
 
+/** Desk's book chip. `emptyBook` is a live office book with no properties and
+ * no recovery (isEmptyOfficeBook): there is nothing to check or hold yet. */
+export function deskHandsStatus(
+  hands: HandsSource,
+  detail: string | null | undefined,
+  emptyBook: boolean,
+): { label: string; tone: "hold" | "muted" | "agency" } {
+  if (emptyBook) return { label: "Waiting for properties", tone: "muted" };
+  const tone = hands === "held" ? (detail ? "hold" : "muted") : hands === "hermes" || hands === "csv" ? "agency" : "muted";
+  return { label: handsChip(hands, detail), tone };
+}
+
 export function handsFactSource(hands: HandsSource): string {
   if (hands === "hermes") return "from Bud";
   if (hands === "csv") return "from CSV";

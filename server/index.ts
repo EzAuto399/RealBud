@@ -232,7 +232,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { coverageFromUncoveredHeld, hostTimezone, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { hostTimezone, morningCheckResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -2607,14 +2607,8 @@ loops = new LoopManager({
     if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
     // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
     // the shared worker clock. The fixture path never silently skips the worker.
-    const snapshot = await runDeskCheck(origin);
-    if (snapshot.hands === "held") {
-      const coverage = coverageFromUncoveredHeld(snapshot.handsDetail, snapshot.results);
-      return { ok: false, detail: snapshot.handsDetail ?? "held", ...coverage };
-    }
-    if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
-    const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
-    return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
+    // An empty book skips the worker inside Desk and settles calmly here.
+    return morningCheckResult(await runDeskCheck(origin));
   }),
 });
 

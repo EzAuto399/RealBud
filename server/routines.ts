@@ -19,7 +19,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
-import { recipeClockRunnable, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
+import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
 
@@ -80,6 +80,24 @@ export function coverageFromUncoveredHeld(
     else covered += 1;
   }
   return { covered, uncovered };
+}
+
+/** Recheck and the morning loop on a book with no properties: calm, never a hold. */
+export const EMPTY_BOOK_DETAIL = "Nothing to check yet — add properties to the office book.";
+
+/** What a morning money check reports from the Desk snapshot its Recheck produced. */
+export function morningCheckResult(
+  snapshot: Pick<DeskSnapshot, "properties" | "hands" | "handsDetail" | "mode" | "results">,
+): LoopExecuteResult {
+  // Desk did not ask Bud: nothing ran, nothing is held, nothing to read.
+  if (snapshot.properties.length === 0) return { ok: true, detail: EMPTY_BOOK_DETAIL, quiet: true };
+  if (snapshot.hands === "held") {
+    const coverage = coverageFromUncoveredHeld(snapshot.handsDetail, snapshot.results);
+    return { ok: false, detail: snapshot.handsDetail ?? "held", ...coverage };
+  }
+  if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
+  const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
+  return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];

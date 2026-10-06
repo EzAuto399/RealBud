@@ -18,7 +18,7 @@ import {
   type QueueCounts,
   type QueueFilter,
 } from "@/lib/desk-queue";
-import { handsChip, missAction } from "@/lib/hands-label";
+import { deskHandsStatus, missAction } from "@/lib/hands-label";
 import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
 import { StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
@@ -474,6 +474,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const headerCheckPrimary = snap.lastRunAt != null;
   // A live, empty office book has nothing to check and no sample to run.
   const liveEmpty = isEmptyOfficeBook(snap);
+  const bookChip = deskHandsStatus(snap.hands, snap.handsDetail, liveEmpty);
   // Unmatched imports can need review before the first property is added.
   // Only replace the queue when it has no work in any status or filter.
   const emptyWorkspace = liveEmpty && rows.length === 0;
@@ -705,11 +706,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             {sampleBook ? (
               <StatusLabel tone={missed ? "hold" : "muted"}>Sample book</StatusLabel>
             ) : (
-              <StatusLabel
-                tone={snap.hands === "held" ? (snap.handsDetail ? "hold" : "muted") : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}
-              >
-                {handsChip(snap.hands, snap.handsDetail)}
-              </StatusLabel>
+              <StatusLabel tone={bookChip.tone}>{bookChip.label}</StatusLabel>
             )}
             {phonePaired(channels) ? (
               <StatusLabel

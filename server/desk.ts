@@ -47,6 +47,7 @@ import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, uncoveredPropertyIds, type HermesLedgerAttempt } from "./hermes-hands.ts";
 import { writeHandsLast } from "./hands-last.ts";
+import { EMPTY_BOOK_DETAIL } from "./routines.ts";
 import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
 import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
 import { parseIntakeText, type IntakeItem } from "./intake.ts";
@@ -396,6 +397,8 @@ export class Desk {
     this.assertWritable();
     const startedAtRevision = this.store.data.revision;
     const ids = this.store.data.properties.map((p) => p.id);
+    // An empty book has nothing for Bud to read: no model turn, no hold.
+    if (ids.length === 0) return this.recordEmptyBook();
     const attempt = await this.hermes(ids);
     // The provider is the only await inside a Desk check. A PM may keep
     // working (or explicitly choose the sample book) while it is away; never
@@ -1305,6 +1308,18 @@ export class Desk {
       return this.snapshot();
     }
     return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail, undefined, opts);
+  }
+
+  /** Nothing to check. Not a check (no lastRunAt) and not a hold. A sample
+   * book's detail is left alone: there any non-"Demo book" detail reads as a miss. */
+  private recordEmptyBook(): DeskSnapshot {
+    if (this.store.data.mode === "live" && this.store.data.handsDetail !== EMPTY_BOOK_DETAIL) {
+      this.store.data.handsDetail = EMPTY_BOOK_DETAIL;
+      this.store.data.results = [];
+      this.store.persist();
+      this.emit();
+    }
+    return this.snapshot();
   }
 
   /** Live Recheck missed on the Demo book. Do not draft fixture cards. */
