@@ -137,14 +137,14 @@ describe("managed Bud status", () => {
     expect(html).toMatch(/Model connection<\/dt><dd[^>]*>Configured/);
     expect(html).toMatch(/Private readiness check<\/dt><dd[^>]*>Waiting/);
     expect(html).not.toContain("Your service administrator needs");
-    expect(html).toContain("Return to Ask");
+    expect(html).toContain("Return to Work");
     expect(html).not.toContain("Finish Bud setup");
   });
   it("offers return to work once every prerequisite is ready", () => {
     const html = render(ready);
     expect(html).toContain("Bud ready");
     expect((html.match(/>Ready<\/dd>/g) || [])).toHaveLength(4);
-    expect(html).toContain("Return to Ask");
+    expect(html).toContain("Return to Work");
     expect(html).not.toContain("Service administration");
   });
   it("does not leave stale green checks after a refresh failure or during retry", () => {
@@ -166,7 +166,7 @@ describe("managed Bud status", () => {
     for (const html of [render(null), render(ready, { connected: false })]) {
       expect(html).not.toMatch(/>Ready<\/dd>/);
       expect(html).not.toContain("Your service administrator needs");
-      expect(html).toContain("Return to Ask");
+      expect(html).toContain("Return to Work");
     }
   });
   it("offers book recovery, keeping service setup out of the way", () => {

@@ -300,7 +300,7 @@ describe("Bud is a status line, not a step", () => {
 
   it("says what the host reports about Bud and nothing more", () => {
     expect(budStatusLine(true)).toBe("Bud: ready");
-    expect(budStatusLine(false)).toBe("Bud: needs setup on You");
+    expect(budStatusLine(false)).toBe("Bud: needs setup in Workspace");
     expect(budStatusLine("unknown")).toBe("Bud: not checked yet");
   });
 });

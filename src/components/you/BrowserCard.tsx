@@ -86,7 +86,7 @@ export function BrowserCard({ id = "you-browser", defaultOpen = false, disabledR
         <summary className="cursor-pointer font-medium">Browser options and sign-in help</summary>
         <div className="mt-3 space-y-3 text-ink-secondary">
           <p>Your separate work profile retains website sign-ins. Websites decide when they expire; this connection check does not renew them.</p>
-          <p>To sign in or change account, stop any running browser work and wait for release, then use the work browser yourself. Return to Ask when you are ready. Stopping does not undo completed actions or restart the task.</p>
+          <p>To sign in or change account, stop any running browser work and wait for release, then use the work browser yourself. Return to Work when you are ready. Stopping does not undo completed actions or restart the task.</p>
           <p>Bud can read websites and use permitted search and filter controls. Website record changes, uploads and downloads are not available in this build.</p>
           {!unavailable && status?.enabled && !status.active && (status.browsers.length > 1 || status.state === "choose_browser") && <fieldset className="space-y-2" disabled={disabled}>
             <legend className="mb-2 font-medium">Browser for this computer</legend>
