@@ -345,7 +345,7 @@ describe("W1 host", () => {
     const f = await fixture(made => ({ load: async () => {
       const pack = await made.load();
       const recipe = pack.recipes["bulk-receipting-pending"];
-      return { ...pack, recipes: { ...pack.recipes, "bulk-receipting-pending": { ...recipe, steps: [{ nav: ["Process", "Pending transactions"] }, ...recipe.steps.slice(1)] } } };
+      return { ...pack, recipes: { ...pack.recipes, "bulk-receipting-pending": { ...recipe, steps: [{ nav: ["Process", "Pending Transactions"] }, ...recipe.steps.slice(1)] } } };
     } }));
     await f.configure();
     await f.lab.handle({ action: "sign-in" });

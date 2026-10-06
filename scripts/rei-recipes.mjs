@@ -23,8 +23,10 @@ const sha256 = text => createHash("sha256").update(text).digest("hex");
 
 /** Where the runner finds account scope and the UI version on a page. Declared for REI only. */
 const ADAPTER = {
-  account: { urlParam: "reicid", pageMarker: { landmark: "banner", role: "button" } },
-  uiVersion: { landmark: "contentinfo", pattern: "v ([\\d.]+)" },
+  // Live REI (6 Oct 2026, UI 26.0922.0) has no banner or footer landmark: the business code is the
+  // first button in the top bar's list, and the version is in the first link ("REI Cloud v 26.0922.0 P").
+  account: { urlParam: "reicid", pageMarker: { landmark: "list", role: "button" } },
+  uiVersion: { landmark: "link", pattern: "v ([\\d.]+)" },
   signInTexts: ["Choose your account", "Sign in with your email address", "Sign In Cancelled"],
   // The pager group's exact role and name are not confirmed on live REI Cloud: until the read-only
   // live look records them here, no pager is read-safe and live paging falls back to asking.

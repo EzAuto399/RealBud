@@ -37,7 +37,7 @@ import { parsePortalRecipePack, type PortalRecipePack } from "../portal-recipe.t
  * screen before this can be added to the pack. */
 export const FICTIONAL_PENDING_RECIPE = "bulk-receipting-pending";
 const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: [],
-  steps: [{ nav: ["Receipts", "Bulk receipting"] }, { check: "account" }, { wait: "table" }, { read: "table" }, { paginate: true }],
+  steps: [{ nav: ["Receipts", "Bulk Receipting"] }, { check: "account" }, { wait: "table" }, { read: "table" }, { paginate: true }],
   stopBefore: ["Process Receipts", "Receipt All", "Save", "Post", "Finalise"],
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
@@ -67,9 +67,9 @@ const AGENCY = "Fictional Realty Office";
 const TOP = ["Dashboard", "Business", "Owners", "Pool of Owners", "Contacts", "Rentals", "Tenants", "Suppliers", "Communities", "Sales", "Listings", "Agents", "Booking Calendar", "Tasks", "Receipts", "Process", "Reports", "Settings", "Tools", "My Profile"];
 const ROUTES: Record<string, string> = { Dashboard: "/customers/dashboard", Owners: "/customers/owner", Rentals: "/customers/property", Tenants: "/customers/tenant", Tasks: "/customers/task", Reports: "/report/reportlist", Suppliers: "/customers/supplier", Contacts: "/customers/contact" };
 const CHILDREN: Record<string, Array<[string, string]>> = {
-  Tenants: [["Arrears", "/customers/arrears/"]],
-  Receipts: [["Tenant receipts", "/customers/transaction/tenantreceipt"], ["Bulk receipting", "/customers/importbanklink/index"]],
-  Process: [["Bank reconciliation", "/customers/reconciliation/bankreconciliation"], ["Pending transactions", "/customers/transaction/pendingtransactions"]],
+  // Live REI menu labels and parents (6 Oct 2026).
+  Receipts: [["Bulk Receipting", "/customers/importbanklink/index"], ["Tenant", "/customers/transaction/tenantreceipt"]],
+  Process: [["Arrears", "/customers/arrears/"], ["Bank Reconciliation", "/customers/reconciliation/bankreconciliation"], ["Pending Transactions", "/customers/transaction/pendingtransactions"]],
   Settings: [["Integrations", "/RequesterIntegrations"]],
 };
 const TENANTS = [
@@ -344,8 +344,10 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     }
     const path = at.pathname; const b = business();
     const title = path === "/customers/dashboard" ? "Dashboard" : Object.values(CHILDREN).flat().find(([, route]) => route === path)?.[0] ?? Object.entries(ROUTES).find(([, route]) => route === path)?.[0] ?? path.split("/").filter(Boolean).pop() ?? "Page";
-    lines.push(`  RootWebArea ${q(`${title} - REI Cloud`)}`, "    banner");
-    lines.push(`      StaticText ${q(AGENCY)}`, `      ${ref({ role: "button", name: b, action: "none" })} button ${q(b)}`);
+    // Shaped like live REI: no banner landmark; the version is in the first link and the business
+    // code is the first button in the top bar's list.
+    lines.push(`  RootWebArea ${q(`${title} - REI Cloud`)}`, "    generic", `      ${ref({ role: "link", name: `REI Cloud v ${options.version ?? "26.0922.0"} P`, action: "none" })} link ${q(`REI Cloud v ${options.version ?? "26.0922.0"} P`)}`);
+    lines.push(`      StaticText ${q(AGENCY)}`, "      list", "        listitem", `          ${ref({ role: "button", name: b, action: "none" })} button ${q(b)}`);
     lines.push('    navigation "Main"');
     const section = Object.entries(CHILDREN).find(([, kids]) => kids.some(([, route]) => route === path))?.[0] ?? Object.entries(ROUTES).find(([, route]) => route === path)?.[0];
     for (const label of TOP) {
@@ -410,7 +412,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
           `        ${ref({ role: "button", name: "Export", action: "export" })} button "Export"`);
       }
     }
-    lines.push("    contentinfo", `      StaticText ${q(`2026 © Fictional mock · v ${options.version ?? "26.0922.0"}`)}`);
+    lines.push("    contentinfo", `      StaticText ${q("2026 © Fictional mock")}`);
     return lines.join("\n");
   };
   /** Refs are assigned by rendering; the helper resolves them against the page as it stands. */

@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
-import { jobBrowserUrl, type BrowserPortalControls } from "./browser-authority.ts";
+import { jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
 import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -281,8 +281,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     // A parameter shown on the page must be the saved one; its absence proves nothing either way.
     const value = at.searchParams.get(pack.account.urlParam);
     if (value !== null && account.urlValue && value !== account.urlValue) throw handover("account-url-changed");
-    const landmark = first(page.root, node => node.role === pack.account.pageMarker.landmark);
-    const marker = landmark ? first(landmark, node => node.role === pack.account.pageMarker.role)?.name?.trim() : undefined;
+    // One reading of the account marker for the broker and the runner (browser-authority.ts portalAccountName).
+    const marker = portalAccountName(page.text, pack.account.pageMarker);
     if (!marker) throw handover("account-marker-missing");
     if (marker !== account.marker) throw handover("account-marker-changed");
     receipt.accountChecks += 1;

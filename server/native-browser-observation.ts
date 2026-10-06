@@ -30,6 +30,8 @@ export function nativeBrowserObservation(snapshot: unknown): string {
     const role = rawRole.toLowerCase() === "text" ? "statictext" : rawRole.toLowerCase();
     let name: string | undefined;
     try { if (quoted !== undefined) name = JSON.parse(`"${quoted}"`) as string; } catch { throw new Error("The work browser returned an unsupported accessibility name."); }
+    // Icon-font glyphs (private use area) carry no meaning: REI's Action button reads "<glyph> Action".
+    if (name !== undefined) name = name.replace(/[-]/g, "").trim();
     let rest = tail; let ref = ""; const flags: string[] = [];
     while (rest.startsWith(" [")) {
       const flag = rest.match(/^ \[([^\]\n]+)\]/);
@@ -43,6 +45,10 @@ export function nativeBrowserObservation(snapshot: unknown): string {
       }
       rest = rest.slice(flag[0].length);
     }
+    // The engine tags a plain element that behaves like a control (REI's grid headers and Action
+    // button): ` clickable [cursor:pointer, onclick]`. Keep only the kind, as a flag.
+    const hint = rest.match(/^ (clickable|focusable|editable) \[(?:cursor:pointer|onclick|tabindex|contenteditable)(?:, (?:cursor:pointer|onclick|tabindex|contenteditable))*\]/);
+    if (hint) { flags.push(`[${hint[1]}]`); rest = rest.slice(hint[0].length); }
     if (rest && !rest.startsWith(":")) throw new Error("The work browser returned an unsupported accessibility value.");
     const rawValue = rest.startsWith(":") ? rest.slice(1).trimStart() : "";
     let value = rawValue;
