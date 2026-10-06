@@ -97,7 +97,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
       <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
     </div></details>
-    <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details above.</p>
+    <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details below.</p>
     {change&&<CustomerPackChangeReview key={change.previewDigest} preview={change} busy={busy} cancel={()=>setChange(null)} apply={()=>void run(async()=>{
       const body={expectedInstalledDigest:change.installedDigest,expectedInstalledRevision:change.installedRevision,expectedDigest:change.digest,expectedPreviewDigest:change.previewDigest,
         ...(change.action==='upgrade'?{pack:change.pack}:{packId:change.pack.id,installationRevision:change.rollbackRevision})};
