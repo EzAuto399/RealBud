@@ -82,3 +82,27 @@ Evidence tier: live integration, read-only. Nothing in REI was clicked to change
 2. Run it. If Windows shows "Windows protected your PC", choose **More info**, then **Run anyway**. Smart App Control must be Off (see above).
 3. The installer runs one-click and opens RealBud: first-run screen in about 2 minutes on the emulated VM (around 30 s on x64 in CI).
 4. Step 2, connecting the office: have a **link code ready from the billing owner** (realbud.app → Computers → Pair a new computer). Paste it under "Use a link code instead"; the green button then switches to "Connect with this code". The browser-approval path needs a billing-owner sign-in.
+
+## 7 October: release 0.1.35 and the verified Friday install path
+Evidence tier: installed device (Windows 11 Arm VM, x64 emulated) with live realbud.app, live gateway and the public GitHub release. Mac: packaged build only.
+
+**Release.** `v0.1.35` is GitHub's latest release, with Windows `RealBud-0.1.35-setup.exe` (sha256 `5e3c0282…`) + `latest.yml` and Mac `RealBud-0.1.35.dmg`/zip + `latest-mac.yml`. realbud.app/download offers "Download for Windows" on Windows and shows Version 0.1.35. Before this, the latest release was v0.1.18 with no Windows file.
+
+**Kevin's click path (walked on Windows 11, 7 Oct):**
+1. realbud.app/download → **Download for Windows**.
+2. Edge: "RealBud-setup.exe isn't commonly downloaded" → hover the download → **…** → **Keep** → arrow next to Delete → **Keep anyway**.
+3. Open the file → "Windows protected your PC" → **More info** → **Run anyway**. (The download page has the same steps under "Windows says the file isn't commonly downloaded?".)
+4. Installer runs (upgrade: "RealBud is running. Click OK to close it" → OK; about 80 s on the emulated VM).
+5. RealBud opens. Step 1 name → step 2 **Paste the link code your office owner sent you** → **Connect with this code** (or the owner approves in their browser; code shown on both screens must match).
+6. "This computer is connected" → **Continue to Bud setup**. Bud sets itself up unattended (Download Bud / Turn on approvals / Connect your office's AI / Test Bud → all Ready).
+7. Desk **Get started**: 1 linked ✓, 2 Bud set up ✓, 3 Import your office's pack (needs the signed packs uploaded), 4 Gmail (needs shared office Gmail set up by the owner), 5 review and switch on workflows.
+
+**Timings (emulated VM; a real x64 PC should be faster):** silent install 61–87 s; first window and first health 33–41 s; owner approval links in under a minute; Bud answers a first question in about 60 s; health latency p95 under 100 ms.
+
+**Before Friday (owner):**
+- Upload the two signed role packs (realbud.app → Workflow packs).
+- Turn on Shared office Gmail and allow Kevin's and Sherry's computers (realbud.app → Computers).
+- Have a link code ready for each PC (realbud.app → Computers → Pair a new computer).
+- On Kevin's PC check Smart App Control is Off and the PC is not in S mode (an unsigned installer is blocked outright otherwise).
+
+QA tooling: `scripts/windows-qa.ps1` (one-line receipt) and `docs/WINDOWS-QA-RUNBOOK.md`; issues in `docs/WINDOWS-TEST-ISSUES-2026-10-06.md`.
