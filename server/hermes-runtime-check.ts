@@ -47,7 +47,10 @@ export async function verifyRuntime(home: string, release: HermesRelease, option
     // Upstream/environment contribution accounting can stamp email metadata
     // during an official install. It is not executable agent code.
     const changed = await command(git, ["-C", repo, "diff", "--name-only", "HEAD", "--"], env);
-    if (changed.split("\n").filter(Boolean).some(path => !/^contributors\/emails\/[^/]+$/.test(path))) {
+    const modified = changed.split("\n").filter(Boolean).filter(path => !/^contributors\/emails\/[^/]+$/.test(path));
+    if (modified.length) {
+      // Repository-relative names only, so a one-off on a customer machine can be traced.
+      console.warn(`[${new Date().toISOString()}] Bud runtime check: ${modified.length} modified source file(s): ${modified.slice(0, 5).join(", ").slice(0, 300)}`);
       throw new BootstrapError("The downloaded agent contains modified source files. Your current agent is kept.");
     }
     const versionLaunch = checkedLaunch(home, scratch, runtimeCli(home), ["--version"], env);
