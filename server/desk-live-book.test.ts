@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { Desk } from "./desk.ts";
+import { EMPTY_BOOK_DETAIL, morningCheckResult } from "./routines.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
@@ -103,5 +104,30 @@ describe("office book after linking", () => {
     expect(snap.mode).toBe("live");
     expect(snap.properties.map(property => property.address)).toEqual([realProperty.address]);
     expect(snap.book?.bookProposals.map(proposal => proposal.address)).toEqual(["2 Fictional Way, Testville"]);
+  });
+
+  it("rechecks an empty office book calmly without asking Bud, then checks normally once a property lands", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-live-book-"));
+    dirs.push(dir);
+    const now = () => new Date(2026, 8, 30, 7, 30, 0).getTime();
+    const asked: string[][] = [];
+    const desk = new Desk({ file: join(dir, "desk.json"), now, hermes: async (ids) => { asked.push(ids); return { rows: null, detail: "Bud found no ledger facts — facts stay held." }; } });
+    desk.startLiveBookIfUntouched();
+
+    const empty = await desk.runMorningCheckLive();
+    expect(asked).toEqual([]);
+    expect(empty).toMatchObject({ mode: "live", properties: [], handsDetail: EMPTY_BOOK_DETAIL, lastRunAt: null, results: [] });
+    expect(morningCheckResult(empty)).toEqual({ ok: true, detail: EMPTY_BOOK_DETAIL, quiet: true });
+    // A second empty run is a no-op, not another revision every morning.
+    const revision = desk.revision;
+    await desk.runMorningCheckLive();
+    expect(desk.revision).toBe(revision);
+
+    desk.addProperty(realProperty);
+    const held = await desk.runMorningCheckLive();
+    expect(asked).toHaveLength(1);
+    expect(held.hands).toBe("held");
+    expect(held.handsDetail).toMatch(/facts stay held/);
+    expect(morningCheckResult(held).ok).toBe(false);
   });
 });

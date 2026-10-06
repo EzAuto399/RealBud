@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { handsChip, handsFactSource, missAction, sourceKindLabel } from "./hands-label";
+import { deskHandsStatus, handsChip, handsFactSource, missAction, sourceKindLabel } from "./hands-label";
 
 describe("hands labels", () => {
   it("keeps Hermes out of user chrome", () => {
@@ -13,6 +13,22 @@ describe("hands labels", () => {
     expect(handsFactSource("hermes")).toBe("from Bud");
     expect(sourceKindLabel("hermes")).toBe("Bud");
     expect(`${handsChip("hermes")} ${handsFactSource("hermes")} ${sourceKindLabel("hermes")}`).not.toMatch(/Hermes/i);
+  });
+});
+
+describe("deskHandsStatus", () => {
+  it("reads an empty office book as waiting, whatever an earlier check left", () => {
+    expect(deskHandsStatus("held", null, true)).toEqual({ label: "Waiting for properties", tone: "muted" });
+    expect(deskHandsStatus("held", "Bud found no ledger facts — facts stay held.", true)).toEqual({ label: "Waiting for properties", tone: "muted" });
+  });
+
+  it("keeps On hold for real holds on a book with properties or in recovery", () => {
+    expect(deskHandsStatus("held", "Bud found no ledger facts — facts stay held.", false)).toEqual({ label: "On hold", tone: "hold" });
+    expect(deskHandsStatus("held", "CSV batch is stale", false)).toEqual({ label: "On hold", tone: "hold" });
+    // A recovery book is empty but isEmptyOfficeBook is false for it.
+    expect(deskHandsStatus("held", "Desk is in recovery — the book was not replaced with Demo data.", false)).toEqual({ label: "On hold", tone: "hold" });
+    expect(deskHandsStatus("held", null, false)).toEqual({ label: "Not checked yet", tone: "muted" });
+    expect(deskHandsStatus("hermes", "ok", false)).toEqual({ label: "Bud live", tone: "agency" });
   });
 });
 
