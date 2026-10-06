@@ -88,11 +88,11 @@ try {
   let failSettings = true;
   await failedContext.route('**/assets/YouPage-*.js', route => failSettings ? route.abort('failed') : route.continue());
   const failed = await failedContext.newPage(); failed.on('pageerror', error => expectedErrors.push(error.message));
-  await failed.goto(origin + '/#/you'); await failed.getByRole('heading', { name: 'Could not open You', exact: true }).waitFor();
+  await failed.goto(origin + '/#/you'); await failed.getByRole('heading', { name: 'Could not open Workspace', exact: true }).waitFor();
   await failed.locator('nav').getByRole('button', { name: /^Desk\b/ }).first().click();
   await failed.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   await failed.getByRole('button', { name: 'Workspace', exact: true }).click();
-  await failed.getByRole('heading', { name: 'Could not open You', exact: true }).waitFor();
+  await failed.getByRole('heading', { name: 'Could not open Workspace', exact: true }).waitFor();
   failSettings = false;
   await failed.getByRole('button', { name: 'Reload RealBud', exact: true }).click();
   await failed.getByRole('heading', { name: 'Workspace', exact: true }).waitFor();

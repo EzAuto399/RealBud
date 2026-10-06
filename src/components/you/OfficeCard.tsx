@@ -137,7 +137,7 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
               <span className="mt-1.5 block text-[12px] text-ink-muted">General process only—no passwords, account numbers or tenant details. These steps are shared with Bud when you ask for work.</span>
             </label>
             <p className="rounded-lg bg-inset p-3 text-[12.5px] leading-relaxed text-ink-secondary">A receipt is a claim until checked. Bud will flag partial, pending, duplicate or conflicting payments for review. These settings do not mark rent paid or change reminder rules.</p>
-            <p className="text-[12px] text-ink-muted">After saving, open Ask → More task examples → Review rent payment evidence.</p>
+            <p className="text-[12px] text-ink-muted">After saving, open Work → More task examples → Review rent payment evidence.</p>
           </div>
         </details>
 
