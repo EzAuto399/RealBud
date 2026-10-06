@@ -3,7 +3,7 @@
 // this list decides who counts as a trusted sender in W4's maintenance checks.
 // Turn it on in Schedule → Run now → signed out, the run waits at the "Sign in
 // to REI Cloud" handover and says so in Schedule while other loops keep running
-// → the person signs in and allows the download in Maintenance checks → the
+// → the person signs in and Bud reads REI's Suppliers grid (no download) → the
 // first check against the seeded list is a big drop, held with a warning until
 // "Approve anyway" → a repeat check with REI unchanged ends quietly (no card)
 // → REI adds FS-PAINT, removes FS-ROOF and changes FS-ELEC's address → the run
@@ -113,24 +113,19 @@ try {
   assert.equal((await latestRun()).status, 'running');
   pass(`Supplier list check is off until enabled (fortnightly, Monday 08:15); turned on in Schedule; Run now waits at the REI sign-in handover and Schedule says "${first.detail}"; Maintenance checks still ran (${other.status})`);
 
-  // ── 2. Sign in → the download ask waits for the person in Maintenance checks ──
+  // ── 2. Sign in → Bud reads REI's Suppliers grid by itself: no Export Only or download card ──
   await lab('sign-in');
   await openMaintenance();
-  const card = suppliersPanel().getByRole('group', { name: 'Approval for REI', exact: true });
-  await card.getByText("Allow Bud to choose Export Only on REI's report?", { exact: true }).waitFor();
-  await card.getByRole('button', { name: 'Allow', exact: true }).click();
-  await card.getByText("Allow Bud to download REI's supplier list?", { exact: true }).waitFor();
-  const asking = await until(latestRun, r => /download of REI's supplier list/.test(r?.detail ?? ''), 'Schedule shows the download ask');
-  assert.equal(asking.status, 'running');
-  await capture('download-ask', suppliersPanel());
-  await card.getByRole('button', { name: 'Allow', exact: true }).click();
-  pass(`After sign-in each per-run ask waited for the person (Export Only, then the download); Schedule said "${asking.detail}"`);
+  await supplierPreview().waitFor({ timeout: 60_000 });
+  assert.equal(await suppliersPanel().getByRole('group', { name: 'Approval for REI', exact: true }).count(), 0, 'no export or download card');
+  await capture('read-from-grid', suppliersPanel());
+  pass("After sign-in Bud read REI's Suppliers grid by itself: no Export Only or download card");
 
   // ── 3. First check vs the seeded list: a big drop, held with a warning until "Approve anyway" ──
   const held = await checkRun(first.id);
   assert.equal(held.status, 'awaiting-approval');
-  assert.equal(held.detail, `REI returned far fewer suppliers than before — check the export before approving. Review it in ${WHERE}.`);
-  await supplierPreview().getByRole('alert').getByText('REI returned far fewer suppliers than before — check the export before approving.', { exact: true }).waitFor();
+  assert.equal(held.detail, `REI returned far fewer suppliers than before — check REI's Suppliers list before approving. Review it in ${WHERE}.`);
+  await supplierPreview().getByRole('alert').getByText("REI returned far fewer suppliers than before — check REI's Suppliers list before approving.", { exact: true }).waitFor();
   await supplierPreview().getByText(`Removed in REI · ${seeded.suppliers.length}`, { exact: true }).waitFor();
   assert.equal((await directory()).revision, seeded.revision, 'nothing saved before approval');
   await capture('big-drop-held', suppliersPanel());
@@ -205,7 +200,7 @@ try {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ ok: !failure, at: new Date().toISOString(), checks, shots, errors, denied,
     layer: 'Real local source service and built UI on the fictional Austin demo office; real browser runtime, broker, recipe runner and sign-in handover over the fictional REI-style portal',
     limits: [
-      'Fictional REI-style portal: no REI Cloud evidence. The REI export location in the pack is a placeholder until the real one is mapped.',
+      'Fictional REI-style portal: no REI Cloud evidence. The pack reads the Suppliers grid as live REI 26.0922.0 shows it (6 Oct 2026); a live read is still to be recorded.',
       'The sign-in tab is a lab stand-in that reports the portal\'s address; the real work browser tab was not opened.',
       'The person (sign-in, approvals, Approve) is simulated by this script; the desktop notification is covered by unit tests only.',
       'Runs were started with Run now; the fortnightly Monday 08:15 clock firing is covered by unit tests only.',

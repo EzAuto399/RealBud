@@ -10,6 +10,7 @@ import type { BrowserStatus, BrowserConnection } from "../shared/browser.ts";
 import { browserTaskUploadName, type BrowserTaskUpload } from "../shared/browser-task.ts";
 import type { BrowserSessionRuntime, BrowserSessionAction, BrowserSessionTab, BrowserSessionObservation } from "./browser-session.ts";
 import { NativeBrowserRuntime } from "./native-browser-runtime.ts";
+import { GRID_SCROLL, readLazyGrid, snapshotRows } from "./hermes-browser-transport.ts";
 
 export const BROWSER_VERSION = "0.3.1";
 /** Wire protocol shared by the pinned helper and extension (BrowserSkill `PROTOCOL_VERSION`). */
@@ -211,9 +212,15 @@ export class BrowserRuntime implements BrowserSessionRuntime {
     if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
     await this.command(["tab", "borrow", String(tabId), "--session", this.state!.lease!.sessionId!, "--timeout", "60s"], signal);
   }
-  async observeTab(owner: string, tabId: number, signal?: AbortSignal): Promise<BrowserSessionObservation> {
+  async observeTab(owner: string, tabId: number, signal?: AbortSignal, scroll?: string): Promise<BrowserSessionObservation> {
     if (!this.isOwner(owner)) throw fail("This browser request has stopped.");
-    const data = await this.command(["observe", "--session", this.state!.lease!.sessionId!, "--tab-id", String(tabId), "--max-tokens", "6000"], signal);
+    if (scroll !== undefined && !GRID_SCROLL.test(scroll)) throw fail("This list cannot be scrolled safely.");
+    const on = ["--session", this.state!.lease!.sessionId!, "--tab-id", String(tabId)];
+    const observe = () => { if (!this.isOwner(owner) || signal?.aborted) throw fail("This browser request has stopped."); return this.command(["observe", ...on, "--max-tokens", "6000"], signal); };
+    // A lazy grid loads its rows only when its own container scrolls: the native engine's read-only loop. No settle
+    // wait here: this adapter drives deterministic fixtures, which render at once (production is NativeBrowserRuntime).
+    const data = scroll ? await readLazyGrid(() => this.command(["scroll", "down", "100000", "--selector", scroll, ...on], signal).then(() => true, () => false), observe,
+      read => snapshotRows(typeof read.text === "string" ? read.text : ""), 0) : await observe();
     if (data.tab_id !== tabId || typeof data.text !== "string") throw fail("The browser did not confirm its page observation.");
     return { tabId, text: data.text, truncated: data.truncated === true || Boolean(data.next_cursor) };
   }

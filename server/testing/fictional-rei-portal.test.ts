@@ -1,7 +1,7 @@
 // The FICTIONAL portal's own behaviour: its CSV reader, and the shape it copies
 // from a read-only look at live REI (2 Oct 2026). Values are all fictional.
 import { describe, expect, it } from "vitest";
-import { FICTIONAL_BUSINESS, FICTIONAL_FILE_FORMATS, FICTIONAL_REI_ORIGIN, fictionalCsv, fictionalReiPortal } from "./fictional-rei-portal.ts";
+import { FICTIONAL_BUSINESS, FICTIONAL_FILE_FORMATS, FICTIONAL_REI_ORIGIN, FICTIONAL_SUPPLIER_COLUMNS, FICTIONAL_TENANT_COLUMNS, fictionalCsv, fictionalReiPortal } from "./fictional-rei-portal.ts";
 
 describe("fictional bank file parsing", () => {
   it("reads quoted cells with commas, escaped quotes and newlines, and refuses malformed quoting", () => {
@@ -40,6 +40,44 @@ describe("fictional portal shaped like live REI", () => {
     expect(first).not.toMatch(/records · 0 row\(s\) selected/);
     expect(filled).toMatch(/StaticText "\d+ records · 0 row\(s\) selected"/);
     expect(filled).not.toContain('navigation "Pagination"');
+  });
+  it("Tenants renders its first rows until the grid's own content scrolls; Suppliers renders every row; both carry live REI's columns", async () => {
+    const mock = fictionalReiPortal({ gridBlock: 3 });
+    const rows = (page: string) => page.split("\n").filter(line => /^\s*row\b/.test(line)).length - 1; // less the header row
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/tenant`]);
+    await observe(mock);
+    let page = await observe(mock);
+    for (const column of FICTIONAL_TENANT_COLUMNS) expect(page).toContain(`columnheader ${JSON.stringify(column)}`);
+    expect(FICTIONAL_TENANT_COLUMNS).toEqual(expect.arrayContaining(["Reference", "Surname", "Firstname", "Property", "Rent", "BPay/Ref No.", "Email", "Mobile", "Home Phone", "Work Phone", "Fax"]));
+    expect(page).toContain('StaticText "10 records · 0 row(s) selected"');
+    expect(rows(page)).toBe(3);
+    // Another container, or a list without one, is not there to scroll.
+    await expect(mock.command(["scroll", "down", "100000", "--selector", ".e-content"])).rejects.toThrow(/No such element/);
+    expect(rows(await observe(mock))).toBe(3);
+    for (const expected of [6, 9, 10, 10]) {
+      await mock.command(["scroll", "down", "100000", "--selector", ".e-gridcontent .e-content"]);
+      page = await observe(mock);
+      expect(rows(page)).toBe(expected);
+    }
+    expect(page).toContain('cell "FT-KILO"');
+    // A new load renders the first rows again.
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/tenant`]); await observe(mock);
+    expect(rows(await observe(mock))).toBe(3);
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/supplier`]); await observe(mock);
+    page = await observe(mock);
+    for (const column of FICTIONAL_SUPPLIER_COLUMNS) expect(page).toContain(`columnheader ${JSON.stringify(column)}`);
+    expect(rows(page)).toBe(5);
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/arrears/`]);
+    await expect(mock.command(["scroll", "down", "100000", "--selector", ".e-gridcontent .e-content"])).rejects.toThrow(/No such element/);
+    expect(mock.effects).toEqual([]);
+  });
+  it("a short grid (directoryRows) still counts every row in its footer", async () => {
+    const mock = fictionalReiPortal({ directoryRows: rows => rows.slice(1) });
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/supplier`]); await observe(mock);
+    const page = await observe(mock);
+    expect(page).toContain('StaticText "5 records · 0 row(s) selected"');
+    expect(page).not.toContain('cell "FS-PLUMB"');
+    expect(page).toContain('cell "FS-ELEC"');
   });
   it("Pending Transactions is a separate payments page whose Process controls Bud never presses", async () => {
     const mock = fictionalReiPortal();

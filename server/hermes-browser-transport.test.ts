@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { admitHermesEngine, HermesBrowserTransport, ownedBrowserEndpoint, type HermesEngineExec, type HermesEngineStep } from "./hermes-browser-transport.ts";
+import { admitHermesEngine, HermesBrowserTransport, ownedBrowserEndpoint, snapshotRows, type HermesEngineExec, type HermesEngineStep } from "./hermes-browser-transport.ts";
 import { privateTempRoot } from "./testing/private-fixture.ts";
 
 const deferred = () => { let resolve!: (value: Record<string, unknown>) => void; let reject!: (error: Error) => void; const promise = new Promise<Record<string, unknown>>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -15,7 +15,7 @@ async function fixture(run?: HermesEngineExec) {
   const root = await tempRoot("rb-native-engine-");
   const calls: string[][] = [];
   const envs: NodeJS.ProcessEnv[] = [];
-  const transport = new HermesBrowserTransport({ root, endpoint: "http://127.0.0.1:9222", bundle: { executable: "/fictional/agent-browser", sha256: "a".repeat(64) }, exec: async (bin, args, options) => { calls.push(args); envs.push(options.env); return run ? run(bin, args, options) : tabs; } });
+  const transport = new HermesBrowserTransport({ root, endpoint: "http://127.0.0.1:9222", bundle: { executable: "/fictional/agent-browser", sha256: "a".repeat(64) }, scrollWaitMs: 0, exec: async (bin, args, options) => { calls.push(args); envs.push(options.env); return run ? run(bin, args, options) : tabs; } });
   return { root, calls, envs, transport };
 }
 const command = (args: string[]) => args.slice(6, -1);
@@ -142,6 +142,60 @@ describe("Hermes native browser transport lifecycle", () => {
   ])("rejects raw selectors, arbitrary commands and CLI flag injection: %j", async step => {
     const f = await fixture(); await f.transport.start();
     await expect(f.transport.step(step as HermesEngineStep)).rejects.toThrow();
+    expect(f.calls).toHaveLength(1); await f.transport.stop();
+  });
+});
+
+describe("reading a lazy grid", () => {
+  const SCROLL = ["scroll", "down", "100000", "--selector", ".e-gridcontent .e-content"];
+  const grid = (rows: number) => ({ snapshot: ['- grid "Results"', '  - row "Reference Surname"', ...Array.from({ length: rows }, (_, i) => `  - row "FT-${i} Fictional" [ref=e${i + 1}]`), '  - rowgroup "not a row"'].join("\n") });
+  it("scrolls only the given container until the row count stops growing, and returns that snapshot", async () => {
+    let loaded = 3;
+    const f = await fixture(async (_bin, args) => { const step = command(args);
+      if (step[0] === "scroll") { loaded = Math.min(loaded + 3, 7); return {}; } return step[0] === "snapshot" ? grid(loaded) : tabs; });
+    await f.transport.start();
+    const result = await f.transport.step({ kind: "read", tab: 1, scroll: ".e-gridcontent .e-content" });
+    expect(snapshotRows(String(result.snapshot))).toBe(8); // the header row and all seven rows
+    expect(f.calls.map(command).slice(2)).toEqual([SCROLL, ["snapshot"], SCROLL, ["snapshot"], SCROLL, ["snapshot"]]);
+    // Without a container the read is today's single snapshot.
+    await f.transport.step({ kind: "read", tab: 1 });
+    expect(f.calls.map(command).slice(-2)).toEqual([["tab", "list"], ["snapshot"]]);
+    await f.transport.stop();
+  });
+  it("gives up after fifteen scrolls of a grid that never stops growing", async () => {
+    let loaded = 0;
+    const f = await fixture(async (_bin, args) => { const step = command(args); if (step[0] === "scroll") { loaded += 1; return {}; } return step[0] === "snapshot" ? grid(loaded) : tabs; });
+    await f.transport.start();
+    expect(snapshotRows(String((await f.transport.step({ kind: "read", tab: 1, scroll: ".e-content" })).snapshot))).toBe(16);
+    expect(f.calls.map(command).filter(step => step[0] === "scroll")).toHaveLength(15);
+    await f.transport.stop();
+  });
+  it("reads the page as it stands when the engine cannot scroll it, and holds nothing", async () => {
+    const f = await fixture(async (_bin, args) => { const step = command(args); if (step[0] === "scroll") throw new Error("fictional: no such element"); return step[0] === "snapshot" ? grid(2) : tabs; });
+    await f.transport.start();
+    expect(snapshotRows(String((await f.transport.step({ kind: "read", tab: 1, scroll: ".e-content" })).snapshot))).toBe(3);
+    expect(f.calls.map(command).slice(2)).toEqual([[...SCROLL.slice(0, 4), ".e-content"], ["snapshot"]]);
+    expect(f.transport.state).toBe("active");
+    await f.transport.stop();
+  });
+  it("Stop between a scroll and the next read ends the step without another command", async () => {
+    const scrolled = deferred();
+    const f = await fixture(async (_bin, args) => { const step = command(args); return step[0] === "scroll" ? scrolled.promise : step[0] === "snapshot" ? grid(1) : tabs; });
+    await f.transport.start();
+    const read = f.transport.step({ kind: "read", tab: 1, scroll: ".e-content" });
+    await new Promise(resolve => setImmediate(resolve));
+    const rejected = expect(read).rejects.toThrow(/stopped/);
+    const stop = f.transport.stop(); scrolled.resolve({}); await rejected; await stop;
+    expect(f.calls.map(command).filter(step => step[0] === "snapshot")).toEqual([]);
+    expect(f.calls.at(-1)).toContain("close");
+  });
+  it.each([
+    { kind: "read", tab: 1, scroll: "--cdp=ws://other" }, { kind: "read", tab: 1, scroll: "-p" }, { kind: "read", tab: 1, scroll: "div[onclick]" },
+    { kind: "read", tab: 1, scroll: ".a;rm" }, { kind: "read", tab: 1, scroll: "" }, { kind: "read", tab: 1, scroll: `.${"a".repeat(100)}` },
+    { kind: "read", tab: 1, scroll: 5 }, { kind: "read", tab: 1, scrolls: ".a" }, { kind: "click", tab: 1, ref: "@e1", scroll: ".a" },
+  ])("refuses a container that is not a plain selector, or one on another step: %j", async step => {
+    const f = await fixture(); await f.transport.start();
+    await expect(f.transport.step(step as HermesEngineStep)).rejects.toThrow(/scrolled safely|unexpected fields/);
     expect(f.calls).toHaveLength(1); await f.transport.stop();
   });
 });

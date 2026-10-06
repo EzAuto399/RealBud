@@ -12,7 +12,7 @@ import { authorizeBrowserAction, BrowserApprovalStore } from "./browser-authorit
 import { startBrowserBroker, type BrowserBroker } from "./browser-broker.ts";
 import { BrowserRuntime, browserRuntime, type BrowserJson } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { checkPortalPathProposal, PortalEvidenceStore, PortalPathStore, portalRoute, PORTAL_PROPOSE_TOOL } from "./portal-path-overrides.ts";
+import { checkPortalPathProposal, PortalEvidenceStore, PortalPathStore, portalPaths, portalRoute, PORTAL_PROPOSE_TOOL } from "./portal-path-overrides.ts";
 import { portalRecipeControls } from "./portal-recipe-runner.ts";
 import { loadPortalRecipePack, portalMapForSites } from "./portal-recipe-task.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
@@ -22,6 +22,7 @@ import { createTenantDirectoryStore } from "./tenant-directory.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { writePrivateJson } from "./private-json.ts";
+import { ensureDirs } from "./config.ts";
 import { portalAccounts, type PortalAccountStore } from "./portal-accounts.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { BROWSER_ACCOUNT_CONFIRM_TOOL, parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
@@ -229,16 +230,19 @@ describe("what a learned path keeps of a page", () => {
 });
 
 describe("Refresh from REI follows the learned path", () => {
-  it("reads REI's renamed report through the approved path; without it the repo placeholder is not found", async () => {
+  it("reads the repo pack's grid recipe and ignores a learned path: no report, no Output choice, no download in its grant", async () => {
     const f = await lab({ reports: { tenants: REPORT } });
     const t = await askTask(f);
     await explore(t);
     await t.ok(PORTAL_PROPOSE_TOOL, { slot: "tenant-list", steps: PATH });
     t.broker.close(); await t.broker.released();
+    // The saved path is live for Ask tasks (portalMapForSites applies it): it would add the report, Export Only and the download.
+    const merged = (await portalMapForSites([FICTIONAL_REI_ORIGIN], async () => fictionalReiPack(), f.paths))!.pack;
+    expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
 
     const db = new WorkflowDatabase({ dir: f.root, key: Buffer.alloc(32, 7) }); cleanup.push(() => db.close());
-    const refresh = (paths: PortalPathStore) => createReiDirectorySync({ runtime: f.runtime, browserId: async () => "work", account: async () => ({ marker: FICTIONAL_BUSINESS }),
-      tenants: createTenantDirectoryStore(db), suppliers: createSupplierDirectory({ file: join(f.root, "suppliers.json") }), load: async () => fictionalReiPack(), paths, signInHolding: () => false, pollMs: 0 });
+    const refresh = (load?: () => Promise<PortalRecipePack>) => createReiDirectorySync({ runtime: f.runtime, browserId: async () => "work", account: async () => ({ marker: FICTIONAL_BUSINESS }),
+      tenants: createTenantDirectoryStore(db), suppliers: createSupplierDirectory({ file: join(f.root, "suppliers.json") }), ...(load ? { load } : {}), signInHolding: () => false, pollMs: 0 });
     const run = async (sync: ReturnType<typeof refresh>) => {
       const tools: string[] = [];
       await sync.handle("/api/rei-directory/runs", "POST", async () => ({ kind: "tenants" }));
@@ -250,15 +254,26 @@ describe("Refresh from REI follows the learned path", () => {
       }
       throw new Error("The refresh did not settle.");
     };
-    const without = await run(refresh(new PortalPathStore({ file: join(f.root, "no-paths.json") })));
-    expect(without.run.phase).toBe("failed");
-    expect(without.run.message).toMatch(/could not find REI's tenant list export/);
-    const learned = await run(refresh(f.paths));
-    expect(learned.run.phase, learned.run.message ?? "").toBe("preview");
-    // The unmapped report asks on this run too (an Allow on the path was not standing permission); the choice and download still ask.
-    expect(learned.tools).toEqual(["browser_click_semantic", "browser_select", "browser_download"]);
-    expect(learned.run.preview).toMatchObject({ rows: 10, footer: 10, countMatches: true, accepted: 9 });
+    const from = f.mock.calls.length;
+    const read = await run(refresh(async () => fictionalReiPack()));
+    expect(read.run.phase, read.run.message ?? "").toBe("preview");
+    expect(read.tools).toEqual([]);
+    expect(read.run.preview).toMatchObject({ rows: 10, footer: 10, countMatches: true, accepted: 9 });
+    const calls = f.mock.calls.slice(from);
+    expect(calls.some(args => ["select", "download"].includes(args[0]))).toBe(false);
+    expect(calls.some(args => args[0] === "navigate" && args[1].includes("/report/"))).toBe(false);
     expect(f.mock.effects).toEqual([]);
+    // The default loader is the repo pack as committed: with a learned path saved where Ask finds it (the office data
+    // folder, for REI's own origin), the refresh's grant still holds no download, so it gets as far as REI's tab.
+    ensureDirs();
+    const real = await loadPortalRecipePack("rei-cloud", new PortalPathStore({ file: join(f.root, "none.json") }));
+    await portalPaths().save("rei-cloud", checkPortalPathProposal(real, { slot: "tenant-list", steps: PATH }, SEEN), { grantId: "g", runId: "r", threadId: "t", origin: real.origin });
+    expect((await loadPortalRecipePack("rei-cloud")).recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
+    const repo = await run(refresh());
+    expect(repo.run.phase).toBe("failed");
+    expect(repo.run.message).not.toMatch(/more than reading/);
+    expect(repo.run.message).toMatch(/Sign in to REI Cloud/);
+    await portalPaths().restore("rei-cloud", "tenant-list", null);
   });
 
   it("a saved path applies only on the origin it was learned on; the repo labels are never widened", async () => {

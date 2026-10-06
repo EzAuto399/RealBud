@@ -35,6 +35,9 @@ const ADAPTER = {
   // record, and Close and Archived are not scoped to a screen in the map. They
   // stay out of read-safe until the map scopes them.
   notReadSafe: ["Cancel", "Close", "Archived"],
+  // Live REI (6 Oct 2026): record lists are Syncfusion grids with no pager. Tenants renders its first 90 rows and loads
+  // more only when the grid's own content scrolls (keys, wheel and scrolling a cell into view load nothing).
+  grid: { scrollContainer: ".e-gridcontent .e-content" },
 };
 /** Read batches a person or loop can start under one grant. */
 const BATCHES = { morning: ["open-session", "arrears-review", "tasks-due", "bank-reconciliation-read"] };
@@ -74,6 +77,7 @@ export function buildReiRecipes(mapText, siteMapText) {
     account: ADAPTER.account,
     versionMarker: ADAPTER.uiVersion,
     pagination: ADAPTER.pagination,
+    grid: ADAPTER.grid,
     labels: { readSafe: labels.read_safe_labels.filter(label => !ADAPTER.notReadSafe.includes(label)), consequential: labels.consequential_labels, forbiddenAreas: labels.forbidden_areas },
     // Money and upload screens from both site-map observations: the classifier treats them as financial pages.
     financialRoutes: [...new Set([...siteMap.routes, ...(siteMap.live2026_10_06?.menuTree ?? []).map(entry => ({ path: entry.route, class: entry.class }))]

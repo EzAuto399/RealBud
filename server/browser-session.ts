@@ -26,7 +26,8 @@ export interface BrowserSessionRuntime {
   checkSession(owner: string): Promise<void>;
   listTabs(owner: string, signal?: AbortSignal): Promise<BrowserSessionTab[]>;
   claimTab(owner: string, tabId: number, signal?: AbortSignal): Promise<void>;
-  observeTab(owner: string, tabId: number, signal?: AbortSignal): Promise<BrowserSessionObservation>;
+  /** `scroll`: a lazy grid's scroll container from the portal's declared controls (never a model); the read loads every row. */
+  observeTab(owner: string, tabId: number, signal?: AbortSignal, scroll?: string): Promise<BrowserSessionObservation>;
   perform(owner: string, action: BrowserSessionAction, signal?: AbortSignal): Promise<BrowserJson>;
   requestHelp(owner: string, input: { tabId: number; title: string; prompt: string }, signal?: AbortSignal): Promise<BrowserHelpOutcome>;
   release(owner: string): Promise<void>;

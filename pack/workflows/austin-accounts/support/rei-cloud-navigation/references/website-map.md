@@ -190,7 +190,7 @@ note: >-
   live readback until an approved export is inspected.
 ```
 
-Directory exports (tenant-list, supplier-list), live findings 6 Oct (`L`):
+Directory lists (tenant-list, supplier-list), live findings 6 Oct (`L`):
 - No list has an Export item. Every list's **Action** menu holds Send, Record
   change and report items only (`../site-map.json` → `live2026_10_06.screens`).
 - **Suppliers**: the grid renders every row on first load (60 of 60 records),
@@ -204,34 +204,29 @@ Directory exports (tenant-list, supplier-list), live findings 6 Oct (`L`):
   link opens the parameter modal, Output (`Filter1`) = **Export Only** (never
   Email Only or Export & Email), then **Preview** opens the Telerik viewer,
   whose export formats are not yet observed.
-- So both recipes below stay tier `U` until Refresh from REI reads the grid
-  (suppliers) and the grid-or-report path (tenants) live. Their report names
-  remain deliberately fake so a live run stops at "control missing".
+- So both recipes below read the list's own grid, with no Reports export and
+  no download. The `read: table` step scrolls the grid's own content
+  (`.e-gridcontent .e-content`, declared once in `scripts/rei-recipes.mjs`)
+  until the row count stops growing; the read is complete only when its rows
+  equal the "N records" footer. Status stays at its default, Active. Both
+  recipes stay tier `U` until Refresh from REI has read them live.
 
 ```yaml
 recipe: tenant-list
 workflow: Austin W1 tenant directory (REI Reference → bank file last column)
 kind: prepare
 tier: [U]
-grant_needs: [download]
+grant_needs: []
 steps:
   - nav: [Tenants]
   - check: account
   - wait: table
   - read: table
-  - nav: [Reports]
-  - check: account
-  - wait: table
-  - click: Tenant list export (placeholder)    # PLACEHOLDER: real REI report name
-  - wait: modal
-  - select: {field: Output, option: Export Only}
-  - download: {label: Export}
-  - check: account
-success: approved Export Only tenant list (Reference, Surname, Firstname, Property, Rent, BPay/Ref No.) for the selected account; its row count equals the Tenants grid footer
-on_unknown: hold if approval, download, account scope or row count is uncertain; never save a directory from an unconfirmed file
+success: every Active row of the Tenants grid (Reference, Surname, Firstname, Property, Rent, BPay/Ref No., …) read for the selected account; rows read equal the grid's "N records" footer
+on_unknown: hold if account scope or the row count is uncertain; never save a directory from a read shorter than the footer
 note: >-
-  PLACEHOLDER export path (see above). Read only: nothing in REI changes.
-  The person reviews the preview and saves it in RealBud.
+  Read only: nothing in REI is pressed or changes. The person reviews the
+  preview and saves it in RealBud.
 ```
 
 ```yaml
@@ -239,25 +234,17 @@ recipe: supplier-list
 workflow: Austin W4 supplier directory (listed senders)
 kind: prepare
 tier: [U]
-grant_needs: [download]
+grant_needs: []
 steps:
   - nav: [Suppliers]
   - check: account
   - wait: table
   - read: table
-  - nav: [Reports]
-  - check: account
-  - wait: table
-  - click: Supplier list export (placeholder)  # PLACEHOLDER: real REI report name
-  - wait: modal
-  - select: {field: Output, option: Export Only}
-  - download: {label: Export}
-  - check: account
-success: approved Export Only supplier list (Reference, Description, Email, …) for the selected account; its row count equals the Suppliers grid footer
-on_unknown: hold if approval, download, account scope or row count is uncertain; never save a directory from an unconfirmed file
+success: every Active row of the Suppliers grid (Reference, Description, Email, …) read for the selected account; rows read equal the grid's "N records" footer
+on_unknown: hold if account scope or the row count is uncertain; never save a directory from a read shorter than the footer
 note: >-
-  PLACEHOLDER export path (see above). Read only: nothing in REI changes.
-  The person reviews the preview and saves it in RealBud.
+  Read only: nothing in REI is pressed or changes. The person reviews the
+  preview and saves it in RealBud.
 ```
 
 ```yaml
@@ -418,7 +405,7 @@ A click, upload, toast or HTTP 200 is **not** a readback.
 ## 6. Labels Bud may and may not press
 
 ```yaml
-read_safe_labels: [Search, Status, Category, Zone, View, From day, Hide vacated tenants, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
+read_safe_labels: [Search, Status, Category, Zone, View, From day, Hide vacated tenants, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel]
 consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit, Send Email, Email Only, Export & Email, Process File, Update, Apply Automation, Apply Recurring Batch, Complete Task(s), Retry Task(s), Form 9, Form 11, Invite to Portal, Sync to Outlook, Delete Statement Message, Re-Assign Portfolios, Re-Assign Template, Re-Assign Copy Last Inspection, Re-Assign Housekeeper, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot, Set Payment Type, Email Invoice]
 forbidden_areas: [Settings, My Profile, Process › Disbursement, Process › End of Month, Process › Journals, Process › Reversals, Process › Direct Debit, Process › Payments]
 ```

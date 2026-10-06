@@ -164,9 +164,9 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
     // personal tab or pretends an extension confirmation occurred.
     this.claimed.add(tabId);
   }
-  async observeTab(owner: string, tabId: number, signal?: AbortSignal): Promise<BrowserSessionObservation> {
+  async observeTab(owner: string, tabId: number, signal?: AbortSignal, scroll?: string): Promise<BrowserSessionObservation> {
     if (!this.claimed.has(tabId)) throw fail("Choose this work-browser tab for the task first.");
-    const result = await this.step(owner, { kind: "read", tab: tabId }, signal);
+    const result = await this.step(owner, { kind: "read", tab: tabId, ...(scroll ? { scroll } : {}) }, signal);
     if (result.truncated === true || result.next_cursor) throw fail("The work browser returned an incomplete accessibility observation. This step is held.");
     return { tabId, text: nativeBrowserObservation(result.snapshot), truncated: false };
   }

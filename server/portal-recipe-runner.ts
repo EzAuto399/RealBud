@@ -144,7 +144,7 @@ export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalContr
   return { origin: new URL(pack.origin).origin, readSafe: [...pack.labels.readSafe], menu: [...menu], pagination,
     ...(pack.pagination.landmark ? { pager: { ...pack.pagination.landmark } } : {}), consequential: [...pack.labels.consequential],
     signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker },
-    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}) };
+    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}) };
 }
 
 // ── page model (the helper's VOM text) ───────────────────────────────────
@@ -288,9 +288,10 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     if (marker !== account.marker) throw handover("account-marker-changed");
     receipt.accountChecks += 1;
   };
-  /** Every read is a load check: sign-in pages hand over, then the account must still be the selected one. */
-  const read = async (): Promise<PageView> => {
-    const raw = await tool("browser_read", { tab_id: tabId });
+  /** Every read is a load check: sign-in pages hand over, then the account must still be the selected one.
+   * `allRows`: the broker scrolls the portal's declared lazy grid until every row has loaded (the `read: table` step only). */
+  const read = async (allRows = false): Promise<PageView> => {
+    const raw = await tool("browser_read", { tab_id: tabId, ...(allRows ? { all_rows: true } : {}) });
     let text = raw;
     try {
       const parsed = JSON.parse(raw) as { text?: unknown; truncated?: unknown };
@@ -304,7 +305,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     assertAccount(page);
     view = page; stale = false; return page;
   };
-  const current = async () => (stale || !view ? read() : view);
+  const current = async (allRows = false) => (stale || !view ? read(allRows) : view);
   /** The content a recipe acts in: an open dialog, else the main region; never the menu or header. */
   const scope = (page: PageView) => first(page.root, node => node.role === "dialog" || node.role === "alertdialog") ?? first(page.root, node => node.role === "main") ?? page.root;
   const control = (page: PageView, roles: string[], name: string): Node | null => {
@@ -330,9 +331,10 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const count = footer ? Number(footer.name!.match(/^[\d,]+/)![0].replaceAll(",", "")) : null;
     return { loading, empty, records, count };
   };
-  const waitTable = async () => {
+  const waitTable = async (allRows = false) => {
+    if (allRows) stale = true;
     for (let attempt = 0; attempt <= maxWaitReads; attempt++) {
-      const page = await current(); const table = tableOf(page);
+      const page = await current(allRows); const table = tableOf(page);
       // A grid can show "No records to display" before it fills: an empty grid is settled once its
       // footer counts it, and one without a footer is re-read until the wait runs out.
       const settled = table && !table.loading && (table.count === null ? table.records.length > 0 || attempt === maxWaitReads : table.count === 0 || table.records.length > 0);
@@ -446,7 +448,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           const page = await current();
           if (raw === "controls") result.controls = all(scope(page), node => node.name !== null && (FIELD.has(node.role) || node.role === "radio")).map(node => node.name!);
           else {
-            const table = await waitTable();
+            const table = await waitTable(true);
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
             if (table.count !== null) result.footer = table.count;
           }

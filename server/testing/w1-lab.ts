@@ -99,9 +99,9 @@ export async function createW1Lab(dataDir: string, bank: { redbarkBase?: string;
         { status: "Active", cells: ["FS-PAINT", "Fictional Painting", "07 0000 0006", "", "", "", "paint@fictional-painting.test", "6 Fictional St, Brisbane", "Painter"] }];
       // REI's Suppliers list loses most of its rows (a big drop to hold for the person).
       else if (action === "drop-suppliers") options.suppliers = FICTIONAL_SUPPLIER_LIST.slice(0, 2);
-      // REI's tenant and supplier list exports carry names other than the pack's placeholders (a path Bud learns in Ask).
+      // REI's tenant and supplier report exports carry names Bud can only learn in Ask (Refresh from REI reads the grids instead).
       else if (action === "rename-reports") options.reports = { tenants: FICTIONAL_LEARNED_REPORTS.tenants, suppliers: FICTIONAL_LEARNED_REPORTS.suppliers };
-      // The next tenant or supplier list export drops its first row (it disagrees with REI's own record count).
+      // The next tenant or supplier list read shows one row fewer than REI's own record count.
       else if (action === "short-export") options.directoryRows = rows => rows.slice(1);
       // The person switches REI to another business (top-bar code FICT2), then back.
       else if (action === "switch-business") mock.setBusiness("FICT2");

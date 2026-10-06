@@ -1,18 +1,18 @@
 // Refresh from REI: Bud reads the office's REI Tenants and Suppliers lists
 // itself through RealBud's work browser, read only, and the person saves each
 // preview. Signed out → the "Sign in to REI Cloud" handover → the person signs
-// in → approval cards for the report's Export Only choice and the download →
-// a preview whose row count matches the list's "N records" footer → Save. The
-// saved tenant list then puts the REI Reference in a bank file's last column;
-// the saved supplier list lets W4's sender check recognise a listed sender.
-// Stop mid-run leaves both directories unchanged; a repeat refresh with no
-// change in REI adds no revision.
+// in → Bud reads the list's own grid (the Tenants grid loads more rows as its
+// content scrolls), with no report, approval card or download → a preview whose
+// row count matches the list's "N records" footer → Save. The saved tenant list
+// then puts the REI Reference in a bank file's last column; the saved supplier
+// list lets W4's sender check recognise a listed sender. A read shorter than
+// the footer cannot be saved; Stop mid-run leaves both directories unchanged; a
+// repeat refresh with no change in REI adds no revision.
 // Real source service + built UI on the FICTIONAL Austin demo office
 // (scripts/seed-austin-demo.mjs) with the fictional REI-style portal behind the
 // real browser runtime, broker and recipe runner (server/testing/w1-lab.ts).
-// The REI export location in the pack is a PLACEHOLDER until the real one is
-// mapped; the fictional portal follows the pack's names. The person is
-// simulated by this script.
+// The fictional grids copy live REI's columns, footer and lazy Tenants loading
+// (read-only look, 6 Oct 2026). The person is simulated by this script.
 //
 //   REALBUD_UI_DIR=<scratch vite build> PLAYWRIGHT_MODULE=... CHROME_EXECUTABLE=... QA_OUTPUT=<fresh dir> node scripts/qa-rei-directory-sync.mjs
 import assert from 'node:assert/strict';
@@ -64,14 +64,8 @@ async function capture(name, locator) {
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
-/** The simulated person allows each approval card in the panel: the report's Export Only choice, then the download. */
-async function allowInPanel(panel, list) {
-  const card = panel.getByRole('group', { name: 'Approval for REI', exact: true });
-  await card.getByText('Allow Bud to choose Export Only on REI\'s report?', { exact: true }).waitFor();
-  await card.getByRole('button', { name: 'Allow', exact: true }).click();
-  await card.getByText(`Allow Bud to download REI's ${list}?`, { exact: true }).waitFor();
-  return card;
-}
+/** A grid read asks nothing: the panel never shows an approval card. */
+const noApprovalCard = async panel => assert.equal(await panel.getByRole('group', { name: 'Approval for REI', exact: true }).count(), 0, 'no approval card for a grid read');
 
 try {
   demo = await startAustinDemo({ demoRoot });
@@ -98,14 +92,13 @@ try {
   assert.equal((await lab('status')).effects.length, 0);
   pass('Signed out at REI: Refresh from REI shows the "Sign in to REI Cloud" handover (Done and Stop) in the bank review; nothing pressed in REI');
 
-  // ── 2. Sign in → approval cards → preview counts match REI's footer → Save ──
+  // ── 2. Sign in → Bud reads the whole Tenants grid → preview counts match REI's footer → Save ──
   await lab('sign-in');
-  const card = await allowInPanel(tenantsPanel(), 'tenant list');
-  await capture('tenants-download-approval', tenantsPanel());
-  await card.getByRole('button', { name: 'Allow', exact: true }).click();
   const preview = tenantsPanel().getByRole('group', { name: 'REI tenant list preview', exact: true });
   await preview.getByText('9 tenants ready to save · 1 skipped', { exact: true }).waitFor();
-  await preview.getByText("10 rows in REI's export · matches the 10 records REI lists", { exact: true }).waitFor();
+  await preview.getByText("10 rows read from REI's list · matches the 10 records REI lists", { exact: true }).waitFor();
+  await preview.getByText(/^REI Tenants list \(read from the page\) · sha256 [a-f0-9]{16}…$/).waitFor();
+  await noApprovalCard(tenantsPanel());
   await preview.getByText('9 new · 0 removed · 0 changed', { exact: true }).waitFor();
   now = await status();
   assert.deepEqual([now.run.preview.rows, now.run.preview.footer, now.run.preview.countMatches, now.run.preview.accepted], [10, 10, true, 9]);
@@ -121,7 +114,7 @@ try {
   await tenantsPanel().getByText(/^Saved: 9 tenants/).waitFor();
   const portal = await lab('status');
   assert.deepEqual(portal.effects, [], 'nothing pressed in REI');
-  pass(`After sign-in Bud read the Tenants list (footer 10 records), the person allowed Export Only and the download, the preview showed 10 rows = 10 records, 9 tenants, 1 skipped with its reason (sha256 ${now.run.preview?.file.sha256.slice(0, 12) ?? 'shown'}…), and Save stored revision 1`);
+  pass(`After sign-in Bud read every row of the Tenants grid (it renders 4 until its content scrolls) with no approval card or download: the preview showed 10 rows = 10 records, 9 tenants, 1 skipped with its reason, and Save stored revision 1`);
 
   // ── 3. The saved list is the bank batch's directory: REI Reference in the ANZ file's last column ──
   const anz = Buffer.from(`${demo.today.slice(8, 10)}/${demo.today.slice(5, 7)}/${demo.today.slice(0, 4)},"540.00",FICTIONAL PAYMENT 4470002,,,,,\n`);
@@ -136,36 +129,48 @@ try {
 
   // ── 4. Repeat refresh with no change in REI: no new revision ──
   await tenantsPanel().getByRole('button', { name: 'Refresh tenant list from REI', exact: true }).click();
-  const again = await allowInPanel(tenantsPanel(), 'tenant list');
-  await again.getByRole('button', { name: 'Allow', exact: true }).click();
   await preview.getByText('No changes since the last save.', { exact: true }).waitFor();
   await preview.getByRole('button', { name: 'Confirm', exact: true }).click();
   await tenantsPanel().getByText('The tenant list in REI matches the saved one. Nothing changed.', { exact: true }).waitFor();
   assert.equal((await status()).tenants.revision, 1);
   pass('A repeat refresh with nothing changed in REI previewed "No changes" and kept revision 1');
 
-  // ── 5. Stop mid-run (at the approval card) leaves both directories unchanged ──
+  // ── 5. A read shorter than REI's own record count is shown and cannot be saved ──
+  await lab('short-export'); // the fictional grid shows 9 of the 10 rows its footer counts
+  await tenantsPanel().getByRole('button', { name: 'Refresh tenant list from REI', exact: true }).click();
+  await preview.getByText("9 rows read from REI's list · REI lists 10 records", { exact: true }).waitFor();
+  await tenantsPanel().getByText("Bud read 9 rows but REI's list shows 10 records. Nothing can be saved from it; refresh again.", { exact: true }).waitFor();
+  assert.equal(await preview.getByRole('button', { name: 'Save tenant list', exact: true }).isDisabled(), true, 'Save is disabled for a short read');
+  await capture('tenants-short-read', tenantsPanel());
+  await preview.getByRole('button', { name: 'Discard', exact: true }).click();
+  await tenantsPanel().getByText('Stopped. Nothing was saved.', { exact: true }).waitFor();
+  await lab('clear');
+  assert.equal((await status()).tenants.revision, 1);
+  pass('A Tenants read of 9 rows against REI\'s 10 records was shown with Save disabled; Discard kept revision 1');
+
+  // ── 6. Stop mid-run (while Bud waits for sign-in) leaves both directories unchanged ──
   const before = await status();
+  await lab('sign-out');
   await openMaintenance();
   await suppliersPanel().getByRole('button', { name: 'Refresh supplier list from REI', exact: true }).click();
-  const stopCard = suppliersPanel().getByRole('group', { name: 'Approval for REI', exact: true });
-  await stopCard.waitFor();
-  await stopCard.getByRole('button', { name: 'Stop', exact: true }).click();
+  await until(status, s => s.run?.signIn, 'supplier refresh waits for REI sign-in');
+  await suppliersPanel().getByText(/Waiting for you to sign in to REI Cloud/).waitFor();
+  await suppliersPanel().getByRole('button', { name: 'Stop', exact: true }).click();
   await suppliersPanel().getByText('Stopped. Nothing was saved.', { exact: true }).waitFor();
   now = await status();
   assert.deepEqual([now.run.phase, now.tenants.revision, now.suppliers.revision], ['stopped', before.tenants.revision, before.suppliers.revision]);
   assert.equal((await request('/api/supplier-directory')).directory.revision, before.suppliers.revision);
-  pass(`Stop at the approval card ended the supplier refresh: tenant list revision ${now.tenants.revision} and supplier list revision ${now.suppliers.revision} unchanged`);
+  pass(`Stop mid-run ended the supplier refresh: tenant list revision ${now.tenants.revision} and supplier list revision ${now.suppliers.revision} unchanged`);
 
-  // ── 6. Supplier refresh → preview → Save → W4 recognises a listed sender ──
+  // ── 7. Supplier refresh → preview → Save → W4 recognises a listed sender ──
+  await lab('sign-in');
   await suppliersPanel().getByRole('button', { name: 'Refresh supplier list from REI', exact: true }).click();
-  const supplierCard = await allowInPanel(suppliersPanel(), 'supplier list');
-  await supplierCard.getByRole('button', { name: 'Allow', exact: true }).click();
   const supplierPreview = suppliersPanel().getByRole('group', { name: 'REI supplier list preview', exact: true });
   await supplierPreview.getByText('5 suppliers ready to save · 1 skipped · 2 without email', { exact: true }).waitFor();
-  await supplierPreview.getByText("5 rows in REI's export · matches the 5 records REI lists", { exact: true }).waitFor();
+  await supplierPreview.getByText("5 rows read from REI's list · matches the 5 records REI lists", { exact: true }).waitFor();
+  await noApprovalCard(suppliersPanel());
   // Every seeded supplier is gone from REI's list: a big drop, saved only when the person confirms it.
-  await supplierPreview.getByRole('alert').getByText('REI returned far fewer suppliers than before — check the export before approving.', { exact: true }).waitFor();
+  await supplierPreview.getByRole('alert').getByText("REI returned far fewer suppliers than before — check REI's Suppliers list before approving.", { exact: true }).waitFor();
   await supplierPreview.getByRole('list', { name: 'Suppliers added in REI' }).getByText('FS-PLUMB · Fictional Plumbing Co · accounts@fictional-plumbing.test', { exact: true }).waitFor();
   await capture('suppliers-preview', suppliersPanel());
   await supplierPreview.getByRole('button', { name: 'Save anyway', exact: true }).click();
@@ -193,9 +198,9 @@ try {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ ok: !failure, at: new Date().toISOString(), checks, shots, errors, denied,
     layer: 'Real local source service and built UI on the fictional Austin demo office; real browser runtime, broker, recipe runner and sign-in handover over the fictional REI-style portal',
     limits: [
-      'Fictional REI-style portal: no REI Cloud evidence. The REI export location in the pack is a placeholder until the real one is mapped.',
+      'Fictional REI-style portal: no REI Cloud evidence. Its lazy Tenants grid (4 rows, 4 more per scroll of its own content) models a read-only look at live REI; how many rows live REI loads per scroll is not modelled.',
       'The sign-in tab is a lab stand-in that reports the portal\'s address; the real work browser tab was not opened.',
-      'The person (sign-in, approvals, Save) is simulated by this script.',
+      'The person (sign-in, Stop, Save) is simulated by this script.',
       'Source service only: no packaged, installed or Windows evidence.'],
     ...(failure ? { failure, serviceLog: logs.slice(-8000) } : {}) }, null, 2) + '\n');
 }
