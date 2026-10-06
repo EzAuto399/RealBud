@@ -155,10 +155,10 @@ describe("budAvailability for managed access", () => {
       id: "you-worker", status, connected: true, onRefresh: async () => {},
     }));
     const missing = hermes({ managed: false, withdrawn: false, attached: false, detail: "" }, { attached: false, provider: null, model: null });
-    const connect = />Connect to your office<\/button>/;
+    const connect = />Connect with this code<\/button>/;
     expect(render(missing)).toMatch(connect);
     expect(render(missing)).not.toContain("Open website account");
-    expect(render(missing)).toContain("private readiness check still needs to pass");
+    expect(render(missing)).toContain("Paste the link code your office owner sent you.");
     expect(render(managed(false, null))).not.toMatch(connect);
     expect(render(withdrawn())).not.toMatch(connect);
     expect(render({ ...missing, ready: true, model: { attached: true, provider: "fictional", model: "fictional" } })).not.toMatch(connect);

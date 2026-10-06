@@ -33,12 +33,13 @@ describe("managed Bud status", () => {
       modelAccess: { managed: true, withdrawn: false, attached: true, detail: "managed" },
       lastPing: { at: 1, ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" },
       autoSetup: { state: "installing", step: 1, total: 4, detail: "Downloading Bud" } });
-    expect(html).toContain("Downloading Bud");
-    expect(html).toContain("Step 1 of 4. Keep RealBud open.");
-    expect(html).toContain("Keep preparing</button>");
+    expect(html).toContain("Setting up Bud");
+    expect(html).toContain("Step 1 of 4: downloading. Usually about 10 minutes. Nothing to do; keep RealBud open.");
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).toMatch(/<button[^>]*class="pm-decision[^"]*"[^>]*>Back to Work<\/button>/);
     expect(html).not.toContain("Check again</button>");
-    expect(html).toMatch(/Bud installed<\/dt><dd[^>]*>In progress/);
-    expect(html).toMatch(/Private readiness check<\/dt><dd[^>]*>Waiting/);
+    expect(html).toMatch(/Download Bud<\/dt><dd[^>]*>In progress/);
+    expect(html).toMatch(/Test Bud<\/dt><dd[^>]*>Waiting/);
     expect(html).not.toContain("service administrator");
     expect(html).not.toContain("Service administration");
     expect(html).not.toContain("Last readiness check");
@@ -47,7 +48,7 @@ describe("managed Bud status", () => {
     const managed = { managed: true, withdrawn: false, attached: true, detail: "managed" };
     const running = render({ ...ready, ready: false, cli: { ...ready.cli, compatible: false }, modelAccess: managed,
       autoSetup: { state: "verifying", code: "checking", step: 0, total: 4, detail: "Checking Bud on this computer" } });
-    expect(running).toContain("Checking Bud on this computer");
+    expect(running).toContain("Checking this computer. Usually about 10 minutes.");
     expect(running).not.toContain("Try setup again");
     for (const autoSetup of [
       { state: "idle" as const, step: 0, total: 4, detail: "" },
@@ -66,9 +67,10 @@ describe("managed Bud status", () => {
     const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
       pack: { installed: false, approvalsManual: false, workroomReady: false }, model: { attached: false, provider: null, model: null },
       autoSetup: { state: "idle", step: 0, total: 4, detail: "" } });
-    expect(html).toContain("Connect to your office</button>");
-    expect(html).toContain("RealBud will then set up Bud and your office’s app connection service automatically.");
-    expect(html).toContain("Accounts that need your sign-in will still ask you to connect.");
+    expect(html).toContain("Connect with this code</button>");
+    expect(html).toContain("I’m the office owner: approve in my browser");
+    expect(html).toContain("Paste the link code your office owner sent you. RealBud then sets up Bud automatically.");
+    expect(html).not.toContain("readiness check");
     expect(html).not.toContain("Service setup needed");
     expect(html).not.toContain("service administrator");
     expect(html).not.toContain("Service administration");
@@ -80,8 +82,8 @@ describe("managed Bud status", () => {
       model: { attached: false, provider: null, model: null }, autoSetup: { state: "idle", step: 0, total: 4, detail: "" } });
     expect(html).toContain("Connected to Fictional Harbour Agency");
     expect(html).toContain("Setting up Bud’s model access…");
-    expect(html).toContain("private readiness check before work can start");
-    expect(html).not.toContain("Connect to your office</button>");
+    expect(html).toContain("Bud must finish setting up and pass its test before work can start.");
+    expect(html).not.toContain("Connect with this code</button>");
     expect(html).not.toContain("service administrator");
     expect(html).not.toContain("Bud ready");
     expect(html).not.toContain("Try setup again");
@@ -120,12 +122,22 @@ describe("managed Bud status", () => {
     expect(html).toContain("Try setup again");
     expect(html).not.toContain("service administrator");
   });
+  it("shows a failed installer stage as stopped, never as in progress", () => {
+    const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
+      lastPing: { at: 1, ok: false, kind: "ping", detail: "Bud setup changed. Its private readiness check is still needed." },
+      autoSetup: { state: "held", code: "held_failed", step: 1, total: 4, detail: "Downloading Bud" } });
+    expect(html).toContain("Bud setup stopped");
+    expect(html).not.toContain("Last readiness check");
+    expect(html).toContain("Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
+    expect(html).toContain("Try setup again</button>");
+    expect(html).not.toMatch(/In progress|Setting up Bud|Usually about/);
+  });
   it("says plainly when automatic setup is waiting to retry", () => {
     const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
       autoSetup: { state: "waiting_retry", step: 1, total: 4, nextRetryAt: Date.now() + 5 * 60_000, detail: "busy" } });
     expect(html).toContain("will try again in about 5 minutes");
-    expect(html).toContain("You can draft a request or prepare plans");
-    expect(html).toMatch(/Bud installed<\/dt><dd[^>]*>Will retry/);
+    expect(html).toContain("Nothing to do; keep RealBud open.");
+    expect(html).toMatch(/Download Bud<\/dt><dd[^>]*>Will retry/);
     expect(html).not.toContain(">In progress</dd>");
   });
   it("names the incomplete safeguard, preserves configured model facts and holds readiness", () => {
@@ -133,18 +145,18 @@ describe("managed Bud status", () => {
       modelAccess: { managed: true, withdrawn: false, attached: true, detail: "managed" } });
     expect(html).toContain("Service setup needed");
     expect(html).toContain("private workroom is not ready");
-    expect(html).toMatch(/Property safeguards<\/dt><dd[^>]*>Needs attention/);
-    expect(html).toMatch(/Model connection<\/dt><dd[^>]*>Configured/);
-    expect(html).toMatch(/Private readiness check<\/dt><dd[^>]*>Waiting/);
+    expect(html).toMatch(/Turn on approvals<\/dt><dd[^>]*>Needs attention/);
+    expect(html).toMatch(/Connect your office’s AI<\/dt><dd[^>]*>Configured/);
+    expect(html).toMatch(/Test Bud<\/dt><dd[^>]*>Waiting/);
     expect(html).not.toContain("Your service administrator needs");
-    expect(html).toContain("Return to Work");
+    expect(html).toContain("Back to Work");
     expect(html).not.toContain("Finish Bud setup");
   });
   it("offers return to work once every prerequisite is ready", () => {
     const html = render(ready);
     expect(html).toContain("Bud ready");
     expect((html.match(/>Ready<\/dd>/g) || [])).toHaveLength(4);
-    expect(html).toContain("Return to Work");
+    expect(html).toContain("Back to Work");
     expect(html).not.toContain("Service administration");
   });
   it("does not leave stale green checks after a refresh failure or during retry", () => {
@@ -166,7 +178,7 @@ describe("managed Bud status", () => {
     for (const html of [render(null), render(ready, { connected: false })]) {
       expect(html).not.toMatch(/>Ready<\/dd>/);
       expect(html).not.toContain("Your service administrator needs");
-      expect(html).toContain("Return to Work");
+      expect(html).toContain("Back to Work");
     }
   });
   it("offers book recovery, keeping service setup out of the way", () => {
@@ -184,6 +196,6 @@ describe("managed Bud status", () => {
     const withdrawn = render({ ...held, modelAccess: { ...held.modelAccess!, withdrawn: true } });
     expect(withdrawn).toContain("Model access withdrawn");
     expect(withdrawn).not.toContain("Try setup again");
-    expect(withdrawn).not.toContain("Connect to your office</button>");
+    expect(withdrawn).not.toContain("Connect with this code</button>");
   });
 });

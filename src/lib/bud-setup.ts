@@ -102,28 +102,37 @@ function managedIdle(status: HermesStatus): boolean {
 }
 
 // Installer detail is not a log surface. Only these fixed server product
-// phrases may become visible progress; paths and upstream output fall back to
-// the known setup code. Kept aligned with worker-bootstrap's stage labels.
-const INSTALL_PHASES = new Set([
-  "Downloading verified setup", "Preparing this computer", "Downloading Bud",
-  "Installing Bud’s components", "Finishing setup", "Installing Bud", "Checking already downloaded Bud",
-]);
+// phrases may become visible progress, shown through this display map; paths
+// and upstream output fall back to the known setup code. Keys stay aligned
+// with worker-bootstrap's stage labels.
+const INSTALL_PHASES: Record<string, string> = {
+  "Downloading verified setup": "downloading", "Preparing this computer": "preparing this computer", "Downloading Bud": "downloading",
+  "Installing Bud’s components": "installing", "Finishing setup": "finishing", "Installing Bud": "installing",
+  "Checking already downloaded Bud": "checking the download",
+};
 const SETUP_PHASES: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
-  checking: "Checking Bud on this computer", installing: "Installing Bud",
-  safeguards: "Applying Bud’s safeguards", model: "Connecting Bud’s model",
-  readiness: "Running the private readiness check",
+  checking: "checking this computer", installing: "installing",
+  safeguards: "turning on approvals", model: "connecting your office’s AI",
+  readiness: "testing Bud",
 };
 const SETUP_HOLDS: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
   held_exhausted: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.",
-  held_failed: "Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.",
+  held_failed: "Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.",
   held_recovery: "Bud’s setup record needs recovery. Your files are kept; contact RealBud support.",
   held_restart: "Bud’s update is installed. Restart RealBud to use it.",
   held_unavailable: "Automatic Bud setup is not available on this computer yet.",
 };
-const PREPARE_DURING_SETUP = "Keep RealBud open. You can draft a request or prepare plans while setup continues. Work starts only when you choose.";
+// A fixed phrase, not a measurement: keep the word "usually".
+const SETUP_ESTIMATE = "Usually about 10 minutes.";
+const NOTHING_TO_DO = "Nothing to do; keep RealBud open.";
+
+/** Office-facing names for the four setup checks, shared by every Bud setup surface. */
+export const BUD_SETUP_STEP_LABELS: Record<BudSetupStep, string> = {
+  install: "Download Bud", safeguards: "Turn on approvals", model: "Connect your office’s AI", verify: "Test Bud",
+};
 
 function setupPhase(auto: BudAutoSetup): string {
-  if (auto.state === "installing" && INSTALL_PHASES.has(auto.detail)) return auto.detail;
+  if (auto.state === "installing" && Object.prototype.hasOwnProperty.call(INSTALL_PHASES, auto.detail)) return INSTALL_PHASES[auto.detail]!;
   if (auto.code && SETUP_PHASES[auto.code]) return SETUP_PHASES[auto.code]!;
   // Earlier services did not send codes. Their fixed four-step position is a
   // useful fallback, but arbitrary detail is never treated as product copy.
@@ -141,14 +150,15 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
   const auto = status?.autoSetup;
   if (!status || !auto || status.ready || status.modelAccess?.withdrawn) return null;
   if (auto.state === "installing" || auto.state === "verifying") {
-    const step = auto.step > 0 && auto.total >= auto.step ? `Step ${auto.step} of ${auto.total}. ` : "";
-    return { label: setupPhase(auto), detail: `${step}${PREPARE_DURING_SETUP}`, working: true };
+    const phase = setupPhase(auto);
+    const where = auto.step > 0 && auto.total >= auto.step ? `Step ${auto.step} of ${auto.total}: ${phase}` : phase[0]!.toUpperCase() + phase.slice(1);
+    return { label: "Setting up Bud", detail: `${where}. ${SETUP_ESTIMATE} ${NOTHING_TO_DO}`, working: true };
   }
   if (auto.state === "waiting_retry") {
     const minutes = auto.nextRetryAt ? Math.max(1, Math.round((auto.nextRetryAt - now) / 60_000)) : null;
     return {
       label: "Setting up Bud",
-      detail: `Bud’s setup paused and will try again ${minutes ? `in about ${minutes} minute${minutes === 1 ? "" : "s"}` : "shortly"}. ${PREPARE_DURING_SETUP}`,
+      detail: `Bud’s setup paused and will try again ${minutes ? `in about ${minutes} minute${minutes === 1 ? "" : "s"}` : "shortly"}. ${NOTHING_TO_DO}`,
       working: true,
     };
   }
@@ -239,9 +249,16 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
   };
 }
 
+// Display map for fixed server receipts (server/index.ts writes this one when
+// a setup run starts): plain words on the office-facing surfaces.
+const READINESS_DETAILS: Record<string, string> = Object.assign(Object.create(null), {
+  "Bud setup changed. Its private readiness check is still needed.": "Bud’s setup didn’t finish. Nothing was lost. Press Try setup again in Bud status.",
+});
+
 export function budReadinessFailure(status: HermesStatus | null): string | null {
   if (!status || status.ready) return null;
   const lastCheck = status.lastPing ?? (status.lastTest?.kind === "ping" ? status.lastTest : null);
+  if (lastCheck && !lastCheck.ok && READINESS_DETAILS[lastCheck.detail]) return READINESS_DETAILS[lastCheck.detail]!;
   return lastCheck && !lastCheck.ok
     ? budFacingCopy(lastCheck.detail, "The private readiness check did not finish. A service administrator needs to check the connection.")
     : null;

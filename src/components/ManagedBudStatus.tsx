@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { HermesStatus } from "@/state/store";
-import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEPS } from "@/lib/bud-setup";
+import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, BUD_SETUP_STEP_LABELS, BUD_SETUP_STEPS } from "@/lib/bud-setup";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
@@ -19,9 +19,6 @@ type ManagedBudStatusProps = {
   onShowAsk?: () => void;
 };
 
-const stepLabels = {
-  install: "Bud installed", safeguards: "Property safeguards", model: "Model connection", verify: "Private readiness check",
-};
 const secondaryButton = "pm-control rounded border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50";
 
 export function ManagedBudStatus({ id, status, connected, recovering = false, active = true, onRefresh, onServiceAdministration, onShowAsk }: ManagedBudStatusProps) {
@@ -135,8 +132,8 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
         <p className="mt-1 text-sm leading-relaxed text-ink-secondary">{error
           ? `${budFacingCopy(error, "Could not check Bud's status.")} Your draft and saved plans are kept.`
           : showOfficeAccess ? officeLinked
-            ? "Your office connection is saved. Bud must finish its setup and private readiness check before work can start."
-            : "Connect this computer to your office. RealBud will then set up Bud and your office’s app connection service automatically."
+            ? "Your office connection is saved. Bud must finish setting up and pass its test before work can start."
+            : "Paste the link code your office owner sent you. RealBud then sets up Bud automatically."
           : availability.detail}</p>
       </div>
       <dl className="mt-4 divide-y divide-line" aria-label="Bud setup checks">
@@ -152,20 +149,20 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
             : progress === "current" ? (step === "verify" && !lastFailure ? "Not checked" : "Needs attention")
             : step === "model" && journey.stage === "checking" ? "Not checked" : "Waiting";
           return <div key={step} className="flex items-center justify-between gap-4 py-3 text-sm">
-            <dt className="min-w-0">{stepLabels[step]}</dt>
+            <dt className="min-w-0">{BUD_SETUP_STEP_LABELS[step]}</dt>
             <dd className={`shrink-0 ${label === "Ready" ? "text-agency" : "text-ink-secondary"}`}>{label}</dd>
           </div>;
         })}
       </dl>
-      {!ready && known && lastFailure && <p className="mt-3 text-sm text-danger" role="status">Last readiness check: {lastFailure}</p>}
+      {/* A setup hold already says what stopped and what to press; don't repeat it in red. */}
+      {!ready && known && lastFailure && !automatic && <p className="mt-3 text-sm text-danger" role="status">Last readiness check: {lastFailure}</p>}
       {showOfficeAccess && <div className="mt-3 space-y-3">
         <div className="max-w-[32rem]"><ConnectOfficeView {...office.view} /></div>
-        <p className="text-sm leading-relaxed text-ink-secondary">The private readiness check still needs to pass. Accounts that need your sign-in will still ask you to connect. Your office’s permissions and work approvals stay in place.</p>
       </div>}
       {retryError && <p role="alert" className="mt-3 text-sm text-danger">{retryError}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
-        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{automatic?.working ? "Keep preparing" : "Return to Work"}</button>}
+        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>Back to Work</button>}
         {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
           onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
         {/* aria-disabled while checking: a disabled button drops keyboard focus to the page. */}

@@ -20,7 +20,7 @@ import {
 
 import { fmtDateTime } from "@/lib/au";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
-import { BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy, budSetupJourney, type BudSetupStep, type ManagedModelStatus, budDocumentToolsNeedRepair } from "@/lib/bud-setup";
+import { BUD_SETUP_STEP_LABELS, BUD_SETUP_STEPS, parseBudStatus, parseManagedModelStatus, budFacingCopy, budSetupJourney, type BudSetupStep, type ManagedModelStatus, budDocumentToolsNeedRepair } from "@/lib/bud-setup";
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { workerIssueLine } from "@/lib/worker-issues";
@@ -96,10 +96,10 @@ const STEP_META: Record<
   BudSetupStep,
   { title: string; icon: ComponentType<{ size?: number; className?: string }> }
 > = {
-  install: { title: "Bud on this computer", icon: Download },
-  safeguards: { title: "Property safeguards", icon: ShieldCheck },
-  model: { title: "Model connection", icon: SlidersHorizontal },
-  verify: { title: "Private readiness check", icon: Cpu },
+  install: { title: BUD_SETUP_STEP_LABELS.install, icon: Download },
+  safeguards: { title: BUD_SETUP_STEP_LABELS.safeguards, icon: ShieldCheck },
+  model: { title: BUD_SETUP_STEP_LABELS.model, icon: SlidersHorizontal },
+  verify: { title: BUD_SETUP_STEP_LABELS.verify, icon: Cpu },
 };
 
 const primaryButton =

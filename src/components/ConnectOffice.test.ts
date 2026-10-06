@@ -28,26 +28,24 @@ const live = (html: string) => /<p role="status" aria-live="polite" class="sr-on
 beforeEach(() => { vi.clearAllMocks(); link.status = { state: "unlinked" }; link.phase = { kind: "idle" }; });
 
 describe("connect this computer to your office", () => {
-  it("makes Connect with this code the primary button once a code is pasted", () => {
+  it("leads with the link code box and one 44 px primary action, with browser approval as a quiet owner option", () => {
     const button = (html: string, label: string) => new RegExp(`<button[^>]*class="([^"]*)"[^>]*>(?:(?!</button>).)*${label}`).exec(html)?.[1] ?? "";
-    const empty = view({ state: "unlinked" }), pasted = view({ state: "unlinked" }, { kind: "idle" }, { code: "rb1_" + "a".repeat(64) });
-    expect(button(empty, "Connect to your office")).toContain("bg-agency");
-    expect(button(empty, "Connect with this code")).not.toContain("bg-agency");
-    expect(button(pasted, "Connect with this code")).toContain("bg-agency");
-    expect(button(pasted, "Connect to your office")).not.toContain("bg-agency");
-  });
-  it("offers one 44 px primary action and keeps the pasted code behind a closed disclosure", () => {
-    const html = view({ state: "unlinked" });
+    const html = view({ state: "unlinked" }), pasted = view({ state: "unlinked" }, { kind: "idle" }, { code: "rb1_" + "a".repeat(64) });
     expect(html.match(/pm-decision/g)).toHaveLength(1);
-    expect(html).toMatch(/<button type="button" class="pm-decision[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Connect to your office<\/button>/);
-    expect(html).toMatch(/<details class="[^"]*"><summary class="pm-control[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Use a link code instead<\/summary>/);
-    expect(html).toContain(">Connect with this code</button>");
+    expect(html).not.toContain("<details");
+    expect(html).toMatch(/<label[^>]*>Link code<input[^>]*placeholder="Paste the code here"/);
+    expect(html).toMatch(/<button type="submit" class="pm-decision[^"]*bg-agency[^"]*" disabled="">Connect with this code<\/button>/);
+    expect(button(pasted, "Connect with this code")).toContain("bg-agency");
+    expect(pasted).not.toMatch(/type="submit"[^>]*disabled=""/);
+    expect(button(html, "I’m the office owner: approve in my browser")).not.toContain("bg-agency");
+    expect(html).toContain("Owners: realbud.app → Office computers → Pair a computer.");
     expect(live(html)).toBe("");
     expect(html).not.toMatch(/Hermes|MCP|broker|grant|installation/i);
   });
 
   it("holds the action until the saved link has been read, with a retry when it could not be", () => {
-    expect(view(null)).toMatch(/disabled="">.*Connect to your office<\/button>/);
+    expect(view(null)).toMatch(/disabled="">.*I’m the office owner: approve in my browser<\/button>/);
+    expect(view(null, { kind: "idle" }, { code: "rb1_" + "a".repeat(64) })).toMatch(/disabled="">Connect with this code<\/button>/);
     const failed = view(null, { kind: "idle" }, { error: "Website link status could not be loaded. Try again." });
     expect(failed).toContain('role="alert"');
     expect(failed).toContain(">Try again</button>");
@@ -60,8 +58,8 @@ describe("connect this computer to your office", () => {
     expect(html).toContain("Waiting for your approval…");
     expect(html).toContain("Open the page again</button>");
     expect(html).toContain(">Cancel</button>");
-    expect(html).not.toContain("Connect to your office</button>");
-    expect(html).not.toContain("Use a link code instead");
+    expect(html).not.toContain("approve in my browser</button>");
+    expect(html).not.toContain("Connect with this code");
     expect(view({ state: "pending", browser: request }, { kind: "cancelling", request })).toMatch(/disabled="" aria-busy="true">Cancelling…/);
   });
 
@@ -78,8 +76,8 @@ describe("connect this computer to your office", () => {
     const html = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: true });
     expect(html).toContain("Connected to Fictional Harbour Agency");
     expect(live(html)).toBe("Connected to Fictional Harbour Agency. Bud’s model access is set up.");
-    expect(html).not.toContain("Connect to your office</button>");
-    expect(html).not.toContain("Use a link code instead");
+    expect(html).not.toContain("approve in my browser</button>");
+    expect(html).not.toContain("Connect with this code");
   });
 
   it("uses passive guidance when linked provisioning failed, without naming an absent Update status button", () => {
@@ -107,8 +105,9 @@ describe("connect this computer to your office", () => {
 
   it("opens an interrupted pasted-code link so it can be finished", () => {
     const html = view({ state: "pending" });
-    expect(html).toContain("<details open=\"\"");
-    expect(html).not.toContain("Connect to your office</button>");
+    expect(html).toContain("Connecting with a code was interrupted. Paste the same code below to finish safely.");
+    expect(html).toContain(">Connect with this code</button>");
+    expect(html).not.toContain("approve in my browser</button>");
   });
 });
 
@@ -122,7 +121,7 @@ describe("connect wiring", () => {
   });
 
   it("renders inline for Bud setup from the store's profile", () => {
-    expect(renderToStaticMarkup(createElement(ConnectOffice))).toContain("Connect to your office</button>");
+    expect(renderToStaticMarkup(createElement(ConnectOffice))).toContain("Connect with this code</button>");
   });
 
   it("always yields a name the local service accepts", () => {
