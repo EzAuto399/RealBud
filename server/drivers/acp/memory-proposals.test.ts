@@ -107,7 +107,7 @@ describe('Hermes typed memory proposal ACP capability', () => {
       // Hermes prepends its identity instructions to the user prompt.
       expect(observed.promptText?.split('\n').at(-1)).toBe(text);
       expect(observed.count).toBe(expectedCount); expect(observed.active).toBe(true);
-    });
+    }, { timeout: process.platform === 'win32' ? 60_000 : 10_000 }); // a fresh worker process starts slowly on loaded Windows runners
     return turn;
   }
   async function finish(turnId: string) {

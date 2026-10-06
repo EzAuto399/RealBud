@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { privateTempRoot } from './testing/private-fixture.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ function run(over: Partial<LoopRun> = {}): LoopRun {
   return { id: 'run-1', loopId: 'weekly-bills', loopName: 'Weekly bills', scheduledFor: 1, status: 'completed', manual: false, detail: '2 bills ready to review.', createdAt: 1, ...over } as LoopRun;
 }
 
-function harness(dataDir = mkdtempSync(join(tmpdir(), 'loop-chat-')), tasks = true) {
+function harness(dataDir = privateTempRoot(join(tmpdir(), 'loop-chat-')), tasks = true) {
   const appended: Array<{ threadId: string; message: any }> = [];
   const created: string[] = [];
   const bud: any = { id: 'bud', threadId: 'thread-active', tasks: tasks ? [{ threadId: 'thread-active' }] : [] };

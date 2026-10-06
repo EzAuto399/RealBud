@@ -230,10 +230,14 @@ describe('permanent encrypted bill review drafts', () => {
 
   it('retains over 1,000 encrypted drafts and returns bounded summaries across all pages', () => {
     const f = fixture(), ids: string[] = [];
-    for (let index = 0; index < 1001; index++) {
-      const id = randomUUID(), initial = input(f.workspaceId); initial.fields.vendor = `Fictional ${index}`;
-      initial.state = index % 2 ? 'discarded' : 'saved'; ids.push(id); f.store.create(id, null, initial);
-    }
+    // One commit for the setup: each create still runs in full, but a hosted
+    // Windows runner pays ~0.13 s of durable-commit flushing per transaction.
+    f.database.transaction(() => {
+      for (let index = 0; index < 1001; index++) {
+        const id = randomUUID(), initial = input(f.workspaceId); initial.fields.vendor = `Fictional ${index}`;
+        initial.state = index % 2 ? 'discarded' : 'saved'; ids.push(id); f.store.create(id, null, initial);
+      }
+    });
     vi.spyOn(f.database, 'list').mockImplementation(() => { throw new Error('Draft history must not use the truncated list.'); });
     vi.spyOn(f.database, 'page').mockImplementation(() => { throw new Error('Draft history must project small summaries.'); });
     expect(f.store.page().total).toBe(501); expect(f.store.page().items).toHaveLength(20);

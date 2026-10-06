@@ -102,6 +102,16 @@ describe("job drawer", () => {
     expect(buttonTag(held, "Resume")).toContain('disabled=""');
   });
 
+  it("keeps Pause/Resume focusable while its change is saving, so keyboard focus is not dropped", () => {
+    // A focused button that becomes disabled loses focus to <body>; Escape then cannot close the drawer.
+    for (const enabled of [false, true]) {
+      const tag = buttonTag(detail({ loop: loop({ enabled }), busy: true, disabled: true }), enabled ? "Pause" : "Resume");
+      expect(tag).not.toContain('disabled=""');
+      expect(tag).toContain('aria-disabled="true"');
+    }
+    expect(buttonTag(detail(), "Resume")).not.toContain('aria-disabled="');
+  });
+
   it("routes Morning priorities timing to agency setup instead of the generic timing editor", () => {
     const html = detail({ loop: loop({ id: "inbound-triage", name: "Morning priorities" }) });
     expect(html).toContain("Open agency workflow setup");

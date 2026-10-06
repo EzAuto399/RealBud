@@ -28,7 +28,7 @@ describe("website installation link", () => {
     const { app, create, file } = fixture(fetcher);
     await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow(/could not be reached/);
     expect((await app.status()).state).toBe("pending");
-    await expect(app.link({ code: `rb1_${"c".repeat(64)}`, label: "Other" })).rejects.toThrow(/original code/);
+    await expect(app.link({ code: `rb1_${"c".repeat(64)}`, label: "Other" })).rejects.toThrow(/still finishing the first code you pasted/);
     expect(bodies).toHaveLength(1);
     const restarted = create(); await restarted.link({ code, label: "Reception Mac" });
     expect(bodies[0]).toEqual(bodies[1]);
@@ -37,6 +37,33 @@ describe("website installation link", () => {
     expect(JSON.stringify(await restarted.status())).not.toContain(bodies[0].token);
     expect(readFileSync(file, "utf8")).not.toContain(code);
     if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+  it("forgets a code the website refuses as expired or used, revoking its token, so a fresh code or the browser link works", async () => {
+    const expired = `rb1_${"e".repeat(64)}`, fresh = `rb1_${"b".repeat(64)}`;
+    const calls: { route: string; method: string; auth?: string; body?: any }[] = [];
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const route = String(url).slice("https://realbud.app/api/installations/".length);
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ route, method: init.method, auth: init.headers?.Authorization, body });
+      if (route === "redeem") return body.code === expired ? Response.json({ error: "code_used" }, { status: 409 })
+        : Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" });
+      if (route === "report" && init.method === "DELETE") return Response.json({}, { status: 401 });
+      if (route === "link-requests") return Response.json({ version: 1, purpose: "installation-link-issued", approvalUrl: `https://realbud.app/link/${"A".repeat(43)}`,
+        displayCode: "ABCD-EFGH", expiresAt: new Date(Date.now() + 600_000).toISOString() });
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const { app } = fixture(fetcher);
+    await expect(app.link({ code: expired, label: "Reception Mac" })).rejects.toThrow(/expired or already used/);
+    const refused = calls.find(call => call.route === "redeem")!;
+    // A lost reply past the replay window may still have created an installation: its token is revoked.
+    expect(calls.find(call => call.route === "report" && call.method === "DELETE")?.auth).toBe(`Bearer ${refused.body.token}`);
+    expect((await app.status()).state).toBe("unlinked");
+    // The browser link is open again too.
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).resolves.toMatchObject({ displayCode: "ABCD-EFGH" });
+    await app.cancelBrowserLink();
+    await app.link({ code: fresh, label: "Reception Mac" });
+    expect((await app.status()).state).toBe("linked");
+    expect(calls.filter(call => call.route === "redeem").at(-1)!.body.id).not.toBe(refused.body.id);
   });
   it("sends only installation metadata, stops on revocation, and cannot silently move offices", async () => {
     const calls: any[] = [];
@@ -865,10 +892,16 @@ describe("provisioning retried on the report path", () => {
       expect(count(60_000)).toBe(1);
       await app.report();
       expect(count(60_000)).toBe(2);
+      // A background usage read may finish before this one or be shared with it,
+      // so plain reads are counted as "at least one", each with the short deadline.
       await app.usage();
-      expect([count(60_000), count(10_000)]).toEqual([2, 1]);
+      expect(count(60_000)).toBe(2);
+      expect(count(10_000)).toBeGreaterThanOrEqual(1);
+      const readsBefore = count(10_000);
       await app.disconnect();
-      expect([count(60_000), count(10_000), timeouts.mock.calls.length]).toEqual([2, 2, 4]);
+      expect(count(60_000)).toBe(2);
+      expect(count(10_000)).toBe(readsBefore + 1);
+      expect(timeouts.mock.calls.every(call => call[0] === 60_000 || call[0] === 10_000)).toBe(true);
     } finally { timeouts.mockRestore(); }
   });
 

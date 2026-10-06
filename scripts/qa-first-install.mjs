@@ -2,6 +2,7 @@
 // Production UI + isolated local server; installation responses are fixtures.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,7 +59,7 @@ try {
   await page.getByRole('textbox', { name: 'Your name', exact: true }).fill('Fictional PM');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Continue to Bud setup', exact: true }).click();
-  let setup = page.getByRole('dialog', { name: 'Set up Bud', exact: true }); await setup.waitFor();
+  let setup = page.getByRole('dialog', { name: 'Bud status', exact: true }); await setup.waitFor();
   assert.equal(new URL(page.url()).hash, '#/ask', 'first-run setup remains on Ask');
   await page.locator('.ask-composer textarea').first().waitFor({ state: 'attached' });
   const install = setup.getByRole('button', { name: 'Install Bud', exact: true });
@@ -72,10 +73,10 @@ try {
   assert.equal(installs, 1, 'a failed progress read never repeats installation');
   await setup.getByRole('button', { name: 'Stop setup', exact: true }).click();
   await setup.getByText(/Setup stopped before it finished/).waitFor(); assert.equal(cancels, 1);
-  await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
+  await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
   const composer = page.locator('.ask-composer textarea').first(); await composer.fill('Prepare a repair follow-up for my first property.');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
-  setup = page.getByRole('dialog', { name: 'Set up Bud', exact: true });
+  setup = page.getByRole('dialog', { name: 'Bud status', exact: true });
   await setup.getByText(/Setup stopped before it finished/).waitFor();
   await setup.getByRole('button', { name: 'Install Bud', exact: true }).click(); assert.equal(installs, 2);
   for (const width of [390, 320]) {
@@ -88,7 +89,7 @@ try {
   installed = true; job = { state: 'done', error: null };
   await setup.getByText('Connected to Fictional Harbour Agency', { exact: true }).first().waitFor({ timeout: 10000 });
   assert.equal(await setup.getByText('Bud is ready', { exact: true }).count(), 0, 'installed is not ready without a model check');
-  await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
+  await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
   assert.equal(await composer.inputValue(), 'Prepare a repair follow-up for my first property.');
   assert.deepEqual(errors, []);
   const result = { passed: true, checks: ['fresh onboarding opens setup over Ask', 'Windows action enabled', 'progress recovers without duplicate install', 'cancel and retry', 'failure survives reopening panel', '320/390px layout and touch target', 'successful install advances to model connection', 'not ready prematurely', 'Ask draft preserved'], liveInstallation: false, liveProvider: false };
@@ -96,4 +97,9 @@ try {
 } catch (error) {
   await page?.screenshot({ path: join(out, 'failure.png') }).catch(() => {});
   writeFileSync(join(out, 'failure.log'), `${error.stack}\n${logs}`); throw error;
-} finally { await browser?.close(); child?.kill('SIGTERM'); rmSync(scratch, { recursive: true, force: true }); }
+} finally {
+  // Cleanup never replaces the real error: wait for the server to exit before removing its data dir.
+  await browser?.close().catch(() => {});
+  if (child && child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), new Promise(r => setTimeout(r, 5000))]); }
+  try { rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (cause) { console.warn(`Scratch not removed: ${scratch} (${cause.code ?? cause.message})`); }
+}

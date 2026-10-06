@@ -6,6 +6,13 @@ import type { CustomerPack } from '../shared/customer-packs.ts';
 const directory = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows', 'austin-accounts');
 const sourceProvenance = 'Call this a synthetic rehearsal only when input.synthetic=true; otherwise call it saved-source evidence. This does not verify live freshness or complete coverage.';
 
+/** The REI recipes and site map shipped with the app, read at call time so
+ * reviewed changes to them need no hash pin here. */
+export function austinReiFiles(): { 'rei/recipes.json': string; 'rei/site-map.json': string } {
+  const rei = join(directory, 'support/rei-cloud-navigation');
+  return { 'rei/recipes.json': readFileSync(join(rei, 'recipes.json'), 'utf8'), 'rei/site-map.json': readFileSync(join(rei, 'site-map.json'), 'utf8') };
+}
+
 /** Distributed plans contain no customer records, sign-ins, clocks or approvals. */
 export function austinCustomerPack(): CustomerPack {
   const source = JSON.parse(readFileSync(join(directory, 'workflows.json'), 'utf8')) as { recipes: CustomerPack['recipes'] };

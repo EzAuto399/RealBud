@@ -33,23 +33,23 @@ function verifyOperatorToken(token: string, secret: string, now: number): { subj
 }
 const MINTED = `rbk_0123456789abcdef_${'A'.repeat(43)}`;
 
-function transport(handler: (url: string, method: string) => { status?: number; body?: unknown; text?: string; redirected?: boolean }) {
+function transport(handler: (url: string, method: string) => { status?: number; body?: unknown; text?: string; redirected?: boolean; headers?: Record<string, string> }) {
   const seen: { url: string; method: string; authorization: string | undefined; body: Record<string, unknown> | undefined }[] = [];
   const fetchLike: HttpTransport = async (url, init) => {
     const headers = init.headers as Record<string, string>;
     const method = String(init.method);
     seen.push({ url, method, authorization: headers.authorization, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
     const result = handler(url, method);
-    const response = new Response(result.text ?? JSON.stringify(result.body ?? {}), { status: result.status ?? 200 });
+    const response = new Response(result.text ?? JSON.stringify(result.body ?? {}), { status: result.status ?? 200, headers: result.headers });
     if (result.redirected) Object.defineProperty(response, 'redirected', { value: true });
     return response;
   };
   return { seen, fetchLike };
 }
 let clock = CLOCK;
-const client = (t: ReturnType<typeof transport>, scopedSecret: () => string | undefined = () => OPERATOR_SECRET) =>
+const client = (t: ReturnType<typeof transport>, scopedSecret: () => string | undefined = () => OPERATOR_SECRET, sleep?: (ms: number) => Promise<void>) =>
   modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: 'realbud',
-    allowedModels: ['auto'], scopedSecret, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike, now: () => clock });
+    allowedModels: ['auto'], scopedSecret, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike, now: () => clock, ...(sleep ? { sleep } : {}) });
 
 const project = { projectId: 'rb-install-one', name: 'RealBud installation install-one', customerId: 'cus-office',
   monthlyCapNanoAud: '100000000000', requestCapNanoAud: '1000000000', maxConcurrent: 4 };
@@ -215,10 +215,35 @@ test('listKeys refuses partial envelopes and duplicate records used as cleanup e
   const key = { id: '0123456789abcdef', project: 'rb-install-one', environment: 'production', label: 'company-a:install-one', revokedAt: 5 };
   for (const body of [
     { keys: [key], nextCursor: 'more-keys' },
-    { keys: [key], hasMore: false },
+    { keys: [key], hasMore: true },
     { keys: [key, key] },
     { keys: Array.from({ length: 1001 }, () => key) },
+    { records: [key] },
   ]) await assert.rejects(() => client(transport(() => ({ body }))).listKeys('rb-install-one', 'production'), /modelvia_unreadable/);
+  // Modelvia `managed-gateway/platform-admin.ts:684` (4be5c37) answers `{keys}`; a field it adds later
+  // (or a complete-listing marker) must not stop resume or rotation, which read only `keys`.
+  for (const body of [{ keys: [key], schemaVersion: 2, generatedAt: 1 }, { keys: [key], nextCursor: null, hasMore: false }])
+    assert.deepEqual(await client(transport(() => ({ body }))).listKeys('rb-install-one', 'production'),
+      [{ keyId: '0123456789abcdef', projectId: 'rb-install-one', environment: 'production', label: 'company-a:install-one', revokedAt: 5 }]);
+});
+
+test('a 429 repeats a GET once after Modelvia\'s bounded Retry-After; a write is never repeated', async () => {
+  // Modelvia `managed-gateway/http.ts:111-116` (4be5c37): 429 `{error, retryAfterSeconds}` with `Retry-After` in seconds.
+  const limited = { status: 429, body: { error: 'rate_limited', retryAfterSeconds: 2 }, headers: { 'retry-after': '2' } };
+  const key = { id: '0123456789abcdef', project: 'rb-install-one', environment: 'production', createdAt: 1 };
+  let answers = [limited];
+  const waits: number[] = [], sleep = async (ms: number) => { waits.push(ms); };
+  const t = transport(() => answers.shift() ?? { body: { keys: [key] } });
+  assert.equal((await client(t, undefined, sleep).listKeys('rb-install-one', 'production')).length, 1);
+  assert.deepEqual(t.seen.map(s => s.method), ['GET', 'GET']); assert.deepEqual(waits, [2000]);
+  // Each attempt carries its own freshly minted bearer.
+  assert.deepEqual(verifyOperatorToken(t.seen[1]!.authorization!.slice('Bearer '.length), OPERATOR_SECRET, clock), { subject: OPERATOR_SUBJECT });
+  answers = [limited, { ...limited, headers: { 'retry-after': '3600' } }];
+  await assert.rejects(() => client(t, undefined, sleep).listKeys('rb-install-one', 'production'), /modelvia_rejected/);
+  assert.equal(t.seen.length, 4); assert.deepEqual(waits, [2000, 2000]);
+  const write = transport(() => limited);
+  await assert.rejects(() => client(write, undefined, sleep).rotate('0123456789abcdef'), /modelvia_rejected/);
+  assert.equal(write.seen.length, 1); assert.deepEqual(waits, [2000, 2000]);
 });
 
 test('only an explicit key_revoked 409 is a definitive no-effect rotation refusal', async () => {

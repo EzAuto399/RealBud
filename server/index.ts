@@ -120,6 +120,7 @@ import {
   type BrowserTaskEnd,
 } from "./browser-grants.ts";
 import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask } from "./portal-recipe-task.ts";
+import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
   ATTEND_ERRORS,
@@ -924,6 +925,15 @@ function runAskRecipeTask(threadId: string, botId: string, record: Awaited<Retur
       const result = await runPortalRecipeTask({ record, grant, runtime: browserRuntime, approve, signal: stop.signal,
         isActive: () => !stop.signal.aborted && fenceContextFor(threadId)?.grant?.id === grant.id });
       reply = portalRecipeTaskReply(result);
+      // REI rows land on Desk under the source-of-truth rule (read-only: nothing goes back to REI).
+      if (record.recipe?.portal === "rei-cloud") {
+        try {
+          const sync = syncReiReadIntoDesk(desk, { runs: record.recipe.runs, results: result.results, observedAt: result.receipt.endedAt });
+          if (sync) { commitDesk(desk.snapshot()); reply += `\n\n${reiDeskSyncLine(sync)}`; }
+        } catch (error) {
+          reply += `\n\nDesk was not updated from this read: ${error instanceof Error ? error.message : "unknown error"}`;
+        }
+      }
       if (result.outcome === "stopped") end = "stopped";
       else if (result.outcome !== "completed") end = "interrupted";
     } catch (error) {
@@ -4644,6 +4654,20 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       commitDesk(desk.snapshot());
       return json(res, 200, { property });
     }
+    // A person's edit of REI-sourced facts, and their pick on "Differs from REI".
+    const deskFacts = path.match(/^\/api\/desk\/properties\/([\w-]+)\/facts$/);
+    if (deskFacts && method === "PATCH") {
+      const snapshot = desk.editPropertyFacts(deskFacts[1], await readBody(req));
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
+    const reiDiffer = path.match(/^\/api\/desk\/properties\/([\w-]+)\/rei-differs\/([A-Za-z]+)\/(rei|desk)$/);
+    if (reiDiffer && method === "POST") {
+      await readBody(req);
+      const snapshot = desk.resolveReiDiffer(reiDiffer[1], reiDiffer[2], reiDiffer[3]);
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
     if (path === "/api/desk/properties" && method === "POST") {
       const snapshot = desk.addProperty(await readBody(req));
       commitDesk(snapshot);
@@ -5979,6 +6003,11 @@ const customerPacks = createCustomerPackService({ directory: DATA_DIR,
     loops!.setEnabled('weekly-bills', false);
   },
   activeRecipeIds: () => jobRuns.list().filter(run => run.status === 'queued' || run.status === 'running').map(run => run.jobId),
+  // Per-client export reads the REI business code and loop clocks; the export keeps allowlisted fields only and turns every loop off.
+  officeSettings: async () => {
+    const w1 = await (await import('./w1-host.ts')).readW1Settings(DATA_DIR);
+    return { businessCode: w1?.rei.marker, loops: (loops?.listLoops() ?? []).map(loop => ({ id: loop.id, schedule: loop.schedule })) };
+  },
   profileDirectory: () => propertyProfileDir(), workroomDirectory: () => join(DATA_DIR, 'vault'),
   readiness: async () => {
     const worker = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));

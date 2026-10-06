@@ -1,4 +1,4 @@
-import type { Recipe } from './contracts.ts';
+import type { CsvColumnMapping, LoopSchedule, Recipe } from './contracts.ts';
 
 export type CustomerPackCheckId = 'worker' | 'mail-account' | 'browser-account' | 'bank-mapping' | 'bill-register' | 'input-coverage' | 'timezone' | 'workflow-acceptance';
 export type CustomerPackCheck = { id: CustomerPackCheckId | 'installation'; label: string; state: 'passed' | 'needed' | 'unknown'; detail: string; nextAction: string };
@@ -10,6 +10,21 @@ export interface CustomerPack {
   /** Text-only native skill instructions. Paths and executable assets are never accepted. */
   skills: { id: string; name: string; description: string; instructions: string; license: string }[];
   dependencies: { runtime: 'hermes-property'; mode: 'supplied-source-preparation'; schedules: 'off'; permissions: 'local-review-required' };
+  /** Optional data files, by allowlisted path (CUSTOMER_PACK_FILES). Text only. */
+  files?: Partial<Record<CustomerPackFile, string>>;
+  /** RealBud publisher signature (server/pack-signing.ts). Built-in packs ship inside the signed app and carry none. */
+  signature?: { algorithm: 'ed25519'; keyId: string; value: string };
+}
+/** The only data files a pack may carry. */
+export const CUSTOMER_PACK_FILES = ['rei/recipes.json', 'rei/site-map.json', 'office/settings.json'] as const;
+export type CustomerPackFile = typeof CUSTOMER_PACK_FILES[number];
+/** `office/settings.json`: office setup only. Loops always arrive off. */
+export interface CustomerPackOfficeSettings {
+  version: 1; kind: 'office-settings';
+  /** The business code in REI's top bar. */
+  rei?: { businessCode: string };
+  csvColumnMapping?: CsvColumnMapping;
+  loops: { id: string; enabled: false; schedule: LoopSchedule }[];
 }
 export interface CustomerPackPreview {
   pack: CustomerPack; digest: string; additions: string[]; kept: string[]; conflicts: string[];

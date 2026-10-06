@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { privateTempRoot } from './testing/private-fixture.ts';
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -23,7 +23,7 @@ const CSV = [
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
 const store = async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'realbud-bill-refs-')); directories.push(directory);
+  const directory = privateTempRoot(join(tmpdir(), 'realbud-bill-refs-')); directories.push(directory);
   const file = join(directory, 'property-bill-references.json');
   return { file, store: createPropertyReferenceStore({ file, now: () => 1_000 }) };
 };

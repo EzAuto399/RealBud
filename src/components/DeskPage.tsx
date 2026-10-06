@@ -685,6 +685,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
         onAllowBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book")}
         onDenyBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/deny`, "POST", {}, id)}
         onAllowAllBookProposals={() => void run("/api/desk/book-proposals/allow-all", "POST", {}, "allow-all", "Properties added to the book")}
+        onResolveReiDiffer={(id, field, pick) => void run(`/api/desk/properties/${id}/rei-differs/${field}/${pick}`, "POST", {}, `rei-${id}-${field}`, pick === "rei" ? "REI value used" : "Desk value kept")}
         onSave={(id, options) => run(`/api/desk/properties/${id}`, "PATCH", options, id, "Options saved")}
         onNotes={(id, body) => run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
         onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}

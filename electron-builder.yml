@@ -68,6 +68,8 @@ extraResources:
     to: pack/workflows/austin-office
   - from: pack/workflows/office-core
     to: pack/workflows/office-core
+  - from: pack/workflows/department-starters
+    to: pack/workflows/department-starters
   # Admitted PostgreSQL 16 runtime for "Set up this office". Staged by
   # `pnpm build:postgres`, which fails the build rather than shipping an
   # installer whose Set up button cannot provision storage. Resolved at setup

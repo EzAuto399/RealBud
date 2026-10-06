@@ -7,6 +7,7 @@ import { FileUp, Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide
 import { cn } from "@/lib/cn";
 import { fmtDate } from "@/lib/au";
 import { aud, type CsvColumnMapping, type CsvImportPreview, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
+import type { ReiField } from "@shared/contracts";
 import { useWorkspacePreferences, portfolioLayout } from "@/lib/workspace-preferences";
 import { groupBySuburb, groupProperties, sortBook, type PropertyScope } from "@/lib/book-groups";
 import { completenessLine, propertyCompleteness } from "@/lib/completeness";
@@ -45,6 +46,22 @@ function csvHeaderCells(text: string): string[] {
   return cells.some((value) => value) ? cells : [];
 }
 
+const REI_FIELD_LABELS: Record<ReiField, string> = {
+  address: "Address", tenantName: "Tenant", weeklyRentCents: "Weekly rent", ownerName: "Owner",
+  ownerContact: "Owner contact", amountOwingCents: "Amount owing", paidTo: "Paid to",
+};
+function deskFieldValue(property: Property, field: ReiField): string | number | undefined {
+  if (field === "ownerName") return property.owner?.name;
+  if (field === "ownerContact") return property.owner?.contact;
+  return property[field];
+}
+function reiFieldText(field: ReiField, value: string | number | undefined): string {
+  if (value === undefined || value === "") return "none";
+  if (field === "weeklyRentCents") return `${aud(Number(value))}/wk`;
+  if (field === "amountOwingCents") return aud(Number(value));
+  return String(value);
+}
+
 function isMissingColumnError(message: string): boolean {
   return /csv missing column/i.test(message);
 }
@@ -73,6 +90,7 @@ export function DeskBook({
   onAllowBookProposal,
   onDenyBookProposal,
   onAllowAllBookProposals,
+  onResolveReiDiffer,
   onOpenTasks,
   onGroupTasks,
   onGroupBatch,
@@ -92,6 +110,8 @@ export function DeskBook({
   onAllowBookProposal: (id: string) => void;
   onDenyBookProposal: (id: string) => void;
   onAllowAllBookProposals: () => void;
+  /** A person picks one side of "Differs from REI". */
+  onResolveReiDiffer?: (propertyId: string, field: string, pick: "rei" | "desk") => void;
   onOpenTasks: (property: Property) => void;
   onGroupTasks: (scope: PropertyScope) => void;
   onGroupBatch: (scope: PropertyScope) => void;
@@ -344,6 +364,40 @@ export function DeskBook({
           </ul>
         </section>
       ) : null}
+      {onResolveReiDiffer && snap.properties.some((property) => property.differs?.length) ? (
+        <section className="mt-6" aria-label="Differs from REI">
+          <h3 className="text-[13px] font-semibold text-ink">Differs from REI</h3>
+          <p className="mt-1 text-[12px] text-ink-muted">You changed these in Desk and REI shows something else. Desk keeps your value until you pick.</p>
+          <ul className="mt-2 space-y-2">
+            {snap.properties.flatMap((property) => (property.differs ?? []).map((differ) => (
+              <li key={`${property.id}-${differ.field}`} className="rounded-xl border border-line bg-sheet px-3 py-2.5">
+                <div className="text-[13px] font-medium text-ink">{property.address} · {REI_FIELD_LABELS[differ.field]}</div>
+                <div className="text-[12px] text-ink-muted">
+                  Differs from REI: {reiFieldText(differ.field, differ.rei)} vs {reiFieldText(differ.field, deskFieldValue(property, differ.field))}
+                </div>
+                <div className="mt-1.5 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => onResolveReiDiffer(property.id, differ.field, "rei")}
+                    className="rounded-lg bg-agency px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+                  >
+                    Use REI
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => onResolveReiDiffer(property.id, differ.field, "desk")}
+                    className="rounded-lg px-2.5 py-1 text-[12px] text-ink-muted hover:bg-raised hover:text-ink disabled:opacity-40"
+                  >
+                    Keep Desk
+                  </button>
+                </div>
+              </li>
+            )))}
+          </ul>
+        </section>
+      ) : null}
       {(snap.book?.bookProposals.length ?? 0) > 0 && snap.book && (
         <section className="mt-6">
           <div className="flex items-center justify-between gap-3">
@@ -357,13 +411,13 @@ export function DeskBook({
               Allow all
             </button>
           </div>
-          <p className="mt-1 text-[12px] text-ink-muted">From what you gave Bud. Nothing is in the book until you allow it.</p>
+          <p className="mt-1 text-[12px] text-ink-muted">From what you gave Bud or what REI shows. Nothing is in the book until you allow it.</p>
           <ul className="mt-2 space-y-2">
             {snap.book.bookProposals.slice(0, proposalShown).map((proposal) => (
               <li key={proposal.id} className="rounded-xl border border-line bg-sheet px-3 py-2.5">
                 <div className="text-[13px] font-medium text-ink">{proposal.address}</div>
                 <div className="text-[12px] text-ink-muted">
-                  {proposal.tenantName} · {proposal.tenantPhone} · ${proposal.weeklyRentCents / 100}/wk
+                  {[proposal.tenantName, proposal.tenantPhone, proposal.ownerName ? `Owner ${proposal.ownerName}` : "", `$${proposal.weeklyRentCents / 100}/wk`, proposal.origin === "rei" ? "In REI, not in Desk" : ""].filter(Boolean).join(" · ")}
                 </div>
                 <div className="mt-1.5 flex gap-2">
                   <button

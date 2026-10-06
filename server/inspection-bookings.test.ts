@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { privateTempRoot } from './testing/private-fixture.ts';
 import { readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +12,7 @@ const portfolio = JSON.parse(readFileSync(new URL('../pack/workflows/austin-insp
 const { planStart: _start, ...officeRules } = portfolio.rules;
 const base: PlanBase = { properties: portfolio.properties, rules: { ...officeRules, closedDates: ['2026-11-10'] } };
 const directories: string[] = [];
-const dir = async () => { const d = await mkdtemp(join(tmpdir(), 'realbud-inspection-bookings-')); directories.push(d); return d; };
+const dir = async () => { const d = privateTempRoot(join(tmpdir(), 'realbud-inspection-bookings-')); directories.push(d); return d; };
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
 
 describe('inspection bookings store', () => {

@@ -1,8 +1,9 @@
 // Refresh from REI end to end in one process: the FICTIONAL REI-style portal
+import { privateTempRoot } from "./testing/private-fixture.ts";
 // behind the real BrowserRuntime, broker and recipe runner (w1-lab.ts), the
 // real tenant and supplier directory stores. No network, no REI account: a
 // pass proves RealBud's wiring and guards only.
-import { mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,7 +19,7 @@ const dirs: string[] = [], dbs: WorkflowDatabase[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 async function fixture(options: { account?: boolean; load?: () => ReturnType<typeof fictionalReiPack> } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "realbud-rei-dir-")); dirs.push(dir);
+  const dir = privateTempRoot(join(tmpdir(), "realbud-rei-dir-")); dirs.push(dir);
   const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 5) }); dbs.push(db);
   const lab = await createW1Lab(dir, { fetch: (async () => new Response("{}", { status: 404 })) as never });
   const tenants = createTenantDirectoryStore(db), suppliers = createSupplierDirectory({ file: join(dir, "suppliers.json") });

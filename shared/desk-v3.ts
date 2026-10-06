@@ -10,6 +10,7 @@ import {
   type HandsSource,
   type NotifyChannel,
   type PropertyOptions,
+  type Property,
   type WorkState,
 } from "./contracts.ts";
 import { emptyOffice, type Office } from "./office.ts";
@@ -112,7 +113,17 @@ export interface Source {
   lastCheckedAt?: number | null;
 }
 
-export interface PropertyV3 {
+/** The REI-sourced facts and their provenance, kept on the property row as Desk shows them. */
+export const PROPERTY_REI_KEYS = ["owner", "rei", "amountOwingCents", "paidTo", "origins", "differs"] as const;
+export type PropertyReiFacts = Pick<Property, (typeof PROPERTY_REI_KEYS)[number]>;
+/** A copy of the REI facts that are set, so the V2 working copy and the V3 file carry the same ones. */
+export function propertyReiFacts(row: PropertyReiFacts): PropertyReiFacts {
+  const out: Record<string, unknown> = {};
+  for (const key of PROPERTY_REI_KEYS) if (row[key] !== undefined) out[key] = structuredClone(row[key]);
+  return out as PropertyReiFacts;
+}
+
+export interface PropertyV3 extends PropertyReiFacts {
   id: string;
   address: string;
   propertyCode?: string;
@@ -151,12 +162,14 @@ export interface BookProposal {
   id: string;
   kind: "add-property";
   status: "open";
-  origin: "ask" | "manual";
+  origin: "ask" | "manual" | "rei";
   fields: {
     address: string;
     tenantName: string;
     tenantPhone: string;
     weeklyRentCents: number;
+    ownerName?: string;
+    rei?: Property["rei"];
   };
   createdAt: number;
 }

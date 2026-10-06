@@ -5,6 +5,8 @@ import {
   CASE_KINDS,
   FORBIDDEN_HANDOFF_ACTIONS,
   lockedNever,
+  PROPERTY_REI_KEYS,
+  propertyReiFacts,
   tenantContactIdFromProperty,
   tenancyIdFromProperty,
   type CaseKind,
@@ -71,6 +73,9 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       row.archivedAt = undefined;
       row.options = { ...property.options, never: [...lockedNever()] };
     }
+    row.propertyCode = property.propertyCode || undefined;
+    for (const key of PROPERTY_REI_KEYS) delete row[key];
+    Object.assign(row, propertyReiFacts(property));
     let tenancy = next.tenancies.find((item) => item.propertyId === property.id && item.status === "current");
     if (!tenancy) {
       tenancy = {

@@ -91,6 +91,8 @@ beforeEach(() => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
   // Absolute on every host, so the helper's own path check admits it.
   vi.stubEnv('SystemRoot', '/synthetic/Windows');
+  // Each recorded launch is one process: keep async admissions on the one-shot path.
+  vi.stubEnv('REALBUD_WINDOWS_PRIVACY_HOST', '0');
   acl.launches.length = 0; acl.refuse = false; acl.refuseAsync = false;
   acl.restricted.clear(); acl.trusted.clear(); acl.unadmitted.length = 0;
   held.fails = 0; held.code = 'EBUSY'; held.renames.length = 0;
