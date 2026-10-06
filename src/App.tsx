@@ -220,7 +220,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         {/* Keyed on the view: each place rises in once on arrival. Pages already
             remount on switch (the ternary above), so no state contract changes. */}
         <div key={`${state.activeView}:${state.activeView === 'workspace' ? state.workspaceTabId ?? 'manage' : ''}`} className="animate-view-in flex min-h-0 min-w-0 flex-1">
-          <WorkspaceScreen label={state.activeView === 'workspace' ? savedView?.label ?? 'saved views' : state.activeView === 'schedule' ? 'Schedule' : state.activeView === 'you' ? 'You' : state.activeView === 'desk' ? 'Desk' : 'Ask'}>
+          <WorkspaceScreen label={state.activeView === 'workspace' ? savedView?.label ?? 'saved views' : state.activeView === 'schedule' ? 'Schedule' : state.activeView === 'you' ? 'Workspace' : state.activeView === 'desk' ? 'Desk' : 'Work'}>
           {state.activeView === 'workspace' ? (
             state.workspaceTabId === null ? <WorkspaceTabsManager /> : savedView ? <WorkspaceSavedView key={`${savedView.id}:${savedView.view.kind}:${savedView.view.filter}`} tab={savedView} /> : <main className="h-full min-w-0 flex-1 overflow-y-auto bg-paper p-6"><h1 className="text-2xl font-semibold">{workspaceTabs.loading ? 'Loading saved view…' : 'This saved view is unavailable'}</h1><p role={workspaceTabs.error ? 'alert' : 'status'} className="mt-3 text-[14px] text-ink-secondary">{workspaceTabs.error || (workspaceTabs.loading ? 'Checking this private workspace.' : 'It may have been hidden or removed. Your records remain in their original workspace.')}</p><button className="mt-4 min-h-11 rounded border border-line bg-sheet px-3 py-2" onClick={() => dispatch({ type: 'showWorkspaceTab' })}>Manage views</button></main>
           ) : state.activeView === "desk" ? (
@@ -241,7 +241,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         </div>
       </DesktopShell>
       {!setup && <ShellPalette />}
-      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
+      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
     </div>
   );
 }

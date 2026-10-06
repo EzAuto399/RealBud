@@ -53,6 +53,9 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | 41 | After both failures, the Bud dialog still said "Downloading Bud · Step 1 of 4 · In progress" with "Keep preparing" for over 10 minutes. The person can't tell it stopped | The failed-stage state doesn't reach the dialog | Open (UX packet P1) |
 | 42 | Each retry makes a new runtime folder (`…-99d82954a30c`, `…-179c8de06397`, `…-945983aed8c4`) and adds its `git`/`node`/`bin` folders to the user PATH | Retries never clean up or reuse the failed runtime | Open: reuse or remove the failed attempt's folder and PATH entries |
 | 43 | The service stall logger reported "the service could not answer for 14 s" during Bud setup | A sync call still blocks the event loop somewhere in setup | Open: find the blocking call (the #4 fix covers file privacy only) |
+| 44 | Loading screens said "Opening You…" and "Opening Ask…" (old view names) | Labels in `App.tsx` predate the Workspace/Work rename | **Fixed** (this PR) |
+| 45 | After the failure, Work shows "Connection needs another look: Bud setup changed. Its private readiness check is still needed." The person can't tell what to do | Internal wording ("private readiness check") | Open (UX packet P1) |
+| 46 | On the fixed build (#87), Bud status correctly says "Bud setup stopped" with "Try setup again" after a restart. Before the restart it kept saying "In progress" (#41) | — | Verified (installed device) |
 
 ## Test-rig issues (not product, but they slowed testing)
 
