@@ -948,6 +948,17 @@ describe("a loop's read-only grant (route loop-read)", () => {
     }
   });
 
+  it("lets a loop scroll a list's grid (browser_read all_rows) only on a page the site map calls read-class", () => {
+    const portal = { ...PORTAL, gridScroll: ".e-gridcontent .e-content", readRoutes: ["/customers/tenant"] };
+    const read = (url: string, args: Record<string, unknown>, controls: BrowserPortalControls = portal) =>
+      authorizeBrowserAction(loop(), page("@vom 1\nL1 page", url), "browser_read", { tab_id: 1, ...args }, { portal: controls, rules: RULES }).decision;
+    expect(read("https://portal.example/customers/tenant", { all_rows: true })).toBe("allow");
+    expect(read("https://portal.example/customers/transaction/tenantreceipt", { all_rows: true })).toBe("deny"); // a money page
+    expect(read("https://portal.example/customers/tenant/details", { all_rows: true })).toBe("deny"); // a record page the map does not list as read
+    expect(read("https://portal.example/customers/tenant", { all_rows: true }, PORTAL)).toBe("deny"); // no read routes declared
+    expect(read("https://portal.example/customers/transaction/tenantreceipt", {})).toBe("allow"); // a plain read scrolls nothing
+  });
+
   it("is a narrow route: its grant cannot carry uploads, downloads or submits", () => {
     expect(() => loop({ actions: ["read", "navigate", "download"] })).toThrow(/incomplete or damaged/);
     expect(() => loop({ actions: ["read", "submit"] })).toThrow(/incomplete or damaged/);

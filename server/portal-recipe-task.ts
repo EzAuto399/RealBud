@@ -247,8 +247,10 @@ export async function runPortalReadLoop(input: {
   dispatching.add(grant.id); running.add(grant.id);
   try {
     // No `approve`: the runner refuses anything a person would have to answer.
+    // Only the site map's read pages may have their grid scrolled to load every row.
+    const readRoutes = input.map.routes.filter(route => route.class === "read").map(route => route.path.split("?")[0]);
     return await runPortalRecipes({
-      pack: input.pack, runs: input.runs, account: input.account, grant, threadId: input.threadId, runtime: input.runtime, signal: input.signal,
+      pack: input.pack, runs: input.runs, account: input.account, grant, threadId: input.threadId, runtime: input.runtime, signal: input.signal, readRoutes,
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),

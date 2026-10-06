@@ -17,6 +17,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import type { Desk } from "./desk.ts";
 import { loadPortalRecipePack, loadPortalSiteMap, runPortalReadLoop, type PackLoader, type PortalSiteMap } from "./portal-recipe-task.ts";
+import type { PortalPathStore } from "./portal-path-overrides.ts";
+import type { PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, type PortalRunRequest, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { REI_PARTS, reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
@@ -59,6 +61,8 @@ export interface ReiMorningRefreshDeps {
   workroom?: string;
 }
 
+/** The pack's shipped recipes only: a path learned in Ask is never used by an unattended loop. */
+const shippedRecipes: PackLoader = portal => loadPortalRecipePack(portal, { apply: async (pack: PortalRecipePack) => pack } as unknown as PortalPathStore);
 const notFresh = (stale: readonly string[]) => stale.length ? `Not fresh from REI: ${stale.join(", ")}.` : "";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 let inFlight = false;
@@ -73,7 +77,7 @@ export function createReiMorningRefresh(deps: ReiMorningRefreshDeps) {
     if (!account) return { ok: false, status: "failed", detail: `Save the REI business code (Schedule → Bank reference review → Set up bank imports) before the REI morning refresh can read REI. ${notFresh(staleNow())}`.trim() };
     const browserId = await deps.browserId();
     if (!browserId) return missed(`The work browser isn't open and ready (open it and sign in to REI, or release an earlier browser task that needs recovery), so REI wasn't read. ${SIGN_IN_HOW}`);
-    const [pack, map, today] = await Promise.all([(deps.load ?? loadPortalRecipePack)(PORTAL), (deps.map ?? loadPortalSiteMap)(PORTAL), deps.today()]);
+    const [pack, map, today] = await Promise.all([(deps.load ?? shippedRecipes)(PORTAL), (deps.map ?? loadPortalSiteMap)(PORTAL), deps.today()]);
     const runs = reiMorningRuns(today);
     const needs = portalRecipeGrantNeeds(pack, runs);
     const id = randomUUID(), text = `Read REI Cloud for ${account.marker} this morning: tenants, arrears, owners and tasks due. Read only; nothing in REI changes and nobody is asked.`;

@@ -56,10 +56,10 @@ describe("the loop's read-only grant refuses anything but reading", () => {
     // A recipe that calls itself read but opens a money page, presses Notice or Send, exports or uploads is refused all the same.
     const sneaky = (steps: Array<Record<string, unknown>>) => ({ ...pack, recipes: { ...pack.recipes, sneaky: { kind: "read" as const, tier: [], inputs: [], grantNeeds: [], steps, stopBefore: [] } } });
     const cases: Array<[Array<Record<string, unknown>>, RegExp]> = [
-      [[{ nav: ["Receipts", "Tenant receipts"] }, { read: "table" }], /does not call a read page/],
-      [[{ nav: ["Receipts", "Bulk receipting"] }, { upload: { field: "Load File", file: "x.csv" } }], /does not call a read page/],
+      [[{ nav: ["Receipts", "Tenant"] }, { read: "table" }], /does not call a read page/],
+      [[{ nav: ["Receipts", "Bulk Receipting"] }, { upload: { field: "Load File", file: "x.csv" } }], /does not call a read page/],
       [[{ nav: ["Reports"] }, { download: { label: "Export" } }], /does not call a read page/],
-      [[{ nav: ["Tenants", "Arrears"] }, { click: "Notice" }], /not call read-safe/],
+      [[{ nav: ["Process", "Arrears"] }, { click: "Notice" }], /not call read-safe/],
       [[{ nav: ["Owners"] }, { click: "Send" }], /not call read-safe/],
       [[{ nav: ["Tenants"] }, { download: { label: "Export" } }], /download step/],
       [[{ nav: ["Settings", "Integrations"] }, { read: "table" }], /does not call a read page/],
@@ -167,6 +167,33 @@ describe("the REI morning refresh", () => {
     expect(result.detail).toMatch(/REI signed out part-way\..*Not fresh from REI: arrears, owners\..*Missed: sign in to REI/);
     expect(reiStamps(f.desk).map(([id]) => id)).toEqual(["src-rei-tenants"]);
     expect(f.mock.calls.some(call => call[0] === "request-help")).toBe(false);
+  });
+
+  it("a live-shaped tenants grid (90 rows, more on scroll) is read whole at 106 and 300 rows; the scroll clicks, types and opens nothing", async () => {
+    for (const count of [106, 300]) {
+      const f = await fixture({ ...fictionalBook(count), pageSize: 50, gridBlock: 90 });
+      const result = await f.refresh.run();
+      expect(result.status, `${count}: ${result.detail}`).toBe("completed");
+      expect(reiStamps(f.desk).map(([id]) => id).sort()).toEqual(["src-rei-arrears", "src-rei-owners", "src-rei-tenants"]);
+      expect(f.desk.snapshot().book!.bookProposals.filter(card => card.origin === "rei")).toHaveLength(count);
+      const scrolls = f.mock.calls.filter(call => call[0] === "scroll");
+      expect(scrolls.length).toBeGreaterThanOrEqual(Math.ceil(count / 90) - 1);
+      expect(scrolls.every(call => call.includes("--selector") && call.includes(".e-gridcontent .e-content"))).toBe(true);
+      // While the tenants grid is read and scrolled, nothing is clicked or opened.
+      const start = f.mock.calls.findIndex(call => call[0] === "navigate" && call[1].endsWith("/customers/tenant"));
+      const end = f.mock.calls.findIndex((call, i) => i > start && call[0] === "navigate");
+      expect(f.mock.calls.slice(start + 1, end).filter(call => ["click", "navigate", "upload", "download"].includes(call[0]))).toEqual([]);
+      expect(f.mock.effects).toEqual([]);
+    }
+  });
+
+  it("a grid that stops loading is partial, never fresh", async () => {
+    const f = await fixture({ ...fictionalBook(106), pageSize: 50, gridBlock: 90, gridStallsAt: 95 });
+    const result = await f.refresh.run();
+    expect(result.status).toBe("partial");
+    expect(result.detail).toMatch(/Not read whole this run[^.]*tenants/);
+    expect(reiStamps(f.desk).map(([id]) => id)).not.toContain("src-rei-tenants");
+    expect(f.desk.snapshot().book?.bookProposals ?? []).toEqual([]);
   });
 
   it("two REI tabs open: says so and names the site, never 'not signed in'", async () => {

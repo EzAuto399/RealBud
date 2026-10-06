@@ -16,7 +16,8 @@ const [{ LoopManager }, { Desk }, { BrowserRuntime }, { createReiMorningRefresh 
 
 let now = Number(process.env.REI_CHILD_NOW ?? Date.parse("2026-10-06T07:00:00Z"));
 const clock = () => now;
-const options = {};
+// Live-shaped: the Tenants grid renders 90 rows and loads more as its content scrolls.
+const options = { gridBlock: 90 };
 const mock = portal.fictionalReiPortal(options);
 const runtime = new BrowserRuntime({ root: join(dataDir, "browser"), command: mock.command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
 // After a SIGKILL the helper's saved session lease is still there: browser work waits for the person's release.
@@ -46,7 +47,7 @@ const state = () => {
       owner: p.owner?.name ?? null, differs: p.differs ?? [], rei: p.rei ?? null })),
     proposals: (snap.book?.bookProposals ?? []).map((card) => ({ id: card.id, address: card.address, tenantName: card.tenantName, weeklyRentCents: card.weeklyRentCents, origin: card.origin })),
     issues: (snap.book?.importIssues ?? []).map((issue) => `${issue.kind} ${issue.rawIdentity}`),
-    portal: { observes: count("observe"), borrows: mock.calls.filter((call) => call[0] === "tab" && call[1] === "borrow").length, fills: count("fill"), helpRequests: count("request-help"), effects: [...mock.effects] },
+    portal: { observes: count("observe"), borrows: mock.calls.filter((call) => call[0] === "tab" && call[1] === "borrow").length, fills: count("fill"), scrolls: count("scroll"), clicks: count("click"), helpRequests: count("request-help"), effects: [...mock.effects] },
     memory: process.memoryUsage(),
   };
 };

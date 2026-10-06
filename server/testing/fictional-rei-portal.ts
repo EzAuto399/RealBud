@@ -258,6 +258,8 @@ export interface FictionalReiOptions {
   directoryRows?: (rows: string[][]) => string[][];
   /** Rows the Tenants grid renders at first and adds per scroll of its own content (live REI renders 90; default 4). */
   gridBlock?: number;
+  /** The grid stops loading at this many rows, however far its content scrolls. */
+  gridStallsAt?: number;
   /** Report names for the fictional tenant and supplier exports on the Reports page (rehearses a path learned in the portal). */
   reports?: { tenants?: string; suppliers?: string };
   /** The Suppliers grid and export instead of FICTIONAL_SUPPLIER_LIST (rehearses REI's list changing between checks). */
@@ -505,7 +507,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "scroll") {
       const path = new URL(url).pathname;
       if (args[args.indexOf("--selector") + 1] !== GRID_CONTENT || !["/customers/tenant", "/customers/supplier"].includes(path)) throw new Error("No such element");
-      rendered += block; return { ok: true };
+      // A grid that stops loading (gridStallsAt) scrolls but renders nothing more.
+      rendered = options.gridStallsAt !== undefined ? Math.max(rendered, Math.min(rendered + block, options.gridStallsAt)) : rendered + block; return { ok: true };
     }
     if (args[0] === "fill") { const target = control(args); if (!target.action.startsWith("field:")) throw new Error("Not a field"); setField(target.name, args[args.indexOf("--value") + 1]); return { ok: true }; }
     if (args[0] === "press") { control(args); return { ok: true }; }

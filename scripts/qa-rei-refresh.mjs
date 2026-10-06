@@ -245,8 +245,26 @@ try {
       /Not read whole this run[^.]*tenants/.test(cut.result.detail) && cut.state.stamps["src-rei-tenants"] !== T0 + 48 * H, `${cut.result.status}: ${cut.result.detail}`);
     observe({ firstReadMs: first.result.ms, approve300Ms: approve.result.ms, secondReadMs: second.result.ms, cappedReadMs: cut.result.ms, cappedDetail: cut.result.detail,
       rssMB: { before: mb(base.rss), afterFirst: mb(first.state.memory.rss), afterSecond: mb(second.state.memory.rss) }, heapUsedMB: { before: mb(base.heapUsed), afterFirst: mb(first.state.memory.heapUsed), afterSecond: mb(second.state.memory.heapUsed) },
-      observes: second.state.portal.observes });
+      observes: second.state.portal.observes, scrolls: second.state.portal.scrolls });
     await c.close();
+  });
+
+  await scenario("12", "A live-shaped tenants grid (90 rows first, more as it scrolls): 106 rows read whole; a grid that stops loading is partial", async (check, observe) => {
+    const c = await child("grid106");
+    await c.ask({ op: "book", count: 106 }); await c.ask({ op: "portal", set: { pageSize: 50 } });
+    const whole = await c.ask({ op: "refresh" });
+    check("106 rows read whole after scrolling the grid's own content, every part fresh", whole.result.status === "completed" && whole.state.proposals.length === 106 && whole.state.portal.scrolls >= 1,
+      `${whole.result.status}, ${whole.state.proposals.length} cards, ${whole.state.portal.scrolls} scrolls: ${whole.result.detail}`);
+    await c.close();
+    const d = await child("grid-stalls");
+    await d.ask({ op: "book", count: 106 }); await d.ask({ op: "portal", set: { pageSize: 50, gridStallsAt: 95 } });
+    const stalled = await d.ask({ op: "refresh" });
+    check("a grid that stops loading at 95 of 106 is partial: tenants never stamped, no cards", stalled.result.status === "partial" &&
+      /Not read whole this run[^.]*tenants/.test(stalled.result.detail) && !stalled.state.stamps["src-rei-tenants"] && stalled.state.proposals.length === 0,
+      `${stalled.result.status}, ${stalled.state.portal.scrolls} scrolls: ${stalled.result.detail}`);
+    check("nothing pressed in REI while reading and scrolling", whole.state.portal.effects.length === 0 && stalled.state.portal.effects.length === 0);
+    observe({ wholeMs: whole.result.ms, stalledMs: stalled.result.ms, wholeScrolls: whole.state.portal.scrolls, stalledScrolls: stalled.state.portal.scrolls });
+    await d.close();
   });
 } finally {
   for (const proc of children.splice(0)) if (proc.exitCode === null) proc.kill("SIGKILL");
@@ -263,6 +281,7 @@ try {
       "The person's side (card approval, Desk edits, picks) is simulated by the script.",
       "Timings are on this Mac with no browser; live REI page loads and the helper's observation cap dominate real runs.",
       "Freshness keeps P2/P3's 24-hour window: a missed morning leaves the previous read fresh until it is 24 hours old.",
+      "The grid scroll is main's browser_read all_rows (the pack-declared grid container only); the fictional grid mirrors live REI's 90-row render, not proven against live REI by this script.",
     ],
   };
   mkdirSync(out, { recursive: true });

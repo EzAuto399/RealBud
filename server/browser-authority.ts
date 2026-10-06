@@ -291,6 +291,9 @@ export interface BrowserPortalControls {
   signInHosts: readonly string[];
   /** CSS selector of the portal's lazy grid scroll container: browser_read's all_rows scrolls it on this origin only. */
   gridScroll?: string;
+  /** Paths (no query) the pack's site map calls read-class. Under a loop's read-only grant, browser_read's all_rows
+   * scroll is allowed only on one of them; without the list, a loop never scrolls. */
+  readRoutes?: readonly string[];
 }
 const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
 const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";
@@ -1101,7 +1104,9 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     const routine = classification.class === "routine" && !classification.unusualName && (LOOP_READ_ACTIONS as readonly string[]).includes(classification.action) &&
       grant.actions.includes(classification.action) ? classification : null;
     const tab = routine?.step !== "press" || /^(Shift\+)?Tab$/.test(browserKey(args.key)?.spec ?? "");
-    const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" ||
+    // browser_read's all_rows scrolls the portal's declared grid container (and nothing else): only on a read-class page.
+    const scrollsGrid = routine?.step === "read" && args.all_rows === true;
+    const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" && (!scrollsGrid || !!options.portal?.readRoutes?.includes(url.pathname)) ||
       routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
       (routine.step === "click" || routine.step === "fill" || routine.step === "select" || routine.step === "press") && tab && !!options.portal &&
         browserReadOnlyAction(grant, observation!, tool, args, options.portal));

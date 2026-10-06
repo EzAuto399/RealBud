@@ -108,6 +108,8 @@ export interface PortalRunOptions {
   workroom?: string;
   /** Menu clicks instead of direct routes (for a screen whose route is unknown this happens anyway). */
   menuOnly?: boolean;
+  /** Paths the pack's site map calls read-class (a loop's read): the only pages whose grid a loop may scroll. */
+  readRoutes?: readonly string[];
   pollMs?: number;
   maxWaitReads?: number;
 }
@@ -138,7 +140,7 @@ export function portalRecipeGrantNeeds(pack: PortalRecipePack, runs: PortalRunRe
 /** The pack's declared controls, bound to its origin, for the broker's classifier
  * (server/browser-authority.ts). Menu names come from the pack's screens, never a
  * forbidden area; sign-in hosts are for waiting only. */
-export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalControls {
+export function portalRecipeControls(pack: PortalRecipePack, readRoutes?: readonly string[]): BrowserPortalControls {
   const forbidden = new Set(pack.labels.forbiddenAreas);
   const menu = new Set(pack.screens.flatMap(screen => screen.menu.filter((_, index) => !forbidden.has(screen.menu.slice(0, index + 1).join(" › ")))));
   // The pager's buttons are read-safe only in a pager beside a table (server/browser-authority.ts).
@@ -146,7 +148,8 @@ export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalContr
   return { origin: new URL(pack.origin).origin, readSafe: [...pack.labels.readSafe], menu: [...menu], pagination,
     ...(pack.pagination.landmark ? { pager: { ...pack.pagination.landmark } } : {}), consequential: [...pack.labels.consequential],
     signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker },
-    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}) };
+    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}),
+    ...(readRoutes ? { readRoutes: [...readRoutes] } : {}) };
 }
 
 // ── page model (the helper's VOM text) ───────────────────────────────────
@@ -236,7 +239,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     broker = await startBrowserBroker({
       threadId: options.threadId, runId: grant.runId, grant, runtime: tap.runtime,
       context: { allowedOrigins: grant.sites, capabilities: [] },
-      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack),
+      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack, options.readRoutes),
       ...(options.operations ? { operations: options.operations } : {}), ...(options.approvals ? { approvals: options.approvals } : {}),
       ...(options.rules ? { rules: options.rules } : {}), ...(options.assertCapability ? { assertCapability: options.assertCapability } : {}),
       ...(options.now ? { now: options.now } : {}), ...(options.workroom ? { workroom: options.workroom } : {}),
