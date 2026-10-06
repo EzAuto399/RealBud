@@ -45,7 +45,7 @@ import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
-import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
+import { CONNECTED_APP_APPROVAL, OFFICE_MAIL_SERVER, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
 import { startWebResearchBroker, WEB_RESEARCH_SERVER, type LoopbackToolServer } from "../../web-research-broker.ts";
 import { SIGN_IN_SERVER, startSignInBroker } from "../../browser-sign-in.ts";
@@ -398,6 +398,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               .map(([name, value]) => ({ name, value: String(value) })),
           });
         }
+        const officeMail = turn.integrations?.officeMail;
+        if (officeMail) {
+          // Replaced with its own private broker before session/new or load.
+          servers.push({ type: "http", name: OFFICE_MAIL_SERVER, url: officeMail.url, headers: Object.entries(officeMail.headers).map(([name, value]) => ({ name, value: String(value) })) });
+        }
         const agents = turn.integrations?.agents;
         if (agents) {
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
@@ -436,7 +441,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ...(mcpServers.some(server => server.name === HERMIOS_CRM_SERVER) ? { hermiosScope: hermiosCrm?.scope, hermiosGeneration: hermiosCrm?.generation } : {}),
           ...(composio?.allowedApps ? { allowedApps: composio.allowedApps } : {}),
           ...(composio?.gmailReadOnly ? { gmailReadOnly: composio.gmailReadOnly, appKey: composio.key } : {}),
-          ...(mcpServers.some(server => server.name === "connected-apps") ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
+          ...(mcpServers.some(server => server.name === "connected-apps" || server.name === OFFICE_MAIL_SERVER) ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
         })).digest("hex");
 
       const replayOnFreshSession = (turn: SendTurnInput): SendTurnInput => {
@@ -488,6 +493,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let stderr = "";
         let runtime!: SessionRuntime;
         let appBroker: ConnectedAppsBroker | undefined;
+        let officeMailBroker: ConnectedAppsBroker | undefined;
         let browserBroker: BrowserBroker | undefined;
         let memoryBroker: Awaited<ReturnType<typeof startMemoryProposalBroker>> | undefined;
         let pagesBroker: LoopbackToolServer | undefined;
@@ -555,6 +561,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           modelLease?.revoke();
           browserBroker?.close();
           appBroker?.close();
+          officeMailBroker?.close();
           memoryBroker?.close();
           pagesBroker?.close();
           signInBroker?.close();
@@ -605,6 +612,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (browserBroker) { browserBroker.close(); keepWarm = false; }
           if (steered) keepWarm = false;
           appBroker?.cancelPending();
+          officeMailBroker?.cancelPending();
           memoryBroker?.cancelPending();
           pagesBroker?.cancelPending();
           signInBroker?.cancelPending();
@@ -1045,6 +1053,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (closed) { appBroker.close(); throw new Error("Bud's app session stopped."); }
             mcpServers = mcpServers.map(server => server.name === "connected-apps" ? appBroker!.descriptor : server);
           }
+          if (firstTurn.integrations?.officeMail) {
+            // The office shared mailbox: Gmail only, classified and carded like the person's own.
+            const { key, url, headers, address } = firstTurn.integrations.officeMail;
+            officeMailBroker = await startConnectedAppsBroker({
+              key, url, headers, allowedApps: ["gmail"], managed: true, mailbox: "office", ...(address ? { officeAddress: address } : {}), threadId,
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+              approve: reviewOnce,
+            });
+            if (closed) { officeMailBroker.close(); throw new Error("Bud's app session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === OFFICE_MAIL_SERVER ? officeMailBroker!.descriptor : server);
+          }
           if (mcpServers.some(server => server.name === WEB_RESEARCH_SERVER)) {
             // Bounded public page reads, no approval card; receipts name the host only.
             pagesBroker = await startWebResearchBroker({
@@ -1252,6 +1271,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           modelLease?.revoke();
           browserBroker?.close();
           appBroker?.cancelPending();
+          officeMailBroker?.cancelPending();
           memoryBroker?.cancelPending();
           pagesBroker?.cancelPending();
           signInBroker?.cancelPending();

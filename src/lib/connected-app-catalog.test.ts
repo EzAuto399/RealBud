@@ -37,6 +37,19 @@ describe('app discovery uses observed connection authority', () => {
     expect(connectedAppCatalog(status, options).find(app => app.slug === 'gmail')?.action).toBeNull();
   });
 
+  it('mailbox mode both shows your own Gmail and the office shared Gmail as separate, labelled entries', () => {
+    const status = snapshot(); status.mailboxMode = 'both'; status.services.gmail = service(true);
+    let catalog = connectedAppCatalog(status, options);
+    expect(catalog.find(app => app.slug === 'gmail')).toMatchObject({ label: 'Your Gmail', connected: true });
+    expect(catalog.find(app => app.slug === 'gmail-office')).toMatchObject({ label: 'Office shared Gmail', connected: false, status: 'Not allowed on this computer', action: null });
+    status.officeShared = service(true);
+    catalog = connectedAppCatalog(status, options);
+    expect(catalog.find(app => app.slug === 'gmail-office')).toMatchObject({ connected: true, status: 'Ready', action: null });
+    status.mailboxMode = 'personal';
+    expect(connectedAppCatalog(status, options).some(app => app.slug === 'gmail-office')).toBe(false);
+    expect(connectedAppCatalog(status, options).find(app => app.slug === 'gmail')?.label).toBe('Gmail');
+  });
+
   it('does not offer repeated sign-in for pending, excluded or connected apps', () => {
     const status = snapshot(); status.services.gmail.status = 'PENDING'; status.services.slack = service(true); status.services.xero = service(); status.excludedApps = ['xero'];
     const catalog = connectedAppCatalog(status, options);

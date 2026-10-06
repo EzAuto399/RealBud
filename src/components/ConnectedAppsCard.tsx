@@ -11,7 +11,7 @@ import {
   type ConnectedAppOperation, type EmailApp,
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
-import { appConnectionPrompt, connectedAppCatalog, filterConnectedAppCatalog, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
+import { appConnectionPrompt, connectedAppCatalog, filterConnectedAppCatalog, OFFICE_GMAIL_SLUG, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
 import { useHermiosConnection, type HermiosConnectionControls } from "@/lib/hermios-connection-api";
 import { useConnector, type ConnectorControls } from "@/lib/redbark-connection-api";
 import { useConnectorRegistry } from "@/lib/mcp-connector-api";
@@ -330,17 +330,17 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
           {visibleApps.map(app => {
             if (app.featured) return <HermiosFeaturedTile key={app.slug} app={app} controls={hermios} disabled={Boolean(DESIGN_PREVIEW_REASON) || !state.connected} onOpenDesk={onOpenDesk ?? (() => dispatch({ type: "showDesk" }))} />;
             if (app.slug === REDBARK_APP_SLUG) return <BankFeedTile key={app.slug} app={app} controls={bankFeed} disabled={Boolean(DESIGN_PREVIEW_REASON) || !state.connected} />;
-            const service = snapshot?.services[app.slug];
+            const service = app.slug === OFFICE_GMAIL_SLUG ? snapshot?.officeShared : snapshot?.services[app.slug];
             const accounts = activeConnectedAccounts(service);
             return <li key={app.slug} className="flex min-w-0 flex-col rounded-xl border border-line bg-sheet p-3" data-app-slug={app.slug}>
               <div className="flex items-start gap-3">
-                <AppMark slug={app.slug} />
+                <AppMark slug={app.slug === OFFICE_GMAIL_SLUG ? 'gmail' : app.slug} />
                 <div className="min-w-0 flex-1"><h4 className="break-words text-[13px] font-medium text-ink">{app.label}</h4><p className="text-[11.5px] text-ink-muted">{app.category}</p></div>
               </div>
               <p className="mt-2 text-[12.5px] text-ink-secondary">{app.purpose}</p>
               <p className="mt-2 text-[12px] font-medium text-ink">{app.connected ? `Connected · ${app.status}` : app.status}</p>
               {app.connected && accounts.length > 0 && <ul className="mt-1 space-y-1 text-[12px] text-ink-secondary" aria-label={`${app.label} connected accounts`}>{accounts.map((account, index) => <li key={account.id} className="break-words">{account.label || `Connected account ${index + 1}`}</li>)}</ul>}
-              {app.slug === 'gmail' && sharedMail && <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">{app.detail}</p>}
+              {((app.slug === 'gmail' && (sharedMail || snapshot?.mailboxMode === 'both')) || app.slug === OFFICE_GMAIL_SLUG) && <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">{app.detail}</p>}
               {app.action && <button type="button" className={`${control} mt-3 self-start`} disabled={!canConnect} aria-label={app.action === 'find' ? `Find ${app.label} connection` : `Connect ${app.label}`} onClick={() => askConnect(app.label)}>
                 {connecting === app.label ? 'Starting…' : app.action === 'find' ? 'Find connection' : `Connect ${app.label}`}
               </button>}
@@ -356,7 +356,8 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
 
       {configured ? (
         <div className="mt-4 space-y-4">
-          {snapshot?.sourceKind === "personal" && <p className="text-sm text-ink-secondary">Personal Gmail for this desktop.</p>}
+          {snapshot?.mailboxMode === "both" ? <p className="text-sm text-ink-secondary">Your own Gmail, plus the office shared Gmail when the owner allows this computer. Say which mailbox you mean; Bud asks when it isn't clear.</p>
+            : snapshot?.sourceKind === "personal" && <p className="text-sm text-ink-secondary">Personal Gmail for this desktop.</p>}
           {sharedMail && <p className="text-sm text-ink-secondary">{snapshot?.services.gmail?.connected ? 'Office shared Gmail is connected for this desktop. No additional sign-in is needed.' : 'The office shared Gmail is not available. Ask the office owner to connect it, then check access again.'}</p>}
 
           {!readOnly ? (

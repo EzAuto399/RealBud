@@ -233,3 +233,117 @@ test('shared mailbox full access: read-only by default, owner-only versioned gra
     await assert.rejects(() => s.call('policy', { ...grant, expectedRevision: 8 }), /office_mailbox_shared_required/);
   } finally { s.f.close(); }
 });
+test('unfinished Google consent: verify says which step applies, and a lapsed link is replaced only when its account never connected',async()=>{
+  let status='INITIATED';
+  const s=setup({access:async(binding)=>({checkedAt:'',services:{gmail:{connected:status==='ACTIVE',status,accounts:[{id:binding.accountId!,status}],accountSelectionRequired:false}},tools:{available:false,names:[]}})});
+  try{
+    await s.call('policy',{mode:'shared',expectedRevision:0});await s.call('authorize',{expectedRevision:1});
+    // The live case: link issued, Google sign-in not finished (Composio INITIATED).
+    await assert.rejects(()=>s.call('verify',{expectedRevision:1}),/office_mailbox_consent_pending/);
+    assert.equal((await s.call('status') as {state:string}).state,'pending');
+    // A still-valid link is handed back, never a second provider link.
+    await s.call('authorize',{expectedRevision:1});assert.equal(s.connects(),1);
+    status='EXPIRED';await assert.rejects(()=>s.call('verify',{expectedRevision:1}),/office_mailbox_link_expired/);
+    // Expired by time while still INITIATED: same next step.
+    status='INITIATED';s.f.setTime(s.f.now()+120_000);await assert.rejects(()=>s.call('verify',{expectedRevision:1}),/office_mailbox_link_expired/);
+    // Lapsed link whose account did connect: verify it instead of issuing another.
+    status='ACTIVE';await assert.rejects(()=>s.call('authorize',{expectedRevision:1}),/office_mailbox_verify_required/);assert.equal(s.connects(),1);
+    // Lapsed and never connected: one fresh link, journaled, same revision.
+    status='INITIATED';const fresh=await s.call('authorize',{expectedRevision:1}) as {revision:number};assert.equal(s.connects(),2);assert.equal(fresh.revision,1);
+    assert.equal(s.f.ledger.db.all<{kind:string}>('SELECT kind FROM events WHERE kind=?','office_mailbox_link_replaced').length,1);
+    status='ACTIVE';const review=await s.call('verify',{expectedRevision:1}) as {state:string};assert.equal(review.state,'review');
+  }finally{s.f.close();}
+});
+test('a provider that cannot answer keeps a lapsed shared link on hold',async()=>{
+  const s=setup();try{
+    await s.call('policy',{mode:'shared',expectedRevision:0});await s.call('authorize',{expectedRevision:1});s.f.setTime(s.f.now()+120_000);
+    s.options.access=async()=>{throw new Error('provider unavailable');};
+    await assert.rejects(()=>s.call('authorize',{expectedRevision:1}),/office_mailbox_link_needs_recovery/);assert.equal(s.connects(),1);
+  }finally{s.f.close();}
+});
+test('both mode: own Gmail per computer, office mailbox only on a granted computer and only when selected',async()=>{
+  const s=setup();try{
+    await s.shared();const company=s.f.tenant.companyId,office=s.broker.officeMailbox.binding(s.base)!.accountId!;
+    // shared -> both keeps the confirmed mailbox, its grants and full access; every desktop re-reviews.
+    const both=await s.call('policy',{mode:'both',expectedRevision:4}) as {mode:string;revision:number;state:string;installations:{installationId:string;allowed:boolean}[]};
+    assert.equal(both.mode,'both');assert.equal(both.revision,5);assert.equal(both.state,'ready');
+    assert.deepEqual(both.installations.filter(i=>i.allowed).map(i=>i.installationId),['desktop-a']);
+    await assert.rejects(()=>s.request(s.a.token,'/v1/connectors/mcp',{jsonrpc:'2.0',id:1,method:'initialize'},undefined,4),/office_mailbox_review_required/);
+    // A person's own Gmail connects again (refused only in shared).
+    s.set(s.getDevices().map(d=>d.id==='b'?{...d,accountId:undefined}:d));
+    assert.equal(((await s.request(s.b.token,'/v1/connectors/authorize',{app:'gmail'})).body as {url:string}).url,'https://connect.example.invalid/oauth');assert.equal(s.seen.at(-1),'staff-b');
+    // Status: own mailbox by default, the office mailbox beside it on the granted computer only.
+    const granted=(await s.request()).body as {sourceKind:string;mailboxMode:string;services:{gmail:{accounts:{id:string}[]}};officeShared:{connected:boolean;accounts:{id:string}[]};mailboxAccess:string;officeMailboxAccess:string};
+    assert.equal(granted.sourceKind,'personal');assert.equal(granted.mailboxMode,'both');assert.equal(granted.services.gmail.accounts[0]!.id,'personal-a');
+    assert.equal(granted.officeShared.connected,true);assert.equal(granted.officeShared.accounts[0]!.id,office);assert.equal((granted.officeShared.accounts[0] as {label?:string}).label,'office@example.invalid');assert.equal(granted.mailboxAccess,'full');assert.equal(granted.officeMailboxAccess,'read_only');
+    const ungranted=(await s.request(s.b.token)).body as typeof granted;assert.equal(ungranted.officeShared.connected,false);assert.deepEqual(ungranted.officeShared.accounts,[]);assert.ok(!JSON.stringify(ungranted).includes(office));
+    // MCP: default is the person's own mailbox; the office one needs the selection and the grant.
+    const used:string[]=[];s.options.transport=(binding)=>({async request(method){used.push(binding.accountId!);return method==='tools/list'?{tools:[{name:'GMAIL_LIST_THREADS',description:'List threads'}]}:{};}});
+    const own=await s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:5,body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal});
+    const shared=await s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:5,mailbox:'office',body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal});
+    assert.deepEqual(used,['personal-a',office]);
+    const list=async(session:string|undefined,mailbox?:'office')=>((await s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:5,session,...(mailbox?{mailbox}:{}),body:{jsonrpc:'2.0',id:2,method:'tools/list'},signal:new AbortController().signal})).body as {result:{tools:{description:string}[]}}).result.tools[0]!.description;
+    assert.match(await list(own.session),/^Your own Gmail/);assert.match(await list(shared.session,'office'),/^Office shared Gmail/);
+    // A session is pinned to its mailbox: the other selection cannot reuse it.
+    await assert.rejects(()=>list(own.session,'office'),/session_expired/);
+    await assert.rejects(()=>s.broker.handle({token:s.b.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:5,mailbox:'office',body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal}),/office_mailbox_desktop_denied/);
+    // A saved scan names its account: the office account routes to the office mailbox (grant still required).
+    let scanned='';s.options.scan=async(binding)=>{scanned=binding.accountId!;return {} as never;};
+    const scope={windowStartAt:s.f.now()-60000,windowEndAt:s.f.now(),includeSent:true,maxMessages:20,carryThreadIds:[]};
+    await s.request(s.a.token,'/v1/connectors/mail-scan',{expectedAccountId:office,scope});assert.equal(scanned,office);
+    await s.request(s.a.token,'/v1/connectors/mail-scan',{expectedAccountId:'personal-a',scope});assert.equal(scanned,'personal-a');
+    await assert.rejects(()=>s.request(s.b.token,'/v1/connectors/mail-scan',{expectedAccountId:office,scope}),/office_mailbox_desktop_denied/);
+    assert.equal(s.broker.officeMailbox.mailboxAccess(company,'personal'),'full');
+    // both -> personal starts the office mailbox over; personal refuses an office selection.
+    await s.call('policy',{mode:'personal',expectedRevision:5});
+    await assert.rejects(()=>s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:6,mailbox:'office',body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal}),/office_mailbox_shared_required/);
+    const back=await s.call('policy',{mode:'both',expectedRevision:6}) as {state:string;installations:{allowed:boolean}[]};
+    assert.equal(back.state,'pending');assert.ok(back.installations.every(i=>!i.allowed));
+    await assert.rejects(()=>s.call('policy',{mode:'office',expectedRevision:7}),/invalid_mailbox_mode/);
+  }finally{s.f.close();}
+});
+test('mailbox route failures log the operation and code only',async()=>{
+  const s=setup();const server=createGatewayServer({connectors:s.broker,allowedOrigins:new Set(),portal:{async authenticate(){return s.f.owner;}}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/portal/mailbox`;
+  const logged:string[]=[],warn=console.warn;console.warn=(line:string)=>{logged.push(line);};
+  try{
+    const post=(suffix:string,body:unknown)=>fetch(base+suffix,{method:'POST',headers:{authorization:'Bearer owner-fictional-token-00000000000000','content-type':'application/json'},body:JSON.stringify(body)});
+    await post('/policy',{mode:'shared',expectedRevision:0});await post('/authorize',{expectedRevision:1});
+    s.options.access=async(binding)=>({checkedAt:'',services:{gmail:{connected:false,status:'INITIATED',accounts:[{id:binding.accountId!,status:'INITIATED'}],accountSelectionRequired:false}},tools:{available:false,names:[]}});
+    const res=await post('/verify',{expectedRevision:1});assert.equal(res.status,409);assert.deepEqual(await res.json(),{error:'office_mailbox_consent_pending'});
+    assert.deepEqual(logged.map(line=>JSON.parse(line)),[{officeMailbox:'verify',error:'office_mailbox_consent_pending'}]);
+  }finally{console.warn=warn;server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));s.f.close();}
+});
+test('two owner authorizes racing on a lapsed link: one fresh link, the other a clear 409',async()=>{
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});let waiting=0,arrived!:()=>void;const both=new Promise<void>(resolve=>{arrived=resolve;});
+  const s=setup({access:async(binding)=>{if(++waiting===2)arrived();await gate;return {checkedAt:'',services:{gmail:{connected:false,status:'INITIATED',accounts:[{id:binding.accountId!,status:'INITIATED'}],accountSelectionRequired:false}},tools:{available:false,names:[]}};}});
+  try{
+    await s.call('policy',{mode:'shared',expectedRevision:0});await s.call('authorize',{expectedRevision:1});s.f.setTime(s.f.now()+120_000);
+    const first=s.call('authorize',{expectedRevision:1}),second=s.call('authorize',{expectedRevision:1});await both;release();
+    const results=await Promise.allSettled([first,second]);
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    const refused=results.find(r=>r.status==='rejected') as PromiseRejectedResult;assert.match(String(refused.reason?.code??refused.reason),/office_mailbox_link_in_progress/);
+    assert.equal(s.connects(),2);assert.equal(s.f.ledger.db.all<{kind:string}>('SELECT kind FROM events WHERE kind=?','office_mailbox_link_replaced').length,1);
+  }finally{s.f.close();}
+});
+test('shared mode refuses a request that asks for the personal mailbox instead of using the office one',async()=>{
+  const s=setup();try{
+    await s.shared();
+    await assert.rejects(()=>s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:4,mailbox:'personal',body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal}),/office_mailbox_personal_not_allowed/);
+    assert.equal(s.broker.officeMailbox.source(s.f.tenant.companyId),'office');
+  }finally{s.f.close();}
+});
+test('both mode: revoking a computer ends its office access (shared -> both -> revoke) and leaves its own Gmail',async()=>{
+  const s=setup();try{
+    await s.shared();await s.call('policy',{mode:'both',expectedRevision:4});
+    const mcp=(revision:number,mailbox?:'office')=>s.broker.handle({token:s.a.token,profile:'property',method:'POST',path:'/v1/connectors/mcp',policyRevision:revision,...(mailbox?{mailbox}:{}),body:{jsonrpc:'2.0',id:1,method:'initialize'},signal:new AbortController().signal});
+    await mcp(5,'office');
+    const revoked=await s.call('grants',{expectedRevision:5,installationId:'desktop-a',allowed:false}) as {installations:{installationId:string;allowed:boolean}[]};
+    assert.ok(revoked.installations.every(i=>!i.allowed));
+    await assert.rejects(()=>mcp(5,'office'),/office_mailbox_review_required/);
+    await assert.rejects(()=>mcp(6,'office'),/office_mailbox_desktop_denied/);
+    const status=(await s.request()).body as {officeShared:{connected:boolean;accounts:unknown[]};services:{gmail:{accounts:{id:string}[]}}};
+    assert.equal(status.officeShared.connected,false);assert.deepEqual(status.officeShared.accounts,[]);assert.equal(status.services.gmail.accounts[0]!.id,'personal-a');
+    await mcp(6);
+  }finally{s.f.close();}
+});

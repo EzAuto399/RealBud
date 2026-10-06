@@ -5,7 +5,7 @@
  * policy (`gmailToolkit`). Any other Composio toolkit is admitted on demand
  * into the office's own project (see `admitApp`). Do not turn this into an
  * arbitrary HTTP proxy: every upstream call is one of the bounded adapters'. */
-import { OfficeMailbox } from './office-mailbox.ts';
+import { OfficeMailbox, type MailboxSource } from './office-mailbox.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { GatewayError, canonical, exact, id, integer, object, requireThat } from './contracts.ts';
@@ -100,6 +100,11 @@ export interface ConnectorOptions {
   apps?: ComposioAppAdapter;
 }
 const TOOL_CACHE_TTL_MS = 10 * 60_000, TOOL_CACHE_MAX = 256;
+/** Prefix each listed tool's description (tool names and calls are unchanged). */
+const labelled = (transport: Transport, label: string): Transport => !label ? transport : { async request(method, params, signal) {
+  const result = await transport.request(method, params, signal);
+  return method === 'tools/list' && Array.isArray(result?.tools) ? { ...result, tools: result.tools.map((tool: Record<string, unknown>) => ({ ...tool, description: label + String(tool.description ?? '') })) } : result;
+} };
 export class ManagedConnectors {
   readonly officeMailbox: OfficeMailbox;
   private readonly sessions = new Map<string, Session>();
@@ -121,9 +126,9 @@ export class ManagedConnectors {
   }
   /** The binding fingerprint a session is pinned to. The apps allowlist is left
    * out on purpose: connecting another app must not break sessions in flight. */
-  private fingerprint(device: ConnectorDevice): string {
+  private fingerprint(device: ConnectorDevice, source: MailboxSource): string {
     const { apps: _apps, ...pinned } = device;
-    return hash(this.officeMailbox.fingerprint(pinned as ConnectorDevice));
+    return hash(this.officeMailbox.fingerprint(pinned as ConnectorDevice) + source);
   }
   private current(token: string, profile: string): ConnectorDevice {
     requireThat(TOKEN.test(token), 'connector_unauthenticated', 401);
@@ -148,8 +153,8 @@ export class ManagedConnectors {
     requireThat(typeof apiKey === 'string' && /^ak_[A-Za-z0-9_-]{5,1000}$/.test(apiKey), 'connector_not_configured', 503);
     return apiKey;
   }
-  private binding(device: ConnectorDevice): GmailReadOnlyBinding {
-    const shared = this.officeMailbox.binding(device); if (shared) return shared;
+  private binding(device: ConnectorDevice, source?: MailboxSource): GmailReadOnlyBinding {
+    const shared = this.officeMailbox.binding(device, source); if (shared) return shared;
     const binding: GmailReadOnlyBinding = { apiKey: this.projectKey(device), authConfigId: device.authConfigId, userId: device.userId, accountId: device.accountId, acceptComposioManagedScopes: true };
     const saved = this.link(device);
     if (!binding.accountId && saved?.state === 'ready' && saved.result) {
@@ -402,17 +407,22 @@ export class ManagedConnectors {
    * full-toolkit transport plus one generic adapter per other connected app.
    * Tool names route by namespace; a blocked class is refused here as well as
    * on the desktop, and no tool outside an admitted, connected app is reachable. */
-  private async compositeTransport(device: ConnectorDevice, assertAuthority: () => void, signal: AbortSignal): Promise<Transport> {
+  private async compositeTransport(device: ConnectorDevice, assertAuthority: () => void, signal: AbortSignal, source: MailboxSource): Promise<Transport> {
     // Gmail's binding (shared-mailbox grant included) is resolved and refused
     // here, whatever other apps the device carries. A member's own mailbox gets
     // the full toolkit (owner decision 2026-10-02). An office's shared mailbox
     // stays on the three bounded reads it was granted until the owner accepts
     // the versioned full-access grant (OfficeMailbox.mailboxAccess); the grant
     // moves the policy revision and so the session fingerprint.
-    const readOnly = this.officeMailbox.mailboxAccess(device.companyId) === 'read_only';
-    const gmail = appsOf(device).includes('gmail') ? (this.options.transport ?? (readOnly ? createGmailReadOnlyTransport : (binding: GmailReadOnlyBinding) => this.gmailToolkit(binding)))({ ...this.binding(device), assertAuthority }) : undefined;
+    const readOnly = this.officeMailbox.mailboxAccess(device.companyId, source) === 'read_only';
+    const gmail = appsOf(device).includes('gmail') ? labelled((this.options.transport ?? (readOnly ? createGmailReadOnlyTransport : (binding: GmailReadOnlyBinding) => this.gmailToolkit(binding)))({ ...this.binding(device, source), assertAuthority }),
+      // With both mailboxes in use, every Gmail tool says which mailbox it acts on.
+      this.officeMailbox.policy(device.companyId).mode === 'both' ? (source === 'office' ? 'Office shared Gmail, not the person\'s own: use it only when they ask for the office mailbox; if unclear, ask which mailbox first. '
+        : 'Your own Gmail, not the office shared mailbox. If a mail request does not say which mailbox, ask which one first. ') : '') : undefined;
     const others = new Map<string, { binding: AppBinding; tools: AppTool[] }>();
-    for (const app of appsOf(device).filter(app => app !== 'gmail')) {
+    // An office-mailbox session in `both` carries only that mailbox; the person's
+    // other apps stay on their own session.
+    for (const app of source === 'office' && this.officeMailbox.policy(device.companyId).mode === 'both' ? [] : appsOf(device).filter(app => app !== 'gmail')) {
       const status = await this.appStatus(device, app, signal, assertAuthority);
       if (status.service.connected && status.binding) others.set(app, { binding: status.binding, tools: status.tools });
     }
@@ -455,12 +465,18 @@ export class ManagedConnectors {
     } };
   }
 
-  async handle(input: { token: string; profile: string; method: string; path: string; body?: unknown; session?: string; policyRevision?: number; signal: AbortSignal }): Promise<ConnectorResponse> {
+  async handle(input: { token: string; profile: string; method: string; path: string; body?: unknown; session?: string; policyRevision?: number; mailbox?: MailboxSource; signal: AbortSignal }): Promise<ConnectorResponse> {
     let device = this.current(input.token, input.profile); const now = this.options.ledger.now();
     const policy=this.officeMailbox.policy(device.companyId);
     if (input.path !== '/v1/connectors/status' && input.path !== '/v1/connectors/authorize') {
       requireThat((policy.mode === 'personal' && policy.revision === 0 && input.policyRevision === undefined) || input.policyRevision === policy.revision, 'office_mailbox_review_required', 409);
     }
+    // Which mailbox this request uses. In `both` the office mailbox is chosen only
+    // by an explicit selection (MCP) or its exact confirmed account (saved
+    // workflows); `binding` still requires this computer's grant.
+    const named = input.body && typeof input.body === 'object' ? (input.body as Record<string, unknown>)[input.path === '/v1/connectors/mail-scan' ? 'expectedAccountId' : 'accountId'] : undefined;
+    const source = this.officeMailbox.source(device.companyId, input.mailbox ??
+      (['/v1/connectors/mail-scan', '/v1/connectors/mail-attachment'].includes(input.path) && this.officeMailbox.isOfficeAccount(device.companyId, named) ? 'office' : undefined));
     // Only bounded read/connection operations are admitted. No caller may choose
     // the upstream URL, project key, provider user or connected account.
     for (const [key, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(key);
@@ -468,15 +484,15 @@ export class ManagedConnectors {
     const rate = this.rates.get(device.id) ?? { starts: now, count: 0 };
     requireThat(rate.count < 120, 'connector_rate_limited', 429); rate.count++; this.rates.set(device.id, rate);
     requireThat(!this.inflight.has(device.id), 'connector_busy', 409); this.inflight.add(device.id);
-    let fingerprint = this.fingerprint(device);
-    const current = () => { input.signal.throwIfAborted(); requireThat(this.fingerprint(this.current(input.token, input.profile)) === fingerprint, 'connector_binding_changed', 409); };
+    let fingerprint = this.fingerprint(device, source);
+    const current = () => { input.signal.throwIfAborted(); requireThat(this.fingerprint(this.current(input.token, input.profile), source) === fingerprint, 'connector_binding_changed', 409); };
     try {
       if (input.path === '/v1/connectors/mail-attachment' && input.method === 'POST') {
-        const source=parseSourceAttachmentRequest(input.body);this.admit(device,'gmail');
-        const binding=this.binding(device);
-        const assertAuthority=()=>{current();requireThat(this.binding(this.current(input.token,input.profile)).accountId===source.accountId,'mail_attachment_account_binding_changed',409);};
-        requireThat(binding.accountId===source.accountId,'mail_attachment_account_binding_changed',409);assertAuthority();
-        const result=await(this.options.attachment??readGmailPdfAttachment)({...binding,assertAuthority},source,input.signal);
+        const attachment=parseSourceAttachmentRequest(input.body),mailbox=source;this.admit(device,'gmail');
+        const binding=this.binding(device,mailbox);
+        const assertAuthority=()=>{current();requireThat(this.binding(this.current(input.token,input.profile),mailbox).accountId===attachment.accountId,'mail_attachment_account_binding_changed',409);};
+        requireThat(binding.accountId===attachment.accountId,'mail_attachment_account_binding_changed',409);assertAuthority();
+        const result=await(this.options.attachment??readGmailPdfAttachment)({...binding,assertAuthority},attachment,input.signal);
         assertAuthority();return {status:200,body:result};
       }
       if (input.path === '/v1/connectors/mail-scan' && input.method === 'POST') {
@@ -490,12 +506,12 @@ export class ManagedConnectors {
         let request;
         try { request = parseMailScanRequest(input.body.scope, now); } catch { throw new GatewayError('invalid_mail_scan_request', 400); }
         this.admit(device, 'gmail');
-        const binding = this.binding(device);
+        const binding = this.binding(device, source);
         const assertScanAuthority = () => {
           current();
           // Include account selection restored from connector_links, which can
           // change independently of the device registry fingerprint.
-          requireThat(this.binding(this.current(input.token, input.profile)).accountId === expectedAccountId, 'mail_scan_account_binding_changed', 409);
+          requireThat(this.binding(this.current(input.token, input.profile), source).accountId === expectedAccountId, 'mail_scan_account_binding_changed', 409);
         };
         requireThat(binding.accountId === expectedAccountId, 'mail_scan_account_binding_changed', 409);
         assertScanAuthority();
@@ -503,14 +519,25 @@ export class ManagedConnectors {
         assertScanAuthority(); return { status: 200, body: result };
       }
       if (input.path === '/v1/connectors/status' && input.method === 'GET') {
-        const services: Record<string, ServiceStatus> = {}; const names: string[] = [];
+        const services: Record<string, ServiceStatus> = {}; const names: string[] = []; let officeShared: ServiceStatus | undefined;
         if (appsOf(device).includes('gmail')) {
           const policy = this.officeMailbox.policy(device.companyId);
           const result = policy.mode === 'shared' && !this.officeMailbox.readyForDevice(device)
             ? { services: { gmail: NOT_CONNECTED }, tools: { available: false, names: [] as string[] } }
-            : await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device), assertAuthority: current });
+            : await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device, source), assertAuthority: current });
           current();
           services.gmail = { ...result.services.gmail!, accountSelectionRequired: false } as ServiceStatus; names.push(...result.tools.names);
+          if (policy.mode === 'both') {
+            // The office mailbox, beside the person's own: only on a granted
+            // computer is it read; otherwise it is plainly not connected.
+            const office = this.officeMailbox.readyForDevice(device)
+              ? (await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device, 'office'), assertAuthority: current })).services.gmail ?? NOT_CONNECTED
+              : NOT_CONNECTED;
+            current();
+            // The label is the office's confirmed address, never a provider alias: approval cards name it.
+            const address = this.officeMailbox.confirmedAddress(device.companyId);
+            officeShared = { ...office, accounts: office.accounts.map(account => { const { label: _alias, ...rest } = account; return address ? { ...rest, label: address } : rest; }), accountSelectionRequired: false } as ServiceStatus;
+          }
         }
         for (const app of appsOf(device).filter(app => app !== 'gmail')) {
           const status = await this.appStatus(device, app, input.signal, current);
@@ -518,7 +545,10 @@ export class ManagedConnectors {
         }
         current();
         return { status: 200, body: { checkedAt: new Date(now).toISOString(), services, tools: { available: names.length > 0, names },
-          sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true,
+          // `sourceKind` names the default mailbox (an older desktop reads `both` as personal);
+          // `mailboxMode` and `officeShared` add the office mailbox beside it.
+          sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true, mailboxMode: policy.mode,
+          ...(officeShared ? { officeShared, officeMailboxAccess: this.officeMailbox.mailboxAccess(device.companyId, 'office') } : {}),
           // Lets the desktop say "the owner must enable this" instead of showing a send card the gateway would refuse.
           ...(appsOf(device).includes('gmail') ? { mailboxAccess: this.officeMailbox.mailboxAccess(device.companyId) } : {}), apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
       }
@@ -570,13 +600,14 @@ export class ManagedConnectors {
           this.options.ledger.db.run('UPDATE connector_app_links SET state=?,result=? WHERE device=? AND app=?', 'ready', JSON.stringify(result), device.id, app);
           current(); return { status: 200, body: { url: result.url } };
         }
-        requireThat(this.officeMailbox.policy(device.companyId).mode === 'personal', 'office_mailbox_owner_authorization_required', 403);
+        // Only a shared-only office refuses a person's own Gmail; `both` allows it.
+        requireThat(this.officeMailbox.policy(device.companyId).mode !== 'shared', 'office_mailbox_owner_authorization_required', 403);
         this.admit(device, app);
         // A device still on a Gmail config nobody could connect moves to the
         // office's current one before any link is read or issued.
         if (await this.rebindGmail(device, current)) {
           device = this.current(input.token, input.profile);
-          fingerprint = this.fingerprint(device);
+          fingerprint = this.fingerprint(device, source);
           this.admit(device, app);
         }
         const existing = this.link(device);
@@ -634,9 +665,9 @@ export class ManagedConnectors {
         // Do not capture this HTTP request's abort signal in a multi-request
         // session. Revalidate the live device/tenant before each adapter request.
         const assertAuthority = () => {
-          requireThat(this.fingerprint(this.current(input.token, input.profile)) === fingerprint, 'connector_binding_changed', 409);
+          requireThat(this.fingerprint(this.current(input.token, input.profile), source) === fingerprint, 'connector_binding_changed', 409);
         };
-        const transport = await this.compositeTransport(device, assertAuthority, input.signal);
+        const transport = await this.compositeTransport(device, assertAuthority, input.signal, source);
         const result = await transport.request('initialize', message.params, input.signal); current();
         const key = randomBytes(32).toString('hex');
         this.sessions.set(key, { device: device.id, fingerprint, expiresAt: now + 5 * 60_000, transport, busy: false, calls: 0 });
