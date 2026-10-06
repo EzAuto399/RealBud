@@ -35,6 +35,20 @@ describe('private workspace saved views', () => {
     expect(await chosen.handler.simpleDeskIfNeverCustomized()).toBe(false);
     expect((await chosen.read()).state!.desk.sections).toEqual(defaultDeskSections());
   });
+  it('adds Get started once to an untouched automatic simple desk from before it existed', async () => {
+    const old = await fixture();
+    const legacy = defaultDeskSections().map(section => ({ ...section, visible: section.id === 'brief' || section.id === 'queue' }));
+    expect((await old.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: legacy } }))?.status).toBe(200);
+    expect(await old.handler.addGetStartedToAutomaticSimpleDesk()).toBe(true);
+    expect((await old.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort()).toEqual(['brief', 'go-live', 'queue']);
+    expect(await old.handler.addGetStartedToAutomaticSimpleDesk()).toBe(false);
+    // A person's own layout is never changed.
+    const chosen = await fixture();
+    const own = defaultDeskSections().map(section => ({ ...section, visible: section.id !== 'go-live' }));
+    expect((await chosen.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: own } }))?.status).toBe(200);
+    expect(await chosen.handler.addGetStartedToAutomaticSimpleDesk()).toBe(false);
+    expect((await chosen.read()).state!.desk.sections).toEqual(own);
+  });
   it('persists a mail filter as a private shortcut without executable settings or source access', async () => {
     const a = await fixture();
     const mail = { ...tab, label: 'Mail waiting', view: { kind: 'mail', filter: 'waiting' } };

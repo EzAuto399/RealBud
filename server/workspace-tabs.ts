@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseShellLayout, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { DESK_SECTION_IDS, MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseShellLayout, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 
@@ -69,6 +69,20 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
         const current = await read();
         if (!current.state || current.state.revision !== 0 || current.state.history.length) return false;
         const revision = 1;
+        await save({ ...current.state, revision, ...withDesk(current.state, revision, simpleDeskSections()) });
+        return true;
+      });
+    },
+    /** Computers linked before "Get started" existed got the automatic simple
+     * desk without it (brief + Needs you only). Untouched since, that layout
+     * was never a person's choice, so it gains Get started once. Any later
+     * save, restore or reset leaves the layout alone. Returns whether it applied. */
+    async addGetStartedToAutomaticSimpleDesk(): Promise<boolean> {
+      return serial(async () => {
+        const current = await read();
+        const legacy = DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
+        if (!current.state || current.state.revision !== 1 || current.state.history.length !== 2 || current.state.history[1].savedAt !== null || !sameDeskSections(current.state.desk.sections, legacy)) return false;
+        const revision = 2;
         await save({ ...current.state, revision, ...withDesk(current.state, revision, simpleDeskSections()) });
         return true;
       });
