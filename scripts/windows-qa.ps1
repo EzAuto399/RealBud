@@ -5,7 +5,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\windows-qa.ps1 -Mode install -ExpectedSha256 4b5c9c0b
 # Keep this file ASCII: Windows PowerShell 5.1 reads BOM-less files as ANSI.
 param(
-  [string]$InstallerUrl = 'http://192.168.64.1:8765/RealBud-0.1.34-setup.exe',
+  [string]$InstallerUrl = 'http://192.168.64.1:8765/RealBud-0.1.35-setup.exe',
   [string]$ExpectedSha256 = '',
   [ValidateSet('install', 'status', 'fresh-check')][string]$Mode = 'status',
   [string]$Out = (Join-Path ([Environment]::GetFolderPath('Desktop')) ('realbud-qa-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json'))

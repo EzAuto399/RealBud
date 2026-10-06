@@ -89,3 +89,5 @@ Use a skill when it fits the request:
 - When moving UI controls, check 390px: below 600px only `.rb-sidebar-navigation` shows, so footer-only entries vanish on phones.
 - When a QA script fails on copy or server behaviour another session changed, report it to that session; don't rewrite their fixture expectations.
 - When the owner says "simpler", relocate rarely-used controls into one collapsed place; remove duplicate surfaces, not capabilities.
+- When running a packaged Mac app for QA, isolate it with REALBUD_DATA_DIR, REALBUD_LOG_DIR, --user-data-dir and --use-mock-keychain; HOME alone still reads the real ~/.realbud.
+- When cutting a customer build, bump package.json and publish a GitHub release with the Windows setup.exe + latest.yml and the Mac dmg/zip + latest-mac.yml; realbud.app/download and auto-update read only the latest release.
