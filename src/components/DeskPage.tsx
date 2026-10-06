@@ -47,7 +47,6 @@ import { MorningBrief, MorningEmpty, TASK_CHECK_FAILED_EMPTY, TASK_CHECK_NEVER }
 import { OfficeBookEmpty, StartOfficeBook, isEmptyOfficeBook, offersOfficeBookStart } from "./desk/OfficeBookNotice";
 import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
 import { deskCheckAction, missedCheckLine, workdayGuide } from "@/lib/workday";
-import { coerceOffice } from "../../shared/office";
 import { recheckProgress } from "@/lib/task-progress";
 import { api, useStore } from "@/state/store";
 import { HermiosMark } from "./HermiosMark";
@@ -507,6 +506,11 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
 
   const casesArea = (
     <>
+      {/* The one setup checklist. It sits above the brief so a fresh, empty
+          office still sees it, and it hides itself once every step is done. */}
+      {sectionShown("go-live") ? (
+        <GoLiveCard agencyName={snap.book?.agency.name ?? ""} compact inert={drawerOpen} menu={<DeskCardMenu id="go-live" />} />
+      ) : null}
       {statusShown ? (
         <div className="desk-status-row flex items-start gap-2" inert={drawerOpen}>
           <div className="min-w-0 flex-1">
@@ -545,25 +549,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           >
             {keysHint ? (
               <p className="pm-desk-hint mt-2 flex items-center gap-3 text-[12px] text-ink-muted"><span>↑↓ move the queue · [ ] toggle Tasks / Evidence</span><button type="button" onClick={dismissKeysHint} className="text-agency">Got it</button></p>
-            ) : null}
-            {/* Setup stays available here and in Workspace. */}
-            {sectionShown("go-live") ? (
-              <div className="mt-3 flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                <GoLiveCard
-                  mode={snap.mode}
-                  agencyName={snap.book?.agency.name ?? ""}
-                  workerReady={Boolean(state.hermes?.ready)}
-                  compact
-                  jurisdictions={snap.book?.agency.jurisdictions ?? []}
-                  office={snap.book?.office ? coerceOffice(snap.book.office) : undefined}
-                  onConnectExport={() => setMode("book")}
-                  onAttachWorker={() => { openWorkspaceSetup("bud"); }}
-                  onNameAgency={() => { openWorkspaceSetup("office"); }}
-                />
-                </div>
-                <DeskCardMenu id="go-live" />
-              </div>
             ) : null}
           </MorningBrief>
           </div>

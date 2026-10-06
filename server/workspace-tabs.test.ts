@@ -25,7 +25,7 @@ describe('private workspace saved views', () => {
     const fresh = await fixture();
     expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(true);
     const visible = (await fresh.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort();
-    expect(visible).toEqual(['brief', 'queue']);
+    expect(visible).toEqual(['brief', 'go-live', 'queue']);
     // Applying twice is a no-op, and the standard layout stays restorable.
     expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(false);
     expect((await fresh.read()).state!.history.length).toBeGreaterThan(0);

@@ -2,8 +2,8 @@
 // office in a throwaway home/data folder (never ~/.realbud). No mail, model,
 // bank, REI or network call.
 // Install the pack from Schedule → Workflow setup → Schedule lists all six
-// workflows with Brisbane times and off → every checklist item opens where it
-// is done → open Maintenance checks, read what it does, switch it on → it shows
+// workflows with Brisbane times and off → Desk's Get started card ticks the
+// import and counts workflows → open Maintenance checks, switch it on → it shows
 // its next Brisbane run.
 //
 //   REALBUD_UI_DIR=<scratch vite build> PLAYWRIGHT_MODULE=... CHROME_EXECUTABLE=... QA_OUTPUT=<fresh dir> node scripts/qa-austin-pack.mjs
@@ -95,40 +95,34 @@ try {
     assert.ok(text.includes(`Off · ${timing}. Review it, then switch it on.`), `${name}: ${text}`);
     assert.ok(text.includes('Paused'), `${name} shows Paused in its timing column: ${text}`);
   }
-  const checklist = page.getByRole('list', { name: 'Auston setup checklist', exact: true });
-  await checklist.waitFor();
-  assert.equal(await checklist.getByRole('listitem').count(), 6);
-  await page.getByText('0 of 6 done. Times are Brisbane time', { exact: false }).waitFor();
+  // The setup checklist lives only on Desk now; Schedule keeps each job's own Needs.
+  assert.equal(await page.getByRole('list', { name: 'Auston setup checklist', exact: true }).count(), 0, 'no second checklist on Schedule');
   await page.screenshot({ path: join(output, '03-schedule-six-off.png'), fullPage: true });
-  pass('Schedule lists all six with their Brisbane times and Off, and shows the 6-item Auston setup checklist');
+  pass('Schedule lists all six with their Brisbane times and Off, and shows no second setup checklist');
 
-  // ── 3. Every checklist item opens where it is done ──
-  const item = label => checklist.getByRole('button', { name: label, exact: true });
-  for (const label of ['Open Connected apps: Gmail connected', 'Open Connected apps: Redbark bank link connected']) {
-    await item(label).click();
-    await page.locator('#you-connected-apps').waitFor({ state: 'visible' });
-    await page.goto(base + '/#/schedule'); await checklist.waitFor();
-  }
-  pass('Gmail and Redbark items open Workspace, Connected apps');
-  for (const label of ['Open Bank reference review: Signed in to REI Cloud once', 'Open Bank reference review: REI tenant list saved']) {
-    await item(label).click();
-    await page.getByRole('dialog', { name: 'Bank reference review' }).waitFor();
-    await page.getByRole('article', { name: 'Bank reference review details', exact: true }).getByRole('region', { name: 'What this job does' }).getByText('Not yet: REI tenant list saved', { exact: false }).waitFor();
-    await page.getByRole('button', { name: 'Close Bank reference review', exact: true }).click();
-  }
-  await item('Open Bank reference review: REI tenant list saved').click();
-  await page.getByRole('dialog', { name: 'Bank reference review' }).waitFor();
-  await page.screenshot({ path: join(output, '04-bank-needs.png') });
+  // ── 3. Desk's Get started card ticks the import and counts the workflows ──
+  const getStarted = async () => {
+    await page.goto(base + '/#/desk');
+    const card = page.getByRole('region', { name: 'Get started', exact: true });
+    await card.getByRole('list', { name: 'Get started steps', exact: true }).waitFor();
+    return card;
+  };
+  let card = await getStarted();
+  await card.getByText('0 of 6 on.', { exact: false }).waitFor();
+  let cardText = (await card.innerText()).replace(/\s+/g, ' ');
+  assert.match(cardText, /3\. Import your office’s pack · Done/, cardText);
+  assert.doesNotMatch(cardText, /4\. Connect the office Gmail · Done/, cardText);
+  assert.equal(await page.getByRole('region', { name: 'Get started', exact: true }).count(), 1);
+  await page.screenshot({ path: join(output, '04-desk-get-started.png') });
+  pass('Desk shows one Get started card: the imported pack is Done, Gmail is not, and the workflows step reads 0 of 6 on');
+  await page.goto(base + '/#/schedule'); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  await page.getByRole('article', { name: 'Bank reference review details', exact: true }).getByRole('region', { name: 'What this job does' }).getByText('Not yet: REI tenant list saved', { exact: false }).waitFor();
+  await page.screenshot({ path: join(output, '05-bank-needs.png') });
   await page.getByRole('button', { name: 'Close Bank reference review', exact: true }).click();
-  pass('REI sign-in and tenant list items open Bank reference review, which says in plain words what it still needs');
-  await item('Open Maintenance checks: REI supplier list saved').click();
-  await page.getByRole('region', { name: 'Maintenance checks', exact: true }).waitFor();
-  await page.screenshot({ path: join(output, '05-supplier-list-on-bills.png') });
-  await page.goto(base + '/#/schedule'); await checklist.waitFor();
-  pass('Supplier list item opens Bills with Maintenance checks');
+  pass('Bank reference review still says in plain words what it needs (REI, Redbark, suppliers stay in each job, not the card)');
 
   // ── 4. Review W4 and switch it on: it shows its next run ──
-  await item('Review Bank reference review: Each workflow reviewed and switched on').waitFor();
   await page.getByRole('button', { name: 'Open job: Maintenance checks', exact: true }).click();
   const drawer = page.getByRole('article', { name: 'Maintenance checks details', exact: true });
   const about = drawer.getByRole('region', { name: 'What this job does' });
@@ -145,20 +139,25 @@ try {
   assert.ok(!/Paused|not confirmed/i.test(nextText), nextText);
   await page.screenshot({ path: join(output, '07-w4-on-next-run.png') });
   await page.getByRole('button', { name: 'Close Maintenance checks', exact: true }).click();
-  await page.getByText('1 of 6 on.', { exact: false }).waitFor();
-  await item('Review Bank reference review: Each workflow reviewed and switched on').waitFor();
-  pass(`After review, switching Maintenance checks on shows its next Brisbane run (${nextText}) and the checklist counts 1 of 6 on`);
+  card = await getStarted();
+  await card.getByText('1 of 6 on.', { exact: false }).waitFor();
+  pass(`After review, switching Maintenance checks on shows its next Brisbane run (${nextText}) and Desk's Get started counts 1 of 6 on`);
 
   // ── 5. Repeat install keeps the office's choice; narrow layout ──
   await request('/api/austin-pack/install', 'POST', {});
   assert.equal((await request('/api/loops')).loops.find(l => l.id === 'maintenance-review').enabled, true);
   pass('A repeat install keeps Maintenance checks on and changes nothing the office chose');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(base + '/#/schedule'); await checklist.waitFor();
+  await page.goto(base + '/#/schedule'); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.screenshot({ path: join(output, '08-schedule-390.png'), fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'horizontal scroll at 390px');
+  card = await getStarted();
+  await card.getByText('1 of 6 on.', { exact: false }).waitFor();
+  await card.evaluate(el => el.scrollIntoView({ block: 'start' }));
+  await page.screenshot({ path: join(output, '09-desk-get-started-390.png') });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'horizontal scroll on Desk at 390px');
   assert.deepEqual(errors, []);
-  pass('Schedule with the checklist fits 390x844 without horizontal scroll, and the renderer recorded no page errors');
+  pass('Schedule and Desk with Get started fit 390x844 without horizontal scroll, and the renderer recorded no page errors');
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); if (page) await page.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {
   await browser?.close();
@@ -168,6 +167,7 @@ finally {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure,
     layer: 'Actual local HTTP app + built UI from source; fictional empty office; not live Gmail/Redbark/REI, packaged, Windows or customer proof', checks, errors,
     limits: ['No Gmail, Redbark or REI connection exists here, so every connection item stays open; their done states are unit-tested (server/austin-pack.test.ts).',
+      'This computer is never linked, so Get started keeps "Enter link code" as its current action and the "Review <next workflow>" button is unit-tested (src/lib/setup-sequence.test.ts), not clicked here.',
       'The REI "signed in once" record comes from a finished REI sign-in handover; this run performs none.',
       'Fictional data; Mac browser rendering only; no packaged build, Windows or customer acceptance.'],
     failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2));

@@ -27,14 +27,14 @@ export const DESK_SECTION_LABELS: Record<DeskSectionId, string> = {
   mail: 'Mail priorities',
   bills: 'Bills and calendar',
   'shared-work': 'Shared work',
-  'go-live': 'Setup checklist',
+  'go-live': 'Get started',
   queue: 'Needs you',
   activity: 'Activity',
 };
 /** Today's Desk order; also the fallback for an absent or invalid layout. */
 export const defaultDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: true }));
-/** A calm starting Desk for a freshly linked office: brief and Needs you only. */
-export const simpleDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
+/** A calm starting Desk for a freshly linked office: brief, Get started (it hides itself once every step is done) and Needs you. */
+export const simpleDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'go-live' || id === 'queue' }));
 
 /** Right-hand context panels. Approval surfaces always show: the panel only
  * mirrors and links to the case, where Approve, Stop and recovery stay. */

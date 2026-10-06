@@ -1,12 +1,10 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
-import type { AustinPackView } from '@shared/austin-pack';
+import { describe, expect, it } from 'vitest';
+import { parseAustinPackView, type AustinPackView } from '@shared/austin-pack';
 import type { Loop } from '@/lib/routines';
 
-vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
-
-import { AustinPackCard, AustinPlanDetail, checklistLink, parseAustinPackView } from './AustinPackCard';
+import { AustinPlanDetail } from './AustinPackCard';
 import { scheduleRowGuidance } from '@/lib/schedule-presentation';
 import { scheduleSummary } from '@/lib/schedule-week';
 
@@ -18,33 +16,7 @@ const view = (installed: boolean, done: Partial<Record<string, boolean>> = {}): 
   rules: [{ id: 'maintenance-month', text: 'Calendar month by received date.', matches: true }],
   checklist: (['gmail', 'redbark', 'rei', 'tenants', 'suppliers', 'workflows'] as const).map(id => ({ id, label: `Label ${id}`, done: Boolean(done[id]), detail: `Detail ${id}`, ...(id === 'workflows' ? { next: 'maintenance-review' } : {}) })),
 });
-const loops = [{ id: 'maintenance-review', name: 'Maintenance checks' }] as Loop[];
-
-describe('Austin pack card', () => {
-  it('shows nothing until a pack from the office has set its workflows, and never offers a separate install', () => {
-    expect(renderToStaticMarkup(createElement(AustinPackCard, { view: view(false), loops }))).toBe('');
-    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(true), loops }));
-    expect(html).toContain('aria-label="Auston setup checklist"');
-    expect(html).not.toMatch(/Install the Aust[io]n pack|Austin/);
-  });
-
-  it('lists every checklist item with its state and a link to where it is done', () => {
-    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(true, { gmail: true }), loops }));
-    expect(html).toContain('1 of 6 done');
-    expect(html).toContain('Label gmail<span class="sr-only"> (done)</span>');
-    expect(html).toContain('Label redbark<span class="sr-only"> (not done)</span>');
-    for (const label of ['Open Connected apps: Label gmail', 'Open Bank reference review: Label tenants', 'Open Maintenance checks: Label suppliers', 'Review Maintenance checks: Label workflows']) expect(html).toContain(`aria-label="${label}"`);
-  });
-
-  it('maps each item to a working destination', () => {
-    const items = view(true).checklist;
-    expect(items.map(item => checklistLink(item, loops))).toEqual([
-      { label: 'Open Connected apps', hash: 'you-connected-apps' }, { label: 'Open Connected apps', hash: 'you-connected-apps' },
-      { label: 'Open Bank reference review', hash: 'job-bank-references' }, { label: 'Open Bank reference review', hash: 'job-bank-references' },
-      { label: 'Open Maintenance checks', bills: true }, { label: 'Review Maintenance checks', hash: 'job-maintenance-review' },
-    ]);
-  });
-
+describe('Austin pack plan', () => {
   it('refuses a malformed answer instead of showing a partial checklist', () => {
     expect(parseAustinPackView(view(true))).toBeTruthy();
     expect(() => parseAustinPackView({ ...view(true), checklist: [{ id: 'unknown', label: 'x', detail: 'y', done: true }] })).toThrow(/could not be read/);
