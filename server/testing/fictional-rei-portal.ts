@@ -344,8 +344,10 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     }
     const path = at.pathname; const b = business();
     const title = path === "/customers/dashboard" ? "Dashboard" : Object.values(CHILDREN).flat().find(([, route]) => route === path)?.[0] ?? Object.entries(ROUTES).find(([, route]) => route === path)?.[0] ?? path.split("/").filter(Boolean).pop() ?? "Page";
-    lines.push(`  RootWebArea ${q(`${title} - REI Cloud`)}`, "    banner");
-    lines.push(`      StaticText ${q(AGENCY)}`, `      ${ref({ role: "button", name: b, action: "none" })} button ${q(b)}`);
+    // Shaped like live REI: no banner landmark; the version is in the first link and the business
+    // code is the first button in the top bar's list.
+    lines.push(`  RootWebArea ${q(`${title} - REI Cloud`)}`, "    generic", `      ${ref({ role: "link", name: `REI Cloud v ${options.version ?? "26.0922.0"} P`, action: "none" })} link ${q(`REI Cloud v ${options.version ?? "26.0922.0"} P`)}`);
+    lines.push(`      StaticText ${q(AGENCY)}`, "      list", "        listitem", `          ${ref({ role: "button", name: b, action: "none" })} button ${q(b)}`);
     lines.push('    navigation "Main"');
     const section = Object.entries(CHILDREN).find(([, kids]) => kids.some(([, route]) => route === path))?.[0] ?? Object.entries(ROUTES).find(([, route]) => route === path)?.[0];
     for (const label of TOP) {
@@ -410,7 +412,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
           `        ${ref({ role: "button", name: "Export", action: "export" })} button "Export"`);
       }
     }
-    lines.push("    contentinfo", `      StaticText ${q(`2026 © Fictional mock · v ${options.version ?? "26.0922.0"}`)}`);
+    lines.push("    contentinfo", `      StaticText ${q("2026 © Fictional mock")}`);
     return lines.join("\n");
   };
   /** Refs are assigned by rendering; the helper resolves them against the page as it stands. */

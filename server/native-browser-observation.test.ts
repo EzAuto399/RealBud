@@ -75,6 +75,17 @@ describe("native accessibility observation boundary", () => {
     expect(text).toContain('@e2 combobox "Status" [expanded=false] value="Open"');
     expect(observationRefs(text).size).toBe(4);
   });
+  it("accepts the engine's clickable, focusable and editable hints on plain elements", () => {
+    const text = nativeBrowserObservation('- main\n  - generic [ref=e1] clickable [cursor:pointer]\n  - columnheader "Reference" [ref=e2] clickable [cursor:pointer, onclick, tabindex]\n  - columnheader [ref=e3] focusable [tabindex]\n  - generic [ref=e4] editable [contenteditable]: note\n  - checkbox "Card" [checked=true, ref=e5] clickable [cursor:pointer]');
+    expect(text).toContain('@e1 generic [clickable]');
+    expect(text).toContain('@e2 columnheader "Reference" [clickable]');
+    expect(text).toContain('@e3 columnheader [focusable]');
+    expect(text).toContain('@e4 generic [editable]');
+    expect(text).toContain('@e5 checkbox "Card" [checked=true] [clickable]');
+    expect(nativeBrowserObservation('- button "\\ue5c5 Action" [expanded=false, ref=e1]')).toContain('@e1 button "Action" [expanded=false]');
+    expect(() => nativeBrowserObservation('- generic [ref=e1] clickable [cursor:pointer] extra')).toThrow(/unsupported accessibility value/);
+    expect(() => nativeBrowserObservation('- generic [ref=e1] clickable [javascript:x]')).toThrow(/unsupported accessibility value/);
+  });
   it("keeps each link's address on its own link for the authority, never in its label or in what the model reads", () => {
     const raw = `- banner:\n  - button "MOCK-OFFICE" [ref=e9]\n- main:\n  - link "Tenant 123" [ref=e1]:\n    - /url: /tenants/123/delete\n  - link "Tenant 124" [ref=e2]:\n    - img "Avatar"\n    - /url: "/tenants/124"\n  - button "Open" [ref=e3]:\n    - /url: /tenants/125\n  - link "Tenant 126" [ref=e4]\n  - list:\n    - listitem:\n      - link "Tenant 127" [ref=e5]\n  - /url: /stray`;
     const observed = page(raw);

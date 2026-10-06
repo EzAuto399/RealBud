@@ -17,6 +17,7 @@ Goal (owner, 5 Oct): install RealBud on Austin Realty's Windows PC and show all 
   - no Windows VM found in UTM on this Mac
   - Windows CI on `main` was red before today's work
   - the shared checkout mixes Codex's HTTPS change with today's work, and needs reconciling before any build
+  - the installer is unsigned: before Friday, check on Kevin's Windows 11 PC that **Smart App Control is Off** (Settings › Privacy & security › Windows Security › App & browser control › Smart App Control) and the PC is **not in S mode** (Settings › System › About must not say "S mode"). With Smart App Control On, Windows blocks an unsigned installer outright. Peer session result, 6 Oct: the installer installs silently in 57 s on Windows Server 2025, health 200 about 30 s cold
 
 Demo rehearsal (Mac, fake providers): `scripts/qa-austin-showcase.mjs` passes 8/8 (W1–W5 plus a rule-change card). The demo screens are not labelled "fictional"; only the data says so ("Fictional …" addresses), so say it out loud.
 

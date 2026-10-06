@@ -19,7 +19,7 @@ describe("fictional portal shaped like live REI", () => {
     await mock.command(["request-help"]);
     expect(new URL(mock.url()).searchParams.has("reicid")).toBe(false);
     expect(mock.url()).toBe(`${FICTIONAL_REI_ORIGIN}/customers/dashboard`);
-    expect(await observe(mock)).toMatch(new RegExp(`banner[\\s\\S]*button "${FICTIONAL_BUSINESS}"`));
+    expect(await observe(mock)).toMatch(new RegExp(`list[\\s\\S]*button "${FICTIONAL_BUSINESS}"`));
     mock.setBusiness("FICT2");
     expect(await observe(mock)).toContain('button "FICT2"');
   });

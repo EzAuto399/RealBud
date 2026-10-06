@@ -409,7 +409,7 @@ A click, upload, toast or HTTP 200 is **not** a readback.
 ## 6. Labels Bud may and may not press
 
 ```yaml
-read_safe_labels: [Search, Status, Category, Zone, View, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
+read_safe_labels: [Search, Status, Category, Zone, View, Action, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
 consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit]
 forbidden_areas: [Settings, My Profile, Process › Disbursement, Process › End of Month, Process › Journals, Process › Reversals, Process › Direct Debit, Process › Payments]
 ```
