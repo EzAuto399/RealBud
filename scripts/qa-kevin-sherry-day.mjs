@@ -68,7 +68,7 @@ async function runPerson(who) {
   assert.notEqual(realpathSync(data), resolve(homedir(), '.realbud'), 'Never point a QA run at the real ~/.realbud');
   const today = localDate();
   const CODE = `rb1_${(who === 'kevin' ? 'c3' : 'a1').repeat(32)}`, credential = `rbc_${'d'.repeat(64)}`;
-  const PERSON = who === 'kevin' ? 'Fictional Kevin' : 'Fictional Sherry', OFFICE = 'Fictional Austin Demo Office (sample)';
+  const PERSON = who === 'kevin' ? 'Fictional Kevin' : 'Fictional Sherry', OFFICE = 'Fictional Auston Demo Office (sample)';
   const GMAIL = seed.office.gmail.accountId;
 
   // ── lab website (realbud.app stand-in) + Gmail connector on one loopback origin ──

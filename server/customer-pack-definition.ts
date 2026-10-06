@@ -53,7 +53,7 @@ function roleLoops(ids: string[]): Pick<CustomerPack, 'files'> {
   const schedule = loadAustinPack();
   const settings: CustomerPackOfficeSettings = { version: 1, kind: 'office-settings', loops: ids.map(id => {
     const item = schedule.loops.find(loop => loop.loopId === id);
-    if (!item) throw new Error(`The Austin schedule file has no ${id} workflow.`);
+    if (!item) throw new Error(`The Auston schedule file has no ${id} workflow.`);
     return { id, enabled: false, schedule: { type: 'daily', ...item.schedule, timezone: schedule.timeZone } };
   }) };
   return { files: { 'office/settings.json': JSON.stringify(settings) } };
