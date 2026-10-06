@@ -99,7 +99,7 @@ describe('three-step workspace setup card', () => {
   });
 
   it('shows Bud as a status line rather than a step', () => {
-    expect(renderToStaticMarkup(createElement(GoLiveCard, basic))).toContain('Bud: needs setup on You');
+    expect(renderToStaticMarkup(createElement(GoLiveCard, basic))).toContain('Bud: needs setup in Workspace');
     const ready = renderToStaticMarkup(createElement(GoLiveCard, { ...basic, workerReady: true }));
     expect(ready).toContain('Bud: ready');
     expect(ready).not.toContain('Step 2 of 3: Set up Bud');

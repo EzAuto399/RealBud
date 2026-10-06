@@ -11,7 +11,7 @@ import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { focusedWindowAction, headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
-import { resolveDeskKey, windowsKeyPrivacy } from "./desk-key-custody.mjs";
+import { resolveDeskKey, windowsKeyPrivacyAsync } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -385,7 +385,7 @@ function createWindow() {
         // because a driver that never settles must still not hang the smoke.
         await settledWithin(cuaReady, 10_000, "computer use start");
         if (smokeMode && serviceHandle) {
-          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacy });
+          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
         }
         win.close();
         if (smokeMode) app.quit();
@@ -646,14 +646,14 @@ async function officeSessionToken() {
   if (app.isPackaged) {
     const running = await probeService(SERVER_PORT);
     if (!running || !isOurService(running.body, identity)) return null;
-    return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+    return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacyAsync });
   }
   // Development: Vite proxies to `pnpm dev:server`, which serves no static UI
   // (so isOurService does not apply). Same installation id, pid and port still.
   const running = await probeService(Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799));
   const body = running?.body;
   if (!body || typeof body !== "object" || body.app !== "realbud" || body.instanceId !== identity.instanceId) return null;
-  return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+  return localSessionFor(dataDirectory, running, { verifyWindowsPrivacy: windowsKeyPrivacyAsync });
 }
 officeIpc.handle("local-session:get", async (event) => {
   // The wrapper checked the sender; check again after the file read, since the
@@ -721,7 +721,7 @@ officeIpc.handle("service:stop", async () => {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacy })) {
+  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacyAsync })) {
     return { ok: false, status: await officeServiceStatus() };
   }
   // Wait for the port to be released so the next start is not racing a dying service.
@@ -786,7 +786,7 @@ async function officeSupportReport(desktopLog) {
   if (!running) return null;
   const base = `http://127.0.0.1:${running.port}`;
   try {
-    const token = await localSessionFor(realbudDataDir(), running, { verifyWindowsPrivacy: windowsKeyPrivacy });
+    const token = await localSessionFor(realbudDataDir(), running, { verifyWindowsPrivacy: windowsKeyPrivacyAsync });
     if (!token) return null;
     const response = await fetch(`${base}/api/support/bundle`, {
       method: "POST",
@@ -1207,7 +1207,7 @@ async function startOrAdoptOfficeServiceOnce() {
   // and name the reason; never start a second service beside it.
   /** @returns {Promise<"adopt" | "retired" | "blocked">} */
   const settle = async (found) => {
-    const outcome = await retireIncompatibleService(found, { dataDirectory, identity, verifyWindowsPrivacy: windowsKeyPrivacy });
+    const outcome = await retireIncompatibleService(found, { dataDirectory, identity, verifyWindowsPrivacy: windowsKeyPrivacyAsync });
     if (outcome.adopt) return "adopt";
     if (outcome.problem) {
       serviceStartProblem = outcome.problem;

@@ -165,7 +165,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       {retryError && <p role="alert" className="mt-3 text-sm text-danger">{retryError}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
-        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{automatic?.working ? "Keep preparing" : "Return to Ask"}</button>}
+        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{automatic?.working ? "Keep preparing" : "Return to Work"}</button>}
         {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
           onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
         {/* aria-disabled while checking: a disabled button drops keyboard focus to the page. */}

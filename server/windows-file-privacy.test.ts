@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { windowsFilePrivacy, windowsFilePrivacyBatchSync } from './windows-file-privacy.ts';
+import { windowsFilePrivacy, windowsFilePrivacyBatch, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
 import { writeNewPrivateFile } from './private-file.ts';
 
 const roots: string[] = [];
@@ -52,6 +52,124 @@ it.skipIf(process.platform === 'win32')('does not run Windows ACL operations on 
     { path: '/no-file-is-accessed', kind: 'file', action: 'verify', applied: false },
     { path: '/no-directory-is-accessed', kind: 'directory', action: 'restrict', applied: false },
   ]);
+});
+
+// The synchronous form, with win32 simulated on this thread and powershell.exe
+// replaced by a Node script under a scratch SystemRoot. The worker thread that
+// owns the host is real, so this proves the thread hop, not the ACL policy
+// (the native suite below covers that on a Windows runner). The fake decides
+// from the requested path: "refuse-N" answers N, "crash" exits, "hang" stays
+// silent, "garble" answers out of order; everything else is admitted.
+const FAKE_POWERSHELL = String.raw`#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const log = require('node:path').join(__dirname, 'log');
+const host = process.env.REALBUD_WINDOWS_FILE_PRIVACY_HOST === '1';
+appendFileSync(log, 'start ' + process.pid + ' ' + (host ? 'host' : 'oneshot ' + process.env.REALBUD_WINDOWS_FILE_PRIVACY_PATH) + '\n');
+if (!host) process.exit(0);
+let buffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('end', () => process.exit(9));
+process.stdin.on('data', chunk => {
+  buffer += chunk;
+  for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+    const [id, kind, action, encoded] = buffer.slice(0, end).split('\t');
+    buffer = buffer.slice(end + 1);
+    const path = Buffer.from(encoded, 'base64').toString('utf8');
+    appendFileSync(log, 'request ' + process.pid + ' ' + kind + ' ' + action + ' ' + path + '\n');
+    if (path.includes('crash')) process.exit(1);
+    if (path.includes('hang')) continue;
+    if (path.includes('garble')) { process.stdout.write('999\t0\t\n'); continue; }
+    const refuse = /refuse-(\d+)/.exec(path);
+    process.stdout.write(refuse
+      ? id + '\t' + refuse[1] + '\t[windows-acl] stage=24 index=0 type=System.IO.IOException hresult=-2147024891 win32=5\r\n'
+      : id + '\t0\t\r\n');
+  }
+});
+`;
+
+describe.skipIf(process.platform === 'win32')('synchronous admissions through the long-lived host', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  let systemRoot = '';
+  const log = async () => (await readFile(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'log'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean);
+  const failureOf = (run: () => unknown) => { try { run(); } catch (error) { return error; } throw new Error('expected a refusal'); };
+  const fields = (error: unknown) => {
+    const { name, message, category, nativeExitCode, operationIndex, detail } = error as Record<string, unknown>;
+    return { name, message, category, nativeExitCode, operationIndex, detail };
+  };
+  beforeAll(async () => {
+    systemRoot = await realpath(await mkdtemp(join(tmpdir(), 'realbud-fake-systemroot-')));
+    const folder = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0');
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, 'powershell.exe'), FAKE_POWERSHELL); await chmod(join(folder, 'powershell.exe'), 0o755);
+  });
+  beforeEach(async () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    vi.stubEnv('SystemRoot', systemRoot);
+    await rm(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'log'), { force: true });
+  });
+  afterEach(() => { Object.defineProperty(process, 'platform', platform); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+  afterAll(() => rm(systemRoot, { recursive: true, force: true }));
+
+  it('serves several synchronous calls from one long-lived host process', async () => {
+    windowsFilePrivacySync('/fictional/a', 'directory', true);
+    windowsFilePrivacySync('/fictional/a/b.txt', 'file');
+    expect(windowsFilePrivacyBatchSync([
+      { path: '/fictional/c', kind: 'directory', action: 'verify' },
+      { path: '/fictional/c/d.txt', kind: 'file', action: 'restrict' },
+    ])).toEqual([
+      { path: '/fictional/c', kind: 'directory', action: 'verify', applied: true },
+      { path: '/fictional/c/d.txt', kind: 'file', action: 'restrict', applied: true },
+    ]);
+    const lines = await log();
+    const starts = lines.filter(line => line.startsWith('start '));
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatch(/^start \d+ host$/);
+    const pid = starts[0]!.split(' ')[1];
+    expect(lines.filter(line => line.startsWith('request ')).map(line => line.split(' ').slice(1).join(' '))).toEqual([
+      `${pid} directory restrict /fictional/a`, `${pid} file verify /fictional/a/b.txt`,
+      `${pid} directory verify /fictional/c`, `${pid} file restrict /fictional/c/d.txt`,
+    ]);
+  });
+
+  it('rebuilds a refusal with exactly the asynchronous path’s fields and stops at it', async () => {
+    const batch = [
+      { path: '/fictional/ok', kind: 'directory' as const, action: 'verify' as const },
+      { path: '/fictional/refuse-24', kind: 'file' as const, action: 'restrict' as const },
+      { path: '/fictional/never', kind: 'file' as const, action: 'restrict' as const },
+    ];
+    const synchronous = failureOf(() => windowsFilePrivacyBatchSync(batch));
+    const asynchronous = await windowsFilePrivacyBatch(batch).catch(error => error);
+    expect(fields(synchronous)).toEqual(fields(asynchronous));
+    expect(synchronous).toMatchObject({
+      name: 'WindowsFilePrivacyError', category: 'acl-apply-failed', nativeExitCode: 24, operationIndex: 1,
+      detail: 'stage=24 index=0 type=System.IO.IOException hresult=-2147024891 win32=5',
+      message: expect.stringContaining('exit=24; operation=1/3'),
+    });
+    expect((await log()).filter(line => line.includes('/fictional/never'))).toEqual([]);
+    const single = failureOf(() => windowsFilePrivacySync('/fictional/refuse-5', 'directory'));
+    expect(fields(single)).toEqual(fields(await windowsFilePrivacy('/fictional/refuse-5', 'directory').catch(error => error)));
+    expect(single).toMatchObject({ category: 'inheritance-not-protected', nativeExitCode: 5, operationIndex: null });
+  });
+
+  it('fails closed when the host crashes, answers out of order or the worker hangs, then recovers', async () => {
+    for (const path of ['/fictional/crash', '/fictional/garble']) {
+      expect(failureOf(() => windowsFilePrivacySync(path, 'directory'))).toMatchObject({ category: 'process-terminated', nativeExitCode: null });
+      expect(() => windowsFilePrivacySync('/fictional/after', 'directory')).not.toThrow();
+    }
+    // A worker that never answers is terminated at the deadline and the call refused.
+    const wait = vi.spyOn(Atomics, 'wait').mockReturnValueOnce('timed-out');
+    expect(failureOf(() => windowsFilePrivacySync('/fictional/hang', 'directory'))).toMatchObject({ category: 'process-terminated' });
+    wait.mockRestore();
+    expect(() => windowsFilePrivacySync('/fictional/after', 'directory')).not.toThrow();
+    // Each failure ended its host; every recovery started a fresh one.
+    expect((await log()).filter(line => line.startsWith('start '))).toHaveLength(3);
+  });
+
+  it('keeps the one-shot launch when the host is switched off', async () => {
+    vi.stubEnv('REALBUD_WINDOWS_PRIVACY_HOST', '0');
+    windowsFilePrivacySync('/fictional/one-shot', 'directory');
+    expect(await log()).toEqual([expect.stringMatching(/^start \d+ oneshot \/fictional\/one-shot$/)]);
+  });
 });
 
 describe.skipIf(process.platform !== 'win32')('native Windows privacy admission', () => {

@@ -15,8 +15,8 @@ describe('agency workflow setup steps', () => {
     expect(markup).toContain('1. Agency details');
     expect(markup).toContain('2. Connect your accounts');
     // Property references and the workflow review are two tabs of one step.
-    expect(markup).toContain('3. Property references');
-    expect(markup).toContain('3. Review workflows');
+    expect(markup).toContain('3a. Property references');
+    expect(markup).toContain('3b. Review workflows');
     // The old seven-step numbering must not reappear beside a step name.
     expect(markup).not.toContain('3. Agency details');
     expect(markup).not.toContain('4. Private Gmail source');
