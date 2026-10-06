@@ -33,6 +33,7 @@ import { canonical, exact, GatewayError, id, object, requireThat, type PortalPri
 import { connectorRegistry, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServiceBundle, type ServiceIssuer, type ServiceIssuerState } from './service-entitlement-issuer.ts';
 import type { UsageLedger } from './ledger.ts';
+import { carryMailboxGrant } from './office-mailbox.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
 import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaRotatedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
@@ -846,6 +847,8 @@ export class InstallationProvisioning {
       updateRegistry(this.options.registry, devices => {
         const device = devices.find(entry => entry.id === deviceId);
         requireThat(device && device.active && device.companyId === companyId && device.installationId === installationId, 'connector_device_unavailable', 409);
+        // Same installation, new credential: its office Gmail grant follows (rolled back if the registry write fails).
+        carryMailboxGrant(this.options.ledger.db, device!, credential.tokenHash);
         return { devices: devices.map(entry => entry.id === deviceId ? { ...entry, tokenHash: credential.tokenHash } : entry) };
       });
     });

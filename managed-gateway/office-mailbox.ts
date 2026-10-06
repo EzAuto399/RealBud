@@ -12,6 +12,17 @@ interface Policy { mode: 'personal'|'shared'; revision: number; grants: string[]
 interface Mailbox { projectKeyEnv: string; authConfigId: string; userId: string; state: 'unknown'|'pending'|'review'|'ready'; emailAddress?: string; accountId?: string; url?: string; expiresAt?: string }
 const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
 const grantKey=(device:ConnectorDevice)=>digest(canonical({companyId:device.companyId,profile:device.profile,installationId:device.installationId,tokenHash:device.tokenHash,id:device.id,memberId:device.memberId,licenseId:device.licenseId}));
+/** Redelivery gives one active installation of this office a new credential
+ * (provisioning checks both), so the owner's grant moves to it in the same
+ * transaction. Revoke, mode change and a new mailbox still clear access; the
+ * revision stays because the granted computer is the same one. */
+export function carryMailboxGrant(db:ConnectorOptions['ledger']['db'],device:ConnectorDevice,tokenHash:string):void {
+  db.run('CREATE TABLE IF NOT EXISTS office_mailbox_policy (company TEXT PRIMARY KEY, body TEXT NOT NULL)');
+  const row=db.get<{body:string}>('SELECT body FROM office_mailbox_policy WHERE company=?',device.companyId);if(!row)return;
+  const policy:Policy=JSON.parse(row.body),from=grantKey(device);if(policy.mode!=='shared'||!policy.grants.includes(from))return;
+  const to=grantKey({...device,tokenHash});
+  db.run('UPDATE office_mailbox_policy SET body=? WHERE company=?',canonical({...policy,grants:policy.grants.map(key=>key===from?to:key)}),device.companyId);
+}
 export class OfficeMailbox {
   private readonly options: ConnectorOptions;
   /** Moves the office's devices off a Gmail config nobody could connect before a shared link is issued. */
