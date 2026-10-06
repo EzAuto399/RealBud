@@ -43,10 +43,13 @@ export async function verifyRuntime(home: string, release: HermesRelease, option
   try {
     const repo = join(home, "hermes-agent");
     const git = process.platform === "win32" ? windowsHermesGit(home) : "git";
-    if (await command(git, ["-C", repo, "rev-parse", "HEAD"], env) !== release.commit) throw new BootstrapError("The downloaded source does not match the reviewed release. Your current agent is kept.");
+    // The checkout has files past Windows' MAX_PATH; without longpaths Git cannot
+    // read them and reports them as modified (seen once on a fresh Windows 11).
+    const repoGit = ["-c", "core.longpaths=true", "-C", repo];
+    if (await command(git, [...repoGit, "rev-parse", "HEAD"], env) !== release.commit) throw new BootstrapError("The downloaded source does not match the reviewed release. Your current agent is kept.");
     // Upstream/environment contribution accounting can stamp email metadata
     // during an official install. It is not executable agent code.
-    const changed = await command(git, ["-C", repo, "diff", "--name-only", "HEAD", "--"], env);
+    const changed = await command(git, [...repoGit, "diff", "--name-only", "HEAD", "--"], env);
     const modified = changed.split("\n").filter(Boolean).filter(path => !/^contributors\/emails\/[^/]+$/.test(path));
     if (modified.length) {
       // Repository-relative names only, so a one-off on a customer machine can be traced.
