@@ -119,7 +119,6 @@ export function startRuntimeUpdate(options: {
   let candidate = releaseHome(home, candidateId);
   const lockHome = join(home, ".runtime-install");
   const completedPath = join(lockHome, "completed-runtime.json");
-  let receipted = false;
   const installerSha256 = bootstrapPlan(process.platform, release, true)?.sha256;
   if (!installerSha256) throw new BootstrapError("Automatic Bud setup is not available on this computer yet.");
   return startBootstrapInstall({
@@ -153,8 +152,11 @@ export function startRuntimeUpdate(options: {
       try {
         await (options.run ?? runWorkerBootstrap)({ ...opts, home: candidate, lockHome, release, privateRuntime: true });
       } catch (error) {
-        // A receipted candidate is kept: the next attempt re-verifies it in
-        // full. Verification runs inside this call (finalize), so check here.
+        // Decided by the receipt on disk: verification runs inside this call
+        // (finalize) after writing it, and the next attempt re-verifies a
+        // receipted candidate in full. An unreadable receipt keeps the folder.
+        let receipted = true;
+        try { receipted = completedRuntime(await readPrivateJson(completedPath, 2_000))?.candidateId === candidateId; } catch {}
         if (!receipted) discardFailedCandidate(home, candidateId, lockHome, before);
         throw error;
       }
@@ -163,7 +165,6 @@ export function startRuntimeUpdate(options: {
       await privateDirectory(candidate);
       // This is proof that installation stages completed, never proof that
       // executable code is trusted. Every retry repeats verifyRuntime in full.
-      receipted = true;
       await writePrivateJson(completedPath, { version: 1, candidateId, commit: release.commit, product: release.product, tag: release.tag, installerSha256 });
       return (options.verify ?? verifyRuntime)(candidate, release);
     },

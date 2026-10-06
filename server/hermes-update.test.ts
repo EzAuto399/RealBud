@@ -235,6 +235,26 @@ it("uses a fresh candidate folder when an attempt fails", async () => {
   expect(homes.some(existsSync)).toBe(false);
 });
 
+it("keeps a receipted candidate when verification fails after all stages, and the retry reuses it", async () => {
+  const stages = vi.fn(async () => {});
+  const installer: typeof runWorkerBootstrap = opts => runWorkerBootstrap({ ...opts, download: async () => Buffer.from("fixture"), documentDeps: async () => {},
+    execute: async invocation => { await stages(); const cli = runtimeCli(opts.home); mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fixture"); void invocation; } });
+  let candidate = "";
+  start({ run: installer, verify: async path => { candidate = path; throw new Error("fictional modified source files"); } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(stages).toHaveBeenCalled();
+  const receipt = JSON.parse(readFileSync(join(home, ".runtime-install", "completed-runtime.json"), "utf8"));
+  expect(receipt.candidateId).toBe(candidate.split(/[\\/]/).at(-1));
+  expect(existsSync(runtimeCli(candidate))).toBe(true);
+  const calls = stages.mock.calls.length;
+  start({ run: installer, verify: async path => { expect(path).toBe(candidate); return version; } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  expect(stages.mock.calls.length).toBe(calls);
+  expect(readRuntimeSelection(home).selected).toBe(receipt.candidateId);
+});
+
 it("keeps a failed candidate while its installer child may still be writing, and never discards a selected runtime", async () => {
   let candidate = "";
   start({ run: async opts => {
