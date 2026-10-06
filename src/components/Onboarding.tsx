@@ -303,7 +303,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                   <p className="mt-2 max-w-[29rem] text-[14px] leading-relaxed text-ink-secondary">
                     {connect.office
                       ? "Next, Bud sets itself up on this computer with your office’s AI access."
-                      : "Your office account on realbud.app approves this computer, then Bud sets itself up here. Your conversations and documents stay on this computer."}
+                      : "Paste the link code your office owner sent you."}
                   </p>
                 </div>
 

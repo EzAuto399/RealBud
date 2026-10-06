@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { Check, ExternalLink, Loader2 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { BrowserLinkRequest, OfficeLinkStatus } from "../../server/office-link";
 import {
@@ -9,6 +9,7 @@ import {
 
 const primary = "pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const secondary = "pm-control inline-flex items-center justify-center gap-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-raised/60 disabled:opacity-40";
+const quiet = "pm-control inline-flex items-center gap-1.5 rounded px-1 text-[13px] text-ink-secondary underline-offset-2 hover:text-ink hover:underline disabled:opacity-40";
 const field = "pm-control mt-1 block w-full rounded border border-line bg-paper px-3 font-mono text-[13px] text-ink";
 
 export interface ConnectOfficeViewProps {
@@ -29,9 +30,10 @@ export interface ConnectOfficeViewProps {
 }
 
 /**
- * Connect this computer to the office's RealBud account: one primary action
- * that opens realbud.app, the matching code while it waits, and a quiet
- * pasted-code fallback. Linked, it names the office and stops asking.
+ * Connect this computer to the office's RealBud account: the pasted link code
+ * is the one primary action, with a quiet owner option that approves in the
+ * browser and shows the matching code while it waits. Linked, it names the
+ * office and stops asking.
  */
 export function ConnectOfficeView(props: ConnectOfficeViewProps) {
   const { status, phase, error, code, codeBusy } = props;
@@ -70,22 +72,19 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       {phase.kind === "declined" || phase.kind === "expired" ? <p>{browserLinkMessage(phase)}</p> : null}
       {status?.state === "revoked" ? <p>This computer was removed from your office. Connect it again to continue.</p> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
-      {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : <>
-        {/* A pasted code makes its own button the one to press (Windows issues log #37). */}
-        <button type="button" className={code.trim() ? secondary : primary} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
-          {phase.kind === "starting" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={15} aria-hidden="true" />}
-          Connect to your office
+      {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : null}
+      {/* The link code is the day-one path for office staff; browser approval stays available for owners. */}
+      <form className="space-y-2" onSubmit={event => { event.preventDefault(); props.onLinkCode(); }}>
+        <label className="block text-ink">Link code<input required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="Paste the code here" className={field} /></label>
+        <button type="submit" className={primary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
+      </form>
+      {codePending ? null : <div className="border-t border-line pt-2 text-[12.5px] text-ink-muted">
+        <button type="button" className={quiet} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
+          {phase.kind === "starting" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
+          I’m the office owner: approve in my browser
         </button>
-        <p className="text-[12.5px] leading-relaxed text-ink-muted">{phase.kind === "starting" ? "Opening your browser…" : "Your browser opens realbud.app. Sign in with the email RealBud invited, check the code matches this screen, then approve."}</p>
-      </>}
-      <details open={codePending || undefined} className="group text-[12.5px] text-ink-secondary">
-        <summary className="pm-control flex cursor-pointer list-none items-center gap-1 hover:text-ink"><ChevronRight size={14} aria-hidden="true" className="transition-transform group-open:rotate-90 motion-reduce:transition-none" />Use a link code instead</summary>
-        <form className="mt-1 space-y-2" onSubmit={event => { event.preventDefault(); props.onLinkCode(); }}>
-          <p>On realbud.app, open Account → Computers, create a link code, then paste it here.</p>
-          <label className="block text-ink">Link code<input required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="rb1_…" className={field} /></label>
-          <button type="submit" className={code.trim() ? primary : secondary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
-        </form>
-      </details>
+        <p>{phase.kind === "starting" ? "Opening your browser…" : "Owners: realbud.app → Office computers → Pair a computer."}</p>
+      </div>}
     </>}
     {failure ? <p role="alert" className="text-danger">{failure}{!status ? <> <button type="button" className="pm-control underline underline-offset-2" onClick={props.onRefresh}>Try again</button></> : null}</p> : null}
   </div>;

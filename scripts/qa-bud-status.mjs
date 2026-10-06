@@ -202,8 +202,8 @@ try {
     assert.equal(await panel.getByRole('button', { name: /Finish Bud setup/ }).count(), 0);
     assert.match(await panel.innerText(), /private workroom is not ready/);
     assert.deepEqual(await readRows(), [
-      { check: 'Bud installed', state: 'Ready' }, { check: 'Property safeguards', state: 'Needs attention' },
-      { check: 'Model connection', state: 'Configured' }, { check: 'Private readiness check', state: 'Waiting' },
+      { check: 'Download Bud', state: 'Ready' }, { check: 'Turn on approvals', state: 'Needs attention' },
+      { check: 'Connect your office’s AI', state: 'Configured' }, { check: 'Test Bud', state: 'Waiting' },
     ]);
     checks.push('Staff safeguards hold identifies the missing workroom, shows four dependency-ordered facts and provides no false Finish setup action.');
     await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
@@ -248,9 +248,9 @@ try {
     await setState(null); await panel.getByText('Checking Bud', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); await shot('bud-checking');
     await setState({ ...ready, ready: false, lastPing: null }); await panel.getByText('Check needed', { exact: true }).waitFor(); await shot('bud-readiness-needed');
     await setState({ ...ready, ready: false, lastPing: null, model: { attached: false, provider: null, model: null }, modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' } });
-    await panel.getByRole('button', { name: 'Connect to your office', exact: true }).waitFor(); await shot('bud-model-needed');
+    await panel.getByRole('button', { name: 'Connect with this code', exact: true }).waitFor(); await shot('bud-model-needed');
     await setState({ ...ready, ready: false, model: { ...ready.model, attached: false }, modelAccess: { managed: true, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } });
-    await panel.getByText('Model access withdrawn', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect to your office', exact: true }).count(), 0); await shot('bud-withdrawn');
+    await panel.getByText('Model access withdrawn', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect with this code', exact: true }).count(), 0); await shot('bud-withdrawn');
     await setState(ready, { recovering: true }); await panel.getByText('Recovery needed', { exact: true }).waitFor(); assert.notEqual((await readRows()).at(-1).state, 'Ready'); await shot('bud-recovery');
     await setState(ready, { connected: false }); await panel.getByText('Reconnecting', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); assert.equal(await panel.getByRole('button', { name: 'Check again', exact: true }).isDisabled(), true); await shot('bud-offline');
     await setState({ ...safeguards, cli: { ...ready.cli, matchesPin: false, compatible: false }, installerAvailable: true });
@@ -261,9 +261,9 @@ try {
     await page.emulateMedia({ reducedMotion: 'reduce' }); await shot('bud-reduced-motion');
     observations.reducedMotion = await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches); assert.equal(observations.reducedMotion, true);
     checks.push('Reduced-motion setting retains a readable, usable status panel.');
-    await panel.getByRole('button', { name: 'Return to Work', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); assert.equal(await composer.inputValue(), draft);
+    await panel.getByRole('button', { name: 'Back to Work', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); assert.equal(await composer.inputValue(), draft);
     const readsClosed = counts.statusReads; await page.evaluate(() => { for (let i = 0; i < 10; i++) window.dispatchEvent(new Event('focus')); }); await wait(300); observations.readsAfterCloseAndTenFocusEvents = counts.statusReads - readsClosed; assert.ok(counts.statusReads - readsClosed <= 1, 'closing the status panel permits one handoff read, never a focus-triggered loop');
-    checks.push('Return to Work preserves the draft; ten repeated focus events after closing permit at most one handoff read for the surviving Ask observer.');
+    checks.push('Back to Work preserves the draft; ten repeated focus events after closing permit at most one handoff read for the surviving Ask observer.');
     managed = false;
     await page.evaluate(() => window.__budQa.dispatch({ type: 'serviceAdminStatus', status: { managed: false, configured: true, authenticated: false, expiresAt: null } }));
     await page.getByRole('button', { name: /^Finish Bud setup/ }).click();

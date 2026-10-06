@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { budAutoSetupView, budAvailability, budFacingCopy, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import { budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
 import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
@@ -105,8 +105,8 @@ describe("automatic Bud setup status", () => {
 
   it("gives a non-administrator progress with nothing to press, and ready at the end", () => {
     const availability = budAvailability(status, true, false, { canAdminister: false });
-    expect(availability.label).toBe("Connecting Bud’s model");
-    expect(availability.detail).toBe("Step 3 of 4. Keep RealBud open. You can draft a request or prepare plans while setup continues. Work starts only when you choose.");
+    expect(availability.label).toBe("Setting up Bud");
+    expect(availability.detail).toBe("Step 3 of 4: connecting your office’s AI. Usually about 10 minutes. Nothing to do; keep RealBud open.");
     expect(availability.action).toBeNull();
     expect(budAutoSetupView({ ...status, ready: true, autoSetup: { state: "ready", step: 4, total: 4, detail: "Bud is ready." } })).toBeNull();
   });
@@ -119,30 +119,42 @@ describe("automatic Bud setup status", () => {
     expect(availability.action).toBe("View Bud status");
   });
 
-  it("shows actual fixed installer phases without guessing a percentage or finish time", () => {
-    for (const phase of ["Downloading verified setup", "Preparing this computer", "Downloading Bud", "Installing Bud’s components", "Finishing setup", "Checking already downloaded Bud"]) {
+  it("maps fixed installer phases to plain words with the usual time, never a percentage or countdown", () => {
+    const phases = { "Downloading verified setup": "downloading", "Preparing this computer": "preparing this computer", "Downloading Bud": "downloading",
+      "Installing Bud’s components": "installing", "Finishing setup": "finishing", "Installing Bud": "installing", "Checking already downloaded Bud": "checking the download" };
+    for (const [phase, words] of Object.entries(phases)) {
       const view = budAutoSetupView({ ...status, autoSetup: { state: "installing", code: "installing", step: 1, total: 4, detail: phase } });
-      expect(view?.label).toBe(phase);
-      expect(view?.detail).toContain("Step 1 of 4");
-      expect(view?.detail).toContain("You can draft a request");
-      expect(view?.detail).not.toMatch(/%|minute|second|almost done/i);
+      expect(view?.label).toBe("Setting up Bud");
+      expect(view?.detail).toBe(`Step 1 of 4: ${words}. Usually about 10 minutes. Nothing to do; keep RealBud open.`);
+      expect(view?.detail).not.toMatch(/%|second|almost done|minutes left/i);
     }
   });
 
   it("uses codes for safety/model/readiness phases and ignores arbitrary upstream detail", () => {
-    const phases = { checking: "Checking Bud on this computer", safeguards: "Applying Bud’s safeguards", model: "Connecting Bud’s model", readiness: "Running the private readiness check" } as const;
-    for (const [code, label] of Object.entries(phases)) {
+    const phases = { checking: "Checking this computer", safeguards: "turning on approvals", model: "connecting your office’s AI", readiness: "testing Bud" } as const;
+    for (const [code, words] of Object.entries(phases)) {
       const view = budAutoSetupView({ ...status, autoSetup: { state: "verifying", code: code as keyof typeof phases, step: code === "checking" ? 0 : 2, total: 4, detail: "/private/path?api_key=fictional-secret" } });
-      expect(view?.label).toBe(label);
+      expect(view?.label).toBe("Setting up Bud");
+      expect(view?.detail).toContain(code === "checking" ? `${words}.` : `: ${words}.`);
       expect(view?.detail).not.toMatch(/private\/path|fictional-secret/);
       if (code === "checking") expect(view?.detail).not.toContain("Step 1");
     }
-    expect(budAutoSetupView({ ...status, autoSetup: { state: "installing", code: "installing", step: 1, total: 4, detail: "Downloading Bud from /private/secret" } })?.label).toBe("Installing Bud");
+    expect(budAutoSetupView({ ...status, autoSetup: { state: "installing", code: "installing", step: 1, total: 4, detail: "Downloading Bud from /private/secret" } })?.detail).toContain("Step 1 of 4: installing.");
   });
 
   it("uses fixed hold copy even if the status carries an unsafe error", () => {
     const view = budAutoSetupView({ ...status, autoSetup: { state: "held", code: "held_failed", step: 1, total: 4, detail: "fatal: secret-token from /private/path" } });
-    expect(view?.detail).toBe("Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.");
+    expect(view?.detail).toBe("Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
     expect(view?.detail).not.toMatch(/secret-token|private\/path/);
+  });
+});
+
+describe("last readiness check copy", () => {
+  it("shows the setup-changed receipt in plain words and keeps other failures bounded", () => {
+    const failed = (detail: string) => budReadinessFailure({ ready: false, lastPing: { at: 1, ok: false, kind: "ping", detail } } as HermesStatus);
+    expect(failed("Bud setup changed. Its private readiness check is still needed."))
+      .toBe("Bud’s setup didn’t finish. Nothing was lost. Press Try setup again in Bud status.");
+    expect(failed("Hermes CLI is not ready")).toBe("Bud is not ready");
+    expect(failed("toString")).toBe("toString");
   });
 });

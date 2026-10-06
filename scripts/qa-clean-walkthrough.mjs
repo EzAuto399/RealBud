@@ -230,7 +230,6 @@ try {
   });
 
   await step(2, 'Office link through the lab website (link code)', async c => {
-    await page.getByText('Use a link code instead', { exact: true }).click();
     await page.getByRole('textbox', { name: 'Link code' }).fill(CODE);
     await shot('link-code');
     const connect = page.getByRole('button', { name: 'Connect with this code' });
@@ -287,7 +286,7 @@ try {
     assert.equal(await checkAgain.evaluate(el => el === document.activeElement), true, `Focus after Check again: ${await page.evaluate(() => document.activeElement?.tagName)}`);
     check(c, 'Keyboard: focus stays on Check again while it checks and after it finishes');
     assert.equal((await api('/api/hermes')).body.ready, true);
-    check(c, 'Bud status: installed, property safeguards, model connection and private readiness check all Ready');
+    check(c, 'Bud status: Download Bud, Turn on approvals, Connect your office’s AI and Test Bud all Ready');
     await widths('bud-status-ready');
     assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'focus is inside Bud status before Escape');
     await page.keyboard.press('Escape');
@@ -532,20 +531,18 @@ try {
       await p2.goto(`http://127.0.0.1:${port2}`);
       await p2.getByRole('textbox', { name: 'Your name', exact: true }).fill('Fictional Second Person');
       await p2.getByRole('button', { name: 'Continue', exact: true }).click();
-      await p2.getByText('Use a link code instead', { exact: true }).click();
       await p2.getByRole('textbox', { name: 'Link code' }).fill(EXPIRED_CODE);
       await p2.getByRole('button', { name: 'Connect with this code' }).click();
       await p2.getByText('This code is expired or already used. Get a new code from your account owner, then paste it here.').waitFor();
       await shot('expired-code', p2);
       check(c, 'Error state: an expired code says to get a new code');
       // The browser link is not blocked by the refused code: start it, then cancel it.
-      await p2.getByRole('button', { name: 'Connect to your office', exact: true }).click();
+      await p2.getByRole('button', { name: 'I’m the office owner: approve in my browser', exact: true }).click();
       await p2.getByText('Code on this computer').waitFor();
       await p2.getByRole('button', { name: 'Cancel', exact: true }).click();
-      await p2.getByRole('button', { name: 'Connect to your office', exact: true }).waitFor();
+      await p2.getByRole('button', { name: 'I’m the office owner: approve in my browser', exact: true }).waitFor();
       assert.equal((await fetch(`http://127.0.0.1:${port2}/api/office-link`, { headers: { 'x-realbud-session': second.token } }).then(r => r.json())).state, 'unlinked');
       check(c, 'Browser link after an expired code: starts, shows its code, and cancels back to unlinked');
-      if (!await p2.getByRole('textbox', { name: 'Link code' }).isVisible()) await p2.getByText('Use a link code instead', { exact: true }).click();
       const field = p2.getByRole('textbox', { name: 'Link code' });
       await field.fill(FRESH_CODE);
       await p2.getByRole('button', { name: 'Connect with this code' }).click();

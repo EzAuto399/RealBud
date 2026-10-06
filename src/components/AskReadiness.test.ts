@@ -81,9 +81,9 @@ describe("Ask readiness permission and status", () => {
     const html = render();
     for (const effect of fakes.effects) effect();
     await Promise.resolve();
-    expect(html).toContain("Downloading Bud");
-    expect(html).toContain("You can draft a request or prepare plans");
-    expect(html).toContain("Work starts only when you choose");
+    expect(html).toContain("Setting up Bud");
+    expect(html).toContain("Step 1 of 4: downloading. Usually about 10 minutes.");
+    expect(html).toContain("Nothing to do; keep RealBud open.");
     expect(html).not.toMatch(/Run readiness check|Try check again|Finish Bud setup/);
     expect(fakes.run).not.toHaveBeenCalled();
     expect(fakes.readiness).not.toHaveBeenCalled();

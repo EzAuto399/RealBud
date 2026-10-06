@@ -241,16 +241,17 @@ describe('connect this computer to your office', () => {
   const saved = { ...initial, stage: 'office-rules' as const };
   const html = () => renderToStaticMarkup(render(saved));
 
-  it('leads with one Connect action and a visible step, keeping the code path and rules secondary', () => {
+  it('leads with the link code and one Connect action, keeping owner approval and rules secondary', () => {
     fixture.config.profile.name = 'Fictional Draft';
     fixture.connect = connection({ state: 'unlinked' });
     const markup = html();
     expect(markup).toContain('Step 2 of 3');
     expect(markup).toMatch(/<h1[^>]*>Connect this computer to your office<\/h1>/);
     expect(markup.match(/class="pm-decision/g)).toHaveLength(1);
-    expect(markup).toMatch(/<button type="button" class="pm-decision[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Connect to your office<\/button>/);
-    expect(markup).toContain('Your browser opens realbud.app. Sign in with the email RealBud invited');
-    expect(markup).toMatch(/<details class="[^"]*"><summary class="pm-control[^"]*"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>Use a link code instead<\/summary>/);
+    expect(markup).toContain('Paste the link code your office owner sent you.');
+    expect(markup).toMatch(/<button type="submit" class="pm-decision[^"]*"[^>]*>Connect with this code<\/button>/);
+    expect(markup).toContain('I’m the office owner: approve in my browser</button>');
+    expect(markup).not.toContain('<details');
     expect(markup).toContain('aria-label="You stay in charge"');
     expect(markup).not.toContain('Continue to Bud setup');
     expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
@@ -265,8 +266,8 @@ describe('connect this computer to your office', () => {
     expect(markup).toContain('>ABCD-EFGH</span>');
     expect(markup).toContain('Open the page again</button>');
     expect(markup).toContain('>Cancel</button>');
-    expect(markup).not.toContain('Connect to your office</button>');
-    expect(markup).not.toContain('Use a link code instead');
+    expect(markup).not.toContain('approve in my browser</button>');
+    expect(markup).not.toContain('Connect with this code');
   });
 
   it('skips connecting when this computer is already linked and continues to Bud setup', async () => {
@@ -274,7 +275,7 @@ describe('connect this computer to your office', () => {
     const markup = html();
     expect(markup).toMatch(/<h1[^>]*>This computer is connected<\/h1>/);
     expect(markup).toContain(`Connected to ${OFFICE}`);
-    expect(markup).not.toContain('Connect to your office</button>');
+    expect(markup).not.toContain('Connect with this code');
     fixture.api.mockResolvedValueOnce({ book: { office: { pmUser: 'Fictional Draft' } } })
       .mockResolvedValueOnce({ ...saved, revision: 4, stage: 'complete' });
     button(render(saved), 'Continue to Bud setup').props.onClick!();

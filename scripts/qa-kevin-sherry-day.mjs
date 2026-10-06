@@ -370,7 +370,6 @@ async function runPerson(who) {
       await pressByKeyboard('Continue');
       await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
       c(`Keyboard only: typed "${PERSON}" and pressed Continue`);
-      await page.getByText('Use a link code instead', { exact: true }).click();
       await page.getByRole('textbox', { name: 'Link code' }).fill(CODE);
       await pressByKeyboard('Connect with this code', { from: page.getByRole('textbox', { name: 'Link code' }) });
       await page.getByRole('heading', { name: 'This computer is connected', exact: true }).waitFor({ timeout: 30_000 });
