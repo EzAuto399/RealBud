@@ -168,7 +168,8 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
         {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{automatic?.working ? "Keep preparing" : "Return to Ask"}</button>}
         {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
           onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
-        {!automatic?.working && <button type="button" className={secondaryButton} disabled={pending || !connected} aria-busy={pending} onClick={() => { void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>}
+        {/* aria-disabled while checking: a disabled button drops keyboard focus to the page. */}
+        {!automatic?.working && <button type="button" className={`${secondaryButton} aria-disabled:opacity-50`} disabled={!connected} aria-disabled={pending || undefined} aria-busy={pending} onClick={() => { if (!pending) void refresh(); }}>{pending ? "Checking…" : "Check again"}</button>}
       </div>
     </Card>
   </section>;
