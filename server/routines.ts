@@ -96,7 +96,8 @@ export function morningCheckResult(
     return { ok: false, detail: snapshot.handsDetail ?? "held", ...coverage };
   }
   if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
-  const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
+  // "held" returned above; Bud and CSV facts are live, demo and fixture facts are not.
+  const live = snapshot.hands !== "demo" && snapshot.hands !== "fixture";
   return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
 }
 
