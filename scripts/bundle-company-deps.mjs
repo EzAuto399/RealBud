@@ -43,6 +43,12 @@ const runtimeInputs = await Promise.all(
 );
 const copiedRuntimeInputs = runtimeInputs.reduce((total, count) => total + count, 0);
 
+// The packaged server has no package.json above it, so /api/health said "unreported", the window never
+// matched its own service and stranded on "did not start". server/app-version.ts reads this file first.
+// (Shipping package.json itself as an extraResource breaks electron-builder's app.asar check.)
+const { name, version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+await writeFile(join(server, 'app-version.json'), JSON.stringify({ name, version }) + '\n');
+
 // Every relative specifier the compiled server still resolves at runtime must exist
 // in dist-server. Catch a missing runtime input at build time rather than as a crash
 // on a customer's Mac, which is how the service-identity omission reached a release.
