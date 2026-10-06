@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { checkUpstreamRelease, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { checkUpstreamRelease, discardFailedCandidate, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
 import type { HermesStatus } from "./hermes-status.ts";
 import { cancelBootstrapInstall, installStatus, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
@@ -231,6 +231,58 @@ it("uses a fresh candidate folder when an attempt fails", async () => {
   start({ run: fail }); await waitForBootstrapStop();
   expect(homes).toHaveLength(2); expect(homes[0]).not.toBe(homes[1]);
   expect(readRuntimeSelection(home).selected).toBeNull();
+  // Each failed, never-receipted attempt is removed instead of piling up.
+  expect(homes.some(existsSync)).toBe(false);
+});
+
+it("keeps a receipted candidate when verification fails after all stages, and the retry reuses it", async () => {
+  const stages = vi.fn(async () => {});
+  const installer: typeof runWorkerBootstrap = opts => runWorkerBootstrap({ ...opts, download: async () => Buffer.from("fixture"), documentDeps: async () => {},
+    execute: async invocation => { await stages(); const cli = runtimeCli(opts.home); mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fixture"); void invocation; } });
+  let candidate = "";
+  start({ run: installer, verify: async path => { candidate = path; throw new Error("fictional modified source files"); } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(stages).toHaveBeenCalled();
+  const receipt = JSON.parse(readFileSync(join(home, ".runtime-install", "completed-runtime.json"), "utf8"));
+  expect(receipt.candidateId).toBe(candidate.split(/[\\/]/).at(-1));
+  expect(existsSync(runtimeCli(candidate))).toBe(true);
+  const calls = stages.mock.calls.length;
+  start({ run: installer, verify: async path => { expect(path).toBe(candidate); return version; } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  expect(stages.mock.calls.length).toBe(calls);
+  expect(readRuntimeSelection(home).selected).toBe(receipt.candidateId);
+});
+
+it("keeps a failed candidate while its installer child may still be writing, and never discards a selected runtime", async () => {
+  let candidate = "";
+  start({ run: async opts => {
+    candidate = opts.home; writeFileSync(join(opts.home, "fictional-partial"), "x");
+    writeFileSync(join(home, ".runtime-install", ".realbud-bootstrap.json"), JSON.stringify({ version: 1, pending: true, childPid: process.pid }));
+    throw new Error("fixture failure");
+  } });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("failed");
+  expect(existsSync(join(candidate, "fictional-partial"))).toBe(true);
+
+  const id = candidate.split(/[\\/]/).at(-1)!;
+  discardFailedCandidate(home, id, join(home, "fictional-no-lock"), { selected: null, previous: id });
+  discardFailedCandidate(home, id, join(home, "fictional-no-lock"), { selected: id, previous: null });
+  saveRuntimeSelection(home, { version: 1, selected: id, previous: null });
+  discardFailedCandidate(home, id, join(home, "fictional-no-lock"), { selected: null, previous: null });
+  expect(existsSync(join(candidate, "fictional-partial"))).toBe(true);
+  saveRuntimeSelection(home, { version: 1, selected: null, previous: null });
+  discardFailedCandidate(home, id, join(home, "fictional-no-lock"), { selected: null, previous: null });
+  expect(existsSync(candidate)).toBe(false);
+});
+
+it.skipIf(process.platform === "win32")("unlinks, never follows, a link planted as a failed candidate", () => {
+  const target = join(home, "fictional-profile"); mkdirSync(target); writeFileSync(join(target, "keep"), "x");
+  const planted = join(home, "runtimes", `${HERMES_RECOMMENDED.commit}-abcdefabcdef`);
+  mkdirSync(dirname(planted), { recursive: true }); symlinkSync(target, planted);
+  discardFailedCandidate(home, planted.split(/[\\/]/).at(-1)!, join(home, "fictional-no-lock"), { selected: null, previous: null });
+  expect(readFileSync(join(target, "keep"), "utf8")).toBe("x");
 });
 
 it("rechecks a completed private download after verification failed without downloading or installing again", async () => {

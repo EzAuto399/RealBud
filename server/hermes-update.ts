@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
@@ -26,6 +26,26 @@ function completedRuntime(value: unknown): CompletedRuntime | undefined {
     throw new BootstrapError("Bud’s saved download needs recovery. Existing files are kept; contact RealBud support.");
   }
   return row as CompletedRuntime;
+}
+
+/**
+ * A failed installer run leaves a fresh, never-receipted candidate of several
+ * hundred MB; each retry makes a new one. Remove it, but only when it is
+ * neither the selected nor the previous runtime (before this attempt or now)
+ * and no installer child may still be writing to it. Anything doubtful is kept. Links are unlinked, never
+ * followed. A file Windows refuses to remove (locked, or deeper than the
+ * runtime can reach) only leaves the folder in place, as before.
+ */
+export function discardFailedCandidate(home: string, candidateId: string, lockHome: string, before: { selected: string | null; previous: string | null }) {
+  try {
+    const candidate = releaseHome(home, candidateId);
+    for (const selection of [before, readRuntimeSelection(home)]) if (candidateId === selection.selected || candidateId === selection.previous) return;
+    if (bootstrapChildRunning(lockHome)) return;
+    if (!lstatSync(candidate).isDirectory()) return;
+    rmSync(candidate, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch {
+    console.warn(`[${new Date().toISOString()}] Bud setup kept a failed download folder it could not remove.`);
+  }
 }
 
 export function runtimeUpdateStatus(home = hermesHome()) {
@@ -129,7 +149,17 @@ export function startRuntimeUpdate(options: {
       } finally { unlock(); }
       opts.signal.throwIfAborted();
       ensureProfileDirectory(candidate);
-      await (options.run ?? runWorkerBootstrap)({ ...opts, home: candidate, lockHome, release, privateRuntime: true });
+      try {
+        await (options.run ?? runWorkerBootstrap)({ ...opts, home: candidate, lockHome, release, privateRuntime: true });
+      } catch (error) {
+        // Decided by the receipt on disk: verification runs inside this call
+        // (finalize) after writing it, and the next attempt re-verifies a
+        // receipted candidate in full. An unreadable receipt keeps the folder.
+        let receipted = true;
+        try { receipted = completedRuntime(await readPrivateJson(completedPath, 2_000))?.candidateId === candidateId; } catch {}
+        if (!receipted) discardFailedCandidate(home, candidateId, lockHome, before);
+        throw error;
+      }
     },
     verify: async () => {
       await privateDirectory(candidate);
