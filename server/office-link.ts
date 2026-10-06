@@ -341,7 +341,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       let saved = await read();
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
       if (saved?.browser && !saved.revoked) throw Object.assign(new Error("Cancel the browser approval before using a link code."), { status: 409 });
-      if (saved?.code && saved.code !== code && !saved.revoked) throw Object.assign(new Error("Retry the original code, or cancel the pending link before using a new code."), { status: 409 });
+      if (saved?.code && saved.code !== code && !saved.revoked) throw Object.assign(new Error("This computer is still finishing the first code you pasted. Paste that same code again to finish. If it has expired, you can then use a new one."), { status: 409 });
       // The revoked link is the durable cleanup signal. Keep it until the old
       // grant is released, including after a restart or a failed withdrawal.
       if (saved?.revoked) await options.provisioning?.withdraw();
@@ -353,7 +353,17 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
         await save(saved);
       } else await preflightProvisioning(saved.id);
       const response = await request("redeem", { method: "POST", body: JSON.stringify({ code, id: saved.id, token: saved.token, label: saved.label, platform: options.platform ?? process.platform, appVersion: options.appVersion }) }, PROVISIONING_TIMEOUT_MS);
-      if (!response.ok) throw new Error(response.status === 409 ? "This code is expired or already used. Get a new code from your account owner." : "The website could not finish linking this computer. Try again shortly.");
+      if (response.status === 409) {
+        // The website refused this code for good: expired, or used (elsewhere,
+        // or here by a reply lost past its replay window). Revoke the token in
+        // case that lost reply created an installation, then forget the code so
+        // a fresh code or the browser link can start. Any other failure keeps it.
+        await response.body?.cancel().catch(() => {});
+        await revokeQuietly(saved.token);
+        unlinkSync(path);
+        throw new Error("This code is expired or already used. Get a new code from your account owner, then paste it here.");
+      }
+      if (!response.ok) throw new Error("The website could not finish linking this computer. Try again shortly.");
       const result = await response.json().catch(() => null) as { companyId?: unknown; agencyLabel?: unknown; installationId?: unknown; provisioning?: unknown } | null;
       if (!result || result.installationId !== saved.id || typeof result.companyId !== "string" || !result.companyId || result.companyId.length > 200 || typeof result.agencyLabel !== "string" || result.agencyLabel.length > 200) throw new Error("The website returned an incomplete link. Retry the same code.");
       // Vendor provisioning, when present, is applied before the link is
@@ -409,7 +419,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       if (!label || label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) throw Object.assign(new Error("Name this computer in 80 characters or fewer."), { status: 400 });
       const saved = await read();
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
-      if (saved?.code && !saved.revoked) throw Object.assign(new Error("Retry the pending link code, or cancel it before linking in the browser."), { status: 409 });
+      if (saved?.code && !saved.revoked) throw Object.assign(new Error("This computer is still finishing a link code. Paste that same code under “Use a link code instead” to finish. If it has expired, you can then connect here."), { status: 409 });
       if (saved?.revoked) await options.provisioning?.withdraw();
       if (saved?.browser && !saved.revoked) {
         // One pending request at a time: an unexpired one is resumed, never duplicated.

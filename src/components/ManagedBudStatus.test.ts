@@ -156,6 +156,12 @@ describe("managed Bud status", () => {
     expect(html).not.toMatch(/>Ready<\/dd>/);
     expect(html).toContain("Your draft and saved plans are kept");
   });
+  it("keeps Check again focusable while it checks, so keyboard focus stays in Bud status", () => {
+    monitor.pending = true;
+    const tag = /<button[^>]*>Checking…<\/button>/.exec(render(ready))?.[0] ?? "";
+    expect(tag).toContain('aria-disabled="true"');
+    expect(tag).not.toContain('disabled=""');
+  });
   it("renders unknown and offline checks without an administrator setup demand", () => {
     for (const html of [render(null), render(ready, { connected: false })]) {
       expect(html).not.toMatch(/>Ready<\/dd>/);

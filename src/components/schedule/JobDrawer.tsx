@@ -360,10 +360,13 @@ export function LoopDetail({
         {!loop.waitingForPlan ? (
           <button
             type="button"
-            onClick={onToggle}
-            disabled={controlsDisabled}
+            // aria-disabled while saving (the parent's `disabled` includes busy): a disabled
+            // button drops keyboard focus out of the drawer, so Escape stops working.
+            onClick={busy ? undefined : onToggle}
+            disabled={disabled && !busy}
+            aria-disabled={busy || undefined}
             title={loop.enabled ? "Pause this job" : "Resume this job"}
-            className="pm-control inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
+            className="pm-control inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-40 aria-disabled:opacity-40"
           >
             {loop.enabled ? <Pause size={13} aria-hidden /> : <Play size={13} aria-hidden />}
             {loop.enabled ? "Pause" : "Resume"}

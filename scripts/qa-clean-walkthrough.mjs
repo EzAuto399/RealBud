@@ -66,6 +66,15 @@ const lab = createServer(async (req, res) => {
       model: { provider: 'modelvia', baseUrl: 'https://model.fictional.invalid/v1', projectId: 'fictional-qa-project', keyId: 'fictional-qa-key', key: `rbk_${'f'.repeat(40)}`, spendCapLabel: 'Fictional deterministic worker only' } } }));
     return;
   }
+  // Browser link: one approval page on the lab origin that stays pending until cancelled.
+  if (req.method === 'POST' && path === '/api/installations/link-requests') {
+    res.end(JSON.stringify({ version: 1, purpose: 'installation-link-issued', approvalUrl: `${labOrigin}/link/${'L'.repeat(43)}`, displayCode: 'ABCD-EFGH', expiresAt: new Date(Date.now() + 600_000).toISOString() }));
+    return;
+  }
+  if (req.method === 'POST' && (path === '/api/installations/link-requests/status' || path === '/api/installations/link-requests/cancel')) {
+    res.end(JSON.stringify({ version: 1, purpose: 'installation-link-status', state: path.endsWith('cancel') ? 'declined' : 'pending', ...(path.endsWith('status') ? { expiresAt: new Date(Date.now() + 600_000).toISOString() } : {}) }));
+    return;
+  }
   if (path === '/api/installations/report') { res.end('{}'); return; }
   res.writeHead(404); res.end('{}');
 });
@@ -254,7 +263,11 @@ try {
     await shot('bud-status-first');
     // A linked office sees the staff status view (Check again / Try setup again).
     const firstText = await dialog.innerText();
-    if (/no AI access on this computer yet/.test(firstText)) observations.push({ step: 3, note: 'Right after linking, Bud status kept the pre-link readiness result "Bud has no AI access on this computer yet. Connect this computer to your office on realbud.app" although the office was connected. The fixture runtime is custom, which halts automatic setup, so whether a real install re-checks on its own is not confirmed here.', screenshot: current.screenshots.at(-1) });
+    if (/no AI access on this computer yet/.test(firstText)) {
+      // Not a stale UI: the service's own status still carries the pre-link readiness receipt.
+      const lastPing = (await api('/api/hermes')).body?.lastPing;
+      observations.push({ step: 3, note: `Right after linking, Bud status showed the pre-link readiness result "Bud has no AI access on this computer yet…". GET /api/hermes returns ${lastPing?.ok === false && /no AI access/.test(lastPing?.detail ?? '') ? 'that same saved receipt' : 'a different receipt'} (lastPing ok=${lastPing?.ok}), so a UI refetch cannot clear it. On a real install the approved link starts automatic setup, which hides the old result while it works and replaces it with a new readiness check (server/worker-auto-setup.ts readinessPing); the fixture runtime is custom, which halts automatic setup, so the old receipt stays until the check runs.`, screenshot: current.screenshots.at(-1) });
+    }
     const retry = dialog.getByRole('button', { name: 'Try setup again', exact: true });
     if (await retry.isVisible()) { await retry.click(); await wait(3000); }
     const rows = dialog.locator('dl[aria-label="Bud setup checks"] dd');
@@ -265,17 +278,18 @@ try {
       // readiness check (the route the administrator button uses), then let the UI refresh.
       const ping = await api('/api/hermes/test', 'POST', {});
       observations.push({ step: 3, note: `Try setup again did not run the readiness check with the fixture runtime; the harness ran POST /api/hermes/test (status ${ping.status}, ok=${ping.body?.ok}) and then pressed Check again.` });
-      await dialog.getByRole('button', { name: 'Check again', exact: true }).focus();
-      await page.keyboard.press('Enter');
     }
+    const checkAgain = dialog.getByRole('button', { name: /^(Check again|Checking…)$/ });
+    await checkAgain.focus();
+    await page.keyboard.press('Enter');
     await until(allReady, 'Bud status rows all Ready', 30_000);
+    await dialog.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    assert.equal(await checkAgain.evaluate(el => el === document.activeElement), true, `Focus after Check again: ${await page.evaluate(() => document.activeElement?.tagName)}`);
+    check(c, 'Keyboard: focus stays on Check again while it checks and after it finishes');
     assert.equal((await api('/api/hermes')).body.ready, true);
     check(c, 'Bud status: installed, property safeguards, model connection and private readiness check all Ready');
     await widths('bud-status-ready');
-    if (!await dialog.evaluate(el => el.contains(document.activeElement))) {
-      observations.push({ step: 3, note: `After the status turned Ready, keyboard focus was outside the Bud status dialog (active element: ${await page.evaluate(() => document.activeElement?.tagName)}), so Escape did nothing until focus was put back in the dialog.` });
-      await dialog.getByRole('button', { name: 'Close Bud status', exact: true }).focus();
-    }
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'focus is inside Bud status before Escape');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
     check(c, 'Keyboard: Escape closes Bud status back to Work');
@@ -382,16 +396,16 @@ try {
     await page.keyboard.press('Enter');
     await dialog.getByText('Morning money check paused until you Resume').waitFor();
     assert.equal((await api('/api/loops')).body.loops.find(l => l.id === 'morning-arrears').enabled, false);
+    const resume = dialog.getByRole('button', { name: 'Resume', exact: true });
+    assert.equal(await resume.evaluate(el => el === document.activeElement), true, `Focus after Pause: ${await page.evaluate(() => document.activeElement?.tagName)}`);
     await shot('loop-paused');
     check(c, 'Disable (keyboard): Morning money check paused');
-    await dialog.getByRole('button', { name: 'Resume', exact: true }).focus();
     await page.keyboard.press('Enter');
     await until(async () => (await api('/api/loops')).body.loops.find(l => l.id === 'morning-arrears').enabled === true, 'loop resumed');
     await dialog.getByRole('button', { name: 'Pause', exact: true }).waitFor();
     check(c, 'Enable (keyboard): Morning money check resumed');
-    const focusInside = await dialog.evaluate(el => el.contains(document.activeElement));
-    if (!focusInside) observations.push({ step: 6, note: `After pressing Resume with Enter (the button swaps to Pause), keyboard focus left the job drawer (active element: ${await page.evaluate(() => document.activeElement?.tagName)}), so Escape did nothing until focus was put back in the drawer.` });
-    await dialog.getByRole('button', { name: 'Pause', exact: true }).focus();
+    assert.equal(await dialog.getByRole('button', { name: 'Pause', exact: true }).evaluate(el => el === document.activeElement), true, `Focus after Resume: ${await page.evaluate(() => document.activeElement?.tagName)}`);
+    check(c, 'Keyboard: focus stays on the Pause/Resume button as it swaps, so Escape works without re-focusing');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
     check(c, 'Keyboard: Escape closes the job');
@@ -521,14 +535,22 @@ try {
       await p2.getByText('Use a link code instead', { exact: true }).click();
       await p2.getByRole('textbox', { name: 'Link code' }).fill(EXPIRED_CODE);
       await p2.getByRole('button', { name: 'Connect with this code' }).click();
-      await p2.getByText('This code is expired or already used. Get a new code from your account owner.').waitFor();
+      await p2.getByText('This code is expired or already used. Get a new code from your account owner, then paste it here.').waitFor();
       await shot('expired-code', p2);
       check(c, 'Error state: an expired code says to get a new code');
+      // The browser link is not blocked by the refused code: start it, then cancel it.
+      await p2.getByRole('button', { name: 'Connect to your office', exact: true }).click();
+      await p2.getByText('Code on this computer').waitFor();
+      await p2.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await p2.getByRole('button', { name: 'Connect to your office', exact: true }).waitFor();
+      assert.equal((await fetch(`http://127.0.0.1:${port2}/api/office-link`, { headers: { 'x-realbud-session': second.token } }).then(r => r.json())).state, 'unlinked');
+      check(c, 'Browser link after an expired code: starts, shows its code, and cancels back to unlinked');
+      if (!await p2.getByRole('textbox', { name: 'Link code' }).isVisible()) await p2.getByText('Use a link code instead', { exact: true }).click();
       const field = p2.getByRole('textbox', { name: 'Link code' });
       await field.fill(FRESH_CODE);
       await p2.getByRole('button', { name: 'Connect with this code' }).click();
       const linked = p2.getByRole('heading', { name: 'This computer is connected', exact: true });
-      const outcome = await Promise.race([linked.waitFor({ timeout: 20_000 }).then(() => 'linked'), p2.getByRole('alert').filter({ hasText: /original code|cancel the pending link/i }).waitFor({ timeout: 20_000 }).then(() => 'refused')]).catch(() => 'unknown');
+      const outcome = await Promise.race([linked.waitFor({ timeout: 20_000 }).then(() => 'linked'), p2.getByRole('alert').filter({ hasText: /still finishing|original code|cancel the pending link/i }).waitFor({ timeout: 20_000 }).then(() => 'refused')]).catch(() => 'unknown');
       const file = await shot('fresh-code-after-expired', p2);
       if (outcome !== 'linked') {
         const text = (await p2.locator('[data-connect-office]').innerText().catch(() => '')).replace(/\s+/g, ' ');
@@ -560,12 +582,12 @@ try {
     limits: [
       'Fictional office, person, property and payee only; not customer acceptance.',
       'Source service plus built renderer in headless Chrome, not the packaged or installed RealBud.app; no notarization, Gatekeeper or Electron window.',
-      'realbud.app is a loopback lab website: link-code redeem and status report only. No browser approval link, no real account, no real Modelvia key, no model call.',
+      'realbud.app is a loopback lab website: link-code redeem, status report, and a browser link request that is started and cancelled (never approved). No real account, no real Modelvia key, no model call.',
       'The runtime is a fixture worker (version probe, OK readiness answer, scripted ACP turns). REALBUD_HERMES_CLI marks it custom, so automatic runtime install is halted, not exercised; qa-first-install covers the install UI with stubbed responses.',
       'Electron main is replaced by a test bridge for the local session token and the updater state; the update banner is driven by a fixture, not electron-updater.',
       'The approval card is a generic worker tool approval. A browser payment approval card with recipient and amount needs the owned work browser and broker; not produced here.',
       'Desktop widths 1280 and 1024 only (no phone layouts by product direction).',
-      'Built on origin/main 7d6490f: Desk customization is "Customize desk" (Move up/down, Show checkboxes, Reset to default). Arrange Desk / Reset to recommended from the desktop-shell branch are not on this base.',
+      'Built on origin/main a4849b1 plus claude/fix-link-dead-end: Desk customization is "Customize desk" (Move up/down, Show checkboxes, Reset to default). Arrange Desk / Reset to recommended from the desktop-shell branch are not on this base.',
     ],
   }, null, 2));
   if (!passed) writeFileSync(join(output, 'service.log'), logs.slice(-20_000));
