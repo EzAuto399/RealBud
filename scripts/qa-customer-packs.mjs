@@ -49,6 +49,7 @@ try {
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   const card = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
+  await card.getByText('Earlier Auston office pack (all workflows in one)', { exact: true }).click();
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
   assert.equal((await request('/api/customer-packs')).installations.length, 0);
@@ -87,6 +88,7 @@ try {
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   await card.getByText('Plans and instructions installed', { exact: true }).waitFor();
+  await card.getByText('Earlier Auston office pack (all workflows in one)', { exact: true }).click();
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();
   await card.getByText('Pack installed locally. Review the setup checks below; account access and real workflow results still need verification.', { exact: true }).waitFor();

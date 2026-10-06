@@ -219,6 +219,7 @@ try {
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   const packCard = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
+  await packCard.getByText('Earlier Auston office pack (all workflows in one)', { exact: true }).click();
   await packCard.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await packCard.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
   await packCard.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();

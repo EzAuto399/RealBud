@@ -3,14 +3,14 @@ import { departmentStarterCustomerPack } from './department-starter-pack.ts';
 import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import type { CsvColumnMapping, LoopSchedule, Recipe } from '../shared/contracts.ts';
-import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
+import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
 import { PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
 import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
-import { austinCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { assertOwnPrivate, readPrivateFileSync, writeFileAtomic, fsyncDir } from './atomic.ts';
 import { lstatSync, unlinkSync } from 'node:fs';
@@ -58,12 +58,13 @@ function validateOfficeSettings(value: unknown): CustomerPackOfficeSettings {
   if (s.rei !== undefined && !plain(fields(s.rei, ['businessCode']).businessCode, 100)) return fail('The REI business code in this pack is not valid.');
   if (s.csvColumnMapping !== undefined && Object.values(fields(s.csvColumnMapping, ['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'])).some(column => !plain(column, 200))) return fail('A column mapping in this pack is not valid.');
   for (const raw of s.loops) {
-    const loop = fields(raw, ['id', 'enabled', 'schedule']), schedule = fields(loop.schedule, ['type', 'time', 'weekdays', 'timezone', 'intervalDays', 'anchorDate']);
+    const loop = fields(raw, ['id', 'enabled', 'schedule']), schedule = fields(loop.schedule, ['type', 'time', 'weekdays', 'timezone', 'intervalDays', 'anchorDate', 'monthly']);
     safeId(loop.id);
     if (loop.enabled !== false) return fail('Loop schedules in a pack must arrive switched off.');
     if (schedule.type !== 'daily' || typeof schedule.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.time) || !Array.isArray(schedule.weekdays) || schedule.weekdays.some(day => !Number.isInteger(day) || Number(day) < 0 || Number(day) > 6) ||
       (schedule.timezone !== undefined && !plain(schedule.timezone, 64)) || (schedule.intervalDays !== undefined && (!Number.isSafeInteger(schedule.intervalDays) || Number(schedule.intervalDays) < 1 || Number(schedule.intervalDays) > 31)) ||
-      (schedule.anchorDate !== undefined && (typeof schedule.anchorDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(schedule.anchorDate)))) return fail('A loop schedule in this pack is not valid.');
+      (schedule.anchorDate !== undefined && (typeof schedule.anchorDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(schedule.anchorDate))) ||
+      (schedule.monthly !== undefined && (schedule.monthly !== 'first-weekday' || schedule.intervalDays !== undefined || schedule.anchorDate !== undefined))) return fail('A loop schedule in this pack is not valid.');
   }
   return s as unknown as CustomerPackOfficeSettings;
 }
@@ -189,15 +190,20 @@ export interface CustomerPackServiceOptions {
   trustedKeys?: readonly PackPublisherKey[];
   /** This office's setup for a per-client export. Only allowlisted fields are copied out. */
   officeSettings?: () => Promise<{ businessCode?: string; csvColumnMapping?: CsvColumnMapping; loops: { id: string; schedule: LoopSchedule }[] }>;
+  /** Applies an installed pack's office/settings.json loops (server/austin-pack.ts): never switches one on, keeps office-changed clocks. */
+  applyLoops?: (loops: CustomerPackOfficeSettings['loops']) => Promise<unknown>;
+  /** Packs the office uploaded on the website (server/office-link.ts). Untrusted until admitted with a signature. */
+  officePacks?: () => Promise<OfficePacksSource>;
 }
 /** Packs generated from files inside the signed app bundle. Trusted as shipped:
  * the digest is computed from the current app files, never pinned. */
-const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': austinCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
-/** A pack from outside the app must carry a valid RealBud signature. */
-function admitPack(value: unknown, keys: readonly PackPublisherKey[]): CustomerPack {
+const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': austinCustomerPack, 'austin-accounts': austinAccountsCustomerPack, 'austin-property': austinPropertyCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
+/** A pack from outside the app must carry a valid RealBud signature. A pack from
+ * the office website always must: matching a built-in is no excuse there. */
+export function admitPack(value: unknown, keys: readonly PackPublisherKey[], requireSignature = false): CustomerPack {
   const pack = validateCustomerPack(value);
   if (pack.signature) verifyPackSignature(pack, keys);
-  else if (!Object.hasOwn(builtInPacks, pack.id) || hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(UNSIGNED_PACK_MESSAGE);
+  else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id) || hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(UNSIGNED_PACK_MESSAGE);
   return pack;
 }
 /** Per-client export: the validated installed pack (validation is itself a field
@@ -214,7 +220,7 @@ export function clientExportPack(installed: CustomerPack, office: Awaited<Return
     ...(office?.businessCode ? { rei: { businessCode: office.businessCode } } : {}),
     ...(mapping ? { csvColumnMapping: Object.fromEntries((['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'] as const).flatMap(key => mapping[key] ? [[key, mapping[key]]] : [])) } : {}),
     loops: (office?.loops ?? []).filter(loop => !loop.id.startsWith('recipe-') || recipeLoops.has(loop.id)).map(({ id, schedule }) => ({ id, enabled: false, schedule: { type: 'daily', time: schedule.time, weekdays: [...schedule.weekdays],
-      ...(schedule.timezone ? { timezone: schedule.timezone } : {}), ...(schedule.intervalDays ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate ? { anchorDate: schedule.anchorDate } : {}) } })) };
+      ...(schedule.timezone ? { timezone: schedule.timezone } : {}), ...(schedule.intervalDays ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate ? { anchorDate: schedule.anchorDate } : {}), ...(schedule.monthly ? { monthly: schedule.monthly } : {}) } })) };
   return validateCustomerPack({ ...pack, files: { ...rei, 'office/settings.json': JSON.stringify(settings) } });
 }
 async function safeAncestors(target: string) {
@@ -427,8 +433,30 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       delete entry.initialApprovalReset;
       entry.receipt = receipt;
       await persistJournals(entries);
+      const settings = entry.pack.files?.['office/settings.json'];
+      if (settings && options.applyLoops) {
+        try { await options.applyLoops((JSON.parse(settings) as CustomerPackOfficeSettings).loops); }
+        catch { return fail('The pack was installed, but its workflow times could not be set. Your saved schedule is unchanged. Recover the schedule, then import the same pack again.', 503); }
+      }
       return status(entry);
     });
+  }
+
+  /** The office's uploaded packs, each admitted only with a valid pinned signature. */
+  async function officePacks(): Promise<OfficePacksView> {
+    const listed = await options.officePacks?.() ?? { state: 'not-linked' as const };
+    if (listed.state !== 'ready') return listed;
+    const view: Extract<OfficePacksView, { state: 'ready' }> = { state: 'ready', packs: [], refused: [] };
+    for (const item of listed.packs) {
+      try {
+        const pack = admitPack(item.pack, options.trustedKeys ?? PACK_PUBLISHER_KEYS, true);
+        if (pack.id !== item.id || pack.revision !== item.revision) fail('The office list does not match the pack it sent.');
+        view.packs.push({ id: pack.id, title: pack.title, revision: pack.revision, digest: hash(JSON.stringify(pack)), pack });
+      } catch (error) {
+        view.refused.push({ id: item.id, revision: item.revision, reason: error instanceof Error && (error as { status?: number }).status === 400 ? error.message : 'This pack could not be checked.' });
+      }
+    }
+    return view;
   }
 
   async function readArchive(packId:string,digest:string):Promise<PackHistoryArchive> {
@@ -1012,9 +1040,9 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       if (recover && method === 'POST') return exclusive(async () => { const input = fields(body, ['expectedDigest']); const entries = await journals(), entry = entries[recover[1]]; if (!entry || entry.digest !== input.expectedDigest) return fail('Refresh this pack before recovering instructions.', 409); return { status: 200, body: await finishUpgrade(entries, entry) }; });
       const clientExport = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/client-export$/);
       if (clientExport && method === 'GET') return { status: 200, body: await this.clientExport(clientExport[1]) };
-      if (route === '/api/customer-packs/austin-office/export' && method === 'GET') return { status: 200, body: validateCustomerPack(austinCustomerPack()) };
-      if (route === '/api/customer-packs/department-starters/export' && method === 'GET') return { status: 200, body: validateCustomerPack(departmentStarterCustomerPack()) };
-      if (route === '/api/customer-packs/office-core/export' && method === 'GET') return { status: 200, body: validateCustomerPack(officeCoreCustomerPack()) };
+      const builtIn = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/export$/);
+      if (builtIn && method === 'GET' && Object.hasOwn(builtInPacks, builtIn[1])) return { status: 200, body: validateCustomerPack(builtInPacks[builtIn[1]]()) };
+      if (route === '/api/customer-packs/office' && method === 'GET') return { status: 200, body: await officePacks() };
       if (route === '/api/customer-packs/preview' && method === 'POST') { const input = fields(body, ['pack']); return { status: 200, body: await preview(admit(input.pack)) }; }
       if (route === '/api/customer-packs/install' && method === 'POST') { const input = fields(body, ['pack', 'expectedDigest']); return { status: 200, body: await install(admit(input.pack), String(input.expectedDigest)) }; }
       const repair = route.match(/^\/api\/customer-packs\/([a-z][a-z0-9-]{1,79})\/repair$/);

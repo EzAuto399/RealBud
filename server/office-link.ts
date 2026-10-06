@@ -14,6 +14,7 @@ import { currentUsagePeriod, isProvisioningSkipReasonText, isProvisioningSkipped
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
 import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkCancelInput, type LinkRequestInput, type LinkStatus, type LinkStatusInput } from "../shared/installation-link.ts";
 import { PrivateStorageError } from "./private-json.ts";
+import { OFFICE_PACKS_MAX_BYTES, parseOfficePacks, type OfficePacksSource } from "../shared/customer-packs.ts";
 
 /** CLI diagnostics include local paths and update notices; only the product
  * version belongs in the website report. */
@@ -158,6 +159,22 @@ function retryAfterMs(header: string | null, now = Date.now()): number {
   const ms = /^\d+$/.test(value) ? Number(value) * 1000 : value ? Date.parse(value) - now : NaN;
   return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), REPORT_RETRY_CAP_MS) : REPORT_RETRY_DEFAULT_MS;
 }
+/** A response body read up to `max` bytes; a longer one is cancelled and refused. */
+async function boundedText(response: Response, max: number): Promise<string> {
+  if (Number(response.headers.get("content-length")) > max) { await response.body?.cancel().catch(() => {}); throw new Error("too large"); }
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel().catch(() => {}); throw new Error("too large"); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 export function createOfficeLink(options: { directory: string; appVersion: string; fetch?: typeof fetch; report: () => Promise<Report>; platform?: NodeJS.Platform; provisioning?: OfficeLinkProvisioning; origin?: string }) {
   const directory = join(options.directory, "office-link");
   const path = join(directory, "link.json");
@@ -234,6 +251,21 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     usagePending.set(key, work);
     try { return await work; }
     finally { if (usagePending.get(key) === work) usagePending.delete(key); }
+  }
+
+  /**
+   * The packs this office uploaded on the website. Read-only and never saved:
+   * the website is untrusted, so the envelope is checked here and every pack is
+   * still admitted with a pinned signature before anyone can preview it.
+   */
+  async function officePacks(): Promise<OfficePacksSource> {
+    const saved = await read().catch(() => null);
+    if (!saved?.companyId || saved.revoked) return { state: "not-linked" };
+    try {
+      const response = await readWithRetry("packs", { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
+      if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error("packs unavailable"); }
+      return { state: "ready", packs: parseOfficePacks(JSON.parse(await boundedText(response, OFFICE_PACKS_MAX_BYTES))) };
+    } catch { return { state: "unavailable" }; }
   }
 
   async function refreshUsage(): Promise<OfficeLinkStatus> {
@@ -623,7 +655,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       unlinkSync(path);
     });
   }
-  return { status, link, report, disconnect, usage, refreshUsage, beginBrowserLink, browserLinkStatus, cancelBrowserLink,
+  return { status, link, report, disconnect, usage, refreshUsage, officePacks, beginBrowserLink, browserLinkStatus, cancelBrowserLink,
     /** Internal launch gate, including a grant applied during pending linking.
      * A stale async vault read cannot republish access after revoke/relink. */
     async modelAccessEnv(resolve: () => Promise<Record<string, string>>): Promise<Record<string, string>> {

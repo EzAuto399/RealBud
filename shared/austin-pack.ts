@@ -10,7 +10,8 @@ export interface AustinPackView {
   /** Office timezone from agency setup, else the pack's default. */
   timeZone: string;
   timeZoneFromOffice: boolean;
-  installed: { revision: number; at: number } | null;
+  /** loopIds: the workflows role packs set on this PC; absent means all of them. */
+  installed: { revision: number; at: number; loopIds?: string[] } | null;
   loops: AustinPackLoop[];
   rules: Array<{ id: string; text: string; matches: boolean }>;
   checklist: AustinChecklistItem[];

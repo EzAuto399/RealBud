@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CustomerPack, CustomerPackInstallation, CustomerPackPreview, CustomerPackChangePreview } from '@shared/customer-packs';
+import type { CustomerPack, CustomerPackInstallation, CustomerPackPreview, CustomerPackChangePreview, OfficePacksView } from '@shared/customer-packs';
 import { api } from '@/state/store';
 import { PackSkillReview, type PackSkillReviewState } from './PackSkillReview';
 import { CustomerPackChangeReview } from './CustomerPackChangeReview';
@@ -7,8 +7,40 @@ import { CustomerPackHistory } from './CustomerPackHistory';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-sm text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const labels = { passed: 'Checked', needed: 'Needs setup', unknown: 'Not verified' };
+const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+/** A malformed answer reads as "could not be checked", never as a partial list. */
+export function parseOfficePacksView(body: unknown): OfficePacksView {
+  if (object(body) && (body.state === 'not-linked' || body.state === 'unavailable')) return { state: body.state } as OfficePacksView;
+  const ok = object(body) && body.state === 'ready' && Array.isArray(body.packs) && Array.isArray(body.refused) &&
+    body.packs.every(p => object(p) && str(p.id) && str(p.title) && Number.isSafeInteger(p.revision) && str(p.digest) && object(p.pack) && p.pack.id === p.id && p.pack.revision === p.revision) &&
+    body.refused.every(r => object(r) && str(r.id) && Number.isSafeInteger(r.revision) && str(r.reason));
+  if (!ok) throw new Error('The packs from your office could not be read.');
+  return body as unknown as OfficePacksView;
+}
+
+/** Packs the office uploaded on realbud.app. Preview opens the normal review and import. */
+export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: OfficePacksView | null; busy: boolean; onPreview: (pack: CustomerPack) => void; onRefresh: () => void }) {
+  const again = <button className={button} disabled={busy} onClick={onRefresh}>Check again</button>;
+  return <section aria-label="Packs from your office" className="rounded-lg border border-agency p-4 space-y-2">
+    <h4 className="font-medium text-ink">Packs from your office</h4>
+    <p className="text-sm text-ink-secondary">Your office shares signed packs for each role on realbud.app. Preview yours, then import it. Its workflows arrive switched off until you review each one.</p>
+    {!view ? <p className="text-sm text-ink-secondary">Checking your office for packs…</p>
+      : view.state === 'not-linked' ? <><p className="text-sm">This computer isn’t connected to your office yet. Choose Connect to your office, then check again. You can still preview a pack file below.</p>{again}</>
+      : view.state === 'unavailable' ? <><p className="text-sm">Your office’s packs couldn’t be checked right now. Nothing on this computer changed. You can still preview a pack file below.</p>{again}</>
+      : <>
+        {view.packs.length ? <ul className="divide-y divide-line">{view.packs.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+          <span className="text-sm"><strong className="font-medium">{item.title}</strong> · version {item.revision}</span>
+          <button className={button} disabled={busy} aria-label={`Preview ${item.title}`} onClick={() => onPreview(item.pack)}>Preview</button>
+        </li>)}</ul> : <p className="text-sm">Your office hasn’t shared any packs yet.</p>}
+        {view.refused.map(item => <p key={`${item.id}-${item.revision}`} role="alert" className="text-sm text-danger">{item.id} version {item.revision} can’t be used: {item.reason}</p>)}
+        {again}
+      </>}
+  </section>;
+}
 export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => void | Promise<void> }) {
   const [installed, setInstalled] = useState<CustomerPackInstallation[]>([]);
+  const [office, setOffice] = useState<OfficePacksView | null>(null);
   const [preview, setPreview] = useState<CustomerPackPreview | null>(null);
   const [change,setChange] = useState<CustomerPackChangePreview|null>(null);
   const [skills, setSkills] = useState<PackSkillReviewState | null>(null);
@@ -16,7 +48,9 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
   const alive = useRef(true), pending = useRef(false);
   const loadGeneration=useRef(0);
   const load = async () => { const generation=++loadGeneration.current; if(alive.current)setChange(null); const [result, review] = await Promise.all([api('/api/customer-packs'), api('/api/customer-packs/skill-proposals')]); if (alive.current&&generation===loadGeneration.current) { setInstalled(result.installations); setSkills(review); } };
-  useEffect(() => { alive.current = true; void load().catch(() => { if (alive.current) setError('Pack setup could not be checked. Your saved work is unchanged.'); }); return () => { alive.current = false; }; }, []);
+  // Separate from load(): the website being down never hides local setup.
+  const loadOffice = async () => { const next = await api('/api/customer-packs/office', undefined, { timeoutMs: 30_000 }).then(parseOfficePacksView, () => ({ state: 'unavailable' as const })); if (alive.current) setOffice(next); };
+  useEffect(() => { alive.current = true; void load().catch(() => { if (alive.current) setError('Pack setup could not be checked. Your saved work is unchanged.'); }); void loadOffice(); return () => { alive.current = false; }; }, []);
   const run = async (work: () => Promise<void>) => {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(''); setNotice('');
@@ -39,6 +73,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
   };
   return <section aria-label="Customer workflow pack setup" className="mt-5 border-t border-line pt-4 space-y-4" aria-busy={busy}>
     <div><h3 className="font-medium text-ink">Customer workflow packs</h3><p className="mt-1 text-sm text-ink-secondary">One portable file brings together the work plans, Bud’s instructions and setup checks. Review it before adding anything to this computer.</p></div>
+    <OfficePacks view={office} busy={busy} onPreview={pack => void run(() => inspect(pack))} onRefresh={() => void run(async () => { setOffice(null); await loadOffice(); })} />
     <div className="rounded-lg bg-inset p-4 space-y-2">
       <h4 className="font-medium text-ink">Start with department case reviews</h4>
       <p className="text-sm text-ink-secondary">Five plans for Accounts and Property Management, including general admin, maintenance and inspections. Bud uses the assigned case text to prepare findings and drafts for review.</p>
@@ -51,14 +86,17 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
     <div className="flex flex-wrap gap-2">
       <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/office-core/export')))}>Preview real estate office core pack</button>
       <button className={button} disabled={busy} onClick={() => void run(() => download('office-core'))}>Download office core pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
       <label className={`${button} inline-flex cursor-pointer items-center has-[:disabled]:opacity-50`}>Preview a pack file<input className="sr-only" type="file" accept="application/json,.json" disabled={busy} onChange={event => {
         const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
         void run(async () => { setPreview(null); if (file.size > 500_000) throw new Error('Choose a pack smaller than 500 KB.'); await inspect(JSON.parse(await file.text())); });
       }} /></label>
       <button className={button} disabled={busy} onClick={() => void run(load)}>Refresh setup checks</button>
     </div>
+    {/* The earlier whole-office pack: kept so installed offices can still preview its upgrades. Role packs from the office replace it. */}
+    <details><summary className="min-h-11 cursor-pointer text-sm">Earlier Auston office pack (all workflows in one)</summary><div className="mt-2 flex flex-wrap gap-2">
+      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
+      <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
+    </div></details>
     <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details above.</p>
     {change&&<CustomerPackChangeReview key={change.previewDigest} preview={change} busy={busy} cancel={()=>setChange(null)} apply={()=>void run(async()=>{
       const body={expectedInstalledDigest:change.installedDigest,expectedInstalledRevision:change.installedRevision,expectedDigest:change.digest,expectedPreviewDigest:change.previewDigest,

@@ -24,6 +24,7 @@ export interface CustomerPackOfficeSettings {
   /** The business code in REI's top bar. */
   rei?: { businessCode: string };
   csvColumnMapping?: CsvColumnMapping;
+  /** Installing a pack applies these through server/austin-pack.ts: never on, office-changed clocks kept. */
   loops: { id: string; enabled: false; schedule: LoopSchedule }[];
 }
 export interface CustomerPackPreview {
@@ -64,6 +65,39 @@ export interface PackSkillRevision {
   packId: string; skillId: string; revision: number; digest: string; active: boolean; createdAt: string;
   content: string; reason: string;
 }
+
+/** One entry of GET /api/installations/packs on the office website. The website
+ * is untrusted: `pack` is unchecked JSON until the desktop admits it with a
+ * valid pinned signature, and `sha256` (of the website's stored bytes) is
+ * informational only. */
+export interface OfficePackListing { id: string; title: string; revision: number; sha256: string; pack: unknown }
+export const OFFICE_PACKS_MAX = 20;
+/** The most of a website answer the desktop reads. */
+export const OFFICE_PACKS_MAX_BYTES = 5_000_000;
+/** Strict envelope `{version: 1, packs: [...]}`; unknown fields are refused. */
+export function parseOfficePacks(value: unknown): OfficePackListing[] {
+  const bad = (): never => { throw new Error('The list of packs from your office could not be read.'); };
+  const record = (item: unknown, keys: string[]): Record<string, unknown> => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).length !== keys.length || !keys.every(key => Object.hasOwn(item, key))) return bad();
+    return item as Record<string, unknown>;
+  };
+  const root = record(value, ['version', 'packs']);
+  if (root.version !== 1 || !Array.isArray(root.packs) || root.packs.length > OFFICE_PACKS_MAX) return bad();
+  return root.packs.map(raw => {
+    const entry = record(raw, ['id', 'title', 'revision', 'sha256', 'pack']);
+    if (typeof entry.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(entry.id) || typeof entry.title !== 'string' || !entry.title.trim() || entry.title.length > 200 ||
+      !Number.isSafeInteger(entry.revision) || Number(entry.revision) < 0 || typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+      !entry.pack || typeof entry.pack !== 'object' || Array.isArray(entry.pack)) return bad();
+    return { id: entry.id, title: entry.title, revision: Number(entry.revision), sha256: entry.sha256, pack: entry.pack };
+  });
+}
+export type OfficePacksSource = { state: 'not-linked' } | { state: 'unavailable' } | { state: 'ready'; packs: OfficePackListing[] };
+/** GET /api/customer-packs/office: signed packs ready to preview, and the ones refused with a plain reason. */
+export type OfficePacksView = { state: 'not-linked' } | { state: 'unavailable' } | {
+  state: 'ready';
+  packs: { id: string; title: string; revision: number; digest: string; pack: CustomerPack }[];
+  refused: { id: string; revision: number; reason: string }[];
+};
 
 export type CustomerPackHistoryItem = NonNullable<CustomerPackInstallation['history']>[number];
 export interface CustomerPackArchivePreview {
