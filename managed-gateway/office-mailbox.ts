@@ -51,12 +51,15 @@ export class OfficeMailbox {
    * the request selects it (or names its exact account); never in `personal`. */
   source(company:string,requested?:MailboxSource):MailboxSource {
     const mode=this.policy(company).mode;
-    if(mode==='shared')return 'office';
+    // `shared` has no personal mailbox: a request that asks for one is refused, never remapped.
+    if(mode==='shared'){requireThat(requested!=='personal','office_mailbox_personal_not_allowed',409);return 'office';}
     if(requested==='office'){requireThat(mode==='both','office_mailbox_shared_required',409);return 'office';}
     return 'personal';
   }
   /** True when `accountId` is this office's confirmed shared account (routing only; `binding` still checks the grant). */
   isOfficeAccount(company:string,accountId:unknown):boolean {const account=this.account(company);return officeMode(this.policy(company).mode)&&account?.state==='ready'&&typeof accountId==='string'&&account.accountId===accountId;}
+  /** The confirmed office address (verified by its own profile read), for the desktop's approval cards. */
+  confirmedAddress(company:string):string|undefined {const account=this.account(company);return officeMode(this.policy(company).mode)&&account?.state==='ready'?account.emailAddress:undefined;}
   /** Safe setup projection only; this never reads a secret or authorizes a read. */
   readyForDevice(device:ConnectorDevice):boolean {
     const policy=this.policy(device.companyId),account=this.account(device.companyId);
@@ -131,7 +134,7 @@ export class OfficeMailbox {
     const authority=()=>{check();const t=this.options.ledger.tenant(company);requireThat(t.active&&t.serviceExpiresAt>this.options.ledger.now(),'service_unavailable',402);};
     let account=this.account(company);
     if(operation==='authorize'){
-      let lapsed:string|undefined;
+      let lapsed:string|undefined;const before=account?canonical(account):undefined;
       if(account){
         requireThat(account.state!=='unknown','office_mailbox_link_outcome_unknown',409);
         requireThat(account.state==='pending','office_mailbox_link_needs_recovery',409);
@@ -153,7 +156,10 @@ export class OfficeMailbox {
       const first=devices[0]!;requireThat(devices.every(d=>d.projectKeyEnv===first.projectKeyEnv&&d.authConfigId===first.authConfigId),'office_mailbox_configuration_conflict',409);
       account={projectKeyEnv:first.projectKeyEnv,authConfigId:first.authConfigId,userId:`office_${digest(company)}`,state:'unknown'};
       const binding=this.provider(account);
-      this.options.ledger.db.transaction(()=>{this.saveAccount(company,account!);if(lapsed!==undefined)this.options.ledger.db.append(company,'office_mailbox_link_replaced',null,now,{lapsedAccountId:lapsed,revision:policy.revision});});
+      this.options.ledger.db.transaction(()=>{
+        // Another authorize may have replaced the link while this one awaited the provider: one link only.
+        const stored=this.account(company);requireThat((stored?canonical(stored):undefined)===before,'office_mailbox_link_in_progress',409);
+        this.saveAccount(company,account!);if(lapsed!==undefined)this.options.ledger.db.append(company,'office_mailbox_link_replaced',null,now,{lapsedAccountId:lapsed,revision:policy.revision});});
       const result=await(this.options.authorize??authorizeGmailReadOnly)({...binding,assertAuthority:authority});
       // Keep the exact receipt even if policy/owner authority changed in flight.
       this.saveAccount(company,{...account,...result,state:'pending'});await current();authority();return {url:result.url,revision:policy.revision};

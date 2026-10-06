@@ -165,7 +165,7 @@ import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
 import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import {
   containerComputerAction,
@@ -2118,10 +2118,13 @@ async function startSeatTurn(
         assertDispatch();
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers, ...(managedConnectorConfigured(cfg) ? { managed: true } : {}) };
         // Mailbox mode `both` on a computer the owner allowed: the office mailbox
-        // is its own session beside the person's, so Bud names which one it uses.
-        if (managedConnectorConfigured(cfg) && access?.mailboxMode === 'both' && access.officeShared?.connected && allowedApps.includes('gmail')) {
+        // is its own session beside the person's, mounted only when the person's
+        // own message asks for it (never a bot-to-bot relay), so the model alone
+        // never chooses to read the office mailbox.
+        if (managedConnectorConfigured(cfg) && access?.mailboxMode === 'both' && access.officeShared?.connected && allowedApps.includes('gmail') && !opts?.commsDepth && asksForOfficeMailbox(text)) {
           const office = managedConnectorSettings(cfg, access.policyRevision, 'office');
-          integrations.officeMail = { key: office.key, url: office.url, headers: office.headers };
+          const address = access.officeShared.accounts[0]?.label;
+          integrations.officeMail = { key: office.key, url: office.url, headers: office.headers, ...(address ? { address } : {}) };
         }
       }
       if (PRODUCT_MODE) {

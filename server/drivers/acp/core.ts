@@ -1055,9 +1055,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (firstTurn.integrations?.officeMail) {
             // The office shared mailbox: Gmail only, classified and carded like the person's own.
-            const { key, url, headers } = firstTurn.integrations.officeMail;
+            const { key, url, headers, address } = firstTurn.integrations.officeMail;
             officeMailBroker = await startConnectedAppsBroker({
-              key, url, headers, allowedApps: ["gmail"], managed: true, mailbox: "office", threadId,
+              key, url, headers, allowedApps: ["gmail"], managed: true, mailbox: "office", ...(address ? { officeAddress: address } : {}), threadId,
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
               approve: reviewOnce,
             });

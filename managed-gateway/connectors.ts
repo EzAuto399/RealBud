@@ -534,7 +534,9 @@ export class ManagedConnectors {
               ? (await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device, 'office'), assertAuthority: current })).services.gmail ?? NOT_CONNECTED
               : NOT_CONNECTED;
             current();
-            officeShared = { ...office, accountSelectionRequired: false } as ServiceStatus;
+            // The label is the office's confirmed address, never a provider alias: approval cards name it.
+            const address = this.officeMailbox.confirmedAddress(device.companyId);
+            officeShared = { ...office, accounts: office.accounts.map(account => { const { label: _alias, ...rest } = account; return address ? { ...rest, label: address } : rest; }), accountSelectionRequired: false } as ServiceStatus;
           }
         }
         for (const app of appsOf(device).filter(app => app !== 'gmail')) {

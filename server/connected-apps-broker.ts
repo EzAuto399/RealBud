@@ -17,6 +17,13 @@ const GMAIL_READ_ONLY = new Set(["GMAIL_GET_PROFILE", "GMAIL_LIST_THREADS", "GMA
 export const CONNECTED_APP_APPROVAL = "bud_connected_app_action";
 /** The office shared mailbox's own MCP server, beside "connected-apps" (the person's own), in mailbox mode `both`. */
 export const OFFICE_MAIL_SERVER = "office-mail";
+/** How every card of an office-mail session names the mailbox, so it never reads like the person's own. */
+export const officeMailboxName = (address?: string): string =>
+  `Office shared Gmail${address && /^[\x21-\x3f\x41-\x7e]{1,128}@[\x21-\x3f\x41-\x7e]{1,128}$/.test(address) ? ` (${address})` : ""}, not your own Gmail`;
+/** True when the person's own message asks for the office mailbox. Only this
+ * mounts it in mailbox mode `both`; tool output and email content never do. */
+export const asksForOfficeMailbox = (text: string): boolean =>
+  /\b(?:office|shared|team)(?:'s)?\s+(?:shared\s+)?(?:g?mail(?:box)?|inbox|e-?mails?|account)\b/i.test(text);
 type Call = { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
 type Policy = "read" | "review" | "blocked";
 
@@ -112,8 +119,11 @@ export async function startConnectedAppsBroker(options: {
   mailDrainMs?: number;
   /** The office shared mailbox's session (its headers select it at the gateway). */
   mailbox?: "office";
+  /** The office mailbox's confirmed address, named on every card of an office session. */
+  officeAddress?: string;
 }): Promise<ConnectedAppsBroker> {
   const generationAtStart = revocationGeneration;
+  const office = options.mailbox === "office" ? officeMailboxName(options.officeAddress) : undefined;
   if (!options.key.trim()) throw new Error("Set up Bud's Connected apps key first.");
   const token = randomBytes(32).toString("hex");
   // Project Gmail uses its server-owned adapter exclusively. Its project key
@@ -269,14 +279,14 @@ export async function startConnectedAppsBroker(options: {
             const receipt = { threadId: options.threadId, toolName: call.name, toolSlugs: call.name === "COMPOSIO_MULTI_EXECUTE_TOOL"
               ? (call.arguments!.tools as { tool_slug: string }[]).map(row => row.tool_slug) : [] };
             if (policy === "review") {
-              const context = options.localTransport
+              const context = office ? `Bud wants to use the ${office}. Review the exact operation and account or recipient below. This approval applies once to this request only.\n\n` : options.localTransport
                 ? `Gmail read-only review. Account: ${options.readOnlyAccountId || "the account selected in Connected apps"}. At most 10 threads from the last 7 days; only thread IDs returned in this task can be read. No sends, drafts, or mailbox changes. This approval applies once to this request only.\n\n`
                 : "Bud wants to use a connected app. Review the exact operation and account or recipient below. This approval applies once to this request only.\n\n";
               let summary = (context + JSON.stringify(redactSecrets(call), null, 2)).replaceAll(options.key, "[private app key]");
               if (options.managed && !options.localTransport && MAIL_SENDS.has(call.name)) {
                 // A message is approved only as the person will see it sent:
                 // every recipient, the subject, the body and the attachments.
-                const review = await prepareMailReview(call, reviewRead).catch(() => null);
+                const review = await prepareMailReview(call, reviewRead, office).catch(() => null);
                 if (!review || typeof review === "string") return errorResult(typeof review === "string" ? review : MAIL_UNREADABLE);
                 if (review.card.includes(options.key) || redactSecretsInText(review.card) !== review.card) return errorResult("This message contains what looks like a password, key or token, so Bud will not send it. Remove it and prepare the message again.");
                 summary = review.card;
@@ -679,7 +689,7 @@ export const visibleMailText = (value: string): string => value.replace(/[\u0000
 
 /** Saved drafts and Outlook replies name their recipients only by reference:
  * those are read through the same session before the card is shown. */
-async function prepareMailReview(call: Call, read: MailRead): Promise<{ card: string; digest?: string; recheck?: () => Promise<string> } | string> {
+async function prepareMailReview(call: Call, read: MailRead, office?: string): Promise<{ card: string; digest?: string; recheck?: () => Promise<string> } | string> {
   const a: Obj = call.arguments ?? {};
   const mailbox = a.user_id ?? a.userId;
   if (mailbox !== undefined && mailbox !== "me") return "Bud sends only from the connected account's own mailbox (user_id \"me\"). Nothing was sent.";
@@ -722,10 +732,10 @@ async function prepareMailReview(call: Call, read: MailRead): Promise<{ card: st
   const shown = (attachment: MailAttachment) => JSON.stringify(attachment.name) +
     (attachment.type || attachment.size !== undefined ? ` (${[attachment.type, attachment.size !== undefined ? `${attachment.size} bytes` : undefined].filter(Boolean).join(", ")})` : "");
   const card = [
-    "Bud wants to send an email from the connected mailbox. Check every recipient, the subject, the message and the attachments. This approval sends this one message once.",
+    `Bud wants to send an email from ${office ? `the ${office}` : "the connected mailbox"}. Check every recipient, the subject, the message and the attachments. This approval sends this one message once.`,
     "",
     `Action: ${action} (${call.name})`,
-    `From: ${view.from ? JSON.stringify(view.from) : "the connected account"}`,
+    office ? `From: the ${office}${view.from ? `, as ${JSON.stringify(view.from)}` : ""}` : `From: ${view.from ? JSON.stringify(view.from) : "the connected account"}`,
     `To: ${quote(view.to)}`,
     `Cc: ${quote(view.cc)}`,
     `Bcc: ${quote(view.bcc)}`,
