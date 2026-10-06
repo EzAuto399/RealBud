@@ -1,0 +1,13 @@
+qa-first-install rc=0 16s
+qa-onboarding-setup rc=1 5s
+qa-onboarding-restart rc=0 32s
+qa-austin-day-one rc=0 14s
+qa-recovery-cards rc=0 4s
+qa-telegram-ask-ux rc=0 3s
+qa-customizable-desk rc=0 5s
+qa-workspace-unification rc=0 17s
+qa-e2e rc=0 32s
+clean=/private/tmp/claude-501/-Users-yo-da-projects-RealBud/1cf58fab-e9f1-4c93-8025-50d4902f9f5b/scratchpad/clean-Z5Nx
+.cache
+qa-onboarding-setup rc=0 14s
+clean=/private/tmp/claude-501/-Users-yo-da-projects-RealBud/1cf58fab-e9f1-4c93-8025-50d4902f9f5b/scratchpad/clean-nyIZ

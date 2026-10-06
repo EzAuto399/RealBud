@@ -1,0 +1,270 @@
+{
+  "at": "2026-10-06T00:12:35.001Z",
+  "passed": false,
+  "layer": "local tests: built React UI (dist/) in headless Chrome against the real source service on one fresh temp home; loopback lab website, fixture worker and test desktop bridge",
+  "platform": "darwin arm64, Node v24.21.0",
+  "steps": [
+    {
+      "n": 1,
+      "name": "First run: welcome screen",
+      "status": "PASS",
+      "checks": [
+        "Empty state: Continue is disabled until a name is entered",
+        "Keyboard only: typed name and pressed Continue",
+        "Refresh mid-flow: step 2 of 3 is kept after reload (server receipt, not a browser flag)"
+      ],
+      "screenshots": [
+        "01-welcome-1280.png",
+        "02-welcome-1024.png"
+      ]
+    },
+    {
+      "n": 2,
+      "name": "Office link through the lab website (link code)",
+      "status": "PASS",
+      "checks": [
+        "Error state: website outage shows retry copy; link stays pending, not linked",
+        "Double-submit protection: double-click on \"Connect with this code\" sent one redeem",
+        "Linked to Fictional Harbour Agency; fictional model access provisioned"
+      ],
+      "screenshots": [
+        "03-link-code.png",
+        "04-link-error-1280.png",
+        "05-link-error-1024.png",
+        "06-linked-1280.png",
+        "07-linked-1024.png"
+      ]
+    },
+    {
+      "n": 3,
+      "name": "Bud setup status (fixture worker in place of the runtime install)",
+      "status": "PASS",
+      "checks": [
+        "Bud status: installed, property safeguards, model connection and private readiness check all Ready",
+        "Keyboard: Escape closes Bud status back to Work",
+        "Work empty state shows the first-task prompt"
+      ],
+      "screenshots": [
+        "08-bud-status-first.png",
+        "09-bud-status-ready-1280.png",
+        "10-bud-status-ready-1024.png"
+      ]
+    },
+    {
+      "n": 4,
+      "name": "Desk: add a property, edit it, customize the desk",
+      "status": "PASS",
+      "checks": [
+        "Empty states: linked office starts with an empty office book and no reminders",
+        "Refresh mid-flow: reload during Add property saves nothing and Desk recovers",
+        "Add property: one property added (double-click on Add to book did not duplicate)",
+        "Edit: Grace days changed to 5 and saved",
+        "Needs you (safety/approval section) cannot be hidden",
+        "Arrange (keyboard Move up) and Hide Mail priorities saved",
+        "Reset to default restores every section (brief, mail, bills, shared-work, go-live, queue, activity)"
+      ],
+      "screenshots": [
+        "11-desk-empty-1280.png",
+        "12-desk-empty-1024.png",
+        "13-add-property.png",
+        "14-desk-property-1280.png",
+        "15-desk-property-1024.png",
+        "16-customize-draft.png",
+        "17-customize-panel-1280.png",
+        "18-customize-panel-1024.png"
+      ]
+    },
+    {
+      "n": 5,
+      "name": "Work: send a message and get Bud's answer",
+      "status": "PASS",
+      "checks": [
+        "Refresh mid-flow: Work reloads on the same route with the composer ready",
+        "Keyboard: Enter sends; the scripted fixture answer appears in the conversation"
+      ],
+      "screenshots": [
+        "19-work-answer-1280.png",
+        "20-work-answer-1024.png"
+      ]
+    },
+    {
+      "n": 6,
+      "name": "Schedule: disable and enable a loop",
+      "status": "PASS",
+      "checks": [
+        "Empty state: Needs you filter with no jobs",
+        "Error state: Morning priorities cannot resume before agency workflow setup; the reason is shown",
+        "Disable (keyboard): Morning money check paused",
+        "Enable (keyboard): Morning money check resumed",
+        "Keyboard: Escape closes the job"
+      ],
+      "screenshots": [
+        "21-schedule-needs-you-empty.png",
+        "22-schedule-1280.png",
+        "23-schedule-1024.png",
+        "24-loop-paused.png"
+      ]
+    },
+    {
+      "n": 7,
+      "name": "Approval card and Stop",
+      "status": "PASS",
+      "checks": [
+        "Keyboard: Stop this turn closes the approval and unlocks the composer"
+      ],
+      "screenshots": [
+        "25-approval-waiting-1280.png",
+        "26-approval-waiting-1024.png",
+        "27-approval-stopped.png"
+      ]
+    },
+    {
+      "n": 8,
+      "name": "Service down, then a recovery card appears and resolves",
+      "status": "PASS",
+      "checks": [
+        "Error state: service down shows Reconnecting",
+        "Desk, Work and Schedule stay open while the service is down",
+        "Service back on the same port: the open window reconnects without reload",
+        "Recovery card names the payee, amount and reference",
+        "Keyboard: \"It didn't happen\" resolves the card and clears the hold"
+      ],
+      "screenshots": [
+        "28-service-down-desk.png",
+        "29-service-down-work.png",
+        "30-service-down-schedule.png",
+        "31-recovery-card-1280.png",
+        "32-recovery-card-1024.png",
+        "33-recovery-resolved.png"
+      ]
+    },
+    {
+      "n": 9,
+      "name": "Workspace: Settings & help",
+      "status": "PASS",
+      "checks": [
+        "Keyboard: Settings & help opens from Workspace"
+      ],
+      "screenshots": [
+        "34-workspace-settings-1280.png",
+        "35-workspace-settings-1024.png"
+      ]
+    },
+    {
+      "n": 10,
+      "name": "Restart: everything is kept",
+      "status": "PASS",
+      "checks": [
+        "Office link, property and its edit, desk layout, loop states and finished welcome are kept",
+        "Work conversation is kept",
+        "Bud readiness is kept"
+      ],
+      "screenshots": [
+        "36-after-restart-desk-1280.png",
+        "37-after-restart-desk-1024.png"
+      ]
+    },
+    {
+      "n": 11,
+      "name": "Update banner: deferred restart",
+      "status": "PASS",
+      "checks": [
+        "Deferred copy shown; Restart to update hands off to the updater once",
+        "Dismiss hides the notice"
+      ],
+      "screenshots": [
+        "38-update-deferred-1280.png",
+        "39-update-deferred-1024.png"
+      ]
+    },
+    {
+      "n": 12,
+      "name": "Second clean computer: expired link code, then a fresh code",
+      "status": "FAIL",
+      "detail": "Fresh code after an expired code: refused. Connect to your office Your browser opens realbud.app. Sign in with the email RealBud invited, check the code matches this screen, then approve. Use a link code instead On realbud.app, open Account → ",
+      "checks": [
+        "Error state: an expired code says to get a new code"
+      ],
+      "screenshots": [
+        "40-expired-code.png",
+        "41-fresh-code-after-expired.png",
+        "42-step12-failure.png"
+      ]
+    },
+    {
+      "n": 13,
+      "name": "No renderer page errors",
+      "status": "PASS",
+      "checks": [],
+      "screenshots": []
+    }
+  ],
+  "productFailures": [
+    {
+      "step": 12,
+      "title": "A fresh link code is refused after an expired one",
+      "expected": "After \"This code is expired or already used. Get a new code…\", pasting the new code links the computer.",
+      "observed": "Connect to your office Your browser opens realbud.app. Sign in with the email RealBud invited, check the code matches this screen, then approve. Use a link code instead On realbud.app, open Account → Computers, create a link code, then paste it here. Link code Connect with this code Retry the original code, or cancel the pending link before using a new code.",
+      "screenshot": "41-fresh-code-after-expired.png"
+    }
+  ],
+  "observations": [
+    {
+      "step": 3,
+      "note": "Right after linking, Bud status kept the pre-link readiness result \"Bud has no AI access on this computer yet. Connect this computer to your office on realbud.app\" although the office was connected. The fixture runtime is custom, which halts automatic setup, so whether a real install re-checks on its own is not confirmed here.",
+      "screenshot": "08-bud-status-first.png"
+    },
+    {
+      "step": 3,
+      "note": "Try setup again did not run the readiness check with the fixture runtime; the harness ran POST /api/hermes/test (status 200, ok=true) and then pressed Check again."
+    },
+    {
+      "step": 3,
+      "note": "After the status turned Ready, keyboard focus was outside the Bud status dialog (active element: BODY), so Escape did nothing until focus was put back in the dialog."
+    },
+    {
+      "step": 5,
+      "note": "After a reload, the unsent Work draft was kept."
+    },
+    {
+      "step": 6,
+      "note": "After pressing Resume with Enter (the button swaps to Pause), keyboard focus left the job drawer (active element: BODY), so Escape did nothing until focus was put back in the drawer."
+    },
+    {
+      "step": 7,
+      "note": "The waiting card here is a generic worker tool approval (fake ACP \"echo hi\"). A browser payment approval card that names recipient and amount is built only by the browser broker from an owned work-browser page; no existing fixture produces one. Recipient and amount are checked on the held-payment recovery card in step 8."
+    }
+  ],
+  "selectorUpdates": [],
+  "rendererPageErrors": [],
+  "labWebsiteCalls": [
+    "POST /api/installations/redeem",
+    "POST /api/installations/redeem",
+    "GET /v1/connectors/status",
+    "POST /api/installations/report",
+    "GET /api/installations/usage",
+    "GET /v1/connectors/status",
+    "GET /v1/connectors/status",
+    "GET /v1/connectors/status",
+    "GET /v1/connectors/status",
+    "GET /v1/connectors/status",
+    "POST /api/installations/report",
+    "GET /api/installations/usage",
+    "GET /v1/connectors/status",
+    "POST /api/installations/report",
+    "GET /v1/connectors/status",
+    "GET /api/installations/usage",
+    "GET /v1/connectors/status",
+    "POST /api/installations/redeem"
+  ],
+  "limits": [
+    "Fictional office, person, property and payee only; not customer acceptance.",
+    "Source service plus built renderer in headless Chrome, not the packaged or installed RealBud.app; no notarization, Gatekeeper or Electron window.",
+    "realbud.app is a loopback lab website: link-code redeem and status report only. No browser approval link, no real account, no real Modelvia key, no model call.",
+    "The runtime is a fixture worker (version probe, OK readiness answer, scripted ACP turns). REALBUD_HERMES_CLI marks it custom, so automatic runtime install is halted, not exercised; qa-first-install covers the install UI with stubbed responses.",
+    "Electron main is replaced by a test bridge for the local session token and the updater state; the update banner is driven by a fixture, not electron-updater.",
+    "The approval card is a generic worker tool approval. A browser payment approval card with recipient and amount needs the owned work browser and broker; not produced here.",
+    "Desktop widths 1280 and 1024 only (no phone layouts by product direction).",
+    "Built on origin/main 7d6490f: Desk customization is \"Customize desk\" (Move up/down, Show checkboxes, Reset to default). Arrange Desk / Reset to recommended from the desktop-shell branch are not on this base."
+  ]
+}
