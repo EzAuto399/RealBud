@@ -401,6 +401,7 @@ describe("setup subprocess boundary", () => {
         const { config } = JSON.parse(readFileSync(probe, "utf8"));
         expect(config).not.toBe(userConfig);
         expect(readFileSync(config, "utf8")).toContain("autocrlf = false");
+        expect(readFileSync(config, "utf8")).toContain("longpaths = true");
         if (mode === "cancel") abort.abort();
         else writeFileSync(release, "fictional release");
         const error = await settled;
