@@ -2117,6 +2117,12 @@ async function startSeatTurn(
         const mcp = await composio.resolveConnectedAppsMcp(cfg, currentWorkerProfile().memberKey, access?.policyRevision);
         assertDispatch();
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers, ...(managedConnectorConfigured(cfg) ? { managed: true } : {}) };
+        // Mailbox mode `both` on a computer the owner allowed: the office mailbox
+        // is its own session beside the person's, so Bud names which one it uses.
+        if (managedConnectorConfigured(cfg) && access?.mailboxMode === 'both' && access.officeShared?.connected && allowedApps.includes('gmail')) {
+          const office = managedConnectorSettings(cfg, access.policyRevision, 'office');
+          integrations.officeMail = { key: office.key, url: office.url, headers: office.headers };
+        }
       }
       if (PRODUCT_MODE) {
         if (instance.driverKind === 'hermesAgent' && !opts?.systemExtra) {

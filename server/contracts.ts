@@ -140,6 +140,11 @@ export interface SendTurnInput {
        * classified (read / review / blocked). Direct connections review everything. */
       managed?: boolean;
     };
+    /** Mailbox mode `both` on a computer the owner allowed: the office shared
+     * mailbox as its own managed session ("office-mail"), beside the person's own
+     * Gmail in `composio`. Its headers select the office mailbox at the gateway,
+     * which still checks this computer's grant. Never sent to the worker. */
+    officeMail?: { url: string; key: string; headers: Record<string, string> };
     /** RealBud's own SSRF-guarded public page reader (`read_page`). `allowedUrls`
      * are the links the person wrote in this conversation's own messages
      * (`personUrls`); no other link can be read. No credentials. */

@@ -326,10 +326,10 @@ describe("connected app authoritative broker", () => {
     let sessions: number;
     /** Per-tool fixture answers for mailbox reads made while preparing a card. */
     let toolAnswers: Record<string, (args: any) => unknown | Promise<unknown>>;
-    const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number } = {}) => {
+    const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number; mailbox?: "office" } = {}) => {
       const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
       return startConnectedAppsBroker({ threadId: extra.threadId ?? "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
-        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
     };
     const startManaged = async (managed: boolean, extra: { mailDrainMs?: number } = {}) => {
       broker.close();
@@ -648,6 +648,14 @@ describe("connected app authoritative broker", () => {
         mailboxAccess.mockReturnValue("full");
         expect((await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } })).body.result.isError).not.toBe(true);
         expect(approve).toHaveBeenCalledOnce();
+      });
+      it("an office-mail session is its own server and is held by the office mailbox's scope, not the person's", async () => {
+        broker.close(); broker = await managedBroker(true, { mailbox: "office" });
+        expect(broker.descriptor.name).toBe("office-mail");
+        mailboxAccess.mockImplementation((_credential: string, mailbox?: string) => mailbox === "office" ? "read_only" : "full");
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } });
+        expect(result.body.result.content[0].text).toContain("office owner to turn on full access");
+        expect(approve).not.toHaveBeenCalled();
       });
       it("runs drafts, labels and archive without a card, and moves to Trash only after one", async () => {
         for (const params of [{ name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "a@example.test", body: "Draft" } },

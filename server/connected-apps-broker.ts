@@ -15,6 +15,8 @@ const BLOCKED = new Set(["COMPOSIO_REMOTE_WORKBENCH", "COMPOSIO_REMOTE_BASH_TOOL
 /** The project-key Gmail reader (gmail-readonly mode) only; the managed service uses the full mailbox policy. */
 const GMAIL_READ_ONLY = new Set(["GMAIL_GET_PROFILE", "GMAIL_LIST_THREADS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID"]);
 export const CONNECTED_APP_APPROVAL = "bud_connected_app_action";
+/** The office shared mailbox's own MCP server, beside "connected-apps" (the person's own), in mailbox mode `both`. */
+export const OFFICE_MAIL_SERVER = "office-mail";
 type Call = { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
 type Policy = "read" | "review" | "blocked";
 
@@ -108,6 +110,8 @@ export async function startConnectedAppsBroker(options: {
   managed?: boolean;
   /** How long a reviewed draft send waits for mail calls already in flight on its mailbox. */
   mailDrainMs?: number;
+  /** The office shared mailbox's session (its headers select it at the gateway). */
+  mailbox?: "office";
 }): Promise<ConnectedAppsBroker> {
   const generationAtStart = revocationGeneration;
   if (!options.key.trim()) throw new Error("Set up Bud's Connected apps key first.");
@@ -253,7 +257,7 @@ export async function startConnectedAppsBroker(options: {
               : "This operation is outside Bud's connected-app boundary. Use direct app tools to prepare reviewable work. Ask Bud to connect an app separately.");
             // A shared office mailbox without the owner's full-access grant is held
             // to the three bounded reads by the gateway; say so before any card.
-            if (options.managed && !options.localTransport && managedMailboxAccess(options.key) === "read_only" && gmailBeyondReads(call)) return errorResult(SHARED_MAILBOX_READ_ONLY);
+            if (options.managed && !options.localTransport && managedMailboxAccess(options.key, options.mailbox) === "read_only" && gmailBeyondReads(call)) return errorResult(SHARED_MAILBOX_READ_ONLY);
             const mailKeys = mailProviders(call).map(provider => `${mailIdentity}:${provider}`);
             if (mailKeys.some(key => mailbox(key).hold)) return errorResult(MAIL_HELD);
             const reviewProtocol = typeof req.headers["mcp-protocol-version"] === "string" ? req.headers["mcp-protocol-version"] : undefined;
@@ -406,7 +410,7 @@ export async function startConnectedAppsBroker(options: {
   if (!address || typeof address === "string") throw new Error("Bud could not open its app connection.");
   const cancelPending = () => { for (const controller of controllers) controller.abort(); };
   const broker: ConnectedAppsBroker = {
-    descriptor: { type: "http", name: "connected-apps", url: `http://127.0.0.1:${address.port}/mcp`, headers: [{ name: "authorization", value: `Bearer ${token}` }] },
+    descriptor: { type: "http", name: options.mailbox === "office" ? OFFICE_MAIL_SERVER : "connected-apps", url: `http://127.0.0.1:${address.port}/mcp`, headers: [{ name: "authorization", value: `Bearer ${token}` }] },
     cancelPending,
     close() { if (closed) return; closed = true; cancelPending(); server.closeAllConnections(); server.close(); requests.clear(); liveBrokers.delete(broker); },
   };

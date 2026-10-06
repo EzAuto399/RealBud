@@ -30,6 +30,8 @@ export interface ConnectedAppCatalogEntry extends AppSuggestion {
 }
 
 export const HERMIOS_APP_SLUG = 'hermios-native';
+/** The office shared mailbox beside the person's own Gmail (mailbox mode `both`). */
+export const OFFICE_GMAIL_SLUG = 'gmail-office';
 export const REDBARK_APP_SLUG = 'redbark-native';
 
 /** What the Hermios tile says, from Bud's own Hermios connection state only. A
@@ -66,16 +68,24 @@ export function connectedAppCatalog(snapshot: ConnectedAppsStatus | null, option
   const entries = [...bySlug.values()].map((app): ConnectedAppCatalogEntry => {
     const service = snapshot?.services[app.slug], connected = service?.connected === true;
     const sharedGmail = app.slug === 'gmail' && snapshot?.sourceKind === 'office_shared';
+    const ownGmail = app.slug === 'gmail' && snapshot?.mailboxMode === 'both';
     const gmailUnchecked = app.slug === 'gmail' && options.managed && (!service || Boolean(snapshot?.error));
     const excluded = snapshot?.excludedApps?.includes(app.slug) === true;
     const state = officeSourceState(snapshot, app.slug);
     const status = !options.configured ? 'Setup needed' : excluded ? 'Off in Ask' : sharedGmail && !connected ? 'Office setup needed'
       : gmailUnchecked ? 'Check access first' : !service ? 'Availability not checked' : OFFICE_SOURCE_LABELS[state];
-    return { ...app, origin: service ? 'reported' : 'suggested', connected, status,
-      detail: sharedGmail ? connected ? 'Office shared account' : 'Ask the office owner to connect it, then check access again.'
+    return { ...app, ...(ownGmail ? { label: 'Your Gmail', purpose: 'Your own work mail on this computer' } : {}), origin: service ? 'reported' : 'suggested', connected, status,
+      detail: ownGmail ? 'Only you use this mailbox. Bud uses it unless you ask for the office mailbox.' : sharedGmail ? connected ? 'Office shared account' : 'Ask the office owner to connect it, then check access again.'
         : service ? 'Reported by your connection service' : 'Bud will check whether your service offers this connection.',
       action: !options.configured || connected || excluded || sharedGmail || gmailUnchecked || state === 'signing-in' ? null : service ? 'connect' : 'find' };
   });
+  if (snapshot?.mailboxMode === 'both' && !options.readOnly) {
+    // Read-only here: the office owner connects it on the website and allows computers.
+    const office = snapshot.officeShared, connected = office?.connected === true;
+    entries.push({ slug: OFFICE_GMAIL_SLUG, label: 'Office shared Gmail', category: 'Email', purpose: 'The office mailbox the owner connected', aliases: 'gmail shared office mailbox inbox',
+      origin: 'reported', connected, status: !options.configured ? 'Setup needed' : connected ? 'Ready' : 'Not allowed on this computer',
+      detail: connected ? 'Bud uses it only when you ask for the office mailbox.' : 'The office owner connects it and chooses which computers may use it.', action: null });
+  }
   const hermios = options.hermios ?? null;
   entries.push({ slug: HERMIOS_APP_SLUG, label: 'Hermios CRM', category: 'CRM', purpose: 'Customer records for your office', aliases: 'contacts customers pipeline crm',
     origin: 'native', featured: true, connected: hermios?.status === 'connected' && hermios.account !== null, status: hermiosCatalogStatus(hermios),

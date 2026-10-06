@@ -141,3 +141,11 @@ it('projects shared source metadata without claiming an unconnected mailbox is u
   expect(canPrepareConnectedEmail(projected, 'gmail')).toBe(false);
   expect(() => readConnectedAppsStatus({ ...status(), sourceKind: 'office_shared' })).toThrow(/policy/);
 });
+
+it('projects the office mailbox beside the own one only in mailbox mode both', () => {
+  const office = { connected: true, status: 'ACTIVE', accounts: [{ id: 'office-account', status: 'ACTIVE', token: 'fictional-hidden' }], accountSelectionRequired: false };
+  const both = readConnectedAppsStatus({ ...status(), sourceKind: 'personal', policyRevision: 3, mailboxMode: 'both', officeShared: office });
+  expect(both.mailboxMode).toBe('both'); expect(both.officeShared).toEqual({ connected: true, status: 'ACTIVE', accounts: [{ id: 'office-account', status: 'ACTIVE' }], accountSelectionRequired: false });
+  expect(readConnectedAppsStatus({ ...status(), sourceKind: 'personal', policyRevision: 3, mailboxMode: 'shared', officeShared: office })).not.toHaveProperty('officeShared');
+  expect(readConnectedAppsStatus({ ...status(), mailboxMode: 'everyone' })).not.toHaveProperty('mailboxMode');
+});

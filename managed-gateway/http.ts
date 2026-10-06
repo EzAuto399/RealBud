@@ -131,7 +131,10 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         requireThat(session===undefined || (typeof session==='string' && /^[a-f0-9]{64}$/.test(session)), 'invalid_connector_session', 400);
         const revision=req.headers['x-realbud-policy-revision'];
         requireThat(revision===undefined||(typeof revision==='string'&&/^(0|[1-9][0-9]{0,15})$/.test(revision)&&Number.isSafeInteger(Number(revision))),'invalid_mailbox_revision');
-        const result=await options.connectors.handle({token:bearer(req),profile,session,policyRevision:revision===undefined?undefined:Number(revision),method:req.method??'',path:url.pathname,
+        // Selects the office mailbox for this request; the gateway still decides whether this computer may use it.
+        const mailbox=req.headers['x-realbud-mailbox'];
+        requireThat(mailbox===undefined||mailbox==='office'||mailbox==='personal','invalid_mailbox_source');
+        const result=await options.connectors.handle({token:bearer(req),profile,session,policyRevision:revision===undefined?undefined:Number(revision),...(mailbox?{mailbox:mailbox as 'office'|'personal'}:{}),method:req.method??'',path:url.pathname,
           body:req.method==='POST'?json(await body(req,32_000)):undefined,signal:abort.signal});
         if(result.session) res.setHeader('mcp-session-id',result.session);
         if(result.body===undefined) { res.writeHead(result.status);res.end(); } else reply(res,result.status,result.body);
@@ -279,11 +282,18 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       if(mailbox) {
         requireThat(options.connectors,'connectors_unavailable',503);
         requireThat(!url.search && (mailbox[1]?req.method==='POST':req.method==='GET'),'not_found',404);
-        const ownerToken=bearer(req);
-        reply(res,200,await options.connectors.officeMailbox.handle(actor,mailbox[1]??'status',mailbox[1]?json(await body(req,4096)):undefined,async()=>{
-          const current=await options.portal.authenticate(ownerToken);
-          requireThat(current.role==='billing_owner'&&current.companyId===actor.companyId&&current.subject===actor.subject,'forbidden',403);
-        }));return;
+        const ownerToken=bearer(req),operation=mailbox[1]??'status';
+        try {
+          reply(res,200,await options.connectors.officeMailbox.handle(actor,operation,mailbox[1]?json(await body(req,4096)):undefined,async()=>{
+            const current=await options.portal.authenticate(ownerToken);
+            requireThat(current.role==='billing_owner'&&current.companyId===actor.companyId&&current.subject===actor.subject,'forbidden',403);
+          }));
+        } catch(error) {
+          // Operation and code only: never the office, account, address, link or upstream text.
+          console.warn(JSON.stringify({officeMailbox:operation,error:error instanceof GatewayError?error.code:'request_failed'}));
+          throw error;
+        }
+        return;
       }
       // Hermios subscription: the principal is the office; a body names an option,
       // people and the accepted terms digest, never a price or a company.
