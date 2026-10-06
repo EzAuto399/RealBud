@@ -153,12 +153,13 @@ export function ArrangeDeskSheet() {
                 () => setDraft({ ...current, shell: withShellPanel(current.shell, panel.id, !panel.visible) })))}
             </ul>
           </fieldset>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="rb-arrange-actions"><div className="flex flex-wrap gap-2">
             <button type="button" className={cn(control, "border-agency bg-agency text-white hover:bg-agency-hover")} disabled={arrangement.saving || unchanged} onClick={() => void save()}>{arrangement.saving ? "Saving…" : "Save"}</button>
             <button type="button" className={control} disabled={arrangement.saving || isRecommended} onClick={() => setDraft(recommended)}>Reset to recommended</button>
           </div>
+          <p role="status" className="mt-2 min-h-5 text-[13px] text-ink-secondary">{message}</p></div>
         </>}
-        <p role="status" className="mt-2 min-h-5 text-[13px] text-ink-secondary">{message}</p>
+        {!arrangement.ready && <p role="status" className="mt-2 min-h-5 text-[13px] text-ink-secondary">{message}</p>}
       </div>
     </div>
   );
