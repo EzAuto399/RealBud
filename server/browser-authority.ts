@@ -314,22 +314,17 @@ function portalMarkerShown(text: string, where: { landmark: string; role: string
   return portalAccountName(text, where) === marker.trim() && marker.trim() !== "";
 }
 /** The page without the portal's own menu links: REI's sidebar lists "Bank Reconciliation" and "Bulk Receipting",
- * which never make the page itself financial. Only a link whose whole name is a declared menu name, outside the
- * page's content (main, forms, dialogs, tables, regions), is dropped; the page's own words stay. Links the pack
- * does not declare (REI's "Banking") still count, so pages under Process still read as financial. */
+ * which never make the page itself financial. The authority's own parser (parseVom) decides: a link whose whole name
+ * is a declared menu name, outside the page's content (main, forms, dialogs, tables, regions), goes with its subtree
+ * (the label text under it). Lines the parser does not read stay. Undeclared names (REI's "Banking") still count. */
 function withoutMenuLinks(text: string, portal: BrowserPortalControls | null): string {
-  if (!portal?.menu.length) return text;
-  const open: { indent: number; role: string }[] = [];
-  return text.split("\n").filter(line => {
-    const indent = line.length - line.trimStart().length;
-    const role = line.trimStart().match(/^(?:@e\d+\s+)?([a-z][\w-]*)/)?.[1] ?? "";
-    while (open.length && open[open.length - 1].indent >= indent) open.pop();
-    const inContent = open.some(at => PAGE_CONTENT_ROLE.has(at.role));
-    open.push({ indent, role });
-    const name = line.match(/^\s*(?:@e\d+\s+)?link\s+"((?:[^"\\]|\\.)*)"\s*(?:\[[^\]]*\]\s*)*(?:url="(?:[^"\\]|\\.)*")?\s*$/)?.[1];
-    if (name === undefined || inContent) return true;
-    try { return !portal.menu.includes(JSON.parse(`"${name}"`) as string); } catch { return true; }
-  }).join("\n");
+  if (!portal?.menu.length || !isStructuredBrowserObservation(text)) return text;
+  const drop = new Set<number>();
+  for (const node of parseVom(text).nodes) {
+    if (node.role !== "link" || node.name === null || !portal.menu.includes(node.name) || ancestorsOf(node).some(at => PAGE_CONTENT_ROLE.has(at.role))) continue;
+    for (const part of [node, ...descendants(node)]) drop.add(part.line);
+  }
+  return text.split("\n").filter((_, index) => !drop.has(index)).join("\n");
 }
 /** The account name a portal shows at its declared place (REI's top-bar business code), or null when nothing is shown there. */
 export function portalAccountName(text: string, where: { landmark: string; role: string }): string | null {
@@ -744,7 +739,7 @@ function headings(text: string): string[] {
 // values) inside the form, dialog or table row that holds the pressed control.
 // A name that is not shown (a group's aria-label, a button's name) and hidden
 // nodes never confirm a fact; another form, dialog or row never supplies one.
-interface VomNode { indent: number; ref: string | null; role: string; name: string | null; value: string | null; url: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
+interface VomNode { line: number; indent: number; ref: string | null; role: string; name: string | null; value: string | null; url: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
 export const isVomObservation = (text: string): boolean => /^\s*@vom\s+\d+[^\S\n]*(?:\n|$)/.test(text);
 export const isStructuredBrowserObservation = (text: string): boolean => isVomObservation(text) || isNativeBrowserObservation(text);
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
@@ -794,7 +789,7 @@ export function withoutLinkDestinations(text: string): string {
 const unescapeVom = (text: string) => text.replace(/\\(.)/g, "$1");
 function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
   const nodes: VomNode[] = []; const stack: VomNode[] = []; let focus: string | null = null;
-  for (const raw of text.split("\n")) {
+  for (const [index, raw] of text.split("\n").entries()) {
     const line = raw.replace(/\s+$/, "");
     const body = line.trimStart(); const indent = line.length - body.length;
     if (!body) continue;
@@ -807,7 +802,7 @@ function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
     const { kept: rest, url } = linkTail(tail);
     const value = rest.match(VOM_VALUE);
     const node: VomNode = {
-      indent, ref: match?.[1] ?? null, role: layer ? "layer" : match![2].toLowerCase(),
+      line: index, indent, ref: match?.[1] ?? null, role: layer ? "layer" : match![2].toLowerCase(),
       name: layer ? layer[1] : match![3] === undefined ? null : unescapeVom(match![3]),
       value: value ? unescapeVom(value[1]) : /\[empty\]/i.test(rest) ? "" : null,
       url,
