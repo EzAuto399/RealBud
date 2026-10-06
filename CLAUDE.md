@@ -82,6 +82,8 @@ Use a skill when it fits the request:
 ## Lessons
 - When scripting build → install, gate the install on the build's success and on the new app's version string; never swap /Applications from a stale release/ folder.
 <!-- Newest on top. "When X, do Y". Delete what no longer applies. -->
+- When a Package Windows run for `main` is building an installer you need, merge nothing into `main` until it finishes; every push cancels the running build (`cancel-in-progress`). Batch the merges instead.
+- When testing in a VM on this Mac, keep at least 30 GB free on the internal disk; a full host disk corrupted the Windows VM beyond repair (6 Oct).
 - When changing `electron-builder.yml` files or extraResources, run `electron-builder --dir` locally and check the packaged `/api/health` version before merging; a regex test on the YAML once shipped a config that built no installer.
 - When adding a UI control, click it in the running app and confirm it changes something visible (including on an empty book); remove decorative controls rather than ship no-ops.
 - When moving UI controls, check 390px: below 600px only `.rb-sidebar-navigation` shows, so footer-only entries vanish on phones.
