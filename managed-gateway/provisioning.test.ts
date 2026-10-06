@@ -8,7 +8,7 @@ import { fixture } from './testing.ts';
 import { LedgerDatabase } from './database.ts';
 import { UsageLedger } from './ledger.ts';
 import { createGatewayServer } from './http.ts';
-import { validateConnectorDevices } from './connectors.ts';
+import { ManagedConnectors, validateConnectorDevices } from './connectors.ts';
 import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, nodeIo, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, updateRegistry, type DurableIo, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import { ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaProjectInput } from './modelvia-keys.ts';
@@ -415,6 +415,40 @@ test('a lost reply after ready is redelivered: the one key is rotated and the co
     assert.ok(!JSON.stringify(again).includes('ak_'));
     await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
     assert.deepEqual(h.modelvia.revoked, ['fedcba9876543210']);
+  } finally { h.close(); }
+});
+
+test('an office Gmail grant follows its installation through redelivery, never through revoke, a mode change or another office', async () => {
+  const h = harness(); try {
+    const first = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    const company = h.f.tenant.companyId, account = 'shared-account-fictional';
+    const connectors = new ManagedConnectors({ ledger: h.f.ledger, devices: () => h.devices(), secret: () => PROJECT_KEY,
+      authorize: async () => ({ url: 'https://connect.example.invalid/oauth', accountId: account, expiresAt: new Date(h.f.now() + 60_000).toISOString() }),
+      access: async () => ({ checkedAt: '', services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: account, status: 'ACTIVE' }], accountSelectionRequired: false } }, tools: { available: true, names: [] } }),
+      transport: () => ({ async request() { return { content: [{ type: 'text', text: JSON.stringify({ accountId: account, emailAddress: 'office@example.invalid' }) }] }; } }) });
+    const mailbox = connectors.officeMailbox, call = (op: string, body?: unknown) => mailbox.handle(h.f.owner, op, body, async () => {});
+    const status = (token: string) => connectors.handle({ token, profile: 'property', method: 'GET', path: '/v1/connectors/status', policyRevision: mailbox.policy(company).revision, signal: new AbortController().signal });
+    await call('policy', { mode: 'shared', expectedRevision: 0 }); await call('authorize', { expectedRevision: 1 });
+    const review = await call('verify', { expectedRevision: 1 }) as { candidate: { accountId: string; emailAddress: string } };
+    await call('confirm', { expectedRevision: 2, ...review.candidate });
+    await call('grants', { expectedRevision: 3, installationId: 'install-one', allowed: true });
+    assert.equal(((await status(first.connector.credential!)).body as { sourceKind: string }).sourceKind, 'office_shared');
+
+    const again = (await h.make().provision(h.f.owner, { ...h.request, redeliver: true })).provisioning;
+    // The old credential is dead; the new one still has the office mailbox, with no new revision to review.
+    await assert.rejects(() => status(first.connector.credential!), /connector_access_denied/);
+    const shared = (await status(again.connector.credential!)).body as { sourceKind: string; services: { gmail: { connected: boolean } } };
+    assert.equal(shared.sourceKind, 'office_shared'); assert.equal(shared.services.gmail.connected, true);
+    assert.equal(mailbox.policy(company).revision, 4); assert.equal(mailbox.policy(company).grants.length, 1);
+    assert.ok(mailbox.readyForDevice(h.devices()[0]!));
+    // Another office never matches, even with the same installation id and credential.
+    assert.equal(mailbox.readyForDevice({ ...h.devices()[0]!, companyId: 'company-other' }), false);
+
+    await h.make().revoke(h.f.owner, { companyId: company, installationId: 'install-one' });
+    await assert.rejects(() => status(again.connector.credential!), /connector_access_denied/);
+    assert.deepEqual((await call('status') as { installations: unknown[] }).installations, [{ installationId: 'install-one', active: false, allowed: false }]);
+    await call('policy', { mode: 'personal', expectedRevision: 4 });
+    assert.deepEqual(mailbox.policy(company).grants, []);
   } finally { h.close(); }
 });
 
