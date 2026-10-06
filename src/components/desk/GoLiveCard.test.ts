@@ -98,6 +98,6 @@ describe('Get started card', () => {
     } };
     const html = render({ ...linked, austinPack: { ...pack(), installed: null } });
     expect(html.match(/aria-label="Connect Gmail"/g)).toHaveLength(1);
-    expect(html).toContain('Gmail is not connected yet.');
+    expect(html).toContain('Sign in to Gmail in your browser.');
   });
 });

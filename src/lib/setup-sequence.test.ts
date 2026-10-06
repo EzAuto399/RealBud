@@ -117,7 +117,7 @@ describe("step 2: Bud sets itself up and blocks nothing", () => {
     const held = step({ ...linked, bud: { ready: false, working: false, detail: "Bud’s setup stopped before it finished." } }, "bud");
     expect(held).toMatchObject({ state: "later", status: "Bud’s setup stopped before it finished." });
     expect(step({ ...linked, bud: undefined }, "bud")).toMatchObject({ state: "unknown" });
-    expect(step({ ...base, websiteLink: "not-linked", bud: { ready: false, working: false, detail: null } }, "bud").status).toMatch(/once this computer is connected/);
+    expect(step({ ...base, websiteLink: "not-linked", bud: { ready: false, working: false, detail: null } }, "bud").status).toBe("Starts by itself once this computer is connected.");
   });
 
   it("is never the current step", () => {
@@ -162,10 +162,10 @@ describe("step 4: the office Gmail", () => {
 
   it("falls back to the agency Gmail check without a role pack", () => {
     const none = pack({}, false);
-    expect(step({ ...linked, austinPack: none }, "gmail").status).toBe("gmail detail from the host");
+    expect(step({ ...linked, austinPack: none }, "gmail").status).toBe("Sign in to the office Gmail in your browser.");
     const verified = facts({ workflows: [bank({ checks: [check("gmail", "passed", "Verified."), check("mapping", "needed")] })] });
     expect(step({ ...linked, agencySetup: verified, austinPack: none }, "gmail")).toMatchObject({ state: "done" });
-    expect(step({ ...linked, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "unknown", "Not reported.")] })] }), austinPack: none }, "gmail").status).toBe("Not checked yet. Not reported.");
+    expect(step({ ...linked, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "unknown", "Not reported.")] })] }), austinPack: none }, "gmail").status).toBe("Not checked yet. The office Gmail hasn’t been checked.");
     // An app the linked service offers with no account is named on the action.
     expect(step({ ...linked, agencySetup: verified, austinPack: none, appsToConnect: ["gmail"] }, "gmail")).toMatchObject({ state: "current", actionLabel: "Connect Gmail" });
     expect(step({ ...linked, agencySetup: "unavailable", austinPack: none }, "gmail").status).toMatch(/^Not checked yet\. /);
@@ -220,7 +220,7 @@ describe("step 5: review and switch on the workflows", () => {
     });
 
     it("asks for a choice, references and approval before the switch", () => {
-      expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ selected: false, checks: [check("gmail", "passed")] })] }) }, "workflows").status).toMatch(/No work is selected yet/);
+      expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ selected: false, checks: [check("gmail", "passed")] })] }) }, "workflows").status).toBe("Open each workflow, read what it does, then switch it on.");
       expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "needed", "Add references.")] })] }) }, "workflows").status).toBe("Add references.");
       expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "passed")] })] }) }, "workflows").status).toMatch(/Still to approve/);
     });

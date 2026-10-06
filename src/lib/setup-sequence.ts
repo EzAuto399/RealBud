@@ -248,7 +248,7 @@ function budStep(bud: BudRead, link: WebsiteLinkRead): { state: SetupStepState; 
   if (bud.detail) return { state: "later", status: bud.detail };
   return {
     state: "later",
-    status: link === "linked" ? "Bud is not set up yet. See progress for what it is waiting on." : "Bud sets itself up once this computer is connected to your office.",
+    status: link === "linked" ? "Bud is not set up yet. See progress for what it is waiting on." : "Starts by itself once this computer is connected.",
   };
 }
 
@@ -292,6 +292,8 @@ function checkRollup(
 }
 
 const NO_GMAIL = "No Gmail is needed for the work you chose.";
+const SIGN_IN_GMAIL = "Sign in to the office Gmail in your browser.";
+const REVIEW_EACH = "Open each workflow, read what it does, then switch it on.";
 
 /**
  * Step 4: the office Gmail. With a role pack this is the pack's own Gmail
@@ -304,21 +306,25 @@ function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: 
     if (!item) return { fact: "done", status: NO_GMAIL };
     return item.done
       ? { fact: "done", status: "The office Gmail is connected." }
-      : { fact: "todo", status: "Sign in to the office Gmail in your browser." };
+      : { fact: "todo", status: SIGN_IN_GMAIL };
   }
   if (!setup || setup === "unavailable") return { fact: "unknown", status: `${NOT_CHECKED} Your office’s connections could not be read yet.` };
   if (appsToConnect.length) {
     const labels = appsToConnect.map(officeAppLabel);
     return {
       fact: "todo",
-      status: `${list(labels)} ${labels.length === 1 ? "is" : "are"} not connected yet. Sign-in opens in your browser and you finish it there.`,
+      status: `Sign in to ${labels[0]} in your browser.`,
       actionLabel: `Connect ${labels[0]}`,
     };
   }
   const selected = setup.workflows.filter((workflow) => workflow.selected);
   // Before any work is ticked the account is still the agency's own, so the
   // check is read across every workflow that reports one.
-  return checkRollup(selected.length ? selected : setup.workflows, "gmail", { fact: "done", status: NO_GMAIL });
+  const rolled = checkRollup(selected.length ? selected : setup.workflows, "gmail", { fact: "done", status: NO_GMAIL });
+  // The host's check wording is diagnostic; the step stays one plain sentence.
+  if (rolled.fact === "todo") return { fact: "todo", status: SIGN_IN_GMAIL };
+  if (rolled.fact === "unknown") return { fact: "unknown", status: `${NOT_CHECKED} The office Gmail hasn’t been checked.` };
+  return rolled.status === NO_GMAIL ? rolled : { fact: "done", status: "The office Gmail is connected." };
 }
 
 const SEPARATE = "Switching on is a separate action on Schedule.";
@@ -358,7 +364,7 @@ function scheduleFact(schedule: ScheduleRead | undefined, selected: readonly Age
 function approveFact(setup: AgencySetupFacts, schedule: ScheduleRead | undefined): Fact {
   const selected = setup.workflows.filter((workflow) => workflow.selected);
   if (!selected.length) {
-    return { fact: "todo", status: "No work is selected yet. Tick the work to set up in Review workflows, then approve its settings." };
+    return { fact: "todo", status: REVIEW_EACH };
   }
   // Property references exist only for bank work, and only inside this step.
   const mapping = checkRollup(selected, "mapping", { fact: "done", status: "" });
@@ -395,7 +401,7 @@ function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefi
   const name = loops.find((loop) => loop.id === next)?.name?.trim() || "the next workflow";
   return {
     fact: "todo",
-    status: `${ids.length - off.length} of ${ids.length} on. Open each workflow, read what it does, then switch it on.`,
+    status: `${ids.length - off.length} of ${ids.length} on. ${REVIEW_EACH}`,
     actionLabel: `Review ${name}`,
     target: `job-${next}`,
   };
