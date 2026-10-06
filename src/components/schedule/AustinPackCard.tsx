@@ -1,13 +1,13 @@
-// The Austin pack on Schedule: install it (six workflows at office times, every
-// one off until reviewed) and a short setup checklist whose items each open
-// the place where that step is done.
-import { useState } from "react";
-import { CheckCircle2, Circle, Loader2 } from "lucide-react";
+// The Auston setup checklist on Schedule, once a role pack from the office has
+// set its workflows (each off until reviewed). Each item opens the place where
+// that step is done. Importing the pack is what sets the workflows; there is no
+// separate install here.
+import { CheckCircle2, Circle } from "lucide-react";
 
 import { AUSTIN_CHECKLIST_IDS, type AustinChecklistItem, type AustinPackView } from "@shared/austin-pack";
 import type { Loop } from "@/lib/routines";
 import { openDeskBills } from "@/lib/desk-view-state";
-import { api, useStore } from "@/state/store";
+import { useStore } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
 
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -19,7 +19,7 @@ export function parseAustinPackView(body: unknown): AustinPackView {
     Array.isArray(body.loops) && body.loops.every(l => object(l) && str(l.loopId) && str(l.owner) && object(l.plan) && ["reads", "waitsFor", "notifies", "approval"].every(k => str((l.plan as Record<string, unknown>)[k]))) &&
     Array.isArray(body.rules) && body.rules.every(r => object(r) && str(r.text) && typeof r.matches === "boolean") &&
     Array.isArray(body.checklist) && body.checklist.every(i => object(i) && (AUSTIN_CHECKLIST_IDS as readonly unknown[]).includes(i.id) && str(i.label) && str(i.detail) && typeof i.done === "boolean");
-  if (!ok) throw new Error("The Austin setup could not be read. Reload Schedule.");
+  if (!ok) throw new Error("The Auston setup could not be read. Reload Schedule.");
   return body as unknown as AustinPackView;
 }
 
@@ -35,30 +35,14 @@ export function checklistLink(item: AustinChecklistItem, loops: readonly Loop[])
 /** A city name for "Brisbane time" from an IANA zone. */
 export const zoneCity = (zone: string) => zone.split("/").pop()!.replace(/_/g, " ");
 
-export function AustinPackCard({ view, loops, onChanged, className = "" }: {
+export function AustinPackCard({ view, loops, className = "" }: {
   view: AustinPackView | null;
   loops: readonly Loop[];
-  onChanged: (next: AustinPackView) => void;
   className?: string;
 }) {
   const { dispatch } = useStore();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  if (!view) return null;
-  const install = async () => {
-    if (busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      const body = await api("/api/austin-pack/install", { method: "POST", body: "{}" }, { timeoutMs: 30_000 });
-      const next = parseAustinPackView(body);
-      const kept = Array.isArray(body.results) ? body.results.filter((r: { outcome?: string }) => r.outcome === "kept").length : 0;
-      onChanged(next);
-      setNotice(`Six workflows are set to ${zoneCity(next.timeZone)} time and stay off until you review each one.${kept ? ` ${kept} kept the times your office set.` : ""}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The Austin pack could not be installed.");
-    } finally { setBusy(false); }
-  };
+  // Nothing to set up until a pack from the office has set its workflows.
+  if (!view?.installed) return null;
   const open = (item: AustinChecklistItem) => {
     const link = checklistLink(item, loops);
     if (link.bills) { openDeskBills(); dispatch({ type: "showDesk" }); return; }
@@ -67,15 +51,12 @@ export function AustinPackCard({ view, loops, onChanged, className = "" }: {
   };
   const done = view.checklist.filter(item => item.done).length;
   return (
-    <section aria-label="Austin pack" className={className}>
+    <section aria-label="Auston pack" className={className}>
     <Card
-      title={view.installed ? "Austin setup checklist" : "Austin pack"}
-      subtitle={view.installed
-        ? `${done} of ${view.checklist.length} done. Times are ${zoneCity(view.timeZone)} time${view.timeZoneFromOffice ? "" : " (the pack's office time; change it in agency setup)"}.`
-        : `Sets bank references, weekly bills, morning priorities, maintenance checks, the supplier list check and the inspection draft to ${zoneCity(view.timeZone)} times. Each stays off until you review it and switch it on. Times your office already changed are kept.`}
+      title="Auston setup checklist"
+      subtitle={`${done} of ${view.checklist.length} done. Times are ${zoneCity(view.timeZone)} time${view.timeZoneFromOffice ? "" : " (the pack's office time; change it in agency setup)"}.`}
     >
-      {view.installed ? (
-        <ul aria-label="Austin setup checklist" className="divide-y divide-line">
+        <ul aria-label="Auston setup checklist" className="divide-y divide-line">
           {view.checklist.map(item => (
             <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
               {item.done ? <CheckCircle2 size={16} className="text-agency" aria-hidden /> : <Circle size={16} className="text-ink-muted" aria-hidden />}
@@ -90,13 +71,6 @@ export function AustinPackCard({ view, loops, onChanged, className = "" }: {
             </li>
           ))}
         </ul>
-      ) : (
-        <button type="button" disabled={busy} onClick={() => void install()} className="pm-decision inline-flex items-center gap-1.5 rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
-          {busy ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden /> : null}Install the Austin pack
-        </button>
-      )}
-      {error ? <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p> : null}
-      {notice ? <p role="status" className="mt-2 text-[13px] text-ink-secondary">{notice}</p> : null}
     </Card>
     </section>
   );

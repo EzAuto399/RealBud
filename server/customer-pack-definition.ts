@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { CustomerPack } from '../shared/customer-packs.ts';
+import type { CustomerPack, CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
+import { loadAustinPack } from './austin-pack.ts';
 
-const directory = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows', 'austin-accounts');
+const workflows = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows');
+const directory = join(workflows, 'austin-accounts');
 const sourceProvenance = 'Call this a synthetic rehearsal only when input.synthetic=true; otherwise call it saved-source evidence. This does not verify live freshness or complete coverage.';
 
 /** The REI recipes and site map shipped with the app, read at call time so
@@ -43,4 +45,34 @@ export function austinCustomerPack(): CustomerPack {
     skills,
     dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' },
   };
+}
+
+/** office/settings.json for a role pack: the named loops at the Austin schedule
+ * file's times and timezone, every one off. */
+function roleLoops(ids: string[]): Pick<CustomerPack, 'files'> {
+  const schedule = loadAustinPack();
+  const settings: CustomerPackOfficeSettings = { version: 1, kind: 'office-settings', loops: ids.map(id => {
+    const item = schedule.loops.find(loop => loop.loopId === id);
+    if (!item) throw new Error(`The Austin schedule file has no ${id} workflow.`);
+    return { id, enabled: false, schedule: { type: 'daily', ...item.schedule, timezone: schedule.timeZone } };
+  }) };
+  return { files: { 'office/settings.json': JSON.stringify(settings) } };
+}
+
+/** Kevin's role pack: W1 bank references, W2 weekly bills, W3 morning priorities.
+ * Same plans and skills as `austin-office`, installed under its own skill names. */
+export function austinAccountsCustomerPack(): CustomerPack {
+  const office = austinCustomerPack();
+  return { ...office, id: 'austin-accounts', revision: 1, title: 'Auston accounts — Kevin',
+    recipes: office.recipes.map(recipe => ({ ...recipe, steps: recipe.steps.map(step => step.replace('realbud-austin-office-', 'realbud-austin-accounts-')) })),
+    ...roleLoops(['bank-references', 'weekly-bills', 'inbound-triage']) };
+}
+
+/** Sherry's role pack: W4 maintenance review (the reviewed rehearsal plan), the
+ * supplier list check and the W5 inspection draft. No skills, so department case
+ * preparation can still use the maintenance plan. */
+export function austinPropertyCustomerPack(): CustomerPack {
+  const rehearsal = JSON.parse(readFileSync(join(workflows, 'austin-maintenance-rehearsal', 'realbud-austin-maintenance-rehearsal-v1.json'), 'utf8')) as CustomerPack;
+  return { ...rehearsal, id: 'austin-property', revision: 1, title: 'Auston property management — Sherry',
+    ...roleLoops(['maintenance-review', 'rei-supplier-check', 'inspection-draft']) };
 }

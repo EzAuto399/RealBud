@@ -120,8 +120,9 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
         </div>
       </div>
 
-      <div className="mt-4"><AgencyWorkflowSetup onSaved={onInstalled} /></div>
+      {/* The role pack from the office comes first: importing it is the setup most people need. */}
       <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
+      <div className="mt-4"><AgencyWorkflowSetup onSaved={onInstalled} /></div>
       <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
       <details className="mt-5 border-t border-line pt-3">
         <summary className="min-h-11 cursor-pointer text-sm font-medium text-ink">Optional Auston Phase 1 examples and older pack snapshots</summary>

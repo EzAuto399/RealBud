@@ -3938,9 +3938,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (path === '/api/austin-pack' || path === '/api/austin-pack/install') {
       res.setHeader('cache-control', 'no-store');
       if (path === '/api/austin-pack' && method === 'GET') return json(res, 200, await austinPack.view());
-      if (path !== '/api/austin-pack/install' || method !== 'POST') return json(res, 405, { error: 'Use GET for the Austin pack and POST to install it.' });
+      if (path !== '/api/austin-pack/install' || method !== 'POST') return json(res, 405, { error: 'Use GET for the Auston pack and POST to install it.' });
       if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
-      if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) return json(res, 503, { error: 'Recover the private book and schedule before installing the Austin pack.' });
+      if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) return json(res, 503, { error: 'Recover the private book and schedule before installing the Auston pack.' });
       return json(res, 200, await austinPack.install());
     }
     if (path === '/api/inspection-rules') {
@@ -5996,6 +5996,12 @@ const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: wor
   timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null });
 if (!privateRestoreLocked) reminders.start();
 const customerPacks = createCustomerPackService({ directory: DATA_DIR,
+  // A pack's office/settings.json loops land through the Austin pack's one door: never on, office clocks kept.
+  applyLoops: async packLoops => {
+    if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) throw new Error('Schedule recovery is active.');
+    await austinPack.applyPackLoops(packLoops);
+  },
+  officePacks: () => officeLink.officePacks(),
   pauseSchedules: async packId => {
     if ((await agencySetup.getConfiguration()).settings.workflowPackId !== packId) return;
     mailWorkspace.cancel();

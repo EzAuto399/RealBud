@@ -1439,3 +1439,48 @@ describe("linking through the browser", () => {
     await expect(app.browserLinkStatus()).rejects.toThrow("The saved website link needs recovery.");
   });
 });
+
+describe("packs from the office website", () => {
+  const sha = "f".repeat(64);
+  const entry = (over: Record<string, unknown> = {}) => ({ id: "austin-accounts", title: "Fictional role pack", revision: 1, sha256: sha, pack: { id: "austin-accounts" }, ...over });
+  const office = (reply: () => Response | Promise<Response>) => {
+    const calls: { url: string; auth?: string }[] = [];
+    const { app } = fixture(vi.fn(async (url: any, init: any) => {
+      if (String(url).endsWith("redeem")) return Response.json({ installationId: JSON.parse(init.body).id, companyId: "office-a", agencyLabel: "Synthetic Office" });
+      if (String(url).endsWith("/packs")) { calls.push({ url: String(url), auth: init.headers?.Authorization }); return reply(); }
+      return Response.json({}, { status: 404 });
+    }) as unknown as typeof fetch);
+    return { app, calls };
+  };
+
+  it("reads nothing before this computer is linked", async () => {
+    const { app, calls } = office(() => Response.json({ version: 1, packs: [] }));
+    expect(await app.officePacks()).toEqual({ state: "not-linked" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("asks with the installation token and returns the listed packs, still unchecked", async () => {
+    const { app, calls } = office(() => Response.json({ version: 1, packs: [entry()] }));
+    await app.link({ code, label: "Fictional packs desk" });
+    expect(await app.officePacks()).toEqual({ state: "ready", packs: [entry()] });
+    expect(calls[0].url).toBe("https://realbud.app/api/installations/packs");
+    expect(calls[0].auth).toMatch(/^Bearer [a-f0-9]{64}$/);
+  });
+
+  it("reads a refused, garbled, extended or oversized answer as unavailable, never a partial list", async () => {
+    for (const reply of [
+      () => Response.json({ error: "storage" }, { status: 503 }),
+      () => new Response("{not json"),
+      () => Response.json({ version: 1, packs: [entry({ extra: true })] }),
+      () => Response.json({ version: 1, packs: [entry()], next: null }),
+      () => Response.json({ version: 2, packs: [] }),
+      () => Response.json({ version: 1, packs: [entry({ id: "../escape" })] }),
+      () => Response.json({ version: 1, packs: Array.from({ length: 21 }, (_, i) => entry({ id: `pack-${i}` })) }),
+      () => new Response(JSON.stringify({ version: 1, packs: [entry({ pack: { pad: "x".repeat(5_100_000) } })] })),
+    ]) {
+      const { app } = office(reply);
+      await app.link({ code, label: "Fictional packs desk" });
+      expect(await app.officePacks()).toEqual({ state: "unavailable" });
+    }
+  });
+});

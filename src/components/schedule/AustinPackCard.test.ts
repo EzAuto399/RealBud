@@ -21,16 +21,15 @@ const view = (installed: boolean, done: Partial<Record<string, boolean>> = {}): 
 const loops = [{ id: 'maintenance-review', name: 'Maintenance checks' }] as Loop[];
 
 describe('Austin pack card', () => {
-  it('offers the install with plain words and no checklist before install', () => {
-    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(false), loops, onChanged: () => {} }));
-    expect(html).toContain('Install the Austin pack');
-    expect(html).toContain('Brisbane times');
-    expect(html).toContain('stays off until you review it');
-    expect(html).not.toContain('Austin setup checklist');
+  it('shows nothing until a pack from the office has set its workflows, and never offers a separate install', () => {
+    expect(renderToStaticMarkup(createElement(AustinPackCard, { view: view(false), loops }))).toBe('');
+    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(true), loops }));
+    expect(html).toContain('aria-label="Auston setup checklist"');
+    expect(html).not.toMatch(/Install the Aust[io]n pack|Austin/);
   });
 
   it('lists every checklist item with its state and a link to where it is done', () => {
-    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(true, { gmail: true }), loops, onChanged: () => {} }));
+    const html = renderToStaticMarkup(createElement(AustinPackCard, { view: view(true, { gmail: true }), loops }));
     expect(html).toContain('1 of 6 done');
     expect(html).toContain('Label gmail<span class="sr-only"> (done)</span>');
     expect(html).toContain('Label redbark<span class="sr-only"> (not done)</span>');

@@ -1,6 +1,8 @@
 // The Austin pack's schedule: a versioned pack file declaring six catalog loops
 // with their Brisbane schedules, plain plan text, required connections and the
-// office's confirmed rules. Installing never switches a loop on and never
+// office's confirmed rules. The same door applies a customer pack's
+// office/settings.json loops when that pack is imported (applyPackLoops), so a
+// role pack sets its own workflows. Applying never switches a loop on and never
 // overwrites an office edit: a loop whose time, days or cadence differ from the
 // pack keeps them; a loop that matches only gets the office timezone. The
 // maintenance month rule is set only while the office has never changed it.
@@ -8,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AUSTIN_CHECKLIST_IDS, type AustinChecklistId, type AustinChecklistItem, type AustinPackLoop, type AustinPackView } from '../shared/austin-pack.ts';
-import type { Loop, LoopId } from '../shared/contracts.ts';
+import type { Loop, LoopId, LoopSchedule } from '../shared/contracts.ts';
 import { validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 import { DATA_DIR } from './config.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
@@ -29,7 +31,7 @@ export interface AustinLoopPack {
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const exact = (v: Record<string, unknown>, keys: string[], optional: string[] = []) => Object.keys(v).every(k => keys.includes(k) || optional.includes(k)) && keys.every(k => k in v);
 const text = (v: unknown, max = 400) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
-function bad(why: string): never { throw new Error(`The Austin pack file is not valid: ${why}.`); }
+function bad(why: string): never { throw new Error(`The Auston pack file is not valid: ${why}.`); }
 
 /** Rejects anything outside the fixed envelope, credentials and machine paths. */
 export function validateAustinPack(raw: unknown): AustinLoopPack {
@@ -65,11 +67,13 @@ const sameClock = (a: Schedule, b: Schedule) => a.time === b.time && [...a.weekd
 
 export interface AustinSignals { gmail: boolean; redbark: boolean; tenants: number; suppliers: number }
 /** Pure: the setup checklist from what this PC can see. "REI signed in once" is a
- * recorded REI sign-in, or a tenant list that only a signed-in REI read can save. */
+ * recorded REI sign-in, or a tenant list that only a signed-in REI read can save.
+ * Only the items the pack's workflows need are listed. */
 export function austinChecklist(pack: AustinLoopPack, loops: readonly Loop[], signals: AustinSignals & { reiSignedIn: boolean }): AustinChecklistItem[] {
   const off = pack.loops.filter(item => !loops.find(loop => loop.id === item.loopId)?.enabled);
   const item = (id: AustinChecklistId, label: string, done: boolean, yes: string, no: string): AustinChecklistItem => ({ id, label, done, detail: done ? yes : no });
-  return [
+  const needed = new Set<AustinChecklistId>(['workflows', ...pack.loops.flatMap(loop => loop.needs)]);
+  return ([
     item('gmail', 'Gmail connected', signals.gmail, 'The office Gmail is connected.', 'Connect the office Gmail in Connected apps.'),
     item('redbark', 'Redbark bank link connected', signals.redbark, 'Bud can read the ANZ rows from Redbark.', 'Connect Redbark in Connected apps, or add the ANZ CSV in the bank review each time.'),
     item('rei', 'Signed in to REI Cloud once', signals.reiSignedIn || signals.tenants > 0, 'REI Cloud has been signed in on this PC.', 'In Bank reference review, choose Refresh from REI and sign in on REI’s own page. Bud never sees your password.'),
@@ -77,15 +81,17 @@ export function austinChecklist(pack: AustinLoopPack, loops: readonly Loop[], si
     item('suppliers', 'REI supplier list saved', signals.suppliers > 0, `${signals.suppliers} suppliers saved.`, 'In Bills, Maintenance checks, choose Refresh from REI to save the supplier list.'),
     { ...item('workflows', 'Each workflow reviewed and switched on', off.length === 0, `All ${pack.loops.length} workflows are on.`,
       `${pack.loops.length - off.length} of ${pack.loops.length} on. Open each one, read what it does, then switch it on.`), ...(off[0] ? { next: off[0].loopId } : {}) },
-  ];
+  ] satisfies AustinChecklistItem[]).filter(entry => needed.has(entry.id));
 }
 
-interface PackState { version: 1; purpose: 'austin-pack'; installed: { revision: number; at: number } | null; reiSignedInAt: number | null }
+/** `loopIds`: the workflows a role pack set on this PC; absent means all six (the whole-office install). */
+interface PackState { version: 1; purpose: 'austin-pack'; installed: { revision: number; at: number; loopIds?: string[] } | null; reiSignedInAt: number | null }
 const readState = (v: unknown): PackState => {
   if (v === undefined) return { version: 1, purpose: 'austin-pack', installed: null, reiSignedInAt: null };
   if (!object(v) || v.version !== 1 || v.purpose !== 'austin-pack' || !(v.reiSignedInAt === null || Number.isSafeInteger(v.reiSignedInAt)) ||
-      !(v.installed === null || (object(v.installed) && Number.isSafeInteger(v.installed.revision) && Number.isSafeInteger(v.installed.at)))) {
-    throw Object.assign(new Error('The saved Austin pack state needs recovery. Its file has been kept.'), { status: 503 });
+      !(v.installed === null || (object(v.installed) && Number.isSafeInteger(v.installed.revision) && Number.isSafeInteger(v.installed.at) &&
+        (v.installed.loopIds === undefined || (Array.isArray(v.installed.loopIds) && v.installed.loopIds.every(id => (LOOP_IDS as readonly unknown[]).includes(id))))))) {
+    throw Object.assign(new Error('The saved Auston pack state needs recovery. Its file has been kept.'), { status: 503 });
   }
   return v as unknown as PackState;
 };
@@ -107,8 +113,29 @@ export function createAustinPack(deps: AustinPackDeps) {
   const load = async () => readState(await readPrivateJson(file, 10_000));
   const zone = async (p: AustinLoopPack) => { const office = await deps.officeTimeZone(); return { timeZone: office || p.timeZone, timeZoneFromOffice: Boolean(office) }; };
 
+  /** One door for pack loops. A loop whose clock differs from the pack keeps the
+   * office's clock; a matching one gets the office timezone, else the pack's. */
+  async function applyLoops(items: Array<{ loopId: string; schedule: Schedule; timezone?: string }>): Promise<AustinInstallResult[]> {
+    const office = await deps.officeTimeZone(), results: AustinInstallResult[] = [];
+    for (const item of items) {
+      const loop = deps.loops.listLoops().find(candidate => candidate.id === item.loopId);
+      // ponytail: "edited" means differs from this pack revision; a later revision that changes a time also keeps the older pack time.
+      if (!loop || !sameClock(loop.schedule, item.schedule)) { results.push({ loopId: item.loopId, outcome: 'kept' }); continue; }
+      const timezone = office || item.timezone;
+      if (timezone && loop.schedule.timezone !== timezone) deps.loops.patchClock(item.loopId as LoopId, { timezone });
+      results.push({ loopId: item.loopId, outcome: 'applied' });
+    }
+    // The confirmed month rule, only while the office has never chosen one.
+    const maintenance = items.some(item => item.loopId === 'maintenance-review') ? await deps.maintenance.read() : null, month = pack().rules[0].setting;
+    if (maintenance && (maintenance.ruleRevision ?? 0) === 0 && (maintenance.rule.basis !== month.basis || maintenance.rule.span !== month.span)) {
+      await deps.maintenance.setRule({ rule: month, expectedRevision: 0 });
+    }
+    return results;
+  }
+
   async function view(): Promise<AustinPackView> {
-    const p = pack(), state = await load(), loops = deps.loops.listLoops();
+    const full = pack(), state = await load(), loops = deps.loops.listLoops();
+    const scope = state.installed?.loopIds, p = scope ? { ...full, loops: full.loops.filter(item => scope.includes(item.loopId)) } : full;
     const [maintenance, inspection, signals] = await Promise.all([deps.maintenance.read(), deps.inspection.read(), deps.signals()]);
     const [month, cycle] = p.rules;
     return {
@@ -126,21 +153,23 @@ export function createAustinPack(deps: AustinPackDeps) {
     view: () => serial(view),
     /** Applies the pack as reviewable proposals: every loop stays as on or off as it was. */
     install: () => serial(async (): Promise<AustinPackView & { results: AustinInstallResult[] }> => {
-      const p = pack(), state = await load(), { timeZone } = await zone(p);
-      const results: AustinInstallResult[] = [];
-      for (const item of p.loops) {
-        const loop = deps.loops.listLoops().find(candidate => candidate.id === item.loopId);
-        // ponytail: "edited" means differs from this pack revision; a later revision that changes a time also keeps the older pack time.
-        if (!loop || !sameClock(loop.schedule, item.schedule)) { results.push({ loopId: item.loopId, outcome: 'kept' }); continue; }
-        if (loop.schedule.timezone !== timeZone) deps.loops.patchClock(item.loopId as LoopId, { timezone: timeZone });
-        results.push({ loopId: item.loopId, outcome: 'applied' });
-      }
-      const maintenance = await deps.maintenance.read(), month = p.rules[0].setting;
-      if ((maintenance.ruleRevision ?? 0) === 0 && (maintenance.rule.basis !== month.basis || maintenance.rule.span !== month.span)) {
-        await deps.maintenance.setRule({ rule: month, expectedRevision: 0 });
-      }
+      const p = pack(), state = await load();
+      const results = await applyLoops(p.loops.map(item => ({ loopId: item.loopId, schedule: item.schedule, timezone: p.timeZone })));
       await writePrivateJson(file, { ...state, installed: { revision: p.revision, at: Math.max(0, now()) } });
       return { ...await view(), results };
+    }),
+    /** A customer pack's office/settings.json loops, applied when the pack is
+     * installed. The Austin workflows among them are recorded, so this PC's
+     * checklist lists only the workflows its role packs set. */
+    applyPackLoops: (loops: ReadonlyArray<{ id: string; schedule: LoopSchedule }>) => serial(async (): Promise<AustinInstallResult[]> => {
+      const state = await load();
+      const results = await applyLoops(loops.map(({ id, schedule }) => ({ loopId: id, schedule, timezone: schedule.timezone })));
+      const added = loops.map(loop => loop.id).filter(id => (LOOP_IDS as readonly string[]).includes(id));
+      if (added.length) {
+        const before = state.installed ? state.installed.loopIds ?? [...LOOP_IDS] : [];
+        await writePrivateJson(file, { ...state, installed: { revision: pack().revision, at: Math.max(0, now()), loopIds: LOOP_IDS.filter(id => before.includes(id) || added.includes(id)) } });
+      }
+      return results;
     }),
     /** A REI Cloud sign-in finished in the work browser (any handover: W1, supplier check, Ask). */
     noteReiSignedIn: () => serial(async () => {

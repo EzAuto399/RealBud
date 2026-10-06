@@ -64,15 +64,17 @@ try {
   page = await context.newPage(); page.setDefaultTimeout(20_000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/schedule');
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
-  assert.equal(await page.getByRole('region', { name: 'Austin pack', exact: true }).count(), 0, 'no Austin card on Schedule before install');
+  assert.equal(await page.getByRole('region', { name: 'Auston pack', exact: true }).count(), 0, 'no Auston card on Schedule before install');
 
-  // ── 1. Install from Workflow setup ──
+  // ── 1. Importing Kevin's and Sherry's role packs sets the six workflows; there is no separate install ──
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
-  const packCard = page.getByRole('dialog').getByRole('region', { name: 'Austin pack', exact: true });
-  await packCard.getByText('Each stays off until you review it and switch it on.', { exact: false }).waitFor();
+  await page.getByRole('dialog').getByRole('region', { name: 'Packs from your office', exact: true }).waitFor();
+  assert.equal(await page.getByRole('dialog').getByRole('region', { name: 'Auston pack', exact: true }).count(), 0, 'no separate install offer');
   await page.screenshot({ path: join(output, '01-install-offer.png') });
-  await packCard.getByRole('button', { name: 'Install the Austin pack', exact: true }).click();
-  await packCard.getByRole('status').filter({ hasText: 'Six workflows are set to Brisbane time and stay off until you review each one.' }).waitFor();
+  for (const id of ['austin-accounts', 'austin-property']) {
+    const pack = await request(`/api/customer-packs/${id}/export`), preview = await request('/api/customer-packs/preview', 'POST', { pack });
+    await request('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
+  }
   const installed = await request('/api/austin-pack');
   assert.deepEqual(installed.installed?.revision, 1);
   const loops = (await request('/api/loops')).loops;
@@ -82,7 +84,8 @@ try {
   }
   await page.screenshot({ path: join(output, '02-installed.png') });
   await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
-  pass('Install from Workflow setup sets all six workflows to Brisbane time and leaves every one off');
+  await page.goto(base + '/#/schedule'); await page.reload(); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  pass('Importing both role packs sets all six workflows to Brisbane time and leaves every one off');
 
   // ── 2. Schedule lists all six with Brisbane times and Off ──
   for (const [name, timing] of SIX) {
@@ -92,12 +95,12 @@ try {
     assert.ok(text.includes(`Off · ${timing}. Review it, then switch it on.`), `${name}: ${text}`);
     assert.ok(text.includes('Paused'), `${name} shows Paused in its timing column: ${text}`);
   }
-  const checklist = page.getByRole('list', { name: 'Austin setup checklist', exact: true });
+  const checklist = page.getByRole('list', { name: 'Auston setup checklist', exact: true });
   await checklist.waitFor();
   assert.equal(await checklist.getByRole('listitem').count(), 6);
   await page.getByText('0 of 6 done. Times are Brisbane time', { exact: false }).waitFor();
   await page.screenshot({ path: join(output, '03-schedule-six-off.png'), fullPage: true });
-  pass('Schedule lists all six with their Brisbane times and Off, and shows the 6-item Austin setup checklist');
+  pass('Schedule lists all six with their Brisbane times and Off, and shows the 6-item Auston setup checklist');
 
   // ── 3. Every checklist item opens where it is done ──
   const item = label => checklist.getByRole('button', { name: label, exact: true });

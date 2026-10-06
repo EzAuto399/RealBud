@@ -496,7 +496,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   if (drawer?.mode === "create") drawerBody = workspace;
   else if (drawer?.mode === "packs") drawerBody = (
     <>
-      <AustinPackCard view={austin} loops={state.loops} onChanged={(view) => { setAustin(view); void refreshSchedule().catch(() => {}); }} className="mb-4" />
+      <AustinPackCard view={austin} loops={state.loops} className="mb-4" />
       <WorkflowPacksCard onInstalled={refreshSchedule} className="mb-0 border-0 bg-transparent p-0" />
     </>
   );
@@ -611,7 +611,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           </div>
         ) : null}
         {austin?.installed && austin.checklist.some((item) => !item.done) ? (
-          <AustinPackCard view={austin} loops={state.loops} onChanged={setAustin} className="mb-3" />
+          <AustinPackCard view={austin} loops={state.loops} className="mb-3" />
         ) : null}
         {visibleRows.length ? (
           <>

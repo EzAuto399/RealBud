@@ -1,14 +1,22 @@
 /** Host-owned recipe roles. An imported title or model response cannot bind a
  * plan to a business workflow; the agency explicitly selects one known pack. */
 // Ids keep the historical `austin` spelling; the customer is Auston Realty.
-export const AGENCY_WORKFLOW_PACK_IDS = ['office-core', 'austin-office'] as const;
+export const AGENCY_WORKFLOW_PACK_IDS = ['office-core', 'austin-office', 'austin-accounts'] as const;
 export type AgencyWorkflowPackId = typeof AGENCY_WORKFLOW_PACK_IDS[number];
 export const AGENCY_WORKFLOW_PACK_NAMES: Record<AgencyWorkflowPackId, string> = {
   'office-core': 'Real estate office core',
   'austin-office': 'Auston office workflows',
+  'austin-accounts': 'Auston accounts — Kevin',
 };
 export const AGENCY_RECIPE_ROLES = ['inbox-triage', 'invoice-review', 'bill-exceptions', 'bank-reference-prep'] as const;
 export type AgencyRecipeRole = typeof AGENCY_RECIPE_ROLES[number];
+const austinAccounts: Record<AgencyRecipeRole, string> = {
+  'inbox-triage': 'wf-austin-accounts-inbox-triage',
+  'invoice-review': 'wf-austin-accounts-invoice-review',
+  'bill-exceptions': 'wf-austin-accounts-bill-exceptions',
+  'bank-reference-prep': 'wf-austin-accounts-anz-reference-prep',
+};
+// Kevin's role pack carries the same plans as the earlier combined pack.
 const bindings: Record<AgencyWorkflowPackId, Record<AgencyRecipeRole, string>> = {
   'office-core': {
     'inbox-triage': 'wf-office-core-inbox-triage',
@@ -16,12 +24,8 @@ const bindings: Record<AgencyWorkflowPackId, Record<AgencyRecipeRole, string>> =
     'bill-exceptions': 'wf-office-core-bill-exceptions',
     'bank-reference-prep': 'wf-office-core-bank-reference-prep',
   },
-  'austin-office': {
-    'inbox-triage': 'wf-austin-accounts-inbox-triage',
-    'invoice-review': 'wf-austin-accounts-invoice-review',
-    'bill-exceptions': 'wf-austin-accounts-bill-exceptions',
-    'bank-reference-prep': 'wf-austin-accounts-anz-reference-prep',
-  },
+  'austin-office': austinAccounts,
+  'austin-accounts': austinAccounts,
 };
 export function isAgencyWorkflowPackId(value: unknown): value is AgencyWorkflowPackId {
   return typeof value === 'string' && (AGENCY_WORKFLOW_PACK_IDS as readonly string[]).includes(value);

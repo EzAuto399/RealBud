@@ -70,6 +70,11 @@ extraResources:
     to: pack/workflows/office-core
   - from: pack/workflows/department-starters
     to: pack/workflows/department-starters
+  # Sherry's role pack (austin-property) is built from this one reviewed plan; its fixtures stay out.
+  - from: pack/workflows/austin-maintenance-rehearsal
+    to: pack/workflows/austin-maintenance-rehearsal
+    filter:
+      - realbud-austin-maintenance-rehearsal-v1.json
   # Admitted PostgreSQL 16 runtime for "Set up this office". Staged by
   # `pnpm build:postgres`, which fails the build rather than shipping an
   # installer whose Set up button cannot provision storage. Resolved at setup
