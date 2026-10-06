@@ -22,7 +22,7 @@ import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkCuaLogin } from "./cua-login-check.mjs";
-import { createGrantedCuaHost, CUA_HOST_BUNDLE_ID } from "./cua-launcher.mjs";
+import { createGrantedCuaHost, CUA_HOST_BUNDLE_ID, CUA_QUIET_ENV } from "./cua-launcher.mjs";
 
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
@@ -135,7 +135,7 @@ async function startEmbedded(binary, { checkingHumanSignIn = false } = {}) {
     // MCP proxy talks to the already-granted daemon; keep the real binary.
     mcpCommand: binary,
     mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
-    mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: CUA_HOST_BUNDLE_ID },
+    mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: CUA_HOST_BUNDLE_ID, ...CUA_QUIET_ENV },
   };
 }
 

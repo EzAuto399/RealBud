@@ -54,6 +54,9 @@ describe.skipIf(process.platform !== "darwin")("actual macOS grant launcher with
     expect(result.error).toBeUndefined(); expect(result.status).toBe(37);
     expect(JSON.parse(result.stdout)).toEqual(command === "serve" ? ["serve", "--grant", "existing-profile", ...args] : [command, ...args]);
     expect(readFileSync(launcher, "utf8")).not.toContain("dangerously-bypass");
+    // The daemon gets a fixed env allowlist from the SDK; the launcher adds the opt-outs.
+    writeFileSync(binary, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify([process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED, process.env.CUA_DRIVER_RS_UPDATE_CHECK])); process.exit(37);\n`, { mode: 0o755 });
+    expect(JSON.parse(spawnSync(launcher, [command], { encoding: "utf8", timeout: 5000, env: { PATH: "/usr/bin:/bin" } }).stdout)).toEqual(["0", "0"]);
   });
 });
 
