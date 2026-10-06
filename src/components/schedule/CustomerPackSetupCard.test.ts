@@ -22,7 +22,7 @@ describe('Packs from your office', () => {
 
   it('explains empty, unlinked, unavailable and checking states in plain words', () => {
     expect(render({ state: 'ready', packs: [], refused: [] })).toContain('Your office hasn’t shared any packs yet.');
-    expect(render({ state: 'not-linked' })).toContain('Choose Connect to your office, then check again.');
+    expect(render({ state: 'not-linked' })).toContain('Connect this computer to your office first.');
     expect(render({ state: 'unavailable' })).toContain('couldn’t be checked right now. Nothing on this computer changed.');
     expect(render(null)).toContain('Checking your office for packs');
     for (const view of [{ state: 'not-linked' }, { state: 'unavailable' }, ready] as OfficePacksView[]) expect(render(view)).toContain('>Check again</button>');
@@ -36,10 +36,17 @@ describe('Packs from your office', () => {
     expect(() => parseOfficePacksView({ state: 'linked' })).toThrow();
   });
 
-  it('puts the office packs first and keeps the earlier combined Auston pack collapsed', () => {
-    const html = renderToStaticMarkup(createElement(CustomerPackSetupCard, {}));
-    expect(html.indexOf('Packs from your office')).toBeLessThan(html.indexOf('Start with department case reviews'));
-    expect(html).toMatch(/<details><summary[^>]*>Earlier Auston office pack \(all workflows in one\)<\/summary>[\s\S]*Preview Auston office pack/);
-    expect(html).toContain('Preview a pack file');
+  it('keeps office packs visible and puts every owner-only option in one collapsed section at the end', () => {
+    const html = renderToStaticMarkup(createElement(CustomerPackSetupCard, { moreOptions: createElement('p', null, 'Fictional owner extra') }));
+    const more = html.indexOf('<details class="border-t border-line pt-3"><summary');
+    expect(html.match(/More setup options \(office owner\)/g)).toHaveLength(1);
+    expect(html.indexOf('Packs from your office')).toBeLessThan(more);
+    expect(html.indexOf('Refresh setup checks')).toBeLessThan(more);
+    for (const owner of ['Start with department case reviews', 'Preview real estate office core pack', 'Preview a pack file', 'Earlier Auston office pack (all workflows in one)', 'Preview Auston office pack', 'Fictional owner extra']) expect(html.indexOf(owner)).toBeGreaterThan(more);
+    // Collapsed by default and the card's last child, so pending changes, repair and previews never render inside it.
+    expect(html).not.toMatch(/<details[^>]* open/);
+    expect(html.endsWith('</details></section>')).toBe(true);
+    expect(html.slice(more).match(/<details/g)).toHaveLength(1);
+    expect(html).not.toContain('Local file checks');
   });
 });

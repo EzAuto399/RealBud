@@ -49,7 +49,20 @@ try {
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   const card = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
-  await card.getByText('Earlier Auston office pack (all workflows in one)', { exact: true }).click();
+  // Staff see office packs first; every owner-only source sits in one collapsed native <details>.
+  const more = card.locator('summary', { hasText: 'More setup options (office owner)' });
+  const moreOpen = () => more.evaluate(el => el.parentElement.open);
+  const openMore = async () => { if (!(await moreOpen())) await more.click(); };
+  await card.getByRole('region', { name: 'Packs from your office', exact: true }).waitFor();
+  assert.equal(await moreOpen(), false);
+  assert.equal(await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).isVisible(), false);
+  await card.scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'drawer-collapsed-desktop.png') });
+  await more.focus(); await page.keyboard.press('Enter'); assert.equal(await moreOpen(), true);
+  await page.keyboard.press('Space'); assert.equal(await moreOpen(), false);
+  await page.keyboard.press('Enter'); assert.equal(await moreOpen(), true);
+  await card.getByRole('region', { name: 'Agency workflow setup', exact: true }).waitFor();
+  await more.scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'drawer-more-open-desktop.png') });
+  checks.push('Drawer opens with office packs visible and owner-only setup collapsed; the native summary toggles with Enter and Space');
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('group', { name: 'Review customer pack import', exact: true }).waitFor();
   assert.equal((await request('/api/customer-packs')).installations.length, 0);
@@ -88,7 +101,7 @@ try {
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   await card.getByText('Plans and instructions installed', { exact: true }).waitFor();
-  await card.getByText('Earlier Auston office pack (all workflows in one)', { exact: true }).click();
+  await openMore();
   await card.getByRole('button', { name: 'Preview Auston office pack', exact: true }).click();
   await card.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();
   await card.getByText('Pack installed locally. Review the setup checks below; account access and real workflow results still need verification.', { exact: true }).waitFor();
@@ -112,7 +125,7 @@ try {
   const unsigned = "This pack isn't signed by RealBud, so it wasn't installed.";
   const refused = await fetch(origin + '/api/customer-packs/preview', { method: 'POST', headers: { 'x-realbud-session': token, 'content-type': 'application/json' }, body: JSON.stringify({ pack: exported }) });
   assert.equal(refused.status, 400); assert.equal((await refused.json()).error, unsigned);
-  await card.locator('input[type=file]').setInputFiles({ name: 'realbud-austin-office-client.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported)) });
+  await openMore(); await card.getByLabel('Preview a pack file', { exact: true }).setInputFiles({ name: 'realbud-austin-office-client.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported)) });
   await card.getByText(unsigned, { exact: true }).waitFor();
   assert.equal(await card.getByRole('group', { name: 'Review customer pack import', exact: true }).count(), 0);
   await card.getByText(unsigned, { exact: true }).scrollIntoViewIfNeeded(); await page.screenshot({ path: join(output, 'unsigned-pack-refused-desktop.png') });
