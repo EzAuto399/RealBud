@@ -87,7 +87,7 @@ try {
   await setup.getByRole('combobox', { name: 'Gmail account', exact: true }).selectOption('fictional_mail');
   await setup.getByRole('button', { name: 'Save selected account and scope', exact: true }).click();
   await setup.getByRole('button', { name: 'Check selected Gmail access', exact: true }).click();
-  await setup.getByRole('button', { name: '3. Property references', exact: true }).click();
+  await setup.getByRole('button', { name: 'Property references', exact: true }).click();
   await setup.getByRole('button', { name: 'Add property reference', exact: true }).click();
   await setup.getByRole('combobox', { name: /^Property/ }).selectOption('property-1');
   await setup.getByLabel('Agreed reference', { exact: true }).fill('REF100');
@@ -146,7 +146,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 }); await panel.evaluate(element => element.scrollIntoView({block:'start'}));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'mail-work-mobile.png') });
-  await setup.getByRole('button', { name: '2. Connect your accounts', exact: true }).click(); await setup.scrollIntoViewIfNeeded();
+  await setup.getByRole('button', { name: 'Gmail', exact: true }).click(); await setup.scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.screenshot({ path: join(output, 'agency-source-mobile.png') });
   assert.deepEqual(errors, []); checks.push('Reload preserves saved agency and mail records; both 390px components have no overflow or browser errors');

@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-09-21T21:04:13.556Z",
+  "checkedAt": "2026-10-06T10:11:09.162Z",
   "layer": "actual source HTTP service and compiled renderer on macOS",
   "fixture": "100 explicitly seeded fictional retained revisions, two actual staged proposals, one actual reviewed archived revert; no model or customer data",
   "checks": [
@@ -13,7 +13,7 @@
   "final": {
     "activeRevision": 103,
     "hotRevisions": 2,
-    "digest": "277fc6f7dbfaf87a1917483bbe8f5d7682d35d76a1c269d1bdb139c859aaa4a0",
+    "digest": "adf6326b0bc773e7f36530c67de95fa923fe34095ce750e31864f961510f80db",
     "batches": 2,
     "revisions": 101,
     "throughRevision": 101

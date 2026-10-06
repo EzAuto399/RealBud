@@ -5,7 +5,8 @@ import type { CustomerPack, OfficePacksView } from '@shared/customer-packs';
 
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 
-import { CustomerPackSetupCard, OfficePacks, parseOfficePacksView } from './CustomerPackSetupCard';
+import { CustomerPackSetupCard, OfficePacks, parseOfficePacksView, skillReviewPending } from './CustomerPackSetupCard';
+import type { PackSkillReviewState } from './PackSkillReview';
 
 const pack = { id: 'austin-accounts', revision: 2, title: 'Fictional accounts role' } as CustomerPack;
 const ready: OfficePacksView = { state: 'ready', packs: [{ id: 'austin-accounts', title: 'Fictional accounts role', revision: 2, digest: 'd'.repeat(64), pack }], refused: [{ id: 'fictional-other', revision: 1, reason: "This pack isn't signed by RealBud, so it wasn't installed." }] };
@@ -48,5 +49,13 @@ describe('Packs from your office', () => {
     expect(html.endsWith('</details></section>')).toBe(true);
     expect(html.slice(more).match(/<details/g)).toHaveLength(1);
     expect(html).not.toContain('Local file checks');
+  });
+
+  it('keeps instruction review in view only while something waits for review', () => {
+    const idle = { proposals: [], revisions: [], skillHistories: [{ pendingArchive: null }], hasMore: false, pendingUpgrades: [], learning: { supported: true, policyReady: true, enabled: true } } as unknown as PackSkillReviewState;
+    expect(skillReviewPending(idle)).toBe(false);
+    expect(skillReviewPending({ ...idle, proposals: [{}] } as unknown as PackSkillReviewState)).toBe(true);
+    expect(skillReviewPending({ ...idle, pendingUpgrades: [{ packId: 'p', digest: 'd' }] })).toBe(true);
+    expect(skillReviewPending({ ...idle, skillHistories: [{ pendingArchive: { expectedPreviewDigest: 'd' } }] } as unknown as PackSkillReviewState)).toBe(true);
   });
 });

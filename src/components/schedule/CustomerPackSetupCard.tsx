@@ -38,6 +38,8 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
       </>}
   </section>;
 }
+/** A pending suggestion, archival or upgrade hold is a review item and stays in view; otherwise instruction history is owner setup. */
+export const skillReviewPending = (state: PackSkillReviewState) => state.proposals.length > 0 || state.pendingUpgrades.length > 0 || state.skillHistories.some(history => !!history.pendingArchive);
 /** Staff see office packs, previews, installed packs and recovery. Owner-only setup sits in one collapsed section; `moreOptions` joins it. */
 export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalled?: () => void | Promise<void>; moreOptions?: ReactNode }) {
   const [installed, setInstalled] = useState<CustomerPackInstallation[]>([]);
@@ -66,6 +68,8 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
       const upgraded=await api('/api/customer-packs/upgrade/preview',{method:'POST',body:JSON.stringify({pack})}); if(alive.current)setChange(upgraded);
     } else setPreview(result);
   };
+  const skillsNeedReview = !!skills && skillReviewPending(skills);
+  const skillReview = skills && <PackSkillReview state={skills} busy={busy} run={run} reload={async () => { await load(); await onInstalled?.(); }} notice={message => { if (alive.current) setNotice(message); }} mutate={(route, body, message) => void run(async () => { try { await api(route, { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 30_000 }); } finally { await load(); await onInstalled?.(); } if (alive.current) setNotice(message); })} />;
   const download = async (packId: 'office-core' | 'austin-office' | 'department-starters') => {
     const pack = await api(`/api/customer-packs/${packId}/export`);
     const url = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' }));
@@ -111,7 +115,7 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
       <CustomerPackHistory pack={pack} busy={busy} run={run} reload={load} notice={setNotice} showChange={result => { setPreview(null); setChange(result); }} />
       <details><summary className="min-h-11 cursor-pointer text-sm">Installation receipt and update policy</summary><p className="text-sm text-ink-secondary">{pack.receipt.note}</p><p className="mt-2 text-sm">Bud may suggest a reviewed instruction revision below. Published pack content is retained separately; worker safeguards and permissions are unchanged.</p></details>
     </article>)}
-    {skills && <PackSkillReview state={skills} busy={busy} run={run} reload={async () => { await load(); await onInstalled?.(); }} notice={message => { if (alive.current) setNotice(message); }} mutate={(route, body, message) => void run(async () => { try { await api(route, { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 30_000 }); } finally { await load(); await onInstalled?.(); } if (alive.current) setNotice(message); })} />}
+    {skillsNeedReview && skillReview}
     <button className={button} disabled={busy} onClick={() => void run(load)}>Refresh setup checks</button>
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     <p role="status" className="text-sm text-ink-secondary">{busy ? 'Checking local pack setup…' : notice}</p>
@@ -140,6 +144,7 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
         <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
       </div></div>
       <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in the Agency step below.</p>
+      {!skillsNeedReview && skillReview}
       {moreOptions}
     </div></details>
   </section>;

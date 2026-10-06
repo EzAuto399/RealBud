@@ -86,6 +86,7 @@ try {
   await reviews.getByRole('button', { name: 'Apply reviewed instructions and pause plans', exact: true }).click();
   await card.getByText('Reviewed instructions are active. Dependent plans are paused and need fresh approval.', { exact: true }).waitFor();
   assert.equal(readFileSync(skill, 'utf8'), improved);
+  await openMore(); // With nothing left to review, instruction history moves into the owner section.
   await reviews.getByText('Instruction revision history and revert', { exact: true }).click();
   const skillSummary = (await request('/api/customer-packs/skill-proposals')).skillHistories.find(item => item.packId === 'austin-office' && item.skillId === 'email-inbox-triage');
   await reviews.getByRole('article', { name: `${skillSummary.name} instruction history`, exact: true }).getByRole('button', { name: 'Browse saved revisions', exact: true }).click();
