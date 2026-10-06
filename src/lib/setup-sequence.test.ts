@@ -112,8 +112,8 @@ describe("step 2: Bud sets itself up and blocks nothing", () => {
   });
 
   it("ticks only on the server's ready, never on progress or a hold", () => {
-    expect(step({ ...linked, bud: ready }, "bud").state).toBe("done");
-    expect(step({ ...linked, bud: installing }, "bud").state).not.toBe("done");
+    expect(step({ ...linked, bud: ready }, "bud")).toMatchObject({ state: "done", title: "Bud is set up" });
+    expect(step({ ...linked, bud: installing }, "bud")).toMatchObject({ state: "working", title: "Bud is setting itself up" });
     const held = step({ ...linked, bud: { ready: false, working: false, detail: "Bud’s setup stopped before it finished." } }, "bud");
     expect(held).toMatchObject({ state: "later", status: "Bud’s setup stopped before it finished." });
     expect(step({ ...linked, bud: undefined }, "bud")).toMatchObject({ state: "unknown" });

@@ -228,6 +228,7 @@ try {
   assert.equal(await card.getByRole('button', { name: 'Enter link code', exact: true }).count(), 1);
   // Bud is step 2 but never the current step: this harness installs no worker.
   assert.doesNotMatch(cardText, /2\. Bud is setting itself up · (?:Done|Now)/);
+  assert.doesNotMatch(cardText, /2\. Bud is set up\b/);
   assert.doesNotMatch(cardText, /· Done/);
   assert.doesNotMatch(cardText, /\bready\b/i);
   await card.evaluate(el => el.scrollIntoView({ block: 'center' }));

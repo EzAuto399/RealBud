@@ -34,11 +34,13 @@ describe("connect this computer to your office", () => {
     expect(html.match(/pm-decision/g)).toHaveLength(1);
     expect(html).not.toContain("<details");
     expect(html).toMatch(/<label[^>]*>Link code<input[^>]*placeholder="Paste the code here"/);
+    // No browser "Please fill in this field" tooltip on hover; the disabled submit guards empty input.
+    expect(html).toMatch(/<input required="" title=""/);
     expect(html).toMatch(/<button type="submit" class="pm-decision[^"]*bg-agency[^"]*" disabled="">Connect with this code<\/button>/);
     expect(button(pasted, "Connect with this code")).toContain("bg-agency");
     expect(pasted).not.toMatch(/type="submit"[^>]*disabled=""/);
     expect(button(html, "I’m the office owner: approve in my browser")).not.toContain("bg-agency");
-    expect(html).toContain("Owners: realbud.app → Office computers → Pair a computer.");
+    expect(html).toContain("Owners: realbud.app → Computers → Pair a new computer.");
     expect(live(html)).toBe("");
     expect(html).not.toMatch(/Hermes|MCP|broker|grant|installation/i);
   });

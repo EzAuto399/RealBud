@@ -433,7 +433,10 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
   return ORDER.map((step, index) => {
     const number = index + 1;
     // Bud never takes the current step: it runs by itself and blocks nothing.
-    if (step.id === "bud") return { ...step, number, ...budStep(input.bud, input.websiteLink) };
+    if (step.id === "bud") {
+      const bud = budStep(input.bud, input.websiteLink);
+      return { ...step, number, ...bud, title: bud.state === "done" ? "Bud is set up" : step.title };
+    }
     const { fact, status, actionLabel, target } = facts[step.id];
     let state: SetupStepState;
     if (fact === "done") state = "done";

@@ -32,7 +32,7 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
         {view.packs.length ? <ul className="divide-y divide-line">{view.packs.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <span className="text-sm"><strong className="font-medium">{item.title}</strong> · version {item.revision}</span>
           <button className={button} disabled={busy} aria-label={`Preview ${item.title}`} onClick={() => onPreview(item.pack)}>Preview</button>
-        </li>)}</ul> : <p className="text-sm">Your office hasn’t shared any packs yet.</p>}
+        </li>)}</ul> : <p className="text-sm">Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again.</p>}
         {view.refused.map(item => <p key={`${item.id}-${item.revision}`} role="alert" className="text-sm text-danger">{item.id} version {item.revision} can’t be used: {item.reason}</p>)}
         {again}
       </>}

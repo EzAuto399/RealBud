@@ -6,7 +6,9 @@ describe("hands labels", () => {
   it("keeps Hermes out of user chrome", () => {
     expect(handsChip("hermes")).toBe("Bud live");
     expect(handsChip("csv")).toBe("CSV live");
-    expect(handsChip("held")).toBe("Held");
+    expect(handsChip("held")).toBe("Not checked yet");
+    expect(handsChip("held", null)).toBe("Not checked yet");
+    expect(handsChip("held", "CSV batch is stale")).toBe("On hold");
     expect(handsChip("demo")).toBe("Demo");
     expect(handsFactSource("hermes")).toBe("from Bud");
     expect(sourceKindLabel("hermes")).toBe("Bud");
