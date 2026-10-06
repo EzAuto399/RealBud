@@ -1,0 +1,22 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+
+import { supplierImportMessage } from "./MaintenanceFindingsPanel";
+
+// FICTIONAL import results; no supplier data.
+const result = (suppliers: number, withoutEmail: number, conflicts: number, rejected: number) => ({
+  directory: { suppliers: Array.from({ length: suppliers }, (_, i) => ({ emails: i < withoutEmail ? [] : ["fictional@supplier.example.invalid"] })) },
+  conflicts: Array.from({ length: conflicts }, () => ({})), rejected: Array.from({ length: rejected }, () => ({})),
+});
+
+describe("supplier import message", () => {
+  it("says one supplier, not one suppliers", () => {
+    expect(supplierImportMessage(result(1, 0, 0, 0))).toBe("Imported 1 supplier · 0 without email · 0 conflicts.");
+    expect(supplierImportMessage(result(1, 1, 1, 1))).toBe("Imported 1 supplier · 1 without email · 1 conflict · 1 row or email skipped.");
+  });
+  it("keeps the plural for many", () => {
+    expect(supplierImportMessage(result(12, 0, 0, 0))).toBe("Imported 12 suppliers · 0 without email · 0 conflicts.");
+    expect(supplierImportMessage(result(3, 2, 2, 4))).toBe("Imported 3 suppliers · 2 without email · 2 conflicts · 4 rows or emails skipped.");
+  });
+});
