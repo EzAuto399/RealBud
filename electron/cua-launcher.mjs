@@ -7,6 +7,10 @@ import { createWindowsCuaHost } from "./cua-windows-host.mjs";
 
 export const CUA_HOST_BUNDLE_ID = "com.realbud.app";
 export const WINDOWS_CUA_LAUNCHER = "RealBud CUA.exe";
+// The bundled driver is pinned (bounded sessions require 0.19.3) and ships
+// inside RealBud, so it must not register a vendor telemetry id or check
+// GitHub for updates from a customer's computer.
+export const CUA_QUIET_ENV = Object.freeze({ CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" });
 const shellLiteral = value => `'${value.replace(/'/g, "'\\''")}'`;
 
 export function existingProfileGrantLauncher(binary, {
@@ -35,6 +39,8 @@ export function existingProfileGrantLauncher(binary, {
   const launcher = path.join(directory, "cua-driver-grant");
   const body = [
     "#!/bin/bash", "set -euo pipefail", `REAL=${shellLiteral(binary)}`,
+    // The SDK starts the daemon with a fixed env allowlist, so set these here.
+    ...Object.entries(CUA_QUIET_ENV).map(([name, value]) => `export ${name}=${value}`),
     'if [[ "${1:-}" == "serve" ]]; then', "  shift",
     '  exec "$REAL" serve --grant existing-profile "$@"', "fi",
     'exec "$REAL" "$@"', "",

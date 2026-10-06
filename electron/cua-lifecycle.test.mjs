@@ -45,6 +45,8 @@ describe.skipIf(!["darwin", "win32"].includes(process.platform))("GUI CUA lifecy
   it("uses the shared grant launcher while the MCP proxy keeps the real binary", async () => {
     const connection = await cua.startCua();
     expect(connection).toMatchObject({ mode: "embedded", mcpCommand: binary, mcpArgs: ["mcp", "--embedded", "--socket", "fictional-socket-1"] });
+    // The MCP proxy runs without vendor telemetry or update checks too.
+    expect(connection.mcpEnv).toMatchObject({ CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" });
     expect(fixture.hosts[0].binary).not.toBe(binary);
     expect(fixture.hosts[0].binary).toMatch(process.platform === "win32" ? /RealBud CUA\.exe$/ : /cua-driver-grant$/);
     await cua.stopCua();
