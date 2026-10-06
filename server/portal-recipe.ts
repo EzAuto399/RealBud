@@ -1,5 +1,6 @@
 // Versioned portal recipes. Candidates may auto-save; they never auto-publish.
 import type { PortalRecipe } from "../shared/contracts.ts";
+import { GRID_SCROLL } from "./hermes-browser-transport.ts";
 
 export const FAKE_PORTAL_RECIPE: PortalRecipe = {
   id: "fake-building-portal",
@@ -70,6 +71,8 @@ export interface PortalRecipePack {
   versionMarker: { landmark: string; pattern: string };
   /** `landmark`: the pager group exactly (role + name). Null until confirmed on the live portal: paging then asks. */
   pagination: { next: string; previous?: string; landmark: { role: string; name: string } | null; landmarkStatus?: string };
+  /** A list grid that loads more rows only when its own container scrolls: the container's CSS selector. A `read: table` scrolls it. */
+  grid?: { scrollContainer: string };
   labels: { readSafe: string[]; consequential: string[]; forbiddenAreas: string[] };
   /** Routes the map classes as money or upload (lowercase paths): the classifier treats them as financial pages. */
   financialRoutes?: string[];
@@ -97,6 +100,7 @@ export function parsePortalRecipePack(value: unknown): PortalRecipePack {
   if (!object(doc.versionMarker) || typeof doc.versionMarker.pattern !== "string" || typeof doc.uiVersion !== "string") fail();
   if (!object(doc.labels) || !strings(doc.labels.readSafe) || !strings(doc.labels.consequential) || !strings(doc.labels.forbiddenAreas)) fail();
   if (doc.labels.readSafe.some(label => doc.labels.consequential.includes(label))) fail();
+  if (doc.grid !== undefined && (!object(doc.grid) || Object.keys(doc.grid).join() !== "scrollContainer" || typeof doc.grid.scrollContainer !== "string" || !GRID_SCROLL.test(doc.grid.scrollContainer))) fail();
   if (doc.financialRoutes !== undefined && (!strings(doc.financialRoutes) || doc.financialRoutes.some(route => !/^\/[a-z0-9/_-]*$/.test(route)))) fail();
   if (!Array.isArray(doc.screens) || !object(doc.routes) || !object(doc.recipes) || !object(doc.batches) || !object(doc.pagination) || typeof doc.pagination.next !== "string" || (doc.pagination.previous !== undefined && typeof doc.pagination.previous !== "string") ||
     !(doc.pagination.landmark === null || object(doc.pagination.landmark) && typeof doc.pagination.landmark.role === "string" && typeof doc.pagination.landmark.name === "string")) fail();

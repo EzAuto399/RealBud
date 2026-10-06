@@ -41,7 +41,7 @@ export function parseReiDirectoryStatus(value: unknown): ReiDirectoryStatus {
   return v;
 }
 
-const BIG_DROP = "REI returned far fewer suppliers than before — check the export before approving.";
+const BIG_DROP = "REI returned far fewer suppliers than before — check REI's Suppliers list before approving.";
 const name = (s: { reference: string; description: string }) => s.description ? `${s.reference} · ${s.description}` : s.reference;
 const more = (shown: number, total: number) => total > shown ? <li className="text-ink-muted">and {total - shown} more</li> : null;
 
@@ -85,7 +85,6 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
   const preview = run?.phase === "preview" ? run.preview : null;
   const scheduled = run?.origin === "schedule", drop = Boolean(preview?.changes?.bigDrop);
   const saveLabel = preview?.unchanged ? "Confirm" : drop ? (scheduled ? "Approve anyway" : "Save anyway") : scheduled ? "Approve" : `Save ${noun.list}`;
-  const askHeadline = (tool: string) => tool === "browser_download" ? `Allow Bud to download REI's ${noun.list}?` : tool === "browser_select" ? "Allow Bud to choose Export Only on REI's report?" : "Allow this step in REI?";
 
   return <section aria-label={`Refresh ${noun.list} from REI`} className="space-y-2 rounded-lg border border-line p-3 text-sm">
     <div className="flex flex-wrap items-center gap-2">
@@ -102,7 +101,7 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     {run && signIns.handovers.map(handover => <BrowserSignInStrip key={handover.id} handover={handover} busy={signIns.acting === handover.id}
       error={signIns.error?.id === handover.id ? signIns.error.text : null} onDone={() => void signIns.act(handover.id, "done")} onStop={() => void signIns.act(handover.id, "stop")} />)}
     {run?.ask && <div role="group" aria-label="Approval for REI" className="space-y-2 rounded-lg border border-portal/40 p-2">
-      <p className="font-medium">{askHeadline(run.ask.tool)}</p>
+      <p className="font-medium">Allow this step in REI?</p>
       <p className="text-ink-secondary break-words">{run.ask.summary}</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={`${control} border-agency font-medium`} disabled={busy} onClick={() => void post(`${at}/answer`, { requestId: run.ask!.requestId, allowed: true })}>Allow</button>
@@ -112,13 +111,13 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     </div>}
     {preview && <div role="group" aria-label={`REI ${noun.list} preview`} className="space-y-2 rounded-lg border border-line p-2">
       <p className="font-medium">{count(preview.accepted, noun.one, noun.many)} ready to save{preview.rejected.length ? ` · ${preview.rejected.length} skipped` : ""}{preview.withoutEmail ? ` · ${preview.withoutEmail} without email` : ""}</p>
-      <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{count(preview.rows, "row", "rows")} in REI's export{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${count(preview.footer, "record", "records")} REI lists` : ` · REI lists ${count(preview.footer, "record", "records")}`}</p>
+      <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{count(preview.rows, "row", "rows")} read from REI's list{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${count(preview.footer, "record", "records")} REI lists` : ` · REI lists ${count(preview.footer, "record", "records")}`}</p>
       {scheduled && !preview.unchanged && <p className="font-medium">Bud's scheduled check found changes in REI's {noun.list}. Nothing changes here until you approve.</p>}
       <p className="text-ink-secondary">{preview.unchanged ? "No changes since the last save." : `${preview.added} new · ${preview.removed} removed · ${preview.changed} changed`}</p>
       {preview.changes && !preview.unchanged && <SupplierChangeList changes={preview.changes} added={preview.added} removed={preview.removed} />}
       {preview.rejected.length > 0 && <details><summary className="min-h-11 cursor-pointer">Skipped rows · {preview.rejected.length}</summary>
         <ul className="list-disc pl-5">{preview.rejected.map((item, index) => <li key={index} className="break-words">{item.reason}</li>)}</ul></details>}
-      <p className="text-[12px] text-ink-muted break-all">File {preview.file.name} · sha256 {preview.file.sha256.slice(0, 16)}…</p>
+      <p className="text-[12px] text-ink-muted break-all">{preview.file.name} · sha256 {preview.file.sha256.slice(0, 16)}…</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={`${control} border-agency font-medium`} disabled={busy || preview.countMatches === false}
           onClick={() => void post(`${at}/save`, { expectedRevision: preview.baseRevision, ...(drop ? { acknowledgeDrop: true } : {}) }).then(next => { if (next) saved.current?.(next); })}>{saveLabel}</button>

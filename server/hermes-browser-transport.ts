@@ -15,7 +15,8 @@ const failed = (message: string) => new Error(message);
 export type HermesEngineState = "new" | "active" | "stopping" | "released" | "recovery_required";
 export type HermesEngineStep =
   | { kind: "tabs" }
-  | { kind: "read"; tab: number }
+  /** `scroll`: a lazy grid's own scroll container, declared by a workflow pack (never a model); the read scrolls it until every row has loaded. */
+  | { kind: "read"; tab: number; scroll?: string }
   | { kind: "navigate"; tab: number; url: string }
   | { kind: "click"; tab: number; ref: string }
   | { kind: "fill"; tab: number; ref: string; value: string }
@@ -58,11 +59,32 @@ const execute: HermesEngineExec = (executable, args, options) => new Promise((re
   });
 });
 
+/** A pack-declared CSS selector for a grid's scroll container. Never starts with "-", so it cannot pass as a CLI flag. */
+export const GRID_SCROLL = /^[.#a-zA-Z][.#a-zA-Z0-9_\- >]{0,99}$/;
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** Rows in an accessibility snapshot: the engine's `- row` lines, or a VOM `row` line. */
+export const snapshotRows = (text: string) => text.split("\n").filter(line => /^\s*(?:- )?row\b/.test(line)).length;
+/** Loads a lazy grid (read-only): scroll its own container, wait, read again, until the row count stops growing.
+ * Returns the last read. The grid is not virtual, so earlier rows stay rendered. `scroll` answers false when the
+ * page has no such container: scrolling ends and the page is read as it stands (a short read is the caller's to judge). */
+export async function readLazyGrid<T>(scroll: () => Promise<boolean>, read: () => Promise<T>, rows: (result: T) => number, waitMs = 800, rounds = 15): Promise<T> {
+  let last = -1;
+  for (let round = 1; ; round++) {
+    const moved = await scroll();
+    if (moved) await sleep(waitMs);
+    const result = await read(), count = rows(result);
+    if (!moved || count <= last || round >= rounds) return result;
+    last = count;
+  }
+}
+
 const keys: Record<HermesEngineStep["kind"], readonly string[]> = { tabs: ["kind"], read: ["kind", "tab"], navigate: ["kind", "tab", "url"], click: ["kind", "tab", "ref"], fill: ["kind", "tab", "ref", "value"], press: ["kind", "tab", "ref", "key"], select: ["kind", "tab", "ref", "values"], download: ['kind', 'tab', 'ref', 'path'], upload: ['kind', 'tab', 'ref', 'path'] };
 function checkedStep(raw: HermesEngineStep): HermesEngineStep {
   if (!record(raw) || typeof raw.kind !== "string" || !Object.hasOwn(keys, raw.kind)) throw failed("This browser operation is unavailable.");
   const expected = keys[raw.kind as HermesEngineStep["kind"]];
-  if (Object.keys(raw).length !== expected.length || Object.keys(raw).some(key => !expected.includes(key))) throw failed("This browser operation has unexpected fields.");
+  const allowed = raw.kind === "read" ? [...expected, "scroll"] : expected;
+  if (expected.some(key => !Object.hasOwn(raw, key)) || Object.keys(raw).some(key => !allowed.includes(key))) throw failed("This browser operation has unexpected fields.");
+  if (raw.kind === "read" && "scroll" in raw && (typeof raw.scroll !== "string" || !GRID_SCROLL.test(raw.scroll))) throw failed("This list cannot be scrolled safely.");
   if (raw.kind !== "tabs" && (!Number.isSafeInteger(raw.tab) || Number(raw.tab) < 1)) throw failed("Choose a current browser tab.");
   if ("ref" in raw && (typeof raw.ref !== "string" || !/^@e[1-9]\d*$/.test(raw.ref))) throw failed("Use a fresh observed browser control.");
   if (raw.kind === "navigate") {
@@ -95,8 +117,8 @@ export class HermesBrowserTransport {
   private endpoint: string;
   private env: NodeJS.ProcessEnv = {};
   private run: HermesEngineExec;
-  private options: { root: string; bundle: HermesEngineBundle; endpoint: string; exec?: HermesEngineExec };
-  constructor(options: { root: string; bundle: HermesEngineBundle; endpoint: string; exec?: HermesEngineExec }) {
+  private options: { root: string; bundle: HermesEngineBundle; endpoint: string; exec?: HermesEngineExec; scrollWaitMs?: number };
+  constructor(options: { root: string; bundle: HermesEngineBundle; endpoint: string; exec?: HermesEngineExec; scrollWaitMs?: number }) {
     this.options = { ...options, bundle: { ...options.bundle } };
     this.endpoint = ownedBrowserEndpoint(options.endpoint);
     this.run = options.exec ?? execute;
@@ -151,6 +173,15 @@ export class HermesBrowserTransport {
         : step.kind === "click" ? ["click", step.ref] : step.kind === "fill" ? ["fill", step.ref, step.value]
           : step.kind === "select" ? ["select", step.ref, ...step.values]
             : step.kind === 'download' || step.kind === 'upload' ? [step.kind, step.ref, step.path] : null;
+      if (step.kind === "read" && step.scroll) {
+        // Scrolling is read-only, so a scroll the engine does not confirm (no such container on this page) holds
+        // nothing: the page is read as it stands. Stop is honoured between every engine command.
+        const live = () => { if (this.phase !== "active" || signal?.aborted) throw failed("This browser controller is stopped."); };
+        const selector = step.scroll;
+        return readLazyGrid(async () => { live(); try { await this.command(["scroll", "down", "100000", "--selector", selector]); return true; } catch { return false; } },
+          async () => { live(); const read = await this.command(["snapshot"]); live(); return read; },
+          read => snapshotRows(typeof read.snapshot === "string" ? read.snapshot : ""), this.options.scrollWaitMs);
+      }
       if (step.kind === "press") {
         await this.command(["focus", step.ref]);
         if (this.phase !== "active" || signal?.aborted) throw failed("This browser controller is stopped.");

@@ -13,7 +13,7 @@ import { onBrowserSignIn } from "./browser-broker.ts";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
-import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
+import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
@@ -62,6 +62,12 @@ describe("recipes.json stays generated from the website map", () => {
     // Core never learns a portal's names; a label cannot be both safe and consequential.
     expect(() => parsePortalRecipePack({ ...raw, labels: { ...raw.labels, readSafe: [...raw.labels.readSafe, "Notice"] } })).toThrow(/damaged/);
     expect(() => parsePortalRecipePack({ ...raw, origin: "http://app.reimasterapps.com.au" })).toThrow(/damaged/);
+    // The lazy grid's container is declared once, and only a plain selector is accepted.
+    expect(pack.grid).toEqual({ scrollContainer: ".e-gridcontent .e-content" });
+    expect(portalRecipeControls(pack).gridScroll).toBe(".e-gridcontent .e-content");
+    for (const grid of [{ scrollContainer: "--cdp=ws://other" }, { scrollContainer: ".a", extra: true }, { scrollContainer: "div[onclick]" }, { scrollContainer: "" }, ".e-content"]) {
+      expect(() => parsePortalRecipePack({ ...raw, grid }), JSON.stringify(grid)).toThrow(/damaged/);
+    }
   });
 });
 
@@ -82,8 +88,8 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
       expect(run.receipt.approvals.person).toBe(0);
       expect(f.person).not.toHaveBeenCalled();
       expect(f.mock.effects).toEqual([]);
-      // Text reads only: every page read is the helper's observe; nothing else is captured.
-      expect(f.mock.calls.every(args => ["status", "session", "tab", "observe", ...DISPATCH].includes(args[0]))).toBe(true);
+      // Text reads only: every page read is the helper's observe (a list grid's own scroll is read-only); nothing else is captured.
+      expect(f.mock.calls.every(args => ["status", "session", "tab", "observe", "scroll", ...DISPATCH].includes(args[0]))).toBe(true);
       // Direct routes carry the account parameter, and the account was re-checked after every load.
       expect(f.mock.calls.filter(args => args[0] === "navigate").every(args => new URL(args[1]).searchParams.get("reicid") === FICTIONAL_REICID)).toBe(true);
       expect(run.receipt.accountChecks).toBeGreaterThanOrEqual(f.dispatched().length);
@@ -114,6 +120,33 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     const none = await f.start(withOpen("find-record", { list: "Tenants", query: "Nobody" }));
     expect(none.outcome, none.detail).toBe("completed");
     expect(none.results[1]).toMatchObject({ table: "empty", rows: [] });
+  });
+  it("tenant-list and supplier-list read every grid row by scrolling only the pack's declared container: no export, nobody asked", async () => {
+    const f = await fixture({ gridBlock: 3 });
+    const runs = [{ recipe: "open-session" }, { recipe: "tenant-list" }, { recipe: "supplier-list" }];
+    expect(portalRecipeGrantNeeds(f.pack, runs).actions.sort()).toEqual(["click", "navigate", "read"]);
+    const run = await f.start(runs);
+    expect(run.outcome, run.detail).toBe("completed");
+    // Tenants renders 3 of its 10 Active rows until its content scrolls; the read keeps scrolling until no more load.
+    expect(run.results[1]).toMatchObject({ table: "rows", footer: 10, pages: 1 });
+    expect(run.results[1].rows.map(row => row.Reference)).toEqual(["FT-ALPHA", "FT-BRAVO", "FT-CHARLIE", "FT-ECHO", "FT-FOXTROT", "FT-GOLF", "FT-HOTEL", "FT-JULIET", "FT-BRAVO2", "FT-KILO"]);
+    expect(run.results[1].rows[0]).toMatchObject({ Surname: "Alpha", Property: "FP-01", "BPay/Ref No.": "4470001", Email: "alpha@fictional-tenant.test", Fax: "" });
+    expect(run.results[2]).toMatchObject({ table: "rows", footer: 5 });
+    expect(run.results[2].rows).toHaveLength(5);
+    const scrolls = f.mock.calls.filter(args => args[0] === "scroll");
+    expect(scrolls.every(args => args.slice(0, 5).join(" ") === "scroll down 100000 --selector .e-gridcontent .e-content")).toBe(true);
+    // Tenants 3 → 6 → 9 → 10 → 10 (four scrolls, then stable); Suppliers is whole at once (two).
+    expect(scrolls).toHaveLength(6);
+    expect(f.mock.calls.some(args => ["download", "select", "fill"].includes(args[0]))).toBe(false);
+    expect(run.receipt.approvals.person).toBe(0); expect(f.person).not.toHaveBeenCalled();
+    expect(f.mock.effects).toEqual([]);
+    // Without the pack's declaration nothing scrolls, and the read is short of the footer.
+    const { grid: _grid, ...plain } = f.pack;
+    const short = await f.start(withOpen("tenant-list"), { pack: plain });
+    expect(short.outcome, short.detail).toBe("completed");
+    expect(short.results[1]).toMatchObject({ footer: 10, rows: expect.any(Array) });
+    expect(short.results[1].rows).toHaveLength(3);
+    expect(f.mock.calls.filter(args => args[0] === "scroll")).toHaveLength(6);
   });
   it("open-session and unknown-screen-study (menu labels, no route) complete", async () => {
     const f = await fixture();

@@ -287,6 +287,8 @@ export interface BrowserPortalControls {
   /** Where the portal shows the selected account (landmark and role); the grant's marker must be exactly there. */
   accountMarker?: { landmark: string; role: string };
   signInHosts: readonly string[];
+  /** CSS selector of the portal's lazy grid scroll container: browser_read's all_rows scrolls it on this origin only. */
+  gridScroll?: string;
 }
 const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
 const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";

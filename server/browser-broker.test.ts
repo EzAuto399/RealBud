@@ -889,3 +889,40 @@ describe("a card's record path stays on the local card and approval record", () 
     expect(kept).not.toMatch(PRIVATE);
   });
 });
+
+describe("reading every row of a mapped portal's lazy grid", () => {
+  const portal: BrowserPortalControls = { origin: "https://portal.example", readSafe: [], menu: [], pagination: [], consequential: [], signInHosts: [], gridScroll: ".e-gridcontent .e-content" };
+  const task = (sites = ["portal.example"]): Task => ({ actions: ["read", "navigate", "click"], sites });
+  const scrolls = (calls: string[][]) => calls.filter(call => call[0] === "scroll");
+
+  it("all_rows scrolls only the container the portal declares, on the portal's own origin", async () => {
+    const f = await fixture(undefined, { task: task(), portal });
+    await f.ready();
+    expect(scrolls(f.calls)).toEqual([]); // an ordinary read never scrolls
+    const read = await f.request("browser_read", { tab_id: 1, all_rows: true });
+    expect(read.isError, read.content[0].text).not.toBe(true);
+    expect(scrolls(f.calls).length).toBeGreaterThan(0);
+    expect(scrolls(f.calls).every(call => call.slice(0, 5).join(" ") === "scroll down 100000 --selector .e-gridcontent .e-content")).toBe(true);
+    // The model can ask for every row; it can never name what is scrolled.
+    expect((await f.listTools()).find(tool => tool.name === "browser_read")!.inputSchema.properties).toEqual({ tab_id: expect.any(Object), all_rows: expect.objectContaining({ type: "boolean" }) });
+    const before = scrolls(f.calls).length;
+    for (const args of [{ tab_id: 1, all_rows: true, selector: "body" }, { tab_id: 1, all_rows: "yes" }]) expect((await f.request("browser_read", args)).isError).toBe(true);
+    expect((await f.request("browser_read", { tab_id: 1, all_rows: false })).isError).not.toBe(true);
+    expect(scrolls(f.calls)).toHaveLength(before);
+  });
+
+  it("ignores all_rows on another granted site and when no portal grid is declared", async () => {
+    const other = await fixture(undefined, { task: task(["portal.example", "other.example"]), portal });
+    other.url("https://other.example/list"); await other.ready();
+    expect((await other.request("browser_read", { tab_id: 1, all_rows: true })).isError).not.toBe(true);
+    expect(scrolls(other.calls)).toEqual([]);
+    const { gridScroll: _scroll, ...undeclared } = portal;
+    const plain = await fixture(undefined, { task: task(), portal: undeclared });
+    await plain.ready();
+    expect((await plain.request("browser_read", { tab_id: 1, all_rows: true })).isError).not.toBe(true);
+    const none = await fixture(undefined, { task: task() });
+    await none.ready();
+    expect((await none.request("browser_read", { tab_id: 1, all_rows: true })).isError).not.toBe(true);
+    expect([...scrolls(plain.calls), ...scrolls(none.calls)]).toEqual([]);
+  });
+});

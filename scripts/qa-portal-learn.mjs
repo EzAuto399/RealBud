@@ -1,10 +1,11 @@
-// Bud learns a portal path in Ask, and Refresh from REI uses it. Real source
+// Bud learns a portal path in Ask; Refresh from REI reads REI's own list either way. Real source
 // service + built UI on the FICTIONAL Austin demo office
 // (scripts/seed-austin-demo.mjs) with the fictional REI-style portal behind the
 // real browser runtime, broker and recipe runner (server/testing/w1-lab.ts).
 // In the fictional REI the tenant list export carries a name other than the
 // pack's placeholder (lab action "rename-reports"), so:
-//   1. Refresh tenant list from REI fails first: the export's place is not mapped;
+//   1. Refresh tenant list from REI reads REI's Tenants grid (no export, no card) and
+//      previews rows that match REI's footer, before anything is learned;
 //   2. the person asks Bud in Work to find how to export the tenant list; the
 //      browser task card → Start; the person confirms the REI account once;
 //      Bud (a scripted ACP worker, no model) opens REI's Reports menu with no
@@ -13,9 +14,9 @@
 //      download; the person allows each once;
 //   3. Bud proposes the path it took; the "Bud found how to export…" card shows
 //      the exact steps; the person allows it and it is saved;
-//   4. Refresh tenant list from REI now follows the learned path: the report
-//      (not in the repo map, so it asks every run), Export Only and download
-//      cards, a preview whose rows match REI's footer, Save.
+//   4. Refresh tenant list from REI still reads the grid: the learned export path
+//      is never applied to it (no report, Export Only or download card), and the
+//      preview's rows match REI's footer; Save.
 // The person is simulated by this script. A pass proves RealBud's wiring and
 // guards, never REI Cloud behaviour.
 //
@@ -128,15 +129,18 @@ try {
   // The person is signed in to REI; REI's tenant export is not where the pack's placeholder says.
   await lab('sign-in'); await lab('rename-reports');
 
-  // ── 1. Before learning: Refresh from REI cannot find the export ──
+  // ── 1. Before learning: Refresh from REI reads REI's Tenants grid, no export and no card ──
   await openBankJob();
   await tenantsPanel().getByRole('button', { name: 'Refresh tenant list from REI', exact: true }).click();
   let now = await until(status, s => s.run && !s.run.working, 'first refresh ends');
-  assert.equal(now.run.phase, 'failed', JSON.stringify(now.run));
-  assert.match(now.run.message, /could not find REI's tenant list export/);
-  await tenantsPanel().getByText(/could not find REI's tenant list export/).waitFor();
+  assert.equal(now.run.phase, 'preview', JSON.stringify(now.run));
+  assert.equal(now.run.preview.countMatches, true, JSON.stringify(now.run.preview));
+  assert.equal(await tenantsPanel().getByRole('group', { name: 'Approval for REI', exact: true }).count(), 0);
+  await tenantsPanel().getByRole('group', { name: 'REI tenant list preview', exact: true }).getByText(/read from REI's list · matches the \d+ records REI lists/).waitFor();
   await shot('1-refresh-before-learning', tenantsPanel());
-  pass(`Before learning, Refresh from REI stops: "${now.run.message}"`);
+  await tenantsPanel().getByRole('button', { name: 'Discard', exact: true }).click();
+  await until(status, s => !s.run?.working && s.run?.phase !== 'preview', 'first preview discarded');
+  pass(`Before learning, Refresh from REI read REI's Tenants grid with no card: ${now.run.preview.rows} rows match REI's ${now.run.preview.footer} records`);
 
   // ── 2. Work: the browser task card → Start ──
   await page.goto(`${demo.base}/#/desk`);
@@ -191,29 +195,20 @@ try {
   const stop = page.getByRole('region', { name: 'Browser task', exact: true }).last().getByRole('button', { name: /^Stop/ });
   if (await stop.count()) await stop.first().click().catch(() => {});
 
-  // ── 5. Refresh from REI follows the learned path ──
+  // ── 5. Refresh from REI still reads the grid: a learned export path is never applied to it ──
   await until(status, s => !s.run?.working, 'browser free');
   await openBankJob();
   await tenantsPanel().getByRole('button', { name: 'Refresh tenant list from REI', exact: true }).click();
-  const approval = tenantsPanel().getByRole('group', { name: 'Approval for REI', exact: true });
-  // The learned report is not in the repo map, so allowing the path was not standing permission: it asks on every run.
-  await approval.getByText('Allow this step in REI?', { exact: true }).waitFor();
-  assert.match((await approval.innerText()).replace(/\s+/g, ' '), new RegExp(REPORT.replace(/[()]/g, '\\$&')));
-  await approval.getByRole('button', { name: 'Allow', exact: true }).click();
-  await approval.getByText('Allow Bud to choose Export Only on REI\'s report?', { exact: true }).waitFor();
-  await approval.getByRole('button', { name: 'Allow', exact: true }).click();
-  await approval.getByText("Allow Bud to download REI's tenant list?", { exact: true }).waitFor();
-  await shot('5-refresh-download-approval', tenantsPanel());
-  await approval.getByRole('button', { name: 'Allow', exact: true }).click();
   const preview = tenantsPanel().getByRole('group', { name: 'REI tenant list preview', exact: true });
-  await preview.getByText("10 rows in REI's export · matches the 10 records REI lists", { exact: true }).waitFor();
+  await preview.getByText(/read from REI's list · matches the \d+ records REI lists/).waitFor();
+  assert.equal(await tenantsPanel().getByRole('group', { name: 'Approval for REI', exact: true }).count(), 0, 'no report, Export Only or download card');
   await shot('5-refresh-preview', tenantsPanel());
   now = await status();
   assert.equal(now.run.phase, 'preview'); assert.equal(now.run.preview.countMatches, true);
   await preview.getByRole('button', { name: /^Save/ }).first().click();
   now = await until(status, s => s.run?.phase === 'saved', 'tenant list saved');
   assert.equal(now.tenants.revision, 1);
-  pass(`Refresh from REI followed the learned path to "${REPORT}": the report (unmapped, asked every run), Export Only and download still asked, 10 rows matched REI's footer, Save stored revision ${now.tenants.revision}`);
+  pass(`After a path was learned, Refresh from REI still read REI's grid with no card (no "${REPORT}", Export Only or download): ${now.run.preview?.rows ?? 'all'} rows matched REI's footer, Save stored revision ${now.tenants.revision}`);
 
   // ── 6. Nothing pressed in REI; no renderer errors; no off-origin requests ──
   assert.deepEqual((await lab('status')).effects, []);
@@ -234,7 +229,7 @@ try {
     worker: workerLog().map(entry => entry.text ? { ...entry, text: entry.text.replace(/"path":"[^"]*("|$)/g, '"path":"<temp>"') } : entry),
     limits: ['Fictional REI-style portal and data only; no REI account, credential, customer record or model was used.',
       'The worker is scripted: it proves RealBud lets a worker explore and propose through the broker and cards, not that a model explores well.',
-      'The fictional portal follows the pack map; real REI report names and the export flow are still unconfirmed.',
+      'The fictional portal follows the pack map; the learned export path is exercised in Ask only, and real REI report export formats are still unconfirmed.',
       'Source service on macOS; not a packaged build, installed device or Windows. The person is simulated by this script.'],
     failure: failure ?? null, ...(failure && demo ? { diagnostic: demo.logs().slice(-8000) } : {}),
   }, null, 2));

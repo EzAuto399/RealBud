@@ -110,6 +110,9 @@ describe("native browser task lifecycle", () => {
     expect(read).toMatchObject({ tabId: 1, truncated: false });
     expect(read.text).toContain('@e1 searchbox "Search"');
     expect(read.text).toContain('statictext "Fictional invoice 001"');
+    // A lazy grid's container (from the portal's declared controls) rides the same read step; without one the step is unchanged.
+    await f.runtime.observeTab("fictional-job", 1, undefined, ".e-gridcontent .e-content");
+    expect(f.steps.filter(step => step.kind === "read")).toEqual([{ kind: "read", tab: 1 }, { kind: "read", tab: 1, scroll: ".e-gridcontent .e-content" }]);
     await f.runtime.release("fictional-job");
     expect(f.host.disconnect).not.toHaveBeenCalled();
     expect(f.controllers[0].state).toBe("released");

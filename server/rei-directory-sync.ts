@@ -8,30 +8,28 @@
 // the selected browser and the saved REI business code, 30 minutes, no
 // uploads, consequential steps asked each time) and the pack's recipe runs
 // through the browser broker. The grant carries exactly what the recipe needs
-// and is refused if that is anything beyond read, navigate, click, choosing an
-// option (Output: Export Only) and download. The broker asks the person to
-// allow the download; that ask is answered only through this module's answer
-// route. Signed out → the existing sign-in handover ("Sign in to REI Cloud"),
-// then the same read runs again. The saved file is read with the CSV parsers
-// the manual imports use, its sha256 checked against the download receipt, and
-// its row count compared with the list's "N records" footer when REI shows one.
-// Nothing is saved until the person presses Save on the preview, with the
-// directory revision they saw; a count that disagrees with REI's footer cannot
-// be saved. Stop ends the run at any step and saves nothing. Cookies and
+// and is refused if that is anything beyond read, navigate and click. The
+// recipe reads the list's own grid (scrolled until every row has loaded); there
+// is no export or download. Any ask the broker raises is answered only through
+// this module's answer route. Signed out → the existing sign-in handover ("Sign
+// in to REI Cloud"), then the same read runs again. The rows read become a CSV
+// in the grid's column order, read with the CSV parsers the manual imports use,
+// and their count is compared with the list's "N records" footer. Nothing is
+// saved until the person presses Save on the preview, with the directory
+// revision they saw; a read shorter than REI's footer, or one whose footer
+// could not be read, cannot be saved. Stop ends the run at any step and saves nothing. Cookies and
 // passwords stay in the work browser; Bud never sees them. The scheduled check
 // (a loop run) waits on REI's sign-in page until the end of the office day
 // and survives a restart (owner decision, 6 Oct 2026; server/w1-sign-in-wait.ts).
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { browserTaskWorkroom } from "./browser-runtime.ts";
 import { DATA_DIR } from "./config.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HumanHandoffs } from "./human-handoffs.ts";
 import { answerPortalRecipeAsk, loadPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
-import { portalRecipeGrantNeeds, runPortalRecipes, type PortalRunResult } from "./portal-recipe-runner.ts";
-import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
+import { portalRecipeGrantNeeds, runPortalRecipes, type PortalRecipeResult, type PortalRunResult } from "./portal-recipe-runner.ts";
+import { PortalPathStore } from "./portal-path-overrides.ts";
+import type { PortalRecipePack } from "./portal-recipe.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { createSupplierDirectory } from "./supplier-directory.ts";
 import { parseTenantList, type TenantDirectoryStore, type TenantEntry, type TenantRejection } from "./tenant-directory.ts";
@@ -45,8 +43,11 @@ export type ReiDirectoryKind = "tenants" | "suppliers";
 const PORTAL = "rei-cloud";
 const RECIPE: Record<ReiDirectoryKind, string> = { tenants: "tenant-list", suppliers: "supplier-list" };
 const LIST: Record<ReiDirectoryKind, string> = { tenants: "tenant list", suppliers: "supplier list" };
-/** What a directory refresh may ever be granted. `fill` is only for choosing the report's Output. */
-const ALLOWED: readonly BrowserActionClass[] = ["read", "navigate", "click", "fill", "download"];
+const SOURCE: Record<ReiDirectoryKind, string> = { tenants: "REI Tenants list (read from the page)", suppliers: "REI Suppliers list (read from the page)" };
+/** What a directory refresh may ever be granted: reading the list's own page. */
+const ALLOWED: readonly BrowserActionClass[] = ["read", "navigate", "click"];
+/** Applies no learned path: the repo pack as it is. */
+class RepoPathsOnly extends PortalPathStore { apply(pack: PortalRecipePack): Promise<PortalRecipePack> { return Promise.resolve(pack); } }
 const STOPPED = "Stopped. Nothing was saved.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
 const NO_BROWSER = "The work browser could not be opened. Check that Chrome or Edge is installed, then try again.";
@@ -68,9 +69,8 @@ export interface ReiDirectorySyncDeps {
   account: () => Promise<{ marker: string; urlValue?: string } | null>;
   tenants: TenantDirectoryStore;
   suppliers: SupplierStore;
+  /** The pack's recipes (default: the repo pack, never with learned paths). */
   load?: PackLoader;
-  /** Paths Bud learned and the person allowed (server/portal-path-overrides.ts): the current one replaces the repo's export steps. */
-  paths?: PortalPathStore;
   /** The sign-in handover (server/browser-sign-in.ts), read at each use (the test lab turns its own on later). */
   signIn?: () => SignIn | undefined;
   signInHolding?: () => boolean;
@@ -85,7 +85,7 @@ export interface ReiDirectorySyncDeps {
 
 export interface ReiDirectoryPreview {
   file: { name: string; size: number; sha256: string };
-  /** Data rows in REI's export, and the list's own "N records" footer when it was readable. */
+  /** `file`: the list as read from REI's page, as CSV (no file is downloaded). Rows read, and the list's own "N records" footer when it was readable. */
   rows: number; footer: number | null; countMatches: boolean | null;
   accepted: number; rejected: TenantRejection[];
   withoutEmail?: number;
@@ -114,7 +114,7 @@ export function supplierChanges(saved: readonly Supplier[], next: readonly Suppl
     bigDrop: saved.length > 0 && removed.length / saved.length > 0.3,
   };
 }
-export const SUPPLIER_BIG_DROP = "REI returned far fewer suppliers than before — check the export before approving.";
+export const SUPPLIER_BIG_DROP = "REI returned far fewer suppliers than before — check REI's Suppliers list before approving.";
 /** What the Schedule run says while the supplier check waits or after it ends. */
 export interface SupplierCheckResult { ok: boolean; status: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }
 const WHERE = "Bills and calendar → Maintenance checks";
@@ -135,6 +135,12 @@ const fail = (status: number, message: string): never => { throw Object.assign(n
 const message = (error: unknown) => error instanceof Error ? error.message : "Something went wrong.";
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+const csvCell = (text: string) => /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+/** The rows read from REI's grid as a CSV, header first in the grid's column order, for the imports' own parsers. */
+function gridCsv(rows: PortalRecipeResult["rows"]): string {
+  const columns = [...new Set(rows.flatMap(row => Object.keys(row)))];
+  return [columns, ...rows.map(row => columns.map(column => row[column] ?? ""))].map(cells => cells.map(csvCell).join(",")).join("\n") + "\n";
+}
 /** Added, removed and changed entries by reference. */
 function diff<T extends { reference: string }>(saved: readonly T[], next: readonly T[]) {
   const before = new Map(saved.map(item => [item.reference, JSON.stringify(item)])), after = new Set(next.map(item => item.reference));
@@ -150,14 +156,14 @@ function endedBecause(kind: ReiDirectoryKind, run: PortalRunResult, marker: stri
   const detail = run.detail ? ` ${run.detail}` : "";
   if (run.reason?.startsWith("account-")) return `REI is open in a different business than ${marker}. Switch business in REI, then refresh again. Nothing was saved.`;
   if (run.reason === "not-approved") return `You didn't allow that step in REI, so the ${LIST[kind]} was not read. Nothing was saved.`;
-  if (run.reason === "control-missing" || run.reason === "menu-label-missing") return `RealBud could not find REI's ${LIST[kind]} export.${detail} The export's place in REI may not be mapped yet. Nothing was saved.`;
+  if (run.reason === "control-missing" || run.reason === "menu-label-missing") return `RealBud could not find REI's ${LIST[kind]}.${detail} Nothing was saved.`;
   if (run.reason === "sign-in" || run.reason === "choose-tab") return `Sign in to REI Cloud in the work browser, then refresh again. Nothing was saved.`;
   return `REI's ${LIST[kind]} could not be read (${run.reason ?? run.outcome}).${detail} Nothing was saved.`;
 }
 
 export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
-  // A learned export path wins over the repo's placeholder; with none, the repo recipe runs unchanged.
-  const load: PackLoader = async portal => (deps.paths ?? portalPaths()).apply(await (deps.load ?? loadPortalRecipePack)(portal));
+  // The repo pack only: the recipe reads the list's own grid, so a learned export path (Ask) would only add a report and a download it does not need.
+  const load: PackLoader = deps.load ?? (portal => loadPortalRecipePack(portal, new RepoPathsOnly()));
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), { release: readOnly, verify: readOnly }).isHolding());
   const waits = reiSignInWaits(deps.dataDir ?? DATA_DIR), now = deps.now ?? Date.now;
   let current: Run | null = null;
@@ -188,16 +194,15 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     const needs = portalRecipeGrantNeeds(pack, runs);
     const beyond = needs.actions.filter(action => !ALLOWED.includes(action));
     if (beyond.length) fail(409, `The ${LIST[run.kind]} recipe asks for more than reading (${beyond.join(", ")}). Nothing was started.`);
-    const id = randomUUID(), workroom = browserTaskWorkroom(deps.runtime.root, id);
-    const text = `Refresh the ${LIST[run.kind]} from REI for ${account.marker}: read the list and download its export after your approval. Read only; nothing in REI changes.`;
+    const id = randomUUID();
+    const text = `Refresh the ${LIST[run.kind]} from REI for ${account.marker}: read every row of the list on its page. Read only; nothing in REI changes.`;
     const grant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id, runId: `rei-dir-${run.id}`, route: "schedule",
       request: { text, sha256: sha256(text) }, sites: needs.sites, browser: { id: browserId, accountMarker: account.marker },
       actions: needs.actions, consequential: "ask-each", uploads: [], expiresAt: Date.now() + 30 * 60_000, budget: null });
     const approve = portalRecipeApprovalChannel(`rei-dir:${run.id}`, ask => { run.ask = { requestId: ask.requestId, tool: ask.tool, summary: redactSecretsInText(ask.summary).slice(0, 600) }; },
       requestId => { if (run.ask?.requestId === requestId) run.ask = null; });
-    const result = await runPortalRecipes({ pack, runs, account, grant, threadId: `rei-dir-${run.id}-${id}`, runtime: deps.runtime, approve, workroom, signal,
+    return runPortalRecipes({ pack, runs, account, grant, threadId: `rei-dir-${run.id}-${id}`, runtime: deps.runtime, approve, signal,
       ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}) });
-    return { result, workroom };
   }
 
   /** `note`: the scheduled check's Schedule row, whose run waits on REI's sign-in page until the office day ends. */
@@ -210,7 +215,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     }
     let done = await attempt(run, signal, account);
     const signIn = deps.signIn?.();
-    if ((!done || done.result.outcome === "handover" && ["sign-in", "choose-tab"].includes(done.result.reason ?? "")) && signIn) {
+    if ((!done || done.outcome === "handover" && ["sign-in", "choose-tab"].includes(done.reason ?? "")) && signIn) {
       // The person signs in on REI's own page in the work browser; Bud never sees credentials or codes.
       const threadId = `rei-dir-${run.id}`;
       /** One handover, then the same read (signed in is not proof of the account). */
@@ -231,21 +236,17 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
           ...(deps.waitPollMs !== undefined ? { pollMs: deps.waitPollMs } : {}), work: handover });
     }
     if (!done) return fail(409, NO_BROWSER);
-    const { result, workroom } = done;
-    if (signal.aborted || result.outcome === "stopped") return fail(409, STOPPED);
-    const read = result.results.find(item => item.recipe === RECIPE[run.kind]);
-    if (result.outcome !== "completed" || !read?.download) return fail(502, endedBecause(run.kind, result, account.marker));
-    // The file as saved, checked against the download receipt, read by the import's own CSV parser.
-    const bytes = await readFile(join(workroom, "downloads", read.download.name));
-    if (sha256(bytes) !== read.download.sha256) return fail(502, "The downloaded file changed after it was saved. Nothing was saved; refresh again.");
-    let text: string;
-    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return fail(502, `REI's ${LIST[run.kind]} export is not a UTF-8 CSV. Nothing was saved.`); }
+    if (signal.aborted || done.outcome === "stopped") return fail(409, STOPPED);
+    const read = done.results.find(item => item.recipe === RECIPE[run.kind]);
+    if (done.outcome !== "completed" || !read || read.table === "unread") return fail(502, endedBecause(run.kind, done, account.marker));
+    // The grid as read, as CSV in its own column order, read by the import's own CSV parser.
+    const text = gridCsv(read.rows);
     const footer = read.footer ?? null;
     let preview: Omit<ReiDirectoryPreview, "file" | "footer" | "countMatches">;
     if (run.kind === "tenants") {
       const list = parseTenantList(text), saved = deps.tenants.read();
       parsed = { kind: "tenants", tenants: list.tenants };
-      preview = { rows: list.rows, accepted: list.tenants.length, rejected: list.rejected, ...diff(saved.directory?.tenants ?? [], list.tenants), baseRevision: saved.revision };
+      preview = { rows: read.rows.length, accepted: list.tenants.length, rejected: list.rejected, ...diff(saved.directory?.tenants ?? [], list.tenants), baseRevision: saved.revision };
     } else {
       let table: string[][], list: ReturnType<typeof normalizeSupplierRows>;
       try { table = parseCsvTable(text); list = normalizeSupplierRows(table); }
@@ -254,13 +255,14 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
       const saved = await deps.suppliers.read();
       parsed = { kind: "suppliers", csv: text };
       const next = importedSuppliers(list.suppliers);
-      preview = { rows: Math.max(0, table.length - 1), accepted: list.suppliers.length, rejected: list.rejected.map(r => ({ row: r.row, reason: redactSecretsInText(r.reason) })),
+      preview = { rows: read.rows.length, accepted: list.suppliers.length, rejected: list.rejected.map(r => ({ row: r.row, reason: redactSecretsInText(r.reason) })),
         withoutEmail: list.suppliers.filter(s => !s.emails.length).length, ...diff(saved.suppliers, next), baseRevision: saved.revision, changes: supplierChanges(saved.suppliers, next) };
     }
-    run.preview = { file: { name: read.download.name, size: read.download.size, sha256: read.download.sha256 }, footer, countMatches: footer === null ? null : footer === preview.rows, ...preview };
+    // Complete only when the rows read equal REI's own "N records": a short read, or none to compare, is never saved.
+    run.preview = { file: { name: SOURCE[run.kind], size: Buffer.byteLength(text), sha256: sha256(text) }, footer, countMatches: footer === preview.rows, ...preview };
     run.phase = "preview";
-    run.message = run.preview.countMatches === false ? `REI's export has ${preview.rows} rows but its list shows ${footer} records. Nothing can be saved from it; check the export in REI.`
-      : run.preview.countMatches === null ? "REI's record count could not be read, so the row count was not compared." : null;
+    run.message = footer === null ? `REI's record count could not be read, so Bud cannot tell the whole ${LIST[run.kind]} was read. Nothing can be saved from it; refresh again.`
+      : !run.preview.countMatches ? `Bud read ${preview.rows} rows but REI's list shows ${footer} records. Nothing can be saved from it; refresh again.` : null;
   }
 
   function start(kind: unknown, origin: Run["origin"] = "person", note?: (detail: string) => void): Run {
@@ -282,7 +284,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
   async function save(id: string, expectedRevision: unknown, acknowledgeDrop = false) {
     const run = own(id);
     if (working || run.phase !== "preview" || !run.preview || !parsed) return fail(409, "There is no preview to save. Refresh from REI again.");
-    if (run.preview.countMatches === false) return fail(409, run.message ?? "The export's row count does not match REI's list. Nothing was saved.");
+    if (!run.preview.countMatches) return fail(409, run.message ?? "The rows read do not match REI's list. Nothing was saved.");
     if (run.preview.changes?.bigDrop && !acknowledgeDrop) return fail(409, SUPPLIER_BIG_DROP);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== run.preview.baseRevision) return fail(409, "The saved list changed since this preview. Refresh from REI again.");
     const source = { name: run.preview.file.name, sha256: run.preview.file.sha256, rows: run.preview.rows };
@@ -336,11 +338,10 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     catch (error) { return { ok: false, status: "failed", detail: `${message(error)} The supplier check did not start.` }; }
     let said = "";
     while (working) {
-      const ask = run.ask?.tool === "browser_download" ? "the download of REI's supplier list" : run.ask?.tool === "browser_select" ? "Export Only on REI's report" : "a step in REI";
       // While it waits for sign-in the wait itself tells Schedule (once, and at most one midday reminder).
       if (run.signIn) said = "";
       else {
-        const detail = run.ask ? `Waiting for you to allow ${ask}. Answer in ${WHERE}.` : "Reading REI's supplier list. Nothing in REI changes.";
+        const detail = run.ask ? `Waiting for you to allow a step in REI. Answer in ${WHERE}.` : "Reading REI's supplier list. Nothing in REI changes.";
         if (detail !== said) { said = detail; note(detail); }
       }
       await Promise.race([working, new Promise(resolve => setTimeout(resolve, deps.pollMs ?? 250))]);
@@ -348,7 +349,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     const preview = run.preview;
     if (run.message === SUPPLIER_MISSED) return { ok: false, status: "missed", detail: SUPPLIER_MISSED };
     if (run.phase !== "preview" || !preview) return { ok: false, status: "failed", detail: run.message ?? "The supplier check could not finish. Nothing was saved." };
-    if (preview.countMatches === false) return { ok: true, status: "awaiting-approval", detail: `${run.message} Dismiss it in ${WHERE}.` };
+    if (!preview.countMatches) return { ok: true, status: "awaiting-approval", detail: `${run.message} Dismiss it in ${WHERE}.` };
     if (preview.unchanged) {
       await save(run.id, preview.baseRevision);
       return { ok: true, status: "completed", quiet: true, detail: "REI's supplier list has not changed." };

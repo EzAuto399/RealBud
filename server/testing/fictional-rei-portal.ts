@@ -24,6 +24,9 @@
 // "N records · 0 row(s) selected" footer and no pages; Pending Transactions is
 // a separate payments page whose Process / Process Pending / Delete Pending
 // Bud never presses; the Receipt Register opens a parameters popup first.
+// Tenants and Suppliers (live, 6 Oct 2026) are grids with no pager: Suppliers
+// renders every row at once; Tenants renders its first rows only and loads
+// more each time the grid's own content (`.e-gridcontent .e-content`) scrolls.
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -42,12 +45,11 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
 const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
-/** The report a directory recipe opens, read from the pack (its names are placeholders until the real REI export is mapped). */
-function exportReport(recipe: string): string {
-  const steps = (JSON.parse(readFileSync(RECIPES_FILE, "utf8")) as { recipes: Record<string, { steps: Array<Record<string, unknown>> }> }).recipes[recipe]?.steps ?? [];
-  const label = steps.find(step => typeof step.click === "string")?.click;
-  return typeof label === "string" ? label : `${recipe} (not in the pack)`;
-}
+/** FICTIONAL tenant and supplier export reports on the Reports page, for Ask tasks that explore it. The pack's
+ * directory recipes read the lists' own grids and never open them. */
+const TENANT_DEFAULT = "Tenant list export (fictional)", SUPPLIER_DEFAULT = "Supplier list export (fictional)";
+/** The lazy grid's own scroll container, as live REI's Syncfusion grids name it. */
+const GRID_CONTENT = ".e-gridcontent .e-content";
 
 /** The Austin pack's REI recipes, pointed at the fictional origins instead of REI Cloud. */
 export function fictionalReiPack(): PortalRecipePack {
@@ -98,11 +100,11 @@ export const FICTIONAL_TENANCIES: readonly FictionalTenancy[] = [
   { tenantId: "FTN-09", name: "Fictional Tenant India", propertyId: "FP-04", ownerId: "FO-1", status: "Vacated", tenantRef: "FT-INDIA", bankRef: "4470009" },
   { tenantId: "FTN-11", name: "Fictional Tenant Bravo-Two", propertyId: "FP-04", ownerId: "FO-1", status: "Active", tenantRef: "FT-BRAVO2", bankRef: "4470011" },
 ];
-/** FICTIONAL Tenants grid, in live REI's columns (seen 5 Oct 2026); `status` is the Status filter, not a column.
+/** FICTIONAL Tenants grid, in live REI's columns (seen 6 Oct 2026); `status` is the Status filter, not a column.
  * FT-KILO has no Property (an import rejects it); Golf and Hotel share one BPay reference. */
-export const FICTIONAL_TENANT_COLUMNS = ["Reference", "Surname", "Firstname", "Property", "Rent", "Paid To", "Rent Credit", "Days +/-", "Amount Owing", "Lease Expiry", "Vacating", "Owner", "BPay/Ref No."] as const;
+export const FICTIONAL_TENANT_COLUMNS = ["Reference", "Surname", "Firstname", "Property", "Rent", "Paid To", "Rent Credit", "Days +/-", "Amount Owing", "Lease Expiry", "Vacating", "Owner", "BPay/Ref No.", "Email", "Mobile", "Home Phone", "Work Phone", "Fax"] as const;
 const tenantRow = (ref: string, surname: string, property: string, rent: string, paidTo: string, days: string, owing: string, owner: string, bpay: string, status = "Active") =>
-  ({ status, cells: [ref, surname, "Fictional", property, rent, paidTo, "0.00", days, owing, "2027-03-31", "", owner, bpay] });
+  ({ status, cells: [ref, surname, "Fictional", property, rent, paidTo, "0.00", days, owing, "2027-03-31", "", owner, bpay, `${surname.toLowerCase()}@fictional-tenant.test`, "0400 000 000", "", "", ""] });
 export const FICTIONAL_TENANT_LIST = [
   tenantRow("FT-ALPHA", "Alpha", "FP-01", "$500.00 per week", "2026-09-20", "0", "0.00", "Fictional Owner One", "4470001"),
   tenantRow("FT-BRAVO", "Bravo", "FP-02", "$540.00 per week", "2026-09-12", "-9", "540.00", "Fictional Owner One", "4470002"),
@@ -236,9 +238,12 @@ export interface FictionalReiOptions {
   pageSize?: number;
   /** Alters the displayed preview rows (Date, Reference, Tenant, Tenant ID, Amount, Match) to rehearse what a page could show. */
   previewEdit?: (rows: string[][]) => string[][];
-  /** Alters the rows of the next tenant or supplier list export (to rehearse an export that disagrees with its grid). */
+  /** Alters the rows the Tenants or Suppliers grid (and an export of it) shows while its "N records" footer still counts
+   * every row (rehearses a read shorter than the list's own record count). */
   directoryRows?: (rows: string[][]) => string[][];
-  /** Report names for the tenant and supplier list exports instead of the pack's placeholders (rehearses a path learned in the portal). */
+  /** Rows the Tenants grid renders at first and adds per scroll of its own content (live REI renders 90; default 4). */
+  gridBlock?: number;
+  /** Report names for the fictional tenant and supplier exports on the Reports page (rehearses a path learned in the portal). */
   reports?: { tenants?: string; suppliers?: string };
   /** The Suppliers grid and export instead of FICTIONAL_SUPPLIER_LIST (rehearses REI's list changing between checks). */
   suppliers?: Array<{ status: string; cells: string[] }>;
@@ -259,10 +264,12 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   if (!signedIn) url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`;
   // Per-page state, reset on each load.
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
+  const block = options.gridBlock ?? 4;
+  /** Rows the Tenants grid has rendered: one block until its content scrolls. */
+  let rendered = block;
   /** The report whose parameters popup is open. */
   let report = "";
-  // The pack's names unless renamed (`reports`), read at each use so a test can rename them mid-run.
-  const TENANT_DEFAULT = exportReport("tenant-list"), SUPPLIER_DEFAULT = exportReport("supplier-list");
+  // The fictional names unless renamed (`reports`), read at each use so a test can rename them mid-run.
   const tenantReport = () => options.reports?.tenants ?? TENANT_DEFAULT, supplierReport = () => options.reports?.suppliers ?? SUPPLIER_DEFAULT;
   // Portal-side state that survives page loads: the pending import and the receipt ledger.
   let pending: PendingUpload | null = null; let uploads = 0;
@@ -283,7 +290,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     const at = new URL(next);
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
-    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null; report = "";
+    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null; report = ""; rendered = block;
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
@@ -379,7 +386,9 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         if (loading > 0 && scrolls) grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`), "  row", '    cell "No records to display"');
         else if (loading > 0) grid.push("  row", '    cell "Loading…"');
         else {
-          const shown = scrolls ? table.rows : table.rows.slice(page * pageSize, page * pageSize + pageSize);
+          // A short grid (directoryRows) still counts every row in its footer; Tenants shows only what has loaded.
+          const listed = scrolls && options.directoryRows ? options.directoryRows(table.rows.map(row => [...row])) : table.rows;
+          const shown = !scrolls ? table.rows.slice(page * pageSize, page * pageSize + pageSize) : path === "/customers/tenant" ? listed.slice(0, rendered) : listed;
           grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`));
           if (!shown.length) grid.push("  row", `    cell ${q(scrolls ? "No records to display" : "No records found")}`);
           for (const row of shown) grid.push("  row", ...row.map(cell => `    cell ${q(cell)}`));
@@ -422,7 +431,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (item) item.value = value; else fields.push({ kind: "textbox", name, value });
     // A field in the open Receipt Register dialog does not reload the grid behind it.
     if (modal) return;
-    page = 0; loading = 1;
+    page = 0; loading = 1; rendered = block;
   };
 
   const command = async (args: string[]): Promise<BrowserJson> => {
@@ -440,6 +449,12 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       return { ok: true, outcome: options.helpOutcome ?? "completed" };
     }
     if (args[0] === "navigate") { direct = true; load(args[1]); return { ok: true }; }
+    // Only a list grid's own content scrolls; on any other page the engine finds no such element.
+    if (args[0] === "scroll") {
+      const path = new URL(url).pathname;
+      if (args[args.indexOf("--selector") + 1] !== GRID_CONTENT || !["/customers/tenant", "/customers/supplier"].includes(path)) throw new Error("No such element");
+      rendered += block; return { ok: true };
+    }
     if (args[0] === "fill") { const target = control(args); if (!target.action.startsWith("field:")) throw new Error("Not a field"); setField(target.name, args[args.indexOf("--value") + 1]); return { ok: true }; }
     if (args[0] === "press") { control(args); return { ok: true }; }
     if (args[0] === "select") {
