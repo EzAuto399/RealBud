@@ -262,7 +262,7 @@ try {
   await setupSteps.waitFor();
   const stepLabels = (await setupSteps.innerText()).replace(/\s+/g, ' ').trim();
   observations.agencySetupStepLabels = stepLabels;
-  assert.equal(stepLabels, '1. Agency details 2. Connect your accounts 3. Property references 3. Review workflows');
+  assert.equal(stepLabels, '1. Agency details 2. Connect your accounts 3a. Property references 3b. Review workflows');
   checks.push('Schedule → Agency workflow setup numbers its tabs 1, 2, 3 and 3, matching the three-step Desk setup path');
 
   const packsBox = async () => packs.evaluate(el => {
