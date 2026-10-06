@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Local macOS chaos harness (resilience packet F). Runs fault cases against a
+// Local macOS / Windows chaos harness (resilience packet F). Runs fault cases against a
 // fresh marked temp root with the real server, a fake ACP worker, the real Ask
 // model relay and loopback fakes. Each case reports PASS, FAIL or N/A with the
-// exact observed behaviour; FAIL is a result, not an error.
+// exact observed behaviour; FAIL is a result, not an error. On Windows the
+// disk-full case (hdiutil) is N/A and sleep/wake uses NtSuspendProcess.
 //
 //   ~/.nvm/versions/node/v24.21.0/bin/node scripts/resilience/chaos.mjs [--seed N] [--only 1,3,7] [--out DIR]
 //
@@ -13,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FICTIONAL_MODELVIA_KEY, fakeModelvia, severProxy } from "./fakes.mjs";
 import { readSessionToken } from "../local-session.mjs";
-import { DescendantWatch, Owned, ROOT, alive, assertMarked, freePort, http, imagesUnder, markedRoot, processesMentioning, readJsonl, removeRoot, sleep, tempLeftovers, until, writeLoopbackGuard } from "./lib.mjs";
+import { DescendantWatch, Owned, ROOT, WIN, alive, assertMarked, childEnv, commandOf, freePort, http, imagesUnder, markedRoot, processesMentioning, readJsonl, removeRoot, sleep, suspendProcesses, tempLeftovers, until, writeLoopbackGuard } from "./lib.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
@@ -23,7 +24,7 @@ const date = new Date().toISOString().slice(0, 10);
 const out = resolve(flag("--out", join(ROOT, "outputs", `chaos-${date}`)));
 if (existsSync(join(out, "receipt.json"))) throw new Error(`${out}/receipt.json exists; earlier evidence is never overwritten. Pass --out.`);
 if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Run with Node 24 (~/.nvm/versions/node/v24.21.0/bin/node).");
-if (process.platform !== "darwin") throw new Error("This harness uses macOS hdiutil and ps -E.");
+if (process.platform !== "darwin" && !WIN) throw new Error("This harness runs on macOS or Windows.");
 
 const NODE = process.execPath;
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-acp-cli.ts");
@@ -50,10 +51,9 @@ async function startServer(caseDir, dataDir) {
   assertMarked(root, dataDir);
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
   const home = join(caseDir, "home"); mkdirSync(home, { recursive: true });
-  const child = owned.spawn("server", NODE, ["--experimental-strip-types", "--import", guard, join(ROOT, "server", "index.ts")], { cwd: ROOT, env: {
-    PATH: `${dirname(NODE)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, USERPROFILE: home, TMPDIR: join(caseDir, "tmp"),
+  const child = owned.spawn("server", NODE, ["--experimental-strip-types", "--import", guard, join(ROOT, "server", "index.ts")], { cwd: ROOT, env: childEnv(home, join(caseDir, "tmp"), {
     OMB_PORT: String(port), REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_HOME: join(dataDir, "hermes"),
-  } });
+  }) });
   mkdirSync(join(caseDir, "tmp"), { recursive: true });
   const t = Date.now();
   const up = await until(async () => { if (child.exitCode !== null) throw new Error("exited"); return (await http(base, "/api/health", { timeout: 1000 })).status === 200; }, 40000, 150);
@@ -66,7 +66,6 @@ async function startServer(caseDir, dataDir) {
 
 const bud = async (s) => (await s.api("/api/bots")).body?.bots?.find((b) => b.id === "bud");
 const readDump = (dump) => { try { return JSON.parse(readFileSync(dump, "utf8")); } catch { return null; } };
-const commandOf = (pid) => { try { return execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim(); } catch { return ""; } };
 async function workerInFlight(dump, minPrompts) {
   return until(() => { const d = readDump(dump); return d && d.promptCount >= minPrompts && alive(d.pid) && commandOf(d.pid).includes("fake-acp-cli") ? d : null; }, 20000);
 }
@@ -79,9 +78,9 @@ const lastText = (msgs) => [...msgs].reverse().find((m) => m.role === "bot")?.te
 // ── relay helpers (cases 4 and 7) ─────────────────────────────────────────
 async function startRelay(caseDir, gatewayPort, { idleMs } = {}) {
   const dataDir = join(caseDir, "data"); mkdirSync(join(dataDir, "hermes"), { recursive: true });
-  const child = fork(join(ROOT, "scripts", "resilience", "relay-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"], env: {
-    PATH: `${dirname(NODE)}:/usr/bin:/bin`, HOME: join(caseDir, "home"), REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_HOME: join(dataDir, "hermes"),
-    CHAOS_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}/v1`, CHAOS_MODEL_KEY: FICTIONAL_MODELVIA_KEY, ...(idleMs ? { CHAOS_RELAY_IDLE_MS: String(idleMs) } : {}) } });
+  const child = fork(join(ROOT, "scripts", "resilience", "relay-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"], env: childEnv(join(caseDir, "home"), null, {
+    REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_HOME: join(dataDir, "hermes"),
+    CHAOS_GATEWAY_URL: `http://127.0.0.1:${gatewayPort}/v1`, CHAOS_MODEL_KEY: FICTIONAL_MODELVIA_KEY, ...(idleMs ? { CHAOS_RELAY_IDLE_MS: String(idleMs) } : {}) }) });
   child.label = "relay"; child.log = ""; child.closed = new Promise((r) => child.once("close", r));
   for (const st of [child.stdout, child.stderr]) st.on("data", (b) => { child.log = (child.log + b).slice(-20000); });
   owned.children.push(child);
@@ -214,6 +213,7 @@ const cases = [
     check("no interrupted temp files left in the data dir", tmp.length === 0, tmp.join(", "));
   } },
   { id: "3", name: "Disk full (128 MiB APFS image) then freed", deadlineMs: 20000, async run(dir, check, observe) {
+    if (WIN) return { na: "No hdiutil on Windows; a VHD stand-in needs diskpart and admin rights, so disk-full is not covered here." };
     let img = null, s = null;
     try {
       img = attachImage(dir);
@@ -282,18 +282,18 @@ const cases = [
       check("no foreign key, no duplicate upstream effect", audit.foreignAuth === 0 && audit.duplicateIdempotencyKeys === 0, JSON.stringify(audit));
     } finally { await proxy.close(); await mv.close(); }
   } },
-  { id: "5", name: "Sleep/wake: SIGSTOP service and worker 5 s, then SIGCONT", deadlineMs: 30000, async run(dir, check, observe) {
+  { id: "5", name: WIN ? "Sleep/wake: NtSuspendProcess service and worker 5 s, then resume" : "Sleep/wake: SIGSTOP service and worker 5 s, then SIGCONT", deadlineMs: 30000, async run(dir, check, observe) {
     const data = join(dir, "data"); const dump = writeWorkerConfig(data);
     const s = await startServer(dir, data);
     const before = (await bud(s))?.messages?.length ?? 0;
     await s.api("/api/bots/bud/messages", "POST", { text: "chaos sleep: hold this turn" });
     const w = await workerInFlight(dump, 1);
     if (!w) return check("worker turn in flight", false, "no fake worker prompt observed");
-    for (const pid of [s.child.pid, w.pid]) process.kill(pid, "SIGSTOP");
+    suspendProcesses([s.child.pid, w.pid], true);
     const asleep = await http(s.base, "/api/health", { timeout: 1500 });
     observe({ healthWhileStopped: asleep.status || asleep.error });
     await sleep(5000);
-    for (const pid of [s.child.pid, w.pid]) process.kill(pid, "SIGCONT");
+    suspendProcesses([s.child.pid, w.pid], false);
     const t = Date.now();
     const healthy = await until(async () => (await http(s.base, "/api/health", { timeout: 1000 })).status === 200, this.deadlineMs);
     check("service answers after wake", Boolean(healthy), `${Date.now() - t}ms`);
@@ -306,7 +306,7 @@ const cases = [
   } },
   { id: "6", name: "±24 h wall-clock jump (LoopManager fixture clock)", deadlineMs: 10000, async run(dir, check, observe) {
     const data = join(dir, "data"); mkdirSync(data, { recursive: true });
-    const child = fork(join(ROOT, "scripts", "resilience", "clock-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"], env: { PATH: `${dirname(NODE)}:/usr/bin:/bin`, HOME: join(dir, "home"), REALBUD_DATA_DIR: data } });
+    const child = fork(join(ROOT, "scripts", "resilience", "clock-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"], env: childEnv(join(dir, "home"), null, { REALBUD_DATA_DIR: data }) });
     child.label = "clock"; child.log = ""; child.closed = new Promise((r) => child.once("close", r)); owned.children.push(child);
     for (const st of [child.stdout, child.stderr]) st.on("data", (b) => { child.log = (child.log + b).slice(-20000); });
     await new Promise((r) => child.once("message", r));
@@ -399,21 +399,24 @@ try {
   for (const image of images) { try { execFileSync("hdiutil", ["detach", "-force", image], { stdio: "pipe" }); } catch { /* reported below */ } }
   const processes = processesMentioning(root);
   const denied = readJsonl(deniedLog);
-  removeRoot(root);
+  // A file still held open (Windows refuses to delete it) must not cost the receipt.
+  let rootRemoveError = null;
+  try { removeRoot(root); } catch (e) { rootRemoveError = String(e?.code ?? e?.message ?? e); }
   const head = (() => { try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(); } catch { return null; } })();
   const receipt = {
     at: new Date().toISOString(), proofLayer: "local tests — source tree, real server/relay/LoopManager, fake ACP worker, loopback fakes",
-    source: { head, node: process.version, seed }, command: `node scripts/resilience/chaos.mjs --seed ${seed}${only?.length ? ` --only ${only.join(",")}` : ""}`,
+    source: { head, node: process.version, platform: process.platform, seed }, command: `node scripts/resilience/chaos.mjs --seed ${seed}${only?.length ? ` --only ${only.join(",")}` : ""}`,
     summary: Object.fromEntries(["PASS", "FAIL", "N/A"].map((k) => [k, results.filter((r) => r.result === k).map((r) => r.id)])),
     cases: results,
-    cleanup: { imagesAttachedAtEnd: imagesUnder(root).length, imagesForceDetached: images.length, processesMentioningRootAtEnd: processes.length, rootRemoved: !existsSync(root), nonLoopbackAttempts: denied },
+    cleanup: { imagesAttachedAtEnd: imagesUnder(root).length, imagesForceDetached: images.length, processesMentioningRootAtEnd: processes.length, rootRemoved: !existsSync(root), ...(rootRemoveError ? { rootRemoveError } : {}), nonLoopbackAttempts: denied },
     limits: [
       "Fixture-only: fake ACP worker (not Hermes), fictional Modelvia, no website or managed gateway process, no live account.",
       "Relay cases run server/ask-model-relay.ts in a child with a fictional grant; its per-request entitlement check is replaced (no signed entitlement), every other relay check is real.",
       "The service has no injectable wall clock; case 6 drives the real LoopManager in a child. Approval/browser-hold expiry under clock jumps is not covered.",
-      "SIGSTOP/SIGCONT simulates sleep; physical laptop sleep, network interface changes and Electron watchdog behaviour remain device tests.",
-      "Disk-full runs on a 128 MiB APFS image; host disk quotas and Windows are not covered.",
-      "macOS only. Not packaged-build, installed-device or customer evidence.",
+      "SIGSTOP/SIGCONT (NtSuspendProcess on Windows) simulates sleep; physical laptop sleep, network interface changes and Electron watchdog behaviour remain device tests.",
+      "Disk-full runs on a 128 MiB APFS image on macOS only; host disk quotas and Windows disk-full are not covered.",
+      ...(WIN ? ["Windows samples descendants every 2 s through CIM, so a descendant living under 2 s may go unseen by the leftover check."] : []),
+      `Ran on ${process.platform}. Not packaged-build, installed-device or customer evidence.`,
     ],
   };
   mkdirSync(out, { recursive: true });
