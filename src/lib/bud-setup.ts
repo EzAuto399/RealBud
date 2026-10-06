@@ -235,10 +235,15 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
 
 /** Presentation respects who can act; canVerify remains an authoritative fact,
  * never a permission grant. Callers performing checks must also gate access. */
-export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false, context?: { canAdminister: boolean; statusError?: boolean }) {
+export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false, context?: { canAdminister: boolean; statusError?: boolean; officeLink?: "linked" | "not-linked" | "unavailable" }) {
   const availability = budAvailabilityFacts(status, connected, recovering);
   if (context?.statusError && connected && !recovering) return { ...availability, ready: false, label: "Status unavailable", detail: "Could not refresh Bud’s status. Your draft is kept; status will retry automatically.", action: "View Bud status", target: "you-worker", canVerify: false };
   if (!context || context.canAdminister || availability.ready || !connected || recovering || !status || status.modelAccess?.withdrawn) return availability;
+  // Same hold Bud status shows: before an office link nothing can install, so
+  // the next step is connecting, not finishing setup. A failed check stays itself.
+  if (context.officeLink === "not-linked" && !status.modelAccess?.managed && !("automatic" in availability) && status.cli.probeState !== "timeout" && status.cli.probeState !== "error") {
+    return { ...availability, label: "Connect this computer to your office first", detail: "Paste the link code your office owner sent you. RealBud then sets up Bud automatically. Your draft stays here.", action: "Connect this computer", target: "you-worker" };
+  }
   // Automatic setup needs nobody; only a hold points at Bud's status.
   if ("automatic" in availability) return budAutoSetupView(status)?.working ? availability : { ...availability, action: "View Bud status", target: "you-worker" };
   return {

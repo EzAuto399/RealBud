@@ -24,6 +24,8 @@ describe('Packs from your office', () => {
   it('explains empty, unlinked, unavailable and checking states in plain words', () => {
     expect(render({ state: 'ready', packs: [], refused: [] })).toContain('Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again.');
     expect(render({ state: 'not-linked' })).toContain('Connect this computer to your office first.');
+    expect(render({ state: 'not-linked' })).toMatch(/<button type="button"[^>]*>Connect this computer<\/button>/);
+    expect(render({ state: 'unavailable' })).not.toContain('>Connect this computer</button>');
     expect(render({ state: 'unavailable' })).toContain('couldn’t be checked right now. Nothing on this computer changed.');
     expect(render(null)).toContain('Checking your office for packs');
     for (const view of [{ state: 'not-linked' }, { state: 'unavailable' }, ready] as OfficePacksView[]) expect(render(view)).toContain('>Check again</button>');

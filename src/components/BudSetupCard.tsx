@@ -145,7 +145,7 @@ function BudCapabilities({ onShowAsk, onSchedule }: { onShowAsk?: () => void; on
   );
 }
 
-type BudSetupCardProps = { active?: boolean; id?: string; onShowAsk?: () => void; onSchedule?: () => void; administration?: boolean; onServiceAdministration?: () => void };
+type BudSetupCardProps = { active?: boolean; id?: string; onShowAsk?: () => void; onSchedule?: () => void; administration?: boolean; onServiceAdministration?: () => void; onBack?: () => void; backLabel?: string };
 
 export function BudSetupCard(props: BudSetupCardProps) {
   const { state, dispatch } = useStore();
@@ -158,7 +158,7 @@ export function BudSetupCard(props: BudSetupCardProps) {
   const allowed = useServiceAdminAccess(administration);
   if (!props.administration || !allowed) return (
     <ManagedBudStatus id={props.id ?? "you-worker"} status={state.hermes} connected={state.connected}
-      onServiceAdministration={props.onServiceAdministration} onShowAsk={props.onShowAsk}
+      onServiceAdministration={props.onServiceAdministration} onShowAsk={props.onBack ?? props.onShowAsk} backLabel={props.backLabel}
       active={props.active} recovering={Boolean(state.desk?.recovery?.active)} onRefresh={refreshStatus} />
   );
   return <BudSetupDetails {...props} />;

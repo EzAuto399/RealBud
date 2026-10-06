@@ -68,7 +68,7 @@ try {
   assert.equal(await panel.getByRole('region', { name: 'Bud activity', exact: true }).count(), 0, 'Bud activity waits under More');
   await until(async () => /Sample book/.test(await status.innerText()), 'The status bar labels the sample book');
   const statusText = await status.innerText();
-  assert.match(statusText, /Connected/); assert.doesNotMatch(statusText, /Spend/, 'No spend placeholder on an unlinked book'); assert.doesNotMatch(statusText, /Desk checked/, 'A sample check never reads as a live one');
+  assert.match(statusText, /Not connected to your office/, 'An unlinked computer never reads as Connected'); assert.doesNotMatch(statusText, /Spend/, 'No spend placeholder on an unlinked book'); assert.doesNotMatch(statusText, /Desk checked/, 'A sample check never reads as a live one');
   await nav.getByRole('button', { name: 'Desk', exact: true }).hover();
   await until(async () => (await nav.getByRole('button', { name: 'Desk', exact: true }).locator('.rb-rail-tip').evaluate(element => getComputedStyle(element).opacity)) === '1', 'The rail tooltip is visible on hover');
   measurements.desktop = { rail: (await page.locator('aside.rb-sidebar').boundingBox()).width, context: (await contextBar.boundingBox()).width, panel: (await panel.boundingBox()).width };

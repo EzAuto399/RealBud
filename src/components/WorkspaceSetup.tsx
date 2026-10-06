@@ -40,7 +40,8 @@ export function WorkspaceSetup({ target, origin, onTarget, onClose, onSchedule, 
     {error && <div className="px-4 pt-3"><ActionNotice message={error} onDismiss={onDismissError} /></div>}
     {sections.map(section => <div className="workspace-setup-content" key={section} hidden={section !== target} inert={section !== target}>
       {section === "bud" ? <>
-        <BudSetupCard administration active={target === "bud"} id="workspace-bud" onShowAsk={onAsk} onSchedule={onSchedule} onServiceAdministration={onClose} />
+        <BudSetupCard administration active={target === "bud"} id="workspace-bud" onShowAsk={onAsk} onSchedule={onSchedule} onServiceAdministration={onClose}
+          onBack={origin === "Work" ? onAsk : onClose} backLabel={`Back to ${origin}`} />
         <div className="workspace-setup-next"><p>Choose what Bud can work with.</p><button className="pm-control" type="button" onClick={() => onTarget("apps")}>Connect apps & websites</button><button className="pm-control" type="button" onClick={() => onTarget("office")}>Office & department access</button></div>
       </> : section === "apps" ? <><ConnectedAppsCard onAsk={onAsk} onBrowser={showBrowser} /><BrowserCard id="apps-work-browser" onAsk={onAsk} /></> : <YouPage section={section} />}
     </div>)}

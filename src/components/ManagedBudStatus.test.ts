@@ -70,6 +70,9 @@ describe("managed Bud status", () => {
     expect(html).toContain("Connect with this code</button>");
     expect(html).toContain("I’m the office owner: approve in my browser");
     expect(html).toContain("Paste the link code your office owner sent you. RealBud then sets up Bud automatically.");
+    // Nothing has failed before the link exists: the first step waits for it.
+    expect(html).toMatch(/Download Bud<\/dt><dd[^>]*>Starts after you connect/);
+    expect(html).not.toContain("Needs attention");
     expect(html).not.toContain("readiness check");
     expect(html).not.toContain("Service setup needed");
     expect(html).not.toContain("service administrator");
@@ -81,6 +84,7 @@ describe("managed Bud status", () => {
     const html = render({ ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: "missing" },
       model: { attached: false, provider: null, model: null }, autoSetup: { state: "idle", step: 0, total: 4, detail: "" } });
     expect(html).toContain("Connected to Fictional Harbour Agency");
+    expect(html).not.toContain("Starts after you connect");
     expect(html).toContain("Setting up Bud’s model access…");
     expect(html).toContain("Bud must finish setting up and pass its test before work can start.");
     expect(html).not.toContain("Connect with this code</button>");
@@ -151,6 +155,12 @@ describe("managed Bud status", () => {
     expect(html).not.toContain("Your service administrator needs");
     expect(html).toContain("Back to Work");
     expect(html).not.toContain("Finish Bud setup");
+  });
+  it("names the screen it returns to", () => {
+    const html = renderToStaticMarkup(createElement(ManagedBudStatus, { id: "fixture", status: ready, connected: true,
+      onRefresh: async () => {}, onShowAsk: () => {}, backLabel: "Back to Desk" }));
+    expect(html).toContain(">Back to Desk</button>");
+    expect(html).not.toContain("Back to Work");
   });
   it("offers return to work once every prerequisite is ready", () => {
     const html = render(ready);

@@ -17,11 +17,13 @@ type ManagedBudStatusProps = {
   onRefresh: (isCurrent: () => boolean) => Promise<void>;
   onServiceAdministration?: () => void;
   onShowAsk?: () => void;
+  /** Names the screen this status was opened from, e.g. "Back to Desk". */
+  backLabel?: string;
 };
 
 const secondaryButton = "pm-control rounded border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50";
 
-export function ManagedBudStatus({ id, status, connected, recovering = false, active = true, onRefresh, onServiceAdministration, onShowAsk }: ManagedBudStatusProps) {
+export function ManagedBudStatus({ id, status, connected, recovering = false, active = true, onRefresh, onServiceAdministration, onShowAsk, backLabel = "Back to Work" }: ManagedBudStatusProps) {
   const { state, dispatch } = useStore();
   const office = useConnectOffice(state?.config?.profile?.name);
   const { pending, error, refresh } = useBudStatusMonitor({ enabled: connected && active, onRefresh });
@@ -97,6 +99,10 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const autoStep = automatic?.working ? displayStatus?.autoSetup?.step ?? 0 : 0;
   const waitingRetry = automatic?.working && displayStatus?.autoSetup?.state === "waiting_retry";
   const showOfficeAccess = needsOfficeAccess && !automatic;
+  // Before the office link exists nothing can install yet: that is waiting, not
+  // a problem. A failed check, blocked update or pending restart stays a hold.
+  const awaitingLink = showOfficeAccess && !officeLinked && !lastFailure && !status?.restartRequired
+    && !(status?.cli.installed && !(status.cli.compatible ?? status.cli.matchesPin));
   const canRetrySetup = connected && !recovering && !withdrawn && !status?.modelAccess?.withdrawn && budAutoSetupRetryable(status);
   useEffect(() => {
     // A later authoritative status can settle an uncertain response without
@@ -149,7 +155,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
             : step === "model" && displayStatus?.model?.attached && progress !== "complete" ? "Configured"
             : step === "model" && displayStatus?.model && !displayStatus.model.attached ? "Not connected"
             : progress === "complete" ? "Ready"
-            : progress === "current" ? (step === "verify" && !lastFailure ? "Not checked" : "Needs attention")
+            : progress === "current" ? (step === "verify" && !lastFailure ? "Not checked" : awaitingLink ? "Starts after you connect" : "Needs attention")
             : step === "model" && journey.stage === "checking" ? "Not checked" : "Waiting";
           return <div key={step} className="flex items-center justify-between gap-4 py-3 text-sm">
             <dt className="min-w-0">{BUD_SETUP_STEP_LABELS[step]}</dt>
@@ -165,7 +171,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       {retryError && <p role="alert" className="mt-3 text-sm text-danger">{retryError}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
-        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>Back to Work</button>}
+        {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{backLabel}</button>}
         {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
           onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
         {/* aria-disabled while checking: a disabled button drops keyboard focus to the page. */}
