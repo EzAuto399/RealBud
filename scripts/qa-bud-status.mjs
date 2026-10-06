@@ -261,9 +261,9 @@ try {
     await page.emulateMedia({ reducedMotion: 'reduce' }); await shot('bud-reduced-motion');
     observations.reducedMotion = await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches); assert.equal(observations.reducedMotion, true);
     checks.push('Reduced-motion setting retains a readable, usable status panel.');
-    await panel.getByRole('button', { name: 'Return to Ask', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); assert.equal(await composer.inputValue(), draft);
+    await panel.getByRole('button', { name: 'Return to Work', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); assert.equal(await composer.inputValue(), draft);
     const readsClosed = counts.statusReads; await page.evaluate(() => { for (let i = 0; i < 10; i++) window.dispatchEvent(new Event('focus')); }); await wait(300); observations.readsAfterCloseAndTenFocusEvents = counts.statusReads - readsClosed; assert.ok(counts.statusReads - readsClosed <= 1, 'closing the status panel permits one handoff read, never a focus-triggered loop');
-    checks.push('Return to Ask preserves the draft; ten repeated focus events after closing permit at most one handoff read for the surviving Ask observer.');
+    checks.push('Return to Work preserves the draft; ten repeated focus events after closing permit at most one handoff read for the surviving Ask observer.');
     managed = false;
     await page.evaluate(() => window.__budQa.dispatch({ type: 'serviceAdminStatus', status: { managed: false, configured: true, authenticated: false, expiresAt: null } }));
     await page.getByRole('button', { name: /^Finish Bud setup/ }).click();

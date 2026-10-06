@@ -50,7 +50,7 @@ const COMMANDS = [
 const LIMITS = [
   'Fictional data only: a throwaway workspace, a fictional onboarding profile and a fictional saved office contact. No customer book, no customer acceptance.',
   'Source-level run: real server from server/bootstrap.ts plus the real renderer through a Vite dev server. Not a packaged desktop app, not an installed app, not Windows.',
-  'No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent, so the card reads "Bud: needs setup on You" and no step past 2 can finish.',
+  'No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent, so the card reads "Bud: needs setup in Workspace" and no step past 2 can finish.',
   'Headless Chrome at 1400x1050 and 390x844 only. Screenshots are fictional examples, never customer evidence.',
   'Proves onboarding/setup wiring and copy in the rendered app; it proves nothing about live workflow readiness or a real run.',
   'Fresh-browser persistence is exercised here. Restored-book replay and changed-port service restarts are separate scenarios in qa-onboarding-restart.mjs.',
@@ -223,7 +223,7 @@ try {
   assert.match(cardText, /(?:Later|Not checked yet) · 2\. Connect your accounts/);
   assert.match(cardText, /(?:Later|Not checked yet) · 3\. Approve and schedule/);
   // Bud is a status line, not a step: this harness installs no worker.
-  assert.match(cardText, /Bud: needs setup on You/);
+  assert.match(cardText, /Bud: needs setup in Workspace/);
   assert.doesNotMatch(cardText, /Set up Bud/);
   assert.doesNotMatch(cardText, /Done:/);
   assert.doesNotMatch(cardText, /On with a next run recorded/);

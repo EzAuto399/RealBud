@@ -422,5 +422,5 @@ export function setupSequenceComplete(steps: readonly SetupStep[]): boolean {
  */
 export function budStatusLine(ready: boolean | "unknown"): string {
   if (ready === "unknown") return "Bud: not checked yet";
-  return ready ? "Bud: ready" : "Bud: needs setup on You";
+  return ready ? "Bud: ready" : "Bud: needs setup in Workspace";
 }

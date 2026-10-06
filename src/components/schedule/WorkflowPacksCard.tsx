@@ -117,9 +117,6 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
         <PackagePlus size={20} className="mt-0.5 shrink-0 text-agency" aria-hidden />
         <div className="min-w-0 flex-1">
           <h2 className="text-[15px] font-medium text-ink">Set up your workflows</h2>
-          <p className="mt-1 text-[13px] text-ink-secondary">
-            The three workspace setup steps happen here: your agency’s name, timezone and pack on one form, then your own Gmail, then approving the selected work and turning its schedule on. Enabling a schedule stays a decision you take yourself.
-          </p>
         </div>
       </div>
 

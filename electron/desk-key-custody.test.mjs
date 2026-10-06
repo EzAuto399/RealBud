@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { resolveDeskKey } from './desk-key-custody.mjs';
+import { resolveDeskKey, windowsKeyPrivacyAsync } from './desk-key-custody.mjs';
 import { privateFixtureRoot, profileAclWitness, WINDOWS_PROFILE_TEST_OPTIONS } from '../server/testing/private-profile-fixture.ts';
 import { plantPrivateFile } from '../server/testing/private-fixture.ts';
 
@@ -226,6 +226,10 @@ describe('Windows ACL policy for the key directory and key files', () => {
   });
 });
 
+it.skipIf(process.platform === 'win32')('the non-blocking key check is a no-op off Windows', async () => {
+  await expect(windowsKeyPrivacyAsync('/no/such/file', 'file')).resolves.toBeUndefined();
+});
+
 // Native descriptors only: this runs on the Windows CI runner, never here.
 describe.runIf(process.platform === 'win32')('native Windows key-file privacy', () => {
   it('protects the key directory and the wrapped key it writes', WINDOWS_PROFILE_TEST_OPTIONS, () => {
@@ -245,5 +249,17 @@ describe.runIf(process.platform === 'win32')('native Windows key-file privacy', 
     }
     // A second start must still admit its own descriptors without repairing them.
     expect(resolveDeskKey({ directory, safeStorage }).hex).toBe(result.hex);
+  });
+
+  it('admits the same key file without blocking, and refuses an inherited descriptor', WINDOWS_PROFILE_TEST_OPTIONS, async () => {
+    const root = privateFixtureRoot(path.join(tmpdir(), 'realbud-key-custody-async-'));
+    directories.push(root);
+    const directory = path.join(root, 'workspace');
+    resolveDeskKey({ directory, safeStorage: safeStorageFixture() });
+    await expect(windowsKeyPrivacyAsync(path.join(directory, 'desk.key.wrap'), 'file')).resolves.toBeUndefined();
+    const loose = fs.mkdtempSync(path.join(tmpdir(), 'realbud-key-custody-loose-'));
+    directories.push(loose);
+    fs.writeFileSync(path.join(loose, 'session.json'), '{}');
+    await expect(windowsKeyPrivacyAsync(path.join(loose, 'session.json'), 'file')).rejects.toThrow(/windows-acl exit=/);
   });
 });

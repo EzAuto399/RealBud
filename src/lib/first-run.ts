@@ -22,7 +22,7 @@ export function createFirstRunApi(request: (path: string, init?: RequestInit) =>
 }
 
 /** How long the first screen waits for the saved setup before offering Try again. */
-export const SAVED_SETUP_TIMEOUT_MS = 20_000;
+export const SAVED_SETUP_TIMEOUT_MS = 60_000;
 export const SAVED_SETUP_SLOW =
   'Your saved setup did not answer in time. The office service may still be starting. Try again in a moment.';
 

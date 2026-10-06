@@ -19,14 +19,16 @@ import { MausAvatar } from "./Avatar";
 import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
 
 const SAMPLE_PROFILE_NAME = "Sample PM";
-const FINISH_TIMEOUT_MS = 15_000;
+// A busy Windows PC can stall the service for half a minute while Bud installs
+// (Windows issues log #6), so each step waits a minute before offering Try again.
+const FINISH_TIMEOUT_MS = 60_000;
 
 function finishRequest(path: string, init?: RequestInit) {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(new Error("RealBud's local service did not respond within 15 seconds."));
+      reject(new Error("RealBud's local service did not respond within a minute."));
       controller.abort();
     }, FINISH_TIMEOUT_MS);
   });

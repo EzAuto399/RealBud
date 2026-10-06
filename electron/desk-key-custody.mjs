@@ -2,7 +2,7 @@
 // a readable current book, or disappear when a different live key is rewrapped.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 
 const recovery = () => new Error('The saved workspace encryption key needs recovery. No replacement key was created.');
@@ -194,28 +194,54 @@ function literalPath(target) {
   return target;
 }
 
-/** No-op off win32, like the server helper. Tests inject a recording stand-in. */
-export function windowsKeyPrivacy(rawTarget, kind, restrict = false) {
-  if (process.platform !== 'win32') return;
+function keyPrivacyInvocation(rawTarget, kind, restrict) {
   const systemRoot = process.env.SystemRoot;
   const target = literalPath(rawTarget);
   if (!systemRoot || systemRoot.includes('\0') || !path.isAbsolute(systemRoot) || target.includes('\0') || !path.isAbsolute(target)) throw privacyRecovery(null);
+  return {
+    file: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED],
+    options: {
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'psmodulepath')),
+        PSModulePath: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
+        REALBUD_WINDOWS_FILE_PRIVACY_PATH: target,
+        REALBUD_WINDOWS_FILE_PRIVACY_KIND: kind,
+        REALBUD_WINDOWS_FILE_PRIVACY_ACTION: restrict ? 'restrict' : 'verify',
+      },
+      shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096,
+    },
+  };
+}
+
+/** No-op off win32, like the server helper. Tests inject a recording stand-in. */
+export function windowsKeyPrivacy(rawTarget, kind, restrict = false) {
+  if (process.platform !== 'win32') return;
+  const { file, args, options } = keyPrivacyInvocation(rawTarget, kind, restrict);
   try {
-    execFileSync(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED], {
-        env: {
-          ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'psmodulepath')),
-          PSModulePath: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
-          REALBUD_WINDOWS_FILE_PRIVACY_PATH: target,
-          REALBUD_WINDOWS_FILE_PRIVACY_KIND: kind,
-          REALBUD_WINDOWS_FILE_PRIVACY_ACTION: restrict ? 'restrict' : 'verify',
-        },
-        shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
-      });
+    execFileSync(file, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (error) {
     // Retain only the numeric exit; never the native stderr, command or path.
     throw privacyRecovery(error?.status);
   }
+}
+
+/**
+ * The same check without blocking Electron's main process. A cold PowerShell
+ * takes seconds on a busy Windows PC, and the synchronous form froze the whole
+ * window each time it read the local session (seen 6 Oct on a Windows VM).
+ * Every session and service-stop caller already awaits its verifier.
+ */
+export async function windowsKeyPrivacyAsync(rawTarget, kind, restrict = false) {
+  if (process.platform !== 'win32') return;
+  const { file, args, options } = keyPrivacyInvocation(rawTarget, kind, restrict);
+  await new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, error => error
+      // A numeric process exit arrives as `code` here, as `status` from execFileSync.
+      ? reject(privacyRecovery(Number.isInteger(error.code) ? error.code : null))
+      : resolve(undefined));
+    child.stdin?.end();
+  });
 }
 
 const hexKey = value => typeof value === 'string' && /^[a-fA-F0-9]{64}$/.test(value) ? value.toLowerCase() : null;

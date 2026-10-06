@@ -96,10 +96,10 @@ describe('welcome finish recovery', () => {
     const first = button(render(saved), 'Continue to Bud setup');
     first.props.onClick!(); first.props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1);
-    expect(fixture.api.mock.calls[0]).toEqual(['/api/desk', { signal: expect.any(AbortSignal) }, { timeoutMs: 15_000 }]);
+    expect(fixture.api.mock.calls[0]).toEqual(['/api/desk', { signal: expect.any(AbortSignal) }, { timeoutMs: 60_000 }]);
     expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(true);
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(text(render(saved))).toContain('local service did not respond within 15 seconds');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(text(render(saved))).toContain('local service did not respond within a minute');
     expect(fixture.api.mock.calls[0][1].signal.aborted).toBe(true);
     expect(button(render(saved), 'Continue to Bud setup').props.disabled).toBe(false);
     expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
@@ -108,7 +108,7 @@ describe('welcome finish recovery', () => {
     button(render(saved), 'Open the sample desk first').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk', '/api/onboarding']);
-    expect(fixture.api.mock.calls[2][2]).toEqual({ timeoutMs: 15_000 });
+    expect(fixture.api.mock.calls[2][2]).toEqual({ timeoutMs: 60_000 });
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showDesk' });
   });
 
@@ -118,7 +118,7 @@ describe('welcome finish recovery', () => {
     const completed = { ...saved, revision: 4, stage: 'complete' as const };
     const lateResponse = deferred<OnboardingState>();
     fixture.api.mockImplementation((path, init, opts) => {
-      expect(opts).toEqual({ timeoutMs: 15_000 });
+      expect(opts).toEqual({ timeoutMs: 60_000 });
       if (path === '/api/desk') return Promise.resolve({ book: { office: { pmUser: contact } } });
       if (path === '/api/desk/agency') {
         contact = JSON.parse(init.body).office.pmUser;
@@ -134,7 +134,7 @@ describe('welcome finish recovery', () => {
     });
 
     button(render(saved), 'Open the sample desk first').props.onClick!();
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(fixture.onDone).not.toHaveBeenCalled();
     expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
     button(render(saved), 'Open the sample desk first').props.onClick!();
