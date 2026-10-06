@@ -28,6 +28,14 @@ const live = (html: string) => /<p role="status" aria-live="polite" class="sr-on
 beforeEach(() => { vi.clearAllMocks(); link.status = { state: "unlinked" }; link.phase = { kind: "idle" }; });
 
 describe("connect this computer to your office", () => {
+  it("makes Connect with this code the primary button once a code is pasted", () => {
+    const button = (html: string, label: string) => new RegExp(`<button[^>]*class="([^"]*)"[^>]*>(?:(?!</button>).)*${label}`).exec(html)?.[1] ?? "";
+    const empty = view({ state: "unlinked" }), pasted = view({ state: "unlinked" }, { kind: "idle" }, { code: "rb1_" + "a".repeat(64) });
+    expect(button(empty, "Connect to your office")).toContain("bg-agency");
+    expect(button(empty, "Connect with this code")).not.toContain("bg-agency");
+    expect(button(pasted, "Connect with this code")).toContain("bg-agency");
+    expect(button(pasted, "Connect to your office")).not.toContain("bg-agency");
+  });
   it("offers one 44 px primary action and keeps the pasted code behind a closed disclosure", () => {
     const html = view({ state: "unlinked" });
     expect(html.match(/pm-decision/g)).toHaveLength(1);

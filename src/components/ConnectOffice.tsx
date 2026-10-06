@@ -71,7 +71,8 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       {status?.state === "revoked" ? <p>This computer was removed from your office. Connect it again to continue.</p> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
       {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : <>
-        <button type="button" className={primary} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
+        {/* A pasted code makes its own button the one to press (Windows issues log #37). */}
+        <button type="button" className={code.trim() ? secondary : primary} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
           {phase.kind === "starting" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={15} aria-hidden="true" />}
           Connect to your office
         </button>
@@ -82,7 +83,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
         <form className="mt-1 space-y-2" onSubmit={event => { event.preventDefault(); props.onLinkCode(); }}>
           <p>On realbud.app, open Account → Computers, create a link code, then paste it here.</p>
           <label className="block text-ink">Link code<input required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="rb1_…" className={field} /></label>
-          <button type="submit" className={secondary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
+          <button type="submit" className={code.trim() ? primary : secondary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
         </form>
       </details>
     </>}
