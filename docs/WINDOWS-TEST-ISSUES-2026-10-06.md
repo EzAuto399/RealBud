@@ -56,6 +56,14 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | 44 | Loading screens said "Opening You…" and "Opening Ask…" (old view names) | Labels in `App.tsx` predate the Workspace/Work rename | **Fixed** (this PR) |
 | 45 | After the failure, Work shows "Connection needs another look: Bud setup changed. Its private readiness check is still needed." The person can't tell what to do | Internal wording ("private readiness check") | Open (UX packet P1) |
 | 46 | On the fixed build (#87), Bud status correctly says "Bud setup stopped" with "Try setup again" after a restart. Before the restart it kept saying "In progress" (#41) | — | Verified (installed device) |
+| 47 | Fresh-profile run (fix build, sha256 `b8723144…`): install 61 s, first window 33 s, owner approval linked in under a minute, Bud set itself up unattended to "Bud ready" with the new step names, Get started showed "2 of 5 done", packs drawer read the live office list, Bud answered a first-day question in about 60 s | — | **Verified** (installed device + live link) |
+| 48 | Upgrade over a linked install hid Get started (automatic simple layout saved `go-live` hidden) | Layout saved before the card existed | **Fixed and merged** (#95) |
+| 49 | Leftover runtimes and user PATH entries | — | **Verified fixed on the VM** (#96): 1 runtime folder, 0 PATH entries after a fresh setup |
+| 50 | Get started step 2 reads "Bud is setting itself up · Done"; Desk shows an unexplained "Held" badge; empty packs text doesn't say what to do; owner hint path doesn't match the website | Copy | In progress (copy PR) |
+| 51 | Gmail: a fresh desktop offers its own Google sign-in ("continue to Composio") although the office expects its Gmail to be used | By design each computer has its own Composio user; the office mailbox is shared only in "Shared office Gmail" mode, set up by the owner on realbud.app → Computers, plus "Allow Gmail access" per computer. Google's screen says Composio until the gateway has RealBud's own Google OAuth client | Open: **owner setup** (shared mode, OAuth client). Code: a per-computer grant is lost when the connector credential is re-sent (fix in progress) |
+| 52 | Workspace leads with "Hermios CRM" and a green "Connect Bud to your Hermios"; Desk has a Hermios tab, for Auston staff who don't use Hermios | Hermios placement is office-agnostic | Open: **owner decision** (hide for offices without Hermios?) |
+| 53 | Bud and some messages still said "Ask" (old name for Work) | Prompt and copy strings | **Fixed** (this PR) |
+| 54 | Fresh Kevin already sees all 8 Auston jobs (paused), Sherry's included, before importing his role pack | Built-in Auston schedule loops are installed for every desktop | Open: should role-pack import be what adds the jobs? |
 
 ## Test-rig issues (not product, but they slowed testing)
 
@@ -69,4 +77,6 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | R6 | The x64 app is emulated on Arm Windows, so timings are pessimistic | Confirm timings on a real x64 PC before Friday |
 | R7 | Messages to peer sessions failed (stale socket); a follow-up chip was started in parallel | Do the work in one session |
 | R8 | The mouse wheel does not scroll inside the VM; a taskbar click on the active app minimises it | Use PageDown/PageUp; click a taskbar icon once |
+| R10 | VM screen only redraws while UTM is in front; typing from the background turns into "aaaa"; the Mac's own clipboard can leak into a VM paste | A small helper inside the VM (`RealBud-vm-rig`): runs commands published by the Mac, clicks/types with Windows input and uploads its own screenshots |
+| R11 | Colima (Docker) held 11 GB on the 16 GB Mac and starved the VM; the test-lab disk image unmounted overnight | Stop Colima while testing Windows; keep the rig on the internal disk |
 | R9 | The Mac's disk filled (108 MB free) and corrupted the VM: the EFI partition became unreadable and `bcdboot` cannot open `C:\\Windows` boot files | Freed 32 GB (old backups moved to the Passport) plus caches; the VM needs a Windows reinstall. Keep at least 30 GB free while the VM runs |

@@ -51,7 +51,7 @@ const EXISTING_JOB =
 
 const DRAFT_INTRO = "I can take this over as a saved job. Here's the plan:";
 const BOUNDARY =
-  "You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Press **Approve the plan** here in Ask, then **Run beside me**.";
+  "You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Press **Approve the plan** here in Work, then **Run beside me**.";
 const DRAFT_DOWN =
   "I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud setup in Workspace → Settings & help, then say this again or open Schedule → Teach Bud a job to write the steps yourself.";
 

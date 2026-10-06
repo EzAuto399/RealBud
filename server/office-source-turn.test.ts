@@ -31,12 +31,12 @@ describe("contextual mail and source exclusion", () => {
     expect(officeAppsForTurn(offered)).toEqual([]);
     const context = officeSourceTurnContext([], offered);
     expect(context).toContain("Gmail is offered for this office but not connected yet");
-    expect(context).toContain("**Connect Gmail** here in Ask");
+    expect(context).toContain("**Connect Gmail** here in Work");
     expect(context).toContain("Never start sign-in for them");
     expect(context).not.toMatch(/composio|You\s*→/i);
     // A failed or unconfigured read says nothing about which apps are missing.
     expect(officeSourceTurnContext([], { ...offered, error: "unreachable" })).not.toContain("Connect Gmail");
-    expect(officeSourceTurnContext([], null)).toContain("**connect <app>** here in Ask");
+    expect(officeSourceTurnContext([], null)).toContain("**connect <app>** here in Work");
     // Any app, not a fixed set: the ready list is labelled and the door stays open.
     const ready = officeSourceTurnContext(["gmail", "xero"], { ...access(), services: { ...access().services, xero: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "x", status: "ACTIVE" }] } } });
     expect(ready).toContain("Gmail, Xero");

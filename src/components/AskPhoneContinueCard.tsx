@@ -114,7 +114,7 @@ export function AskPhoneContinueCard({
         {ready && pair ? (
           <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-[13px] leading-5 text-ink">
             <li>
-              Message <span className="font-medium">@{pair.botUsername || "your bot"}</span> — replies come back to the phone and appear here in Ask.
+              Message <span className="font-medium">@{pair.botUsername || "your bot"}</span> — replies come back to the phone and appear here in Work.
             </li>
             <li>
               On phone: <code className="rounded bg-raised px-1 text-[12px]">/continue</code> latest reply,{" "}

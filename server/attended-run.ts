@@ -61,7 +61,7 @@ export function portalSignInCompleteIntent(text: string): boolean {
 }
 
 export const SIGN_IN_HANDOFF_CONTINUE =
-  "Stay in Ask on this computer. Press Continue on the sign-in checkpoint when the portal shows you are signed in — Bud will not open another browser window.";
+  "Stay in Work on this computer. Press Continue on the sign-in checkpoint when the portal shows you are signed in — Bud will not open another browser window.";
 
 
 export function fenceContextFor(threadId: string): AttendedFenceContext | undefined {

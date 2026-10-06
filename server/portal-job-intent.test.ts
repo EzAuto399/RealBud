@@ -175,7 +175,7 @@ describe("portalJobIntentReply", () => {
     });
     expect(draft).toHaveBeenCalledWith(IMPERATIVE);
     expect(result?.recipeId).toBe("draft-polite");
-    expect(result?.reply).toContain("Press **Approve the plan** here in Ask");
+    expect(result?.reply).toContain("Press **Approve the plan** here in Work");
   });
   it("returns null when the sentence is not portal work", async () => {
     expect(await portalJobIntentReply("hi", { recipes: () => [], draft: async () => recipe(), save: (row) => row })).toBeNull();
@@ -229,7 +229,7 @@ describe("portalJobIntentReply", () => {
     expect(result?.reply).toContain("Site: add the portal address on the job card before Run beside me");
     expect(result?.reply).toContain("Done when: Levy PDF downloaded");
     expect(result?.reply).toContain(
-      "You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Press **Approve the plan** here in Ask, then **Run beside me**.",
+      "You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Press **Approve the plan** here in Work, then **Run beside me**.",
     );
   });
 
