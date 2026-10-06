@@ -75,7 +75,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : null}
       {/* The link code is the day-one path for office staff; browser approval stays available for owners. */}
       <form className="space-y-2" onSubmit={event => { event.preventDefault(); props.onLinkCode(); }}>
-        <label className="block text-ink">Link code<input required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="Paste the code here" className={field} /></label>
+        <label className="block text-ink">Link code<input required title="" autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="Paste the code here" className={field} /></label>
         <button type="submit" className={primary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
       </form>
       {codePending ? null : <div className="border-t border-line pt-2 text-[12.5px] text-ink-muted">
@@ -83,7 +83,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
           {phase.kind === "starting" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
           I’m the office owner: approve in my browser
         </button>
-        <p>{phase.kind === "starting" ? "Opening your browser…" : "Owners: realbud.app → Office computers → Pair a computer."}</p>
+        <p>{phase.kind === "starting" ? "Opening your browser…" : "Owners: realbud.app → Computers → Pair a new computer."}</p>
       </div>}
     </>}
     {failure ? <p role="alert" className="text-danger">{failure}{!status ? <> <button type="button" className="pm-control underline underline-offset-2" onClick={props.onRefresh}>Try again</button></> : null}</p> : null}

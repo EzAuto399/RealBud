@@ -705,8 +705,10 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             {sampleBook ? (
               <StatusLabel tone={missed ? "hold" : "muted"}>Sample book</StatusLabel>
             ) : (
-              <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
-                {handsChip(snap.hands)}
+              <StatusLabel
+                tone={snap.hands === "held" ? (snap.handsDetail ? "hold" : "muted") : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}
+              >
+                {handsChip(snap.hands, snap.handsDetail)}
               </StatusLabel>
             )}
             {phonePaired(channels) ? (

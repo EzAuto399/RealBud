@@ -1,10 +1,12 @@
 import type { HandsSource } from "@shared/contracts";
 
 /** User chrome only. Advanced diagnostics may still say Hermes. */
-export function handsChip(hands: HandsSource): string {
+export function handsChip(hands: HandsSource, detail?: string | null): string {
   if (hands === "hermes") return "Bud live";
   if (hands === "csv") return "CSV live";
-  if (hands === "held") return "Held";
+  // A new office book starts held with no detail: no source has checked it yet.
+  // With a detail, a check or recovery put the facts on hold for a person.
+  if (hands === "held") return detail ? "On hold" : "Not checked yet";
   return "Demo";
 }
 
