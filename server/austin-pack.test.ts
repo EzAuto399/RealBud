@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { privateTempRoot } from './testing/private-fixture.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -15,7 +15,7 @@ const AUSTIN = ['bank-references', 'weekly-bills', 'inbound-triage', 'maintenanc
 const NOW = Date.parse('2026-10-06T09:00:00+10:00');
 
 function office(options: { zone?: string | null; signals?: Partial<AustinSignals> } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'rb-austin-pack-'));
+  const dir = privateTempRoot(join(tmpdir(), 'rb-austin-pack-'));
   cleanup.push(() => removeFixture(dir));
   const loops = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => NOW, execute: async () => ({ ok: true, detail: 'Fictional run.' }) });
   cleanup.push(() => loops.close());

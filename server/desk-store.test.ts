@@ -168,12 +168,16 @@ describe("DeskStore", () => {
 describe("desk backups", () => {
   const backups = (dir: string) => readdirSync(join(dir, "desk-backups")).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
 
-  it("keeps exactly the newest five by revision number across 2,000 commits and leaves no purged copies", () => {
+  // Windows admits each new private file through one PowerShell launch (about
+  // 0.46 s on a hosted runner), so 2,000 commits took 15 minutes there. 40 still
+  // rotates the five-slot window eight times over.
+  const commits = process.platform === "win32" ? 40 : 2000;
+  it(`keeps exactly the newest five by revision number across ${commits} commits and leaves no purged copies`, () => {
     const { dir, file, key } = tempFile();
     const store = new DeskStore({ file, book: fixtureBook(), key });
-    for (let i = 0; i < 2000; i += 1) store.persist();
+    for (let i = 0; i < commits; i += 1) store.persist();
     const last = store.data.revision;
-    expect(last).toBeGreaterThanOrEqual(2000);
+    expect(last).toBeGreaterThanOrEqual(commits);
     expect(backups(dir)).toEqual([4, 3, 2, 1, 0].map((back) => `desk-${last - back}.json`));
   }, 120_000);
 

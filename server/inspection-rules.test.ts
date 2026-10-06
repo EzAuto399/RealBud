@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { privateTempRoot } from './testing/private-fixture.ts';
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,7 +8,7 @@ import { removeFixture } from './testing/private-fixture.ts';
 
 const directories: string[] = [];
 const store = async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'realbud-inspection-rules-')); directories.push(directory);
+  const directory = privateTempRoot(join(tmpdir(), 'realbud-inspection-rules-')); directories.push(directory);
   const file = join(directory, 'inspection-rules.json');
   return { file, store: createInspectionRulesStore({ file, now: () => 1_000 }) };
 };

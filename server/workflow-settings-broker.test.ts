@@ -1,8 +1,8 @@
 // Bud's working-rules tools: a read with no card, every change and restore behind
+import { privateTempRoot } from "./testing/private-fixture.ts";
 // the one-time card, the stores' revision checks, and kept earlier versions.
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } })
 
 const directories: string[] = [];
 async function stores() {
-  const directory = await mkdtemp(join(tmpdir(), "realbud-bud-settings-")); directories.push(directory);
+  const directory = privateTempRoot(join(tmpdir(), "realbud-bud-settings-")); directories.push(directory);
   const maintenance = createMaintenanceReviewStore({ file: join(directory, "maintenance-review.json"), now: () => 5_000 });
   const inspection = createInspectionRulesStore({ file: join(directory, "inspection-rules.json"), now: () => 5_000 });
   const agencyService = createAgencySetupService({ directory, workspaceId: randomUUID(), actorId: () => "fictional-actor", now: () => 5_000 });
