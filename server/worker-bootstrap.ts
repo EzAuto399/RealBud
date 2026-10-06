@@ -295,7 +295,10 @@ export const runBootstrapStage: StageRun = async (invocation, home, signal, reco
       gitConfigDirectory = mkdtempSync(join(tmpdir(), "realbud-bootstrap-git-"));
       restrictNewSync([{ path: gitConfigDirectory, kind: "directory" }]);
       gitConfigFile = join(gitConfigDirectory, "config");
-      writeFileAtomic(gitConfigFile, "[core]\n\tautocrlf = false\n", 0o600);
+      // longpaths: the pinned Hermes tree has files ~160 characters deep, and the
+      // per-release runtime folder under a Windows profile puts the clone past
+      // MAX_PATH, so checkout fails ("unable to checkout working tree").
+      writeFileAtomic(gitConfigFile, "[core]\n\tautocrlf = false\n\tlongpaths = true\n", 0o600);
     }
     const env = bootstrapStageEnv(home, { ...process.env, PATH: augmentedPath() }, process.platform, gitConfigFile);
     await startBootstrapStage(invocation, recordHome, signal, env);
