@@ -20,6 +20,13 @@ interface Imported { directory: { suppliers: { emails: string[] }[] }; rejected:
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const money = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' });
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What a supplier list import says: "Imported 1 supplier", never "1 suppliers". */
+export function supplierImportMessage(result: Imported) {
+  const suppliers = result.directory.suppliers, withoutEmail = suppliers.filter(s => !s.emails.length).length;
+  return `Imported ${count(suppliers.length, 'supplier', 'suppliers')} · ${withoutEmail} without email · ${count(result.conflicts.length, 'conflict', 'conflicts')}${result.rejected.length ? ` · ${count(result.rejected.length, 'row or email', 'rows or emails')} skipped` : ''}.`;
+}
 
 function readReview(v: unknown): Review {
   const r = v as Review;
@@ -94,8 +101,7 @@ export function MaintenanceFindingsPanel() {
     setBusy(true); setMessage('');
     try {
       const result = await api('/api/supplier-directory/import', { method: 'POST', body: JSON.stringify({ csv: await file.text(), expectedRevision: review.directory.revision }) }) as Imported;
-      const suppliers = result.directory.suppliers, withoutEmail = suppliers.filter(s => !s.emails.length).length;
-      setMessage(`Imported ${suppliers.length} suppliers · ${withoutEmail} without email · ${result.conflicts.length} ${result.conflicts.length === 1 ? 'conflict' : 'conflicts'}${result.rejected.length ? ` · ${result.rejected.length} rows or emails skipped` : ''}.`);
+      setMessage(supplierImportMessage(result));
       await load().catch(() => {});
     } catch (error) {
       const status = (error as { status?: number }).status;
@@ -115,14 +121,14 @@ export function MaintenanceFindingsPanel() {
         Import REI suppliers (CSV)
         <input type="file" accept=".csv,text/csv" className="sr-only" disabled={busy} onChange={event => void importSuppliers(event.currentTarget)} />
       </label>
-      {review.directory.suppliers > 0 && <span className="text-[13px] text-ink-secondary">{review.directory.suppliers} suppliers{review.directory.withoutEmail ? ` · ${review.directory.withoutEmail} without email` : ''}</span>}
+      {review.directory.suppliers > 0 && <span className="text-[13px] text-ink-secondary">{count(review.directory.suppliers, 'supplier', 'suppliers')}{review.directory.withoutEmail ? ` · ${review.directory.withoutEmail} without email` : ''}</span>}
     </div>
     <ReiDirectoryRefresh kind="suppliers" refreshKey={check ? `${check.id}:${check.status}:${check.detail ?? ''}` : undefined} onSaved={() => void load().catch(() => {})} />
     {conflicts.length > 0 && <ul aria-label="Supplier list conflicts" className="list-disc rounded-lg border border-hold/40 p-2 pl-6 text-hold">
       {conflicts.map(c => <li key={c.email} className="break-words">Same email on two suppliers: {c.supplierRefs.join(', ')} ({c.email})</li>)}
     </ul>}
     {!run ? <p className="text-ink-secondary">{review.directory.suppliers ? 'Maintenance checks have not run yet. Turn them on or run them from Schedule.' : 'Import the supplier list, then turn on Maintenance checks in Schedule.'}</p> : <>
-      <p className="text-ink-secondary break-words">{run.checkedBills} reviewed maintenance bills checked · {new Date(run.finishedAt).toLocaleString()}</p>
+      <p className="text-ink-secondary break-words">{count(run.checkedBills, 'reviewed maintenance bill', 'reviewed maintenance bills')} checked · {new Date(run.finishedAt).toLocaleString()}</p>
       {!run.coverage.complete && <div role="status" className="rounded-lg border border-hold/40 p-2">
         <p className="font-medium text-hold">Partial check · bills from {run.coverage.from} to {run.coverage.to}</p>
         <ul className="list-disc pl-5">{run.gaps.map((gap, i) => <li key={i} className="break-words">{gap}</li>)}</ul>

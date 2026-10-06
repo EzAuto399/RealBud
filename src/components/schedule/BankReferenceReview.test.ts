@@ -26,6 +26,7 @@ describe("W1 run strip", () => {
   it("asks before the review is saved, then continues", () => {
     expect(buttons(strip(run({})))).toEqual(["Open pulled transactions"]);
     expect(strip(run({}))).toContain("2 transactions from 30 Sept 2026 to 2 Oct 2026");
+    expect(strip(run({ fetch: { from: "2026-09-30", to: "2026-10-02", batchId: "bank:fictional", transactionIds: ["txn_a"] } }))).toContain("1 transaction from 30 Sept 2026");
     expect(buttons(strip(run({}), true))).toEqual(["Continue"]);
   });
 
@@ -44,10 +45,20 @@ describe("W1 run strip", () => {
   it("puts the person's approval first, shows readback results and says when the import is done", () => {
     const asking = strip({ ...run({ step: "upload" }), working: true, ask: { requestId: "recipe-1", tool: "browser_upload", summary: "Upload REI-reviewed-abc.csv" } });
     expect(asking).toContain("Allow Bud to upload the reviewed file to REI?");
-    expect(buttons(asking)).toEqual(["Allow", "Don&#x27;t allow"]);
+    expect(buttons(asking)).toEqual(["Allow", "Don&#x27;t allow", "Stop"]);
     const read = strip({ ...run({ step: "readback", attention: { reason: "pending_rows", message: "Some payments are still pending in REI." } }), readback: { accepted: 1, rejected: 0, pending: 1, warnings: [] } });
     expect(read).toContain("REI&#x27;s result: 1 accepted · 0 rejected · 1 still pending");
     expect(w1View(run({ step: "done", outcome: "imported", confirm: { coveredThrough: "2026-10-02" } }), false)).toMatchObject({ detail: "Last import confirmed. Covered to 2 Oct 2026.", primary: ["start", "Start bank import"] });
+  });
+
+  it("offers Stop whenever Bud works or waits in REI, and not when nothing runs", () => {
+    const download = strip({ ...run({ step: "readback" }), working: true, ask: { requestId: "recipe-2", tool: "browser_download", summary: "Download the receipt list" } });
+    expect(download).toContain("Allow Bud to download REI&#x27;s receipt list to check the result?");
+    expect(buttons(download)).toEqual(["Allow", "Don&#x27;t allow", "Stop"]);
+    expect(buttons(strip({ ...run({ step: "upload" }), working: true }))).toEqual(["Stop"]);
+    expect(buttons(strip({ ...run({ step: "sign_in" }), working: true, signIn: "thread-fictional" }))).toEqual(["Stop"]);
+    expect(buttons(strip(run({ step: "readback" })))).not.toContain("Stop");
+    expect(buttons(strip(base))).toEqual(["Start bank import"]);
   });
 
   it("refuses a malformed status and formats the masked account and coverage", () => {

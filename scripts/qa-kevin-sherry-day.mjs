@@ -484,16 +484,16 @@ const sherry = {
       c(`All ${seed.mailbox.triage.length} fictional morning mails listed (many)`);
       await widths('sherry-morning-priorities', panel);
     }],
-    ['Supplier directory: one supplier, then the full list', async ({ page, openBills, widths, api, observations }, c) => {
+    ['Supplier directory: one supplier, then the full list', async ({ page, openBills, widths, api }, c) => {
       await openBills();
       const panel = page.getByRole('region', { name: 'Maintenance checks' });
       const lines = readFileSync(join(showcase, 'fixtures/supplier-directory.csv'), 'utf8').trim().split('\n');
       const input = panel.locator('input[type="file"]');
       await input.setInputFiles({ name: 'fictional-one-supplier.csv', mimeType: 'text/csv', buffer: Buffer.from(lines.slice(0, 2).join('\n')) });
       const one = await panel.getByRole('status').filter({ hasText: /^Imported 1 / }).first().innerText();
-      c(`One supplier: "${one}"`);
-      if (/1 suppliers/.test(one)) { c('Copy defect: the one-supplier message reads "1 suppliers"'); observations.push({ step: 'sherry-suppliers', note: `Copy: importing one supplier says "${one}" (src/components/desk/MaintenanceFindingsPanel.tsx builds "Imported ${'${'}suppliers.length} suppliers" without a singular).` }); }
-      await panel.getByText(/^1 suppliers?\b/).first().waitFor();
+      assert.match(one, /^Imported 1 supplier · /, `one supplier reads in the singular: "${one}"`);
+      c(`One supplier: "${one}" (singular)`);
+      await panel.getByText(/^1 supplier\b/).first().waitFor();
       await widths('sherry-one-supplier', panel);
       await input.setInputFiles({ name: 'fictional-suppliers.csv', mimeType: 'text/csv', buffer: Buffer.from(lines.join('\n')) });
       await panel.getByText(`Imported ${lines.length - 1} suppliers · 0 without email · 0 conflicts.`, { exact: true }).waitFor();
@@ -539,6 +539,8 @@ const sherry = {
       await until(async () => (await ok('/api/rei-directory/status')).run?.signIn, 'supplier refresh waits for REI sign-in');
       await page.getByRole('region', { name: 'Sign in to REI Cloud', exact: true }).waitFor();
       c('Signed out at REI: the "Sign in to REI Cloud" handover shows; Bud never types a password');
+      await panel.getByRole('button', { name: 'Stop', exact: true }).waitFor();
+      c('Stop shows on the refresh while Bud waits at REI sign-in');
       const waiting = (await ok('/api/rei-directory/status')).run;
       let stale = false;
       await stopService(); await wait(3000); await startService(); await reconnects(); // a restart that takes a few seconds
@@ -549,9 +551,10 @@ const sherry = {
       else {
         c(`Restart mid-flow: the manual refresh did not survive the restart (server: ${afterRestart.run ? afterRestart.run.phase : 'no run'}); nothing saved`);
         observations.push({ step: 'sherry-rei-refresh-restart', note: 'A manual "Refresh supplier list from REI" waiting at REI sign-in does not survive a service restart; nothing is saved. By design only the scheduled Supplier list check survives a restart (server/rei-directory-sync.ts header).' });
-        await wait(5000);
+        // The panel polls through the blip with a bounded backoff (src/lib/run-poll.ts, at most 5 s apart) and reconciles with the server by itself.
         const refresh = panel.getByRole('button', { name: 'Refresh supplier list from REI', exact: true });
-        stale = (await panel.getByText(/^Waiting for you to sign in to REI Cloud/).isVisible()) && await refresh.isDisabled();
+        stale = !(await until(async () => !(await refresh.isDisabled()) && !(await panel.getByText(/^Waiting for you to sign in to REI Cloud/).isVisible()), 'the open panel reconciles after the blip', 15_000).catch(() => false));
+        if (!stale) c('The open panel reconciled with the server by itself after the blip: no waiting copy, Refresh available, no reopening');
         if (stale) {
           const file = await shot('sherry-stale-refresh-after-restart');
           productBugs.push({ title: 'REI list refresh panel stays on "Waiting for you to sign in... Bud carries on by itself" after a service blip; Refresh stays disabled',
@@ -795,27 +798,29 @@ const kevin = {
       c('Upload approved once; REI\'s preview matches; Bud pressed nothing that posts');
       await widths('kevin-preview-ready', strip);
     }],
-    ['Approve then Stop: upload approved, then Stop at the result check, then finish', async ({ page, ok, labAct, widths, until, productBugs, shot }, c) => {
+    ['Approve then Stop: upload approved, then Stop at the result check, then finish', async ({ page, ok, labAct, widths, until }, c) => {
       const strip = await bankStrip(page);
       await labAct('process');
+      const stop = strip.getByRole('button', { name: 'Stop', exact: true });
       await strip.getByRole('button', { name: "I've processed it in REI", exact: true }).click();
-      await strip.getByText("Allow Bud to download REI's receipt list to check the result?", { exact: true }).waitFor({ timeout: 60_000 });
-      const stripStop = await strip.getByRole('button', { name: 'Stop', exact: true }).count();
-      const barStop = page.getByRole('button', { name: 'Stop browser task', exact: true });
-      c(`At the result-check approval the strip offers: ${(await strip.getByRole('button').allInnerTexts()).join(' / ')}`);
-      const noStop = !stripStop && !await barStop.isVisible();
-      if (noStop) {
-        const file = await shot('kevin-no-stop-at-rei-ask');
-        productBugs.push({ title: 'Bank import (W1) offers no Stop while an REI step waits or works',
-          repro: ['Schedule -> Bank reference review -> Start bank import -> review and save -> Continue -> sign in to REI -> Allow the upload', 'Process in REI, press "I\'ve processed it in REI"', 'At "Allow Bud to download REI\'s receipt list to check the result?" the strip offers only Allow / Don\'t allow; while a stage runs it shows "Working..." with no button; the status bar shows no "Stop browser task"'],
-          cause: 'POST /api/w1/runs/:id/stop exists (server/w1-host.ts) but W1RunPanel/W1RunStrip in src/components/schedule/BankReferenceReview.tsx never call it (actions: start, advance, posted, unsure, retry-upload, abandon, allow, deny, open). The REI list refresh card (src/components/ReiDirectoryRefresh.tsx) shows Stop at the same kind of ask. On a live work browser the status-bar "Stop browser task" may appear (it needs /api/browser active); with the fictional portal it did not.',
-          screenshot: file });
-        c('PRODUCT GAP: no Stop on the bank import strip at the REI ask or while working; "Don\'t allow" used as the stop (see productBugs)');
-      }
-      await strip.getByRole('button', { name: "Don't allow", exact: true }).click();
-      const stopped = await until(async () => { const s = await ok('/api/w1/status'); return !s.working && !s.ask ? s : null; }, 'run holds after Don\'t allow');
+      const asked = strip.getByText("Allow Bud to download REI's receipt list to check the result?", { exact: true });
+      // While the stage works (before REI's ask) the strip reads "Working…"; it may pass too quickly to see.
+      const working = await until(async () => (await asked.isVisible()) ? 'ask' : (await strip.getByText('Working…', { exact: true }).isVisible()) ? ((await stop.isVisible()) ? 'working+stop' : 'working-no-stop') : null, 'the result check starts', 60_000);
+      assert.notEqual(working, 'working-no-stop', 'Stop shows while the bank import works');
+      if (working === 'working+stop') c('While Bud works on the result check the strip shows "Working…" with Stop');
+      await asked.waitFor({ timeout: 60_000 });
+      const offered = await strip.getByRole('button').allInnerTexts();
+      assert.deepEqual(offered, ['Allow', "Don't allow", 'Stop'], `the strip offers Stop at the REI ask: ${offered}`);
+      c(`At the result-check approval the strip offers: ${offered.join(' / ')}`);
+      const effectsBefore = (await labAct('status')).effects;
+      await stop.focus(); await page.keyboard.press('Enter');
+      const stopped = await until(async () => { const s = await ok('/api/w1/status'); return !s.working && !s.ask ? s : null; }, 'the run stops after Stop');
       assert.notEqual(stopped.run.outcome, 'imported', 'not confirmed without the read-back');
-      c(`Don't allow at the download: the run holds at "${stopped.run.step}" and is not marked imported`);
+      assert.match(stopped.note ?? '', /^Stopped\. Bud did nothing more in REI/, `Stop note: ${stopped.note}`);
+      await strip.getByText('Stopped. Bud did nothing more in REI.', { exact: false }).first().waitFor();
+      assert.equal(await stop.count(), 0, 'Stop leaves once nothing runs');
+      assert.deepEqual((await labAct('status')).effects, effectsBefore, 'nothing more uploaded or downloaded after Stop');
+      c(`Keyboard: Stop at the download ask; the run ends cleanly at "${stopped.run.step}", is not marked imported, the strip says "Stopped. Bud did nothing more in REI." and nothing more is uploaded (REI effects: ${effectsBefore.join(', ')})`);
       await widths('kevin-after-stop', strip);
       const trail = [];
       const allow = strip.getByRole('button', { name: 'Allow', exact: true }), next = strip.getByRole('button', { name: /^(Continue|Check again|Check REI|Try again)$/ }).first();
@@ -833,14 +838,13 @@ const kevin = {
         else { trail.push(`press ${await next.innerText()}`); await next.click(); }
         await wait(500);
       }
-      c(`After Don't allow: ${trail.join(' → ')}`);
+      c(`After Stop: ${trail.join(' → ')}`);
       await strip.getByText('Last import confirmed', { exact: false }).first().waitFor({ timeout: 60_000 });
       const done = await ok('/api/w1/status');
       assert.equal(done.run.outcome, 'imported');
       c(`Resumed: read back ${done.readback.accepted} accepted · ${done.readback.rejected} rejected · ${done.readback.pending} pending`);
       assert.ok((await labAct('status')).effects.every(e => e === 'upload'), 'Bud pressed nothing that posts');
       await widths('kevin-readback', strip);
-      if (noStop) throw new Error('Product gap: the bank import strip has no Stop at the REI ask or while working (flow finished with Don\'t allow; see productBugs).');
     }],
   ],
   async afterBlip({ page, openJob }, c) {

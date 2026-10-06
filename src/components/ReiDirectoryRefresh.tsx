@@ -4,6 +4,7 @@
 // decides every step; this panel shows its state and sends the person's answers.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { useRunPoll } from "@/lib/run-poll";
 import { BrowserSignInStrip, useBrowserSignIns } from "./BrowserSignInStrip";
 
 export type ReiDirectoryKind = "tenants" | "suppliers";
@@ -69,12 +70,10 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     void api("/api/rei-directory/status").then(show).catch(() => { if (mounted.current) setFailure("The REI refresh could not be loaded."); });
     return () => { mounted.current = false; };
   }, [show, refreshKey]);
-  // Poll while Bud works, waits for an answer or for sign-in.
-  useEffect(() => {
-    if (!status?.run?.working) return;
-    const timer = setTimeout(() => void api("/api/rei-directory/status").then(show).catch(() => {}), 1000);
-    return () => clearTimeout(timer);
-  }, [status, show]);
+  // Poll while Bud works, waits for an answer or for sign-in. A failed read keeps
+  // polling, so after a service blip the panel shows the server's real run again.
+  const load = useCallback(() => api("/api/rei-directory/status").then(show), [show]);
+  useRunPoll(Boolean(status?.run?.working), load, 1000);
   const post = (path: string, body: unknown) => {
     setBusy(true); setFailure("");
     return api(path, { method: "POST", body: JSON.stringify(body) }).then(show)
@@ -98,7 +97,8 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     {other && <p className="text-[13px] text-ink-secondary">Bud is refreshing the other list from REI. Wait for it to finish.</p>}
     {run?.working && !run.ask && !run.signIn && <div role="status" className="flex flex-wrap items-center gap-2"><p className="flex-1">Bud is reading REI's {noun.list}… Nothing in REI changes.</p>
       <button type="button" className={control} disabled={busy} onClick={() => void post(`${at}/stop`, {})}>Stop</button></div>}
-    {run?.signIn && <p role="status">Waiting for you to sign in to REI Cloud. Bud carries on by itself once you're signed in; it never types your password.</p>}
+    {run?.signIn && <div className="flex flex-wrap items-center gap-2"><p role="status" className="flex-1">Waiting for you to sign in to REI Cloud. Bud carries on by itself once you're signed in; it never types your password.</p>
+      <button type="button" className={control} disabled={busy} onClick={() => void post(`${at}/stop`, {})}>Stop</button></div>}
     {run && signIns.handovers.map(handover => <BrowserSignInStrip key={handover.id} handover={handover} busy={signIns.acting === handover.id}
       error={signIns.error?.id === handover.id ? signIns.error.text : null} onDone={() => void signIns.act(handover.id, "done")} onStop={() => void signIns.act(handover.id, "stop")} />)}
     {run?.ask && <div role="group" aria-label="Approval for REI" className="space-y-2 rounded-lg border border-portal/40 p-2">
@@ -112,7 +112,7 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     </div>}
     {preview && <div role="group" aria-label={`REI ${noun.list} preview`} className="space-y-2 rounded-lg border border-line p-2">
       <p className="font-medium">{count(preview.accepted, noun.one, noun.many)} ready to save{preview.rejected.length ? ` · ${preview.rejected.length} skipped` : ""}{preview.withoutEmail ? ` · ${preview.withoutEmail} without email` : ""}</p>
-      <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{preview.rows} rows in REI's export{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${preview.footer} records REI lists` : ` · REI lists ${preview.footer} records`}</p>
+      <p className={preview.countMatches === false ? "text-hold" : "text-ink-secondary"}>{count(preview.rows, "row", "rows")} in REI's export{preview.footer === null ? " · REI's record count was not readable" : preview.countMatches ? ` · matches the ${count(preview.footer, "record", "records")} REI lists` : ` · REI lists ${count(preview.footer, "record", "records")}`}</p>
       {scheduled && !preview.unchanged && <p className="font-medium">Bud's scheduled check found changes in REI's {noun.list}. Nothing changes here until you approve.</p>}
       <p className="text-ink-secondary">{preview.unchanged ? "No changes since the last save." : `${preview.added} new · ${preview.removed} removed · ${preview.changed} changed`}</p>
       {preview.changes && !preview.unchanged && <SupplierChangeList changes={preview.changes} added={preview.added} removed={preview.removed} />}
