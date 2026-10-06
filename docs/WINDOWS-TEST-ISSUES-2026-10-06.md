@@ -38,8 +38,8 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | 26 | Every package of the bundled REI support files is pinned by digest except `recipes.json`, the file holding `financialRoutes` and the grid scroll. `provenance.json` covers SKILL.md, site-map and references only | Generator scope | Open: add `recipesSha256` to provenance and its test |
 | 27 | The Desk shows a "Hermios" tab beside Tasks/Properties/Bills on Kevin's fresh install | To check whether it is intended for customers | Open |
 | 28 | After the RC reinstall, Bud setup showed "stopped" and needed "Try setup again" | The upgrade killed the running install. Expected, but an update should resume Bud setup by itself | Open |
-| 29 | Arrange Desk: at a 1068×808 window the sheet is taller than the window, so Save sits below the fold. Ticking a box jumped the sheet back to the top | Sheet has no sticky footer; re-render resets scroll | Open: sticky Save / Reset footer; keep scroll position |
-| 30 | Escape does not close the Arrange Desk sheet | Missing Escape handler on the dialog | Open (accessibility) |
+| 29 | Arrange Desk: at a 1068×808 window the sheet is taller than the window, so Save sits below the fold. Ticking a box jumped the sheet back to the top | Sheet has no sticky footer; re-render resets scroll | **Fixed on branch** `claude/issues-log-3`: the sheet scrolls itself and Save/Reset are sticky. `qa-desktop-shell` asserts Save is visible at 1068×640. The jump to the top was the deliberate focus on Close after Save |
+| 30 | Escape does not close the Arrange Desk sheet | Missing Escape handler on the dialog | **Closed, not a product bug:** `qa-desktop-shell` proves Escape closes the sheet. In the VM, focus had left the sheet (R8) |
 | 31 | Saved "Desk arrangement saved." (Morning brief, Mail priorities, Bills and calendar, Setup checklist + Evidence, Today, Connected accounts), but an empty book shows only "Start your office book", so the choice is not visible until properties exist | By design for an empty book? | Open: confirm with owner |
 
 ## Test-rig issues (not product, but they slowed testing)

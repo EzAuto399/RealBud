@@ -156,6 +156,12 @@ try {
   assert.ok(await sheet.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled());
   assert.ok(await sheet.getByRole('checkbox', { name: 'Approvals waiting always shows', exact: true }).isDisabled());
   await shot('03-arrange-desk.png');
+  // A short window (the Windows VM's 1068×808 shell left ~640 px) must still show Save without scrolling.
+  await page.setViewportSize({ width: 1068, height: 640 });
+  const saveBox = await sheet.getByRole('button', { name: 'Save', exact: true }).boundingBox();
+  assert.ok(saveBox && saveBox.y >= 0 && saveBox.y + saveBox.height <= 640, `Save is visible on a 640 px window (${JSON.stringify(saveBox)})`);
+  await shot('03b-arrange-desk-short-window.png');
+  await page.setViewportSize({ width: 1440, height: 940 });
   await sheet.getByRole('button', { name: 'Reset to recommended', exact: true }).click();
   await sheet.getByRole('button', { name: 'Save', exact: true }).click();
   await sheet.getByText('Desk arrangement saved.', { exact: true }).waitFor();
