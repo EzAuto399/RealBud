@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { runtimeCli } from "./hermes-paths.ts";
+import { serviceSafeChildEnv } from "./service-child-env.ts";
 import { selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { WORKER_MODEL_ENV_NAMES, workerModelGrant } from "./worker-model-access.ts";
 import { MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile } from "./hermes-pack.ts";
@@ -103,13 +105,61 @@ export function windowsHermesRuntimeEnv(home: string, source: NodeJS.ProcessEnv)
   const env = { ...source };
   const originalPath = env.PATH ?? Object.entries(env).find(([key]) => key.toUpperCase() === "PATH")?.[1] ?? "";
   for (const key of Object.keys(env)) if (key.toUpperCase() === "PATH") delete env[key];
+  // A PATH (or Git Bash setting) inherited from an earlier attempt can name
+  // another runtime folder's git/node. This runtime adds its own folders below,
+  // so it never depends on a sibling that may be removed.
+  const runtimes = basename(dirname(home)) === "runtimes" ? dirname(home) : join(home, "runtimes");
+  const inherited = withoutRuntimePathEntries(originalPath, runtimes) ?? originalPath;
   const dirs = [join(home, "hermes-agent", "venv", "Scripts"), join(home, "node"), join(home, "bin"),
     join(home, "git", "cmd"), join(home, "git", "usr", "bin"), join(home, "git", "bin")].filter(existsSync);
-  env.PATH = [...dirs, originalPath].filter(Boolean).join(";");
+  env.PATH = [...dirs, inherited].filter(Boolean).join(";");
   const bash = [join(home, "git", "usr", "bin", "bash.exe"), join(home, "git", "bin", "bash.exe")].find(existsSync);
   if (bash) env.HERMES_GIT_BASH_PATH = bash;
+  else if (env.HERMES_GIT_BASH_PATH && withoutRuntimePathEntries(env.HERMES_GIT_BASH_PATH, runtimes) !== null) delete env.HERMES_GIT_BASH_PATH;
   env.PYTHONIOENCODING = "utf-8"; env.PYTHONUTF8 = "1";
   return env;
+}
+
+const pathKey = (entry: string) => entry.trim().replace(/^"(.*)"$/, "$1").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+
+/** `path` without the entries inside `runtimesRoot` (a Windows `;` list,
+ * compared case-insensitively), or null when nothing would change. Other
+ * entries, their order and empty segments are kept exactly. */
+export function withoutRuntimePathEntries(path: string, runtimesRoot: string): string | null {
+  const root = pathKey(runtimesRoot);
+  if (!root) return null;
+  const items = path.split(";");
+  const kept = items.filter(entry => { const key = pathKey(entry); return key !== root && !key.startsWith(`${root}\\`); });
+  return kept.length === items.length ? null : kept.join(";");
+}
+
+/**
+ * The pinned installer's git and node stages persist their portable folders
+ * to the User PATH (install.ps1 has no switch to skip that), and every later
+ * stage re-reads that PATH from the registry, so a retry found a failed
+ * attempt's git and each attempt added more entries. RealBud's private
+ * runtime never needs them: windowsHermesRuntimeEnv gives every child its own
+ * folders. Only entries inside RealBud's runtimes folder are removed. Best
+ * effort: a failure is logged without paths and never blocks setup.
+ */
+export async function pruneRuntimeUserPath(runtimesRoot: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+  if (platform !== "win32") return;
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows";
+  const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const ps = (command: string, extra: NodeJS.ProcessEnv = {}) => new Promise<string>((resolve, reject) =>
+    execFile(powershell, ["-NoProfile", "-NonInteractive", "-Command", command],
+      { env: serviceSafeChildEnv(extra), windowsHide: true, timeout: 30_000, maxBuffer: 256_000 },
+      (error, stdout) => error ? reject(error) : resolve(String(stdout))));
+  try {
+    // ponytail: read-then-write like the installer itself, so a PATH edit made
+    // by another program in between can be lost; the window is one process.
+    const next = withoutRuntimePathEntries(await ps("[Console]::Out.Write([Environment]::GetEnvironmentVariable('Path','User'))"), runtimesRoot);
+    if (next === null) return;
+    // Passed by name, never interpolated into the command.
+    await ps("[Environment]::SetEnvironmentVariable('Path', $env:REALBUD_USER_PATH, 'User')", { REALBUD_USER_PATH: next });
+  } catch {
+    console.warn(`[${new Date().toISOString()}] Bud setup could not tidy the user PATH; setup continues.`);
+  }
 }
 
 export function windowsHermesGit(home: string): string {

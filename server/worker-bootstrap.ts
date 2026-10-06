@@ -5,9 +5,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { DatabaseSync } from "node:sqlite";
 import { mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
-import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
+import { pruneRuntimeUserPath, windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -327,8 +327,12 @@ export async function runWorkerBootstrap(options: {
   const plan = bootstrapPlan(platform, options.release, options.privateRuntime);
   if (!plan) throw new BootstrapError("Automatic Bud setup is not available on this computer yet.");
   const release = acquireSetup(options.lockHome ?? options.home);
+  // Under the setup lock, so another window's installer is never mid-run.
+  // Private runtimes need no User PATH entries (see pruneRuntimeUserPath).
+  const tidyPath = () => options.privateRuntime ? pruneRuntimeUserPath(dirname(options.home)) : Promise.resolve();
   let temp: string | undefined;
   try {
+    await tidyPath();
     options.progress("Downloading verified setup", 0, plan.stages.length);
     const bytes = await (options.download ?? downloadBootstrap)(plan, options.signal, options.request);
     temp = mkdtempSync(join(tmpdir(), "realbud-bootstrap-"));
@@ -350,7 +354,7 @@ export async function runWorkerBootstrap(options: {
     }
     await options.finalize?.();
   } finally {
-    try { if (temp) rmSync(temp, { recursive: true, force: true }); }
+    try { if (temp) rmSync(temp, { recursive: true, force: true }); await tidyPath(); }
     finally { release(); }
   }
 }
