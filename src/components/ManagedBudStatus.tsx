@@ -35,7 +35,10 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   // Office status scopes withdrawal to the current installation. A worker
   // snapshot may still describe the previous link during an approved relink.
   // This affects presentation only; the retry guard retains the worker hold.
-  const withdrawn = office.status ? office.status.serviceWithdrawn === true : Boolean(status?.modelAccess?.withdrawn);
+  // Only a fresh link (linked or pending) may override the worker's hold; an
+  // unlinked or revoked computer keeps the withdrawal, never a link prompt.
+  const freshLink = office.status?.state === "linked" || office.status?.state === "pending";
+  const withdrawn = office.status?.serviceWithdrawn === true || (!freshLink && Boolean(status?.modelAccess?.withdrawn));
   const displayStatus = status?.modelAccess && withdrawn !== status.modelAccess.withdrawn ? {
     ...status, ready: false, autoSetup: undefined, lastPing: null, lastTest: null,
     ...(status.model ? { model: { ...status.model, attached: false } } : {}),
