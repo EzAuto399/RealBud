@@ -64,6 +64,12 @@ The owner asked (6 Oct) that every issue and inconvenience hit while testing Rea
 | 52 | Workspace leads with "Hermios CRM" and a green "Connect Bud to your Hermios"; Desk has a Hermios tab, for Auston staff who don't use Hermios | Hermios placement is office-agnostic | Open: **owner decision** (hide for offices without Hermios?) |
 | 53 | Bud and some messages still said "Ask" (old name for Work) | Prompt and copy strings | **Fixed** (this PR) |
 | 54 | Fresh Kevin already sees all 8 Auston jobs (paused), Sherry's included, before importing his role pack | Built-in Auston schedule loops are installed for every desktop | Open: should role-pack import be what adds the jobs? |
+| 55 | realbud.app/download served v0.1.18 (no Windows file at all) | No release had been published since 16 Sep; all builds were numbered 0.1.34 | **Fixed and live:** v0.1.35 published with Windows + Mac files; download page shows 0.1.35 |
+| 56 | Bud said the office had no "weekly bills" workflow | Work turns didn't include Schedule jobs | **Fixed (#101), verified on 0.1.35:** Bud describes the job and says it's paused |
+| 57 | Morning money check on an empty book set Desk "On hold" and used model budget | Check ran Bud with no properties | **Fixed (#104), verified on 0.1.35:** "Waiting for properties", no model call |
+| 58 | Fresh setup failed once with "modified source files" (deepest checkout file) | Post-install check ran Git without long paths | **Fixed (#102)** |
+| 59 | Before linking: Bud status "Needs attention", Work said "Finish Bud's installation", status bar said "Connected" | State mapping ignored the office link | **Fixed (#106)** |
+| 60 | Download page step 3 and /start still described browser approval first; no Windows warning help | Website copy predates link-code-first | **Fixed and deployed** (RealBud-website#23) |
 
 ## Test-rig issues (not product, but they slowed testing)
 
