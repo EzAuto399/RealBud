@@ -13,17 +13,24 @@ import type {
   CsvImportPreview,
   Draft,
   DraftKind,
+  FactSource,
   HandsSource,
   LedgerFacts,
   Property,
   PropertyOptions,
+  PropertyOwner,
+  ReiField,
+  ReiFieldValue,
+  ReiRefs,
   WorkItem,
   WorkState,
 } from "../shared/contracts.ts";
+import { REI_FIELDS } from "../shared/contracts.ts";
+import type { BookProposal } from "../shared/desk-v3.ts";
 import { DATA_DIR } from "./config.ts";
 import { writeFilePrivateSync } from "./atomic.ts";
 import { persistArtifact } from "./audit-artifacts.ts";
-import { parsePmsExport, resolveExportRows } from "./csv-ledger.ts";
+import { normalizeAddress, parsePmsExport, resolveExportRows } from "./csv-ledger.ts";
 import { runBoundedPrefill } from "./portal-handoff.ts";
 import {
   applyOptions,
@@ -106,6 +113,64 @@ export interface NewPropertyInput {
   propertyCode?: string;
   weeklyRentCents: number;
   options?: Partial<PropertyOptions>;
+  owner?: PropertyOwner;
+}
+
+/** One REI read, mapped onto Desk by server/rei-desk-sync.ts. Desk applies it with the precedence rule. */
+export interface ReiDeskRead {
+  observedAt: number;
+  /** REI values for one matched Desk property. */
+  updates: Array<{ propertyId: string; values: Partial<Record<ReiField, ReiFieldValue>>; refs?: ReiRefs }>;
+  /** Properties REI has and Desk does not: proposed as cards, never added. */
+  proposals: Array<{ address: string; tenantName: string; weeklyRentCents: number; ownerName?: string; rei?: ReiRefs }>;
+  /** Unmatched or ambiguous rows, held for a person. `identity` is what REI showed. */
+  holds: Array<{ identity: string; kind: "unmatched" | "ambiguous"; detail: string }>;
+  /** Parts read completely (every page). Only these are stamped fresh. */
+  fresh: string[];
+}
+export interface ReiDeskApplied { updated: number; differs: number; proposed: number; held: number; fresh: string[] }
+
+/** The source a REI read stamps for one part, e.g. src-rei-tenants. */
+export const reiSourceId = (part: string) => `src-rei-${part}`;
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+function readField(property: Property, field: ReiField): ReiFieldValue | undefined {
+  if (field === "ownerName") return property.owner?.name || undefined;
+  if (field === "ownerContact") return property.owner?.contact || undefined;
+  const value = property[field];
+  return value === "" ? undefined : value;
+}
+function writeField(property: Property, field: ReiField, value: ReiFieldValue): void {
+  if (field === "ownerName" || field === "ownerContact") {
+    const owner = property.owner ?? { name: "", contact: "" };
+    property.owner = { ...owner, [field === "ownerName" ? "name" : "contact"]: String(value) };
+  } else if (field === "weeklyRentCents" || field === "amountOwingCents") property[field] = Number(value);
+  else property[field] = String(value);
+}
+function sameValue(field: ReiField, a: ReiFieldValue, b: ReiFieldValue): boolean {
+  if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
+  return field === "address" ? normalizeAddress(a) === normalizeAddress(b) : tidy(a) === tidy(b);
+}
+/** A value Desk can hold for this field, or a plain sentence saying why not. */
+function checkField(field: ReiField, value: unknown): ReiFieldValue {
+  const bad = (why: string) => Object.assign(new Error(why), { status: 400 });
+  if (field === "weeklyRentCents") {
+    if (!Number.isInteger(value) || (value as number) <= 0) throw bad("weekly rent must be a whole number of cents above zero");
+    return value as number;
+  }
+  if (field === "amountOwingCents") {
+    if (!Number.isSafeInteger(value)) throw bad("amount owing must be a whole number of cents");
+    return value as number;
+  }
+  if (typeof value !== "string") throw bad(`${field} must be text`);
+  const text = value.trim();
+  if (field === "paidTo") {
+    if (!YMD.test(text)) throw bad("paid-to date must be YYYY-MM-DD");
+    return text;
+  }
+  if (text.length > 160) throw bad(`${field} is too long`);
+  if (!text && field !== "ownerContact") throw bad(`${field} required`);
+  return text;
 }
 
 export const MAX_BOOK_PROPERTIES = 1_000;
@@ -297,6 +362,7 @@ export class Desk {
         tenantName: item.fields.tenantName,
         tenantPhone: item.fields.tenantPhone,
         weeklyRentCents: item.fields.weeklyRentCents,
+        ...(item.fields.ownerName ? { ownerName: item.fields.ownerName } : {}),
         origin: item.origin,
       })),
       cases: v3.cases.map((item) => ({
@@ -436,19 +502,11 @@ export class Desk {
       this.store.data.properties.map((property) => property.propertyCode?.toLowerCase()).filter((code): code is string => Boolean(code)),
     );
     const ids = new Set(this.store.data.properties.map((property) => property.id));
-    const prepared = proposals.map((proposal) =>
-      this.prepareProperty(
-        {
-          address: proposal.fields.address,
-          tenantName: proposal.fields.tenantName,
-          tenantPhone: proposal.fields.tenantPhone,
-          weeklyRentCents: proposal.fields.weeklyRentCents,
-        },
-        addresses,
-        codes,
-        ids,
-      ),
-    );
+    const prepared = proposals.map((proposal) => {
+      const row = this.prepareProperty(proposalInput(proposal), addresses, codes, ids);
+      this.stampNewProperty(row.property, proposal.origin === "rei" ? "rei" : "import", proposal.fields.rei);
+      return row;
+    });
     const proposalIds = new Set(proposals.map((proposal) => proposal.id));
     this.store.runBatch(() => {
       for (const row of prepared) this.insertProperty(row);
@@ -550,7 +608,10 @@ export class Desk {
 
   /** Bud/intake: stage add-property proposals from structured items or raw
    * pasted text. Nothing touches the book until the PM allows each card. */
-  proposeBook(input: { text?: string; items?: IntakeItem[] }, origin: "ask" | "manual" = "ask"): { created: number; skipped: number; unparsed: string[] } {
+  proposeBook(
+    input: { text?: string; items?: Array<IntakeItem & { ownerName?: string; rei?: ReiRefs }> },
+    origin: "ask" | "manual" | "rei" = "ask",
+  ): { created: number; skipped: number; unparsed: string[] } {
     this.assertWritable();
     let items = input.items;
     let unparsed: string[] = [];
@@ -574,12 +635,18 @@ export class Desk {
       const tenantName = String(item.tenantName ?? "").trim();
       const tenantPhone = String(item.tenantPhone ?? "").trim();
       const weeklyRentCents = Math.round(Number(item.weeklyRentCents));
-      if (!address || !tenantName || !tenantPhone || !Number.isInteger(weeklyRentCents) || weeklyRentCents <= 0) {
+      // REI's tenant list shows no phone, so a REI card may come without one.
+      if (!address || !tenantName || (!tenantPhone && origin !== "rei") || !Number.isInteger(weeklyRentCents) || weeklyRentCents <= 0) {
         skipped++;
         continue;
       }
       const key = `${address.toLowerCase()}|${tenantName.toLowerCase()}`;
-      const exists = proposalKeys.has(key) || propertyAddresses.has(address.toLowerCase());
+      // One REI card per address: a later read adds nothing until it is allowed or discarded.
+      const exists = proposalKeys.has(key) || propertyAddresses.has(address.toLowerCase()) ||
+        (origin === "rei" && this.store.v3.bookProposals.some((proposal) => proposal.fields.address.toLowerCase() === address.toLowerCase()));
+      // Owner and REI references come only from a REI read, never from a request body.
+      const ownerName = origin === "rei" ? String(item.ownerName ?? "").trim().slice(0, 160) : "";
+      const rei = origin === "rei" && item.rei && Object.keys(item.rei).length ? { ...item.rei } : undefined;
       if (exists) {
         skipped++;
         continue;
@@ -589,7 +656,7 @@ export class Desk {
         kind: "add-property",
         status: "open",
         origin,
-        fields: { address, tenantName, tenantPhone, weeklyRentCents },
+        fields: { address, tenantName, tenantPhone, weeklyRentCents, ...(ownerName ? { ownerName } : {}), ...(rei ? { rei } : {}) },
         createdAt: now,
       });
       proposalKeys.add(key);
@@ -607,12 +674,7 @@ export class Desk {
     const idx = this.store.v3.bookProposals.findIndex((p) => p.id === id && p.status === "open");
     if (idx < 0) throw Object.assign(new Error("no such book proposal"), { status: 404 });
     const proposal = this.store.v3.bookProposals[idx]!;
-    const added = this.addProperty({
-      address: proposal.fields.address,
-      tenantName: proposal.fields.tenantName,
-      tenantPhone: proposal.fields.tenantPhone,
-      weeklyRentCents: proposal.fields.weeklyRentCents,
-    });
+    const added = this.addProperty(proposalInput(proposal), proposal.origin === "rei" ? "rei" : "import", proposal.fields.rei);
     const property = added.properties.find((p) => p.address === proposal.fields.address);
     if (property) {
       appendAllowedLine(property.id, `added from ${proposal.origin === "ask" ? "Bud intake" : "intake"} — ${proposal.fields.address}, ${proposal.fields.tenantName}`, this.vaultRoot, proposal.fields.address);
@@ -822,12 +884,14 @@ export class Desk {
     return property;
   }
 
-  addProperty(input: NewPropertyInput): DeskSnapshot {
+  /** `source`: a person in Desk, unless a REI card or an intake card was allowed. */
+  addProperty(input: NewPropertyInput, source: FactSource = "desk", rei?: ReiRefs): DeskSnapshot {
     this.assertWritable();
     if (this.store.data.properties.length >= MAX_BOOK_PROPERTIES) {
       throw Object.assign(new Error(`the book is full (${MAX_BOOK_PROPERTIES} properties)`), { status: 400 });
     }
     const prepared = this.prepareProperty(input);
+    this.stampNewProperty(prepared.property, source, rei);
     this.insertProperty(prepared);
     this.leaveSampleIfOnlyRealProperties();
     // Book membership changed — recompute cards from facts already on the book.
@@ -880,6 +944,9 @@ export class Desk {
       throw Object.assign(new Error("that property code is already on the book"), { status: 409 });
     }
 
+    const owner = input.owner
+      ? { name: String(checkField("ownerName", input.owner.name)), contact: String(checkField("ownerContact", input.owner.contact ?? "")) }
+      : undefined;
     const options = shopDefaults();
     if (input.options) applyOptions(options, input.options);
     let id = `prop-${randomUUID().slice(0, 8)}`;
@@ -888,7 +955,7 @@ export class Desk {
     if (propertyCode) codes.add(propertyCode.toLowerCase());
     ids.add(id);
     return {
-      property: { id, address, tenantName, tenantPhone, weeklyRentCents: rent, options, ...(propertyCode ? { propertyCode } : {}) },
+      property: { id, address, tenantName, tenantPhone, weeklyRentCents: rent, options, ...(propertyCode ? { propertyCode } : {}), ...(owner ? { owner } : {}) },
       facts: {
         propertyId: id,
         daysSinceDue: 0,
@@ -897,6 +964,160 @@ export class Desk {
         daysSinceCourtesy: null,
       },
     };
+  }
+
+  /** Every value a new property starts with records who supplied it. */
+  private stampNewProperty(property: Property, source: FactSource, rei?: ReiRefs): void {
+    const observedAt = this.now();
+    property.origins = Object.fromEntries(
+      REI_FIELDS.filter((field) => readField(property, field) !== undefined).map((field) => [field, { source, observedAt }]),
+    );
+    if (rei && Object.keys(rei).length) property.rei = { ...rei };
+  }
+
+  /** A person changes REI-sourced facts in Desk. Each becomes a Desk value a REI read never silently overwrites. */
+  editPropertyFacts(id: string, patch: Record<string, unknown>): DeskSnapshot {
+    this.assertWritable();
+    const property = this.store.data.properties.find((p) => p.id === id);
+    if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
+    const entries = Object.entries(patch ?? {}).filter(([key]) => key !== "expectedRevision");
+    if (!entries.length || entries.some(([key]) => !(REI_FIELDS as readonly string[]).includes(key))) {
+      throw Object.assign(new Error(`Change only ${REI_FIELDS.join(", ")}.`), { status: 400 });
+    }
+    if (patch.expectedRevision !== undefined && patch.expectedRevision !== this.revision) {
+      throw Object.assign(new Error("The book changed while you were editing. Reload it and try again."), { status: 409, code: "revision-conflict" });
+    }
+    const values = entries.map(([key, value]) => [key as ReiField, checkField(key as ReiField, value)] as const);
+    const address = values.find(([field]) => field === "address")?.[1];
+    if (address !== undefined && this.store.data.properties.some((p) => p.id !== id && normalizeAddress(p.address) === normalizeAddress(String(address)))) {
+      throw Object.assign(new Error("that address is already on the book"), { status: 409 });
+    }
+    const observedAt = this.now();
+    for (const [field, value] of values) {
+      writeField(property, field, value);
+      property.origins = { ...property.origins, [field]: { source: "desk", observedAt } };
+      // The person wrote the field themselves; the next REI read compares again.
+      this.dropDiffer(property, field);
+    }
+    return this.saveFactsChange(property.id);
+  }
+
+  /** A person picks one side of "Differs from REI". */
+  resolveReiDiffer(id: string, field: string, pick: string): DeskSnapshot {
+    this.assertWritable();
+    if (pick !== "rei" && pick !== "desk") throw Object.assign(new Error("Pick REI or Desk."), { status: 400 });
+    const property = this.store.data.properties.find((p) => p.id === id);
+    const differ = property?.differs?.find((item) => item.field === field);
+    if (!property || !differ) throw Object.assign(new Error("This difference was already settled. Reload the book."), { status: 404 });
+    if (pick === "rei") {
+      writeField(property, differ.field, differ.rei);
+      property.origins = { ...property.origins, [differ.field]: { source: "rei", observedAt: differ.observedAt } };
+    } else {
+      property.origins = { ...property.origins, [differ.field]: { source: "desk", observedAt: this.now(), declinedRei: differ.rei } };
+    }
+    this.dropDiffer(property, differ.field);
+    return this.saveFactsChange(property.id);
+  }
+
+  /**
+   * Apply one REI read. REI wins for every field it provides, except a field a
+   * person changed in Desk (or one older than sources): that is held as
+   * "Differs from REI" until a person picks. New properties become cards;
+   * unmatched or ambiguous rows become held work. Only parts read completely
+   * are stamped fresh, and the book's check state (lastRunAt, hands) is untouched.
+   */
+  applyReiRead(read: ReiDeskRead): ReiDeskApplied {
+    this.assertWritable();
+    const applied: ReiDeskApplied = { updated: 0, differs: 0, proposed: 0, held: 0, fresh: [] };
+    const changed = new Set<string>();
+    for (const update of read.updates) {
+      const property = this.store.data.properties.find((p) => p.id === update.propertyId);
+      if (!property) continue;
+      const refs = { ...property.rei, ...update.refs };
+      if (Object.keys(refs).length && JSON.stringify(refs) !== JSON.stringify(property.rei ?? {})) {
+        property.rei = refs;
+        changed.add(property.id);
+      }
+      for (const [key, raw] of Object.entries(update.values)) {
+        const field = key as ReiField;
+        let value: ReiFieldValue;
+        try {
+          value = checkField(field, raw);
+        } catch {
+          continue;
+        }
+        const outcome = this.applyReiValue(property, field, value, read.observedAt);
+        if (outcome !== "same") changed.add(property.id);
+        if (outcome === "held") applied.differs += 1;
+      }
+    }
+    applied.updated = changed.size;
+    for (const hold of read.holds) {
+      this.holdWork({
+        propertyId: hold.identity,
+        reason: hold.kind === "unmatched" ? "unmatched" : "ambiguous-match",
+        daysLate: 0,
+        observedAt: read.observedAt,
+        sourceId: "src-rei",
+        ...(hold.kind === "ambiguous" ? { detail: hold.detail } : {}),
+      });
+      applied.held += 1;
+    }
+    for (const part of read.fresh) {
+      this.stampSource(reiSourceId(part), "portal", `REI Cloud ${part}`, read.observedAt);
+      applied.fresh.push(part);
+    }
+    for (const id of changed) this.invalidateCapabilities({ propertyId: id });
+    // An unchanged value still records when REI last showed it.
+    if (read.updates.length || applied.held || applied.fresh.length) {
+      this.store.persist();
+      this.emit();
+    }
+    if (read.proposals.length) {
+      applied.proposed = this.proposeBook({ items: read.proposals.map((item) => ({ ...item, tenantPhone: "" })) }, "rei").created;
+    }
+    return applied;
+  }
+
+  /** "set": REI's value stands. "held": a Desk value differs and waits for a person. "same": nothing changed. */
+  private applyReiValue(property: Property, field: ReiField, value: ReiFieldValue, observedAt: number): "set" | "held" | "same" {
+    const current = readField(property, field);
+    const origin = property.origins?.[field];
+    const fromRei = (): "set" => {
+      writeField(property, field, value);
+      property.origins = { ...property.origins, [field]: { source: "rei", observedAt } };
+      this.dropDiffer(property, field);
+      return "set";
+    };
+    if (current === undefined) return fromRei();
+    if (sameValue(field, current, value)) {
+      const unchanged = origin?.source === "rei" && current === value && !property.differs?.some((item) => item.field === field);
+      fromRei();
+      return unchanged ? "same" : "set";
+    }
+    if (origin && origin.source !== "desk") return fromRei();
+    // A Desk value, or one older than sources: never overwritten. Raise or refresh the hold,
+    // unless the person already kept their value over this same REI value.
+    if (origin?.declinedRei !== undefined && sameValue(field, origin.declinedRei, value)) return "same";
+    const held = property.differs?.find((item) => item.field === field);
+    if (held && sameValue(field, held.rei, value)) return "same";
+    property.differs = [...(property.differs ?? []).filter((item) => item.field !== field), { field, rei: value, observedAt }];
+    return "held";
+  }
+
+  private dropDiffer(property: Property, field: ReiField): void {
+    if (!property.differs?.some((item) => item.field === field)) return;
+    property.differs = property.differs.filter((item) => item.field !== field);
+    if (!property.differs.length) delete property.differs;
+  }
+
+  /** Same honesty as patchProperty: recompute cards only on a checked book, never claim a fresh check. */
+  private saveFactsChange(propertyId: string): DeskSnapshot {
+    this.invalidateCapabilities({ propertyId });
+    if (this.store.data.lastRunAt != null) return this.reevaluateOrKeepMiss({ stampRun: false });
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
   }
 
   private insertProperty(prepared: PreparedProperty): void {
@@ -1397,14 +1618,14 @@ export class Desk {
     }
   }
 
-  private stampSource(id: string, kind: "csv" | "hermes" | "demo", label: string): void {
+  private stampSource(id: string, kind: "csv" | "hermes" | "demo" | "portal", label: string, at = this.now()): void {
     const existing = this.store.data.sources.find((s) => s.id === id);
     if (existing) {
-      existing.lastCheckedAt = this.now();
+      existing.lastCheckedAt = at;
       existing.label = label;
       return;
     }
-    this.store.data.sources.push({ id, kind, label, stableKey: `${kind}:${id}`, lastCheckedAt: this.now() });
+    this.store.data.sources.push({ id, kind, label, stableKey: `${kind}:${id}`, lastCheckedAt: at });
   }
 
   private recordHandsLast(ok: boolean, detail: string): void {
@@ -1454,6 +1675,11 @@ export class Desk {
   private emit(): void {
     this.onCommit?.(this.snapshot());
   }
+}
+
+function proposalInput(proposal: BookProposal): NewPropertyInput {
+  const { address, tenantName, tenantPhone, weeklyRentCents, ownerName } = proposal.fields;
+  return { address, tenantName, tenantPhone, weeklyRentCents, ...(ownerName ? { owner: { name: ownerName, contact: "" } } : {}) };
 }
 
 export type { DeskFileV2 };

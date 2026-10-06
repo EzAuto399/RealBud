@@ -90,6 +90,26 @@ export interface PropertyOptions {
   never: string[];
 }
 
+/** Where a Desk fact came from: REI Cloud, a person in Desk, or an import (CSV or Bud intake). */
+export type FactSource = "rei" | "desk" | "import";
+export const FACT_SOURCES: readonly FactSource[] = ["rei", "desk", "import"];
+export interface FactOrigin {
+  source: FactSource;
+  observedAt: number;
+  /** A person kept their Desk value over this REI value; the same REI value is not raised again. */
+  declinedRei?: string | number;
+}
+/** Property facts REI Cloud supplies. REI wins, except over a value a person set in Desk
+ * (docs/decisions/2026-10-06-rei-source-of-truth-and-client-packs.md). */
+export const REI_FIELDS = ["address", "tenantName", "weeklyRentCents", "ownerName", "ownerContact", "amountOwingCents", "paidTo"] as const;
+export type ReiField = (typeof REI_FIELDS)[number];
+export type ReiFieldValue = string | number;
+export interface PropertyOwner { name: string; contact: string }
+/** REI Cloud's own reference for this property, its current tenancy and its owner. */
+export interface ReiRefs { property?: string; tenancy?: string; owner?: string }
+/** A REI value held because a person changed the field in Desk: "Differs from REI" until a person picks one. */
+export interface ReiDiffer { field: ReiField; rei: ReiFieldValue; observedAt: number }
+
 export interface Property {
   id: string;
   address: string;
@@ -100,6 +120,14 @@ export interface Property {
   weeklyRentCents: number;
   options: PropertyOptions;
   notes?: string;
+  owner?: PropertyOwner;
+  rei?: ReiRefs;
+  amountOwingCents?: number;
+  /** Rent paid to this date (YYYY-MM-DD), as REI shows it. */
+  paidTo?: string;
+  /** Per-field source and observedAt. A field without one predates sources and is treated as a Desk value. */
+  origins?: Partial<Record<ReiField, FactOrigin>>;
+  differs?: ReiDiffer[];
 }
 
 export interface LedgerFacts {
@@ -236,7 +264,8 @@ export interface DeskBookView {
     tenantName: string;
     tenantPhone: string;
     weeklyRentCents: number;
-    origin: "ask" | "manual";
+    ownerName?: string;
+    origin: "ask" | "manual" | "rei";
   }>;
   agency: { name: string; timezone: string; jurisdictions: string[] };
   /** Eight visit fields. Empty strings until a named office fills them. */

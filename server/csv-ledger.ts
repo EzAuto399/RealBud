@@ -220,14 +220,17 @@ export function normalizeAddress(value: string): string {
   return words.join(" ");
 }
 
-export function matchExportRow(properties: Pick<Property, "id" | "address" | "propertyCode">[], row: ExportRow): MatchResult {
+type Matchable = Pick<Property, "id" | "address" | "propertyCode" | "rei">;
+
+export function matchExportRow(properties: Matchable[], row: Pick<ExportRow, "identity">): MatchResult {
   const hits: string[] = [];
   for (const property of properties) {
     if (row.identity.kind === "id" || row.identity.kind === "code") {
       const want = row.identity.value.trim().toLowerCase();
-      // A "code" row matches the office's own PMS code first, then the
-      // RealBud id (fixture books are keyed by id).
+      // A "code" row matches the office's own PMS code first, then REI's own
+      // property reference, then the RealBud id (fixture books are keyed by id).
       if (property.propertyCode && property.propertyCode.toLowerCase() === want) hits.push(property.id);
+      else if (property.rei?.property && property.rei.property.toLowerCase() === want) hits.push(property.id);
       else if (property.id.toLowerCase() === want) hits.push(property.id);
     } else if (normalizeAddress(property.address) === normalizeAddress(row.identity.value)) {
       hits.push(property.id);
@@ -239,7 +242,7 @@ export function matchExportRow(properties: Pick<Property, "id" | "address" | "pr
   return { ok: false, reason: "unmatched" };
 }
 
-export function resolveExportRows(properties: Pick<Property, "id" | "address" | "propertyCode">[], rows: ExportRow[]): ResolvedExport {
+export function resolveExportRows(properties: Matchable[], rows: ExportRow[]): ResolvedExport {
   const matched: LedgerFacts[] = [];
   const unmatched: ExportRow[] = [];
   const ambiguous: AmbiguousRow[] = [];
