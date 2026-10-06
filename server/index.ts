@@ -208,6 +208,7 @@ import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
 import { answerAskFromDesk, polishProductAskReply, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
+import { scheduleJobsTurnContext } from "./schedule-turn.ts";
 import { buildHandoffPayload, deliverToPairedPhone } from "./channel-handoff.ts";
 import { readHandsLast, readHandsPing, writeHandsPing } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
@@ -2215,6 +2216,7 @@ async function startSeatTurn(
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
           system: [productBudSystemPrompt({ modelChoice: modelStatus().choice }), officeSourceTurnContext(allowedApps, access),
+            loops ? scheduleJobsTurnContext(loops.listLoops(), { timeZone: loops.timezone, recovery: loops.recovery.active }) : undefined,
             "When the person asks about availability or booking an inspection, check their connected calendar first, then propose the event (time, place, attendees) for their approval before creating it. If no calendar is connected, say so plainly.",
             integrations.memoryProposals ? 'For requested conversational preference changes, use memory_propose from memory-proposals with a complete typed add, replace, remove or batch payload. Use the same requestId and exact payload to check an interrupted proposal. The tool only creates a pending review: it does not apply or approve memory. Direct the person to Workspace → What Bud learned to review the complete change. Do not claim it was saved to memory until its human decision is confirmed. Preferences do not change business records, credentials or work permissions.' : undefined,
             allowedApps.length ? `Selected office account IDs: ${JSON.stringify(Object.fromEntries(allowedApps.map(slug => [slug, cfg.composio?.selectedAccounts?.[slug] ?? access?.services[slug]?.accounts.find(account => /^active$/i.test(account.status))?.id])))}. Use only these accounts. If the tool cannot target an account unambiguously, ask before proceeding.` : undefined,
