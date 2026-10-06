@@ -4,7 +4,7 @@
 // daily flow on FICTIONAL data, with a PASS/FAIL receipt per step and
 // screenshots at desktop widths 1280 and 1024.
 //   Sherry (MacBook): morning priorities, supplier directory, maintenance
-//     findings, inspection plan, approval cards (REI supplier refresh, rule change).
+//     findings, inspection plan, REI supplier refresh (read, then Discard), rule change card.
 //   Kevin (Windows PC; this proves the logic on macOS): arrears on Desk, weekly
 //     bills to the calendar (one and many, a duplicate), bank reconciliation
 //     review (an ambiguous row held), the REI receipting upload approved once on
@@ -529,7 +529,7 @@ const sherry = {
       const review = await api('/api/maintenance-review');
       assert.equal(review.findings.find(f => f.finding.kind === 'multiple-invoices').state, 'seen');
     }],
-    ['Restart mid-flow, then approve then Stop: REI supplier refresh', async ({ page, openBills, widths, ok, labAct, until, stopService, startService, reconnects, observations, productBugs, shot }, c) => {
+    ['Restart mid-flow, then sign in and Discard: REI supplier refresh', async ({ page, openBills, widths, ok, labAct, until, stopService, startService, reconnects, observations, productBugs, shot }, c) => {
       await labAct('handover');
       await openBills();
       const panel = page.getByRole('region', { name: 'Refresh supplier list from REI', exact: true });
@@ -570,21 +570,22 @@ const sherry = {
         await refresh.focus(); await page.keyboard.press('Enter');
         await until(async () => (await ok('/api/rei-directory/status')).run?.signIn, 'refresh waits for REI sign-in again');
       }
+      // Since PR #74 (9269bcb9) Refresh from REI reads REI's own Suppliers grid:
+      // no Export Only or download approval card; the person saves or discards the preview.
       await labAct('sign-in');
-      const card = panel.getByRole('group', { name: 'Approval for REI', exact: true });
-      await card.getByText('Allow Bud to choose Export Only on REI\'s report?', { exact: true }).waitFor({ timeout: 60_000 });
-      await widths('sherry-approval-export-only', card);
-      await card.getByRole('button', { name: 'Allow', exact: true }).click();
-      c('Approved once: Export Only');
-      await card.getByText('Allow Bud to download REI\'s supplier list?', { exact: true }).waitFor({ timeout: 60_000 });
-      await card.getByRole('button', { name: 'Stop', exact: true }).focus(); await page.keyboard.press('Enter');
-      await card.waitFor({ state: 'detached', timeout: 30_000 });
+      const preview = panel.getByRole('group', { name: 'REI supplier list preview', exact: true });
+      await preview.getByText(/^\d+ rows read from REI's list · /).waitFor({ timeout: 60_000 });
+      assert.equal(await panel.getByRole('group', { name: 'Approval for REI', exact: true }).count(), 0, 'no approval card for a grid read');
+      await widths('sherry-supplier-preview', preview);
+      c('After sign-in Bud read REI\'s Suppliers grid by itself: a preview, no Export Only or download card');
+      await preview.getByRole('button', { name: 'Discard', exact: true }).focus(); await page.keyboard.press('Enter');
+      await panel.getByText('Stopped. Nothing was saved.', { exact: true }).waitFor({ timeout: 30_000 });
       const after = await until(async () => { const s = await ok('/api/rei-directory/status'); return !s.run?.working ? s : null; }, 'refresh stops');
-      assert.deepEqual(after.suppliers, before, 'the supplier list is unchanged after Stop');
+      assert.deepEqual(after.suppliers, before, 'the supplier list is unchanged after Discard');
       const effects = (await labAct('status')).effects;
-      assert.ok(!effects.includes('download'), `nothing downloaded after Stop: ${effects}`);
+      assert.ok(!effects.includes('download'), `nothing downloaded: ${effects}`);
       await widths('sherry-after-stop', panel);
-      c(`Keyboard: Stop at the download card; the run ends (${after.run?.phase ?? 'no run'}${after.run?.message ? `: ${after.run.message}` : ''}); the saved REI supplier list is unchanged`);
+      c(`Keyboard: Discard on the preview; the run ends (${after.run?.phase ?? 'no run'}${after.run?.message ? `: ${after.run.message}` : ''}); the saved REI supplier list is unchanged`);
       if (stale) throw new Error('Product bug: the REI refresh panel kept a stale "Bud carries on by itself" state after the service blip (flow completed after reopening Bills; see productBugs).');
     }],
     ['Inspection plan: history, draft, accept one', async ({ page, openBills, widths, ok, today }, c) => {
