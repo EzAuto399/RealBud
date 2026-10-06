@@ -54,7 +54,8 @@ describe("Windows CUA supervised host", () => {
     expect(program).toBe("C:\\Fictional\\RealBud CUA.exe");
     expect(argv).toEqual([WINDOWS_CUA_HOST_FLAG, "serve", "--embedded", "--parent-liveness-stdio", "--no-permissions-gate", "--socket", connection.socketPath, "--host-bundle-id", "com.realbud.app", "--permission-mode", "standard"]);
     expect(settings).toMatchObject({ shell: false, windowsHide: true, stdio: ["pipe", "pipe", "inherit"] });
-    expect(settings.env).toEqual({ SYSTEMROOT: "C:\\Windows", PATH: "fictional-path", CUA_DRIVER_POLICY_FILE: "fictional-policy", CUA_DRIVER_EMBEDDED_HOST_PID: "4000" });
+    expect(settings.env).toEqual({ SYSTEMROOT: "C:\\Windows", PATH: "fictional-path", CUA_DRIVER_POLICY_FILE: "fictional-policy", CUA_DRIVER_EMBEDDED_HOST_PID: "4000",
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" });
     const stopped = f.host.stop(); expect(f.host.stop()).toBe(stopped);
     await stopped;
     expect(f.transmitted).toEqual([]); expect(f.host.connection()).toBeUndefined(); expect(f.host.state()).toBe(0);
