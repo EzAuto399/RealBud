@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { bankDownloadBytes, readBankFile } from "@/lib/bank-file";
 import { appendBankHistory, bankHistoryUrl, hasUnsavedBankDecisions, parseBankHistory } from "@/lib/bank-history";
@@ -10,6 +10,7 @@ import { BankReviewAmendment } from './BankReviewAmendment';
 import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
 import { ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
+import { useRunPoll } from "@/lib/run-poll";
 
 const request = <T,>(method: string, path: string, body?: unknown): Promise<T> => api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
@@ -201,7 +202,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
         const rules = setup.state.settings.propertyReferences;
         if (!rules.length || rules.some(rule => !rule.aliases.length)) throw new Error('Add confirmed payer aliases for each selected property in Agency workflow setup first.');
         setDirectory(rules.map(rule => `${rule.propertyId} | ${rule.reference} | ${rule.aliases.join('; ')}`).join('\n'));
-        setDirectoryNotice(`${rules.length} reviewed agency references copied into this new export. Check the selected bank scope before preparing it.`);
+        setDirectoryNotice(`${plural(rules.length, "reviewed agency reference", "reviewed agency references")} copied into this new export. Check the selected bank scope before preparing it.`);
       }); }}>Use reviewed agency references</button>
       {directoryNotice && <p role="status" className="text-sm text-ink-secondary">{directoryNotice}</p>}
       <label className="block text-sm">Property reference directory<textarea aria-label="Property reference directory" className={`block w-full mt-1 ${control}`} rows={4} value={directory} onChange={e => { settingsDirty.current = true; setDirectory(e.target.value); }} placeholder={"Property name | reference number | payer alias; another alias | REI tenant"} /></label>
@@ -217,7 +218,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
         })().then(csv => { if (mounted.current && current === tenantRead.current) setTenantList({ filename: file.name, csv }); })
           .catch(cause => { if (mounted.current && current === tenantRead.current) setError(cause instanceof Error ? cause.message : "The tenant list could not be read."); });
       }} /></label>
-      <p className="text-xs text-ink-muted">{tenantList ? `Using ${tenantList.filename}: each tenant's REI reference goes in the last column. Directory lines above fill in properties it does not list.` : savedTenants ? `Using the REI tenant list saved from REI (${savedTenants} tenants): each tenant's REI reference goes in the last column. Choose a file only to use a different list.` : "Export Tenants from REI to put each tenant's REI reference in the last column and check payments against the rent."}</p>
+      <p className="text-xs text-ink-muted">{tenantList ? `Using ${tenantList.filename}: each tenant's REI reference goes in the last column. Directory lines above fill in properties it does not list.` : savedTenants ? `Using the REI tenant list saved from REI (${plural(savedTenants, "tenant", "tenants")}): each tenant's REI reference goes in the last column. Choose a file only to use a different list.` : "Export Tenants from REI to put each tenant's REI reference in the last column and check payments against the rent."}</p>
       <button className={control} disabled={busy || unsaved || readingFile || !source || (!directory.trim() && !tenantList && !savedTenants)} onClick={() => void perform(async () => {
         if (unsaved) return;
         const rules = directory.split(/\r?\n/).filter(line => line.trim()).map(line => { const [propertyId, reference, aliases, tenant, extra] = line.split("|").map(s => s.trim()); if (!propertyId || !reference || !aliases || tenant === "" || extra !== undefined) throw new Error("Use property | reference | payer aliases | REI tenant (optional) for each directory line."); return { propertyId, reference, aliases: aliases.split(";").map(s => s.trim()).filter(Boolean), ...(tenant ? { tenant } : {}) }; });
@@ -233,7 +234,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
     <section aria-label="Saved bank review history" className="mt-2 space-y-3" aria-busy={historyLoading}>
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium text-sm">Saved review history</h4><button className={control} disabled={historyLoading} onClick={() => void refresh()}>Refresh bank history</button></div>
       {history && <p className="text-sm text-ink-secondary">{history.batches.length} of {history.total} saved reviews loaded. Refresh includes newer imports; your open review and unsaved decisions stay here.</p>}
-      {(Boolean(history?.batches.length) || saved) && <label className="block text-sm">Saved reviews <select aria-label="Saved reviews" className={`mt-1 block w-full ${control}`} disabled={busy || unsaved} value={saved?.id ?? ""} onChange={e => e.target.value && void perform(() => open(e.target.value))}><option value="">Choose a review…</option>{saved && !history?.batches.some(item => item.id === saved.id) && <option value={saved.id}>Currently open review · outside loaded history</option>}{history?.batches.map(item => <option value={item.id} key={item.id}>{new Date(item.createdAt).toLocaleString()} · version {bankReviewVersion(item.id)} · {item.rows} rows · {item.supersededBy ? 'earlier version' : item.outputDigest ? "reviewed" : "needs review"}</option>)}</select></label>}
+      {(Boolean(history?.batches.length) || saved) && <label className="block text-sm">Saved reviews <select aria-label="Saved reviews" className={`mt-1 block w-full ${control}`} disabled={busy || unsaved} value={saved?.id ?? ""} onChange={e => e.target.value && void perform(() => open(e.target.value))}><option value="">Choose a review…</option>{saved && !history?.batches.some(item => item.id === saved.id) && <option value={saved.id}>Currently open review · outside loaded history</option>}{history?.batches.map(item => <option value={item.id} key={item.id}>{new Date(item.createdAt).toLocaleString()} · version {bankReviewVersion(item.id)} · {plural(item.rows, "row", "rows")} ·{item.supersededBy ? 'earlier version' : item.outputDigest ? "reviewed" : "needs review"}</option>)}</select></label>}
       {history?.total === 0 && <p className="text-sm text-ink-secondary">No saved bank reviews yet.</p>}
       {history?.nextCursor && <button className={control} disabled={historyLoading} onClick={() => void refresh(history.nextCursor!)}>Load more bank reviews</button>}
       {historyLoading && <p role="status" className="text-sm">Checking saved bank history…</p>}
@@ -254,7 +255,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
       {saved.value.batch.version === 2 && saved.value.batch.source
         ? <p className="text-xs text-ink-muted">Original: {saved.value.batch.source.filename} · {saved.value.batch.source.byteLength.toLocaleString()} bytes · {saved.value.batch.source.encoding === "utf-8-bom" ? "UTF-8 with byte-order mark" : "UTF-8"}. Downloads are checked against the saved file digest.</p>
         : <p role="note" className="text-xs text-hold">This older review saved text only. The original file bytes and encoding were not captured. The saved text remains available, but check it against your original bank export before use.</p>}
-      <p className="text-sm">{saved.value.batch.rows.length} transactions · {saved.value.result ? `${saved.value.result.changes.length} reviewed reference changes` : "Review every row, including anything kept unchanged."}</p>
+      <p className="text-sm">{plural(saved.value.batch.rows.length, "transaction", "transactions")} · {saved.value.result ? plural(saved.value.result.changes.length, "reviewed reference change", "reviewed reference changes") : "Review every row, including anything kept unchanged."}</p>
       {saved.firstPass && !saved.value.result && !saved.value.supersededBy && !amending && <FirstPassReview pass={saved.firstPass} decisions={decisions} busy={busy}
         onUseAll={() => setDecisions(Object.fromEntries(saved.firstPass!.rows.map(row => [row.rowId, firstPassDecision(row, row.disposition, row.reason)])))}
         onDecide={(row, choice) => setDecisions(current => ({ ...current, [row.rowId]: firstPassDecision(row, choice, current[row.rowId]?.reason.trim() || row.reason) }))} />}
@@ -368,7 +369,7 @@ function BankPullSource({ accounts, error, disabled, onPulled }: { accounts: Ban
           setBusy(true); setMessage(""); setFailure("");
           void request<{ batch: { id: string; rows: number } | null; pending: number; alreadyConfirmed: number }>("POST", "/api/w1/pull", { account: chosen })
             .then(async result => {
-              if (result.batch) { await onPulled(result.batch.id); setMessage(`${result.batch.rows} transactions pulled. Review them below.`); }
+              if (result.batch) { await onPulled(result.batch.id); setMessage(`${plural(result.batch.rows, "transaction", "transactions")} pulled. Review them below.`); }
               else setMessage(`No new transactions to review${result.alreadyConfirmed ? `; ${result.alreadyConfirmed} were already imported` : ""}.`);
             }).catch(cause => setFailure(cause instanceof Error ? cause.message : "The bank pull did not work."))
             .finally(() => setBusy(false));
@@ -383,7 +384,7 @@ function BankPullSource({ accounts, error, disabled, onPulled }: { accounts: Ban
 
 const STRIP_STEPS = ["Pull from bank", "Review", "Sign in to REI", "Upload preview", "You process in REI", "Check result", "Done"];
 const STEP_INDEX: Record<W1Step, number> = { fetch: 0, review: 1, sign_in: 2, upload: 3, handoff: 4, readback: 5, check_outcome: 5, confirm: 6, done: 6 };
-export type W1Action = "start" | "advance" | "posted" | "unsure" | "retry-upload" | "abandon" | "allow" | "deny" | "open";
+export type W1Action = "start" | "advance" | "posted" | "unsure" | "retry-upload" | "abandon" | "allow" | "deny" | "open" | "stop";
 type View = { headline: string; detail?: string; list?: string[]; primary?: [W1Action, string]; secondary?: [W1Action, string] };
 
 /** What the strip says and the one next action, from the saved run. */
@@ -403,7 +404,7 @@ export function w1View(status: W1Status, reviewReady: boolean): View {
     case "fetch": return { headline: "The bank pull didn't work", detail: message, primary: ["advance", "Try again"] };
     case "review": return reviewReady
       ? { headline: "Review saved", detail: "Continue to check REI is signed in.", primary: ["advance", "Continue"] }
-      : { headline: "Review the pulled transactions", detail: `${run.fetch?.transactionIds.length ?? 0} transactions from ${auDate(run.fetch!.from)} to ${auDate(run.fetch!.to)}. Decide every row and save the reviewed copy, then continue.`, primary: ["open", "Open pulled transactions"] };
+      : { headline: "Review the pulled transactions", detail: `${plural(run.fetch?.transactionIds.length ?? 0, "transaction", "transactions")} from ${auDate(run.fetch!.from)} to ${auDate(run.fetch!.to)}. Decide every row and save the reviewed copy, then continue.`, primary: ["open", "Open pulled transactions"] };
     case "sign_in": return reason === "sign_in" ? { headline: "Waiting for you to sign in to REI", detail: "Sign in to REI in your work browser, then press Continue. Bud never types your password.", primary: ["advance", "Continue"] }
       : reason === "account_mismatch" ? { headline: "REI is open in a different business", detail: message, primary: ["advance", "Continue"] }
       : { headline: "Ready to check REI", primary: ["advance", "Continue"] };
@@ -434,7 +435,8 @@ export function W1RunStrip({ status, reviewReady, busy, onAction }: { status: W1
     {view.list && view.list.length > 0 && <ul aria-label="Differences in REI's preview" className="list-disc space-y-1 pl-5 text-sm">{view.list.map((item, index) => <li key={index} className="break-words">{item}</li>)}</ul>}
     {status.readback && status.run?.step !== "fetch" && <p className="text-sm text-ink-secondary">REI's result: {status.readback.accepted} accepted · {status.readback.rejected} rejected · {status.readback.pending} still pending{status.readback.warnings.length ? `. ${status.readback.warnings.join(" ")}` : ""}</p>}
     {status.note && <p className="text-sm text-hold break-words">{status.note}</p>}
-    {(view.primary || view.secondary) && <div className="flex flex-wrap gap-2">{view.primary && button(view.primary, true)}{view.secondary && button(view.secondary, false)}</div>}
+    {/* Stop whenever Bud works or waits in REI (an ask, sign-in or a stage in flight): POST /api/w1/runs/:id/stop ends it and declines any open ask. */}
+    {(view.primary || view.secondary || status.working) && <div className="flex flex-wrap gap-2">{view.primary && button(view.primary, true)}{view.secondary && button(view.secondary, false)}{status.working && status.run && button(["stop", "Stop"], false)}</div>}
   </section>;
 }
 
@@ -465,13 +467,10 @@ export function W1Setup({ accounts, error, onLoad, onSaved }: { accounts: BankAc
 function W1RunPanel({ accounts, error, reviewReady, onOpenBatch, onLoadAccounts }: { accounts: BankAccount[] | null; error: string; reviewReady: (batchId: string) => boolean; onOpenBatch: (batchId: string) => Promise<void>; onLoadAccounts: () => void }) {
   const [status, setStatus] = useState<W1Status | null>(null), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
   const signIns = useBrowserSignIns({ threadId: status?.signIn ?? "", busy: Boolean(status?.working), enabled: Boolean(status?.signIn) });
-  const refresh = () => request<unknown>("GET", "/api/w1/status").then(value => setStatus(parseW1Status(value)));
-  useEffect(() => { void refresh().catch(cause => setFailure(cause instanceof Error ? cause.message : "The bank import could not be loaded.")); }, []);
-  useEffect(() => {
-    if (!status?.working) return;
-    const timer = setTimeout(() => void refresh().catch(() => {}), 1500);
-    return () => clearTimeout(timer);
-  }, [status]);
+  const refresh = useCallback(() => request<unknown>("GET", "/api/w1/status").then(value => setStatus(parseW1Status(value))), []);
+  useEffect(() => { void refresh().catch(cause => setFailure(cause instanceof Error ? cause.message : "The bank import could not be loaded.")); }, [refresh]);
+  // A failed read keeps polling, so a service blip never freezes the strip on "Working…".
+  useRunPoll(Boolean(status?.working), refresh, 1500);
   if (!status) return failure ? <p role="alert" className="text-sm text-hold">{failure}</p> : null;
   if (!status.settings) return <W1Setup accounts={accounts} error={error} onLoad={onLoadAccounts} onSaved={setStatus} />;
   const run = status.run;
