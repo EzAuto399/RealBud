@@ -76,3 +76,9 @@ Evidence tier: live integration, read-only. Nothing in REI was clicked to change
   - Suppliers: the grid shows all 60 rows, so W4 can read it directly with no download.
   - Tenants: the grid shows 90 of 106 rows until the grid scrolls, so W1 needs a scroll-aware read or the "Tenant Listing (Contact Details)" report through Preview. The viewer's export formats are not seen yet.
   - Until then, tenant-list and supplier-list are tier U and stop at "control missing".
+
+## Friday install click path (unsigned installer, seen 6 Oct on a Windows 11 VM)
+1. In Edge, the download shows "RealBud-0.1.34-setup.exe isn't commonly downloaded". Open Downloads (⋯), then **Keep**, then **Show more**, then **Keep anyway**.
+2. Run it. If Windows shows "Windows protected your PC", choose **More info**, then **Run anyway**. Smart App Control must be Off (see above).
+3. The installer runs one-click and opens RealBud: first-run screen in about 2 minutes on the emulated VM (around 30 s on x64 in CI).
+4. Step 2, connecting the office: have a **link code ready from the billing owner** (realbud.app → Computers → Pair a new computer). Paste it under "Use a link code instead"; the green button then switches to "Connect with this code". The browser-approval path needs a billing-owner sign-in.
