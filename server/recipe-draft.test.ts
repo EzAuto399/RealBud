@@ -142,10 +142,14 @@ describe("complete worker JSON", () => {
     const controller = new AbortController();
     const pending = askWorker("bounded test", { cli: script, root: dir, signal: controller.signal });
     try {
+      // `echo` creates the file before it writes the pid; an empty read is pid 0,
+      // and process.kill(0, 0) signals this test's own group. Wait for the newline.
+      const written = () => existsSync(pidFile) && /^\d+\n$/.test(readFileSync(pidFile, "utf8"));
       const deadline = Date.now() + 3000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-      expect(existsSync(pidFile)).toBe(true);
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      while (!written() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      expect(written()).toBe(true);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(() => process.kill(pid, 0)).not.toThrow();
       controller.abort();
       expect(await pending).toEqual({ ok: false, detail: "Preparation cancelled." });
       expect(() => process.kill(pid, 0)).toThrow();

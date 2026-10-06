@@ -81,7 +81,11 @@ export function runOneShot(command: string, args: string[], options: OneShotOpti
     if (!child.pid) return;
     try { groupSignal(child.pid, requested); }
     catch (caught) {
-      if ((caught as NodeJS.ErrnoException).code !== "ESRCH") {
+      // Darwin answers EPERM while an exited group still holds an unreaped
+      // zombie. That is unknown, not refusal: only the groupExists poll can
+      // confirm the group gone, and the cleanup deadline marks it unconfirmed.
+      const code = (caught as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH" && code !== "EPERM") {
         error ??= failure("Worker cleanup could not be confirmed.", "ERR_WORKER_CLEANUP", true);
         error.cleanupUnconfirmed = true;
       }

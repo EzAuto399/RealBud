@@ -134,6 +134,27 @@ describe("one-shot lifecycle ordering", () => {
     expect(callback).toHaveBeenCalledExactlyOnceWith(null, "", "");
   });
 
+  it("treats a group signal EPERM as unknown until the poll confirms the group gone", async () => {
+    vi.useFakeTimers(); let probes = 0;
+    const groupSignal = vi.fn((_pid: number, signal: NodeJS.Signals | 0) => {
+      // A zombie-only group on Darwin: signals are refused, then the group is reaped.
+      if (signal !== 0 || ++probes < 3) throw Object.assign(new Error("zombie"), { code: "EPERM" });
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    const { child, callback } = fakeRun({}, { platform: "darwin", groupSignal });
+    child.stdout.write("answer"); child.complete(); await vi.advanceTimersByTimeAsync(80);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(null, "answer", "");
+  });
+
+  it("never confirms cleanup of a group that keeps refusing signals", async () => {
+    vi.useFakeTimers();
+    const groupSignal = vi.fn(() => { throw Object.assign(new Error("refused"), { code: "EPERM" }); });
+    const { child, callback } = fakeRun({}, { platform: "darwin", groupSignal, cleanupMs: 200, graceMs: 40 });
+    child.complete(); await vi.advanceTimersByTimeAsync(201);
+    expect(groupSignal).toHaveBeenCalledWith(123, "SIGKILL");
+    expect(callback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: "ERR_WORKER_CLEANUP", killed: true, cleanupUnconfirmed: true }), "", "");
+  });
+
   it("preserves split UTF-8 and applies maxBuffer independently to each stream", async () => {
     vi.useFakeTimers();
     const { child, callback } = fakeRun({ maxBuffer: 4 }); const bytes = Buffer.from("😀");
