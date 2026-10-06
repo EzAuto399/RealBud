@@ -1,41 +1,47 @@
-// One ordered setup path for a nontechnical operator: three numbered steps, one
-// current step, one screen action each, and every step's state read from the
-// host's own facts.
+// "Get started": one ordered setup path for a new staff member's first day.
+// Five numbered steps, one current step, one screen action each, and every
+// step's state read from the host's own facts.
 //
-// Nothing here guesses. When the `/api/agency-setup` read has not answered, was
-// refused or came back malformed, the affected step reads "Not checked yet" and
-// can never read as finished. No step claims a run happened or will succeed.
+// Nothing here guesses. A read that has not answered, was refused or came back
+// malformed leaves its step "Not checked yet", and such a step can never read
+// as finished. Bud's own setup (step 2) runs by itself: it shows as working
+// while it installs, ticks only on the server's own `ready`, and never blocks
+// the steps after it. No step claims a run happened or will succeed.
+//
+// With a role pack from the office (`/api/austin-pack` reports it installed),
+// steps 3 to 5 read that pack's own checklist. An office without a role pack
+// falls back to the agency setup facts (`/api/agency-setup`).
 import { agencyIsNamed } from "./office-setup";
 import { AGENCY_WORKFLOWS, AGENCY_WORKFLOW_NAMES, type AgencyWorkflowId } from "../../shared/agency-setup";
+import type { AustinPackView } from "../../shared/austin-pack";
 import { officeAppLabel, officeSourceState, type ConnectedAppsStatus } from "../../shared/office-sources";
 
-export const SETUP_STEP_COUNT = 3;
+export const SETUP_STEP_COUNT = 5;
 
-export type SetupStepId = "agency" | "accounts" | "approve";
+export type SetupStepId = "link" | "bud" | "pack" | "gmail" | "workflows";
 
 /**
  * `done` is a host-confirmed fact. `current` is the one step to act on now.
+ * `working` is Bud setting itself up: nothing to do, and it blocks nothing.
  * `later` is a readable step that is not this step's turn. `unknown` is a step
  * whose fact could not be read; it is never treated as done.
  */
-export type SetupStepState = "done" | "current" | "later" | "unknown";
+export type SetupStepState = "done" | "current" | "working" | "later" | "unknown";
 
 /**
- * Where this step's single action goes: the agency setup card on Schedule,
- * Connections on You, where accounts are actually connected, or the office
- * section on You, where this computer is linked with its RealBud account.
+ * Where this step's single action goes: the link-code entry in Workspace, Bud's
+ * setup progress, the packs from the office on Schedule, Connections in
+ * Workspace, or one Schedule job (`job-<loop id>`).
  */
-export type SetupJumpTarget = "schedule-packs" | "you-connected-apps" | "you-office" | "you-website";
+export type SetupJumpTarget = "you-website" | "bud-setup" | "schedule-packs" | "you-connected-apps" | `job-${string}`;
 
 export interface SetupStep {
   id: SetupStepId;
-  /** 1-based position in the fixed three-step path. */
+  /** 1-based position in the fixed five-step path. */
   number: number;
   title: string;
-  /** One sentence saying why this step exists. */
-  why: string;
   state: SetupStepState;
-  /** What the host currently reports about this step. */
+  /** What the host currently reports about this step, in one sentence. */
   status: string;
   target: SetupJumpTarget;
   /** The accessible name of this step's single action control. */
@@ -74,10 +80,13 @@ export interface AgencySetupFacts {
  */
 export type AgencySetupRead = AgencySetupFacts | "unavailable" | undefined;
 
+/** The office's role pack view; same reading of `undefined` and `"unavailable"`. */
+export type AustinPackRead = AustinPackView | "unavailable" | undefined;
+
 /**
- * This computer's link with its RealBud account, as `/api/office-link` reports
- * it. `undefined` until that read answers; `unavailable` when it failed or came
- * back malformed. Only `linked` lets the accounts step move on.
+ * This computer's link with its office, as `/api/office-link` reports it.
+ * `undefined` until that read answers; `unavailable` when it failed or came
+ * back malformed. Only `linked` finishes step 1.
  */
 export type WebsiteLinkRead = "linked" | "not-linked" | "unavailable" | undefined;
 
@@ -89,6 +98,14 @@ export function readWebsiteLinkState(value: unknown): "linked" | "not-linked" | 
   return "unavailable";
 }
 
+/**
+ * Bud on this computer, from the server's own status. `ready` is the server's
+ * readiness verdict; `working` means automatic setup is running and needs
+ * nobody; `detail` is the product sentence for a hold, when there is one.
+ * `undefined` until the status read answers.
+ */
+export type BudRead = { ready: boolean; working: boolean; detail: string | null } | undefined;
+
 export interface SetupSequenceInput {
   /**
    * The agency name recorded on You, when there is one. The agency form's own
@@ -96,9 +113,13 @@ export interface SetupSequenceInput {
    */
   officeAgencyName?: string;
   agencySetup: AgencySetupRead;
+  /** The office's role pack. `undefined` until that read answers. */
+  austinPack?: AustinPackRead;
+  /** Bud's server status. `undefined` until it answers. */
+  bud?: BudRead;
   /** The host's own loop facts. `undefined` until the loops read answers. */
   schedule?: ScheduleRead;
-  /** This computer's RealBud account link. `undefined` until the read answers. */
+  /** This computer's office link. `undefined` until the read answers. */
   websiteLink?: WebsiteLinkRead;
   /**
    * Office apps the linked service offers that have no account yet, from
@@ -120,6 +141,8 @@ export function officeAppsToConnect(access: ConnectedAppsStatus | null | undefin
 /** One named loop as the host reports it on the RealBud clock. */
 export interface ScheduleLoopFacts {
   id: string;
+  /** The loop's display name, used to name the next workflow to review. */
+  name?: string;
   available: boolean;
   enabled: boolean;
   /** The host's own next occurrence. A loop with no next run is not scheduled. */
@@ -135,10 +158,11 @@ export type ScheduleRead =
   | { read: "ready"; loops: readonly ScheduleLoopFacts[] };
 
 /**
- * The loop that actually carries each workflow. Only morning priorities has one:
- * `inbound-triage` is the loop the host gates on agency setup and plan review.
- * The other two workflows have no scheduled loop, which stays visible as
- * "not checked yet" rather than being mapped onto an unrelated book loop.
+ * The loop that actually carries each agency workflow (offices without a role
+ * pack). Only morning priorities has one: `inbound-triage` is the loop the host
+ * gates on agency setup and plan review. The other two workflows have no
+ * scheduled loop, which stays visible as "not checked yet" rather than being
+ * mapped onto an unrelated book loop.
  */
 export const WORKFLOW_LOOP_IDS: Record<AgencyWorkflowId, string | null> = {
   "bank-references": null,
@@ -150,7 +174,6 @@ export const WORKFLOW_LOOP_IDS: Record<AgencyWorkflowId, string | null> = {
 type Fact = { fact: "done" | "todo" | "unknown"; status: string; actionLabel?: string; target?: SetupJumpTarget };
 
 const NOT_CHECKED = "Not checked yet.";
-const OPEN_SETUP = "Open Agency workflow setup";
 
 /**
  * Re-validate the agency-setup body before any of it can claim a step is done.
@@ -205,24 +228,50 @@ const names = (rows: readonly AgencySetupWorkflowFacts[]): string => list(rows.m
 /** The host's own sentence, or its label when the host sent no sentence. */
 const said = (check: AgencySetupCheckFacts): string => check.detail.trim() || check.label;
 
+/** Step 1: this computer's link with its office. */
+function linkFact(link: WebsiteLinkRead): Fact {
+  if (link === "linked") return { fact: "done", status: "This computer is connected to your office." };
+  if (link === "not-linked") return { fact: "todo", status: "Your office owner sends this code. Ask them if you don’t have one yet." };
+  return {
+    fact: "unknown",
+    status: link === undefined ? `${NOT_CHECKED} Reading this computer’s office link…` : `${NOT_CHECKED} This computer’s office link could not be read.`,
+  };
+}
+
+const BUD_WORKING = "This usually takes about 10 minutes and you don’t need to do anything.";
+
+/** Step 2: done only on the server's own `ready`; working while setup runs. */
+function budStep(bud: BudRead, link: WebsiteLinkRead): { state: SetupStepState; status: string } {
+  if (!bud) return { state: "unknown", status: `${NOT_CHECKED} Reading Bud’s setup…` };
+  if (bud.ready) return { state: "done", status: "Bud is set up on this computer." };
+  if (bud.working) return { state: "working", status: BUD_WORKING };
+  if (bud.detail) return { state: "later", status: bud.detail };
+  return {
+    state: "later",
+    status: link === "linked" ? "Bud is not set up yet. See progress for what it is waiting on." : "Bud sets itself up once this computer is connected to your office.",
+  };
+}
+
 /**
- * Step 1: one form holds the agency name, the timezone and the workflow pack.
- * The name saved on You counts as much as the one on the form, so the sequence
- * never demands both.
+ * Fallback for step 3 without a role pack: the agency form holds the agency
+ * name, the timezone and the workflow pack. The name saved on You counts as
+ * much as the one on the form.
  */
-function agencyFact(officeAgencyName: string, setup: AgencySetupFacts): Fact {
+function agencyComplete(officeAgencyName: string, setup: AgencySetupFacts): boolean {
   const named = agencyIsNamed(setup.agencyName) || agencyIsNamed(officeAgencyName);
-  const zone = setup.timeZone.trim();
-  const missing = [
-    named ? "" : "an agency name",
-    zone ? "" : "a timezone",
-    setup.packSelected ? "" : "a workflow pack",
-  ].filter(Boolean);
-  if (missing.length) {
-    return { fact: "todo", status: `Still to save on this one form: ${list(missing)}. Nothing is chosen for you.` };
+  return named && Boolean(setup.timeZone.trim()) && setup.packSelected;
+}
+
+/** Step 3: the office's pack is imported (or, without one, the agency form is saved). */
+function packFact(pack: AustinPackRead, setup: AgencySetupRead, officeAgencyName: string): Fact {
+  if (pack && pack !== "unavailable" && pack.installed) return { fact: "done", status: `Imported: ${pack.pack.title}.` };
+  if (setup && setup !== "unavailable" && agencyComplete(officeAgencyName, setup)) {
+    return { fact: "done", status: "Your agency setup and its workflow pack are saved." };
   }
-  const shown = setup.agencyName.trim() || officeAgencyName.trim();
-  return { fact: "done", status: `${shown} · ${zone} · a workflow pack is selected. Its plans are still approved separately.` };
+  if (pack && pack !== "unavailable") {
+    return { fact: "todo", status: "Import the pack your office shared with you. Each workflow arrives switched off." };
+  }
+  return { fact: "unknown", status: pack === undefined ? `${NOT_CHECKED} Reading packs from your office…` : `${NOT_CHECKED} Packs from your office could not be read.` };
 }
 
 /** Roll one named check up across the workflows that actually report it. */
@@ -242,63 +291,42 @@ function checkRollup(
   return { fact: "done", status: said(rows[0].check) };
 }
 
-const LINK_ACTION = "Link with your RealBud account";
+const NO_GMAIL = "No Gmail is needed for the work you chose.";
 
 /**
- * Step 2 starts with linking this computer to its RealBud account: that link is
- * how Bud's model access and the account connections arrive. Until the host
- * reports the link, nothing after it in this step can be the current action.
+ * Step 4: the office Gmail. With a role pack this is the pack's own Gmail
+ * check; without one, the agency setup's Gmail check, after any app the linked
+ * service offers that has no account yet. Signing in is the person's own.
  */
-function websiteLinkFact(link: WebsiteLinkRead): Fact | null {
-  if (link === "linked") return null;
-  const action = { actionLabel: LINK_ACTION, target: "you-website" as const };
-  if (link === "not-linked") {
-    return { fact: "todo", status: "Link this computer with your RealBud account first; your account then sets up Bud’s model access and account connections. Then connect the accounts your work reads.", ...action };
+function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: readonly string[]): Fact {
+  if (pack && pack !== "unavailable" && pack.installed) {
+    const item = pack.checklist.find((entry) => entry.id === "gmail");
+    if (!item) return { fact: "done", status: NO_GMAIL };
+    return item.done
+      ? { fact: "done", status: "The office Gmail is connected." }
+      : { fact: "todo", status: "Sign in to the office Gmail in your browser." };
   }
-  return {
-    fact: "unknown",
-    status: link === undefined ? `${NOT_CHECKED} Reading this computer’s RealBud account link…` : `${NOT_CHECKED} This computer’s RealBud account link could not be read.`,
-    ...action,
-  };
-}
-
-/**
- * Step 2, after the account link: the accounts the selected work reads,
- * connected through Connections and checked. Any app the office uses can be
- * connected on demand there; the one account a shipped workflow requires today
- * is the private Gmail source, so that is the host check this rolls up. The
- * status is whatever the host's own check says; this step invents no fact about
- * an account or about what has been collected from it.
- */
-function accountsFact(setup: AgencySetupFacts, link: WebsiteLinkRead, appsToConnect: readonly string[]): Fact {
-  const linkFirst = websiteLinkFact(link);
-  if (linkFirst) return linkFirst;
-  // The linked service offers these apps; none is connected yet. Name the first
-  // one on the action itself so the next thing to press is unmistakable.
+  if (!setup || setup === "unavailable") return { fact: "unknown", status: `${NOT_CHECKED} Your office’s connections could not be read yet.` };
   if (appsToConnect.length) {
     const labels = appsToConnect.map(officeAppLabel);
     return {
       fact: "todo",
-      status: `${list(labels)} ${labels.length === 1 ? "is" : "are"} not connected yet. In Connections, press Connect ${labels[0]}; sign-in opens in your browser and you finish it there.`,
+      status: `${list(labels)} ${labels.length === 1 ? "is" : "are"} not connected yet. Sign-in opens in your browser and you finish it there.`,
       actionLabel: `Connect ${labels[0]}`,
-      target: "you-connected-apps",
     };
   }
   const selected = setup.workflows.filter((workflow) => workflow.selected);
   // Before any work is ticked the account is still the agency's own, so the
   // check is read across every workflow that reports one.
-  const scope = selected.length ? selected : setup.workflows;
-  return checkRollup(scope, "gmail", {
-    fact: "done",
-    status: "No connected account is needed for the work you chose.",
-  });
+  return checkRollup(selected.length ? selected : setup.workflows, "gmail", { fact: "done", status: NO_GMAIL });
 }
 
-const SEPARATE = "Enabling is a separate action on Schedule.";
+const SEPARATE = "Switching on is a separate action on Schedule.";
 
 function scheduleFact(schedule: ScheduleRead | undefined, selected: readonly AgencySetupWorkflowFacts[]): Fact {
   const label = "Open Schedule";
-  if (!schedule || schedule.read !== "ready") return { fact: "unknown", status: `${NOT_CHECKED} ${SEPARATE}`, actionLabel: label };
+  const target = "schedule-packs" as const;
+  if (!schedule || schedule.read !== "ready") return { fact: "unknown", status: `${NOT_CHECKED} ${SEPARATE}`, actionLabel: label, target };
   const off: string[] = [];
   const unreported: string[] = [];
   const on: string[] = [];
@@ -311,21 +339,21 @@ function scheduleFact(schedule: ScheduleRead | undefined, selected: readonly Age
     else if (loop.enabled && loop.available && loop.nextRunAt !== null) on.push(workflow.title);
     else off.push(workflow.title);
   }
-  if (off.length) return { fact: "todo", status: `Off for ${list(off)}. ${SEPARATE}`, actionLabel: label };
+  if (off.length) return { fact: "todo", status: `Off for ${list(off)}. ${SEPARATE}`, actionLabel: label, target };
   if (unreported.length) {
-    return { fact: "unknown", status: `${NOT_CHECKED} No scheduled loop is reported for ${list(unreported)}. ${SEPARATE}`, actionLabel: label };
+    return { fact: "unknown", status: `${NOT_CHECKED} No scheduled loop is reported for ${list(unreported)}. ${SEPARATE}`, actionLabel: label, target };
   }
   return {
     fact: "done",
     status: `On with a next run recorded for ${list(on)}. A run still asks before it sends, pays or signs anything.`,
-    actionLabel: label,
   };
 }
 
 /**
- * Step 3: the selected work's own settings — property references included, for
- * the bank work that needs them — then approval, then the schedule switch. It is
- * done only when the host reports the loop enabled with a next run.
+ * Step 5 fallback without a role pack: the selected work's own settings
+ * (property references included, for the bank work that needs them), then
+ * approval, then the schedule switch. Done only when the host reports the
+ * loop enabled with a next run.
  */
 function approveFact(setup: AgencySetupFacts, schedule: ScheduleRead | undefined): Fact {
   const selected = setup.workflows.filter((workflow) => workflow.selected);
@@ -347,48 +375,59 @@ function approveFact(setup: AgencySetupFacts, schedule: ScheduleRead | undefined
   return scheduleFact(schedule, selected);
 }
 
-const HELD = `${NOT_CHECKED} Workflow setup could not be read.`;
+/**
+ * Step 5 with a role pack: each of the pack's workflows reviewed and switched
+ * on. The count follows the live loops when they are read, else the pack's
+ * own checklist; the action opens the next workflow still off.
+ */
+function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefined): Fact {
+  if (schedule?.read !== "ready") {
+    const item = pack.checklist.find((entry) => entry.id === "workflows");
+    if (!item) return { fact: "unknown", status: `${NOT_CHECKED} Your workflows could not be read yet.` };
+    if (item.done) return { fact: "done", status: item.detail };
+    return { fact: "todo", status: item.detail, ...(item.next ? { actionLabel: "Review the next workflow", target: `job-${item.next}` as const } : {}) };
+  }
+  const loops = schedule.loops;
+  const ids = pack.loops.map((loop) => loop.loopId);
+  const off = ids.filter((id) => !loops.find((loop) => loop.id === id)?.enabled);
+  if (!off.length) return { fact: "done", status: `All ${ids.length} workflows are on.` };
+  const next = off[0];
+  const name = loops.find((loop) => loop.id === next)?.name?.trim() || "the next workflow";
+  return {
+    fact: "todo",
+    status: `${ids.length - off.length} of ${ids.length} on. Open each workflow, read what it does, then switch it on.`,
+    actionLabel: `Review ${name}`,
+    target: `job-${next}`,
+  };
+}
 
-const ORDER: { id: SetupStepId; title: string; why: string; target: SetupJumpTarget; actionLabel: string }[] = [
-  {
-    id: "agency",
-    title: "Your agency",
-    why: "One form holds the agency name, the timezone its work follows and the workflow pack it uses.",
-    target: "schedule-packs",
-    actionLabel: OPEN_SETUP,
-  },
-  {
-    id: "accounts",
-    title: "Connect your accounts",
-    why: "Link this computer with your RealBud account, then connect the accounts your work reads and check each one.",
-    target: "you-connected-apps",
-    actionLabel: "Open Connections",
-  },
-  {
-    id: "approve",
-    title: "Approve and schedule",
-    why: "Review the selected work’s settings, approve them, then switch the schedule on yourself.",
-    target: "schedule-packs",
-    actionLabel: OPEN_SETUP,
-  },
+function workflowsFact(pack: AustinPackRead, setup: AgencySetupRead, schedule: ScheduleRead | undefined): Fact {
+  if (pack && pack !== "unavailable" && pack.installed) return packWorkflowsFact(pack, schedule);
+  if (!setup || setup === "unavailable") return { fact: "unknown", status: `${NOT_CHECKED} Your workflows could not be read yet.` };
+  return approveFact(setup, schedule);
+}
+
+const ORDER: { id: SetupStepId; title: string; target: SetupJumpTarget; actionLabel: string }[] = [
+  { id: "link", title: "Paste the link code your office sent you", target: "you-website", actionLabel: "Enter link code" },
+  { id: "bud", title: "Bud is setting itself up", target: "bud-setup", actionLabel: "See progress" },
+  { id: "pack", title: "Import your office’s pack", target: "schedule-packs", actionLabel: "Open packs from your office" },
+  { id: "gmail", title: "Connect the office Gmail", target: "you-connected-apps", actionLabel: "Connect Gmail" },
+  { id: "workflows", title: "Review and switch on your workflows", target: "schedule-packs", actionLabel: "Open Schedule" },
 ];
 
 export function setupSequence(input: SetupSequenceInput): SetupStep[] {
-  const setup = input.agencySetup;
-  const unreadable = setup === undefined || setup === "unavailable";
-  const held = (): Fact => ({
-    fact: "unknown",
-    status: setup === undefined ? `${NOT_CHECKED} Reading workflow setup…` : HELD,
-  });
-
-  const facts: Record<SetupStepId, Fact> = {
-    agency: unreadable ? held() : agencyFact(input.officeAgencyName ?? "", setup),
-    accounts: unreadable ? held() : accountsFact(setup, input.websiteLink, input.appsToConnect ?? []),
-    approve: unreadable ? held() : approveFact(setup, input.schedule),
+  const facts: Record<Exclude<SetupStepId, "bud">, Fact> = {
+    link: linkFact(input.websiteLink),
+    pack: packFact(input.austinPack, input.agencySetup, input.officeAgencyName ?? ""),
+    gmail: gmailFact(input.austinPack, input.agencySetup, input.appsToConnect ?? []),
+    workflows: workflowsFact(input.austinPack, input.agencySetup, input.schedule),
   };
 
   let currentTaken = false;
   return ORDER.map((step, index) => {
+    const number = index + 1;
+    // Bud never takes the current step: it runs by itself and blocks nothing.
+    if (step.id === "bud") return { ...step, number, ...budStep(input.bud, input.websiteLink) };
     const { fact, status, actionLabel, target } = facts[step.id];
     let state: SetupStepState;
     if (fact === "done") state = "done";
@@ -396,14 +435,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
       state = "current";
       currentTaken = true;
     } else state = fact === "unknown" ? "unknown" : "later";
-    return {
-      ...step,
-      number: index + 1,
-      state,
-      status,
-      target: target ?? step.target,
-      actionLabel: actionLabel ?? step.actionLabel,
-    };
+    return { ...step, number, state, status, target: target ?? step.target, actionLabel: actionLabel ?? step.actionLabel };
   });
 }
 
@@ -411,16 +443,7 @@ export function currentSetupStep(steps: readonly SetupStep[]): SetupStep | null 
   return steps.find((step) => step.state === "current") ?? null;
 }
 
-/** True only when every step is a host-confirmed `done`. */
+/** True only when every step, Bud included, is a host-confirmed `done`. */
 export function setupSequenceComplete(steps: readonly SetupStep[]): boolean {
   return steps.every((step) => step.state === "done");
-}
-
-/**
- * Bud is not a setup step: the office can read and review this whole path
- * before a worker is installed. It is one honest status line instead.
- */
-export function budStatusLine(ready: boolean | "unknown"): string {
-  if (ready === "unknown") return "Bud: not checked yet";
-  return ready ? "Bud: ready" : "Bud: needs setup in Workspace";
 }

@@ -50,7 +50,8 @@ const COMMANDS = [
 const LIMITS = [
   'Fictional data only: a throwaway workspace, a fictional onboarding profile and a fictional saved office contact. No customer book, no customer acceptance.',
   'Source-level run: real server from server/bootstrap.ts plus the real renderer through a Vite dev server. Not a packaged desktop app, not an installed app, not Windows.',
-  'No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent, so the card reads "Bud: needs setup in Workspace" and no step past 2 can finish.',
+  'No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent and this computer is never linked, so Get started stays at step 1 and steps 2, 4 and 5 never tick.',
+  'The card\'s Schedule actions (packs, next workflow) only appear once the link step is done; this harness cannot link, so the #schedule-packs deep link is opened directly instead.',
   'Headless Chrome at 1400x1050 and 390x844 only. Screenshots are fictional examples, never customer evidence.',
   'Proves onboarding/setup wiring and copy in the rendered app; it proves nothing about live workflow readiness or a real run.',
   'Fresh-browser persistence is exercised here. Restored-book replay and changed-port service restarts are separate scenarios in qa-onboarding-restart.mjs.',
@@ -90,7 +91,7 @@ const writeReceipt = () => {
     layer: 'source',
     passed: failure === null && errors.length === 0 && defects.length === 0,
     exercised: [
-      'src/components/desk/GoLiveCard.tsx', 'src/lib/setup-sequence.ts', 'src/lib/go-live.ts', 'src/lib/first-run.ts',
+      'src/components/desk/GoLiveCard.tsx', 'src/lib/setup-sequence.ts', 'src/lib/first-run.ts',
       'src/components/Onboarding.tsx', 'src/components/you/OfficeCard.tsx', 'src/components/RoutinesPage.tsx',
       'src/components/schedule/WorkflowPacksCard.tsx', 'src/components/schedule/AgencyWorkflowSetup.tsx',
     ],
@@ -177,17 +178,18 @@ try {
   const watch = page => { page.on('pageerror', error => errors.push(`${page.url()} :: ${error.message}`)); return page; };
 
   const openSetupCard = async page => {
-    // Desk's status line expands Check details, which contains the setup card.
-    const morning = page.getByRole('region', { name: 'This morning', exact: true });
-    await morning.waitFor();
-    const show = morning.getByRole('button', { name: 'Check details', exact: true });
-    if (await show.count()) await show.click();
-    const card = page.getByRole('region', { name: 'Workspace setup', exact: true });
+    // Get started sits on Desk itself, above the brief, open by default.
+    const card = page.getByRole('region', { name: 'Get started', exact: true });
     await card.waitFor();
-    const collapsed = card.getByRole('button', { name: /^Workspace setup · / });
+    const collapsed = card.getByRole('button', { name: /^Get started · / });
     if (await collapsed.count()) await collapsed.click();
+    await card.getByRole('list', { name: 'Get started steps', exact: true }).waitFor();
+    // Wait for the card's own reads to answer: the link and the packs.
+    await card.getByText('Your office owner sends this code. Ask them if you don’t have one yet.', { exact: true }).waitFor();
+    await card.getByText(/Reading packs from your office/).waitFor({ state: 'detached' });
     return card;
   };
+  const cardTextOf = async card => (await card.innerText()).replace(/\s+/g, ' ').trim();
 
   // ── 1. Desk workspace setup is one ordered path of three steps ──────────────
   const context = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
@@ -214,56 +216,59 @@ try {
   assert.equal((await request('/api/desk')).book.office.pmUser, FRESH_PERSON);
   checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact');
   let card = await openSetupCard(desk);
-  await card.getByText('Step 1 of 3: Your agency', { exact: true }).waitFor();
-  let cardText = (await card.innerText()).replace(/\s+/g, ' ').trim();
+  await card.getByText('0 of 5 done', { exact: true }).waitFor();
+  let cardText = await cardTextOf(card);
   observations.freshSetupCard = cardText;
-  // Exactly one current step, and nothing the host has not answered may read as done.
-  assert.equal(cardText.match(/Step \d of 3:/g)?.length, 1, cardText);
-  assert.match(cardText, /Still to save on this one form: an agency name, a timezone, a workflow pack\./);
-  assert.match(cardText, /(?:Later|Not checked yet) · 2\. Connect your accounts/);
-  assert.match(cardText, /(?:Later|Not checked yet) · 3\. Approve and schedule/);
-  // Bud is a status line, not a step: this harness installs no worker.
-  assert.match(cardText, /Bud: needs setup in Workspace/);
-  assert.doesNotMatch(cardText, /Set up Bud/);
-  assert.doesNotMatch(cardText, /Done:/);
-  assert.doesNotMatch(cardText, /On with a next run recorded/);
-  assert.doesNotMatch(cardText, /Reviewed with current checks passed/);
+  // Five steps in Kevin's order, exactly one current step, nothing done.
+  for (const title of ['1. Paste the link code your office sent you', '2. Bud is setting itself up', '3. Import your office’s pack', '4. Connect the office Gmail', '5. Review and switch on your workflows']) {
+    assert.ok(cardText.includes(title), `${title} missing: ${cardText}`);
+  }
+  assert.equal(cardText.match(/· Now\b/g)?.length, 1, cardText);
+  assert.match(cardText, /1\. Paste the link code your office sent you · Now/);
+  assert.equal(await card.getByRole('button', { name: 'Enter link code', exact: true }).count(), 1);
+  // Bud is step 2 but never the current step: this harness installs no worker.
+  assert.doesNotMatch(cardText, /2\. Bud is setting itself up · (?:Done|Now)/);
+  assert.doesNotMatch(cardText, /· Done/);
+  assert.doesNotMatch(cardText, /\bready\b/i);
   await card.evaluate(el => el.scrollIntoView({ block: 'center' }));
-  await desk.screenshot({ path: join(output, 'desk-workspace-setup.png') });
-  checks.push('Fresh workspace Desk shows "Workspace setup" as "Step 1 of 3: Your agency", exactly one current step, steps 2 and 3 unresolved, Bud as a status line rather than a step, and nothing marked Done');
+  await desk.screenshot({ path: join(output, 'desk-get-started.png') });
+  checks.push('Fresh workspace Desk shows one "Get started" card with five steps, 0 of 5 done, step 1 "Enter link code" as the single current step, Bud never current or done, and nothing claiming ready');
 
-  // ── 1b. The agency name alone does not finish step 1 ────────────────────────
+  // ── 1b. The agency name alone does not finish the pack step ────────────────
   const namedAgency = await request('/api/desk/agency', 'PATCH', { name: FICTIONAL_AGENCY });
   assert.equal(namedAgency.book.agency.name, FICTIONAL_AGENCY);
   await desk.reload();
   card = await openSetupCard(desk);
-  await card.getByText('Step 1 of 3: Your agency', { exact: true }).waitFor();
-  cardText = (await card.innerText()).replace(/\s+/g, ' ').trim();
+  await card.getByText('0 of 5 done', { exact: true }).waitFor();
+  cardText = await cardTextOf(card);
   observations.namedOnYouSetupCard = cardText;
-  // The name saved on You counts, so only the timezone and pack are still asked for.
-  assert.match(cardText, /Still to save on this one form: a timezone, a workflow pack\./);
-  assert.doesNotMatch(cardText, /an agency name/);
-  assert.doesNotMatch(cardText, /Done:/);
-  checks.push(`Naming the agency on You through PATCH /api/desk/agency (${FICTIONAL_AGENCY}) is accepted as the agency name — step 1 stops asking for it — but step 1 stays current until the timezone and pack are saved too`);
+  assert.doesNotMatch(cardText, /3\. Import your office’s pack · Done/);
+  checks.push(`Naming the agency on You through PATCH /api/desk/agency (${FICTIONAL_AGENCY}) does not tick "Import your office’s pack" on its own`);
 
-  const openSetup = card.getByRole('button', { name: 'Open Agency workflow setup', exact: true });
-  await openSetup.waitFor();
-  await openSetup.click();
+  // The card's Schedule actions appear only after the link step; open the same
+  // deep link the way the card does (Schedule door, then #schedule-packs).
+  await desk.getByRole('button', { name: 'Schedule', exact: true }).click();
   await desk.getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
+  await desk.evaluate(() => { location.hash = 'schedule-packs'; });
   observations.hashAfterOpenSetup = await desk.evaluate(() => location.hash);
   const packs = desk.locator('#schedule-packs');
   await packs.waitFor();
   assert.equal(await packs.count(), 1);
-  checks.push('Open Agency workflow setup opens the Schedule door with #schedule-packs present in the document');
+  checks.push('The Schedule door with #schedule-packs puts the packs section in the document');
 
-  // The two surfaces must number the same steps, so Schedule's tabs read 1 to 3
-  // with property references and the workflow review both inside step 3.
+  // The agency form is an owner's fallback. Once the drawer packet lands it sits
+  // inside a collapsed "More setup options (office owner)" section; open it when present.
+  const more = packs.locator('details').filter({ has: desk.getByText('More setup options (office owner)', { exact: true }) }).first();
+  if (await more.count() && !(await more.evaluate(el => el.open))) await more.locator('summary').first().click();
   const setupSteps = packs.getByRole('navigation', { name: 'Agency setup steps', exact: true });
   await setupSteps.waitFor();
   const stepLabels = (await setupSteps.innerText()).replace(/\s+/g, ' ').trim();
   observations.agencySetupStepLabels = stepLabels;
-  assert.equal(stepLabels, '1. Agency details 2. Connect your accounts 3a. Property references 3b. Review workflows');
-  checks.push('Schedule → Agency workflow setup numbers its tabs 1, 2, 3 and 3, matching the three-step Desk setup path');
+  assert.ok([
+    'Agency Gmail Property references Review workflows',
+    '1. Agency details 2. Connect your accounts 3a. Property references 3b. Review workflows',
+  ].includes(stepLabels), stepLabels);
+  checks.push(`Schedule → Agency workflow setup tabs read "${stepLabels}"`);
 
   const packsBox = async () => packs.evaluate(el => {
     const rect = el.getBoundingClientRect();
@@ -299,9 +304,8 @@ try {
   // Back to Desk for the rest of the path.
   await desk.goto(`${uiBase}/#/desk`);
   card = await openSetupCard(desk);
-  await card.getByText('Step 1 of 3: Your agency', { exact: true }).waitFor();
 
-  // ── 1c. Saving name, timezone and pack on one form advances to step 2 ───────
+  // ── 1c. Saving name, timezone and pack on one form ticks the pack step ──────
   const before = await request('/api/agency-setup');
   const saved = await request('/api/agency-setup', 'PUT', {
     expectedRevision: before.state.revision,
@@ -311,35 +315,34 @@ try {
   assert.equal(saved.state.settings.workflowPackId, FICTIONAL_PACK);
   await desk.reload();
   card = await openSetupCard(desk);
-  await card.getByText('Step 2 of 3: Connect your accounts', { exact: true }).waitFor();
-  cardText = (await card.innerText()).replace(/\s+/g, ' ').trim();
+  await card.getByText('1 of 5 done', { exact: true }).waitFor();
+  cardText = await cardTextOf(card);
   observations.savedAgencySetupCard = cardText;
-  assert.equal(cardText.match(/Step \d of 3:/g)?.length, 1, cardText);
-  assert.match(cardText, /Done: 1\. Your agency/);
+  assert.equal(cardText.match(/· Now\b/g)?.length, 1, cardText);
+  assert.match(cardText, /3\. Import your office’s pack · Done/);
   // No account is connected in this harness, so Gmail may never read as done.
-  assert.doesNotMatch(cardText, /Done:.*2\. Connect your accounts/);
-  // A fresh computer must link its RealBud account before account connections
-  // can become step 2's current action. This harness never starts that link.
+  assert.doesNotMatch(cardText, /4\. Connect the office Gmail · Done/);
+  // This harness never links, so step 1 stays the single current action.
   assert.equal((await request('/api/office-link')).state, 'unlinked');
-  const accountLink = card.getByRole('button', { name: 'Link with your RealBud account', exact: true });
-  await accountLink.waitFor();
+  assert.match(cardText, /1\. Paste the link code your office sent you · Now/);
+  const accountLink = card.getByRole('button', { name: 'Enter link code', exact: true });
   assert.equal(await accountLink.count(), 1);
-  assert.equal(await card.getByRole('button', { name: 'Open Connections', exact: true }).count(), 0);
+  assert.equal(await card.getByRole('button', { name: 'Connect Gmail', exact: true }).count(), 0);
   await card.evaluate(el => el.scrollIntoView({ block: 'center' }));
-  await desk.screenshot({ path: join(output, 'desk-workspace-setup-named.png') });
-  checks.push(`Saving the agency name, timezone (${FICTIONAL_ZONE}) and workflow pack (${FICTIONAL_PACK}) in one PUT /api/agency-setup collapses step 1 into Done and advances the single current step to "Step 2 of 3: Connect your accounts", whose single action requires linking the RealBud account and which stays not done while unlinked`);
+  await desk.screenshot({ path: join(output, 'desk-get-started-pack-saved.png') });
+  checks.push(`Saving the agency name, timezone (${FICTIONAL_ZONE}) and workflow pack (${FICTIONAL_PACK}) in one PUT /api/agency-setup ticks "Import your office’s pack" (1 of 5 done) for an office without a role pack, while the unlinked computer keeps "Enter link code" as the single current action`);
 
-  // ── 1d. Step 2 opens its account-link gate; Connections remains navigable ──
+  // ── 1d. Step 1 opens the link-code entry; Connections remains navigable ────
   await accountLink.click();
   const accountSettings = desk.locator('#you-settings');
   await accountSettings.waitFor();
   const websiteAccount = accountSettings.getByRole('region', { name: 'Website account', exact: true });
-  await websiteAccount.getByRole('button', { name: 'Link with your RealBud account', exact: true }).waitFor();
+  await websiteAccount.waitFor();
   observations.hashAfterOpenAccountLink = await desk.evaluate(() => location.hash);
   assert.equal((await request('/api/office-link')).state, 'unlinked');
   await websiteAccount.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await desk.screenshot({ path: join(output, 'you-account-link.png') });
-  checks.push('Step 2 opens the Website account controls in Workspace → Settings & help without starting a link or marking the computer linked');
+  checks.push('Enter link code opens the Website account controls in Workspace without starting a link or marking the computer linked');
 
   await desk.getByRole('button', { name: 'Workspace', exact: true }).click();
   const connectedApps = desk.locator('#you-connected-apps');
@@ -360,7 +363,7 @@ try {
   await narrow.setViewportSize({ width: 390, height: 844 });
   await narrow.goto(`${uiBase}/#/desk`);
   const narrowCard = await openSetupCard(narrow);
-  await narrowCard.getByText(/^Step \d of 3: /).waitFor();
+  await narrowCard.getByText(/^\d of 5 done$/).waitFor();
   await narrowCard.evaluate(el => el.scrollIntoView({ block: 'center' }));
   const narrowWidths = await narrow.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
   observations.narrowWidths = narrowWidths;

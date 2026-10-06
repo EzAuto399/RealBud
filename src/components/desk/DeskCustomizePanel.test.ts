@@ -16,7 +16,7 @@ const html = (fields: Partial<Parameters<typeof DeskCustomizeView>[0]> = {}) => 
 describe('Customize desk panel', () => {
   it('names every section with plain labels and accessible reorder controls', () => {
     const markup = html();
-    for (const label of ['Morning brief', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Setup checklist', 'Activity', 'Needs you']) expect(markup).toContain(label);
+    for (const label of ['Morning brief', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Get started', 'Activity', 'Needs you']) expect(markup).toContain(label);
     expect(markup).toContain('aria-label="Move Mail priorities up"');
     expect(markup).toContain('aria-label="Move Activity down"');
     expect(markup).toContain('aria-label="Show Morning brief"');

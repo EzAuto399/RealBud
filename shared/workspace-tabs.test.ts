@@ -5,7 +5,7 @@ describe('Desk section layout', () => {
   it('defaults to today\'s Desk order with every section visible', () => {
     expect(defaultDeskSections().map(section => section.id)).toEqual(['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity']);
     expect(defaultDeskSections().every(section => section.visible)).toBe(true);
-    expect(simpleDeskSections().filter(section => section.visible).map(section => section.id)).toEqual(['brief', 'queue']);
+    expect(simpleDeskSections().filter(section => section.visible).map(section => section.id)).toEqual(['brief', 'go-live', 'queue']);
   });
   it('accepts a reordered complete layout with hidden optional sections', () => {
     const sections = [...defaultDeskSections()].reverse().map(section => ({ ...section, visible: section.id === 'queue' }));

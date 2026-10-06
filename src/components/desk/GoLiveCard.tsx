@@ -1,130 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { CheckCircle2, Circle, CircleHelp, LoaderCircle } from "lucide-react";
 
-import { propertyExportRow, type GoLiveWorkflow } from "@/lib/go-live";
+import { parseAustinPackView } from "@shared/austin-pack";
+import { budAutoSetupView } from "@/lib/bud-setup";
 import {
   SETUP_STEP_COUNT,
-  budStatusLine,
-  currentSetupStep,
   officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
   setupSequence,
   setupSequenceComplete,
   type AgencySetupRead,
+  type AustinPackRead,
   type ScheduleRead,
   type SetupStep,
   type WebsiteLinkRead,
 } from "@/lib/setup-sequence";
-import type { Office } from "@/lib/office-setup";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
+import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { api, useStore } from "@/state/store";
 
 const STATE_LABEL: Record<SetupStep["state"], string> = {
   done: "Done",
   current: "Now",
+  working: "Working",
   later: "Later",
   unknown: "Not checked yet",
 };
 
-export function GoLiveCard({
-  mode,
-  agencyName,
-  workerReady,
-  compact = false,
-  workflow = "workspace",
-  agencySetup,
-  websiteLink,
-  onConnectExport,
-}: {
-  mode: "demo" | "live";
-  agencyName: string;
-  workerReady: boolean;
-  compact?: boolean;
-  workflow?: GoLiveWorkflow;
-  /** Supply the host facts to skip this card's own bounded read of them. */
-  agencySetup?: AgencySetupRead;
-  /** Supply this computer's RealBud account link to skip the card's own read of it. */
-  websiteLink?: WebsiteLinkRead;
-  onConnectExport: () => void;
-  /**
-   * Still accepted from the Desk and You callers. Each of the three steps has
-   * its own single action (the agency setup card, or the account link or
-   * Connections on You), and
-   * Bud is a status line rather than a step, so these place no control here.
-   */
-  jurisdictions?: readonly string[];
-  office?: Office | null;
-  onAttachWorker?: () => void;
-  attachWorkerLabel?: string;
-  onSaveAgency?: (name: string) => void;
-  onNameAgency?: () => void;
-}) {
-  const { state, dispatch } = useStore();
-  const [open, setOpen] = useState(!compact);
-  // Unknown setup state stays unknown: a failed or slow read may never read as
-  // finished setup, so the step carries its own honest wording instead.
-  const [read, setRead] = useState<AgencySetupRead>(undefined);
-  const supplied = agencySetup !== undefined;
-  const [linkRead, setLinkRead] = useState<WebsiteLinkRead>(undefined);
-  const linkSupplied = websiteLink !== undefined;
-  // The store already hydrates the loops once per session, so the schedule fact
-  // reuses that slice instead of reading /api/loops again. Anything short of a
-  // finished read stays "not checked yet".
-  const routines = state?.activityLoad?.routines;
-  const schedule: ScheduleRead =
-    routines === "ready"
-      ? {
-          read: "ready",
-          loops: (state.loops ?? []).map((loop) => ({
-            id: loop.id,
-            available: loop.available,
-            enabled: loop.enabled,
-            nextRunAt: loop.nextRunAt,
-          })),
-        }
-      : { read: routines === "error" ? "error" : "loading" };
-  // The app-wide office-source watch already keeps this snapshot fresh; an app
-  // the linked service offers with no account yet becomes the named next step.
-  const { snapshot: officeSnapshot } = useOfficeSources();
-  const steps = setupSequence({
-    officeAgencyName: agencyName,
-    agencySetup: supplied ? agencySetup : read,
-    schedule,
-    websiteLink: linkSupplied ? websiteLink : linkRead,
-    appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
-  });
-  const current = currentSetupStep(steps);
-  const exportRow = propertyExportRow({ mode, workflow });
-
+/** One bounded read: a hung or failed read becomes "unavailable", never a permanent "Reading…". */
+function useBoundedRead<T>(path: string, parse: (body: unknown) => T, skip: boolean, refreshEvent?: string): T | "unavailable" | undefined {
+  const [value, setValue] = useState<T | "unavailable" | undefined>(undefined);
   useEffect(() => {
-    if (compact) setOpen(false);
-  }, [compact]);
-
-  useEffect(() => {
-    if (supplied) return;
-    let alive = true;
-    const controller = new AbortController();
-    // A hung read must become a visible "could not be read", never a permanent
-    // "Reading…", and leaving the card cancels it.
-    const timer = setTimeout(() => controller.abort(), 15_000);
-    void api("/api/agency-setup", { signal: controller.signal })
-      .then((view: unknown) => {
-        if (alive) setRead(readAgencySetupFacts(view));
-      })
-      .catch(() => {
-        if (alive) setRead("unavailable");
-      });
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [supplied]);
-
-  // Step 2 starts with the account link. Re-read it whenever the link card on
-  // You changes it, so the step moves on without a reload.
-  useEffect(() => {
-    if (linkSupplied) return;
+    if (skip) return;
     let alive = true;
     let controller: AbortController | undefined;
     const load = () => {
@@ -132,141 +40,188 @@ export function GoLiveCard({
       const current = new AbortController();
       controller = current;
       const timer = setTimeout(() => current.abort(), 15_000);
-      void api("/api/office-link", { signal: current.signal })
-        .then((status: unknown) => {
-          if (alive && controller === current) setLinkRead(readWebsiteLinkState(status));
+      void api(path, { signal: current.signal })
+        .then((body: unknown) => {
+          if (alive && controller === current) setValue(parse(body));
         })
         .catch(() => {
-          if (alive && controller === current) setLinkRead("unavailable");
+          if (alive && controller === current) setValue("unavailable");
         })
         .finally(() => clearTimeout(timer));
     };
     load();
-    window.addEventListener("realbud-website-link-changed", load);
+    if (refreshEvent) window.addEventListener(refreshEvent, load);
     return () => {
       alive = false;
       controller?.abort();
-      window.removeEventListener("realbud-website-link-changed", load);
+      if (refreshEvent) window.removeEventListener(refreshEvent, load);
     };
-  }, [linkSupplied]);
+    // `parse` is a module-level function at every call site.
+  }, [path, skip, refreshEvent]);
+  return value;
+}
 
-  const openWorkflowSetup = () => {
-    // Schedule's own section scroll runs off the hash once its screen mounts;
-    // the direct call covers the case where that section is already on screen.
-    if (typeof location !== "undefined") location.hash = "schedule-packs";
-    dispatch({ type: "showRoutines" });
-    if (typeof document !== "undefined") document.getElementById("schedule-packs")?.scrollIntoView({ block: "start" });
-  };
+/**
+ * "Get started": the one setup checklist, on Desk. Five steps that tick from
+ * the host's own facts; the card disappears once every step is done.
+ */
+export function GoLiveCard({
+  agencyName,
+  compact = false,
+  agencySetup,
+  websiteLink,
+  austinPack,
+  menu,
+  inert,
+}: {
+  agencyName: string;
+  /** Desk's per-card menu, placed beside the card (and gone with it). */
+  menu?: ReactNode;
+  /** True while a Desk drawer covers the card. */
+  inert?: boolean;
+  /** Desk shows a Hide control that folds the card to one line. */
+  compact?: boolean;
+  /** Supply the host facts to skip this card's own bounded reads of them. */
+  agencySetup?: AgencySetupRead;
+  websiteLink?: WebsiteLinkRead;
+  austinPack?: AustinPackRead;
+}) {
+  const { state, dispatch } = useStore();
+  const [open, setOpen] = useState(true);
+  // Unknown setup state stays unknown: a failed or slow read may never read as
+  // finished setup, so the step carries its own honest wording instead.
+  const agencyRead = useBoundedRead("/api/agency-setup", readAgencySetupFacts, agencySetup !== undefined);
+  const packRead = useBoundedRead("/api/austin-pack", parseAustinPackView, austinPack !== undefined);
+  // Step 1 re-reads whenever the link card in Workspace changes the link, so it
+  // ticks without a reload.
+  const linkRead = useBoundedRead("/api/office-link", readWebsiteLinkState, websiteLink !== undefined, "realbud-website-link-changed");
+  // The store already hydrates the loops once per session, so the workflow step
+  // reuses that slice. Anything short of a finished read stays "not checked yet".
+  const routines = state?.activityLoad?.routines;
+  const schedule: ScheduleRead =
+    routines === "ready"
+      ? {
+          read: "ready",
+          loops: (state.loops ?? []).map((loop) => ({
+            id: loop.id,
+            name: loop.name,
+            available: loop.available,
+            enabled: loop.enabled,
+            nextRunAt: loop.nextRunAt,
+          })),
+        }
+      : { read: routines === "error" ? "error" : "loading" };
+  // Bud ticks only on the server's own readiness verdict.
+  const hermes = state?.hermes ?? null;
+  const auto = budAutoSetupView(hermes);
+  // The app-wide office-source watch already keeps this snapshot fresh.
+  const { snapshot: officeSnapshot } = useOfficeSources();
+  const steps = setupSequence({
+    officeAgencyName: agencyName,
+    agencySetup: agencySetup ?? agencyRead,
+    austinPack: austinPack ?? packRead,
+    websiteLink: websiteLink ?? linkRead,
+    bud: hermes ? { ready: hermes.ready, working: Boolean(auto?.working), detail: auto && !auto.working ? auto.detail : null } : undefined,
+    schedule,
+    appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
+  });
 
-  // The account link and connected accounts live in Workspace; the other two
-  // steps are taken in the agency setup card on Schedule. Each step has exactly one.
   const openStep = (step: SetupStep) => {
-    if (step.target === "you-connected-apps" || step.target === "you-office" || step.target === "you-website") {
-      if (typeof location !== "undefined") location.hash = step.target;
+    if (step.target === "bud-setup") {
+      openWorkspaceSetup("bud");
+      return;
+    }
+    if (typeof location !== "undefined") location.hash = step.target;
+    if (step.target.startsWith("you-")) {
       dispatch({ type: "showYou" });
       return;
     }
-    openWorkflowSetup();
+    // Schedule's own section scroll runs off the hash once its screen mounts;
+    // the direct call covers the case where that section is already on screen.
+    dispatch({ type: "showRoutines" });
+    if (typeof document !== "undefined") document.getElementById(step.target)?.scrollIntoView({ block: "start" });
   };
 
-  if (setupSequenceComplete(steps) && (!exportRow || exportRow.done)) return null;
+  // Every step done: the card goes away. It never announces "ready".
+  if (setupSequenceComplete(steps)) return null;
+
+  const doneCount = steps.filter((step) => step.state === "done").length;
+  const summary = `${doneCount} of ${SETUP_STEP_COUNT} done`;
+
+  const frame = (card: ReactNode) => (
+    <div className="mb-3 flex items-start gap-2" inert={inert}>
+      <div className="min-w-0 flex-1">{card}</div>
+      {menu}
+    </div>
+  );
 
   if (compact && !open) {
-    return (
-      <section className="mt-3 border border-line bg-sheet px-3.5 py-2" aria-label="Workspace setup">
+    return frame(
+      <section className="rounded-lg border border-line bg-sheet px-3.5 py-2" aria-label="Get started">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex w-full items-center justify-between gap-2 text-left text-[13px] text-ink"
+          className="flex min-h-8 w-full items-center justify-between gap-2 text-left text-[13px] text-ink"
         >
-          <span>
-            Workspace setup · {current ? `Step ${current.number} of ${SETUP_STEP_COUNT}: ${current.title}` : "every step checked"}
-            <span className="text-ink-muted"> · Each workflow is still reviewed on its own.</span>
-          </span>
+          <span>Get started · {summary}</span>
           <span className="text-[12px] text-agency">Open</span>
         </button>
       </section>
     );
   }
 
-  const done = steps.filter((step) => step.state === "done");
-  const ahead = steps.filter((step) => step.state === "later" || step.state === "unknown");
-
-  return (
-    <section className="mt-3 rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label="Workspace setup">
+  return frame(
+    <section className="rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label="Get started">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="text-[13px] font-medium text-ink">Workspace setup</div>
-          <p className="mt-0.5 text-[12px] text-ink-muted">
-            {SETUP_STEP_COUNT} steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished.
-          </p>
+          <h2 className="text-[14px] font-medium text-ink">Get started</h2>
+          <p className="mt-0.5 text-[12px] text-ink-muted">{summary}</p>
         </div>
         {compact ? (
-          <button type="button" onClick={() => setOpen(false)} className="text-[12px] text-ink-muted hover:text-ink">
+          <button type="button" onClick={() => setOpen(false)} className="min-h-8 px-1 text-[12px] text-ink-muted hover:text-ink">
             Hide
           </button>
         ) : null}
       </div>
-
-      {done.length ? (
-        <p className="mt-2 text-[12px] text-ink-muted">
-          Done: {done.map((step) => `${step.number}. ${step.title}`).join(" · ")}
-        </p>
-      ) : null}
-
-      {current ? (
-        <div className="mt-2 rounded border border-line bg-inset px-3 py-2">
-          <div className="text-[13px] font-medium text-ink">
-            Step {current.number} of {SETUP_STEP_COUNT}: {current.title}
-          </div>
-          <p className="mt-0.5 text-[12.5px] text-ink-secondary">{current.why}</p>
-          <p className="mt-0.5 text-[12.5px] text-ink-muted">{current.status}</p>
-          <button
-            type="button"
-            onClick={() => openStep(current)}
-            aria-label={current.actionLabel}
-            className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink"
-          >
-            {current.actionLabel}
-          </button>
-        </div>
-      ) : (
-        <p className="mt-2 text-[12.5px] text-ink-secondary">Every setup step is recorded as done. Each run is still reviewed on its own.</p>
-      )}
-
-      {ahead.length ? (
-        <ol className="mt-2 space-y-1">
-          {ahead.map((step) => (
-            <li key={step.id} className="text-[12.5px] text-ink-muted">
-              <span className="text-ink-muted">{STATE_LABEL[step.state]}</span>
-              {" · "}
-              {step.number}. {step.title}
-              {step.state === "unknown" ? <span className="text-hold"> — {step.status}</span> : null}
+      <ol aria-label="Get started steps" className="mt-2 divide-y divide-line">
+        {steps.map((step) => {
+          // Bud's step always offers its progress; any other step acts only on its turn.
+          const action = step.state === "current" || (step.id === "bud" && step.state !== "done");
+          return (
+            <li key={step.id} className="flex flex-wrap items-start gap-x-3 gap-y-1.5 py-2">
+              <StepIcon state={step.state} />
+              <div className="min-w-0 flex-1 basis-[12rem]">
+                <div className={`text-[13px] ${step.state === "current" ? "font-medium text-ink" : "text-ink-secondary"}`}>
+                  {step.number}. {step.title}
+                  {/* An unread step's own sentence already starts "Not checked yet." */}
+                  {step.state === "unknown" ? null : <span className="text-[12px] text-ink-muted">{` · ${STATE_LABEL[step.state]}`}</span>}
+                </div>
+                {step.state !== "done" ? (
+                  <p className={`mt-0.5 text-[12.5px] ${step.state === "unknown" ? "text-hold" : "text-ink-muted"}`}>{step.status}</p>
+                ) : null}
+              </div>
+              {action ? (
+                <button
+                  type="button"
+                  onClick={() => openStep(step)}
+                  aria-label={step.actionLabel}
+                  className={`pm-control shrink-0 rounded border px-3 text-[13px] ${step.state === "current" ? "border-agency bg-agency text-white hover:bg-agency-hover" : "border-line bg-sheet text-ink hover:bg-selected"}`}
+                >
+                  {step.actionLabel}
+                </button>
+              ) : null}
             </li>
-          ))}
-        </ol>
-      ) : null}
-
-      {exportRow && !exportRow.done ? (
-        <div className="mt-2 border-t border-line pt-2 text-[12.5px]">
-          <div className="text-ink">Also needed for this workflow · {exportRow.title}</div>
-          <p className="text-ink-muted">{exportRow.detail}</p>
-          <button
-            type="button"
-            onClick={onConnectExport}
-            aria-label="Open properties"
-            className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink"
-          >
-            Open properties
-          </button>
-        </div>
-      ) : null}
-
-      {/* Bud is not a step: this setup can be read and reviewed before a worker
-          is installed, so its readiness is one status line under the path. */}
-      <p className="mt-2 border-t border-line pt-2 text-[12px] text-ink-muted">
-        {budStatusLine(workerReady)} · setup can be reviewed before Bud is installed.
-      </p>
+          );
+        })}
+      </ol>
     </section>
   );
+}
+
+function StepIcon({ state }: { state: SetupStep["state"] }) {
+  const className = "mt-0.5 shrink-0";
+  if (state === "done") return <CheckCircle2 size={16} className={`${className} text-agency`} aria-hidden />;
+  if (state === "working") return <LoaderCircle size={16} className={`${className} animate-spin text-agency motion-reduce:animate-none`} aria-hidden />;
+  if (state === "unknown") return <CircleHelp size={16} className={`${className} text-hold`} aria-hidden />;
+  return <Circle size={16} className={`${className} ${state === "current" ? "text-ink" : "text-ink-muted"}`} aria-hidden />;
 }

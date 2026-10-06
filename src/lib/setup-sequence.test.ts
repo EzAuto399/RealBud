@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import type { AustinChecklistItem, AustinPackView } from "../../shared/austin-pack";
 import {
   SETUP_STEP_COUNT,
-  budStatusLine,
   currentSetupStep,
   officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
-  setupSequence as sequenceOf,
+  setupSequence,
   setupSequenceComplete,
   type AgencySetupFacts,
   type AgencySetupWorkflowFacts,
@@ -17,12 +17,7 @@ import {
   type SetupStepId,
 } from "./setup-sequence";
 
-const check = (id: string, state: "passed" | "needed" | "unknown", detail = `${id} detail from the host`) => ({
-  id,
-  label: `${id} check`,
-  state,
-  detail,
-});
+const check = (id: string, state: "passed" | "needed" | "unknown", detail = `${id} detail from the host`) => ({ id, label: `${id} check`, state, detail });
 
 const bank = (fields: Partial<AgencySetupWorkflowFacts> = {}): AgencySetupWorkflowFacts => ({
   id: "bank-references",
@@ -42,135 +37,138 @@ const facts = (fields: Partial<AgencySetupFacts> = {}): AgencySetupFacts => ({
   ...fields,
 });
 
-// The cases below describe a computer already linked with its RealBud account;
-// the account-link cases pass `websiteLink` explicitly.
-const setupSequence = (input: SetupSequenceInput) => sequenceOf({ websiteLink: "linked", ...input });
+const plan = { reads: "r", waitsFor: "w", notifies: "n", approval: "a" };
+/** A fictional role pack with three workflows, installed on this computer. */
+const pack = (done: Partial<Record<AustinChecklistItem["id"], boolean>> = {}, installed = true): AustinPackView => ({
+  pack: { id: "fictional-pack", revision: 1, title: "Fictional Accounts pack" },
+  timeZone: "Australia/Brisbane",
+  timeZoneFromOffice: true,
+  installed: installed ? { revision: 1, at: 1, loopIds: ["bank-references", "inbound-triage", "maintenance-review"] } : null,
+  loops: ["bank-references", "inbound-triage", "maintenance-review"].map((loopId) => ({ loopId, owner: "Accounts", plan, needs: [] })),
+  rules: [],
+  checklist: [
+    { id: "gmail", label: "Gmail connected", done: Boolean(done.gmail), detail: "Gmail detail" },
+    { id: "workflows", label: "Each workflow reviewed and switched on", done: Boolean(done.workflows), detail: "1 of 3 on. Open each one.", ...(done.workflows ? {} : { next: "inbound-triage" }) },
+  ],
+});
+const loop = (fields: Partial<ScheduleLoopFacts> = {}): ScheduleLoopFacts => ({ id: "inbound-triage", available: true, enabled: true, nextRunAt: 1_700_000_000_000, ...fields });
+const loopsOn = (on: readonly string[]) => ({
+  read: "ready" as const,
+  loops: [
+    loop({ id: "bank-references", name: "Bank reference review", enabled: on.includes("bank-references") }),
+    loop({ id: "inbound-triage", name: "Morning priorities", enabled: on.includes("inbound-triage") }),
+    loop({ id: "maintenance-review", name: "Maintenance checks", enabled: on.includes("maintenance-review") }),
+  ],
+});
+
+const ready = { ready: true, working: false, detail: null };
+const installing = { ready: false, working: true, detail: null };
 const base: SetupSequenceInput = { agencySetup: undefined };
-const stateOf = (input: SetupSequenceInput, id: SetupStepId) => setupSequence(input).find((step) => step.id === id)?.state;
+const step = (input: SetupSequenceInput, id: SetupStepId) => setupSequence(input).find((item) => item.id === id)!;
 const onlyOneCurrent = (input: SetupSequenceInput) => {
   const steps = setupSequence(input);
   expect(steps).toHaveLength(SETUP_STEP_COUNT);
-  expect(steps.map((step) => step.number)).toEqual([1, 2, 3]);
-  expect(steps.filter((step) => step.state === "current")).toHaveLength(1);
-  // One screen action per step, each on a door that can actually take it.
-  expect(steps.map((step) => step.target)).toEqual(["schedule-packs", "you-connected-apps", "schedule-packs"]);
-  for (const step of steps) expect(step.actionLabel.length).toBeGreaterThan(0);
+  expect(steps.map((item) => item.number)).toEqual([1, 2, 3, 4, 5]);
+  expect(steps.filter((item) => item.state === "current").length).toBeLessThanOrEqual(1);
+  for (const item of steps) expect(item.actionLabel.length).toBeGreaterThan(0);
   // Nothing may claim done without a host fact saying so.
-  for (const step of steps) if (step.state === "done") expect(step.status).not.toMatch(/Not checked yet/);
+  for (const item of steps) if (item.state === "done") expect(item.status).not.toMatch(/Not checked yet/);
   return steps;
 };
 
-describe("the three-step workspace setup", () => {
-  it("starts a fresh install at step 1 with every later step unresolved", () => {
+describe("Get started: five steps in Kevin's order", () => {
+  it("starts a fresh install at step 1 with nothing done and unread steps not checked yet", () => {
     const steps = onlyOneCurrent(base);
-    expect(currentSetupStep(steps)).toMatchObject({ number: 1, id: "agency", title: "Your agency", actionLabel: "Open Agency workflow setup" });
-    expect(steps.some((step) => step.state === "done")).toBe(false);
-    // The agency-setup read has not answered, so its steps are unknown, never later-but-fine.
-    expect(steps.filter((step) => step.state === "unknown").map((step) => step.id)).toEqual(["accounts", "approve"]);
+    expect(steps.map((item) => item.id)).toEqual(["link", "bud", "pack", "gmail", "workflows"]);
+    expect(currentSetupStep(steps)).toMatchObject({ number: 1, id: "link", target: "you-website", actionLabel: "Enter link code" });
+    expect(steps.some((item) => item.state === "done")).toBe(false);
+    expect(steps.filter((item) => item.state === "unknown").map((item) => item.id)).toEqual(["bud", "pack", "gmail", "workflows"]);
+    for (const item of steps.slice(1)) expect(item.status).toMatch(/^Not checked yet\. /);
     expect(setupSequenceComplete(steps)).toBe(false);
   });
 
-  it("holds step 1 until the name, timezone and pack are all saved on the one form", () => {
-    const missing = { ...base, agencySetup: facts({ agencyName: "", timeZone: "", packSelected: false }) };
-    expect(setupSequence(missing)[0].status).toBe("Still to save on this one form: an agency name, a timezone, a workflow pack. Nothing is chosen for you.");
-    expect(stateOf({ ...missing, agencySetup: facts({ timeZone: "" }) }, "agency")).toBe("current");
-    expect(setupSequence({ ...missing, agencySetup: facts({ timeZone: "" }) })[0].status).toBe("Still to save on this one form: a timezone. Nothing is chosen for you.");
-    expect(stateOf({ ...missing, agencySetup: facts({ packSelected: false }) }, "agency")).toBe("current");
+  it("ticks step 1 only on a host-reported link", () => {
+    expect(step({ ...base, websiteLink: "linked" }, "link")).toMatchObject({ state: "done" });
+    expect(step({ ...base, websiteLink: "not-linked" }, "link")).toMatchObject({ state: "current", status: "Your office owner sends this code. Ask them if you don’t have one yet." });
+    expect(step({ ...base, websiteLink: undefined }, "link").status).toMatch(/Reading this computer’s office link/);
+    expect(step({ ...base, websiteLink: "unavailable" }, "link").status).toMatch(/could not be read/);
   });
 
-  it("takes the agency name from either surface and never demands both", () => {
-    // Named on the agency form only.
-    const onForm = onlyOneCurrent({ agencySetup: facts() });
-    expect(onForm[0].state).toBe("done");
-    expect(onForm[0].status).toMatch(/^Harbour Agency · Australia\/Brisbane · a workflow pack is selected\./);
-    // Named on You only, with the form's own name still empty.
-    const onYou = onlyOneCurrent({ officeAgencyName: "Harbour Agency", agencySetup: facts({ agencyName: "" }) });
-    expect(onYou[0].state).toBe("done");
-    expect(onYou[0].status).toMatch(/^Harbour Agency · /);
-  });
-
-  it("moves to the accounts step and shows the host's own check sentence", () => {
-    const steps = onlyOneCurrent({ agencySetup: facts() });
-    expect(currentSetupStep(steps)).toMatchObject({
-      number: 2,
-      id: "accounts",
-      title: "Connect your accounts",
-      why: "Link this computer with your RealBud account, then connect the accounts your work reads and check each one.",
-      target: "you-connected-apps",
-      actionLabel: "Open Connections",
-    });
-    expect(steps[1].status).toBe("gmail detail from the host");
-  });
-
-  it("reads the account check across every workflow that reports one before work is ticked", () => {
-    const unticked: SetupSequenceInput = {
-      agencySetup: facts({
-        workflows: [
-          bank({ selected: false, checks: [check("mapping", "needed")] }),
-          bank({ id: "morning-priorities", title: "Morning priorities", selected: false, checks: [check("gmail", "needed", "Choose an account and verify its current private read access.")] }),
-        ],
-      }),
-    };
-    const steps = onlyOneCurrent(unticked);
-    expect(currentSetupStep(steps)).toMatchObject({ id: "accounts" });
-    expect(steps[1].status).toBe("Choose an account and verify its current private read access.");
-  });
-
-  it("is done on the host's verified account and renders whatever detail the host sent", () => {
-    const collecting = "Read access to this private account was verified and history collection has started.";
-    const steps = onlyOneCurrent({
-      agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "passed", collecting), check("mapping", "needed")] })] }),
-    });
-    expect(steps[1].state).toBe("done");
-    expect(steps[1].status).toBe(collecting);
-    expect(currentSetupStep(steps)).toMatchObject({ number: 3, id: "approve" });
-  });
-
-  it("never reads an unreported account check as done", () => {
-    const steps = onlyOneCurrent({
-      agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "unknown", "The host has not reported this account.")] })] }),
-    });
-    expect(currentSetupStep(steps)).toMatchObject({ id: "accounts" });
-    expect(steps[1].state).not.toBe("done");
-    expect(steps[1].status).toBe("Not checked yet. The host has not reported this account.");
-  });
-
-  it("needs no connected account when the selected work requires none", () => {
-    // Bank references is the one workflow the host reports no account check for.
-    const steps = onlyOneCurrent({
-      agencySetup: facts({ workflows: [bank({ checks: [check("mapping", "passed")] })] }),
-    });
-    expect(steps[1].state).toBe("done");
-    expect(steps[1].status).toBe("No connected account is needed for the work you chose.");
+  it("reads the office-link status without guessing", () => {
+    expect(readWebsiteLinkState({ state: "linked" })).toBe("linked");
+    for (const state of ["unlinked", "pending", "revoked"]) expect(readWebsiteLinkState({ state })).toBe("not-linked");
+    for (const body of [null, undefined, "linked", {}, { state: "approved" }]) expect(readWebsiteLinkState(body)).toBe("unavailable");
   });
 });
 
-describe("step 2 starts with linking this computer to its RealBud account", () => {
-  const verified = facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "needed")] })] });
+describe("step 2: Bud sets itself up and blocks nothing", () => {
+  const linked: SetupSequenceInput = { agencySetup: facts(), websiteLink: "linked", austinPack: pack() };
 
-  it("makes the account link the first action of step 2, before any account connection", () => {
-    const steps = sequenceOf({ agencySetup: facts(), websiteLink: "not-linked" });
-    expect(currentSetupStep(steps)).toMatchObject({ number: 2, id: "accounts", target: "you-website", actionLabel: "Link with your RealBud account" });
-    expect(steps[1].status).toMatch(/^Link this computer with your RealBud account first; .*model access and account connections\. Then connect the accounts your work reads\.$/);
-    // A verified mailbox does not skip the link: model access comes through it.
-    const mailOnly = sequenceOf({ agencySetup: verified, websiteLink: "not-linked" });
-    expect(mailOnly[1].state).toBe("current");
-    expect(mailOnly[1].actionLabel).toBe("Link with your RealBud account");
-    expect(setupSequenceComplete(mailOnly)).toBe(false);
+  it("shows as working while installing and lets the next open step be current", () => {
+    const steps = onlyOneCurrent({ ...linked, bud: installing });
+    expect(steps[1]).toMatchObject({ state: "working", actionLabel: "See progress", target: "bud-setup" });
+    expect(steps[1].status).toBe("This usually takes about 10 minutes and you don’t need to do anything.");
+    expect(currentSetupStep(steps)?.id).toBe("gmail");
   });
 
-  it("moves on to Connections once the host reports the link", () => {
-    const linked = sequenceOf({ agencySetup: facts(), websiteLink: "linked" });
-    expect(currentSetupStep(linked)).toMatchObject({ id: "accounts", target: "you-connected-apps", actionLabel: "Open Connections" });
-    expect(sequenceOf({ agencySetup: verified, websiteLink: "linked" })[1].state).toBe("done");
+  it("ticks only on the server's ready, never on progress or a hold", () => {
+    expect(step({ ...linked, bud: ready }, "bud").state).toBe("done");
+    expect(step({ ...linked, bud: installing }, "bud").state).not.toBe("done");
+    const held = step({ ...linked, bud: { ready: false, working: false, detail: "Bud’s setup stopped before it finished." } }, "bud");
+    expect(held).toMatchObject({ state: "later", status: "Bud’s setup stopped before it finished." });
+    expect(step({ ...linked, bud: undefined }, "bud")).toMatchObject({ state: "unknown" });
+    expect(step({ ...base, websiteLink: "not-linked", bud: { ready: false, working: false, detail: null } }, "bud").status).toMatch(/once this computer is connected/);
   });
 
-  it("names Connect Gmail when the linked service offers Gmail with no account yet", () => {
-    const steps = sequenceOf({ agencySetup: verified, websiteLink: "linked", appsToConnect: ["gmail"] });
-    expect(currentSetupStep(steps)).toMatchObject({ id: "accounts", target: "you-connected-apps", actionLabel: "Connect Gmail" });
-    expect(steps[1].status).toBe("Gmail is not connected yet. In Connections, press Connect Gmail; sign-in opens in your browser and you finish it there.");
-    // The link still comes first.
-    expect(sequenceOf({ agencySetup: verified, websiteLink: "not-linked", appsToConnect: ["gmail"] })[1].actionLabel).toBe("Link with your RealBud account");
+  it("is never the current step", () => {
+    for (const bud of [undefined, installing, { ready: false, working: false, detail: null }]) {
+      expect(step({ ...base, bud }, "bud").state).not.toBe("current");
+    }
+  });
+});
+
+describe("step 3: the office's pack", () => {
+  it("is done once the role pack is installed", () => {
+    expect(step({ agencySetup: undefined, austinPack: pack() }, "pack")).toMatchObject({ state: "done", status: "Imported: Fictional Accounts pack." });
+  });
+
+  it("falls back to a saved agency setup for an office without a role pack", () => {
+    expect(step({ agencySetup: facts(), austinPack: pack({}, false) }, "pack").state).toBe("done");
+    // The name saved on You counts as much as the form's own.
+    expect(step({ officeAgencyName: "Harbour Agency", agencySetup: facts({ agencyName: "" }), austinPack: "unavailable" }, "pack").state).toBe("done");
+    // Name alone, or no pack, does not finish it.
+    expect(step({ agencySetup: facts({ timeZone: "" }), austinPack: pack({}, false), websiteLink: "linked" }, "pack")).toMatchObject({ state: "current", actionLabel: "Open packs from your office", target: "schedule-packs" });
+    expect(step({ agencySetup: facts({ packSelected: false }), austinPack: pack({}, false), websiteLink: "linked" }, "pack").state).toBe("current");
+  });
+
+  it("never reads unread packs as done", () => {
+    for (const austinPack of [undefined, "unavailable" as const]) {
+      const item = step({ agencySetup: facts({ packSelected: false }), austinPack, websiteLink: "linked" }, "pack");
+      expect(item.state).not.toBe("done");
+      expect(item.status).toMatch(/^Not checked yet\. /);
+    }
+  });
+});
+
+describe("step 4: the office Gmail", () => {
+  const linked = { websiteLink: "linked" as const, agencySetup: facts() };
+
+  it("reads the role pack's own Gmail check", () => {
+    expect(step({ ...linked, austinPack: pack() }, "gmail")).toMatchObject({ state: "current", actionLabel: "Connect Gmail", target: "you-connected-apps", status: "Sign in to the office Gmail in your browser." });
+    expect(step({ ...linked, austinPack: pack({ gmail: true }) }, "gmail").state).toBe("done");
+    const noGmail = { ...pack(), checklist: pack().checklist.filter((item) => item.id !== "gmail") };
+    expect(step({ ...linked, austinPack: noGmail }, "gmail")).toMatchObject({ state: "done", status: "No Gmail is needed for the work you chose." });
+  });
+
+  it("falls back to the agency Gmail check without a role pack", () => {
+    const none = pack({}, false);
+    expect(step({ ...linked, austinPack: none }, "gmail").status).toBe("gmail detail from the host");
+    const verified = facts({ workflows: [bank({ checks: [check("gmail", "passed", "Verified."), check("mapping", "needed")] })] });
+    expect(step({ ...linked, agencySetup: verified, austinPack: none }, "gmail")).toMatchObject({ state: "done" });
+    expect(step({ ...linked, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "unknown", "Not reported.")] })] }), austinPack: none }, "gmail").status).toBe("Not checked yet. Not reported.");
+    // An app the linked service offers with no account is named on the action.
+    expect(step({ ...linked, agencySetup: verified, austinPack: none, appsToConnect: ["gmail"] }, "gmail")).toMatchObject({ state: "current", actionLabel: "Connect Gmail" });
+    expect(step({ ...linked, agencySetup: "unavailable", austinPack: none }, "gmail").status).toMatch(/^Not checked yet\. /);
   });
 
   it("lists only fresh, managed, personal apps with no account as still to connect", () => {
@@ -187,121 +185,63 @@ describe("step 2 starts with linking this computer to its RealBud account", () =
     const connected = { ...offered, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } };
     expect(officeAppsToConnect(connected, true)).toEqual([]);
   });
-
-  it("never reads an unread or failed link as linked", () => {
-    for (const websiteLink of [undefined, "unavailable" as const]) {
-      const steps = sequenceOf({ agencySetup: verified, websiteLink });
-      expect(steps[1].state).not.toBe("done");
-      expect(steps[1].status).toMatch(/^Not checked yet\. /);
-      expect(steps[1].actionLabel).toBe("Link with your RealBud account");
-    }
-    expect(sequenceOf({ agencySetup: verified })[1].status).toMatch(/Reading this computer’s RealBud account link/);
-    expect(sequenceOf({ agencySetup: verified, websiteLink: "unavailable" })[1].status).toMatch(/could not be read/);
-  });
-
-  it("reads the office-link status without guessing", () => {
-    expect(readWebsiteLinkState({ state: "linked" })).toBe("linked");
-    for (const state of ["unlinked", "pending", "revoked"]) expect(readWebsiteLinkState({ state })).toBe("not-linked");
-    for (const body of [null, undefined, "linked", {}, { state: "approved" }]) expect(readWebsiteLinkState(body)).toBe("unavailable");
-  });
 });
 
-describe("step 3 covers references, approval and the schedule switch", () => {
-  const ready = (fields: Partial<AgencySetupWorkflowFacts> = {}) =>
-    bank({ checks: [check("gmail", "passed"), check("mapping", "passed")], ...fields });
-  const step3 = (input: SetupSequenceInput) => setupSequence(input)[2];
+describe("step 5: review and switch on the workflows", () => {
+  const ahead: SetupSequenceInput = { websiteLink: "linked", agencySetup: facts(), austinPack: pack({ gmail: true }), bud: ready };
 
-  it("asks for a workflow choice before anything else in this step", () => {
-    const steps = onlyOneCurrent({ agencySetup: facts({ workflows: [bank({ selected: false, checks: [check("gmail", "passed")] })] }) });
-    expect(currentSetupStep(steps)).toMatchObject({ number: 3, id: "approve" });
-    expect(steps[2].status).toMatch(/No work is selected yet/);
+  it("counts the pack's workflows that are on and opens the next one that is off", () => {
+    const item = step({ ...ahead, schedule: loopsOn(["bank-references"]) }, "workflows");
+    expect(item).toMatchObject({ state: "current", actionLabel: "Review Morning priorities", target: "job-inbound-triage" });
+    expect(item.status).toBe("1 of 3 on. Open each workflow, read what it does, then switch it on.");
+    expect(step({ ...ahead, schedule: loopsOn(["bank-references", "inbound-triage"]) }, "workflows").status).toMatch(/^2 of 3 on\./);
   });
 
-  it("shows the property reference need inside this step, for bank work only", () => {
-    const needed = step3({ agencySetup: facts({ workflows: [ready({ checks: [check("gmail", "passed"), check("mapping", "needed", "Add a reviewed reference for each property in the selected bank scope.")] })] }) });
-    expect(needed.state).toBe("current");
-    expect(needed.status).toBe("Add a reviewed reference for each property in the selected bank scope.");
-    const mailOnly = step3({ agencySetup: facts({ workflows: [bank({ id: "morning-priorities", title: "Morning priorities", checks: [check("gmail", "passed")] })] }) });
-    expect(mailOnly.status).toMatch(/Still to approve: Morning priorities/);
+  it("uses the pack's own checklist while the loops are unread", () => {
+    expect(step({ ...ahead, schedule: { read: "loading" } }, "workflows")).toMatchObject({ state: "current", status: "1 of 3 on. Open each one.", target: "job-inbound-triage" });
   });
 
-  it("holds the step until every selected workflow is approved with current checks", () => {
-    expect(step3({ agencySetup: facts({ workflows: [ready()] }) }).status).toMatch(/Still to approve/);
-    expect(step3({ agencySetup: facts({ workflows: [ready({ reviewed: true })] }) }).status).toMatch(/current checks are not passing/);
+  it("hides the whole card only when every step, Bud included, is done", () => {
+    const all = setupSequence({ ...ahead, schedule: loopsOn(["bank-references", "inbound-triage", "maintenance-review"]) });
+    expect(all.map((item) => item.state)).toEqual(["done", "done", "done", "done", "done"]);
+    expect(setupSequenceComplete(all)).toBe(true);
+    expect(currentSetupStep(all)).toBeNull();
+    const budStill = setupSequence({ ...ahead, bud: installing, schedule: loopsOn(["bank-references", "inbound-triage", "maintenance-review"]) });
+    expect(setupSequenceComplete(budStill)).toBe(false);
   });
 
-  const approved: SetupSequenceInput = {
-    agencySetup: facts({
-      workflows: [ready({ id: "morning-priorities", title: "Morning priorities", checks: [check("gmail", "passed")], reviewed: true, readyForRun: true })],
-    }),
-  };
-  const loop = (fields: Partial<ScheduleLoopFacts> = {}): ScheduleLoopFacts => ({ id: "inbound-triage", available: true, enabled: true, nextRunAt: 1_700_000_000_000, ...fields });
+  describe("without a role pack: approval and the schedule switch", () => {
+    const none = pack({}, false);
+    const approved = (schedule?: SetupSequenceInput["schedule"]): SetupSequenceInput => ({
+      websiteLink: "linked",
+      austinPack: none,
+      schedule,
+      agencySetup: facts({ workflows: [bank({ id: "morning-priorities", title: "Morning priorities", checks: [check("gmail", "passed")], reviewed: true, readyForRun: true })] }),
+    });
 
-  it("binds morning priorities to the inbound-triage loop", () => {
-    expect(WORKFLOW_LOOP_IDS["morning-priorities"]).toBe("inbound-triage");
-  });
+    it("asks for a choice, references and approval before the switch", () => {
+      expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ selected: false, checks: [check("gmail", "passed")] })] }) }, "workflows").status).toMatch(/No work is selected yet/);
+      expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "needed", "Add references.")] })] }) }, "workflows").status).toBe("Add references.");
+      expect(step({ websiteLink: "linked", austinPack: none, agencySetup: facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "passed")] })] }) }, "workflows").status).toMatch(/Still to approve/);
+    });
 
-  it("is done only when the loop is enabled and its next run is recorded", () => {
-    const on = setupSequence({ ...approved, schedule: { read: "ready", loops: [loop()] } });
-    expect(on[2].state).toBe("done");
-    expect(on[2].status).toMatch(/On with a next run recorded for Morning priorities/);
-    expect(on[2].actionLabel).toBe("Open Schedule");
-    expect(setupSequenceComplete(on)).toBe(true);
-    expect(currentSetupStep(on)).toBeNull();
-  });
+    it("binds morning priorities to the inbound-triage loop and is done only with a next run", () => {
+      expect(WORKFLOW_LOOP_IDS["morning-priorities"]).toBe("inbound-triage");
+      expect(WORKFLOW_LOOP_IDS["bank-references"]).toBeNull();
+      expect(step(approved({ read: "ready", loops: [loop()] }), "workflows").state).toBe("done");
+      expect(step(approved({ read: "ready", loops: [loop({ nextRunAt: null })] }), "workflows").status).toMatch(/Off for Morning priorities/);
+      for (const schedule of [undefined, { read: "loading" as const }, { read: "error" as const }]) {
+        expect(step(approved(schedule), "workflows")).toMatchObject({ state: "current", actionLabel: "Open Schedule" });
+      }
+      expect(step(approved({ read: "ready", loops: [] }), "workflows").status).toMatch(/No scheduled loop is reported/);
+    });
 
-  it("is current, not done, when the loop is on but has no next run", () => {
-    const stalled = step3({ ...approved, schedule: { read: "ready", loops: [loop({ nextRunAt: null })] } });
-    expect(stalled.state).toBe("current");
-    expect(stalled.status).toMatch(/Off for Morning priorities\. Enabling is a separate action on Schedule\./);
-    expect(step3({ ...approved, schedule: { read: "ready", loops: [loop({ enabled: false })] } }).state).toBe("current");
-    expect(step3({ ...approved, schedule: { read: "ready", loops: [loop({ available: false })] } }).state).toBe("current");
-  });
-
-  it("reads an unfinished, failed or unreported loops read as not checked yet", () => {
-    for (const schedule of [undefined, { read: "loading" as const }, { read: "error" as const }]) {
-      const step = step3({ ...approved, schedule });
-      expect(step.state).toBe("current");
-      expect(step.status).toMatch(/^Not checked yet\. Enabling is a separate action on Schedule\.$/);
-      expect(step.actionLabel).toBe("Open Schedule");
-    }
-    const missing = step3({ ...approved, schedule: { read: "ready", loops: [] } });
-    expect(missing.state).toBe("current");
-    expect(missing.status).toMatch(/No scheduled loop is reported for Morning priorities/);
-  });
-
-  it("does not map a workflow with no loop of its own onto an unrelated book loop", () => {
-    const banked: SetupSequenceInput = {
-      agencySetup: facts({ workflows: [ready({ reviewed: true, readyForRun: true })] }),
-      schedule: { read: "ready", loops: [loop(), loop({ id: "morning-arrears" })] },
-    };
-    expect(WORKFLOW_LOOP_IDS["bank-references"]).toBeNull();
-    const step = step3(banked);
-    expect(step.state).toBe("current");
-    expect(step.status).toMatch(/No scheduled loop is reported for Bank references/);
-  });
-
-  it("never lets an unreadable setup read as done", () => {
-    for (const agencySetup of [undefined, "unavailable" as const]) {
-      const steps = onlyOneCurrent({ officeAgencyName: "Harbour Agency", agencySetup });
-      expect(currentSetupStep(steps)).toMatchObject({ number: 1, id: "agency" });
-      for (const step of steps) expect(step.state).not.toBe("done");
-      expect(setupSequenceComplete(steps)).toBe(false);
-    }
-    expect(setupSequence({ ...base, agencySetup: "unavailable" })[0].status).toMatch(/could not be read/);
-    expect(setupSequence(base)[0].status).toMatch(/Reading workflow setup/);
-  });
-});
-
-describe("Bud is a status line, not a step", () => {
-  it("never appears among the three steps", () => {
-    expect(setupSequence(base).map((step) => step.id)).toEqual(["agency", "accounts", "approve"]);
-  });
-
-  it("says what the host reports about Bud and nothing more", () => {
-    expect(budStatusLine(true)).toBe("Bud: ready");
-    expect(budStatusLine(false)).toBe("Bud: needs setup in Workspace");
-    expect(budStatusLine("unknown")).toBe("Bud: not checked yet");
+    it("never lets an unreadable setup read as done", () => {
+      for (const agencySetup of [undefined, "unavailable" as const]) {
+        const steps = onlyOneCurrent({ websiteLink: "linked", officeAgencyName: "Harbour Agency", agencySetup, austinPack: none });
+        for (const id of ["gmail", "workflows"] as const) expect(steps.find((item) => item.id === id)!.state).not.toBe("done");
+      }
+    });
   });
 });
 
@@ -321,7 +261,6 @@ describe("agency setup validation", () => {
     expect(readAgencySetupFacts({ ...body, workflows: [{ ...body.workflows[0], id: "not-a-workflow" }] })).toBe("unavailable");
     expect(readAgencySetupFacts({ ...body, workflows: [{ ...body.workflows[0], readyForRun: "yes" }] })).toBe("unavailable");
     expect(readAgencySetupFacts({ ...body, workflows: [{ ...body.workflows[0], checks: [{ id: "gmail", label: "Gmail", state: "ok", detail: "" }] }] })).toBe("unavailable");
-    // A check with no sentence from the host is not a fact this path may render.
     expect(readAgencySetupFacts({ ...body, workflows: [{ ...body.workflows[0], checks: [{ id: "gmail", label: "Gmail", state: "passed" }] }] })).toBe("unavailable");
     expect(readAgencySetupFacts({ ...body, state: { settings: { agencyName: 1, timeZone: "UTC", workflowPackId: null } } })).toBe("unavailable");
     expect(readAgencySetupFacts({ ...body, state: { settings: { agencyName: "Harbour", workflowPackId: null } } })).toBe("unavailable");

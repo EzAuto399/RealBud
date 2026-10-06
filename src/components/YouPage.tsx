@@ -58,11 +58,9 @@ import { CompanySetupCard } from "./CompanySetupCard";
 import { Card } from "./SettingsPrimitives";
 import { SettingsCard } from "./you/SettingsCard";
 import { ProfileFields } from "./SettingsModal";
-import { GoLiveCard } from "./desk/GoLiveCard";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { officeAppsToConnect } from "@/lib/setup-sequence";
 import { officeAppLabel } from "@shared/office-sources";
-import { coerceOffice } from "../../shared/office";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
 import { UnattendedWorkCard } from "./you/UnattendedWorkCard";
@@ -126,7 +124,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const { snapshot: officeSnapshot } = useOfficeSources();
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
   const [deskError, setDeskError] = useState("");
-  const [agencyError, setAgencyError] = useState("");
   const [rules, setRules] = useState<Array<{
     id: string;
     key: string;
@@ -220,7 +217,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   // book's own.
   const bookTimezone = agency?.timezone || desk?.timezone || null;
   const timezone = bookTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const budReady = Boolean(hermes?.ready);
 
   const copyDiagnostics = () => {
     const text = workerDiagnosticsText(hermes, configVersion(state.config));
@@ -294,28 +290,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       <div className="settings-section-body">{officeBasics}{officeGroups.find(group => group.id === "people")?.content}</div>
     </details>
   );
-
-  const goLiveSection = desk ? (
-    <GoLiveCard
-      mode={desk.mode}
-      agencyName={agency?.name ?? ""}
-      workerReady={budReady}
-      compact
-      jurisdictions={agency?.jurisdictions ?? []}
-      office={desk.book?.office ? coerceOffice(desk.book.office) : undefined}
-      onConnectExport={() => dispatch({ type: "showDesk", book: true })}
-      attachWorkerLabel="Set up Bud"
-      onAttachWorker={() => scrollYouTarget("you-worker")}
-      onSaveAgency={(name) => {
-        void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) }, { timeoutMs: 15_000 })
-          .then((snapshot) => {
-            dispatch({ type: "deskSnapshot", snapshot });
-            setAgencyError("");
-          })
-          .catch((cause: unknown) => setAgencyError(cause instanceof Error ? cause.message : String(cause)));
-      }}
-    />
-  ) : null;
 
   // After an office link, an app the service offers with no account yet is
   // the next thing to do, so Connections opens instead of hiding as optional.
@@ -524,8 +498,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           )}
 
           <WorkspaceNextStep />
-          {goLiveSection}
-          {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
 
           <div className="flex flex-col">
             {officeSection}

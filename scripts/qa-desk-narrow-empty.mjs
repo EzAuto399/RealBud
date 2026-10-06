@@ -108,10 +108,6 @@ async function wheelMovesContent(area) {
   assert.equal(after.case.scrollTop, 0, 'The case has no nested scroll');
   return { before: before.content.scrollTop, after: after.content.scrollTop };
 }
-async function openOverview() {
-  const show = page.getByRole('region', { name: 'This morning', exact: true }).getByRole('button', { name: 'Check details', exact: true });
-  if (await show.count()) { await wheelTo(show); await show.click(); }
-}
 async function noOverflow() {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'No horizontal page overflow');
 }
@@ -157,23 +153,21 @@ try {
   await page.locator('.desk-content .desk-empty-canvas').waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'complete');
 
-  await openOverview();
-  const setup = page.getByRole('region', { name: 'Workspace setup', exact: true });
-  const expand = setup.getByRole('button', { name: /^Workspace setup · / });
-  await wheelTo(expand); await expand.click();
-  const setupAction = setup.getByRole('button', { name: 'Open Agency workflow setup', exact: true });
-  const title = setup.getByText('Step 1 of 3: Your agency', { exact: true });
+  // Get started sits on Desk itself, open, even on an empty office.
+  const setup = page.getByRole('region', { name: 'Get started', exact: true });
+  const expand = setup.getByRole('button', { name: /^Get started · / });
+  if (await expand.count()) { await wheelTo(expand); await expand.click(); }
+  const setupAction = setup.getByRole('button', { name: 'Enter link code', exact: true });
+  const title = setup.getByText(/^1\. Paste the link code your office sent you/);
   await wheelTo(title); await wheelTo(setupAction);
   assert.ok(await fits(setupAction));
   measurements.empty390 = await singleContentScroll();
   await noOverflow();
   await page.screenshot({ path: join(output, 'setup-390.png') });
   await setupAction.click();
-  await page.getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
-  await page.locator('#schedule-packs').waitFor();
-  record('At 390px, setup title and action are reachable inside .desk-content below a fixed toolbar; clicking opens Agency workflow setup');
+  await page.locator('#you-website').waitFor();
+  record('At 390px, the Get started card and its current action are reachable inside .desk-content below a fixed toolbar; Enter link code opens the Website account section');
 
-  await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
   await page.getByRole('button', { name: 'Desk', exact: true }).click();
   await page.locator('.desk-content .desk-empty-canvas').waitFor();
   for (const width of [720, 1400]) {
