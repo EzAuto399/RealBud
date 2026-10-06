@@ -5954,6 +5954,9 @@ setBankProvider({
   listBankTransactions: query => redbark.listBankTransactions(query),
 });
 const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id });
+void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
+  .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
+  .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));
 // One-off reminders per workspace and member. Its own interval only marks them
 // due; nothing is sent or started. The office zone is read, never guessed.
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
