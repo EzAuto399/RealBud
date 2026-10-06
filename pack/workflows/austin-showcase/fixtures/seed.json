@@ -4,7 +4,7 @@
   "note": "SYNTHETIC. One fictional Austin-shaped office for the Friday showcase (scripts/seed-austin-demo.mjs, scripts/qa-austin-showcase.mjs). Every name, address, email, reference and amount is invented. Dates are day offsets before the run day in the office time zone. Tenant references match the fixed tenancies of server/testing/fictional-rei-portal.ts so the fictional REI portal can match the bank rows. Adapted from scripts/testing/austin-day-one-seed.json on branch claude/austin-day-one-rehearsal.",
   "office": {
     "synthetic": true,
-    "agencyName": "Fictional Austin Demo Office (sample)",
+    "agencyName": "Fictional Auston Demo Office (sample)",
     "timeZone": "Australia/Brisbane",
     "workflowPackId": "austin-office",
     "gmail": { "accountId": "fictional-austin-demo-inbox", "label": "Fictional demo inbox (sample)", "address": "accounts@austin-demo.example.invalid" },
