@@ -92,7 +92,7 @@ describe("hard gates (canary)", () => {
   });
 
   it("loops are named product loops — no prompts, no bots, no Hermes cron", () => {
-    expect(LOOP_CATALOG.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills"]);
+    expect(LOOP_CATALOG.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage", "bank-references", "weekly-bills", "maintenance-review", "rei-supplier-check", "inspection-draft"]);
     for (const loop of LOOP_CATALOG) {
       expect(loop).not.toHaveProperty("prompt");
       expect(loop).not.toHaveProperty("botId");

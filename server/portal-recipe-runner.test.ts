@@ -67,7 +67,7 @@ describe("recipes.json stays generated from the website map", () => {
 
 describe("portal recipe runner through the real broker (fictional REI mock)", () => {
   const S_READS: Array<[string, Record<string, string>, (rows: Array<Record<string, string>>) => void]> = [
-    ["find-record", { list: "Tenants", query: "Delta" }, rows => { expect(rows).toHaveLength(1); expect(rows[0].Name).toBe("Fictional Tenant Delta"); }],
+    ["find-record", { list: "Tenants", query: "Delta" }, rows => { expect(rows).toHaveLength(1); expect(rows[0].Surname).toBe("Delta"); }],
     ["arrears-review", { min_days: "1" }, rows => { expect(rows).toHaveLength(6); expect(rows.some(row => row.Status === "Vacated")).toBe(false); }],
     ["tasks-due", { date_from: "2026-09-25", date_to: "2026-09-30" }, rows => { expect(rows).toHaveLength(2); expect(rows.every(row => row.Status === "Open")).toBe(true); }],
     ["compliance-expiry", { view: "lease expiry" }, rows => expect(rows).toHaveLength(7)],
@@ -94,7 +94,7 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     const f = await fixture();
     const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } });
     expect(run.outcome, run.detail).toBe("completed");
-    expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Tenant Delta"]);
+    expect(run.results[1].rows.map(row => row.Reference)).toEqual(["FT-DELTA"]);
     expect(f.mock.calls.filter(args => args[0] === "navigate").every(args => !new URL(args[1]).searchParams.has("reicid"))).toBe(true);
     expect(run.receipt.accountChecks).toBeGreaterThanOrEqual(f.dispatched().length);
     const other = await fixture({ business: "FICT2" });

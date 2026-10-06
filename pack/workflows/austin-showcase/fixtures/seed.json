@@ -1,0 +1,106 @@
+{
+  "synthetic": true,
+  "label": "fictional-austin-showcase",
+  "note": "SYNTHETIC. One fictional Austin-shaped office for the Friday showcase (scripts/seed-austin-demo.mjs, scripts/qa-austin-showcase.mjs). Every name, address, email, reference and amount is invented. Dates are day offsets before the run day in the office time zone. Tenant references match the fixed tenancies of server/testing/fictional-rei-portal.ts so the fictional REI portal can match the bank rows. Adapted from scripts/testing/austin-day-one-seed.json on branch claude/austin-day-one-rehearsal.",
+  "office": {
+    "synthetic": true,
+    "agencyName": "Fictional Austin Demo Office (sample)",
+    "timeZone": "Australia/Brisbane",
+    "workflowPackId": "austin-office",
+    "gmail": { "accountId": "fictional-austin-demo-inbox", "label": "Fictional demo inbox (sample)", "address": "accounts@austin-demo.example.invalid" },
+    "rei": { "business": "FICT1", "bankFormat": "ANZ(csv file)" }
+  },
+  "properties": [
+    { "synthetic": true, "code": "SYN-P01", "address": "1 Fictional Oak Street, Northvale QLD 4000", "area": "Northvale", "weeklyRentCents": 54000,
+      "tenant": { "name": "Fictional Tenant Bravo", "email": "bravo.tenant@example.invalid", "phone": "0400 000 101", "reiTenantRef": "FT-BRAVO" },
+      "owner": { "name": "Fictional Owner Avery", "email": "avery.owner@example.invalid" } },
+    { "synthetic": true, "code": "SYN-P02", "address": "2 Fictional Pine Street, Northvale QLD 4000", "area": "Northvale", "weeklyRentCents": 36000,
+      "tenant": { "name": "Fictional Tenant Charlie", "email": "charlie.tenant@example.invalid", "phone": "0400 000 102", "reiTenantRef": "FT-CHARLIE" },
+      "owner": { "name": "Fictional Owner Avery", "email": "avery.owner@example.invalid" } },
+    { "synthetic": true, "code": "SYN-P03", "address": "3 Fictional Elm Avenue, Northvale QLD 4000", "area": "Northvale", "weeklyRentCents": 66000,
+      "tenant": { "name": "Fictional Tenant Echo", "email": "echo.tenant@example.invalid", "phone": "0400 000 103", "reiTenantRef": "FT-ECHO" },
+      "owner": { "name": "Fictional Owner Blake", "email": "blake.owner@example.invalid" } },
+    { "synthetic": true, "code": "SYN-P04", "address": "4 Fictional Wattle Close, Bayside QLD 4000", "area": "Bayside", "weeklyRentCents": 50000, "options": { "levyFromRent": { "amountCents": 120000, "cadence": "quarterly" } },
+      "tenant": { "name": "Fictional Tenant Golf", "email": "golf.tenant@example.invalid", "phone": "0400 000 104", "reiTenantRef": "FT-GOLF" },
+      "owner": { "name": "Fictional Owner Blake", "email": "blake.owner@example.invalid" } },
+    { "synthetic": true, "code": "SYN-P05", "address": "5 Fictional Banksia Drive, Bayside QLD 4000", "area": "Bayside", "weeklyRentCents": 48000,
+      "tenant": { "name": "Fictional Tenant Hotel", "email": "hotel.tenant@example.invalid", "phone": "0400 000 105", "reiTenantRef": "FT-HOTEL" },
+      "owner": { "name": "Fictional Owner Casey", "email": "casey.owner@example.invalid" } },
+    { "synthetic": true, "code": "SYN-P06", "address": "6 Fictional Gum Tree Place, Bayside QLD 4000", "area": "Bayside", "weeklyRentCents": 52000,
+      "tenant": { "name": "Fictional Tenant Bravo-Two", "email": "bravo-two.tenant@example.invalid", "phone": "0400 000 106", "reiTenantRef": "FT-BRAVO2" },
+      "owner": { "name": "Fictional Owner Casey", "email": "casey.owner@example.invalid" } }
+  ],
+  "reiLedger": {
+    "synthetic": true,
+    "note": "Stub of the REI tenant ledger for the same tenants; imported to Desk as CSV (propertyCode,daysSinceDue,rentLanded,levyPaid).",
+    "rows": [
+      { "code": "SYN-P01", "daysSinceDue": 0, "rentLanded": true, "levyPaid": true },
+      { "code": "SYN-P02", "daysSinceDue": 4, "rentLanded": false, "levyPaid": false },
+      { "code": "SYN-P03", "daysSinceDue": 0, "rentLanded": true, "levyPaid": true },
+      { "code": "SYN-P04", "daysSinceDue": 0, "rentLanded": true, "levyPaid": false },
+      { "code": "SYN-P05", "daysSinceDue": 0, "rentLanded": true, "levyPaid": true },
+      { "code": "SYN-P06", "daysSinceDue": 3, "rentLanded": false, "levyPaid": false }
+    ]
+  },
+  "mailbox": {
+    "synthetic": true,
+    "note": "Thread and message ids are hex because the mail routes accept only hex ids. Triage mail avoids bill words so W2 picks up only the bill threads.",
+    "triage": [
+      { "threadId": "a101", "messageId": "b101", "daysAgo": 0, "property": "SYN-P01", "from": "bravo.tenant@example.invalid",
+        "subject": "SYN-P01 1 Fictional Oak Street: kitchen tap leaking", "body": "Fictional request: the kitchen tap at 1 Fictional Oak Street (SYN-P01) is leaking under the sink. Nothing has been approved." },
+      { "threadId": "a102", "messageId": "b102", "daysAgo": 1, "property": "SYN-P03", "from": "echo.tenant@example.invalid",
+        "subject": "SYN-P03 3 Fictional Elm Avenue: lease renewal question", "body": "Fictional question about renewing the lease at 3 Fictional Elm Avenue (SYN-P03). Please call back." },
+      { "threadId": "a103", "messageId": "b103", "daysAgo": 1, "property": "SYN-P05", "from": "casey.owner@example.invalid",
+        "subject": "SYN-P05 5 Fictional Banksia Drive: routine inspection date", "body": "Fictional owner asks when the next routine inspection at 5 Fictional Banksia Drive (SYN-P05) is booked." },
+      { "threadId": "a104", "messageId": "b104", "daysAgo": 2, "property": "SYN-P06", "from": "bravo-two.tenant@example.invalid",
+        "subject": "SYN-P06 6 Fictional Gum Tree Place: smoke alarm beeping", "body": "Fictional tenant reports a beeping smoke alarm at 6 Fictional Gum Tree Place (SYN-P06)." }
+    ],
+    "bills": [
+      { "threadId": "c201", "messageId": "d201", "daysAgo": 3, "property": "SYN-P02", "from": "accounts@fictional-water.example.invalid", "authResults": "mx.google.com; dkim=pass header.i=@fictional-water.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-water.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-water.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-water.example.invalid",
+        "vendor": "Fictional Water", "kind": "Water", "invoiceId": "FW-2201", "amountCents": 18765, "dueInDays": 21,
+        "subject": "Water invoice FW-2201 for SYN-P02 2 Fictional Pine Street" },
+      { "threadId": "c202", "messageId": "d202", "daysAgo": 2, "property": "SYN-P04", "from": "rates@fictional-council.example.invalid", "authResults": "mx.google.com; dkim=pass header.i=@fictional-council.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-council.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-council.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-council.example.invalid",
+        "vendor": "Fictional Council", "kind": "Council rates", "invoiceId": "FC-3304", "amountCents": 42050, "dueInDays": 28,
+        "subject": "Council rates bill FC-3304 for SYN-P04 4 Fictional Wattle Close" },
+      { "threadId": "c203", "messageId": "d203", "daysAgo": 1, "property": "SYN-P04", "from": "kevin@austin-demo.example.invalid", "authResults": "mx.google.com; dkim=pass header.i=@austin-demo.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@austin-demo.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@austin-demo.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=austin-demo.example.invalid", "forwarded": true,
+        "vendor": "Fictional Council", "kind": "Council rates", "invoiceId": "FC-3304", "amountCents": 42050, "dueInDays": 29,
+        "subject": "Fwd: Council rates bill FC-3304 for SYN-P04 4 Fictional Wattle Close" },
+      { "threadId": "c204", "messageId": "d204", "daysAgo": 1, "property": "SYN-P02", "from": "accounts@fictional-water.example.invalid", "authResults": "mx.google.com; dkim=pass header.i=@fictional-water.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-water.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-water.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-water.example.invalid", "corrected": true,
+        "vendor": "Fictional Water", "kind": "Water", "invoiceId": "FW-2201", "amountCents": 17865, "dueInDays": 23,
+        "subject": "Corrected water invoice FW-2201 for SYN-P02 2 Fictional Pine Street" }
+    ],
+    "maintenance": {
+      "note": "W4: maintenance invoices already reviewed into the bill register last month (invoice dates are days into the previous calendar month). Seeded straight into the register so the Maintenance checks loop has history; the repeat supplier is Fictional Plumbing on 1 Fictional Oak Street.",
+      "invoices": [
+        { "property": "SYN-P01", "from": "Fictional Plumbing <accounts@fictional-plumbing.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@fictional-plumbing.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-plumbing.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-plumbing.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-plumbing.example.invalid", "number": "INV-1001", "dayOfLastMonth": 3, "cents": 18000, "work": "Fictional blocked kitchen drain cleared", "subject": "Fictional invoice INV-1001", "vendor": "Fictional Plumbing" },
+        { "property": "SYN-P01", "from": "Fictional Plumbing <accounts@fictional-plumbing.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@fictional-plumbing.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-plumbing.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-plumbing.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-plumbing.example.invalid", "number": "INV-1001", "dayOfLastMonth": 3, "receivedDayOfLastMonth": 24, "cents": 18000, "work": "Fictional blocked kitchen drain cleared", "subject": "Reminder: fictional invoice INV-1001", "vendor": "Fictional Plumbing" },
+        { "property": "SYN-P01", "from": "Fictional Plumbing <accounts@fictional-plumbing.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@fictional-plumbing.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-plumbing.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-plumbing.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-plumbing.example.invalid", "number": "INV-1002", "dayOfLastMonth": 17, "cents": 22000, "work": "Fictional hot water valve replaced", "subject": "Fictional invoice INV-1002", "vendor": "Fictional Plumbing" },
+        { "property": "SYN-P01", "from": "Fictional Office <office@austin-demo.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@austin-demo.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@austin-demo.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@austin-demo.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=austin-demo.example.invalid", "number": "INV-1002", "dayOfLastMonth": 17, "cents": 22000, "work": "Fictional hot water valve replaced", "ref": "FIC-PLUMB", "subject": "Fwd: Fictional invoice INV-1002", "vendor": "Fictional Plumbing" },
+        { "property": "SYN-P02", "from": "Fictional Plumbing <accounts@fictional-plumbing.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@fictional-plumbing.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-plumbing.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-plumbing.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-plumbing.example.invalid", "number": "INV-1003", "dayOfLastMonth": 20, "cents": 15000, "work": "Fictional leaking tap washer", "subject": "Fictional invoice INV-1003", "vendor": "Fictional Plumbing" },
+        { "property": "SYN-P03", "from": "office@fictional-electrical.example.invalid", "authResults": "mx.google.com; dkim=pass header.i=@fictional-electrical.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-electrical.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-electrical.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-electrical.example.invalid", "number": "INV-2001", "dayOfLastMonth": 11, "cents": 30000, "work": "Fictional smoke alarm check", "subject": "Fictional invoice INV-2001", "vendor": "Fictional Electrical" },
+        { "property": "SYN-P03", "from": "Fictional Sparks <new@fictional-sparks.example.invalid>", "authResults": "mx.google.com; dkim=pass header.i=@fictional-sparks.example.invalid header.s=fictional2026 header.b=FICTIONAL; spf=pass (google.com: domain of bounce@fictional-sparks.example.invalid designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@fictional-sparks.example.invalid; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fictional-sparks.example.invalid", "number": "INV-3001", "dayOfLastMonth": 25, "cents": 41000, "work": "Fictional switchboard repair", "kind": "Repairs", "subject": "Fictional invoice INV-3001", "vendor": "Fictional Sparks" }
+      ]
+    }
+  },
+  "redbark": {
+    "synthetic": true,
+    "note": "Rows the fictional Redbark returns for the trust account (live REST shapes, see scripts/qa-w1-simulated.mjs); each pays the tenant's REI reference.",
+    "account": { "id": "acct_FictionalAustinTrust1", "name": "Fictional Demo Trust Account", "last4": "4321", "connection": "conn_FictionalAustin0001" },
+    "rows": [
+      { "id": "txn_fk_demo-0001", "daysAgo": 2, "amountCents": 54000, "reference": "FT-BRAVO" },
+      { "id": "txn_fk_demo-0002", "daysAgo": 2, "amountCents": 36000, "reference": "FT-CHARLIE" },
+      { "id": "txn_fk_demo-0003", "daysAgo": 1, "amountCents": 66000, "reference": "FT-ECHO" },
+      { "id": "txn_fk_demo-0004", "daysAgo": 1, "amountCents": 50000, "reference": "FT-GOLF" },
+      { "id": "txn_fk_demo-0005", "daysAgo": 0, "amountCents": 48000, "reference": "FT-HOTEL" },
+      { "id": "txn_fk_demo-0006", "daysAgo": 0, "amountCents": 52000, "reference": "FT-BRAVO2" },
+      { "id": "txn_fk_demo-0099", "daysAgo": 0, "amountCents": 12000, "reference": "FT-BRAVO", "status": "pending" }
+    ]
+  },
+  "sherryRules": {
+    "synthetic": true,
+    "note": "Sherry's working rules as decided 5 Oct (calendar month; completed-date cycle). Inspector names are fictional. The scripted rule change in the showcase moves the maintenance comparison basis from invoice date to date received.",
+    "maintenanceRule": { "span": "calendarMonth", "basis": "invoiceDate" },
+    "inspectionRules": { "horizonMonths": 6, "cycleMonths": 6, "cycleBasis": "completed", "workingDays": [1, 2, 3, 4, 5], "closedDates": [], "inspectors": ["Fictional Inspector Sam"], "dayStart": "09:00", "appointmentMinutes": 30, "travelMinutes": 15, "dailyCapacity": 4 },
+    "scriptedChange": { "target": "maintenance_month_rule", "values": { "basis": "receivedDate" }, "ask": "Bud, please compare maintenance invoices by the date we received them, not the invoice date.", "reason": "Sherry asked to compare maintenance invoices by the date they arrived." }
+  }
+}

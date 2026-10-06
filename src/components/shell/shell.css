@@ -1,0 +1,139 @@
+/* Desktop shell (decision 2026-10-05). Tokens from @theme; breakpoints 1279 / 959 / 719 in CSS only.
+   Motion is transform/opacity/width with a reduced-motion fallback at the end. */
+
+/* Windows title strip: drag area under the caption-button overlay. The env() values come from
+   Window Controls Overlay (Electron titleBarOverlay); the fallback matches its height in main.mjs. */
+.rb-win-titlebar { flex-shrink: 0; height: env(titlebar-area-height, 40px); border-bottom: 1px solid var(--color-line); background: var(--color-sheet); -webkit-app-region: drag; app-region: drag; }
+
+/* Icon rail. Below 600px the existing bottom-bar rules in styles.css take over. */
+.rb-rail-tip { display: none; }
+@media (min-width: 600px) {
+  .rb-sidebar.rb-rail { width: 76px; }
+  .rb-rail .rb-sidebar-navigation { overflow: visible; }
+  .rb-rail .rb-sidebar-label { display: none; }
+  .rb-rail .rb-rail-item { position: relative; justify-content: center; gap: 0; min-height: 48px; padding: 0; }
+  .rb-rail .rb-sidebar-extra { position: absolute; right: 4px; top: 4px; }
+  .rb-rail-badge { display: inline-flex; min-width: 18px; height: 18px; align-items: center; justify-content: center; padding: 0 4px; border-radius: 9px; background: var(--color-agency); color: var(--color-sheet); font-size: 11px; font-weight: 600; }
+  .rb-rail-reconnect { max-width: 68px; text-align: center; line-height: 1.2; }
+  .rb-rail-foot.rb-sidebar-utilities { position: relative; margin: 8px 6px 10px; }
+  .rb-rail .rb-workspace-status-trigger { position: relative; justify-content: center; padding: 8px; }
+  .rb-rail .rb-workspace-status-label { display: none; }
+  .rb-rail .rb-workspace-status-dot { position: absolute; right: 6px; top: 10px; }
+  .rb-rail-tip {
+    position: absolute; left: calc(100% + 10px); top: 50%; z-index: 60;
+    display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px;
+    background: var(--color-ink); color: var(--color-sheet); font-size: 12px; font-weight: 500; white-space: nowrap;
+    opacity: 0; pointer-events: none; transform: translate(-4px, -50%);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .rb-rail-tip-key { color: color-mix(in srgb, var(--color-sheet) 70%, transparent); font-variant-numeric: tabular-nums; }
+  .rb-rail-item:hover > .rb-rail-tip, .rb-rail-item:focus-visible > .rb-rail-tip,
+  .rb-rail-foot:hover > .rb-rail-tip, .rb-rail-foot:focus-within > .rb-rail-tip { opacity: 1; transform: translate(0, -50%); }
+}
+
+/* Context sidebar: per-area lists, then saved views. */
+.rb-context-sidebar { display: none; }
+@media (min-width: 960px) {
+  .rb-context-sidebar { display: flex; flex-direction: column; flex-shrink: 0; width: 232px; min-height: 0; border-right: 1px solid var(--color-line); background: var(--color-paper); }
+}
+.rb-context-title { display: flex; align-items: center; gap: 8px; padding: 16px 16px 4px; font-size: 14px; font-weight: 600; color: var(--color-ink); }
+.rb-context-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.rb-context-group { margin-top: 10px; }
+.rb-context-label { padding: 4px 8px; font-size: 12px; font-weight: 500; color: var(--color-ink-muted); }
+.rb-context-item { display: flex; width: 100%; align-items: center; gap: 8px; min-height: 44px; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--color-ink); font-size: 14px; text-align: left; cursor: pointer; }
+.rb-context-item:hover { background: var(--color-raised); }
+.rb-context-item.is-current { background: var(--color-selected); box-shadow: inset 3px 0 0 var(--color-agency); }
+.rb-context-item:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
+.rb-context-count { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-ink-muted); }
+.rb-context-arrange { margin-top: 12px; color: var(--color-agency); font-weight: 500; }
+
+/* Main column: area tabs above the page, side panel beside it. */
+.rb-shell-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.rb-shell-tabbar { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 4px 12px 0; border-bottom: 1px solid var(--color-line); background: var(--color-sheet); }
+.rb-shell-body { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.rb-shell-content { display: flex; flex: 1; min-width: 0; min-height: 0; }
+
+.rb-area-tabs { position: relative; display: flex; flex: 1; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.rb-area-tabs::-webkit-scrollbar { display: none; }
+.rb-area-tab { position: relative; z-index: 1; display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; max-width: 14rem; min-height: 44px; padding: 0 14px; border: 0; border-radius: 4px 4px 0 0; background: transparent; color: var(--color-ink-secondary); font-size: 14px; white-space: nowrap; cursor: pointer; }
+.rb-area-tab:hover { color: var(--color-ink); background: color-mix(in srgb, var(--color-raised) 60%, transparent); }
+.rb-area-tab[aria-selected="true"] { color: var(--color-ink); font-weight: 600; }
+.rb-area-tab:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
+.rb-area-tab-count { padding: 0 6px; border-radius: 999px; background: var(--color-selected); color: var(--color-agency); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rb-area-tab-highlight { position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; background: var(--color-agency); transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), width 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* Right context panel: inline from 1280px, a drawer from 960px, hidden below. */
+.rb-panel-close-row { display: flex; justify-content: flex-end; padding: 4px 8px 0; }
+.rb-context-panel, .rb-panel-toggle, .rb-panel-backdrop { display: none; }
+@media (min-width: 1280px) {
+  .rb-context-panel { position: relative; display: flex; flex-direction: column; flex-shrink: 0; width: var(--rb-panel-width, 340px); min-height: 0; border-left: 1px solid var(--color-line); background: var(--color-sheet); }
+  .rb-panel-close-row { display: none; }
+}
+@media (min-width: 960px) and (max-width: 1279px) {
+  .rb-panel-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-bottom: 4px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-sheet); color: var(--color-ink); font-size: 13px; }
+  .rb-panel-toggle[aria-expanded="true"] { background: var(--color-selected); }
+  .rb-panel-toggle:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+  .rb-panel-backdrop { position: absolute; inset: 0; z-index: 39; display: block; border: 0; background: rgb(37 35 31 / 28%); cursor: pointer; }
+  .rb-context-panel[data-open="true"] { position: absolute; top: 0; right: 0; bottom: 0; z-index: 40; display: flex; flex-direction: column; width: min(var(--rb-panel-width, 340px), 88%); border-left: 1px solid var(--color-line); background: var(--color-sheet); box-shadow: -8px 0 24px rgb(37 35 31 / 14%); animation: var(--animate-panel-in); }
+}
+.rb-panel-close { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; color: var(--color-ink); }
+.rb-panel-close:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+.rb-panel-resize { position: absolute; left: -4px; top: 0; bottom: 0; z-index: 3; width: 8px; cursor: col-resize; touch-action: none; }
+.rb-panel-resize:hover, .rb-panel-resize:focus-visible { background: color-mix(in srgb, var(--color-agency) 35%, transparent); }
+.rb-panel-resize:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 0; }
+.rb-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.rb-panel { position: relative; border-bottom: 1px solid var(--color-line); }
+.rb-panel > aside { height: auto; }
+.rb-panel-menu { position: absolute; top: 1px; right: 6px; }
+.rb-panel-row { display: block; width: 100%; min-height: 44px; padding: 6px 8px; border-radius: 4px; color: var(--color-ink); font-size: 13px; text-align: left; }
+.rb-panel-row:hover { background: var(--color-raised); }
+.rb-panel-row:focus-visible, .rb-panel-link:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 1px; }
+.rb-panel-link { display: inline-flex; align-items: center; min-height: 44px; margin-right: 12px; color: var(--color-agency); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
+.rb-panel-more { padding: 4px 16px 12px; }
+.rb-panel-count { min-height: 44px; padding: 6px 4px; border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-sheet); color: var(--color-ink); cursor: pointer; }
+.rb-panel-count:hover { background: var(--color-raised); }
+.rb-panel-count[aria-current="true"] { border-color: var(--color-agency); background: var(--color-selected); }
+.rb-panel-count:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 1px; }
+
+/* ⋯ menus on cards and panels. */
+.rb-card-menu-trigger { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 4px; color: var(--color-ink-muted); }
+.rb-card-menu-trigger:hover { background: var(--color-raised); color: var(--color-ink); }
+.rb-card-menu-trigger:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 1px; }
+.rb-card-menu-panel .desk-more-item { min-height: 44px; }
+.rb-card-menu-panel .desk-more-item:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
+.rb-card-menu-row { display: flex; justify-content: flex-end; }
+.rb-card-menu-anchor { position: relative; }
+.rb-card-menu-anchor > .rb-card-menu-corner { position: absolute; top: 4px; right: 4px; z-index: 5; }
+
+/* Status bar. */
+.rb-status-bar { display: none; }
+@media (min-width: 960px) {
+  .rb-status-bar { display: flex; flex-shrink: 0; align-items: center; gap: 18px; min-height: 30px; padding: 0 12px; overflow: hidden; border-top: 1px solid var(--color-line); background: var(--color-sheet); color: var(--color-ink-secondary); font-size: 12px; white-space: nowrap; }
+}
+.rb-status-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.rb-status-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; }
+.rb-status-spend { margin-left: auto; }
+/* Facts that open their screen: full bar height (30px, above the 24px minimum target), quiet until hovered. */
+.rb-status-link { min-height: 30px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.rb-status-link:hover { background: var(--color-raised); color: var(--color-ink); }
+.rb-status-link:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
+.rb-status-stop { min-height: 44px; margin-left: 6px; padding: 0 10px; border: 1px solid var(--color-danger); border-radius: 4px; color: var(--color-danger); font-size: 12px; font-weight: 600; background: var(--color-sheet); }
+.rb-status-stop:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+
+/* Arrange Desk sheet. */
+.rb-arrange-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px; overflow-y: auto; background: rgb(37 35 31 / 32%); }
+.rb-arrange-sheet { width: min(30rem, 100%); padding: 16px; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-sheet); box-shadow: 0 16px 48px rgb(37 35 31 / 18%); animation: var(--animate-pop-in); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rb-rail-tip, .rb-area-tab-highlight { transition: none; }
+  .rb-context-panel[data-open="true"], .rb-arrange-sheet { animation: none; }
+}
+
+/* Shell tabs inside Desk's own tab row: one row on Desk, styled like Desk's tabs. */
+.desk-shell-tabs { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
+.desk-shell-tabs:empty { display: none; }
+/* Wraps with the row instead of scrolling, so .desk-content stays Desk's only scroller. */
+.desk-shell-tabs .rb-area-tabs { flex-wrap: wrap; overflow: visible; }
+.desk-shell-tabs .rb-area-tab { min-height: 48px; padding: 0 11px; border-bottom: 3px solid transparent; border-radius: 0; color: var(--color-ink-muted); font-weight: 500; }
+.desk-shell-tabs .rb-area-tab[aria-selected="true"] { border-bottom-color: var(--color-agency); color: var(--color-agency); font-weight: 500; }
+.desk-shell-tabs .rb-area-tab-highlight { display: none; }

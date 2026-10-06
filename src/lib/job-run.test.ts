@@ -213,5 +213,6 @@ describe("job run copy", () => {
     expect(loopRunStatusLabel("failed")).toEqual({ label: "Failed", tone: "danger" });
     expect(loopRunStatusLabel("missed")).toEqual({ label: "Missed", tone: "danger" });
     expect(loopRunStatusLabel("interrupted")).toEqual({ label: "Interrupted", tone: "danger" });
+    expect(loopRunStatusLabel("resumed")).toEqual({ label: "Resumed after restart", tone: "muted" });
   });
 });

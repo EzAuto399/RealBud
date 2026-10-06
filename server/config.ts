@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { mkdirNewSync, mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
+import { admitPrivateDirectorySync, PrivateStorageError } from "./private-json.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
 
 export interface AppConfig {
@@ -79,6 +80,12 @@ export function ensureDirs() {
   // migrated) folders are left to verify-only paths.
   const created = [DATA_DIR, EVENTS_DIR, NATIVE_DIR].flatMap((dir) => mkdirNewSync(dir, 0o700));
   restrictNewSync(created.map((path) => ({ path, kind: "directory" as const })));
+  // Check the data folder at launch, not at the first private write (often
+  // onboarding). An owned, only-too-open folder (copied, restored, migrated
+  // above) is tightened; any other refusal is reported now and again, with the
+  // same plain reason, by the private stores that need it.
+  try { admitPrivateDirectorySync(DATA_DIR, "RealBud's data folder"); }
+  catch (error) { console.error(`[storage] ${error instanceof PrivateStorageError ? error.message : "RealBud's data folder could not be checked."}`); }
 }
 
 export class ConfigRecoveryError extends Error {

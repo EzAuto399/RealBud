@@ -52,6 +52,16 @@ import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
 import { runWeeklyBillsWorkflow } from './weekly-bills-workflow.ts';
+import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanceReview } from './maintenance-review.ts';
+import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
+import { createPropertyReferenceApi, createPropertyReferenceStore } from './property-bill-references.ts';
+import { createInspectionHistoryStore } from './inspection-history.ts';
+import { createInspectionBookingsStore, createInspectionsApi, runInspectionDraft } from './inspection-bookings.ts';
+import { createAustinPack } from './austin-pack.ts';
+import { bindWorkflowSettings } from './workflow-settings-broker.ts';
+import { createSupplierDirectory } from './supplier-directory.ts';
+import { createLoopChatCards } from './loop-chat-cards.ts';
+import type { LoopRun } from '../shared/contracts.ts';
 import { latestRoutineResult } from './routine-results.ts';
 import { createBillFollowUpsApi } from './bill-followups.ts';
 import { recordMorningResult } from './morning-routine-result.ts';
@@ -183,8 +193,11 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
+import { askBrowserRuntime, askPortalPackLoader, askSignInRuntime, useAskBrowserLab } from "./ask-browser-lab.ts";
+import { askTaskSignIn } from "./ask-task-sign-in.ts";
+import type { SignInOutcome } from "./browser-sign-in.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
-import { legacyBrowserGrant } from "./browser-authority.ts";
+import { jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -217,7 +230,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { coverageFromUncoveredHeld, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { coverageFromUncoveredHeld, hostTimezone, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -397,6 +410,7 @@ async function defaultSelection() {
 let bootSelection = { instanceId: "", model: "" };
 sweepStaleTempFiles(DATA_DIR);
 const store = new Store(() => bootSelection);
+const loopChatCard = createLoopChatCards({ store, broadcast, dataDir: DATA_DIR });
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 const existingProductBud = store.bot(CANONICAL_BUD_ID) ?? store.bots[0] ?? null;
@@ -820,6 +834,8 @@ const askTaskStartedAt = new Map<string, number>();
 const askTaskDone = new Map<string, string[]>();
 /** Running portal recipe tasks (server/portal-recipe-task.ts): ending the task stops its runner. */
 const recipeTaskStops = new Map<string, AbortController>();
+/** Ask tasks waiting at Start for the person to sign in (server/ask-task-sign-in.ts): ending the task stops the wait. */
+const askSignInWaits = new Map<string, AbortController>();
 
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
@@ -844,6 +860,7 @@ function reportBrowserTaskFailure(): void {
 async function endAskBrowserTask(threadId: string, grantId: string, status: BrowserTaskEnd, note?: string) {
   if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
   recipeTaskStops.get(grantId)?.abort(); recipeTaskStops.delete(grantId); releasePortalRecipeGrant(grantId);
+  askSignInWaits.get(grantId)?.abort(); askSignInWaits.delete(grantId);
   const timer = askTaskTimers.get(grantId);
   if (timer) clearTimeout(timer);
   askTaskTimers.delete(grantId);
@@ -858,6 +875,26 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
     } catch { /* the card still shows how the task ended */ }
   }
   return ended;
+}
+
+/** Start's sign-in wait ended (server/ask-task-sign-in.ts). Signed in: Bud's first turn starts with the
+ * task's grant, unless the task ended meanwhile. Anything else ends the task; nothing was done on the site. */
+async function afterAskTaskSignIn(threadId: string, botId: string, grant: BrowserTaskGrant, site: string, outcome: SignInOutcome | null): Promise<void> {
+  askSignInWaits.delete(grant.id);
+  if (fenceContextFor(threadId)?.grant?.id !== grant.id) return;
+  if (outcome !== "signed_in") {
+    const note = outcome === "timed_out" ? `Sign-in to ${site} was not finished within 15 minutes, so this task stopped. Nothing was done there; ask again when you are ready.`
+      : outcome === "stopped" ? `You stopped the sign-in to ${site}, so this task stopped. Nothing was done there.`
+        : `The work browser could not open ${site} for sign-in, so this task stopped. Nothing was done there.`;
+    await endAskBrowserTask(threadId, grant.id, outcome === "stopped" ? "stopped" : "interrupted", note).catch(() => {});
+    return;
+  }
+  void browserTasks().appendEvidence(grant.id, [{ at: Date.now(), kind: "action", note: `Signed in to ${site}.` }]).catch(reportBrowserTaskFailure);
+  try {
+    await startTurn(botId, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
+  } catch {
+    await endAskBrowserTask(threadId, grant.id, "interrupted", "This task could not start. Nothing was done in your browser.").catch(() => {});
+  }
 }
 
 /** A started portal recipe task: RealBud's runner (no model turn) with the task's
@@ -2111,6 +2148,16 @@ async function startSeatTurn(
               return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body))!;
             },
           };
+          // Working rules (maintenance month rule, inspection rules, Morning priorities)
+          // through the same stores and revision checks as their routes; every change
+          // and restore is shown on the one-time card first.
+          integrations.workflowSettings = bindWorkflowSettings({ maintenance: maintenanceReview, inspection: inspectionRules,
+            agency: { read: () => agencySetup.getConfiguration(), save: async body => {
+              const previous = (await agencySetup.getConfiguration()).revision;
+              try { await agencySetup.save(body); } finally { if ((await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange(); }
+            } },
+            writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
+              : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
           // Read-only bank feed for Ask (Redbark connection); no writes exist.
           const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
           integrations.bankSource = {
@@ -2436,9 +2483,11 @@ function emitLoopAndPulse(payload: unknown) {
   if (!payload || typeof payload !== "object") return;
   const rec = payload as { kind?: string; run?: { loopId?: string; status?: string } };
   if (rec.kind !== "loop.run" || !rec.run?.loopId) return;
+  // Bud tells the person in chat, like a colleague; the saved result stays on Desk.
+  void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references'].includes(rec.run.loopId)) return;
+  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'].includes(rec.run.loopId)) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2467,7 +2516,7 @@ loops = new LoopManager({
     if (privateRestoreLocked) return {ok:false,detail:'Private restore is staged; restart the service before running work.'};
     jobRuns.sweepQueuedAttended();
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
-    if (loop.id === 'bank-references') return (await w1Host()).runLoop(); // W1 host (see BEGIN W1 host)
+    if (loop.id === 'bank-references') return (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)); // W1 host (see BEGIN W1 host)
     if (loop.id === 'weekly-bills') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
       database: workflowDatabase, workspaceId: workspaceIdentity.id, drafts: billDraftStore,
       authorize: async () => { await checkWebsiteExecution(); await authorizeBillWorkflow(); },
@@ -2476,6 +2525,17 @@ loops = new LoopManager({
       readProposal: requestId => readBillProposal({ database: workflowDatabase, runs: () => jobRuns.list(), findRunByKey: key => jobRuns.getByIdempotencyKey(key) }, requestId),
       bills: range => sourceBills().snapshot(range),
     })));
+    // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
+    if (loop.id === 'rei-supplier-check') return (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail));
+    // W4: reads saved reviewed bills only; no mail, model or browser call.
+    // W5: refreshes the saved inspection draft monthly; nothing is booked.
+    if (loop.id === 'inspection-draft') return runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
+      properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })),
+      today: async () => (await import('./redbark-source.ts')).localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined) });
+    if (loop.id === 'maintenance-review') return runMaintenanceReview(run, { store: maintenanceReview, directory: supplierDirectory,
+      bills: () => { const today = new Date().toISOString().slice(0, 10); return sourceBills().snapshot({ from: today, to: today }).occurrences; },
+      weekly: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
+      timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() });
     if (loop.id === 'inbound-triage') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
       const started = Date.now(); let modelCalls = 0;
       const outcome = await runMorningMailWorkflow(run, {
@@ -2553,6 +2613,11 @@ loops = new LoopManager({
 // setBankProvider in server/bank-provider.ts; until then bank routes answer 409 bank_not_connected.
 const w1Lab = process.env.REALBUD_TEST_LAB === "1" && process.env.REALBUD_TEST_W1_FICTIONAL_REI === "1"
   ? import("./testing/w1-lab.ts").then(({ createW1Lab }) => createW1Lab(DATA_DIR)) : null;
+// Lab only: Ask browser tasks use the same fictional portal (useAskBrowserLab refuses outside a lab process).
+const askLab = w1Lab?.then(lab => useAskBrowserLab({ runtime: lab.runtime, load: lab.load, signIn: lab.signInTab }));
+askLab?.catch(() => {}); // a failed lab start is answered on the next Ask browser request
+/** Ask's browser runtime: the work browser, or in the lab its fictional portal once the lab is up. */
+async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
 async function currentBankProvider() { return w1Lab ? (await w1Lab).provider : (await import("./bank-provider.ts")).connectedBankProvider(); }
 let w1HostPromise: Promise<import("./w1-host.ts").W1Host> | undefined;
 // One coverage tracker per process: separate instances on the same file would
@@ -2572,11 +2637,39 @@ function w1Host() {
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       // Self-serve REI sign-in: opens REI's own sign-in page and resumes when signed in.
       ...(lab ? {} : { openForSignIn }),
+      // A loop run's REI sign-in wait lasts until 18:00 office time (server/w1-sign-in-wait.ts); the lab moves its clock.
+      timeZone: reiWaitTimeZone, ...(lab ? { now: lab.now, waitPollMs: 100 } : {}),
       onSettings: settings => loops?.setAvailable("bank-references", Boolean(settings)) });
   })().catch(error => { w1HostPromise = undefined; throw error; });
 }
 void import("./w1-host.ts").then(({ readW1Settings }) => readW1Settings(DATA_DIR)).then(settings => loops?.setAvailable("bank-references", Boolean(settings))).catch(() => {});
+const reiWaitTimeZone = async () => (await agencySetup.getConfiguration()).settings.timeZone || undefined;
+/** Startup (owner decision, 6 Oct 2026): each W1 or Supplier list check run saved waiting at REI sign-in, still inside
+ * its deadline, runs again: it reopens REI's sign-in page in the work browser and keeps waiting with the same deadline. */
+async function resumeReiSignInWaits() {
+  const { resumableReiWaits } = await import("./w1-sign-in-wait.ts");
+  const now = w1Lab ? (await w1Lab).now() : Date.now();
+  // The run the restart interrupted then reads "Resumed after restart", not "Interrupted".
+  for (const loop of await resumableReiWaits(DATA_DIR, now)) { try { if (loops?.runNow(loop)) loops.markResumed(loop); } catch { /* a run of that loop already holds it */ } }
+}
 // ---- END W1 host ----
+
+// ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
+// Bud reads the list in the work browser under a host-issued read-only grant; the person saves the preview. Same lab as W1.
+let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
+function reiDirectorySync() {
+  return reiDirectoryPromise ??= (async () => {
+    const [{ createReiDirectorySync }, { createTenantDirectoryStore }, { readW1Settings }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts"), import("./w1-host.ts")]);
+    const lab = w1Lab ? await w1Lab : null;
+    return createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+      browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
+      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
+      signIn: () => lab ? lab.openForSignIn : openForSignIn,
+      dataDir: DATA_DIR, timeZone: reiWaitTimeZone, ...(lab ? { now: lab.now, waitPollMs: 100 } : {}) });
+  })().catch(error => { reiDirectoryPromise = undefined; throw error; });
+}
+// ---- END REI directory refresh ----
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -3358,7 +3451,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (desk.recovery.active && method !== 'GET') return json(res, 503, { error: 'Recover the private book before changing workflow setup.' });
       const previous = method === 'PUT' ? (await agencySetup.getConfiguration()).revision : undefined;
       const result = await agencySetup.handle(path, method, method === 'GET' ? undefined : await readBody(req, 400_000));
-      if (previous !== undefined && (await agencySetup.getConfiguration()).revision !== previous) { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
+      if (previous !== undefined && (await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange();
       return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown agency setup action.' });
     }
     const mailQuery = path.startsWith('/api/mail-workspace') ? mailWorkspaceQuery(url.searchParams,
@@ -3419,7 +3512,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {
@@ -3722,6 +3815,17 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, result.status, result.body);
     }
     // ---- END Redbark bank source + W1 run ----
+    // ---- BEGIN REI directory refresh routes (server/rei-directory-sync.ts) ----
+    if (path === "/api/rei-directory" || path.startsWith("/api/rei-directory/")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      res.setHeader("cache-control", "no-store");
+      if (!["GET", "HEAD"].includes(method) && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      if (path.endsWith("/save") && (desk.recovery.active || privateRestoreLocked)) return json(res, 503, { error: "Recover the private book before saving a directory." });
+      const result = await (await reiDirectorySync()).handle(path, method, () => readBody(req, 8192));
+      return json(res, result.status, result.body);
+    }
+    // ---- END REI directory refresh routes ----
     if (path === '/api/job-runs/history' && method === 'GET') {
       return json(res, 200, jobRuns.history({
         cursor: url.searchParams.get('cursor') ?? undefined,
@@ -3814,6 +3918,38 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
       const result = await billFollowUpsApi(url, method, method === 'GET' ? undefined : await readBody(req, 10_000));
       return json(res, result.status, result.body);
+    }
+    if (/^\/api\/(?:supplier-directory|maintenance-review)(?:\/|$)/.test(path)) {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await maintenanceReviewApi(url, method, method === 'GET' ? undefined : await readBody(req, 2_100_000));
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown maintenance check action.' });
+    }
+    if (path === '/api/austin-pack' || path === '/api/austin-pack/install') {
+      res.setHeader('cache-control', 'no-store');
+      if (path === '/api/austin-pack' && method === 'GET') return json(res, 200, await austinPack.view());
+      if (path !== '/api/austin-pack/install' || method !== 'POST') return json(res, 405, { error: 'Use GET for the Austin pack and POST to install it.' });
+      if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) return json(res, 503, { error: 'Recover the private book and schedule before installing the Austin pack.' });
+      return json(res, 200, await austinPack.install());
+    }
+    if (path === '/api/inspection-rules') {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await inspectionRulesApi(path, method, method === 'GET' ? undefined : await readBody(req, 100_000));
+      return json(res, result!.status, result!.body);
+    }
+    if (path === '/api/bill-references' || path === '/api/bill-references/match') {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await propertyReferencesApi(path, method, method === 'GET' ? undefined : await readBody(req, 1_100_000));
+      return json(res, result!.status, result!.body);
+    }
+    if (/^\/api\/inspections(?:\/|$)/.test(path)) {
+      res.setHeader('cache-control', 'no-store');
+      if (method !== 'GET' && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      const result = await inspectionsApi(path, method, method === 'GET' ? undefined : await readBody(req, 4_100_000));
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown inspection plan action.' });
     }
     if (/^\/api\/bill-(?:register|evidence|occurrences|series|scan)(?:\/|$)/.test(path)) {
       const result = await sourceBillsApi(url,method,method === 'GET' ? undefined : await readBody(req,30_000));
@@ -4020,7 +4156,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const threadId = url.searchParams.get("threadId") ?? "";
       const bud = store.productBud();
       if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
-      const [tasks, browser] = await Promise.all([browserTasks().list(threadId), browserRuntime.status()]);
+      const [tasks, browser] = await Promise.all([browserTasks().list(threadId), askRuntime().then(runtime => runtime.status())]);
       const chosen = browser.browsers.find((item) => item.id === browser.selectedBrowserId);
       return json(res, 200, {
         tasks: tasks.map(browserTaskCardView),
@@ -4082,8 +4218,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         // Start: the thread is free, the browser is connected, and the grant is saved before any browser work.
         if (fenceContextFor(threadId)) return json(res, 409, { error: "Other browser work is running in this conversation. Stop it first." });
         if (signInHandoffs().isHolding()) return json(res, 409, { error: "Finish the saved sign-in handover before starting more browser work." });
-        let browser = await browserRuntime.status();
-        if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await browserRuntime.connect(); } catch { /* answered below */ } }
+        const runtime = await askRuntime();
+        let browser = await runtime.status();
+        if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await runtime.connect(); } catch { /* answered below */ } }
         if (browser.state !== "ready" || !browser.selectedBrowserId) return json(res, 409, { error: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then press Start again.", code: "browser_not_connected" });
         const started = await browserTasks().start(taskId, { threadId, browserId: browser.selectedBrowserId, site: body.site });
         const grant = started.grant;
@@ -4098,6 +4235,20 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
           runAskRecipeTask(threadId, bud.id, started);
           return json(res, 202, { task: browserTaskCardView(started) });
         }
+        // A mapped portal (REI): open its site and wait on that tab's address until the person has signed in;
+        // Bud's turn starts only then (afterAskTaskSignIn), so nobody picks a page. Start answers once the tab is open.
+        const wait = new AbortController();
+        const signIn = await askTaskSignIn({ threadId, sites: grant.sites, runtime: askSignInRuntime(runtime), load: askPortalPackLoader(), signal: wait.signal }).catch(() => null);
+        if (signIn) {
+          askSignInWaits.set(grant.id, wait);
+          void signIn.outcome.catch(() => null).then(outcome => afterAskTaskSignIn(threadId, bud.id, grant, signIn.site.name, outcome));
+          return json(res, 202, { task: browserTaskCardView(started) });
+        }
+        // Open the job's site before the model's first turn, so the person sees it (or its sign-in page)
+        // at once. Within the grant only; no page access. Best effort, bounded: a missing tab is Bud's to report.
+        const site = jobBrowserUrl(`${new URL(grant.sites[0]!.includes("://") ? grant.sites[0]! : `https://${grant.sites[0]}`).origin}/`, grant.sites);
+        const opener = runtime as { openSignInTab?: (url: string) => Promise<string> };
+        if (site && opener.openSignInTab) await Promise.race([opener.openSignInTab(site.href).catch(() => {}), new Promise(resolve => setTimeout(resolve, 10_000).unref())]);
         try {
           await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
         } catch (error) {
@@ -5784,6 +5935,39 @@ const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspac
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
 const billFollowUpsApi = createBillFollowUpsApi({ file: join(DATA_DIR, 'bill-followups.json'),
   latest: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'), recovery: () => desk.recovery.active || privateRestoreLocked });
+// W4 maintenance checks: supplier directory + findings (notify once), both private JSON.
+const supplierDirectory = createSupplierDirectory();
+const maintenanceReview = createMaintenanceReviewStore();
+const maintenanceReviewApi = createMaintenanceReviewApi({ store: maintenanceReview, directory: supplierDirectory,
+  recovery: () => desk.recovery.active || privateRestoreLocked,
+  propertyLabel: id => desk.snapshot().properties.find(p => p.id === id)?.address,
+  bill: id => /^source-bill:[a-f0-9]{64}$/.test(id) ? sourceBills().getOccurrence(id) : undefined,
+  loop: () => loops!.listLoops().find(loop => loop.id === 'maintenance-review') });
+// W5 inspection rules: private revisioned JSON with the last 10 replaced versions.
+const inspectionRules = createInspectionRulesStore();
+const inspectionRulesApi = createInspectionRulesApi({ store: inspectionRules, recovery: () => desk.recovery.active || privateRestoreLocked });
+// W2 rate and levy reference numbers per property (REI property list CSV). A number only proposes a property.
+const propertyReferencesApi = createPropertyReferenceApi({ store: createPropertyReferenceStore(), recovery: () => desk.recovery.active || privateRestoreLocked,
+  properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address, ...(p.propertyCode ? { propertyCode: p.propertyCode } : {}) })) });
+// W5 inspection history + saved plan (accepted bookings, moves). Nothing is booked in Property Inspect.
+const inspectionHistory = createInspectionHistoryStore(), inspectionBookings = createInspectionBookingsStore();
+const inspectionsApi = createInspectionsApi({ rules: inspectionRules, history: inspectionHistory, bookings: inspectionBookings,
+  properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })), recovery: () => desk.recovery.active || privateRestoreLocked,
+  today: () => new Date().toLocaleDateString('en-CA') });
+// Austin pack: six workflows with Brisbane schedules and plain plans, installed off; office edits are kept (server/austin-pack.ts).
+const austinPack = createAustinPack({ loops: { listLoops: () => loops!.listLoops(), patchClock: (id, patch) => loops!.patchClock(id, patch) },
+  officeTimeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null,
+  maintenance: maintenanceReview, inspection: inspectionRules,
+  signals: async () => {
+    const gmail = connectedAppAccess.status(connectedAppsConfigured(cfg)).services.gmail;
+    let tenants = 0, suppliers = 0;
+    try { tenants = (await import('./tenant-directory.ts')).createTenantDirectoryStore(workflowDatabase()).read().directory?.tenants.length ?? 0; } catch { /* its recovery shows in Bank reference review */ }
+    try { suppliers = (await supplierDirectory.read()).suppliers.length; } catch { /* its recovery shows in Maintenance checks */ }
+    return { gmail: Boolean(gmail?.connected) || Boolean(gmailReadOnlyMode(cfg) && gmailReadOnlyBinding(cfg)?.accountId), redbark: w1Lab ? true : (await redbark.connector.state().catch(() => null))?.status === 'connected', tenants, suppliers };
+  } });
+onSignInSettled(event => { if (event.outcome === 'signed_in' && event.site === 'REI Cloud') void austinPack.noteReiSignedIn().catch(() => {}); });
+/** A changed agency setup clears its workflow reviews, so its mail work stops until they are reviewed again. */
+function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),
   timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null });
 if (!privateRestoreLocked) reminders.start();
@@ -6133,6 +6317,7 @@ server.listen(PORT, "127.0.0.1", () => {
   // restart continues the saved checkpoint under its own authority re-check. It
   // reads nothing when no window is pending.
   if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
+  if (!privateRestoreLocked) void resumeReiSignInWaits().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
   setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));

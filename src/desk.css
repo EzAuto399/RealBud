@@ -1,8 +1,8 @@
 /* Desk: a shallow toolbar that never scrolls, then one scroll region (.desk-content)
    holding the task queue beside the case in normal flow. No nested scrollers. */
 .desk-workspace { min-height: 0; background: var(--color-sheet); }
-.desk-workspace .pm-desk-header { padding: 20px 24px 0; }
-.desk-workspace-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 8px; }
+.desk-workspace .pm-desk-header { padding: 8px 24px 0; }
+.desk-workspace-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 2px; }
 .desk-other-work > summary { min-height: 40px; }
 .desk-content { display: flex; flex-direction: column; overscroll-behavior: contain; background: var(--color-sheet); }
 .desk-content[data-drawer-open="true"] { overflow: hidden; }
@@ -178,7 +178,7 @@
 @media (max-width: 719px) {
   .desk-empty-canvas { padding: 20px 16px; }
   .desk-empty-workspace { padding: 24px 16px; }
-  .desk-workspace .pm-desk-header { padding: 12px 16px 0; }
+  .desk-workspace .pm-desk-header { padding: 8px 16px 0; }
   .desk-workspace-tabs { gap: 16px; }
   .desk-case > header { padding: 14px 16px; }
   .desk-case .pm-case-title { font-size: 19px; }
@@ -187,8 +187,8 @@
 .desk-property-card { align-self: start; }
 .desk-property-notes[open] { padding-bottom: 6px; }
 @media (max-height: 759px) {
-  .desk-workspace .pm-desk-header { padding-top: 10px; }
-  .desk-workspace-nav { margin-top: 4px; }
+  .desk-workspace .pm-desk-header { padding-top: 6px; }
+  .desk-workspace-nav { margin-top: 0; }
   .desk-workspace-tabs > button { min-height: 38px; }
   .desk-case > header { padding-top: 12px; padding-bottom: 10px; }
 }

@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, browserTaskAsksFirst, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
+import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, browserTaskAsksFirst, browserTaskLooksOnly, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
 
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
 
@@ -10,11 +10,11 @@ const task = (extra: Partial<BrowserTaskCardView> = {}): BrowserTaskCardView => 
   id: '00000000-0000-4000-8000-0000000000c1', messageId: 'message-1', status: 'proposed',
   request: "Download this month's invoices from the strata portal", sites: ['portal.fictional-strata.example'], siteSource: 'saved-job',
   savedJob: 'Strata levy check', actions: ['read', 'navigate', 'click', 'download'], consequential: ['pay', 'sign', 'send', 'notice', 'delete', 'account-change'],
-  minutes: 30, budget: 40, offerExpiresAt: NOW + 60 * 60_000, startedAt: null, expiresAt: null, endNote: null, ...extra,
+  minutes: 30, budget: 40, offerExpiresAt: NOW + 60 * 60_000, startedAt: null, expiresAt: null, endNote: null, progress: [], ...extra,
 });
 const ready: BrowserTaskBrowser = { ready: true, name: 'Chrome' };
 const render = (value: BrowserTaskCardView, browser = ready, extra: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(BrowserTaskCard, {
-  task: value, browser, now: NOW, onStart: vi.fn(), onDecline: vi.fn(), onSaveJob: vi.fn(), onStop: vi.fn(), onConnect: vi.fn(), ...extra,
+  task: value, browser, now: NOW, onStart: vi.fn(), onDecline: vi.fn(), onSaveJob: vi.fn(), onStop: vi.fn(), ...extra,
 }));
 const button = (html: string, name: string) => html.match(new RegExp(`<button[^>]*>(?:<[^>]+>)*${name}(?:<[^>]+>)*</button>`))?.[0] ?? '';
 
@@ -41,13 +41,24 @@ describe('BrowserTaskCard', () => {
     expect(html).not.toMatch(/broker|MCP|Hermes|You\s*→|grant|origin|action class/i);
   });
 
-  it('offers Connect your browser instead of Start when no browser is connected', () => {
+  it('offers Start in one press when the work browser is not open yet: Start opens it', () => {
     const html = render(task(), { ready: false, name: null });
-    expect(html).toContain('Not connected');
-    expect(button(html, 'Start this task')).toBe('');
-    expect(button(html, 'Connect your browser')).toContain('aria-describedby');
-    expect(html).toContain('Connect your browser before starting.');
+    expect(html).toContain('Work browser on this computer · opens when you start');
+    expect(button(html, 'Start this task')).not.toContain('disabled=""');
+    expect(html).not.toMatch(/Connect your browser|Not connected/);
     expect(button(html, 'Save as a job instead')).toBeTruthy();
+  });
+
+  it('says plainly that a reading task only looks, and shows what the task has done so far', () => {
+    expect(render(task())).toContain('Bud only looks: it opens portal.fictional-strata.example, reads pages and follows links. It changes nothing there without asking you first.');
+    expect(browserTaskLooksOnly({ actions: ['read', 'navigate', 'click', 'fill', 'keys'], sites: [] })).toBe('Bud only looks: it opens the site, reads pages and follows links. It changes nothing there without asking you first.');
+    expect(browserTaskLooksOnly({ actions: ['read', 'navigate', 'click', 'upload'], sites: ['x.example'] })).toBeNull();
+    expect(render(task({ actions: ['read', 'navigate', 'click', 'submit'] }))).not.toContain('Bud only looks');
+    const running = render(task({ status: 'active', startedAt: NOW, expiresAt: NOW + 60_000, progress: ['Signed in to REI Cloud', 'Opened Reports', 'Downloaded tenants.csv'] }));
+    expect(running).toContain('aria-label="Progress"');
+    expect(running).toContain('Signed in to REI Cloud · Opened Reports · Downloaded tenants.csv');
+    expect(render(task())).not.toContain('aria-label="Progress"');
+    expect(render(task({ status: 'finished', startedAt: NOW, expiresAt: NOW + 1, endNote: 'Finished.', progress: ['Opened Reports'] }))).not.toContain('Bud only looks');
   });
 
   it('asks for the site when neither the request nor a saved job named one', () => {
@@ -115,6 +126,8 @@ describe('BrowserTaskCard', () => {
     expect(() => parseBrowserTaskList({ ...good, browser: { ready: 'yes', name: null } })).toThrow();
     expect(() => parseBrowserTaskList({ ...good, tasks: [{ ...task(), status: 'running-anyway' }] })).toThrow();
     expect(() => parseBrowserTaskList({ ...good, tasks: [{ ...task(), actions: ['read', 'pay'] }] })).toThrow();
+    expect(() => parseBrowserTaskList({ ...good, tasks: [{ ...task(), progress: undefined }] })).toThrow();
+    expect(() => parseBrowserTaskList({ ...good, tasks: [{ ...task(), progress: [42] }] })).toThrow();
     expect(() => parseBrowserTaskList(null)).toThrow();
   });
 

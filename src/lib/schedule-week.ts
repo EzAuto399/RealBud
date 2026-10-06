@@ -96,6 +96,7 @@ export function scheduleSummary(schedule: { time: string; weekdays: number[] } &
       : days.join(",") === "1,2,3,4,5"
         ? "Weekdays"
         : days.map((day) => DAY_NAMES[day]).join(", ");
+  if (schedule.monthly) return `First weekday of each month ${time}`;
   return schedule.intervalDays ? `Every ${schedule.intervalDays} days ${time} · from ${schedule.anchorDate}${days.length < 7 ? ` · ${dayLabel}` : ''}` : `${dayLabel} ${time}`;
 }
 

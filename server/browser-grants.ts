@@ -12,7 +12,7 @@ import { realpathSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { readPrivateJson, trimOldestToBytes, writePrivateJson } from "./private-json.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { normalizeOrigin } from "./recipes.ts";
 import { grantedBrowserTools, portalBrowserPolicy } from "./attended-run.ts";
@@ -121,6 +121,8 @@ export interface BrowserTaskCardView {
   startedAt: number | null;
   expiresAt: number | null;
   endNote: string | null;
+  /** What the task has done so far, in short words from its own record, oldest first. */
+  progress: string[];
 }
 
 const MAX_RECORDS = 200;
@@ -213,6 +215,24 @@ function parseStore(value: unknown): BrowserTaskRecord[] {
   return row.tasks.map(item => structuredClone(item));
 }
 
+/** The card's progress lines from the task's recorded actions ("Signed in to REI Cloud", "Opened Reports",
+ * "Downloaded tenants.csv"): the plain sentence only, never the action record's hashes or a field value. */
+export function browserTaskProgress(evidence: readonly JobRunEvidence[]): string[] {
+  const lines: string[] = [];
+  for (const item of evidence) {
+    if (item.kind !== "action") continue;
+    const sentence = item.note.split(" Action record:")[0]!.replace(/\s+value="(?:[^"\\]|\\.)*"?/g, "").trim();
+    const download = sentence.match(/^Downloaded '([^']{1,120})'/);
+    let line = download ? `Downloaded ${download[1]}` : (sentence.split(/\.(?:\s|$)/)[0] ?? "")
+      .replace(/ (?:on|from) [a-z0-9-]+(?:\.[a-z0-9-]+)+\b.*$/i, "")
+      .replace(/\b(?:link|button|combobox|textbox|searchbox|menuitem|tab|checkbox|radio|option) "((?:[^"\\]|\\.){1,120})"/g, "$1");
+    if (/^You finished the (?:sign-in page|verification step)\b/.test(line)) line = "Signed in";
+    if (!line || /^allowed (?:for this browser task|by rule|once by you)/i.test(line) || lines.at(-1) === line) continue;
+    lines.push(line.slice(0, 80));
+  }
+  return lines.slice(-8);
+}
+
 export function browserTaskCardView(record: BrowserTaskRecord): BrowserTaskCardView {
   return {
     id: record.id,
@@ -230,6 +250,7 @@ export function browserTaskCardView(record: BrowserTaskRecord): BrowserTaskCardV
     startedAt: record.startedAt,
     expiresAt: record.grant?.expiresAt ?? null,
     endNote: record.endNote,
+    progress: browserTaskProgress(record.evidence),
   };
 }
 
@@ -350,6 +371,9 @@ export class BrowserTaskStore {
     return rows;
   }
   private async save(rows: BrowserTaskRecord[]): Promise<void> {
+    // Evidence makes tasks large: near the file cap the oldest settled tasks go
+    // first; a proposed, running or paused task is never dropped.
+    rows = trimOldestToBytes(rows, MAX_BYTES * 0.8, row => !holding(row) && row.status !== "proposed");
     try { await writePrivateJson(this.file, { version: 1, purpose: "browser-tasks", tasks: rows }, { maxBytes: MAX_BYTES, validate: parseStore }); }
     catch (error) { this.rows = null; throw error; }
     this.rows = rows;

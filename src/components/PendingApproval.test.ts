@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bot, Message } from '@/state/store';
 import { HERMES_MEMORY_APPROVAL, type MemoryApprovalReview } from '@shared/approval-policy';
-import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, type Pending } from './PendingApproval';
+import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, spokenApproval, type Pending } from './PendingApproval';
+import { BROWSER_ACCOUNT_CONFIRM_TOOL } from '@shared/browser-task';
 
 const fixture = vi.hoisted(() => ({ dispatch: vi.fn() }));
 vi.mock('@/state/store', () => ({ useStore: () => ({ state: { desk: { properties: [] } }, dispatch: fixture.dispatch }) }));
@@ -93,5 +94,35 @@ describe('native memory permission review', () => {
     const value = pending({ tool: 'shell', approvalPolicy: undefined, memoryReview: undefined, allowKey: 'Bash:git' });
     expect(renderActions(value)).toContain('Allow for this task');
     expect(renderActions(value, false, bot('other'))).toContain('Always allow');
+  });
+});
+
+describe('the account a browser task works in', () => {
+  it('asks in plain words, answered Continue in this account or Stop, with nothing standing', () => {
+    const account = pending({ tool: BROWSER_ACCOUNT_CONFIRM_TOOL, memoryReview: undefined, approvalPolicy: 'once',
+      detail: 'Signed in to rei-mock.fictional.test as FICT1. Continue in this account? Bud remembers it, and asks again if a later task finds a different account.',
+      fence: { surface: 'portal-read', origin: 'rei-mock.fictional.test', ruleOffer: null } });
+    const panel = renderPanel(account);
+    expect(panel).toContain('Check the account');
+    expect(panel).toContain('Signed in to rei-mock.fictional.test as FICT1. Continue in this account?');
+    expect(panel).not.toContain('Allow once approves this request only');
+    const rendered = buttons(PendingApprovalActions(props(account)));
+    expect(rendered.map(button => button.text)).toEqual(['Continue in this account', 'Stop', 'Stop this turn']);
+    rendered[0]!.onClick(); expect(fixture.dispatch).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'allow', scope: 'once' }));
+    rendered[1]!.onClick(); expect(fixture.dispatch).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'deny' }));
+  });
+});
+
+// Security review of b7fceb50 (sensitive-data-exposure): speech is made off this computer, and a browser step's card
+// can show the record it acts on, so a call announces such an approval without its details.
+describe('an approval read aloud on a call', () => {
+  it('names no page, record or detail for a fenced or browser approval', () => {
+    const detail = 'Open portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement in this job\'s borrowed tab.';
+    const fence = { surface: 'portal-read' as const, origin: 'portal.example', ruleOffer: null };
+    for (const extra of [{ fence }, { browserApproval: null }]) {
+      const spoken = spokenApproval(pending({ tool: 'browser_navigate', detail, ...extra }), 'Bud');
+      expect(spoken).toBe('Approval needed in RealBud. Check the card on your screen, then say allow or deny.');
+    }
+    expect(spokenApproval(pending({ tool: 'Bash', detail: 'git status', approvalPolicy: undefined, memoryReview: undefined }), 'Bud')).toBe('Bud wants to Bash. git status. Should I allow it?');
   });
 });

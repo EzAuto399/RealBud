@@ -23,6 +23,8 @@ import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { validBrowserTaskRecipe, type BrowserTaskProposal, type BrowserTaskRecipe, type BrowserTaskRecord } from "./browser-grants.ts";
 import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
+import { jobBrowserUrl } from "./browser-authority.ts";
+import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { browserTaskUploadName, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -33,13 +35,23 @@ export const PORTAL_RECIPE_PACKS: Readonly<Record<string, string>> = {
 };
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 
-export async function loadPortalRecipePack(portal: string): Promise<PortalRecipePack> {
+/** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them. */
+export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
   if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no recipes for that portal.");
   const pack = parsePortalRecipePack(JSON.parse(await readFile(join(ROOT, PORTAL_RECIPE_PACKS[portal]), "utf8")));
   if (pack.portal !== portal) throw fail(409, "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.");
-  return pack;
+  return paths.apply(pack);
 }
 export type PackLoader = (portal: string) => Promise<PortalRecipePack>;
+
+/** The mapped portal an Ask task's grant includes (its exact origin), with learned paths applied; null when none. */
+export async function portalMapForSites(sites: readonly string[], load: PackLoader = loadPortalRecipePack, paths: PortalPathStore = portalPaths()): Promise<{ portal: string; pack: PortalRecipePack } | null> {
+  for (const portal of Object.keys(PORTAL_RECIPE_PACKS)) {
+    const pack = await paths.apply(await load(portal));
+    if (jobBrowserUrl(`${pack.origin}/`, sites)) return { portal, pack };
+  }
+  return null;
+}
 
 /** The card for a recipe or batch: sites and action classes are exactly what the recipes need. */
 export async function portalRecipeTaskProposal(input: { threadId: string; messageId: string; portal: unknown; target: unknown; inputs?: unknown; account: unknown; upload?: unknown }, load: PackLoader = loadPortalRecipePack): Promise<BrowserTaskProposal & { recipe: BrowserTaskRecipe }> {

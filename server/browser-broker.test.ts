@@ -8,16 +8,23 @@ import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type Browser
 import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, onBrowserSignIn, browserToolsFor, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
 import { grantedBrowserTools } from "./attended-run.ts";
 import { openForSignIn, signInHandovers, signInStop } from "./browser-sign-in.ts";
-import { BrowserApprovalStore, legacyBrowserGrant, type BrowserPortalControls } from "./browser-authority.ts";
+import { approvalPath, approvalUrl, BrowserApprovalStore, legacyBrowserGrant, type BrowserPortalControls } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { PortalEvidenceStore } from "./portal-path-overrides.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
+import { browserApprovalCardFrom } from "./browser-approval-card.ts";
+import { buildHandoffPayload } from "./channel-handoff.ts";
+import { EVENTS_DIR, ensureDirs } from "./config.ts";
+import { EventBus } from "./harness/bus.ts";
+import type { Store } from "./store.ts";
+import { websiteRunReceipt } from "./website-work-adapters.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
 type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }>; browserId?: string; accountMarker?: string; expiresAt?: number; budget?: number; sites?: string[] };
-async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean } = {}) {
+async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean; evidence?: PortalEvidenceStore } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   const workroom = browserTaskWorkroom(root, "grant-fictional-1");
   const uploads = [...await Promise.all((job.task?.files ?? []).map(file => addBrowserTaskUpload(workroom, file.name, file.bytes))), ...(job.task?.extraUploads ?? [])];
@@ -60,7 +67,7 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
     const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, grant,
       context: { allowedOrigins: ["portal.example"], capabilities, ...(job.rules ? { rules: job.rules } : {}) },
       ...(job.rules ? { rules: () => job.rules! } : {}),
-      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root });
+      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root, ...(job.evidence ? { evidence: job.evidence } : {}) });
     cleanup.push(async () => { started.close(); await started.released(); });
     return started;
   };
@@ -567,7 +574,7 @@ describe("keys, dropdowns, downloads and uploads", () => {
     expect(result.isError).not.toBe(true);
     expect(dispatched(f, "press")).toEqual([["press", "Shift+Tab", "--ref", "@e1", "--session", "owned", "--tab-id", "1"]]);
     expect(f.approve.mock.calls.at(-1)!.slice(0, 3)).toEqual(["browser_press", { url: "https://portal.example/work", label: 'textbox "Property code"', key: "Shift+Tab" }, 'Press Shift+Tab in textbox "Property code" on portal.example.']);
-    expect(logged(seen)).toEqual([{ grantId: "grant-fictional-1", tool: "browser_press", origin: "https://portal.example", path: "/work", label: 'textbox "Property code"', class: "routine", decision: "approved", outcome: "succeeded", key: "Shift+Tab" }]);
+    expect(logged(seen)).toEqual([{ grantId: "grant-fictional-1", tool: "browser_press", origin: "https://portal.example", label: 'textbox "Property code"', class: "routine", decision: "approved", outcome: "succeeded", key: "Shift+Tab" }]);
     // Enter on a button presses it: without the click class, no key is a way round.
     expect((await f.request("browser_read", { tab_id: 1 })).isError).not.toBe(true);
     expect((await f.request("browser_press", { tab_id: 1, ref: "@e5", key: "Enter" })).content[0].text).toBe("This task does not include that browser step. Ask again with the step you need.");
@@ -742,5 +749,143 @@ describe("explicit grants and exact tool lists", () => {
     const same = await fixture(undefined, { task: { actions: ["read"], browserId: "work" } });
     expect((await same.request("browser_borrow", { tab_id: 1 })).isError).not.toBe(true);
     expect(same.calls.filter(args => args[0] === "tab" && args[1] === "borrow")).toHaveLength(1);
+  });
+});
+
+// Security review of 8ce3e6c9: a link's address and the tab's query carry tokens. Neither reaches what the model reads,
+// an approval card's params (also written to the thread's event log), the run's evidence, or the learned-path record.
+// Security review of 21be00b9: a card shows the record ids in its page path (approvalPath); evidence keeps the origin only.
+describe("addresses stay out of what is read, shown and kept", () => {
+  it("never shows a link's address or the tab's query, and keeps every path out of evidence", async () => {
+    const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
+    const root = privateTempRoot(join(tmpdir(), "rb-broker-evidence-")); cleanup.push(() => removeFixture(root));
+    const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
+    const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click", "keys"] }, evidence });
+    f.url("https://portal.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e?token=SYNTHETIC-TAB-TOKEN&session=SYNTHETIC-TAB-SESSION");
+    f.page('@native-ax 1\nrootwebarea\n  @e1 link "foo url=" url="/tenants?token=SYNTHETIC-LINK-TOKEN&session=SYNTHETIC-LINK-SESSION"\n  @e2 textbox "Reference" value=""');
+    await f.request("browser_borrow", { tab_id: 1 });
+    const read = await f.request("browser_read", { tab_id: 1 });
+    expect(read.content[0].text).toContain('@e1 link \\"foo url=\\"');
+    for (const [name, args] of [["browser_click_semantic", { ref: "@e1" }], ["browser_press", { ref: "@e2", key: "Tab" }], ["browser_navigate", { url: "https://portal.example/tenants?token=SYNTHETIC-NAV-TOKEN" }]] as const) {
+      await f.request("browser_read", { tab_id: 1 });
+      expect((await f.request(name, { tab_id: 1, ...args })).isError, name).not.toBe(true);
+    }
+    const steps = await evidence.steps("grant-fictional-1");
+    // No mapped pack declares these routes, so learned-path evidence keeps the origin only.
+    expect(steps.map(step => [step.tool, step.label, step.path])).toEqual([["click", "foo url=", "https://portal.example"], ["press", "Reference", "https://portal.example"], ["navigate", "", "https://portal.example"]]);
+    const cardUrls = f.approve.mock.calls.map(call => (call[1] as { url?: string }).url);
+    expect(new Set(cardUrls)).toEqual(new Set(["https://portal.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e", "https://portal.example/tenants"])); expect(cardUrls.at(-1)).toBe("https://portal.example/tenants");
+    expect(f.approve.mock.calls.at(-1)![2]).toBe("Open portal.example/tenants in this job's borrowed tab.");
+    expect(JSON.stringify(f.approve.mock.calls)).not.toMatch(/SYNTHETIC/);
+    const kept = JSON.stringify({ read, seen, steps, kept: await readFile(join(root, "evidence.json"), "utf8") });
+    expect(kept).not.toMatch(/SYNTHETIC|0f8fad5b|\/tenants/);
+    expect(seen.filter(event => event.action).map(event => event.action!.origin)).toEqual(["https://portal.example"]);
+    expect(seen.map(event => event.entry.note)).toContain("Opened a page on portal.example.");
+  });
+});
+
+// Security review of 21be00b9 (approval-ui-integrity, authorization-classification-bypass).
+describe("an approval is for the record and control its card showed", () => {
+  const clicks = (f: Awaited<ReturnType<typeof fixture>>) => f.calls.filter(a => a[0] === "click").length;
+  const RECORD = "https://portal.example/tenants/0f8fad5b-d9cb-469f-a165-70867728950e/remove";
+  const DELETE_PAGE = 'Are you sure you want to delete Fictional Tenant?\n@e1 button "Delete"';
+
+  it("shows the record on the card and presses nothing when the tab moves to another record while it waits", async () => {
+    const f = await fixture(); f.url(RECORD); f.page(DELETE_PAGE); await f.ready();
+    f.approve.mockImplementationOnce(async () => { f.url(RECORD.replace("0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679-7425-40de-944b-e07fc1f90ae7")); return true; });
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect((f.approve.mock.calls.at(-1)![1] as { url: string }).url).toBe(RECORD);
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/changed after approval\. Nothing was pressed/);
+    expect(clicks(f)).toBe(0);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "changed", outcome: "not-dispatched", url: RECORD }]);
+  });
+
+  it("presses nothing when the tab moves to another record while an ordinary step waits", async () => {
+    const f = await fixture(); f.url("https://portal.example/tenants/1042"); f.page('@e1 button "Show details"'); await f.ready();
+    f.approve.mockImplementationOnce(async () => { f.url("https://portal.example/tenants/1043"); return true; });
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect((f.approve.mock.calls.at(-1)![1] as { url: string }).url).toBe("https://portal.example/tenants/1042");
+    expect(result.isError).toBe(true); expect(clicks(f)).toBe(0);
+  });
+
+  it("classifies the whole name: a control named past url= is not the harmless label it shows", async () => {
+    const f = await fixture(); f.page('@e1 button "Show details url= Delete all tenants"'); await f.ready();
+    const asked = f.approve.mock.calls.length;
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/could not confirm the item it changes/);
+    expect(f.approve.mock.calls.length).toBe(asked); expect(clicks(f)).toBe(0);
+    f.page('@e1 button "Show details url= extra"'); await f.request("browser_read", { tab_id: 1 });
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).not.toBe(true);
+    const [, params, summary, , projection] = f.approve.mock.calls.at(-1)!;
+    expect(summary).toContain("unusual text"); expect(projection).toMatchObject({ approvalPolicy: "once" });
+    expect(JSON.stringify(params)).not.toContain("extra");
+  });
+});
+
+// Security review of b7fceb50 (sensitive-data-exposure), and the reviews of its masked log path after it: the record path
+// a card shows (approvalPath) may hold a name, an email or a record id, in any spelling. It stays on this computer's card
+// and the private approval record; the thread's event log, decision events and evidence keep the page's origin only, and
+// the model, the phone relay and website receipts never see it.
+describe("a card's record path stays on the local card and approval record", () => {
+  const PRIVATE = /jane|smith|000048213|t\/42|%6A|SYNTHETIC|\/owners|\/tenants/i;
+  const ROWS: ReadonlyArray<[string, string]> = [
+    ["https://portal.example/tenants/jane.doe@example.com/TEN-2026-000048213/remove", "https://portal.example/owners/jane.doe@example.com/OWN-2026-000048213/statement"],
+    ["https://portal.example/owners/jane-smith/remove", "https://portal.example/owners/jane-smith/statement"],
+    ["https://portal.example/t/42/remove", "https://portal.example/t/42/statement"],
+    ["https://portal.example/tenants/%6A%61ne%20smith/remove", "https://portal.example/owners/%6A%61ne%20smith/statement"],
+    ["https://portal.example\\owners\\jane-smith\\remove", "https://portal.example\\owners\\jane-smith\\statement"],
+    ["HTTPS://PORTAL.EXAMPLE:443/Owners/Jane-Smith/remove?name=jane#smith", "HTTPS://PORTAL.EXAMPLE/Owners/Jane-Smith/statement?name=jane"],
+  ];
+
+  it.each(ROWS)("shows %s on the card and keeps it in the record, and nowhere else", async (record, statement) => {
+    const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
+    const root = privateTempRoot(join(tmpdir(), "rb-broker-record-path-")); cleanup.push(() => removeFixture(root));
+    const evidence = new PortalEvidenceStore({ file: join(root, "evidence.json") });
+    const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click"] }, evidence });
+    f.url(record.includes("?") ? record : `${record}?session=SYNTHETIC-SESSION`); f.page('Are you sure you want to delete Fictional Tenant?\n@e1 button "Delete"'); await f.ready();
+    // Denied, then approved and pressed, then a page opened: what each returns to the model is checked below.
+    f.approve.mockResolvedValueOnce(false);
+    const results = [await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })];
+    await f.request("browser_read", { tab_id: 1 });
+    results.push(await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }));
+    await f.request("browser_read", { tab_id: 1 });
+    results.push(await f.request("browser_navigate", { tab_id: 1, url: statement.includes("?") ? statement : `${statement}?session=SYNTHETIC-NAV` }));
+    expect(results.map(result => result.isError === true)).toEqual([true, false, false]);
+
+    // This computer's card and the private approval record show the record, normalised once (approvalUrl).
+    const recordUrl = approvalUrl(record), target = new URL(statement);
+    const calls = f.approve.mock.calls as unknown as Array<[string, BrowserJson, string, AbortSignal, { fence: unknown; approvalPolicy?: string }]>;
+    const cards = calls.map(([tool, params, summary, , projection]) => ({ tool, params, summary, projection, card: browserApprovalCardFrom(params) }));
+    const deleted = cards.find(card => card.card)!; const opened = cards.find(card => card.tool === "browser_navigate")!;
+    expect(deleted.params.url).toBe(recordUrl); expect(deleted.card!.page).toBe(recordUrl.replace("https://", ""));
+    expect(opened.params.url).toBe(approvalUrl(target));
+    expect(opened.summary).toBe(`Open ${target.hostname}${approvalPath(target)} in this job's borrowed tab.`);
+    expect((await f.approvals.list()).map(row => row.url)).toEqual([recordUrl, recordUrl]);
+    expect(JSON.stringify(cards)).not.toMatch(/SYNTHETIC/);
+
+    // The thread's event log (each card as the host emits it) keeps the page's origin only.
+    ensureDirs();
+    const bus = new EventBus(); const thread = `thread-record-path-${ROWS.findIndex(row => row[0] === record)}`;
+    for (const { tool, params, summary, projection, card } of cards) {
+      bus.publish({ eventId: `ev-${tool}`, provider: "hermesAgent", threadId: thread, createdAt: new Date(0).toISOString(), type: "request.opened",
+        requestType: "permission", tool, params, summary, fence: projection.fence as never, ...(card ? { browserApproval: card, approvalPolicy: "once" as const } : {}) });
+    }
+    const log = (await readFile(join(EVENTS_DIR, `${thread}.ndjson`), "utf8")).trim().split("\n").map(line => JSON.parse(line) as { params: { url?: string }; summary: string; browserApproval?: { page?: string } });
+    expect(JSON.stringify(log)).not.toMatch(PRIVATE);
+    expect(log.map(event => event.params.url).filter(Boolean).every(url => url === "https://portal.example")).toBe(true);
+    expect(log.some(event => event.browserApproval && event.browserApproval.page === undefined)).toBe(true);
+    expect(log.map(event => event.summary)).toContain("Open portal.example in this job's borrowed tab.");
+
+    // What the model reads, decision events, the run's evidence, the phone relay and a website receipt never hold it.
+    const messages = [{ id: "card", role: "bot", kind: "options", at: 1, card: { title: "Approval needed", subtitle: opened.summary, options: ["Allow", "Deny"], browserApproval: deleted.card } },
+      { id: "reply", role: "bot", kind: "text", text: "The tenant was removed.", at: 2 }];
+    const phone = { productBud: () => ({ threadId: "bud", busy: false }), activePath: () => messages } as unknown as Store;
+    const relayed = [buildHandoffPayload(phone, { mode: "summary" }), buildHandoffPayload(phone, { mode: "result" })];
+    expect(relayed.every(item => item.ok)).toBe(true);
+    const steps = await evidence.steps("grant-fictional-1");
+    expect(steps.map(step => step.path)).toEqual(["https://portal.example", "https://portal.example"]);
+    const kept = JSON.stringify({ results, seen, steps, evidence: await readFile(join(root, "evidence.json"), "utf8"), relayed,
+      receipt: websiteRunReceipt({ id: "run-1", status: "awaiting-approval", detail: opened.summary } as never) });
+    expect(kept).not.toMatch(PRIVATE);
   });
 });

@@ -54,7 +54,7 @@ describe("an Ask task grant in the ACP core", () => {
     const dump = await send("t-ask-grant", { runId: grant.runId, allowedOrigins: [SITE], capabilities: ["portal-read", "portal-prefill", "portal-submit"], grant, active: () => holding });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
     const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers[0];
-    expect(descriptor.name).toBe("browser");
+    expect(descriptor.name).toBe("workbrowser");
     const listing = await rpc(descriptor, "tools/list", {});
     expect(listing.result.tools!.map(tool => tool.name)).toEqual(grantedBrowserTools(grant, true));
     holding = false;

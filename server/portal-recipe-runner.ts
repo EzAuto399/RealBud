@@ -55,6 +55,8 @@ export interface PortalRecipeResult {
   filters: Record<string, string>;
   table: "rows" | "empty" | "unread";
   pages: number;
+  /** The grid footer's "N records" count when the table was read, if the page shows one. */
+  footer?: number;
   controls?: string[];
   /** stop_before labels present on the last page: reached, never pressed. */
   stopBefore: string[];
@@ -428,12 +430,14 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           break;
         }
         case "click": {
-          const label = fill(raw); entry.target = label;
+          // A learned step the map does not call read-safe (server/portal-path-overrides.ts) goes to the person on every run.
+          const eachRun = typeof raw === "object" && raw !== null && (raw as Record<string, unknown>).ask === "each-run";
+          const label = fill(eachRun ? (raw as Record<string, unknown>).label : raw); entry.target = label;
           if (stops.has(label)) throw new RunEnd("stopped-before", "consequential-label", label);
-          if (!readSafe.has(label)) throw blocked("not-read-safe", label);
+          if (!eachRun && !readSafe.has(label)) throw blocked("not-read-safe", label);
           const target = control(await current(), ["button", "link", "tab", "menuitem"], label);
           if (!target) throw blocked("control-missing", `No ${label} control on the page.`);
-          await act("browser_click_semantic", { ref: target.ref! }, { name: label });
+          await act("browser_click_semantic", { ref: target.ref! }, { name: label, ...(eachRun ? { recipe: false } : {}) });
           break;
         }
         case "read": {
@@ -443,6 +447,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           else {
             const table = await waitTable();
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
+            if (table.count !== null) result.footer = table.count;
           }
           break;
         }

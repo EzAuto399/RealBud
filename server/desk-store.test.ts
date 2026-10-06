@@ -1,4 +1,4 @@
-import { chmodSync, statSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -162,6 +162,79 @@ describe("DeskStore", () => {
     const again = new DeskStore({ file, book: fixtureBook(), key });
     expect(again.data.revision).toBe(beforeRevision + 1);
     expect(again.recovery.active).toBe(false);
+  });
+});
+
+describe("desk backups", () => {
+  const backups = (dir: string) => readdirSync(join(dir, "desk-backups")).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+
+  // Windows admits each new private file through one PowerShell launch (about
+  // 0.46 s on a hosted runner), so 2,000 commits took 15 minutes there. 40 still
+  // rotates the five-slot window eight times over.
+  const commits = process.platform === "win32" ? 40 : 2000;
+  it(`keeps exactly the newest five by revision number across ${commits} commits and leaves no purged copies`, () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    for (let i = 0; i < commits; i += 1) store.persist();
+    const last = store.data.revision;
+    expect(last).toBeGreaterThanOrEqual(commits);
+    expect(backups(dir)).toEqual([4, 3, 2, 1, 0].map((back) => `desk-${last - back}.json`));
+  }, 120_000);
+
+  it("deletes purged leftovers from older builds and leaves other files alone", () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    store.persist();
+    const backupDir = join(dir, "desk-backups");
+    writeFileSync(join(backupDir, "purged-desk-9.json"), "old");
+    writeFileSync(join(backupDir, "purged-desk-123.json"), "old");
+    writeFileSync(join(backupDir, "notes.txt"), "keep");
+    symlinkSync(join(dir, "desk.json"), join(backupDir, "purged-desk-77.json"));
+    store.persist();
+    const r = store.data.revision;
+    expect(backups(dir)).toEqual([`desk-${r - 1}.json`, `desk-${r}.json`, "notes.txt", "purged-desk-77.json"]);
+    expect(readFileSync(file, "utf8").length).toBeGreaterThan(0);
+  });
+
+  it("restores the newest backup the key opens when no quarantine is restorable, keeping the damaged book", () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    for (let i = 0; i < 7; i += 1) store.persist();
+    const newest = store.data.revision;
+    writeFileSync(file, "not json {{{");
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    expect(again.recovery.active).toBe(false);
+    expect(again.data.revision).toBe(newest);
+    const quarantined = readdirSync(dir).filter((name) => name.startsWith("desk.json.quarantine-"));
+    expect(quarantined).toHaveLength(1);
+    expect(readFileSync(join(dir, quarantined[0]!), "utf8")).toBe("not json {{{");
+    expect(backups(dir)).toContain(`desk-${newest}.json`);
+  });
+
+  it("skips a damaged backup and restores the next newest", () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    for (let i = 0; i < 3; i += 1) store.persist();
+    const newest = store.data.revision;
+    writeFileSync(join(dir, "desk-backups", `desk-${newest}.json`), "damaged");
+    rmSync(file);
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    expect(again.recovery.active).toBe(false);
+    expect(again.data.revision).toBe(newest - 1);
+    expect(readFileSync(join(dir, "desk-backups", `desk-${newest}.json`), "utf8")).toBe("damaged");
+  });
+
+  it("restores nothing and stays in recovery when no backup opens", () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    store.persist();
+    store.persist();
+    for (const name of readdirSync(join(dir, "desk-backups"))) writeFileSync(join(dir, "desk-backups", name), "damaged");
+    writeFileSync(file, "not json {{{");
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    expect(again.recovery.active).toBe(true);
+    expect(again.data.properties).toEqual([]);
+    expect(readdirSync(dir).filter((name) => name.startsWith("desk.json.quarantine-"))).toHaveLength(1);
   });
 });
 

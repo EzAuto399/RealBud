@@ -392,7 +392,8 @@ describe("Gmail read-only setup HTTP boundary", () => {
     await readonlyMode();
     holdAuth = true;
     expect((await api("POST", "/api/bots/bud/messages", { text: request })).status).toBe(202);
-    await vi.waitFor(() => expect(heldAuth.length).toBeGreaterThan(0));
+    // The default 1 s is too short on a hosted Windows runner before Bud reaches the held check.
+    await vi.waitFor(() => expect(heldAuth.length).toBeGreaterThan(0), { timeout: 15_000 });
     const followup = "Review the recent mailbox messages and prepare unsent replies";
     const queued = await api("PUT", "/api/bots/bud/queued-message", { text: followup });
     expect(queued.status).toBe(200);

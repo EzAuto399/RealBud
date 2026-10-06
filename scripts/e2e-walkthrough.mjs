@@ -177,6 +177,9 @@ try {
   child.kill("SIGKILL");
   await sleep(300);
   writeFileSync(join(HOME, ".realbud", "desk.json"), "{corrupt");
+  // With a readable backup the book now restores itself (desk-auto-restore.ts);
+  // remove them so this step proves the no-backup path: recovery, not demo.
+  rmSync(join(HOME, ".realbud", "desk-backups"), { recursive: true, force: true });
   session = "";
   const revived = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
     cwd: ROOT,

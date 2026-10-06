@@ -36,9 +36,27 @@ export const defaultDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id 
 /** A calm starting Desk for a freshly linked office: brief and Needs you only. */
 export const simpleDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
 
+/** Right-hand context panels. Approval surfaces always show: the panel only
+ * mirrors and links to the case, where Approve, Stop and recovery stay. */
+export const SHELL_PANEL_IDS = ['evidence', 'approvals', 'today', 'activity', 'accounts'] as const;
+export type ShellPanelId = typeof SHELL_PANEL_IDS[number];
+export const SHELL_PANEL_LABELS: Record<ShellPanelId, string> = {
+  evidence: 'Evidence', approvals: 'Approvals waiting', today: 'Today', activity: 'Bud activity', accounts: 'Connected accounts',
+};
+export const LOCKED_SHELL_PANELS: readonly ShellPanelId[] = ['approvals'];
+/** Desk sections that carry approval, safety or recovery work and so cannot be hidden. */
+export const LOCKED_DESK_SECTIONS: readonly DeskSectionId[] = ['queue'];
+export const SHELL_PANEL_WIDTH = { min: 280, max: 560, default: 340 } as const;
+export type ShellPanel = { id: ShellPanelId; visible: boolean };
+export interface ShellLayout { panelWidth: number; panels: ShellPanel[] }
+const RECOMMENDED_PANELS: readonly ShellPanelId[] = ['evidence', 'approvals', 'today'];
+export const defaultShellLayout = (): ShellLayout => ({ panelWidth: SHELL_PANEL_WIDTH.default, panels: SHELL_PANEL_IDS.map(id => ({ id, visible: RECOMMENDED_PANELS.includes(id) })) });
+
 export interface WorkspaceTabs {
   version: 2; revision: number; tabs: WorkspaceTab[];
   desk: DeskLayout; history: DeskLayoutHistoryEntry[];
+  /** Absent until the person first arranges or resizes the side panel. */
+  shell?: ShellLayout;
 }
 export interface WorkspaceTabsResponse {
   state: WorkspaceTabs | null;
@@ -62,6 +80,21 @@ export function parseDeskSections(value: unknown): DeskSection[] {
   });
   if (!sections.some(section => section.id === 'queue' && section.visible)) throw new Error('Needs you always stays on Desk.');
   return sections;
+}
+/** Strict: every panel once, a whole-pixel width in range, approvals visible. Throws a user-facing sentence. */
+export function parseShellLayout(value: unknown): ShellLayout {
+  if (!object(value) || !exact(value, ['panelWidth', 'panels'])) throw new Error('Check the side panel settings.');
+  const width = value.panelWidth;
+  if (!Number.isSafeInteger(width) || Number(width) < SHELL_PANEL_WIDTH.min || Number(width) > SHELL_PANEL_WIDTH.max) throw new Error('Choose a side panel width that fits the window.');
+  if (!Array.isArray(value.panels) || value.panels.length !== SHELL_PANEL_IDS.length) throw new Error('Choose every side panel once.');
+  const seen = new Set<string>();
+  const panels = value.panels.map(raw => {
+    if (!object(raw) || !exact(raw, ['id', 'visible']) || typeof raw.id !== 'string' || !(SHELL_PANEL_IDS as readonly string[]).includes(raw.id) || seen.has(raw.id) || typeof raw.visible !== 'boolean') throw new Error('Choose every side panel once.');
+    seen.add(raw.id);
+    return { id: raw.id as ShellPanelId, visible: raw.visible };
+  });
+  if (panels.some(panel => LOCKED_SHELL_PANELS.includes(panel.id) && !panel.visible)) throw new Error('Approvals waiting always stays in the side panel.');
+  return { panelWidth: Number(width), panels };
 }
 /** Renderer fallback: an absent or invalid layout renders today's order. */
 export function deskSectionsOrDefault(value: unknown): DeskSection[] {
@@ -99,8 +132,10 @@ export function parseWorkspaceTabs(value: unknown): WorkspaceTabs {
     if (!exact(value, ['version', 'revision', 'tabs']) || !validWorkspaceRevision(value.revision)) throw new Error('Saved views have an invalid format.');
     return { version: 2, revision: value.revision, tabs: parseTabs(value.tabs), desk: { sections: defaultDeskSections() }, history: [] };
   }
-  if (!object(value) || !exact(value, ['version', 'revision', 'tabs', 'desk', 'history']) || value.version !== 2 || !validWorkspaceRevision(value.revision)) throw new Error('Saved views have an invalid format.');
-  return { version: 2, revision: value.revision, tabs: parseTabs(value.tabs), desk: parseDeskLayout(value.desk), history: parseHistory(value.history, value.revision) };
+  const keys = ['version', 'revision', 'tabs', 'desk', 'history'];
+  if (!object(value) || !(exact(value, keys) || exact(value, [...keys, 'shell'])) || value.version !== 2 || !validWorkspaceRevision(value.revision)) throw new Error('Saved views have an invalid format.');
+  const state: WorkspaceTabs = { version: 2, revision: value.revision, tabs: parseTabs(value.tabs), desk: parseDeskLayout(value.desk), history: parseHistory(value.history, value.revision) };
+  return Object.hasOwn(value, 'shell') ? { ...state, shell: parseShellLayout(value.shell) } : state;
 }
 export function parseWorkspaceTabsResponse(value: unknown): WorkspaceTabsResponse {
   if (!object(value) || !exact(value, ['state', 'recovery'])) throw new Error('Saved views could not be checked. Refresh before changing them.');

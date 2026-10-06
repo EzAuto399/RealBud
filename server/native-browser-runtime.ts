@@ -19,6 +19,7 @@ export interface NativeWorkBrowserHost {
   disconnect(): Promise<void>;
   openTab?(url: string): Promise<string>;
   tabUrl?(targetId: string): Promise<string | null>;
+  navigateTab?(targetId: string, url: string): Promise<void>;
 }
 type Controller = Pick<HermesBrowserTransport, "session" | "state" | "start" | "step" | "stop">;
 type Lease = { owner: string; sessionId: string; phase: "starting" | "active" | "stopping" | "unknown" };
@@ -217,6 +218,13 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
   async signInTabUrl(targetId: string): Promise<string | null> {
     const host = await this.browserHost();
     return host.tabUrl ? host.tabUrl(targetId) : null;
+  }
+  /** A long sign-in wait refreshes the sign-in page in the same tab (REI's sign-in journey goes stale when left
+   * open). No new tab, no task lease and no page read. */
+  async reloadSignInTab(targetId: string, url: string): Promise<void> {
+    const host = await this.browserHost();
+    if (!host.navigateTab) throw fail("This work browser cannot refresh a sign-in page.");
+    await host.navigateTab(targetId, url);
   }
   /** No window at RealBud start: a browser task or a sign-in handover opens
    * the work browser when it is actually needed (an empty window otherwise). */

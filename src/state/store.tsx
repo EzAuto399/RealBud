@@ -55,6 +55,8 @@ export type RequestFence = {
 };
 
 export interface OptionCardData {
+  /** Bud's loop-result card: "Open" goes to Desk instead of replying in chat. */
+  opens?: "desk";
   title: string;
   subtitle: string;
   options: string[];

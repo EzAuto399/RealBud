@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { LoopManager, nextOccurrence } from './routines.ts';
+import { LOOP_CATALOG, LoopManager, nextOccurrence } from './routines.ts';
 import { parseLoopsFile } from './routine-persistence.ts';
 import { removeFixture } from './testing/private-fixture.ts';
 const clean: Array<() => Promise<void>> = [];
@@ -37,5 +37,45 @@ describe('anchored calendar-day routine intervals', () => {
     now = Date.parse('2026-10-05T10:00:01Z'); await manager.tick(); expect(calls).toBe(1);
     expect(manager.listRuns().some(run => run.loopId === 'weekly-bills' && run.status === 'missed')).toBe(true);
     expect(manager.patchClock('weekly-bills', { intervalDays: null, weekdays: [1] }).schedule.intervalDays).toBeUndefined();
+  });
+});
+
+const catalog = (id: string) => ({ ...LOOP_CATALOG.find(loop => loop.id === id)!.schedule });
+const bne = (iso: string) => Date.parse(`${iso}+10:00`);
+describe('Austin loop defaults on the Brisbane clock', () => {
+  it('runs bank references every second day from its anchor at 08:00', () => {
+    expect(nextOccurrence(catalog('bank-references'), bne('2026-10-02T08:00:00'), 'Australia/Brisbane')).toBe(bne('2026-10-04T08:00:00'));
+  });
+  it('runs the supplier list check fortnightly on Mondays 08:15 from 12 October', () => {
+    const schedule = catalog('rei-supplier-check');
+    expect(schedule).toMatchObject({ time: '08:15', intervalDays: 14, anchorDate: '2026-10-12' });
+    expect(new Date(Date.UTC(2026, 9, 12)).getUTCDay()).toBe(1);
+    const first = nextOccurrence(schedule, bne('2026-10-06T09:00:00'), 'Australia/Brisbane')!;
+    expect(first).toBe(bne('2026-10-12T08:15:00'));
+    expect(nextOccurrence(schedule, first, 'Australia/Brisbane')).toBe(bne('2026-10-26T08:15:00'));
+  });
+  it('drafts inspections on the first weekday of each month at 09:00, skipping a weekend 1st', () => {
+    const schedule = catalog('inspection-draft');
+    expect(schedule).toMatchObject({ time: '09:00', monthly: 'first-weekday' });
+    // 1 Nov 2026 is a Sunday, 1 Dec a Tuesday, 1 Aug 2026 a Saturday.
+    expect(nextOccurrence(schedule, bne('2026-10-06T09:00:00'), 'Australia/Brisbane')).toBe(bne('2026-11-02T09:00:00'));
+    expect(nextOccurrence(schedule, bne('2026-11-02T09:00:00'), 'Australia/Brisbane')).toBe(bne('2026-12-01T09:00:00'));
+    expect(nextOccurrence(schedule, bne('2026-07-02T09:00:00'), 'Australia/Brisbane')).toBe(bne('2026-08-03T09:00:00'));
+    expect(() => parseLoopsFile({ version: 3, timezone: 'UTC', state: { 'inspection-draft': { enabled: false, handledThrough: 1, schedule: { time: '09:00', weekdays: [1], monthly: 'first-weekday', intervalDays: 2, anchorDate: '2026-10-02' } } }, runs: [] }, 'UTC')).toThrow();
+  });
+  it('starts morning priorities at 07:30 so they are ready by 08:00, and keeps the other defaults', () => {
+    expect(catalog('inbound-triage')).toMatchObject({ time: '07:30', weekdays: [1, 2, 3, 4, 5] });
+    expect(catalog('weekly-bills')).toMatchObject({ time: '08:00', weekdays: [1] });
+    expect(catalog('maintenance-review')).toMatchObject({ time: '08:30', weekdays: [1, 2, 3, 4, 5] });
+  });
+  it('keeps the monthly cadence through a timezone change and a restart, and never enables it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rb-monthly-')); clean.push(() => removeFixture(dir));
+    const options = { file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => bne('2026-10-06T09:00:00'), execute: async () => ({ ok: true, detail: 'Fictional draft.' }) };
+    let manager = new LoopManager(options);
+    expect(manager.listLoops().find(l => l.id === 'inspection-draft')).toMatchObject({ available: true, enabled: false, nextRunAt: null });
+    expect(manager.patchClock('inspection-draft', { timezone: 'Australia/Brisbane' })).toMatchObject({ enabled: false, schedule: { monthly: 'first-weekday', timezone: 'Australia/Brisbane' } });
+    manager.close(); manager = new LoopManager(options); clean.push(async () => manager.close());
+    expect(manager.patchClock('inspection-draft', { enabled: true }).nextRunAt).toBe(bne('2026-11-02T09:00:00'));
+    expect(() => manager.patchClock('inspection-draft', { intervalDays: 7, anchorDate: '2026-10-12' })).toThrow('Choose an interval');
   });
 });

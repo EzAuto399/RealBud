@@ -44,15 +44,19 @@ export function previewBillSource(value: BillMailSource): BillSourceEvidence {
   const canonical = { accountId, threadId, message: { id: text(message.id, 200), at: at(message.at),
     from: text(message.from, 2048, true), subject: text(message.subject, 2048, true), body: text(message.body, 12000, true),
     bodyTruncated: message.bodyTruncated ?? false, attachments } };
-  return { ...canonical, receiptId, digest: hash(canonical), identity: hash([accountId, threadId, canonical.message.id]) };
+  // Reply-To and Authentication-Results are sender evidence for the maintenance supplier
+  // check. They stay outside the digest so saved proposals replay and digests are unchanged.
+  const replyTo = message.replyTo === undefined ? {} : { replyTo: text(message.replyTo, 2048) };
+  const authResults = message.authResults === undefined ? {} : { authResults: text(message.authResults, 4096) };
+  return { ...canonical, message: { ...canonical.message, ...replyTo, ...authResults }, receiptId, digest: hash(canonical), identity: hash([accountId, threadId, canonical.message.id]) };
 }
 function facts(value: unknown): BillFacts {
-  const f = object(value, ['propertyId', 'kind', 'vendor', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'note', 'invoiceNumber', 'invoiceVersion']);
+  const f = object(value, ['propertyId', 'kind', 'vendor', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'note', 'invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription']);
   if (f.currency !== 'AUD') return fail('This bill workflow currently supports AUD. Confirm the source currency before accepting.');
   if (f.amountCents !== null && (!Number.isSafeInteger(f.amountCents) || Number(f.amountCents) < 0 || Number(f.amountCents) > 999_999_999_999)) return fail('Enter a non-negative bill amount in whole cents.');
   const result: BillFacts = { propertyId: text(f.propertyId, 200).trim(), kind: text(f.kind, 80).trim(), vendor: text(f.vendor, 160).trim(), amountCents: f.amountCents as number | null, currency: 'AUD',
     invoiceDate: nullableDate(f.invoiceDate), dueDate: nullableDate(f.dueDate), note: text(f.note, 1000, true).trim() };
-  for (const [key, max] of [['invoiceNumber', 120], ['invoiceVersion', 80]] as const) {
+  for (const [key, max] of [['invoiceNumber', 120], ['invoiceVersion', 80], ['supplierReference', 120], ['workDescription', 1000]] as const) {
     if (Object.hasOwn(f, key)) result[key] = f[key] === null ? null : text(f[key], max).trim();
   }
   if (result.invoiceVersion && !result.invoiceNumber) return fail('Confirm an invoice number before recording its version.');

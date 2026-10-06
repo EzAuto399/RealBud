@@ -25,7 +25,7 @@ const workflowId = (value: unknown): AgencyWorkflowId => typeof value === 'strin
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const normalized = (value: string) => value.normalize('NFKC').toLocaleLowerCase('en-AU').trim();
 export function defaultAgencySettings(): AgencySetupSettings {
-  return { agencyName: '', workflowPackId: null, timeZone: '', gmailAccountId: null, mailScope: { historyDays: 7, includeSent: true, maxMessages: 100, attachments: 'metadata-only' }, propertyReferences: [], selectedWorkflows: [], morningReview: { localTime: '08:00', weekdays: [1, 2, 3, 4, 5], followUpAfterDays: 3 } };
+  return { agencyName: '', workflowPackId: null, timeZone: '', gmailAccountId: null, mailScope: { historyDays: 7, includeSent: true, maxMessages: 100, attachments: 'metadata-only' }, propertyReferences: [], selectedWorkflows: [], morningReview: { localTime: '07:30', weekdays: [1, 2, 3, 4, 5], followUpAfterDays: 3 } };
 }
 export function validateAgencySettings(value: unknown): AgencySetupSettings {
   const input = object(value, ['agencyName', 'workflowPackId', 'timeZone', 'gmailAccountId', 'mailScope', 'propertyReferences', 'selectedWorkflows', 'morningReview']);

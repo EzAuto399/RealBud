@@ -7,9 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { ensureDirs, EVENTS_DIR, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../../contracts.ts";
-import { browserApprovalDraft, legacyBrowserGrant } from "../../browser-authority.ts";
+import { approvalUrl, browserApprovalDraft, legacyBrowserGrant } from "../../browser-authority.ts";
+import { EventBus } from "../../harness/bus.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { HermesAgentDriver } from "./hermes.ts";
@@ -19,9 +20,10 @@ vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability 
 type Approve = (tool: string, params: Record<string, unknown>, summary: string, signal: AbortSignal, projection?: unknown) => Promise<boolean>;
 const broker = vi.hoisted(() => ({ approve: null as Approve | null, close: vi.fn() }));
 vi.mock("../../browser-broker.ts", () => ({
+  BROWSER_SERVER: "workbrowser",
   startBrowserBroker: async (options: { approve: Approve }) => {
     broker.approve = options.approve;
-    return { descriptor: { type: "http", name: "browser", url: "http://127.0.0.1:9/mcp", headers: [{ name: "authorization", value: "Bearer fictional" }] },
+    return { descriptor: { type: "http", name: "workbrowser", url: "http://127.0.0.1:9/mcp", headers: [{ name: "authorization", value: "Bearer fictional" }] },
       close: broker.close, cancelPending: broker.close, released: async () => {} };
   },
 }));
@@ -51,7 +53,7 @@ describe("browser approval card in the ACP core", () => {
   };
   beforeEach(() => { assertCapability.mockReset(); broker.approve = null; broker.close.mockReset(); ensureDirs(); chmodSync(FAKE_CLI, 0o755); scratch = mkdtempSync(join(tmpdir(), "rb-acp-approval-")); });
   afterEach(async () => {
-    delete process.env.FAKE_ACP_MODE; delete process.env.FAKE_ACP_DUMP;
+    delete process.env.FAKE_ACP_MODE; delete process.env.FAKE_ACP_DUMP; delete process.env.FAKE_ACP_UPDATES;
     recorder?.stop(); await instance?.dispose(); await removeFixture(scratch);
   });
 
@@ -62,7 +64,7 @@ describe("browser approval card in the ACP core", () => {
     const opened = await recorder.until(event => event.type === "request.opened") as Extract<RuntimeEvent, { type: "request.opened" }>;
     expect(opened.approvalPolicy).toBe("once");
     expect(opened.browserApproval).toEqual({
-      version: 1, purpose: "browser-approval-card", id: ID, kind: "pay", site: "portal.fictional-strata.example", control: "Pay now",
+      version: 1, purpose: "browser-approval-card", id: ID, kind: "pay", site: "portal.fictional-strata.example", page: "portal.fictional-strata.example/levies", control: "Pay now",
       facts: [
         { name: "recipient", value: "Fictional Strata Pty Ltd", confirmed: true },
         { name: "amount", value: "1240.00", confirmed: true },
@@ -80,6 +82,62 @@ describe("browser approval card in the ACP core", () => {
     const params = payParams();
     await expect(approve("browser_click_semantic", { ...params, approval: { ...params.approval, facts: [] } }, "Pay", new AbortController().signal, projection)).resolves.toBe(false);
     expect(recorder.events.some(event => event.type === "request.opened")).toBe(false);
+  });
+
+  it("shows a browser or sign-in call as a fixed label, logs its tool and argument keys only, and keeps the path on the card", async () => {
+    const site = "https://portal.fictional-strata.example";
+    const page = `${site}/tenants/jane.citizen@example.com/48213?token=fictional-token-1`;
+    const values = ["portal.fictional-strata.example/tenants", "www.fictional-strata.example", "fictiönal", "jane.citizen", "48213",
+      "?token=", "fictional-token-1", "LEVY-FICTIONAL-77", "Fictional rent ledger note", "fictional-lease-jane-smith.pdf", "/owners/"];
+    const call = (toolCallId: string, title: string, input: Record<string, unknown>) => ({ sessionUpdate: "tool_call", toolCallId, title,
+      rawInput: input, content: [{ type: "content", content: { type: "text", text: JSON.stringify(input, null, 2) } }] });
+    process.env.FAKE_ACP_UPDATES = JSON.stringify([
+      call("tc-nav", `mcp__workbrowser__browser_navigate: ${page}`, { tab_id: 1, url: page }),
+      call("tc-nav-bare", "mcp__workbrowser__browser_navigate: portal.fictional-strata.example/tenants/48213?token=fictional-token-1",
+        { tab_id: 1, url: "portal.fictional-strata.example/tenants/48213?token=fictional-token-1" }),
+      call("tc-download", "mcp__workbrowser__browser_download", { tab_id: 1, ref: "@e3", target: "www.fictional-strata.example/owners/jane-smith" }),
+      call("tc-sign-in", "mcp_sign_in_open_for_sign_in", { site: "https://fictiönal-strata.example/owners/48213",
+        reason: "Sign in to read\nportal.fictional-strata.example/levies/LEVY-FICTIONAL-77 for jane.citizen@example.com" }),
+      call("tc-fill", "mcp__workbrowser__browser_fill", { tab_id: 1, ref: "@e4", value: "Fictional rent ledger note for jane.citizen@example.com" }),
+      call("tc-upload", "mcp__workbrowser__browser_upload", { tab_id: 1, ref: "@e5", file: "fictional-lease-jane-smith.pdf" }),
+      call("tc-new", "mcp__workbrowser__browser_later_tool: 48213", { note: "jane.citizen@example.com" }),
+      { sessionUpdate: "tool_call", toolCallId: "tc-other", title: "web search: https://fictional-other.example/a/b" },
+    ]);
+    const approve = await start();
+    const decision = approve("browser_navigate", { url: approvalUrl(page) }, "Open a page", new AbortController().signal);
+    const opened = await recorder.until(event => event.type === "request.opened") as Extract<RuntimeEvent, { type: "request.opened" }>;
+    expect((opened.params as { url?: string }).url).toBe(`${site}/tenants/jane.citizen@example.com/48213`);
+    await recorder.until(event => event.type === "item.started" && event.itemId === "tc-other");
+    const started = recorder.events.flatMap(event => event.type === "item.started" ? [event] : []);
+    expect(started.map(event => event.title)).toEqual([
+      "Opened a page", "Opened a page", "Downloaded a file", "Opened the sign-in page", "Filled a field", "Uploaded a file",
+      "Used the work browser", "web search: https://fictional-other.example/a/b",
+    ]);
+    // The repeat watchdog still tells two pages apart, from the real arguments.
+    expect(started[0].toolFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(started[0].toolFingerprint).not.toBe(started[1].toolFingerprint);
+    await instance.adapter.respondToRequest(thread, opened.requestId!, { behavior: "deny" });
+    await expect(decision).resolves.toBe(false);
+    const bus = new EventBus();
+    for (const event of recorder.events) bus.publish(event);
+    const events = readFileSync(join(EVENTS_DIR, `${thread}.ndjson`), "utf8");
+    const native = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(events).not.toContain("toolFingerprint");
+    for (const log of [events, native]) {
+      expect(log).toContain("web search: https://fictional-other.example/a/b");
+      for (const value of values) expect(log).not.toContain(value);
+    }
+    const calls = native.trim().split("\n").map(line => JSON.parse(line).msg?.params?.update).filter(update => update?.sessionUpdate === "tool_call");
+    expect(calls).toEqual([
+      { sessionUpdate: "tool_call", toolCallId: "tc-nav", tool: "browser_navigate", argumentKeys: ["tab_id", "url"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-nav-bare", tool: "browser_navigate", argumentKeys: ["tab_id", "url"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-download", tool: "browser_download", argumentKeys: ["tab_id", "ref", "target"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-sign-in", tool: "open_for_sign_in", argumentKeys: ["site", "reason"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-fill", tool: "browser_fill", argumentKeys: ["tab_id", "ref", "value"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-upload", tool: "browser_upload", argumentKeys: ["tab_id", "ref", "file"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-new", tool: "browser_later_tool", argumentKeys: ["note"] },
+      { sessionUpdate: "tool_call", toolCallId: "tc-other", title: "web search: https://fictional-other.example/a/b" },
+    ]);
   });
 
   it("Stop declines a waiting approval, closes browser work and leaves nothing to approve later", async () => {

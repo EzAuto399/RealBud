@@ -21,7 +21,7 @@ import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
-import { HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, WORKER_APPROVAL_CARD_MS } from "./core.ts";
+import { ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
@@ -33,6 +33,8 @@ import { legacyBrowserGrant } from "../../browser-authority.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
 import { productBudSystemPrompt } from "../../ask-book.ts";
 
+/** Hermes 0.21.5's exhausted-retries copy, as Ask received it (agent/turn_failure_copy.py). */
+const HERMES_FAILURE_EXAMPLE = "custom didn't answer after 3 attempts — it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: unoffered_tool_call";
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability } }));
 
@@ -84,6 +86,16 @@ describe("ACP decodeConfig", () => {
       expect(hermesNativeBrowserTool(other), other).toBeNull();
     }
   });
+  it("recognises Hermes' failed-turn copy, never a model's words", () => {
+    for (const copy of [HERMES_FAILURE_EXAMPLE, "custom rejected this request as malformed, so the model didn't answer. Start a clean session with /new or switch models with /model; if it keeps happening, run `hermes doctor`.",
+      "Hermes hit repeated errors and stopped this turn so it wouldn't keep retrying. Send it again in a moment.\n\nDetails: upstream closed the stream"]) {
+      expect(plainEngineFailure(copy), copy).toBe(ENGINE_FAILURE_REPLY);
+    }
+    for (const words of [" with /model", "The Tenants list exports from Contacts > Tenants > Export. The Suppliers list is under Contacts > Suppliers, same Export button.", "Use the /retry"]) {
+      expect(plainEngineFailure(words), words).toBeNull();
+    }
+    expect(ENGINE_FAILURE_REPLY).not.toMatch(/hermes|\/retry|\/model|provider|custom/i);
+  });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
     expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
@@ -127,6 +139,18 @@ describe("ACP turns (fake CLI)", () => {
     // dispose() does not wait for the killed CLI to exit; on Windows its cwd
     // (the scratch folder, for turns that pass one) stays held until it does.
     await removeFixture(scratch);
+  });
+
+  it("shows plain words, not Hermes' raw failure text, when the model service refuses a turn", async () => {
+    process.env.FAKE_ACP_REPLY = HERMES_FAILURE_EXAMPLE;
+    try {
+      await create(HermesAgentDriver);
+      await instance.adapter.sendTurn({ threadId: "t-engine-failure", text: "Start this task" });
+      await recorder.until(e => e.type === "turn.completed");
+    } finally { delete process.env.FAKE_ACP_REPLY; }
+    const shown = recorder.events.filter(e => e.type === "content.delta" || (e.type === "item.completed" && (e as any).itemType === "assistant_text"));
+    expect(shown.map(e => (e as any).delta ?? (e as any).text)).toEqual([ENGINE_FAILURE_REPLY, ENGINE_FAILURE_REPLY]);
+    expect(JSON.stringify(recorder.events)).not.toMatch(/unoffered_tool_call|hermes fallback|\/retry/);
   });
 
   it("replaces a warm Hermes process when the authenticated member changes", async () => {
@@ -264,7 +288,7 @@ describe("ACP turns (fake CLI)", () => {
         localComputer: { command: "must-not-mount", args: [], env: {} } } });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["browser"]);
+    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["workbrowser"]);
     const descriptor = seen.mcpServers[0];
     const request = () => fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: { name: string; value: string }) => [row.name, row.value])),
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });

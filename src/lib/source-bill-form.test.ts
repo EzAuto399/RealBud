@@ -28,4 +28,14 @@ describe('source bill manual facts', () => {
     expect(() => savedBillFacts({ ...emptyBillFacts(), invoiceNumber: 'a'.repeat(121) })).toThrow('invoice number');
     expect(() => savedBillFacts({ ...emptyBillFacts(), invoiceNumber: 'INV\n123' })).toThrow('invoice number');
   });
+  it('keeps supplier reference and work description as optional reviewed text, blank meaning unknown', () => {
+    const saved = savedBillFacts({ ...emptyBillFacts(), supplierReference: ' SUP-FICTIONAL-042 ', workDescription: ' Fictional gutter clean\nrear yard ' });
+    expect(saved).toMatchObject({ supplierReference: 'SUP-FICTIONAL-042', workDescription: 'Fictional gutter clean\nrear yard' });
+    expect(savedBillFacts(draftBillFacts(saved))).toEqual(saved);
+    expect(savedBillFacts(emptyBillFacts())).toMatchObject({ supplierReference: null, workDescription: null });
+    const legacy = savedBillFacts(emptyBillFacts()); delete legacy.supplierReference; delete legacy.workDescription;
+    expect(draftBillFacts(legacy)).toMatchObject({ supplierReference: '', workDescription: '' });
+    expect(() => savedBillFacts({ ...emptyBillFacts(), supplierReference: 'a'.repeat(121) })).toThrow('supplier reference');
+    expect(() => savedBillFacts({ ...emptyBillFacts(), workDescription: 'a'.repeat(1001) })).toThrow('work description');
+  });
 });

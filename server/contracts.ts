@@ -159,6 +159,8 @@ export interface SendTurnInput {
     reminders?: import("./reminders-broker.ts").BudReminders;
     /** The person's Desk saved views (`views_*`). Changes show the one-time card. */
     workspaceViews?: import("./workspace-views-broker.ts").BudWorkspaceViews;
+    /** The office's working rules (`workflow_settings_*`). Changes and restores show the one-time card. */
+    workflowSettings?: import("./workflow-settings-broker.ts").BudWorkflowSettings;
     /** The office's bank feed, read-only (`bank_accounts_list`, `bank_transactions_list`). No card, no writes. */
     bankSource?: import("./bank-source-broker.ts").BudBankSource;
     /** The office's added connectors: reviewed, allowlisted tools of active connectors. Reads have no card; writes show the one-time card; credentials stay with the host. */

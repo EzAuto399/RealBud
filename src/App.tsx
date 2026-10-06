@@ -10,7 +10,8 @@ import { lazy, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
-import { Sidebar } from "@/components/Sidebar";
+import { DesktopShell } from "@/components/shell/DesktopShell";
+import { ShellPalette } from "@/components/shell/ShellPalette";
 
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
@@ -215,8 +216,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           <ActionNotice message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />
         </div>
       )}
-      <div inert={Boolean(setup)} className="rb-app-shell relative flex min-h-0 flex-1">
-        <Sidebar />
+      <DesktopShell inert={Boolean(setup)}>
         {/* Keyed on the view: each place rises in once on arrival. Pages already
             remount on switch (the ternary above), so no state contract changes. */}
         <div key={`${state.activeView}:${state.activeView === 'workspace' ? state.workspaceTabId ?? 'manage' : ''}`} className="animate-view-in flex min-h-0 min-w-0 flex-1">
@@ -239,7 +239,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           )}
           </WorkspaceScreen>
         </div>
-      </div>
+      </DesktopShell>
+      {!setup && <ShellPalette />}
       {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
     </div>
   );

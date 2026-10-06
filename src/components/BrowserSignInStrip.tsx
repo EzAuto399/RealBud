@@ -80,5 +80,5 @@ export function useBrowserSignIns({ threadId, busy, enabled }: { threadId: strin
     catch (cause) { setError({ id, text: typeof (cause as { status?: unknown })?.status === "number" ? (cause as Error).message : "RealBud could not confirm this. Check the sign-in again." }); }
     finally { setActing(null); void refresh(); }
   }, [acting, refresh]);
-  return { handovers, acting, error, act };
+  return { handovers, acting, error, act, refresh };
 }

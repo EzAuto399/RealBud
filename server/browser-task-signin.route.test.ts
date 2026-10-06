@@ -132,8 +132,8 @@ browserRuntime.verifyLogin = async binding => binding.browserId === "fictional-b
     writeScript({ permission: true, tool: "navigate", title: "Open the levy page", rawInput: { url: `https://${SITE}/levy` }, reply: "opening the levy page" });
     const started = await api("POST", `/api/recipes/${draft.id}/attend`, {});
     expect(started.status).toBe(202);
-    await waitFor(() => Boolean(worker()?.mcpServers?.some(server => server.name === "browser")), "the job's browser to be mounted");
-    const browser = worker()!.mcpServers!.find(server => server.name === "browser")!;
+    await waitFor(() => Boolean(worker()?.mcpServers?.some(server => server.name === "workbrowser")), "the job's browser to be mounted");
+    const browser = worker()!.mcpServers!.find(server => server.name === "workbrowser")!;
     const listing = await rpc(browser, "tools/list", {});
     expect(listing.result.tools!.map(tool => tool.name)).toEqual(grantedBrowserTools({ actions: legacyBrowserActions(draft.capabilities), uploads: [] }, false));
     await idle();
@@ -182,7 +182,7 @@ browserRuntime.verifyLogin = async binding => binding.browserId === "fictional-b
     // The same grant (its expiry unchanged) mounted RealBud's browser for the continued turn.
     expect((await tasks()).tasks.find((task: { id: string }) => task.id === card.id)).toMatchObject({ status: "finished", expiresAt: paused.expiresAt });
     expect((await bud()).messages?.some(message => message.role === "user" && message.text === `Continue this task after my sign-in: ${card.request}`)).toBe(true);
-    expect(worker()?.mcpServers?.map(server => server.name)).toEqual(["browser"]);
+    expect(worker()?.mcpServers?.map(server => server.name)).toEqual(["workbrowser"]);
     await idle();
   }, 90_000);
 });

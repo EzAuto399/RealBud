@@ -123,7 +123,7 @@ async function fixture(options: { checkedAccount?: boolean; reference?: string }
     await vi.waitFor(() => {
       const state = JSON.parse(readFileSync(dump, "utf8"));
       expect(state.promptCount).toBe(1);
-      descriptor = state.mcpServers.find((entry: { name: string }) => entry.name === "browser");
+      descriptor = state.mcpServers.find((entry: { name: string }) => entry.name === "workbrowser");
       expect(descriptor).toBeTruthy();
     });
   };

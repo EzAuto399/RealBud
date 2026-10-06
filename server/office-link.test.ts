@@ -7,6 +7,7 @@ import { formatCustomerCharge, formatNanoAud, parseInstallationUsage } from "../
 import { ConfigRecoveryError, type AppConfig } from "./config.ts";
 import { createWorkerModelAccess, setWorkerModelGrant } from "./worker-model-access.ts";
 import { privateFixtureRoot, privateFixtureDirectory, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
+import { PrivateStorageError } from "./private-json.ts";
 const roots: string[] = [];
 const code = `rb1_${"a".repeat(64)}`;
 function fixture(fetcher: typeof fetch) {
@@ -402,6 +403,17 @@ describe("zero-touch provisioning through the website link", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(await desk.app.status()).toMatchObject({ state: "unlinked" });
     expect(JSON.stringify(await desk.app.status())).not.toContain("fictional-private-storage-detail");
+  });
+
+  it("passes a plain private-storage refusal through the preflight message", async () => {
+    const fetcher = vi.fn();
+    const plain = new PrivateStorageError("RealBud's data folder belongs to another account on this Mac, so RealBud will not use it.");
+    const desk = managedDesk(fetcher, undefined, () => { throw new Error("fictional wrapper /fictional/path", { cause: plain }); });
+    const failure = await desk.app.link({ code, label: "Fictional desk" }).then(() => null, (error: unknown) => error);
+    expect(failure).toMatchObject({ code: "service_provisioning_local_recovery", status: 503,
+      message: "RealBud's data folder belongs to another account on this Mac, so RealBud will not use it. Your work is kept." });
+    expect((failure as Error).message).not.toContain("/fictional/path");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("refuses a grant for another office, an unsupported build, and a vendor organization key", async () => {

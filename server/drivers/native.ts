@@ -1,7 +1,9 @@
 // Native (un-normalized) protocol tee — the debugging trick from upstream's
 // EventNdjsonLogger and agentcal's onRaw: every provider-native message is
 // written verbatim next to the canonical stream, so protocol drift can be
-// diagnosed by diffing the two.
+// diagnosed by diffing the two. It is a private debugging log only (nothing
+// recovers or replays from it), so the ACP core keeps a work-browser or
+// sign-in call there as its tool name and argument keys (withoutPageToolValues).
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 

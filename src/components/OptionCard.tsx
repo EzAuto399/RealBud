@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { useStore, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
@@ -16,6 +17,9 @@ export function OptionCard({
   const [custom, setCustom] = useState("");
   const card = message.card;
   if (!card || card.dismissed) return null;
+  // A loop result card (server/loop-chat-cards.ts) opens Desk instead of
+  // sending its option to Bud as a message.
+  const opensDesk = (card as { opens?: unknown }).opens === "desk";
 
   const answer = (text: string) => {
     if (!text.trim()) return;
@@ -48,7 +52,7 @@ export function OptionCard({
           <button
             key={opt}
             disabled={!!card.answered}
-            onClick={() => answer(opt)}
+            onClick={() => opensDesk ? window.dispatchEvent(new Event(SHOW_DESK_EVENT)) : answer(opt)}
             className={cn(
               "flex w-full items-center gap-3 px-3 py-3 text-left text-[15px] text-ink",
               i > 0 && "border-t border-hairline/40",
@@ -67,7 +71,7 @@ export function OptionCard({
 
       {/* a permission ask has no free-text answer — the broker only accepts
           allow/deny, so typing here used to fail silently */}
-      {!card.answered && !card.tool && (
+      {!card.answered && !card.tool && !opensDesk && (
         <input
           value={custom}
           onChange={(e) => setCustom(e.target.value)}

@@ -1,4 +1,4 @@
-import { bankBatchSource, bankDigest, bankImportArtifact, createBankReferenceBatch, decisionDisposition, decodeBankSource, reviewBankReferences, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
+import { bankBatchSource, bankDigest, bankImportArtifact, createBankReferenceBatch, decisionDisposition, decodeBankSource, reviewBankReferences, withTenantDirectory, type BankReferenceBatch, type BankReferenceInput, type BankReferenceUpload, type BankReferenceDecision } from "./bank-reference.ts";
 import { isLocalDate, REDBARK_ACCOUNT_ID, REDBARK_CONNECTION_ID, REDBARK_TRANSACTION_ID, type BankDownloadArtifact, type RedbarkBatchProvenance } from "../shared/bank-source.ts";
 import { join } from "node:path";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
@@ -8,6 +8,7 @@ import { validateSavedBankBatch, validateBankReviewLinks } from './bank-referenc
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass } from './bank-reference-match.ts';
+import { savedTenantDirectoryCsv } from './tenant-directory.ts';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
 type Cursor = { version: 1; kind: 'bank-history'; high: number; before: number };
@@ -80,17 +81,29 @@ export class BankReferenceStore {
   /** A review as shown to the person: the saved record plus the first-pass
    * suggestions, derived from the saved batch on every read and never stored. */
   private view<T extends { value: SavedBankBatch }>(record: T) { return { ...record, firstPass: bankFirstPass(record.value.batch) }; }
-  create(input: BankReferenceInput | BankReferenceUpload) {
+  /** `tenantList`: an REI Tenants export (CSV text) used as this batch's directory, the
+   * given rules as fallback. The merged rules are saved in the batch, so preparing the
+   * same file again with a different list meets the existing-review conflict below. */
+  create(input: (BankReferenceInput | BankReferenceUpload) & { tenantList?: unknown }) {
     // Source provenance is set only by the server's own Redbark pull.
     if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
       throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
     }
-    return this.view(this.save(input));
+    return this.view(this.save(this.withSavedTenants(input)));
+  }
+  /** Without a tenant list in the request, the office's saved REI tenant list (server/tenant-directory.ts)
+   * is the batch's directory, with the given rules as the fallback, exactly as an uploaded list would be. */
+  private withSavedTenants<T extends { rules: BankReferenceInput['rules'] }>(input: T & { tenantList?: unknown }): T {
+    if (input && typeof input === 'object' && !('tenantList' in input) && Array.isArray(input.rules)) {
+      const saved = savedTenantDirectoryCsv(this.db);
+      if (saved) return withTenantDirectory({ ...input, tenantList: saved });
+    }
+    return withTenantDirectory(input);
   }
   /** Internal: a batch generated from validated Redbark rows. */
   createFromRedbark(input: BankReferenceUpload) {
     if (!input?.source?.provenance) throw Object.assign(new Error("The bank source record failed its integrity check."), { status: 400 });
-    return this.save(input);
+    return this.save(this.withSavedTenants(input));
   }
   /** The REI import file of a reviewed batch: only its import rows, with every source row's disposition. */
   importArtifact(id: string) {

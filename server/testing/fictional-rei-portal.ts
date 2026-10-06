@@ -41,10 +41,17 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   stopBefore: ["Process Receipts", "Receipt All", "Save", "Post", "Finalise"],
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
+const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
+/** The report a directory recipe opens, read from the pack (its names are placeholders until the real REI export is mapped). */
+function exportReport(recipe: string): string {
+  const steps = (JSON.parse(readFileSync(RECIPES_FILE, "utf8")) as { recipes: Record<string, { steps: Array<Record<string, unknown>> }> }).recipes[recipe]?.steps ?? [];
+  const label = steps.find(step => typeof step.click === "string")?.click;
+  return typeof label === "string" ? label : `${recipe} (not in the pack)`;
+}
+
 /** The Austin pack's REI recipes, pointed at the fictional origins instead of REI Cloud. */
 export function fictionalReiPack(): PortalRecipePack {
-  const file = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
-  const raw = JSON.parse(readFileSync(file, "utf8"));
+  const raw = JSON.parse(readFileSync(RECIPES_FILE, "utf8"));
   const pack = parsePortalRecipePack({ ...raw, recipes: { ...raw.recipes, [FICTIONAL_PENDING_RECIPE]: pendingRecipe } });
   // The fictional portal declares its own pager exactly (live REI's is unconfirmed, so its landmark is null).
   return { ...pack, origin: FICTIONAL_REI_ORIGIN, signIn: { ...pack.signIn, hosts: [new URL(FICTIONAL_REI_SIGNIN).host] },
@@ -91,6 +98,37 @@ export const FICTIONAL_TENANCIES: readonly FictionalTenancy[] = [
   { tenantId: "FTN-09", name: "Fictional Tenant India", propertyId: "FP-04", ownerId: "FO-1", status: "Vacated", tenantRef: "FT-INDIA", bankRef: "4470009" },
   { tenantId: "FTN-11", name: "Fictional Tenant Bravo-Two", propertyId: "FP-04", ownerId: "FO-1", status: "Active", tenantRef: "FT-BRAVO2", bankRef: "4470011" },
 ];
+/** FICTIONAL Tenants grid, in live REI's columns (seen 5 Oct 2026); `status` is the Status filter, not a column.
+ * FT-KILO has no Property (an import rejects it); Golf and Hotel share one BPay reference. */
+export const FICTIONAL_TENANT_COLUMNS = ["Reference", "Surname", "Firstname", "Property", "Rent", "Paid To", "Rent Credit", "Days +/-", "Amount Owing", "Lease Expiry", "Vacating", "Owner", "BPay/Ref No."] as const;
+const tenantRow = (ref: string, surname: string, property: string, rent: string, paidTo: string, days: string, owing: string, owner: string, bpay: string, status = "Active") =>
+  ({ status, cells: [ref, surname, "Fictional", property, rent, paidTo, "0.00", days, owing, "2027-03-31", "", owner, bpay] });
+export const FICTIONAL_TENANT_LIST = [
+  tenantRow("FT-ALPHA", "Alpha", "FP-01", "$500.00 per week", "2026-09-20", "0", "0.00", "Fictional Owner One", "4470001"),
+  tenantRow("FT-BRAVO", "Bravo", "FP-02", "$540.00 per week", "2026-09-12", "-9", "540.00", "Fictional Owner One", "4470002"),
+  tenantRow("FT-CHARLIE", "Charlie", "FP-03", "$360.00 per week", "2026-09-15", "-6", "360.00", "Fictional Owner One", "4470003"),
+  tenantRow("FT-DELTA", "Delta", "FP-08", "$450.00 per week", "2026-06-01", "0", "0.00", "Fictional Owner Two", "4470008", "Inactive"),
+  tenantRow("FT-ECHO", "Echo", "FP-05", "$660.00 per fortnight", "2026-09-10", "-11", "660.00", "Fictional Owner Two", "4470005"),
+  tenantRow("FT-FOXTROT", "Foxtrot", "FP-09", "$480.00 per week", "2026-09-22", "0", "0.00", "Fictional Owner Two", "4470010"),
+  tenantRow("FT-GOLF", "Golf", "FP-06", "$500.00 per week", "2026-09-08", "-13", "780.00", "Fictional Owner Two", "4470067"),
+  tenantRow("FT-HOTEL", "Hotel", "FP-07", "$520.00 per week", "2026-09-05", "-16", "960.00", "Fictional Owner Two", "4470067"),
+  tenantRow("FT-INDIA", "India", "FP-04", "$600.00 per week", "2026-08-30", "-22", "1320.00", "Fictional Owner One", "4470009", "Vacated"),
+  tenantRow("FT-JULIET", "Juliet", "FP-10", "$2,400.00 per month", "2026-09-11", "-10", "600.00", "Fictional Owner One", "4470012"),
+  tenantRow("FT-BRAVO2", "Bravo-Two", "FP-04", "$600.00 per week", "2026-09-21", "0", "0.00", "Fictional Owner One", "4470011"),
+  tenantRow("FT-KILO", "Kilo", "", "$400.00 per week", "", "0", "0.00", "", ""),
+];
+/** FICTIONAL Suppliers grid, in live REI's columns. FS-LOCK's email is not an address; FS-GARDEN has none. */
+export const FICTIONAL_SUPPLIER_COLUMNS = ["Reference", "Description", "Phone", "Phone A/H", "Mobile", "Fax", "Email", "Address", "Category"] as const;
+export const FICTIONAL_SUPPLIER_LIST = [
+  { status: "Active", cells: ["FS-PLUMB", "Fictional Plumbing Co", "07 0000 0001", "", "0400 000 001", "", "accounts@fictional-plumbing.test", "1 Fictional St, Brisbane", "Plumber"] },
+  { status: "Active", cells: ["FS-ELEC", "Fictional Electrical", "07 0000 0002", "", "", "", "jobs@fictional-electrical.test; invoices@fictional-electrical.test", "2 Fictional St, Brisbane", "Electrician"] },
+  { status: "Active", cells: ["FS-GARDEN", "Fictional Gardens", "", "", "0400 000 003", "", "", "", "Gardener"] },
+  { status: "Active", cells: ["FS-LOCK", "Fictional Locksmiths", "07 0000 0004", "", "", "", "not-an-email", "4 Fictional St, Brisbane", "Locksmith"] },
+  { status: "Active", cells: ["FS-ROOF", "Fictional Roofing", "07 0000 0005", "07 0000 0055", "", "", "roof@fictional-roofing.test", "5 Fictional St, Brisbane", "Roofer"] },
+];
+/** Quoted only where needed, as a spreadsheet export writes it. */
+const csvLine = (cells: readonly string[]) => cells.map(cell => /[",\r\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell).join(",");
+
 /** A receipt's account is its business code (`reicid` is kept on seeded history only). */
 export interface FictionalAccount { reicid?: string; business: string }
 export interface FictionalReceipt { receiptId: string; account: FictionalAccount; date: string; reference: string; tenantId: string; tenant: string; propertyId: string; ownerId: string; amountCents: number; status: string }
@@ -165,7 +203,8 @@ const money = (value: number) => (value / 100).toFixed(2);
 const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
 const TABLES: Record<string, { cols: string[]; rows: string[][] }> = {
-  tenants: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: TENANTS },
+  /** The arrears page (filters on Status and Days). */
+  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: TENANTS },
   owners: { cols: ["Name", "Status", "Properties"], rows: [["Fictional Owner One", "Active", "2"], ["Fictional Owner Two", "Active", "1"]] },
   rentals: { cols: ["Property", "Status", "Lease expiry", "Smoke due"], rows: Array.from({ length: 7 }, (_, i) => [`${i + 1} Fictional St`, "Active", `2026-1${i % 3}-0${i + 1}`, `2026-10-1${i}`]) },
   tasks: { cols: ["Task", "Status", "Due date", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
@@ -197,6 +236,12 @@ export interface FictionalReiOptions {
   pageSize?: number;
   /** Alters the displayed preview rows (Date, Reference, Tenant, Tenant ID, Amount, Match) to rehearse what a page could show. */
   previewEdit?: (rows: string[][]) => string[][];
+  /** Alters the rows of the next tenant or supplier list export (to rehearse an export that disagrees with its grid). */
+  directoryRows?: (rows: string[][]) => string[][];
+  /** Report names for the tenant and supplier list exports instead of the pack's placeholders (rehearses a path learned in the portal). */
+  reports?: { tenants?: string; suppliers?: string };
+  /** The Suppliers grid and export instead of FICTIONAL_SUPPLIER_LIST (rehearses REI's list changing between checks). */
+  suppliers?: Array<{ status: string; cells: string[] }>;
   /** Receipts already in REI before this run; defaults to FICTIONAL_HISTORY. */
   receipts?: FictionalReceipt[];
 }
@@ -214,6 +259,11 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   if (!signedIn) url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`;
   // Per-page state, reset on each load.
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
+  /** The report whose parameters popup is open. */
+  let report = "";
+  // The pack's names unless renamed (`reports`), read at each use so a test can rename them mid-run.
+  const TENANT_DEFAULT = exportReport("tenant-list"), SUPPLIER_DEFAULT = exportReport("supplier-list");
+  const tenantReport = () => options.reports?.tenants ?? TENANT_DEFAULT, supplierReport = () => options.reports?.suppliers ?? SUPPLIER_DEFAULT;
   // Portal-side state that survives page loads: the pending import and the receipt ledger.
   let pending: PendingUpload | null = null; let uploads = 0;
   const receipts: FictionalReceipt[] = structuredClone([...(options.receipts ?? FICTIONAL_HISTORY)]);
@@ -233,13 +283,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     const at = new URL(next);
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
-    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null;
+    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null; report = "";
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
     const status = (value: string): Field => ({ kind: "combobox", name: "Status", value, options: ["Active", "Inactive", "Open", "Closed", "All"] });
     const search: Field = { kind: "textbox", name: "Search", value: "" };
-    if (path === "/customers/tenant" || path === "/customers/owner") return [search, status("Active")];
+    if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
     if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
     if (path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
@@ -254,11 +304,17 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       const base = TABLES[key]; const status = field("Status"); const query = field("Search").toLowerCase();
       return { cols: base.cols, rows: base.rows.filter(row => (!statusDefault || !status || status === "All" || row[1] === status) && (!query || row[0].toLowerCase().includes(query)) && keep(row)) };
     };
-    if (path === "/customers/tenant") return filter("tenants", () => true);
+    // Tenants and Suppliers: Status filters a field that is not a column; Search matches the name columns.
+    const list = (cols: readonly string[], rows: Array<{ status: string; cells: string[] }>, names: number[]) => {
+      const status = field("Status"), query = field("Search").toLowerCase();
+      return { cols: [...cols], rows: rows.filter(row => (!status || status === "All" || row.status === status) && (!query || names.some(i => row.cells[i].toLowerCase().includes(query)))).map(row => row.cells) };
+    };
+    if (path === "/customers/tenant") return list(FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, [0, 1, 2]);
+    if (path === "/customers/supplier") return list(FICTIONAL_SUPPLIER_COLUMNS, options.suppliers ?? FICTIONAL_SUPPLIER_LIST, [0, 1]);
     if (path === "/customers/owner") return filter("owners", () => true);
     if (path === "/customers/property") return filter("rentals", () => true);
     if (path === "/customers/task") return filter("tasks", row => (!field("From") || row[2] >= field("From")) && (!field("To") || row[2] <= field("To")));
-    if (path === "/customers/arrears/") return filter("tenants", row => Number(row[4]) >= Number(field("From day") || 1) && !(field("Hide vacated tenants") === "Yes" && row[1] === "Vacated"), false);
+    if (path === "/customers/arrears/") return filter("arrears", row => Number(row[4]) >= Number(field("From day") || 1) && !(field("Hide vacated tenants") === "Yes" && row[1] === "Vacated"), false);
     if (path === "/customers/reconciliation/bankreconciliation") return TABLES.reconciliation;
     if (path === "/customers/transaction/pendingtransactions") return TABLES.pendingPayments;
     if (path === "/customers/importbanklink/index") {
@@ -310,13 +366,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       if (path === "/report/reportlist") {
         lines.push('      table "Results"');
         if (loading > 0) lines.push("        row", '          cell "Loading…"');
-        else for (const report of ["Receipt Register", "Receipt Register - Reversals", "Arrears Report", "Owner Statement"].filter(r => !field("Search") || r.toLowerCase().includes(field("Search").toLowerCase()))) {
-          reportsListed = true; lines.push("        row", `          ${ref({ role: "link", name: report, action: "report" })} link ${q(report)}`);
+        else for (const name of ["Receipt Register", "Receipt Register - Reversals", "Arrears Report", "Owner Statement", tenantReport(), supplierReport()].filter(r => !field("Search") || r.toLowerCase().includes(field("Search").toLowerCase()))) {
+          reportsListed = true; lines.push("        row", `          ${ref({ role: "link", name, action: "report" })} link ${q(name)}`);
         }
       } else if (table) {
         // The grid, its footer and pager sit in their own region; the page's record-changing buttons are outside it.
         // The tenants grid scrolls (no pages) and shows "No records to display" before it fills, as live REI does.
-        const scrolls = path === "/customers/tenant";
+        const scrolls = path === "/customers/tenant" || path === "/customers/supplier";
         const grid = ['table "Results"'];
         if (loading > 0 && scrolls) grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`), "  row", '    cell "No records to display"');
         else if (loading > 0) grid.push("  row", '    cell "Loading…"');
@@ -344,11 +400,11 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         .map(([name, effect]) => `      ${ref({ role: "button", name, action: `effect:${effect}` })} button ${q(name)}`));
       if (modal) {
         // Live REI opens a parameters popup (#reportParameterOwnerList_popup) before any output.
-        lines.push('      dialog "Report parameters"', '        heading "Receipt Register"',
+        lines.push('      dialog "Report parameters"', `        heading ${q(report || "Receipt Register")}`, ...(report === tenantReport() || report === supplierReport() ? [] : [
           `        ${ref({ role: "radio", name: "Current Period", action: "radio" })} radio "Current Period"`,
           `        ${ref({ role: "radio", name: "Date Range", action: "radio" })} radio "Date Range"`,
           `        ${ref({ role: "textbox", name: "From Date", action: "field:From Date" })} textbox "From Date" value=${q(field("From Date"))}`,
-          `        ${ref({ role: "textbox", name: "To Date", action: "field:To Date" })} textbox "To Date" value=${q(field("To Date"))}`,
+          `        ${ref({ role: "textbox", name: "To Date", action: "field:To Date" })} textbox "To Date" value=${q(field("To Date"))}`]),
           `        ${ref({ role: "combobox", name: "Output", action: "field:Output", options: ["Export Only", "Email Only"] })} combobox "Output" value=${q(field("Output") || "Export Only")}`,
           '          option "Export Only"', '          option "Email Only"',
           `        ${ref({ role: "button", name: "Export", action: "export" })} button "Export"`);
@@ -395,7 +451,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       if (target.action.startsWith("go:")) { direct = false; load(new URL(target.action.slice(3), FICTIONAL_REI_ORIGIN).href); return { ok: true }; }
       if (target.action === "next") { if (!options.stuckPagination) page += 1; loading = 1; return { ok: true }; }
       if (target.action === "prev") { page = Math.max(0, page - 1); loading = 1; return { ok: true }; }
-      if (target.action === "report" && reportsListed) { modal = true; return { ok: true }; }
+      if (target.action === "report" && reportsListed) { modal = true; report = target.name; return { ok: true }; }
       if (target.action === "radio") { setField("Range", target.name); return { ok: true }; }
       if (target.action.startsWith("effect:")) { effects.push(target.action.slice(7)); return { ok: true }; }
       return { ok: true };
@@ -415,6 +471,14 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     }
     if (args[0] === "download") {
       control(args);
+      // A directory export: the list's Active rows (what its grid shows by default), every column.
+      const directory = report === tenantReport() ? { cols: FICTIONAL_TENANT_COLUMNS, rows: FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
+        : report === supplierReport() ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: options.suppliers ?? FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
+      if (directory) {
+        const rows = (options.directoryRows ?? (rows => rows))(directory.rows.filter(row => row.status === "Active").map(row => [...row.cells]));
+        await writeFile(args[args.indexOf("--out") + 1], [directory.cols, ...rows].map(csvLine).join("\r\n") + "\r\n");
+        return { ok: true, suggested_filename: directory.file };
+      }
       // The register is built from the receipt ledger, filtered by this page's account and the dialog's dates.
       const account = here(), from = field("From Date"), to = field("To Date");
       const rows = receipts.filter(item => sameAccount(item.account, account) && (!from || item.date >= from) && (!to || item.date <= to)).sort((a, b) => a.date.localeCompare(b.date) || a.receiptId.localeCompare(b.receiptId));
@@ -439,7 +503,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     pending = null;
     return created;
   };
-  return { command, calls, effects, url: () => url, signIn: () => { signedIn = true; }, post, pendingUpload: () => pending && structuredClone(pending), receipts: () => structuredClone(receipts),
+  return { command, calls, effects, url: () => url, signIn: () => { signedIn = true; }, signOut: () => { signedIn = false; load(url); }, post, pendingUpload: () => pending && structuredClone(pending), receipts: () => structuredClone(receipts),
     /** The person switches the top-bar business (undefined: back to FICT1). */
     setBusiness: (code?: string) => { if (code === undefined) delete options.business; else options.business = code; } };
 }

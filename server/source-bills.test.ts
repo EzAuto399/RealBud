@@ -7,6 +7,7 @@ import { SourceBillRegister, previewBillSource } from './source-bills.ts';
 import { listExpectedBills, upsertExpectedBill } from './expected-bills.ts';
 import { anchoredBillMonth, billDateInZone } from '../shared/bill-dates.ts';
 import type { BillMailSource, BillFacts, BillCalendarEntry } from '../shared/source-bills.ts';
+import { sameBillFacts, isBillFinancialReviewStale } from '../shared/source-bills.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
 afterEach(() => { for (const { dir, db } of resources.splice(0)) { db.close(); rmSync(dir, { recursive: true, force: true }); } });
@@ -251,5 +252,39 @@ describe('expected payment forecasts', () => {
     store.reviseSeries(series.id, { ...settings, expectedRevision: 1, active: false }, 'reviewer');
     expect(payments(store.snapshot(range).calendar).map(e => e.basis)).toEqual(['reviewed-bill-due-date']);
     expect(pages(store, range).filter(e => e.seriesId === series.id && e.billId === null)).toEqual([]);
+  });
+});
+
+describe('reviewed supplier reference and work description', () => {
+  it('keeps legacy facts and their original audit hashes when a status correction sends both labels as null', () => {
+    const { store, dir } = fixture(), s = source(), saved = store.accept(acceptance(s), s, 'reviewer');
+    expect(Object.keys(saved.facts)).not.toContain('supplierReference');
+    const reviewed = store.reviewFinancial(saved.id, { expectedRevision: 1, expectedSourceDigest: saved.source.digest, sourceReviewed: true, reviewReason: 'Fictional status left unknown',
+      observation: { provenance: 'simulated', sourceKind: 'unknown', sourceIds: [], locator: '', accountContext: '', observedAt: Date.parse('2026-01-31T02:00:00Z'), coverage: 'unknown', entry: 'unknown', payment: 'unknown', funding: 'unknown', advance: 'unknown', note: '' } }, 'reviewer');
+    const originalFacts = JSON.stringify(reviewed.facts), audit = JSON.stringify(reviewed.financialReview);
+    const submitted = { ...facts(), supplierReference: null, workDescription: null };
+    expect(sameBillFacts(reviewed.facts, submitted)).toBe(true);
+    const corrected = store.correct(saved.id, { ...acceptance(s), facts: submitted, expectedRevision: 2, state: 'hold' }, s, 'reviewer');
+    expect(JSON.stringify(corrected.facts)).toBe(originalFacts);
+    expect(JSON.stringify(corrected.financialReview)).toBe(audit);
+    expect(isBillFinancialReviewStale(corrected)).toBe(false);
+    const reopened = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+    try { expect(new SourceBillRegister(reopened, { dataDir: dir }).getOccurrence(saved.id)).toEqual(corrected); } finally { reopened.close(); }
+  });
+  it('saves trimmed labels, refuses a client that silently drops them and allows an explicit clear', () => {
+    const { store } = fixture(), s = source();
+    const labelled = { ...facts(), supplierReference: ' SUP-FICTIONAL-042 ', workDescription: ' Fictional gutter clean ' };
+    const saved = store.accept({ ...acceptance(s), facts: labelled }, s, 'reviewer');
+    expect(saved.facts).toMatchObject({ supplierReference: 'SUP-FICTIONAL-042', workDescription: 'Fictional gutter clean' });
+    expect(() => store.correct(saved.id, { ...acceptance(s), expectedRevision: 1, state: 'hold' }, s, 'reviewer')).toThrow(/explicitly clear/);
+    const changed = store.correct(saved.id, { ...acceptance(s), facts: { ...labelled, workDescription: 'Fictional gutter repair' }, expectedRevision: 1, state: 'received' }, s, 'reviewer');
+    expect(changed.history[0].facts.workDescription).toBe('Fictional gutter clean'); expect(changed.facts.workDescription).toBe('Fictional gutter repair');
+    const cleared = store.correct(saved.id, { ...acceptance(s), facts: { ...facts(), supplierReference: null, workDescription: null }, expectedRevision: 2, state: 'received' }, s, 'reviewer');
+    expect(cleared.facts).toMatchObject({ supplierReference: null, workDescription: null });
+  });
+  it.each([{ supplierReference: '' }, { supplierReference: 'x'.repeat(121) }, { workDescription: 'x'.repeat(1001) }, { workDescription: 'bad\u0000value' }, { supplierName: 'Fictional' }])('rejects invalid labels %j', changed => {
+    const { store } = fixture(), s = source();
+    expect(() => store.accept({ ...acceptance(s), facts: { ...facts(), ...changed } }, s, 'reviewer')).toThrow();
+    expect(store.counts().occurrences).toBe(0);
   });
 });

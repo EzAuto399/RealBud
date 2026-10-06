@@ -49,6 +49,8 @@ export interface BrowserTaskGrant {
   origin?: typeof BROWSER_LEGACY_JOB_ORIGIN;
 }
 export const BROWSER_LEGACY_JOB_ORIGIN = "legacy-job" as const;
+/** The card asking the person to confirm which portal account an Ask task works in (server/browser-broker.ts). */
+export const BROWSER_ACCOUNT_CONFIRM_TOOL = "browser_account_confirm";
 
 /** Saved jobs without an explicit grant keep exactly their earlier behaviour:
  * any portal capability reads, opens and clicks on the job's site (every

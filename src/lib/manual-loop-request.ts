@@ -58,7 +58,7 @@ export function confirmLoopReceipt(loopId: string, request: PendingLoopRequest, 
     throw new Error("The result did not match this request. Check saved results before trying again.");
   }
   if (run.status === "queued" || run.status === "running") return false;
-  if (!["completed", "partial", "awaiting-approval", "failed", "missed", "interrupted"].includes(run.status)) throw invalid();
+  if (!["completed", "partial", "awaiting-approval", "failed", "missed", "interrupted", "resumed"].includes(run.status)) throw invalid();
   const rows = read(storage);
   const key = keyFor(loopId);
   if (rows[key]?.requestId === request.requestId && rows[key]?.expectedRevision === request.expectedRevision) {

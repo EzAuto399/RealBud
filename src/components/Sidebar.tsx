@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, Bookmark, SlidersHorizontal } from "lucide-react";
-import { useWorkspaceTabs, WORKSPACE_VIEW_LABELS } from '@/lib/workspace-tabs';
+import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { useWorkspaceTabs } from '@/lib/workspace-tabs';
 import '@/workspace-tabs.css';
 import '@/sidebar-utilities.css';
 import { useStore } from "@/state/store";
@@ -75,6 +75,8 @@ export function Sidebar() {
   const workspaceTabs = useWorkspaceTabs();
   const { capabilities } = useDesktopCapabilities();
   const macInset = capabilities.windowChrome === "mac-inset";
+  // The rail top drags the window on macOS (beside the traffic lights) and on Windows (below the title strip).
+  const dragTop = macInset || window.ogb?.platform === "win32";
   const browser = capabilities.host.label === "Browser";
 
   // Sidebar re-renders on every store change, including each streamed chat
@@ -98,61 +100,54 @@ export function Sidebar() {
     <button
       onClick={action}
       aria-label={label}
-      title={shortcut ? `${label} (${shortcut})` : label}
       aria-current={state.activeView === view ? "page" : undefined}
       className={cn(
-        "rb-sidebar-item flex w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency",
+        "rb-sidebar-item rb-rail-item flex w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency",
         state.activeView === view ? "bg-selected text-ink" : "text-ink hover:bg-raised/70",
       )}
     >
       {icon}
-      <span className="rb-sidebar-label flex-1"><span className="block text-[15px] font-medium">{label}</span><span className="mt-0.5 block text-[13px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Today with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation", workspace: 'Saved views' }[view]}</span></span>
+      <span className="rb-sidebar-label flex-1"><span className="block text-[15px] font-medium">{label}</span></span>
       {extra ? <span className="rb-sidebar-extra">{extra}</span> : null}
+      {/* Visible on hover and keyboard focus; the accessible name is the aria-label. */}
+      <span className="rb-rail-tip" aria-hidden>{label}{shortcut ? <span className="rb-rail-tip-key">{shortcut}</span> : null}</span>
     </button>
   );
 
   return (
-    <aside className="rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet">
+    <aside className="rb-sidebar rb-rail flex h-full shrink-0 flex-col border-r border-line bg-sheet">
       <div
-        className="px-4 pb-1 pt-3.5"
-        style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
+        className="rb-rail-top flex flex-col items-center gap-1.5 px-2 pb-1 pt-3"
+        style={dragTop ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
       >
-        <div className="flex items-center justify-between">
-          {macInset ? (
-            <div className="rb-sidebar-traffic w-14" />
-          ) : browser ? (
-            <div className="rb-sidebar-traffic flex items-center gap-2">
-              <span className="size-3 rounded-full bg-[#ff5f57]" />
-              <span className="size-3 rounded-full bg-[#febc2e]" />
-              <span className="size-3 rounded-full bg-[#28c840]" />
-            </div>
-          ) : (
-            <div />
-          )}
-          <div style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
-            <UpdateButton />
+        {macInset ? <div className="rb-sidebar-traffic h-5 w-full" /> : browser ? (
+          <div className="rb-sidebar-traffic flex items-center gap-1">
+            <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+            <span className="size-2.5 rounded-full bg-[#febc2e]" />
+            <span className="size-2.5 rounded-full bg-[#28c840]" />
           </div>
-        </div>
-        <div className="mt-2.5 flex items-center justify-center gap-2 sm:justify-start" aria-label="RealBud">
+        ) : null}
+        <div className="relative flex items-center justify-center" aria-label="RealBud">
           <MausAvatar color="green" state={state.connected ? "idle" : "sleeping"} size={26} label="RealBud" trackPointer={false} />
-          <div className="rb-sidebar-brand min-w-0">
-            <div className="text-[15px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
-            {/* Connected is the normal state, so only a reconnect is shown; the
-                live region stays mounted so either change is still announced. */}
-            <div className={state.connected ? "sr-only" : "flex items-center gap-1.5 text-[13px] text-ink-muted"} role="status" aria-live="polite">
-              {state.connected ? "App connected" : <><span className="size-1.5 animate-pulse rounded-full bg-hold motion-reduce:animate-none" aria-hidden />Reconnecting</>}
-            </div>
-          </div>
+          {state.connected ? null : <span className="absolute -right-0.5 -top-0.5 size-2 animate-pulse rounded-full bg-hold motion-reduce:animate-none" aria-hidden />}
+        </div>
+        {/* Connected is the normal state, so only a reconnect is shown; the
+            live region stays mounted so either change is still announced. */}
+        <div className={state.connected ? "sr-only" : "rb-rail-reconnect text-[11px] text-ink-muted"} role="status" aria-live="polite">
+          {state.connected ? "App connected" : "Reconnecting"}
+        </div>
+        <div style={dragTop ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
+          <UpdateButton />
         </div>
       </div>
 
-      <nav className="rb-sidebar-navigation flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-2" aria-label="Main navigation">
+      <nav className="rb-sidebar-navigation flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-2" aria-label="Main navigation">
         {item(
           "desk",
           "Desk",
           <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />,
           () => dispatch({ type: "showDesk" }),
-          needYou > 0 ? <span className="text-[11px] tabular-nums text-ink-muted">{needYou}</span> : null,
+          needYou > 0 ? <span className="rb-rail-badge tabular-nums">{needYou}</span> : null,
           `${doorMod}1`,
         )}
         {item(
@@ -175,16 +170,15 @@ export function Sidebar() {
           ) : null,
           `${doorMod}3`,
         )}
-        {/* Views are shortcuts Bud sets up; managing them lives in Workspace → Settings & help.
-            The sidebar only surfaces the manager when saved views need recovery. */}
-        {(workspaceTabs.data?.state?.tabs.some(tab => tab.visible) || workspaceTabs.error || workspaceTabs.data?.recovery) ? <div className="rb-workspace-saved-navigation mt-3 border-t border-line pt-2">
-          <p className="rb-sidebar-label px-3 pb-1 pt-1 text-[13px] text-ink-muted">Pinned</p>
-          {workspaceTabs.data?.state?.tabs.filter(tab => tab.visible).map(tab => <button key={tab.id} aria-label={tab.label} title={tab.label} aria-current={state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'page' : undefined} className={cn('rb-sidebar-item rb-workspace-custom-tab flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-agency', state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'bg-selected text-ink' : 'text-ink hover:bg-raised/70')} onClick={() => dispatch({ type: 'showWorkspaceTab', id: tab.id })}><Bookmark size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label min-w-0 flex-1"><span className="block break-words text-[15px] font-medium">{tab.label}</span><span className="block text-[13px] text-ink-muted">{WORKSPACE_VIEW_LABELS[tab.view.kind]}</span></span></button>)}
-          {workspaceTabs.error || workspaceTabs.data?.recovery ? <button aria-label="Manage saved views" title="Manage saved views" aria-current={state.activeView === 'workspace' && !state.workspaceTabId ? 'page' : undefined} className="rb-sidebar-item rb-workspace-manage-view flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left text-ink hover:bg-raised/70 focus-visible:outline-2 focus-visible:outline-agency" onClick={() => dispatch({ type: 'showWorkspaceTab' })}><SlidersHorizontal size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label text-[14px]"><span>Saved views</span><span className="block text-[13px] text-hold">Needs attention</span></span></button> : null}
+        {/* Saved views live in the context sidebar; the rail keeps only the
+            recovery entry so a damaged list stays reachable at every width. */}
+        {workspaceTabs.error || workspaceTabs.data?.recovery ? <div className="rb-workspace-saved-navigation mt-2 border-t border-line pt-2">
+          <button aria-label="Manage saved views" aria-current={state.activeView === 'workspace' && !state.workspaceTabId ? 'page' : undefined} className="rb-sidebar-item rb-rail-item rb-workspace-manage-view flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left text-ink hover:bg-raised/70 focus-visible:outline-2 focus-visible:outline-agency" onClick={() => dispatch({ type: 'showWorkspaceTab' })}><SlidersHorizontal size={20} className="shrink-0 text-hold" aria-hidden /><span className="rb-sidebar-label text-[14px]"><span>Saved views</span><span className="block text-[13px] text-hold">Needs attention</span></span><span className="rb-rail-tip" aria-hidden>Saved views need attention</span></button>
         </div> : null}
       </nav>
-      <div className="rb-sidebar-utilities" aria-label="Workspace tools">
+      <div className="rb-sidebar-utilities rb-rail-foot" aria-label="Workspace tools">
         <WorkdayPulse shortcut={`${doorMod}4`} />
+        <span className="rb-rail-tip" aria-hidden>Workspace<span className="rb-rail-tip-key">{doorMod}4</span></span>
       </div>
     </aside>
   );

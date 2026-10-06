@@ -22,8 +22,8 @@ interface HostDependencies {
   closeBrowser: (endpoint: string) => Promise<void>;
   isAlive: (pid: number) => boolean;
   admit: typeof admitHermesEngine;
-  /** One CDP command on the owned browser endpoint (Target domain only). */
-  cdp: (endpoint: string, method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** One CDP command on the owned browser endpoint: Target domain, or with `targetId` one command in that tab. */
+  cdp: (endpoint: string, method: string, params: Record<string, unknown>, targetId?: string) => Promise<Record<string, unknown>>;
   startupTimeoutMs: number;
   stopTimeoutMs: number;
 }
@@ -80,17 +80,22 @@ async function closeBrowser(endpoint: string): Promise<void> {
     socket.addEventListener("error", () => finish(fail()), { once: true });
   });
 }
-/** One Target-domain command over the owned endpoint; answered by id, bounded. */
-async function cdp(endpoint: string, method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+/** One Target-domain command over the owned endpoint; answered by id, bounded. With `targetId`, the command runs
+ * in that tab through a flat session that ends when the socket closes. */
+async function cdp(endpoint: string, method: string, params: Record<string, unknown>, targetId?: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(ownedBrowserEndpoint(endpoint));
     const timer = setTimeout(() => finish(fail("The work browser did not answer in time.")), 5000);
     const finish = (error: Error | null, result?: Record<string, unknown>) => { clearTimeout(timer); socket.close(); if (error) reject(error); else resolve(result!); };
-    socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method, params })), { once: true });
+    const last = targetId ? 2 : 1;
+    socket.addEventListener("open", () => socket.send(JSON.stringify(targetId ? { id: 1, method: "Target.attachToTarget", params: { targetId, flatten: true } } : { id: 1, method, params })), { once: true });
     socket.addEventListener("message", event => {
       let reply: unknown; try { reply = JSON.parse(String(event.data)); } catch { return finish(fail()); }
-      if (!record(reply) || reply.id !== 1) return;
-      finish(record(reply.result) ? null : fail(), record(reply.result) ? reply.result : undefined);
+      if (!record(reply) || reply.id !== 1 && reply.id !== last) return;
+      if (!record(reply.result)) return finish(fail());
+      if (reply.id === last) return finish(null, reply.result);
+      if (typeof reply.result.sessionId !== "string") return finish(fail());
+      socket.send(JSON.stringify({ id: 2, sessionId: reply.result.sessionId, method, params }));
     });
     socket.addEventListener("error", () => finish(fail()), { once: true });
   });
@@ -244,6 +249,15 @@ export class WorkBrowserHost {
     if (typeof created.targetId !== "string" || !/^[A-Za-z0-9]{1,64}$/.test(created.targetId)) throw fail();
     await this.deps.cdp(endpoint, "Target.activateTarget", { targetId: created.targetId });
     return created.targetId;
+  }
+  /** Loads an HTTPS address in this already-open tab, in place: no new tab, not brought forward and nothing read
+   * from the page (a long sign-in wait refreshing the site's sign-in page). The caller decides the address. */
+  async navigateTab(targetId: string, url: string): Promise<void> {
+    if (new URL(url).protocol !== "https:") throw fail("Only an HTTPS address can be opened for sign-in.");
+    if (!/^[A-Za-z0-9]{1,64}$/.test(targetId)) throw fail();
+    if (this.phase !== "ready" || !this.connection) throw fail("The work browser has closed. Connect it again before continuing.");
+    await this.verify(this.connection);
+    await this.deps.cdp(this.connection.endpoint, "Page.navigate", { url }, targetId);
   }
   /** The tab's current address, or null when it closed or the browser is not ready. Read-only. */
   async tabUrl(targetId: string): Promise<string | null> {

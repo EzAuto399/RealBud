@@ -37,6 +37,8 @@ import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskSections, DeskWorkArea, LicenseeBadge, OTHER_WORK_LABELS } from "./desk/DeskSections";
 import type { DeskOtherWork } from "@/lib/desk-view-state";
 import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
+import { DeskCardMenu } from "./shell/DeskArrangement";
+import { setDeskTabSlot } from "./shell/use-desk-nav";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { deskSectionsOrDefault } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
@@ -96,8 +98,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const [ready, setReady] = useState(state.desk != null);
   const [mode, setDeskMode] = useDeskViewState("mode");
   // Hermios is a Desk tab beside Tasks, not a Desk mode: choosing any mode
-  // leaves it, and a fresh Desk opens on Tasks.
-  const [hermiosOpen, setHermiosOpen] = useState(false);
+  // (here or from the shell's queue shortcuts) leaves it, and a fresh Desk opens on Tasks.
+  const [hermiosOpen, setHermiosOpen] = useDeskViewState("hermios");
+  useEffect(() => () => setHermiosOpen(false), []);
   // Other work replaces the task area while open. Opened surfaces stay mounted
   // (hidden) so their unsaved drafts and request identities survive switching.
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
@@ -505,7 +508,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const casesArea = (
     <>
       {statusShown ? (
-        <div className="desk-status-row" inert={drawerOpen}>
+        <div className="desk-status-row flex items-start gap-2" inert={drawerOpen}>
+          <div className="min-w-0 flex-1">
           <MorningBrief
             brief={brief}
             timezone={timezone}
@@ -544,7 +548,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             ) : null}
             {/* Setup stays available here and in Workspace. */}
             {sectionShown("go-live") ? (
-              <div className="mt-3">
+              <div className="mt-3 flex items-start gap-2">
+                <div className="min-w-0 flex-1">
                 <GoLiveCard
                   mode={snap.mode}
                   agencyName={snap.book?.agency.name ?? ""}
@@ -556,9 +561,13 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                   onAttachWorker={() => { openWorkspaceSetup("bud"); }}
                   onNameAgency={() => { openWorkspaceSetup("office"); }}
                 />
+                </div>
+                <DeskCardMenu id="go-live" />
               </div>
             ) : null}
           </MorningBrief>
+          </div>
+          <DeskCardMenu id="brief" />
         </div>
       ) : null}
       {emptyWorkspace ? (
@@ -602,7 +611,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             reminders={<DeskRemindersDisclosure>{toggle => <RemindersPanel headerAction={toggle} />}</DeskRemindersDisclosure>}
           />
         </div>
-        <div id="desk-case-column" className="desk-case-column" data-empty={!selected ? "true" : undefined} inert={drawerOpen}>
+        <div id="desk-case-column" tabIndex={-1} className="desk-case-column" data-empty={!selected ? "true" : undefined} inert={drawerOpen}>
           <DeskCase
             key={selected?.id ?? "empty"}
             edits={caseEdits}
@@ -799,6 +808,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               </button>
             ) : null}
           </div>
+          {/* The shell's Properties / Bills / saved-view tabs join this row on Desk. */}
+          <div ref={setDeskTabSlot} className="desk-shell-tabs" />
           <details ref={otherMenuRef} className="desk-more desk-other-work">
             <summary className="desk-secondary-button">Other work<ChevronDown size={14} aria-hidden /></summary>
             <div className="desk-more-panel" role="group" aria-label="Other work">
@@ -892,7 +903,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 <span className="ml-1 tabular-nums text-ink-muted">{recheckElapsed}s</span>
               </div>
             ) : null}
-            {jobRunsOpen && activityShown ? <div className="desk-activity-feed"><JobRunFeed limit={6} /></div> : null}
+            {jobRunsOpen && activityShown ? <div className="desk-activity-feed"><div className="rb-card-menu-row"><DeskCardMenu id="activity" /></div><JobRunFeed limit={6} /></div> : null}
           </div>
           <DeskWorkArea
             active={otherWork}
@@ -900,9 +911,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             onBack={() => setOtherWork(null)}
             tasks={tasks}
             panels={{
-              mail: <MailWorkPanel />,
-              bills: <ExpectedBillsBoard />,
-              "shared-work": <SharedWorkPanel initialExpanded />,
+              mail: <><div className="rb-card-menu-row"><DeskCardMenu id="mail" /></div><MailWorkPanel /></>,
+              bills: <><div className="rb-card-menu-row"><DeskCardMenu id="bills" /></div><ExpectedBillsBoard /></>,
+              "shared-work": <><div className="rb-card-menu-row"><DeskCardMenu id="shared-work" /></div><SharedWorkPanel initialExpanded /></>,
             }}
           />
         </div>
@@ -967,6 +978,15 @@ const QUEUE_STATUSES: Array<[QueueFilter, string]> = [
   ["all", "All"],
 ];
 
+/** What an empty status says; "now" has its own message with an Open Waiting shortcut. */
+const QUEUE_EMPTY: Record<QueueFilter, string> = {
+  now: "Nothing needs you right now.",
+  next: "Nothing is up next.",
+  waiting: "Nothing is waiting on someone else.",
+  done: "Nothing done today yet.",
+  all: "No tasks yet.",
+};
+
 function QueuePane({
   scope,
   onClearScope,
@@ -1017,6 +1037,7 @@ function QueuePane({
     <div className="desk-queue-pane flex flex-col bg-sheet">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-2.5">
         <h2 className="mr-1 text-[16px] font-semibold text-ink">Task queue</h2>
+        <div className="ml-auto flex items-center gap-1.5">
         <button
           type="button"
           onClick={onClose}
@@ -1026,6 +1047,8 @@ function QueuePane({
           <X size={14} aria-hidden />
           Close
         </button>
+        <DeskCardMenu id="queue" />
+        </div>
       </div>
       <div className="desk-queue-controls border-b border-line px-3 py-2">
         <label className="desk-queue-status">
@@ -1092,7 +1115,7 @@ function QueuePane({
             <p className="px-3 py-4 text-[13px] text-ink-muted">No property tasks yet. Add properties to start your queue.</p>
           ) : filter === "now" ? (
             <div className="space-y-3 px-3 py-4 text-[13px] text-ink-muted">
-              <p>Nothing needs you right now.</p>
+              <p>{QUEUE_EMPTY.now}</p>
               {counts.waiting > 0 ? (
                 <button
                   type="button"
@@ -1104,7 +1127,7 @@ function QueuePane({
               ) : null}
             </div>
           ) : (
-            <p className="px-3 py-4 text-[13px] text-ink-muted">No cases with this status. Choose another status above.</p>
+            <p className="px-3 py-4 text-[13px] text-ink-muted">{QUEUE_EMPTY[filter]}</p>
           )
         ) : (
           pageRows.map((row) => (

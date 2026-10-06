@@ -1,5 +1,6 @@
 import { recipeNeedsPlanApproval } from "./portal-job";
 import { SCHEDULE_NOT_CONFIRMED, type ScheduleRow } from "./schedule-rows";
+import { scheduleSummary } from "./schedule-week";
 
 export type ScheduleSection = "running" | "attention" | "ready" | "paused";
 export type ScheduleFilter = "all" | "attention" | "scheduled" | "paused";
@@ -26,6 +27,10 @@ export function scheduleRowGuidance(row: ScheduleRow): string {
   if (row.attention === "Review") return "A result is waiting for your review.";
   if (row.action === "review-bank") return "Choose a bank file to review.";
   if (row.next === "Paused" && row.action !== "resume") return "Scheduled work is paused; saved results remain available.";
+  if (row.action === "resume" && row.loop?.schedule.timezone) {
+    // An installed pack's job shows its office time while it is off.
+    return `Off · ${scheduleSummary(row.loop.schedule)}, ${row.loop.schedule.timezone.split("/").pop()!.replace(/_/g, " ")} time. Review it, then switch it on.`;
+  }
   if (row.action === "resume") return "Resume this job when you want it to run again.";
   if (row.action === "view-result") return "Open the saved result to see what happened.";
   if (row.next === SCHEDULE_NOT_CONFIRMED) return "Check the job's timing before relying on a scheduled run.";

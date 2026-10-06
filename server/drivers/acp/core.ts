@@ -36,8 +36,11 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
-import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { BROWSER_SERVER, startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
 import { browserRuntime } from "../../browser-runtime.ts";
+import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts";
+import { portalMapForSites } from "../../portal-recipe-task.ts";
+import { portalRecipeControls } from "../../portal-recipe-runner.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
@@ -49,6 +52,7 @@ import { SIGN_IN_SERVER, startSignInBroker } from "../../browser-sign-in.ts";
 import { HERMIOS_CRM_SERVER, startHermiosCrmBroker } from "../../hermios-crm-broker.ts";
 import { REMINDERS_SERVER, startRemindersBroker } from "../../reminders-broker.ts";
 import { WORKSPACE_VIEWS_SERVER, startWorkspaceViewsBroker } from "../../workspace-views-broker.ts";
+import { WORKFLOW_SETTINGS_SERVER, startWorkflowSettingsBroker } from "../../workflow-settings-broker.ts";
 import { BANK_SOURCE_SERVER, startBankSourceBroker } from "../../bank-source-broker.ts";
 import { MCP_CONNECTORS_SERVER, startMcpConnectorBroker } from "../../mcp-connector-broker.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
@@ -165,11 +169,36 @@ type AcpHttpMcpServer = {
 };
 type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
 
+/** A call to RealBud's work browser or sign-in server, by the name Hermes ACP puts first in a tool call's title:
+ * mcp__<server>__<tool>, or mcp_<server>_<tool> in older releases ("sign-in" is written sign_in). Its arguments carry
+ * page addresses, field values and file names, so no sink but the local card and approval record sees them. */
+const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})__?([a-z\\d_]*)`, "i");
+const PAGE_TOOL_LABEL: Record<string, string> = {
+  browser_tabs: "Checked the open tabs", browser_borrow: "Borrowed a tab", browser_read: "Read a page",
+  browser_navigate: "Opened a page", browser_fill: "Filled a field", browser_click_semantic: "Clicked a control",
+  browser_press: "Pressed a key", browser_select: "Chose an option", browser_download: "Downloaded a file",
+  browser_upload: "Uploaded a file", browser_release: "Stopped browser work", open_for_sign_in: "Opened the sign-in page",
+};
+const pageTool = (title: unknown): string | null => typeof title === "string" ? PAGE_TOOL.exec(title)?.[1]?.toLowerCase() ?? null : null;
+/** A page tool call's title for the event log and the Work activity line: a fixed label per tool, never its arguments. */
+const pageToolLabel = (tool: string): string => PAGE_TOOL_LABEL[tool] ?? "Used the work browser";
+/** A page tool call (a start, update or permission request) as the private native log keeps it: the tool name and its
+ * argument keys, no values. Every other message is unchanged. */
+function withoutPageToolValues(message: any): any {
+  const key = message?.params?.update ? "update" : message?.params?.toolCall ? "toolCall" : null;
+  const call = key ? message.params[key] : null;
+  const tool = pageTool(call?.title);
+  if (tool === null) return message;
+  const { sessionUpdate, toolCallId, kind, status, rawInput } = call;
+  const argumentKeys = rawInput && typeof rawInput === "object" ? Object.keys(rawInput) : [];
+  return { ...message, params: { ...message.params, [key!]: { sessionUpdate, toolCallId, kind, status, tool, argumentKeys } } };
+}
+
 /** Hermes' own browser and credential-vault tools (`browser_navigate`,
  * `browser_vault_fill`, …), named by the leading tool name Hermes ACP puts in a
  * tool call's title (acp_adapter/tools.py `build_tool_title`) or by an explicit
  * name field. RealBud's fenced browser reaches Hermes as MCP tools
- * (`mcp__browser__…`), which never match. The profile policy and worker
+ * (`mcp__workbrowser__…`), which never match. The profile policy and worker
  * environment keep these tools from being offered; this is the backstop. */
 export function hermesNativeBrowserTool(...values: unknown[]): string | null {
   for (const value of values) {
@@ -188,6 +217,19 @@ const WRAP_UP_TIMEOUT = 10_000;
 /** Hermes answers `/steer` with a short status line on the same session
  * stream (acp_adapter/commands.py `_cmd_steer`); it is not Bud's answer. */
 const HERMES_STEER_ACK = /^\s*(?:⏩ Steer queued for the active turn:|⚠️ Steer failed:|No active turn — queued for the next turn\.)/u;
+
+/** Hermes' own failed-turn copy (agent/turn_failure_copy.py) arrives as one
+ * whole assistant message naming the engine or provider, slash commands,
+ * `hermes …` hints and a raw "Provider said:"/"Details:" line. The person sees
+ * plain words instead; the raw chunk stays in the private native log. A
+ * model's streamed chunk is a few words, so the length floor keeps an answer
+ * that merely mentions such a word from being replaced. */
+const HERMES_FAILURE_COPY = /(?:^|[\s(])\/(?:retry|model|new|reasoning)\b|`hermes [a-z]|\n\n(?:Provider said|Details): /u;
+export const ENGINE_FAILURE_REPLY =
+  "Bud couldn't finish this step because the AI service ran into a problem. Try again, or tell me if it keeps happening.";
+export function plainEngineFailure(delta: string): string | null {
+  return delta.length >= 80 && HERMES_FAILURE_COPY.test(delta) ? ENGINE_FAILURE_REPLY : null;
+}
 
 export const HERMES_BROWSER_REFUSED =
   "Bud tried to use a web browser of its own, which RealBud does not allow, so this request was stopped. Website work runs in RealBud’s browser, where you sign in yourself.";
@@ -299,7 +341,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           servers.push({ type: "http", name: "memory-proposals", url: "http://127.0.0.1/realbud-memory-proposals", headers: [] });
         }
-        if (turn.integrations?.browser) servers.push({ type: "http", name: "browser", url: "http://127.0.0.1/realbud-browser", headers: [] });
+        if (turn.integrations?.browser) servers.push({ type: "http", name: BROWSER_SERVER, url: "http://127.0.0.1/realbud-browser", headers: [] });
         // Replaced with private loopback brokers before session/new or load.
         const pages = turn.integrations?.webPages;
         if (pages && (!Array.isArray(pages.allowedUrls) || pages.allowedUrls.length > 200 || pages.allowedUrls.some(url => typeof url !== "string" || url.length > 2048))) {
@@ -319,6 +361,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (views) {
           if (typeof views.read !== "function" || typeof views.save !== "function") throw new Error("Bud’s saved views are unavailable. Start a new request.");
           servers.push({ type: "http", name: WORKSPACE_VIEWS_SERVER, url: "http://127.0.0.1/realbud-workspace-views", headers: [] });
+        }
+        const workflowSettings = turn.integrations?.workflowSettings;
+        if (workflowSettings) {
+          if (typeof workflowSettings.read !== "function" || typeof workflowSettings.check !== "function" || typeof workflowSettings.save !== "function") throw new Error("Bud’s working rules are unavailable. Start a new request.");
+          servers.push({ type: "http", name: WORKFLOW_SETTINGS_SERVER, url: "http://127.0.0.1/realbud-workflow-settings", headers: [] });
         }
         const bank = turn.integrations?.bankSource;
         if (bank) {
@@ -448,6 +495,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let crmBroker: LoopbackToolServer | undefined;
         let remindersBroker: LoopbackToolServer | undefined;
         let viewsBroker: LoopbackToolServer | undefined;
+        let settingsBroker: LoopbackToolServer | undefined;
         let bankBroker: LoopbackToolServer | undefined;
         let connectorsBroker: LoopbackToolServer | undefined;
         const brokerMounts: Array<() => void> = [];
@@ -513,6 +561,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.close();
           remindersBroker?.close();
           viewsBroker?.close();
+          settingsBroker?.close();
           bankBroker?.close();
           connectorsBroker?.close();
           for (const release of brokerMounts.splice(0)) release();
@@ -562,6 +611,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.cancelPending();
           remindersBroker?.cancelPending();
           viewsBroker?.cancelPending();
+          settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
@@ -767,12 +817,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const update = params.update ?? {};
           switch (update.sessionUpdate) {
             case "agent_message_chunk": {
-              const delta = update.content?.text;
+              let delta = update.content?.text;
               if (typeof delta === "string" && delta) {
                 if (run.steerAckPending && HERMES_STEER_ACK.test(delta)) {
                   run.steerAckPending = false;
                   break;
                 }
+                const plain = plainEngineFailure(delta);
+                if (plain) delta = (run.text.trim() ? "\n\n" : "") + plain;
                 run.text += delta;
                 if (run.sawTool) run.answerText += delta;
                 emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
@@ -786,15 +838,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
               break;
             }
-            case "tool_call":
+            case "tool_call": {
               run.sawTool = true;
               run.answerText = "";
+              const tool = pageTool(update.title);
               emit({
                 ...eventBase(run),
                 type: "item.started",
                 itemType: "tool",
                 itemId: update.toolCallId,
-                title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
+                // A page tool call shows only its label; the fingerprint (a digest of the real arguments, kept off
+                // the event log) still tells two pages apart for the repeat watchdog.
+                title: tool !== null ? pageToolLabel(tool) : String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
@@ -804,6 +859,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               run.toolCount += 1;
               if (wrapUpPoint && run.toolCount >= wrapUpPoint.afterTools) wrapUp(run, "tools");
               break;
+            }
             case "tool_call_update":
               if (update.status === "completed" || update.status === "failed") {
                 emit({
@@ -833,7 +889,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: message });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: withoutPageToolValues(message) });
             if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
               const pending = rpcPending.get(message.id);
               if (pending) {
@@ -928,10 +984,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!browser.grant) throw new Error("This browser work has no saved permission, so nothing was opened. Start it again.");
             // An Ask task's grant is bound to the browser selected when the person started it.
             // (A saved job's checked sign-in page keeps its own browser check in the broker.)
-            if (browser.grant.origin !== BROWSER_LEGACY_JOB_ORIGIN && browser.grant.browser.id && (await browserRuntime.status()).selectedBrowserId !== browser.grant.browser.id) {
+            const askTask = browser.grant.origin !== BROWSER_LEGACY_JOB_ORIGIN;
+            const runtime = askTask ? askBrowserRuntime() : browserRuntime;
+            if (askTask && browser.grant.browser.id && (await runtime.status()).selectedBrowserId !== browser.grant.browser.id) {
               throw new Error("The selected browser changed after this task was started. Start the task again from Ask.");
             }
+            // A task on a mapped portal (REI) gets the pack's declared read-safe controls, so its menus and
+            // listed reports read without a card while everything else asks as before, and Bud may propose
+            // the path it found. Without a map (or if it cannot be read) the task runs exactly as before.
+            const map = askTask && browser.grant.route === "ask" ? await portalMapForSites(browser.grant.sites, askPortalPackLoader()).catch(() => null) : null;
+            const controls = map ? portalRecipeControls(map.pack) : undefined;
+            // The pack's account location only binds a task that chose an account; it never blocks one that did not.
+            if (controls && !browser.grant.browser.accountMarker) delete controls.accountMarker;
             browserBroker = await startBrowserBroker({
+              runtime, ...(map && controls ? { portal: controls, learn: map } : {}),
               threadId, runId: browser.runId,
               checkpoint: browser.checkpoint,
               context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },
@@ -962,7 +1028,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }),
             });
             if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }
-            mcpServers = mcpServers.map(server => server.name === "browser" ? browserBroker!.descriptor : server);
+            mcpServers = mcpServers.map(server => server.name === BROWSER_SERVER ? browserBroker!.descriptor : server);
           }
           if (firstTurn.integrations?.composio) {
             const { key, url, headers, gmailReadOnly, allowedApps, managed } = firstTurn.integrations.composio;
@@ -1033,6 +1099,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
             if (closed) { viewsBroker.close(); throw new Error("Bud’s saved views session stopped."); }
             mcpServers = mcpServers.map(server => server.name === WORKSPACE_VIEWS_SERVER ? viewsBroker!.descriptor : server);
+          }
+          if (mcpServers.some(server => server.name === WORKFLOW_SETTINGS_SERVER)) {
+            // Working rules: a read with no card; every change and restore shows the one-time card first.
+            settingsBroker = await startWorkflowSettingsBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              settings: () => actingTurn()?.turn.integrations?.workflowSettings,
+              approve: reviewOnce,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { workflowSettings: receipt } }),
+            });
+            if (closed) { settingsBroker.close(); throw new Error("Bud’s working rules session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === WORKFLOW_SETTINGS_SERVER ? settingsBroker!.descriptor : server);
           }
           if (mcpServers.some(server => server.name === BANK_SOURCE_SERVER)) {
             // Read-only bank feed; no card. The current turn's binding is used.
@@ -1121,7 +1198,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // resolved session capabilities at the actual prompt boundary,
             // including a computer mounted through the CUA fallback.
             managedService.assertCapability("reasoning");
-            if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
+            if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
             if (!sessionAnnounced) {
               sessionAnnounced = true;
               emit({
@@ -1181,6 +1258,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           crmBroker?.cancelPending();
           remindersBroker?.cancelPending();
           viewsBroker?.cancelPending();
+          settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
@@ -1262,7 +1340,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
-        if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
+        if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
         const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm);
         let runtime = warm.get(threadId);

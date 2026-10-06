@@ -185,6 +185,72 @@ note: >-
   live readback until an approved export is inspected.
 ```
 
+Directory exports (tenant-list, supplier-list): **PLACEHOLDER — the real REI
+export location is not mapped yet.** Both recipes read the list's own grid
+first (its "N records" footer is the count the export must match), then open
+the export through Reports like `receipt-register`, clicking the report by
+name without typing (the task grants no typing). The report names below are
+deliberately fake so a live run stops at "control missing" instead of opening
+the wrong report. When the owner's screenshots confirm the real path (the
+Tenants "Action" menu, or a Reports › Tenants / Suppliers category report),
+replace each `(placeholder)` name — the recipe's `click` label and its entry
+in `read_safe_labels` (section 6) — then run
+`node scripts/rei-recipes.mjs --write`. If the real export is an Action-menu
+item on the list itself, replace the Reports steps with `click` steps on that
+list. The fictional portal reads these names from `recipes.json`, so it follows.
+
+```yaml
+recipe: tenant-list
+workflow: Austin W1 tenant directory (REI Reference → bank file last column)
+kind: prepare
+tier: [S]
+grant_needs: [download]
+steps:
+  - nav: [Tenants]
+  - check: account
+  - wait: table
+  - read: table
+  - nav: [Reports]
+  - check: account
+  - wait: table
+  - click: Tenant list export (placeholder)    # PLACEHOLDER: real REI report name
+  - wait: modal
+  - select: {field: Output, option: Export Only}
+  - download: {label: Export}
+  - check: account
+success: approved Export Only tenant list (Reference, Surname, Firstname, Property, Rent, BPay/Ref No.) for the selected account; its row count equals the Tenants grid footer
+on_unknown: hold if approval, download, account scope or row count is uncertain; never save a directory from an unconfirmed file
+note: >-
+  PLACEHOLDER export path (see above). Read only: nothing in REI changes.
+  The person reviews the preview and saves it in RealBud.
+```
+
+```yaml
+recipe: supplier-list
+workflow: Austin W4 supplier directory (listed senders)
+kind: prepare
+tier: [S]
+grant_needs: [download]
+steps:
+  - nav: [Suppliers]
+  - check: account
+  - wait: table
+  - read: table
+  - nav: [Reports]
+  - check: account
+  - wait: table
+  - click: Supplier list export (placeholder)  # PLACEHOLDER: real REI report name
+  - wait: modal
+  - select: {field: Output, option: Export Only}
+  - download: {label: Export}
+  - check: account
+success: approved Export Only supplier list (Reference, Description, Email, …) for the selected account; its row count equals the Suppliers grid footer
+on_unknown: hold if approval, download, account scope or row count is uncertain; never save a directory from an unconfirmed file
+note: >-
+  PLACEHOLDER export path (see above). Read only: nothing in REI changes.
+  The person reviews the preview and saves it in RealBud.
+```
+
 ```yaml
 recipe: bulk-receipting-preview
 workflow: Austin WF1 bank CSV → REI recognition
@@ -343,7 +409,7 @@ A click, upload, toast or HTTP 200 is **not** a readback.
 ## 6. Labels Bud may and may not press
 
 ```yaml
-read_safe_labels: [Search, Status, Category, Zone, View, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel]
+read_safe_labels: [Search, Status, Category, Zone, View, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
 consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit]
 forbidden_areas: [Settings, My Profile, Process › Disbursement, Process › End of Month, Process › Journals, Process › Reversals, Process › Direct Debit, Process › Payments]
 ```

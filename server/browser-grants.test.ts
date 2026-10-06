@@ -17,6 +17,7 @@ import {
   BROWSER_TASK_RESTART_NOTE,
   browserTaskCapabilities,
   browserTaskCardView,
+  browserTaskProgress,
   browserTaskLimitReached,
   BrowserTaskStore,
   threadAttachedFiles,
@@ -61,11 +62,28 @@ describe("Ask browser task cards", () => {
       id: record.id, messageId: "message-1", status: "proposed", request: "Download this month's invoices from portal.fictional-strata.example",
       sites: [SITE], siteSource: "request", savedJob: null, actions: ["read", "navigate", "click", "download"],
       consequential: ["pay", "sign", "send", "notice", "delete", "account-change"], minutes: 30, budget: 40,
-      offerExpiresAt: NOW + ASK_TASK_OFFER_MS, startedAt: null, expiresAt: null, endNote: null,
+      offerExpiresAt: NOW + ASK_TASK_OFFER_MS, startedAt: null, expiresAt: null, endNote: null, progress: [],
     });
     expect(await store.list("thread-ask")).toHaveLength(1);
     expect(await store.list("thread-other")).toEqual([]);
     expect(BROWSER_TASK_OFFER).toContain("**Start this task**");
+  });
+
+  it("shows what the task did as short progress lines, never an action record's hashes or a field value", () => {
+    const at = NOW;
+    expect(browserTaskProgress([
+      { at, kind: "action", note: "Signed in to REI Cloud." },
+      { at, kind: "action", note: "allowed for this browser task" },
+      { at, kind: "action", note: "Allowed once by you." },
+      { at, kind: "asked", note: "Asked you to confirm the account FICT1 on rei-mock.fictional.test." },
+      { at, kind: "action", note: "You confirmed the account FICT1 on rei-mock.fictional.test." },
+      { at, kind: "action", note: "Opened Reports on rei-mock.fictional.test." },
+      { at, kind: "action", note: "Opened Reports on rei-mock.fictional.test." },
+      { at, kind: "action", note: 'Chose an option in combobox "Output" on rei-mock.fictional.test. Action record: tool=browser_select values-sha256=' + "a".repeat(64) },
+      { at, kind: "action", note: "Downloaded 'fictional-tenant-list.csv' (812 bytes, text/csv, sha256 0123456789ab) from rei-mock.fictional.test into this task's private folder. Action record: tool=browser_download" },
+      { at, kind: "action", note: "Saved the tenant-list path Bud found on rei-mock.fictional.test (version 1) with your approval." },
+    ])).toEqual(["Signed in to REI Cloud", "You confirmed the account FICT1", "Opened Reports", "Chose an option in Output", "Downloaded fictional-tenant-list.csv", "Saved the tenant-list path Bud found"]);
+    expect(browserTaskProgress([{ at, kind: "action", note: "You finished the sign-in page on portal.fictional-strata.example. Bud read the page again and continues the same task." }])).toEqual(["Signed in"]);
   });
 
   it("starts with an explicit grant bound to this thread and the selected browser", async () => {

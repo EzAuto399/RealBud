@@ -1,0 +1,86 @@
+{
+  "format": "realbud-loop-pack",
+  "version": 1,
+  "id": "austin-office-schedule",
+  "revision": 1,
+  "title": "Austin office workflows",
+  "timeZone": "Australia/Brisbane",
+  "connections": [
+    { "id": "gmail", "name": "Gmail", "how": "Connect the office Gmail in Workspace, Connected apps. Each person signs in on their own screen." },
+    { "id": "redbark", "name": "Redbark bank link", "how": "Connect Redbark in Workspace, Connected apps, so Bud can read the ANZ rows. Without it, add the ANZ CSV in the bank review." },
+    { "id": "rei", "name": "REI Cloud", "how": "Sign in to REI Cloud in RealBud's work browser when Bud asks. Bud never sees or types the password." }
+  ],
+  "rules": [
+    { "id": "maintenance-month", "text": "Maintenance checks count invoices per calendar month by the date the email was received.", "setting": { "basis": "receivedDate", "span": "calendarMonth" } },
+    { "id": "inspection-cycle", "text": "Inspections follow a six-month cycle from the last completed inspection.", "setting": { "cycleMonths": 6, "cycleBasis": "completed" } }
+  ],
+  "loops": [
+    {
+      "loopId": "bank-references", "owner": "Accounts",
+      "schedule": { "time": "08:00", "weekdays": [0, 1, 2, 3, 4, 5, 6], "intervalDays": 2, "anchorDate": "2026-10-02" },
+      "plan": {
+        "reads": "The ANZ rows from Redbark, or the ANZ CSV you add in the bank review, and the saved REI tenant list.",
+        "waitsFor": "Your review of rows it could not match, then your REI Cloud sign-in in the work browser. Other workflows keep running while it waits.",
+        "notifies": "Accounts: a card in Work and a desktop notification when it needs you.",
+        "approval": "Uploading the reviewed file to REI is asked each time and shows the exact file. Processing the receipts stays with you in REI."
+      },
+      "needs": ["redbark", "tenants", "rei"]
+    },
+    {
+      "loopId": "weekly-bills", "owner": "Accounts",
+      "schedule": { "time": "08:00", "weekdays": [1] },
+      "plan": {
+        "reads": "Bill emails and PDFs in the reviewed Gmail scope, and the saved property rate and levy numbers.",
+        "waitsFor": "Your review of new bills and suggested patterns. No sign-in is needed.",
+        "notifies": "Accounts: new bills to review and expected bills that have not arrived.",
+        "approval": "Nothing is paid or sent. Accepting a bill is your decision."
+      },
+      "needs": ["gmail"]
+    },
+    {
+      "loopId": "inbound-triage", "owner": "Accounts",
+      "schedule": { "time": "07:30", "weekdays": [1, 2, 3, 4, 5] },
+      "note": "Starts at 7:30 so the list is ready by about 8:00. The time is when Bud starts, not a promise of when it finishes.",
+      "plan": {
+        "reads": "New and unresolved mail in the reviewed Gmail scope since the last check.",
+        "waitsFor": "Nothing. It prepares a list for you and keeps your earlier decisions.",
+        "notifies": "The person whose mail it is: \"Morning priorities ready\".",
+        "approval": "Nothing is sent, archived or relabelled."
+      },
+      "needs": ["gmail"]
+    },
+    {
+      "loopId": "maintenance-review", "owner": "Property manager",
+      "schedule": { "time": "08:30", "weekdays": [1, 2, 3, 4, 5] },
+      "plan": {
+        "reads": "Reviewed maintenance bills and the saved REI supplier list.",
+        "waitsFor": "Nothing. You see the findings when you are ready.",
+        "notifies": "Property manager: senders Gmail could not verify, and several invoices for one property in a calendar month.",
+        "approval": "Nothing is paid or changed. You mark findings seen or dismiss them."
+      },
+      "needs": ["gmail", "suppliers"]
+    },
+    {
+      "loopId": "rei-supplier-check", "owner": "Property manager",
+      "schedule": { "time": "08:15", "weekdays": [0, 1, 2, 3, 4, 5, 6], "intervalDays": 14, "anchorDate": "2026-10-12" },
+      "plan": {
+        "reads": "REI Cloud's supplier list, read-only, in the work browser.",
+        "waitsFor": "Your REI Cloud sign-in, like the bank import.",
+        "notifies": "Property manager: suppliers added, removed or changed in REI.",
+        "approval": "Saving the changed supplier list on this PC. Nothing is changed in REI."
+      },
+      "needs": ["rei"]
+    },
+    {
+      "loopId": "inspection-draft", "owner": "Property manager",
+      "schedule": { "time": "09:00", "weekdays": [1, 2, 3, 4, 5], "monthly": "first-weekday" },
+      "plan": {
+        "reads": "Your inspection rules, the saved inspection history and the properties on Desk.",
+        "waitsFor": "Your review of the draft. Accepted and moved visits stay where you put them.",
+        "notifies": "Property manager: \"New inspection draft ready to review\".",
+        "approval": "Nothing is booked. Property Inspect is not connected yet."
+      },
+      "needs": []
+    }
+  ]
+}

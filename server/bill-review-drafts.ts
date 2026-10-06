@@ -13,7 +13,7 @@ const HEX = /^[a-f0-9]{64}$/;
 const WORKSPACE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALUE_KEYS = ['workspaceId', 'state', 'billId', 'billRevision', 'itemId', 'messageId', 'sourceDigest', 'fields', 'billState', 'reason', 'seriesId', 'arrivalDate', 'proposalRequest'];
 const FIELD_KEYS = ['propertyId', 'kind', 'vendor', 'amount', 'invoiceDate', 'dueDate', 'note'] as const;
-const OPTIONAL_FIELD_KEYS = ['invoiceNumber', 'invoiceVersion'] as const;
+const OPTIONAL_FIELD_KEYS = ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const;
 const STATES = ['editing', 'saved', 'accepted', 'discarded'];
 const BILL_STATES = ['received', 'in-process', 'hold', 'cancelled'];
 const fail = (message: string, status: number): never => { throw Object.assign(new Error(message), { status }); };
@@ -167,7 +167,7 @@ export class BillReviewDraftStore {
           current.proposalRequest !== null && !isDeepStrictEqual(current.proposalRequest, input.proposalRequest)) conflict();
       if (Object.hasOwn(current, 'financialReview') !== Object.hasOwn(input, 'financialReview')) conflict();
       if (OPTIONAL_FIELD_KEYS.some(key => current.fields[key]?.trim() && !Object.hasOwn(input.fields, key)))
-        fail('Keep the saved invoice number and version, or explicitly clear an uncertain value. Your saved draft has been preserved.', 409);
+        fail('Keep the saved invoice number, version, supplier reference and work description, or explicitly clear an uncertain value. Your saved draft has been preserved.', 409);
       const draft: BillReviewDraft = { version: 1, id, revision: current.revision + 1, createdAt: current.createdAt,
         updatedAt: Math.max(current.updatedAt, this.time()), ...input };
       checkSize(draft);

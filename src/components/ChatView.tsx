@@ -792,7 +792,6 @@ const MessagesList = memo(function MessagesList({
   browserTaskActing,
   browserTaskError,
   onBrowserTask,
-  onBrowserTaskConnect,
   scrollRef,
   readingEarlier,
   onReadEarlier,
@@ -835,7 +834,6 @@ const MessagesList = memo(function MessagesList({
   browserTaskActing?: string | null;
   browserTaskError?: { id: string; text: string } | null;
   onBrowserTask?: (id: string, action: BrowserTaskAction, site?: string) => void;
-  onBrowserTaskConnect?: () => void;
   scrollRef: RefObject<HTMLDivElement | null>;
   readingEarlier: boolean;
   onReadEarlier: () => void;
@@ -991,7 +989,6 @@ const MessagesList = memo(function MessagesList({
                     onDecline={() => onBrowserTask(task.id, "decline")}
                     onSaveJob={() => onBrowserTask(task.id, "save-job")}
                     onStop={() => onBrowserTask(task.id, "stop")}
-                    onConnect={() => onBrowserTaskConnect?.()}
                   />
                 </>
               );
@@ -1157,14 +1154,11 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const goYouJobs = goRoutines;
   const stopTurn = useCallback(() => dispatch({ type: "interrupt", botId: bot.id }), [bot.id, dispatch]);
   const browserTasks = useBrowserTasks({ threadId: bot.threadId, messages, busy: Boolean(bot.busy), enabled: productAsk, onInterrupt: stopTurn });
-  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => { void browserTasks.act(id, action, site); }, [browserTasks.act]);
   const browserSignIns = useBrowserSignIns({ threadId: bot.threadId, busy: Boolean(bot.busy), enabled: productAsk });
-  // Opens RealBud's work browser here (the same route the browser card uses); never a trip to settings.
-  const connectTaskBrowser = useCallback(() => {
-    void api("/api/browser/connect", { method: "POST", body: "{}" }, { timeoutMs: 90_000 }).then(
-      () => { setAskActionNotice({ ok: true, text: "The work browser is open. Sign in there if the site asks, then start the task." }); void browserTasks.refresh(); },
-      () => setAskActionNotice({ ok: false, text: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then try again." }));
-  }, [browserTasks.refresh]);
+  // Start opens the work browser itself; on a mapped site it also opens the sign-in handover, so look for it afterwards.
+  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => {
+    void browserTasks.act(id, action, site).then(() => { if (action === "start") void browserSignIns.refresh(); });
+  }, [browserTasks.act, browserSignIns.refresh]);
   const goYouSetup = useCallback(() => {
     if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
     setScheduleContinueOpen(false);
@@ -1425,7 +1419,6 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
               </span>
               {bot.busy && !askWaitingForYou && <Loader2 size={14} className="animate-spin text-ink-muted" />}
             </div>
-            <p className="ask-header-description">Your work with Bud.</p>
           </div>
         ) : (
         <button
@@ -1556,7 +1549,6 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             browserTaskActing={browserTasks.acting}
             browserTaskError={browserTasks.error}
             onBrowserTask={runBrowserTask}
-            onBrowserTaskConnect={connectTaskBrowser}
           />
           {browserSignIns.handovers.map(handover => (
             <BrowserSignInStrip key={handover.id} handover={handover} busy={browserSignIns.acting === handover.id}

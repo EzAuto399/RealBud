@@ -13,6 +13,12 @@ import {
   consequentialKind,
   accountMarkerShown,
   legacyBrowserGrant,
+  UNUSUAL_NAME,
+  UNKNOWN_PAGE,
+  approvalPath,
+  approvalUrl,
+  pageOrigin,
+  withPageOrigin,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
@@ -691,5 +697,138 @@ describe("browser approval records", () => {
     const store = new BrowserApprovalStore({ file });
     await expect(store.create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending")).rejects.toThrow(/waiting for you to check/);
     expect(await new BrowserApprovalStore({ file }).list()).toHaveLength(500);
+  });
+
+  it("trims settled approvals by size but keeps a held legacy acknowledgement", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-approvals-")); cleanup.push(() => removeFixture(root));
+    const file = join(root, "approvals.json");
+    const auth = authorizeBrowserAction(grant(), PAY_PAGE, "browser_click_semantic", { ref: "@e1" }, { now: 10 });
+    if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
+    const row = { ...auth.draft, version: 1, purpose: "browser-approval", grantId: grant().id, runId: RUN, threadId: "thread-fictional", createdAt: 1, decidedAt: 1, decision: "approved" };
+    const id = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    // The oldest row is a pressed payment saved as "succeeded" (an acknowledgement, held); the rest are settled and large.
+    const settled = Array.from({ length: 450 }, (_, i) => ({ ...row, id: id(i + 1), outcome: "confirmed", facts: [{ label: "Note", value: "f".repeat(7000) }] }));
+    plantPrivateFile(file, JSON.stringify({ version: 1, purpose: "browser-approvals", approvals: [{ ...row, id: id(0), outcome: "succeeded" }, ...settled] }));
+    await new BrowserApprovalStore({ file }).create(auth.draft, { grantId: grant().id, runId: RUN, threadId: "thread-fictional" }, "pending");
+    const after = await new BrowserApprovalStore({ file }).list();
+    expect(after.length).toBeLessThan(452);
+    expect(await new BrowserApprovalStore({ file }).unresolved(auth.draft.fingerprint, auth.draft.effect)).toMatchObject({ id: id(0), outcome: "succeeded" });
+  });
+});
+
+// Security review of 21be00b9 (approval-ui-integrity, authorization-classification-bypass): the shown label drops what
+// follows a control's name when it is not a flag, an attribute or one link address (linkTail), and plain text at its
+// first url=. Risk words in that dropped text were never classified, and the card named only the trimmed label. Now every
+// classifier reads the whole line, the label never shows the dropped text, such a control always asks with a warning,
+// and an approval binds the page (record ids shown) and the exact label its card showed.
+describe("a control whose label is not its whole name", () => {
+  const NATIVE = (line: string, url = "https://portal.example/tenants") => page(`@native-ax 1\nrootwebarea\n  @e9 button "MOCK-OFFICE"\n  @e1 ${line}`, url);
+  const reading: BrowserPortalControls = { origin: "https://portal.example", readSafe: ["View report", "Search"], menu: [], pagination: [], consequential: [], signInHosts: [] };
+  const task = () => explicitTask({ route: "ask", browser: { id: "fictional-work", accountMarker: null }, actions: ["read", "navigate", "click", "fill", "keys"], expiresAt: 2_000_000, budget: 50 });
+  const scope = (t: BrowserTaskGrant) => ({ grantId: t.id, runId: t.runId, requestHash: t.request.sha256, browserId: "fictional-work", tabId: 1, origin: "https://portal.example", accountMarker: null, readOnly: true as const });
+  const click = (observed: BrowserObservation, portal = reading) =>
+    authorizeBrowserAction(task(), observed, "browser_click_semantic", { tab_id: 1, ref: "@e1" }, { now: 1_000_000, taskScope: scope(task()), portal });
+
+  it.each([
+    ["plain text cut at url=", page('Tenants\n@e1 button "View report url= Delete all tenants"')],
+    ["words after a structured name", NATIVE('button "View report" Delete all tenants')],
+    ["words after a link address", NATIVE('link "View report" url="/reports" Remove tenant')],
+    ["a name past 1000 characters", NATIVE(`button "View report ${"x".repeat(1000)} Delete all tenants"`)],
+  ])("classifies risk words in the dropped text: %s", (_, observed) => {
+    const classified = classifyBrowserAction(task(), observed, "browser_click_semantic", { ref: "@e1" }, reading);
+    expect(classified).toMatchObject({ class: "consequential", unusualName: true });
+    expect("label" in classified && classified.label).not.toMatch(/Delete|Remove/);
+    // The label cannot name the item, so a deletion with no on-page question stays with the person.
+    expect(click(observed)).toMatchObject({ decision: "deny" });
+  });
+
+  it("asks with a warning, once, and never by the task scope or a rule, for an unusual name with no risk word", () => {
+    const observed = NATIVE('button "View report" extra words');
+    expect(click(NATIVE('button "View report"'))).toMatchObject({ decision: "allow" });
+    expect(click(observed)).toMatchObject({ decision: "ask", once: true, fence: { ruleOffer: null } });
+    expect(click(observed)).toMatchObject({ summary: expect.stringContaining(UNUSUAL_NAME) });
+    expect(JSON.stringify(click(observed))).not.toContain("extra words");
+    const rules = [{ key: "portal:prefill:portal.example", decision: "allow" as const }];
+    const fill = (line: string) => authorizeBrowserAction(grant(), page(line), "browser_fill", { ref: "@e1", value: "FICT-1" }, { rules });
+    expect(fill('@e1 textbox "Property code"')).toMatchObject({ decision: "allow" });
+    expect(fill('@e1 textbox "Property code url= extra"')).toMatchObject({ decision: "ask", once: true, summary: expect.stringContaining(UNUSUAL_NAME) });
+    // A grant still needs the step's own class: an unusual Save is still a submit.
+    expect(authorizeBrowserAction(task(), NATIVE('button "Save" extra'), "browser_click_semantic", { ref: "@e1" }, { now: 1_000_000 })).toMatchObject({ decision: "deny" });
+  });
+
+  it("warns on the approval card and binds the page, its record ids and the exact label", () => {
+    const pay = 'Pay a bill\nPayee: Fictional Plumbing Pty Ltd\nAmount: AUD 480.00\n@e1 button "Pay now"';
+    const at = (path: string) => page(pay, `https://portal.example${path}?session=SYNTHETIC-SESSION`);
+    const draft = (observed: BrowserObservation, label = 'button "Pay now"') => browserApprovalDraft("pay", observed, "@e1", label, 1_000);
+    const first = draft(at("/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay"));
+    expect(first.url).toBe("https://portal.example/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay");
+    expect(first.unusualName).toBeUndefined(); expect(first.summary).not.toContain(UNUSUAL_NAME);
+    // Another record, or another label, is another approval; the same effect still holds against repeats.
+    const other = draft(at("/bills/7c9e6679-7425-40de-944b-e07fc1f90ae7/pay"));
+    expect(other.fingerprint).not.toBe(first.fingerprint); expect(other.effect).toBe(first.effect);
+    expect(draft(at("/bills/0f8fad5b-d9cb-469f-a165-70867728950e/pay"), 'button "Pay now" [focused]').fingerprint).not.toBe(first.fingerprint);
+    const odd = draft(page(pay.replace('"Pay now"', '"Pay now" url= extra'), "https://portal.example/bills/1"));
+    expect(odd).toMatchObject({ unusualName: true, summary: expect.stringContaining(UNUSUAL_NAME) });
+    expect(draft(page(pay.replace('"Pay now"', '"Pay now" url= other'), "https://portal.example/bills/1")).fingerprint).not.toBe(odd.fingerprint);
+  });
+});
+
+// Repeated reviews of the masked path kept off the card (sensitive-data-exposure / parser differential): masking a
+// path always misses a shape. Off-card sinks keep pageOrigin only; the local card and the private approval record keep
+// approvalUrl, both from one WHATWG parse. [address, base, pageOrigin, approvalUrl or null when there is no web page].
+const TRICKY: ReadonlyArray<[string, string | undefined, string, string | null]> = [
+  ["https://portal.example/owners/jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://portal.example/tenants/jane.doe@example.com/remove", undefined, "https://portal.example", "https://portal.example/tenants/jane.doe@example.com/remove"],
+  ["https://portal.example/t/42", undefined, "https://portal.example", "https://portal.example/t/42"],
+  ["https://portal.example/r/%6A%61ne%20smith/%2F..%2Fadmin", undefined, "https://portal.example", "https://portal.example/r/jane smith/%2F..%2Fadmin"],
+  ["../owners/jane-smith?token=SYNTHETIC-TOKEN", "https://portal.example/tenants/list", "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["//other.example/owners/jane-smith", "https://portal.example/tenants", "https://other.example", "https://other.example/owners/jane-smith"],
+  ["https://portal.example\\owners\\jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://jane:SYNTHETIC-PASS@portal.example/owners/jane-smith", undefined, "https://portal.example", "https://portal.example/owners/jane-smith"],
+  ["https://b\u00fccher.example/owners/jane-smith", undefined, "https://xn--bcher-kva.example", "https://xn--bcher-kva.example/owners/jane-smith"],
+  ["HTTPS://PORTAL.EXAMPLE:443/Owners/Jane-Smith?name=jane#smith", undefined, "https://portal.example", "https://portal.example/Owners/Jane-Smith"],
+  ["https://portal.example:8443/owners/jane-smith", undefined, "https://portal.example:8443", "https://portal.example:8443/owners/jane-smith"],
+  ["owners/jane-smith", undefined, UNKNOWN_PAGE, null],
+  ["javascript:alert('jane-smith')", undefined, UNKNOWN_PAGE, null],
+  ["file:///synthetic/jane-smith", undefined, UNKNOWN_PAGE, null],
+  ["data:text/html,jane-smith", undefined, UNKNOWN_PAGE, null],
+];
+const PRIVATE = /jane|smith|42|SYNTHETIC|owners|tenants|admin/i;
+
+describe("a page as every sink keeps it", () => {
+  it("keeps only the origin off the card, and the card's real path on it, from one parse", () => {
+    for (const [address, base, origin, card] of TRICKY) {
+      expect(pageOrigin(address, base), address).toBe(origin);
+      expect(pageOrigin(address, base), address).not.toMatch(PRIVATE);
+      if (card) expect(approvalUrl(new URL(address, base)), address).toBe(card);
+    }
+  });
+
+  it("logs an approval request with its page's origin only, whatever the address or summary", () => {
+    for (const [address, base, origin, card] of TRICKY) {
+      // As the broker emits a navigate card (params.url and summary from approvalUrl), and as a model's own request would.
+      const url = card ? new URL(address, base) : null;
+      const opened = url ? { type: "request.opened", tool: "browser_navigate", fence: { surface: "portal-read" }, params: { url: card, label: 'link "Statement"' },
+        summary: `Open ${url.hostname}${approvalPath(url)} in this job's borrowed tab.`, browserApproval: { site: url.hostname, page: `${url.hostname}${approvalPath(url)}`, control: "Delete" } }
+        : { type: "request.opened", tool: "web_fetch", params: { url: address }, summary: `Fetch ${address}` };
+      const logged = withPageOrigin(opened) as typeof opened & { browserApproval?: Record<string, unknown> };
+      expect(logged.params.url, address).toBe(origin);
+      expect(JSON.stringify({ ...logged, params: { ...logged.params, label: "" } }), address).not.toMatch(PRIVATE);
+      if (url) {
+        expect(logged.summary).toBe(`Open ${url.hostname} in this job's borrowed tab.`);
+        expect(logged.browserApproval).toEqual({ site: url.hostname, control: "Delete" });
+      } else expect(logged.summary).toBe(`Approval asked on ${UNKNOWN_PAGE}.`);
+    }
+    // A summary that writes the page another way, or comes from outside the broker, is replaced whole.
+    const page = "https://portal.example/r/jane smith";
+    for (const opened of [
+      { type: "request.opened", fence: {}, params: { url: page }, summary: "Open portal.example/r/jane%20smith now." },
+      { type: "request.opened", fence: {}, params: { url: page }, summary: "Open /r/jane smith on portal.example." },
+      { type: "request.opened", params: { url: page }, summary: "Fetch the page with jane%20smith." },
+    ]) expect(withPageOrigin(opened)).toEqual({ ...opened, params: { url: "https://portal.example" }, summary: "Approval asked on portal.example." });
+    // Only a request carrying a page address changes.
+    for (const other of [{ type: "request.resolved", params: { url: page } }, { type: "request.opened", summary: page }, { type: "turn.started" }]) {
+      expect(withPageOrigin(other)).toBe(other);
+    }
   });
 });

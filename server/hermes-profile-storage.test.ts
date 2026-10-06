@@ -381,10 +381,18 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     // now ships five more skills (14 files in 8 directories): two admissions
     // per new path on a fresh apply, one on reapply. Launch counts are
     // unchanged because the skill tree still rides the profile's processes.
+    //
+    // 2026-10-05: admissions fresh 68 -> 74, reapply 52 -> 55, startup 8 -> 9.
+    // The working-rules skill (one directory, one file) and the private
+    // shipped-file record that lets unchanged skills update on upgrade.
+    // Launch counts are unchanged.
+    //
+    // 2026-10-05: admissions fresh 74 -> 78, reapply 55 -> 57. The portal-explore
+    // skill (one directory, one file). Launch counts are unchanged.
     expect({ fresh, reapply, startup }).toEqual({
-      fresh: { launches: 5, admissions: 68 },
-      reapply: { launches: 7, admissions: 52 },
-      startup: { launches: 3, admissions: 8 },
+      fresh: { launches: 5, admissions: 78 },
+      reapply: { launches: 7, admissions: 57 },
+      startup: { launches: 3, admissions: 9 },
     });
   });
 

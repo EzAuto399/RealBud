@@ -240,6 +240,55 @@ export function reviewBankReferences(batch: BankReferenceBatch, decisions: BankR
     changes, originalDigest: batch.originalDigest, outputDigest: bankDigest(bytes) };
 }
 
+/** REI Cloud's Tenants grid export as the reference directory: `reference`
+ * (what goes in the bank file's last column) and `tenant` are the REI Reference
+ * ("A114 TALIA"), `propertyId` the Property code; aliases are the code,
+ * surname, "firstname surname" and BPay ref; `expectedRent` from Rent. Headers
+ * match by name in any order, case and spacing. A property with several
+ * tenants gets one rule per tenant keyed by its Reference, so a bare code stays
+ * ambiguous. `fallback` rules (Property.csv or the typed directory) lend their
+ * aliases and invoice codes to the tenant rule of the same property and stay
+ * only for properties the tenant list does not name. */
+export function tenantDirectoryRules(csv: string, fallback: BankReferenceRule[] = []): BankReferenceRule[] {
+  const table = parseBankCsv(csv), header = table[0].cells.map(cell => cell.toLowerCase().replace(/[^a-z]/g, ""));
+  const column = (...names: string[]) => header.findIndex(cell => names.some(name => cell === name || (name.endsWith("*") && cell.startsWith(name.slice(0, -1)))));
+  const at = { reference: column("reference", "tenantreference", "ref"), property: column("property", "propertycode", "code"), surname: column("surname", "lastname"),
+    first: column("firstname", "givenname"), rent: column("rent", "rentamount"), bpay: column("bpay*", "refno") };
+  if (at.reference < 0 || at.property < 0) fail("The tenant list needs Reference and Property columns, as in REI's Tenants export.");
+  const cell = (cells: string[], index: number) => index < 0 ? "" : cells[index].replace(/\s+/g, " ").trim();
+  const rows = table.slice(1).map(({ cells }) => ({ cells, reference: cell(cells, at.reference), code: cell(cells, at.property) })).filter(row => row.reference && row.code);
+  const count = new Map<string, number>(), seen = new Set<string>();
+  for (const row of rows) count.set(row.code, (count.get(row.code) ?? 0) + 1);
+  const tenants: BankReferenceRule[] = rows.map(({ cells, reference, code }, index) => {
+    if (seen.has(reference)) fail(`Tenant reference ${reference} appears twice in the tenant list.`);
+    seen.add(reference);
+    if (!safeText(reference, 100) || formula(reference) || !safeText(code, 100)) fail(`Tenant list row ${index + 1} needs a plain Reference and Property.`);
+    const surname = cell(cells, at.surname), first = cell(cells, at.first), rentText = cell(cells, at.rent).toLowerCase();
+    const aliases = [...new Set([code, surname, [first, surname].filter(Boolean).join(" "), cell(cells, at.bpay)])].filter(alias => safeText(alias, 200) && normalized(alias).length >= 3);
+    const rent = /\d[\d,]*(?:\.\d{1,2})?/.exec(rentText), cents = rent ? Math.round(Number(rent[0].replace(/,/g, "")) * 100) : 0;
+    return { propertyId: count.get(code)! > 1 ? reference : code, reference, tenant: reference, aliases,
+      ...(cents > 0 && Number.isSafeInteger(cents) ? { expectedRent: cents, rentPeriod: /fortnight/.test(rentText) ? "fortnight" as const : /month|\bp\.?c?m\b/.test(rentText) ? "month" as const : "week" as const } : {}) };
+  });
+  const byId = new Map(tenants.map(rule => [rule.propertyId, rule])), references = new Set(tenants.map(rule => rule.reference));
+  const kept = fallback.filter(rule => {
+    const tenant = byId.get(rule.propertyId);
+    if (!tenant) return !references.has(rule.reference) && !count.has(rule.propertyId);
+    tenant.aliases = [...new Set([...tenant.aliases, ...rule.aliases])].slice(0, 20);
+    if (rule.invoiceCodes?.length) tenant.invoiceCodes = rule.invoiceCodes;
+    return false;
+  });
+  return [...tenants, ...kept];
+}
+
+/** A prepare request may carry an REI tenant list as CSV text: it becomes the
+ * directory, with the request's own rules as the fallback. */
+export function withTenantDirectory<T extends { rules: BankReferenceRule[] }>(input: T & { tenantList?: unknown }): T {
+  if (!input || typeof input !== "object" || !("tenantList" in input)) return input;
+  const { tenantList, ...rest } = input;
+  if (typeof tenantList !== "string" || !tenantList.trim()) fail("Choose the REI tenant list CSV again.");
+  return { ...rest, rules: tenantDirectoryRules(tenantList, Array.isArray(rest.rules) ? rest.rules : []) } as unknown as T;
+}
+
 /** Import unless anything is unresolved: a debit, no or several property matches, an existing reference or a possible duplicate holds. */
 export const defaultDisposition = (row: BankReferenceRow): BankRowDisposition =>
   BigInt(row.amount.replace(".", "")) > 0n && row.candidates.length === 1 && !row.issues.length ? "import" : "hold";

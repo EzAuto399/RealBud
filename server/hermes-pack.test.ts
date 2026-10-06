@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
@@ -61,7 +62,11 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
     writeFileSync(join(dir, "SOUL.md"), "Existing profile");
     writeFileSync(join(dir, "config.yaml"), "{broken");
-    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    // Missing shipped skills are added; an unrecognised SOUL and the config are kept.
+    const startup = ensurePropertyPack(home);
+    expect(startup.wrote.every(rel => rel.startsWith("skills/"))).toBe(true);
+    expect(startup.kept).toEqual(["SOUL.md"]);
+    expect(readFileSync(join(dir, "SOUL.md"), "utf8")).toBe("Existing profile");
     expect(readFileSync(join(dir, "config.yaml"), "utf8")).toBe("{broken");
     expect(JSON.parse(readFileSync(join(home, "auth.json"), "utf8"))).toMatchObject({ providers: {}, credential_pool: {} });
     expect(approvalsAreManual(home)).toBe(false);
@@ -472,7 +477,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
 
   it("installs the staged upstream optional skills byte for byte beside RealBud's own", () => {
     const staged = ["decision-questionnaire", "domain-intel", "one-three-one-rule", "rss-feeds", "simple-english"];
-    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", ...staged].sort());
+    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", "portal-explore", "working-rules", ...staged].sort());
     const home = mkdtempSync(join(tmpdir(), "realbud-optional-skills-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     for (const name of staged) {
@@ -484,6 +489,57 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     }
     expect(existsSync(join(dir, "skills", "rss-feeds", "scripts", "feed.py"))).toBe(true);
     expect(existsSync(join(dir, "skills", "simple-english", "references", "checklist.md"))).toBe(true);
+  });
+
+  it("ships the working-rules skill into the prepared profile, visible and free of tool names", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-working-rules-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    const shipped = readFileSync(join(PACK_DIR, "skills", "working-rules", "SKILL.md"), "utf8");
+    expect(shipped).toMatch(/^---\nname: working-rules\ndescription: /);
+    expect(readFileSync(join(dir, "skills", "working-rules", "SKILL.md"), "utf8")).toBe(shipped);
+    expect(parse(readFileSync(join(dir, "config.yaml"), "utf8"), { version: "1.1" }).skills.disabled).not.toContain("working-rules");
+    // SOUL keeps tool names from the person; the skill names none it could echo.
+    expect(shipped).not.toMatch(/workflow_settings_|memory_propose/);
+  });
+
+  it("raises memory limits to the pack's floor on install and Repair, keeping a larger office limit", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-memory-limits-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(parse(readFileSync(path, "utf8"), { version: "1.1" }).memory).toMatchObject({ write_approval: true, memory_char_limit: 12000, user_char_limit: 6000 });
+    writeFileSync(path, readFileSync(path, "utf8").replace("memory_char_limit: 12000", "memory_char_limit: 2200").replace("user_char_limit: 6000", "user_char_limit: 9000").replace("memory:\n", "memory:\n  memory_enabled: true\n"));
+    applyPropertyPack(home);
+    expect(parse(readFileSync(path, "utf8"), { version: "1.1" }).memory).toEqual({ memory_enabled: true, write_approval: true, memory_char_limit: 12000, user_char_limit: 9000 });
+    expect(parse(mergePropertyPolicy("memory:\n  user_char_limit: \"big\"\n", readFileSync(join(PACK_DIR, "config.yaml"), "utf8")), { version: "1.1" }).memory.user_char_limit).toBe(6000);
+  });
+
+  it("brings shipped-unchanged SOUL and skills up to a changed pack on startup, keeps office edits and adds new files", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-pack-upgrade-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    const recordPath = join(dir, ".realbud-shipped.json");
+    const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+    expect(ensurePropertyPack(home)).toMatchObject({ wrote: [], kept: [] });
+    const unchanged = "skills/morning-arrears/SKILL.md", edited = "skills/intake-properties/SKILL.md", added = "skills/working-rules/SKILL.md";
+    // Simulate an earlier pack: SOUL and one skill hold bytes RealBud shipped before.
+    const record = JSON.parse(readFileSync(recordPath, "utf8"));
+    record.pack = "earlier-pack";
+    record.files["SOUL.md"].unshift(sha("Earlier shipped SOUL"));
+    record.files[unchanged].unshift(sha("Earlier shipped skill"));
+    writeFileSync(recordPath, JSON.stringify(record));
+    writeFileSync(join(dir, "SOUL.md"), "Earlier shipped SOUL");
+    writeFileSync(join(dir, unchanged), "Earlier shipped skill");
+    writeFileSync(join(dir, edited), "Office's own version");
+    rmSync(join(dir, added));
+    const result = ensurePropertyPack(home);
+    expect(result.wrote.sort()).toEqual(["SOUL.md", added, unchanged].sort());
+    expect(result.kept).toEqual([edited]);
+    for (const rel of ["SOUL.md", unchanged, added]) expect(readFileSync(join(dir, rel), "utf8")).toBe(readFileSync(join(PACK_DIR, rel), "utf8"));
+    expect(readFileSync(join(dir, edited), "utf8")).toBe("Office's own version");
+    // Recorded: nothing more happens until the pack changes again, and the edit stays.
+    const settled = readFileSync(recordPath, "utf8");
+    expect(JSON.parse(settled).files[unchanged]).toContain(sha("Earlier shipped skill"));
+    expect(ensurePropertyPack(home)).toMatchObject({ wrote: [], kept: [] });
+    expect(readFileSync(recordPath, "utf8")).toBe(settled);
+    expect(readFileSync(join(dir, edited), "utf8")).toBe("Office's own version");
   });
 
   it("does not inherit a Hermes Desktop home model into Bud's hands", () => {

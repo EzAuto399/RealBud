@@ -38,8 +38,13 @@ export interface BrowserApprovalCard {
   kind: BrowserConsequentialKind;
   /** Host name of the page, e.g. portal.example.com.au. */
   site: string;
+  /** The page the step acts on: the host and its path with record ids (never a query or a token-like segment), so the
+   * person sees which record it changes. Absent on cards saved before it was shown. */
+  page?: string;
   /** The control Bud would press, as the page labels it. */
   control: string;
+  /** Its name on the page had more text than the control shows; check the page before approving. */
+  unusualName?: true;
   facts: BrowserApprovalCardFact[];
   /** Epoch milliseconds. */
   expiresAt: number;
@@ -59,13 +64,16 @@ const text = (value: unknown, max: number): value is string =>
  * to the kind, a missing required fact and a "confirmed" fact without a value
  * are all rejected. */
 export function parseBrowserApprovalCard(value: unknown): BrowserApprovalCard {
-  const row = exact(value, ["version", "purpose", "id", "kind", "site", "control", "facts", "expiresAt"]);
+  const optional = object(value) ? (["page", "unusualName"] as const).filter(key => Object.hasOwn(value, key)) : [];
+  const row = exact(value, ["version", "purpose", "id", "kind", "site", "control", "facts", "expiresAt", ...optional]);
   if (row.version !== BROWSER_APPROVAL_CARD_VERSION || row.purpose !== BROWSER_APPROVAL_CARD_PURPOSE) invalid();
   if (typeof row.id !== "string" || !/^[0-9a-f-]{36}$/.test(row.id)) invalid();
   if (typeof row.kind !== "string" || !(BROWSER_CONSEQUENTIAL_KINDS as readonly string[]).includes(row.kind)) invalid();
   const kind = row.kind as BrowserConsequentialKind;
   if (typeof row.site !== "string" || row.site.length > 253 || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(row.site) || !row.site.includes(".")) invalid();
+  if (row.page !== undefined && (!text(row.page, 2400) || !row.page.toLowerCase().startsWith(`${(row.site as string).toLowerCase()}/`))) invalid();
   if (!text(row.control, 120)) invalid();
+  if (row.unusualName !== undefined && row.unusualName !== true) invalid();
   if (typeof row.expiresAt !== "number" || !Number.isSafeInteger(row.expiresAt) || row.expiresAt <= 0) invalid();
   const allowed = BROWSER_APPROVAL_FACTS[kind];
   if (!Array.isArray(row.facts) || row.facts.length > allowed.required.length + allowed.optional.length) invalid();
@@ -85,7 +93,9 @@ export function parseBrowserApprovalCard(value: unknown): BrowserApprovalCard {
     id: row.id as string,
     kind,
     site: (row.site as string).toLowerCase(),
+    ...(row.page !== undefined ? { page: row.page as string } : {}),
     control: row.control as string,
+    ...(row.unusualName ? { unusualName: true as const } : {}),
     facts,
     expiresAt: row.expiresAt as number,
   };

@@ -427,6 +427,9 @@ describe("harness HTTP API", () => {
       "inbound-triage",
       "bank-references",
       "weekly-bills",
+      "maintenance-review",
+      "rei-supplier-check",
+      "inspection-draft",
     ]);
     const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");
     expect(morning).toMatchObject({ available: true, enabled: true });
@@ -474,7 +477,7 @@ describe("harness HTTP API", () => {
     expect(enableInbound.status).toBe(409);
     expect(String(enableInbound.body.error)).toMatch(/reviewed agency schedule/);
     const state = (await api('GET','/api/mail-workspace')).body;
-    expect(state.schedule).toMatchObject({enabled:false,localTime:'08:00'});
+    expect(state.schedule).toMatchObject({enabled:false,localTime:'07:30'});
 
     const empty = await api("PATCH", "/api/loops/morning-arrears", {});
     expect(empty.status).toBe(400);

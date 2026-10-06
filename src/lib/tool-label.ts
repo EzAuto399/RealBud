@@ -38,6 +38,7 @@ const ALIAS: Record<string, string> = {
   bash: "running a command in the workroom",
   terminal: "running a command in the workroom",
   browser: "using the bounded browser",
+  browser_account_confirm: "checking the account",
   computer: "using the bounded browser",
   todo: "organising the steps",
   todo_write: "updating the work plan",

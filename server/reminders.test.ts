@@ -7,12 +7,15 @@ import { createRemindersService } from './reminders.ts';
 import { needsSession } from './session-auth.ts';
 import { parseRemindersResponse, type Reminder } from '../shared/reminders.ts';
 import { removeFixture } from './testing/private-fixture.ts';
+import * as privateJson from './private-json.ts';
 
 const directories: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
 
 const START = Date.UTC(2026, 9, 2, 0, 0);
 const HOUR = 60 * 60_000;
+// Each private read and write runs a PowerShell ACL check on Windows.
+const SWEEP_WAIT = { timeout: process.platform === 'win32' ? 60_000 : 1_000 };
 async function fixture(options: { directory?: string; workspaceId?: string; member?: string; timeZone?: string | null } = {}) {
   const directory = options.directory ?? await mkdtemp(join(tmpdir(), 'realbud-reminders-'));
   if (!options.directory) directories.push(directory);
@@ -93,14 +96,32 @@ describe('reminder store', () => {
     await vi.waitFor(async () => {
       const stored = JSON.parse(await readFile(join(f.directory, 'reminders', (await readdir(join(f.directory, 'reminders'))).find(n => n.endsWith('.json'))!), 'utf8'));
       expect(stored.reminders.find((r: Reminder) => r.id === soon.id).state).toBe('due');
-    });
+    }, SWEEP_WAIT);
     restarted.clock.now = START + 6 * HOUR;
     await vi.waitFor(async () => {
       const stored = JSON.parse(await readFile(join(f.directory, 'reminders', (await readdir(join(f.directory, 'reminders'))).find(n => n.endsWith('.json'))!), 'utf8'));
       expect(stored.reminders.find((r: Reminder) => r.id === later.id).state).toBe('due');
-    });
+    }, SWEEP_WAIT);
     restarted.service.close();
     expect((await restarted.list()).reminders.map(r => r.state)).toEqual(['due', 'due']);
+  });
+
+  it('never runs a second sweep while a slow one is still going', async () => {
+    const f = await fixture();
+    await f.add('Lodge the bond', START + HOUR);
+    let running = 0, most = 0;
+    const real = privateJson.privateDirectory;
+    const spy = vi.spyOn(privateJson, 'privateDirectory').mockImplementation(async (...args: Parameters<typeof real>) => {
+      running += 1; most = Math.max(most, running);
+      try { await new Promise(resolve => setTimeout(resolve, 60)); return await real(...args); } finally { running -= 1; }
+    });
+    try {
+      f.service.start();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      f.service.close();
+      await vi.waitFor(() => expect(running).toBe(0));
+    } finally { spy.mockRestore(); }
+    expect(most).toBe(1);
   });
 
   it('keeps each member to their own reminders, and an id never crosses members', async () => {
@@ -128,6 +149,18 @@ describe('reminder store', () => {
     expect(read).toMatchObject({ status: 503, body: { code: 'reminders_recovery_required' } });
     expect((await f.call('POST', '/api/reminders', { title: 'New', dueAt: START + HOUR })).status).toBe(503);
     expect(await readFile(join(dir, name), 'utf8')).toBe('{"damaged":');
+  });
+
+  it('restores the last good copy when a saved file is damaged, keeping the damaged file', async () => {
+    const f = await fixture();
+    await f.add('Check smoke alarms', START + HOUR);
+    await f.add('Chase the plumber invoice', START + 2 * HOUR);
+    const dir = join(f.directory, 'reminders');
+    const name = (await readdir(dir)).find(n => n.endsWith('.json'))!;
+    await writeFile(join(dir, name), '{"damaged":', { mode: 0o600 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try { expect((await f.list()).reminders.map(r => r.title)).toEqual(['Check smoke alarms']); } finally { warn.mockRestore(); }
+    expect((await readdir(dir)).some(n => n.startsWith(`${name}.damaged-`))).toBe(true);
   });
 
   it('creates a reminder for Bud with its thread as the source', async () => {

@@ -55,6 +55,37 @@ describe("bounded task-local routine authority", () => {
     ] as const) expect(decide(tool, args).decision, `${tool} ${JSON.stringify(args)}`).not.toBe("allow");
   });
 
+  it("follows a plain link to a read-only page of the same site, but not a confirming or consequential one, nor one beside a control that changes records", () => {
+    const links = { ...page, text: '@vom 1\nL1 page\n  navigation "Main"\n    @e1 link "Reports" url="/reports"\n  main\n    table "Results"\n      row\n        @e2 link "Tenant contact export" url="https://portal.example/reports/tenants?format=csv"\n      row\n        @e3 link "Continue" url="/next"\n      row\n        @e4 link "Delete tenant" url="/tenants/4"\n      row\n        @e5 link "Approve" url="/approvals"' };
+    const plain = { ...links, text: links.text.split("\n").slice(0, 8).join("\n") };
+    for (const ref of ["@e1", "@e2"]) expect(decide("browser_click_semantic", { ref }, {}, grant(), plain), ref).toMatchObject({ decision: "allow", note: "allowed for this browser task" });
+    // A confirming name, a deletion, or any link on a page that also offers one, still asks.
+    for (const ref of ["@e1", "@e2", "@e3", "@e4", "@e5"]) expect(decide("browser_click_semantic", { ref }, {}, grant(), links).decision, ref).not.toBe("allow");
+    // The page's own Save and Log out buttons sit in the same main region: its plain link asks too.
+    expect(decide("browser_click_semantic", { ref: "@e5" }).decision).not.toBe("allow");
+    // Without the live task scope a plain link asks as before.
+    expect(decide("browser_click_semantic", { ref: "@e1" }, { taskScope: undefined }, grant(), links).decision).toBe("ask");
+  });
+
+  it("asks before a harmless-looking link whose address writes, leaves the site, runs script, submits a form or is not shown", () => {
+    const one = (line: string) => ({ url: page.url, text: `@vom 1\nL1 page\n  main\n    ${line}` });
+    const click = (observation: BrowserObservation) => decide("browser_click_semantic", { ref: "@e1" }, {}, grant(), observation).decision;
+    // The control: the same label to a reading page of this site is followed without a card.
+    expect(click(one('@e1 link "Tenant 123" url="/tenants/123"'))).toBe("allow");
+    for (const url of ["/tenants/123/delete", "/tenants/123?action=archive", "/tenants?delete=123", "/tenants/123?do=%61pprove", "/process/run", "/account/logout",
+      "/api/tenants/123", "javascript:deleteTenant(123)", "data:text/html,hi", "#", "/tenants/123#edit", "https://other.example/tenants", "https://evil.portal.example/tenants",
+      "//evil.example/tenants", "http://portal.example/tenants", "https://portal.example:8443/tenants", "https://user@portal.example/tenants", ""]) {
+      expect(click(one(`@e1 link "Tenant 123" url=${JSON.stringify(url)}`)), url).not.toBe("allow");
+    }
+    // No address (an onclick-only link), a button styled as a link, a link inside a form or dialog, a hidden link.
+    for (const line of ['@e1 link "Tenant 123"', '@e1 button "Tenant 123" url="/tenants/123"', 'form "Tenant"\n      @e1 link "Tenant 123" url="/tenants/123"',
+      'dialog "Tenant"\n      @e1 link "Tenant 123" url="/tenants/123"', '@e1 link "Tenant 123" [hidden] url="/tenants/123"']) {
+      expect(click(one(line)), line).not.toBe("allow");
+    }
+    // The address is RealBud's to check: a name cannot smuggle one in, and the label never carries it.
+    expect(click(one('@e1 link "Tenant url=\\"/tenants/1\\""'))).not.toBe("allow");
+  });
+
   it("retains bound account proof and rejects a search button inside a save form", () => {
     const g = { ...grant(), browser: { id: "fictional-browser", accountMarker: "Fictional office" } };
     expect(decide("browser_fill", { ref: "@e1", value: "FICT-7" }, {}, g).decision).not.toBe("allow");

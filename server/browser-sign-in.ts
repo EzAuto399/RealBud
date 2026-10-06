@@ -2,7 +2,9 @@
 // hands the page to the person, and carries on once they are signed in.
 // Credentials and verification codes stay with the person: Bud takes no action
 // in that tab (the browser broker refuses steps on a site being handed over)
-// and detects sign-in from the tab's address only, or the person's Done.
+// and detects sign-in from the tab's address only, or the person's Done. The
+// one exception: a long (scheduled) wait reloads the sign-in page in place
+// when it has sat unchanged for 10 minutes, so it is never stale.
 // The address comes from a known site (an installed pack's site map or the
 // office's approved sites) or one the person typed in this conversation; never
 // from a page, an email or a tool result.
@@ -21,6 +23,11 @@ export const SIGN_IN_TIMEOUT_MS = 15 * 60_000;
 /** How long the tool call itself waits: under the worker's 300 s tool-call limit. */
 export const SIGN_IN_TURN_WAIT_MS = 240_000;
 const POLL_MS = 2000;
+/** A long wait (until a deadline) reads the address every 20 s; Done and Stop still answer at once. */
+const LONG_POLL_MS = 20_000;
+/** A long wait reloads a sign-in page whose address has not changed for this long: REI's sign-in journey failed
+ * after about 15 idle minutes on one page (docs/REI-LOGIN-TEST.md). */
+export const SIGN_IN_REFRESH_MS = 10 * 60_000;
 export const WRONG_ACCOUNT = "This is signed in to a different account than this task allows. Switch account, then press Done.";
 
 export const SIGN_IN_TOOL = {
@@ -33,7 +40,11 @@ export const SIGN_IN_TOOL = {
 
 export interface SignInSite { key: string; name: string; origin: string; loginUrl: string; signInHosts: string[]; postLogin: string[]; accountParam: string | null }
 export type SignInOutcome = "signed_in" | "stopped" | "timed_out" | "wrong_account";
-export interface SignInRuntime { openSignInTab(url: string): Promise<string>; signInTabUrl(targetId: string): Promise<string | null> }
+export interface SignInRuntime {
+  openSignInTab(url: string): Promise<string>; signInTabUrl(targetId: string): Promise<string | null>;
+  /** Loads `url` again in the same tab: never a second tab. Absent: a long wait does not refresh. */
+  reloadSignInTab?(targetId: string, url: string): Promise<void>;
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Installed packs' website maps. A fixed list, never a request. */
@@ -98,6 +109,8 @@ export function signInTarget(input: { site?: unknown; url?: unknown }, sites: re
 }
 
 const LOGIN_PATH = /(?:^|[/_-])(?:log[-_]?in|sign[-_]?in|sign[-_]?on|auth|oauth2?|sso|b2c)(?:$|[/_.-])/i;
+/** A login word inside a path segment too: REI's failed sign-in lands on /Account/NewLoginMFA. */
+const LOGIN_WORD = /log[-_]?[io]n|sign[-_]?[io]n/i;
 /** Signed in, judged from the address alone: back on the site, off its sign-in host and login paths, and on a post-login path when the map names any. */
 export function signedInAt(site: SignInSite, value: string | null): boolean {
   if (!value) return false;
@@ -105,7 +118,15 @@ export function signedInAt(site: SignInSite, value: string | null): boolean {
   if (url.origin !== site.origin || site.signInHosts.includes(url.hostname.toLowerCase())) return false;
   // ponytail: login-path heuristic for sites without a map; a site map's postLogin paths are exact.
   if (site.postLogin.length) return site.postLogin.some(path => url.pathname.startsWith(path));
-  return !LOGIN_PATH.test(url.pathname) && (site.signInHosts.length > 0 || url.href !== new URL(site.loginUrl).href);
+  return !LOGIN_PATH.test(url.pathname) && !LOGIN_WORD.test(url.pathname) && (site.signInHosts.length > 0 || url.href !== new URL(site.loginUrl).href);
+}
+
+/** Still on the site's sign-in page, judged from the address alone: its sign-in host (REI's "Member Login" on
+ * b2clogin), or a login path on the site, such as REI's failed sign-in page. */
+export function onSignInPage(site: SignInSite, value: string | null): boolean {
+  if (!value) return false;
+  let url: URL; try { url = new URL(value); } catch { return false; }
+  return site.signInHosts.includes(url.hostname.toLowerCase()) || url.origin === site.origin && (LOGIN_PATH.test(url.pathname) || LOGIN_WORD.test(url.pathname));
 }
 
 export interface SignInHandoverView { id: string; site: string; origin: string; state: "waiting" | "wrong_account" | "signed_in" | "stopped" | "timed_out"; message: string }
@@ -113,6 +134,10 @@ interface Handover {
   id: string; threadId: string | null; site: SignInSite; reason: string; account: string | null;
   state: SignInHandoverView["state"]; done: boolean; stopped: boolean; inTurn: boolean; stop(): void;
   settled: Promise<SignInOutcome>;
+  /** A scheduled wait's deadline (epoch ms), or null for the attended 15-minute handover. */
+  until: number | null;
+  /** Ends the current poll's sleep (Done). */
+  nudge(): void;
 }
 const handovers = new Map<string, Handover>();
 const settledListeners = new Set<(event: { threadId: string | null; id: string; outcome: SignInOutcome; origin: string; site: string; inTurn: boolean }) => void>();
@@ -131,14 +156,15 @@ export function signInHandoverBlocks(value: string): boolean {
 const messageFor = (item: Handover): string => item.state === "wrong_account" ? WRONG_ACCOUNT
   : item.state === "signed_in" ? `Signed in to ${item.site.name}. Bud carries on.`
     : item.state === "stopped" ? `Sign-in to ${item.site.name} stopped. Nothing was done there.`
-      : item.state === "timed_out" ? `Sign-in to ${item.site.name} was not finished within 15 minutes, so Bud paused. Ask again when you are ready.`
+      : item.state === "timed_out" ? (item.until !== null ? `Sign-in to ${item.site.name} was not finished today, so Bud paused. The next scheduled run tries again.`
+        : `Sign-in to ${item.site.name} was not finished within 15 minutes, so Bud paused. Ask again when you are ready.`)
         : `Sign in to ${item.site.name} here. Bud carries on when you're signed in.`;
 export function signInHandovers(threadId: string | null): SignInHandoverView[] {
   return [...handovers.values()].filter(item => item.threadId === threadId)
     .map(item => ({ id: item.id, site: item.site.name, origin: item.site.origin, state: item.state, message: messageFor(item) }));
 }
 /** The person pressed Done: signed in unless the address shows another account. */
-export function signInDone(id: string): boolean { const item = handovers.get(id); if (!item || item.state !== "waiting" && item.state !== "wrong_account") return false; item.done = true; return true; }
+export function signInDone(id: string): boolean { const item = handovers.get(id); if (!item || item.state !== "waiting" && item.state !== "wrong_account") return false; item.done = true; item.nudge(); return true; }
 export function signInStop(id: string): boolean { const item = handovers.get(id); if (!item || item.state !== "waiting" && item.state !== "wrong_account") return false; item.stopped = true; item.stop(); return true; }
 
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
@@ -149,17 +175,20 @@ const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve =>
 
 export interface SignInDependencies { runtime?: SignInRuntime; sites?: readonly SignInSite[]; now?: () => number; pollMs?: number; timeoutMs?: number }
 
-/** Opens the tab and starts watching it. Re-attaches to a thread's open handover for the same site. */
-async function begin(site: SignInSite, url: string, input: { reason: string; account?: string | null; threadId?: string | null; signal?: AbortSignal }, deps: SignInDependencies): Promise<Handover> {
+/** Opens the tab and starts watching it. Re-attaches to a thread's open handover for the same site.
+ * `until` (epoch ms) makes it a scheduled wait that lasts until then instead of 15 minutes. */
+async function begin(site: SignInSite, url: string, input: { reason: string; account?: string | null; threadId?: string | null; signal?: AbortSignal; until?: number }, deps: SignInDependencies): Promise<Handover> {
   const threadId = input.threadId ?? null;
   const open = [...handovers.values()].find(item => item.threadId === threadId && item.site.origin === site.origin && (item.state === "waiting" || item.state === "wrong_account"));
   if (open) return open;
   const runtime = deps.runtime ?? browserRuntime;
   const now = deps.now ?? Date.now;
   const targetId = await runtime.openSignInTab(url);
-  const item: Handover = { id: randomUUID(), threadId, site, reason: input.reason.slice(0, 300), account: input.account ?? null, state: "waiting", done: false, stopped: false, inTurn: true, stop: () => {}, settled: Promise.resolve("stopped") };
+  const long = input.until !== undefined;
+  const item: Handover = { id: randomUUID(), threadId, site, reason: input.reason.slice(0, 300), account: input.account ?? null, state: "waiting", done: false, stopped: false, inTurn: true, stop: () => {}, settled: Promise.resolve("stopped"),
+    until: input.until ?? null, nudge: () => {} };
   handovers.set(item.id, item);
-  const started = now(); const limit = deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS; const signal = input.signal;
+  const started = now(); const limit = long ? input.until! - started : deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS; const signal = input.signal;
   // The first terminal outcome wins and is final: Stop, an aborted signal or
   // the time limit settle at once, and a poll still in flight can never turn
   // that into signed_in afterwards (nor tell the host to continue).
@@ -186,26 +215,33 @@ async function begin(site: SignInSite, url: string, input: { reason: string; acc
   };
   signal?.addEventListener("abort", aborted, { once: true });
   void (async () => {
-    let last: string | null = null;
+    let last: string | null = null, since = started;
     while (!ended()) {
       // The address only: no page read and no action in the person's tab.
       const current = await runtime.signInTabUrl(targetId).catch(() => null);
       if (ended()) return;
       // Twice the same address so a redirect still in flight is not taken as signed in.
       const steady = current !== null && current === last; last = current;
+      if (!steady) since = now();
       if (item.done || steady && signedInAt(site, current)) {
         const shown = current && site.accountParam && new URL(current).origin === site.origin ? new URL(current).searchParams.get(site.accountParam) : null;
         if (item.account && shown !== null && shown !== item.account) { item.state = "wrong_account"; item.done = false; }
         else if (!ended()) { settle("signed_in"); return; }
+      } else if (long && runtime.reloadSignInTab && onSignInPage(site, current) && now() - since >= SIGN_IN_REFRESH_MS) {
+        // A fresh sign-in page in the same tab, from the address first opened (a new sign-in journey). Focus and typing
+        // are not visible from the address, so only a page unchanged for 10 minutes reloads.
+        since = now(); last = null;
+        await runtime.reloadSignInTab(targetId, url).catch(() => {});
+        if (ended()) return;
       }
-      await sleep(deps.pollMs ?? POLL_MS, signal);
+      await new Promise<void>(resolve => { item.nudge = resolve; void sleep(deps.pollMs ?? (long ? LONG_POLL_MS : POLL_MS), signal).then(resolve); });
     }
   })().catch(() => settle("stopped"));
   return item;
 }
 
 /** Host function (W1 and other host workflows): open the site's sign-in page, hand it over, and resolve when it ends. */
-export async function openForSignIn(input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string; threadId?: string | null; personUrls?: readonly string[]; approvedSites?: readonly string[] },
+export async function openForSignIn(input: { site: string; url?: string; reason: string; signal?: AbortSignal; account?: string; threadId?: string | null; personUrls?: readonly string[]; approvedSites?: readonly string[]; until?: number },
   deps: SignInDependencies = {}): Promise<{ outcome: SignInOutcome; origin: string }> {
   const target = signInTarget(input, deps.sites ?? await knownSignInSites(input.approvedSites), input.personUrls ?? []);
   if ("error" in target) throw Object.assign(new Error(target.error), { status: 409 });

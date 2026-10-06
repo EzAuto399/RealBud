@@ -17,7 +17,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { mergePropertyPolicy, PACK_DIR } from "./hermes-pack.ts";
+import { mergePropertyPolicy, PACK_DIR, WORKER_DISABLED_TOOLSETS } from "./hermes-pack.ts";
+import { BROWSER_SERVER } from "./browser-broker.ts";
+import { SIGN_IN_SERVER } from "./browser-sign-in.ts";
+import { WEB_RESEARCH_SERVER } from "./web-research-broker.ts";
+import { REMINDERS_SERVER } from "./reminders-broker.ts";
+import { BANK_SOURCE_SERVER } from "./bank-source-broker.ts";
+import { WORKFLOW_SETTINGS_SERVER } from "./workflow-settings-broker.ts";
+import { MCP_CONNECTORS_SERVER } from "./mcp-connector-broker.ts";
+import { WORKSPACE_VIEWS_SERVER } from "./workspace-views-broker.ts";
+import { HERMIOS_CRM_SERVER } from "./hermios-crm-broker.ts";
 
 const python = process.env.REALBUD_TEST_HERMES_PYTHON;
 const candidate = process.env.REALBUD_TEST_HERMES_0215_TREE;
@@ -49,11 +58,15 @@ else:
     disabled = None
 out = {"enabled": enabled, "parent": names(enabled, disabled)}
 # RealBud's brokers join per session over ACP mcpServers (acp_adapter/server.py
-# _register_session_mcp_servers); register one tool each as discovery would.
-for server, tool in [("browser", "mcp_browser_navigate"), ("connected-apps", "mcp_connected_apps_execute")]:
+# _register_session_mcp_servers); register one tool each as discovery would,
+# including the bare server-name alias (tools/mcp_tool_registration.py), which a
+# server named like a built-in toolset merges into that toolset's resolution.
+servers = json.loads(sys.argv[2])
+for server, tool in servers:
     registry.register(name=tool, toolset="mcp-" + server, handler=lambda *a, **k: "{}",
                       schema={"name": tool, "description": "fictional broker", "parameters": {"type": "object", "properties": {}}})
-mounted = acp_session._expand_acp_enabled_toolsets(enabled, mcp_server_names=["browser", "connected-apps"])
+    registry.register_toolset_alias(server, "mcp-" + server)
+mounted = acp_session._expand_acp_enabled_toolsets(enabled, mcp_server_names=[server for server, _ in servers])
 out["mounted"] = names(mounted, disabled)
 class Parent: pass
 parent = Parent(); parent.enabled_toolsets = mounted; parent.disabled_toolsets = disabled
@@ -103,7 +116,7 @@ function probe(tree: string): Probe {
     // Read the trees, never write bytecode into them.
     PYTHONDONTWRITEBYTECODE: "1",
   };
-  const stdout = execFileSync(python!, ["-c", PROBE, tree], { env, encoding: "utf8", timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+  const stdout = execFileSync(python!, ["-c", PROBE, tree, JSON.stringify(MOUNTED)], { env, encoding: "utf8", timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
   const line = stdout.split("\n").find(text => text.startsWith("PROBE "));
   if (!line) throw new Error("probe printed no result");
   return JSON.parse(line.slice(6)) as Probe;
@@ -111,9 +124,22 @@ function probe(tree: string): Probe {
 
 const excluded = (tool: string) => /^(?:browser_|kanban_)/.test(tool) ||
   ["browser_exec", "cronjob_manage", "computer_use", "image_generate", "text_to_speech", "manage_connections", "manage_catalog"].includes(tool);
-const brokers = ["mcp_browser_navigate", "mcp_connected_apps_execute"];
+/** Every broker RealBud mounts over ACP, under its real server name, with Hermes'
+ * `mcp__<server>__<tool>` name (tools/mcp_tool_schema.py `mcp_prefixed_tool_name`). */
+const MOUNTED: Array<[string, string]> = [
+  [BROWSER_SERVER, "browser_tabs"], ["connected-apps", "execute"], ["memory-proposals", "memory_propose"], [WEB_RESEARCH_SERVER, "read_page"],
+  [SIGN_IN_SERVER, "open_for_sign_in"], [REMINDERS_SERVER, "set_reminder"], [WORKSPACE_VIEWS_SERVER, "views_list"],
+  [WORKFLOW_SETTINGS_SERVER, "workflow_settings_read"], [BANK_SOURCE_SERVER, "bank_accounts_list"], [MCP_CONNECTORS_SERVER, "list"], [HERMIOS_CRM_SERVER, "crm_search"],
+].map(([server, tool]) => [server, `mcp__${server.replace(/[^A-Za-z0-9_]/g, "_")}__${tool}`]);
+const brokers = MOUNTED.map(([, tool]) => tool);
 const today = ["delegate_task", "execute_code", "memory", "patch", "process_manage", "read_file", "search_files", "session_search",
   "skill_manage", "skill_view", "skills_list", "terminal", "todo_list", "web_extract", "web_search", "write_file"];
+
+// Ungated: pinned Hermes merges a server named like a built-in toolset into that
+// toolset, so a disabled name would strip the broker's every tool from Ask.
+it("mounts no broker under a toolset name the pack disables", () => {
+  for (const [server] of MOUNTED) expect(WORKER_DISABLED_TOOLSETS as readonly string[]).not.toContain(server);
+});
 
 describe.runIf(Boolean(python && candidate) && process.platform !== "win32")("Ask's effective tools on Hermes 0.21.5", () => {
   let result: Probe;

@@ -7,6 +7,8 @@ import { OpenBillsView } from "../OpenBillsView";
 import type { ExpectedBillsPage } from '@shared/source-bills-api';
 import { billPageUrl, expectedBillsPage, mergeBillRows } from '@/lib/source-bill-pages';
 import { SourceBillsPanel } from "./SourceBillsPanel";
+import { MaintenanceFindingsPanel } from "./MaintenanceFindingsPanel";
+import { InspectionsPanel } from "../inspections/InspectionsPanel";
 
 type BillRow = {
   id: string;
@@ -121,6 +123,8 @@ export function ExpectedBillsBoard({ className, compact = false, bare = false }:
         </div>{page?.nextCursor && <button className="min-h-11 rounded border border-line px-3 text-sm" disabled={loading} onClick={() => void more()}>Load more earlier bills</button>}</div>
       )}
       <div className={cn("mt-4", !bare && "border-t border-line pt-4")}><SourceBillsPanel onSaved={() => void load()} /></div>
+      <div className="mt-4 border-t border-line pt-4"><MaintenanceFindingsPanel /></div>
+      <div className="mt-4 border-t border-line pt-4"><InspectionsPanel /></div>
       </>}
     </section>
   );
