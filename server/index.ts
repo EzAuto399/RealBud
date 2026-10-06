@@ -6344,6 +6344,14 @@ server.listen(PORT, "127.0.0.1", () => {
   if (!privateRestoreLocked) void resumeReiSignInWaits().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  // Say in the service's own log when it could not answer at all: on a busy
+  // Windows PC synchronous work froze it for ~30 s and only the window noticed.
+  let stallTick = Date.now();
+  setInterval(() => {
+    const now = Date.now(), blocked = now - stallTick - 1_000;
+    stallTick = now;
+    if (blocked >= 5_000) console.warn(`[${new Date(now).toISOString()}] the service could not answer for ${Math.round(blocked / 1_000)} s`);
+  }, 1_000).unref();
   setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));
   // A renderer/server restart must not silently drop a follow-up the user
   // already scheduled. Claim and resume each durable slot once at boot.
