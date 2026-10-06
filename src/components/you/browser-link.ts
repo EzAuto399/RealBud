@@ -157,6 +157,33 @@ export function linkedOffice(status: OfficeLinkStatus | null, phase: BrowserLink
   return phase.kind === "linked" ? phase.agencyLabel || "your office" : null;
 }
 
+/** How long a pasted code may keep finishing after its request gave up. */
+export const LOST_LINK_WAIT_MS = 5 * 60_000;
+
+/**
+ * The service keeps linking after the window's request times out: on a slow
+ * Windows PC, admitting each new private file can take longer than the budget
+ * (seen 6 Oct on an emulated Windows VM, which then refused the retry as
+ * "already linked"). A request the service never answered waits for the saved
+ * link; one it answered is final. True only when the computer is linked.
+ */
+export async function linkedAfterLostAnswer(
+  cause: unknown,
+  read: () => Promise<OfficeLinkStatus>,
+  wait: { ms?: number; every?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
+): Promise<boolean> {
+  const { ms = LOST_LINK_WAIT_MS, every = LINK_POLL_INTERVAL_MS, now = Date.now } = wait;
+  const sleep = wait.sleep ?? (delay => new Promise<void>(done => window.setTimeout(done, delay)));
+  const answered = typeof (cause as { status?: unknown } | null)?.status === "number";
+  const deadline = now() + (answered ? 0 : ms);
+  for (;;) {
+    const status = await read().catch(() => null);
+    if (status?.state === "linked") return !answered;
+    if (now() >= deadline) return false;
+    await sleep(every);
+  }
+}
+
 /** A computer name the person never has to type: the service requires one. */
 export function defaultComputerName(personName: string | undefined): string {
   const name = (personName ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
@@ -248,10 +275,15 @@ export function useBrowserLink() {
   };
   const retry = (waiting: BrowserLinkRequest) => { setError(""); setPhase({ kind: "waiting", request: waiting }); };
   /** Link with a pasted code. The service waits up to 60 s on the website to
-   * redeem and then reports once, so this budget sits above both. Throws. */
+   * redeem and then reports once, so this budget sits above both. A lost
+   * answer waits for the service to finish before failing. Throws. */
   const linkCode = async (code: string, label: string) => {
     try {
-      await api("/api/office-link", { method: "POST", body: JSON.stringify({ code, label }) }, { timeoutMs: 130_000 });
+      try {
+        await api("/api/office-link", { method: "POST", body: JSON.stringify({ code, label }) }, { timeoutMs: 130_000 });
+      } catch (cause) {
+        if (!(await linkedAfterLostAnswer(cause, refresh))) throw cause;
+      }
       setPhase({ kind: "idle" });
       await refresh();
     } finally { changed(); }
