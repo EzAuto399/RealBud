@@ -6,8 +6,9 @@ import { budReadinessCheck } from "@/lib/bud-readiness";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
+import type { WebsiteLinkRead } from "@/lib/setup-sequence";
 
-export function AskReadiness({ onSetup }: { onSetup: () => void }) {
+export function AskReadiness({ onSetup, officeLink }: { onSetup: () => void; officeLink?: WebsiteLinkRead }) {
   const { state, dispatch } = useStore();
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const refreshStatus = useCallback(async (isCurrent: () => boolean) => {
@@ -24,7 +25,7 @@ export function AskReadiness({ onSetup }: { onSetup: () => void }) {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
-  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister });
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, officeLink });
   // Automatic setup after an approved office link: progress, no action needed.
   const automatic = Boolean(budAutoSetupView(state.hermes)?.working) && !statusRead.error;
   const failure = error || (automatic ? null : budReadinessFailure(state.hermes));

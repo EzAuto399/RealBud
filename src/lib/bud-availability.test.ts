@@ -126,6 +126,16 @@ describe("permission-aware setup presentation", () => {
     expect(budAvailability(ready, true, true, { canAdminister: false }).target).toBe("you-recovery");
     expect(budAvailability(ready, false, false, { canAdminister: false }).action).toBeNull();
   });
+  it("tells unlinked staff to connect this computer first instead of finishing installation", () => {
+    const fresh = { ...ready, cli: { ...ready.cli, installed: false, probeState: "missing" as const }, ready: false };
+    expect(budAvailability(fresh, true, false, { canAdminister: false, officeLink: "not-linked" }))
+      .toMatchObject({ ready: false, label: "Connect this computer to your office first", action: "Connect this computer", target: "you-worker" });
+    // Unknown, linked, administered, managed or failed-check states keep their own wording.
+    for (const officeLink of [undefined, "linked", "unavailable"] as const) expect(budAvailability(fresh, true, false, { canAdminister: false, officeLink }).label).toBe("Service setup needed");
+    expect(budAvailability(fresh, true, false, { canAdminister: true, officeLink: "not-linked" }).label).toBe("Setup needed");
+    expect(budAvailability({ ...fresh, cli: { ...fresh.cli, probeState: "timeout" } }, true, false, { canAdminister: false, officeLink: "not-linked" }).label).toBe("Check Bud");
+    expect(budAvailability(ready, true, false, { canAdminister: false, officeLink: "not-linked" }).ready).toBe(true);
+  });
   it("holds a previously ready worker when status cannot be refreshed", () => {
     expect(budAvailability(ready, true, false, { canAdminister: true, statusError: true }))
       .toMatchObject({ ready: false, label: "Status unavailable", canVerify: false });

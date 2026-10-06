@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CustomerPack, CustomerPackInstallation, CustomerPackPreview, CustomerPackChangePreview, OfficePacksView } from '@shared/customer-packs';
 import { api } from '@/state/store';
+import { openWorkspaceSetup } from '@/lib/workspace-setup';
 import { PackSkillReview, type PackSkillReviewState } from './PackSkillReview';
 import { CustomerPackChangeReview } from './CustomerPackChangeReview';
 import { CustomerPackHistory } from './CustomerPackHistory';
@@ -26,7 +27,7 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
     <h4 className="font-medium text-ink">Packs from your office</h4>
     <p className="text-sm text-ink-secondary">Your office shares signed packs for each role on realbud.app. Preview yours, then import it. Its workflows arrive switched off until you review each one.</p>
     {!view ? <p className="text-sm text-ink-secondary">Checking your office for packs…</p>
-      : view.state === 'not-linked' ? <><p className="text-sm">Connect this computer to your office first.</p>{again}</>
+      : view.state === 'not-linked' ? <><p className="text-sm">Connect this computer to your office first.</p><div className="flex flex-wrap gap-2"><button type="button" className="min-h-11 rounded-lg bg-agency px-3 py-2 text-sm font-medium text-white hover:bg-agency-hover focus-visible:outline-2 focus-visible:outline-agency" onClick={() => openWorkspaceSetup('bud')}>Connect this computer</button>{again}</div></>
       : view.state === 'unavailable' ? <><p className="text-sm">Your office’s packs couldn’t be checked right now. Nothing on this computer changed.</p>{again}</>
       : <>
         {view.packs.length ? <ul className="divide-y divide-line">{view.packs.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
@@ -54,6 +55,8 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
   // Separate from load(): the website being down never hides local setup.
   const loadOffice = async () => { const next = await api('/api/customer-packs/office', undefined, { timeoutMs: 30_000 }).then(parseOfficePacksView, () => ({ state: 'unavailable' as const })); if (alive.current) setOffice(next); };
   useEffect(() => { alive.current = true; void load().catch(() => { if (alive.current) setError('Pack setup could not be checked. Your saved work is unchanged.'); }); void loadOffice(); return () => { alive.current = false; }; }, []);
+  // Connecting from the Bud status sheet changes what the office can share.
+  useEffect(() => { const linked = () => void loadOffice(); window.addEventListener('realbud-website-link-changed', linked); return () => window.removeEventListener('realbud-website-link-changed', linked); }, []);
   const run = async (work: () => Promise<void>) => {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(''); setNotice('');

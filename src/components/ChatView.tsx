@@ -69,6 +69,7 @@ import { AskMessage } from "./AskMessage";
 import { MailPriorityCard } from "./work/MailPriorityCard";
 import { channelMessage } from "@/lib/channel-message";
 import { AskReadiness } from "./AskReadiness";
+import { useOfficeLinkRead } from "@/lib/use-office-link";
 import { RecoveryCards } from "./RecoveryCards";
 import { AskContext } from "./AskContext";
 import { AskAppContextPanel, AskAppContextToggle, useAskAppContext } from "./AskAppContext";
@@ -1082,7 +1083,8 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const askNeedsYou = askBrief?.needsYou ?? 0;
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const budStatusRead = useBudStatusSnapshot();
-  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, statusError: Boolean(budStatusRead.error) });
+  const officeLink = useOfficeLinkRead(productAsk && state.connected);
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, statusError: Boolean(budStatusRead.error), officeLink });
   const askWorkerReady = availability.ready;
   const askWorkroomReady = Boolean(state.hermes?.cli.installed && (state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && state.hermes.pack.installed && state.hermes.pack.approvalsManual && state.hermes.pack.workroomReady);
   const askWaitingForYou = productAsk && pendingApprovals(messages).length > 0;
@@ -1713,7 +1715,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         askRecheckPending={productAsk && Boolean(budAutoSetupView(state.hermes)?.working)}
         askSetupLabel={availability.action ?? undefined}
         onAskSetup={productAsk && availability.action ? goYouSetup : undefined}
-        readiness={productAsk ? <><AskReadiness onSetup={goYouSetup} /><RecoveryCards /></> : undefined}
+        readiness={productAsk ? <><AskReadiness onSetup={goYouSetup} officeLink={officeLink} /><RecoveryCards /></> : undefined}
         starter={productAsk ? composerStarter : undefined}
         onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
