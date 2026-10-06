@@ -526,6 +526,9 @@ describe("a portal pack's declared read-safe controls", () => {
     const live = vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"', '    navigation "Main"',
       '      @e2 link "Bank reconciliation" url="/customers/reconciliation/bankreconciliation"', "    main", '      heading "Arrears"', '      @e3 textbox "From day" value=""'], "https://portal.example/arrears");
     expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, live))).toBe(true);
+    // As the native reader writes a live sidebar link: its label repeated as text under it.
+    const native = { url: "https://portal.example/arrears", text: '@native-ax 1\nrootwebarea\n  banner\n    @e20 button "FICT1"\n  navigation "Main"\n    @e2 link "Bank reconciliation" url="/bank"\n      statictext "Bank reconciliation"\n  main\n    heading "Arrears"\n    @e3 textbox "From day" value=""' };
+    expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, native))).toBe(true);
     // A money screen whose words carry no bank term is still financial by its address.
     const batch = vom(['  RootWebArea "Batch Payments"', "    banner", '      @e20 button "FICT1"', '    navigation "Main"', '      @e2 link "Bank reconciliation"',
       "    main", '      heading "Batch Payments"', '      @e3 textbox "Reference" value=""'], "https://portal.example/customers/batchpayments/index");
