@@ -10,6 +10,7 @@ import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
 import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { DOCUMENT_TOOLS_NEED_REPAIR, ensureDocumentDeps } from "./hermes-document-deps.ts";
 
 // The OS releases this transaction lock on process death. The durable child
@@ -221,6 +222,25 @@ export function bootstrapStageEnv(home: string, source: NodeJS.ProcessEnv, platf
   return env;
 }
 
+/**
+ * The installer ends each stage with one JSON status line ({"stage","ok","reason"}).
+ * Keep only that line's stage name and a masked, bounded reason, so a failed setup
+ * says where it stopped in the service log without paths, environment values or
+ * provider text (Windows issues log #32: it used to leave no reason anywhere).
+ */
+export function stageFailureNote(stdoutTail: string): string | null {
+  const line = stdoutTail.split(/\r?\n/).reverse().find(text => /^\{.*"stage"\s*:/.test(text.trim()));
+  if (!line) return null;
+  let status: { stage?: unknown; reason?: unknown };
+  try { status = JSON.parse(line.trim()); } catch { return null; }
+  const stage = typeof status.stage === "string" && /^[a-z][a-z-]{0,39}$/.test(status.stage) ? status.stage : null;
+  if (!stage) return null;
+  const reason = typeof status.reason === "string" ? redactSecretsInText(status.reason
+    .replace(/[A-Za-z]:[\\/][^\s"'()]*/g, "…").replace(/(?:^|\s)\/[^\s"'()]+/g, " …").replace(/[\u0000-\u001f\u007f]/g, " "))
+    .replace(/\s+/g, " ").trim().slice(0, 160) : "";
+  return reason ? `${stage}: ${reason}` : stage;
+}
+
 type StageRun = (invocation: { command: string; args: string[] }, home: string, signal: AbortSignal, recordHome?: string) => Promise<void>;
 const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: string, signal: AbortSignal, env: NodeJS.ProcessEnv) => new Promise<void>((resolve, reject) => {
   signal.throwIfAborted();
@@ -229,8 +249,12 @@ const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: st
   let recordFailed = false;
   try { saveRecord(recordHome, { version: 1, pending: true, childPid: child.pid ?? null }); }
   catch { recordFailed = true; }
-  // Drain output without retaining paths, environment values or provider text.
-  child.stdout?.resume(); child.stderr?.resume();
+  // Drain output without retaining paths, environment values or provider text;
+  // only the stdout tail is kept, for the stage status line (stageFailureNote).
+  let stdoutTail = "";
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => { stdoutTail = (stdoutTail + chunk).slice(-4096); });
+  child.stderr?.resume();
   let forceStop: ReturnType<typeof setTimeout> | undefined;
   const abort = () => {
     killCliTree(child);
@@ -251,7 +275,11 @@ const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: st
     cleanup();
     if (recordFailed) reject(new BootstrapError("Bud could not save setup progress. Check available space and folder permissions before retrying."));
     else if (signal.aborted) reject(new BootstrapError("Setup stopped. You can try again when you’re ready."));
-    else if (code !== 0) reject(new BootstrapError(RETRYABLE_STAGE_FAILURE));
+    else if (code !== 0) {
+      const note = stageFailureNote(stdoutTail);
+      console.warn(`[${new Date().toISOString()}] Bud setup stage failed (exit ${code})${note ? `: ${note}` : ""}`);
+      reject(new BootstrapError(RETRYABLE_STAGE_FAILURE));
+    }
     else resolve();
   });
   if (signal.aborted || recordFailed) abort();

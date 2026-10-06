@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
+import { stageFailureNote, bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 
@@ -462,6 +462,21 @@ if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
     abort.abort();
     await expect(result).rejects.toThrow(/Setup stopped/);
     expect(() => process.kill(record.childPid, 0)).toThrow();
+  });
+  it("logs only the failed stage and a masked reason from the installer's status line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const status = JSON.stringify({ skipped: false, ok: false, reason: "git checkout failed in C:\\Users\\fictional person\\hermes (exit 1) /home/fictional/x", stage: "repository" });
+      await expect(runBootstrapStage({ command: process.execPath, args: ["-e", `console.log('noise');console.log(${JSON.stringify(status)});console.error('secret-fixture-value');process.exit(1)`] }, home(), controller().signal)).rejects.toThrow(/couldn’t finish this step/);
+      const line = warn.mock.calls.map(call => String(call[0])).find(text => text.includes("Bud setup stage failed"));
+      expect(line).toMatch(/exit 1\): repository: git checkout failed in …/);
+      expect(line).not.toMatch(/fictional|secret-fixture-value|Users|home/);
+    } finally { warn.mockRestore(); }
+  });
+  it("names no stage when the installer printed no status line", () => {
+    expect(stageFailureNote("plain output\nno status")).toBeNull();
+    expect(stageFailureNote('{"stage":"../etc","reason":"x"}')).toBeNull();
+    expect(stageFailureNote('{"stage":"venv","ok":false}')).toBe("venv");
   });
   it("reports a failed subprocess without exposing its output", async () => {
     await expect(runBootstrapStage({ command: process.execPath, args: ["-e", "console.error('secret-fixture-value');process.exit(1)"] }, home(), controller().signal)).rejects.toThrow(/couldn’t finish this step/);
