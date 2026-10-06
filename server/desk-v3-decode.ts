@@ -36,7 +36,9 @@ import {
   type Source,
   type Tenancy,
   type BookProposal,
+  type PropertyReiFacts,
 } from "../shared/desk-v3.ts";
+import { FACT_SOURCES, REI_FIELDS, type FactOrigin, type ReiDiffer, type ReiRefs } from "../shared/contracts.ts";
 import {
   emptyOffice,
   EXPORT_CADENCES,
@@ -396,6 +398,59 @@ function decodeSourceV3(value: unknown, field: string, errors: string[]): Source
   };
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const reiValue = (value: unknown, field: string, errors: string[]): string | number => {
+  if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) return value;
+  errors.push(`${field} must be a string or number`);
+  return "";
+};
+
+function decodeReiRefs(value: unknown, field: string, errors: string[]): ReiRefs {
+  if (!isRec(value)) { errors.push(`${field} must be an object`); return {}; }
+  const refs: ReiRefs = {};
+  for (const key of ["property", "tenancy", "owner"] as const) {
+    if (value[key] !== undefined) refs[key] = str(value[key], `${field}.${key}`, errors);
+  }
+  return refs;
+}
+
+/** REI facts were added compatibly within V3: an older property has none of them. */
+function decodeReiFacts(value: Record<string, unknown>, field: string, errors: string[]): PropertyReiFacts {
+  const facts: PropertyReiFacts = {};
+  if (value.owner !== undefined) {
+    const owner = isRec(value.owner) ? value.owner : {};
+    facts.owner = { name: text(owner.name, `${field}.owner.name`, errors), contact: text(owner.contact, `${field}.owner.contact`, errors) };
+  }
+  if (value.rei !== undefined) facts.rei = decodeReiRefs(value.rei, `${field}.rei`, errors);
+  if (value.amountOwingCents !== undefined) facts.amountOwingCents = num(value.amountOwingCents, `${field}.amountOwingCents`, errors);
+  if (value.paidTo !== undefined) {
+    if (typeof value.paidTo === "string" && YMD.test(value.paidTo)) facts.paidTo = value.paidTo;
+    else errors.push(`${field}.paidTo must be a YYYY-MM-DD date`);
+  }
+  if (value.origins !== undefined) {
+    const origins: Record<string, FactOrigin> = {};
+    for (const [key, raw] of Object.entries(isRec(value.origins) ? value.origins : {})) {
+      const at = `${field}.origins.${key}`;
+      const origin = isRec(raw) ? raw : {};
+      if (!(REI_FIELDS as readonly string[]).includes(key)) { errors.push(`${at} is not a REI field`); continue; }
+      origins[key] = {
+        source: oneOf(origin.source, FACT_SOURCES, `${at}.source`, errors) ?? "desk",
+        observedAt: num(origin.observedAt, `${at}.observedAt`, errors),
+        ...(origin.declinedRei !== undefined ? { declinedRei: reiValue(origin.declinedRei, `${at}.declinedRei`, errors) } : {}),
+      };
+    }
+    facts.origins = origins as PropertyReiFacts["origins"];
+  }
+  if (value.differs !== undefined) {
+    facts.differs = arr(value.differs, `${field}.differs`, errors).map((raw, i): ReiDiffer => {
+      const at = `${field}.differs[${i}]`;
+      const row = isRec(raw) ? raw : {};
+      return { field: oneOf(row.field, REI_FIELDS, `${at}.field`, errors) ?? "address", rei: reiValue(row.rei, `${at}.rei`, errors), observedAt: num(row.observedAt, `${at}.observedAt`, errors) };
+    });
+  }
+  return facts;
+}
+
 function decodePropertyV3(value: unknown, field: string, errors: string[]): PropertyV3 {
   if (!isRec(value)) {
     errors.push(`${field} must be an object`);
@@ -408,6 +463,7 @@ function decodePropertyV3(value: unknown, field: string, errors: string[]): Prop
     status: oneOf(value.status, PROPERTY_LIFECYCLES, `${field}.status`, errors) ?? "active",
     options: decodeOptionsV3(value.options, `${field}.options`, errors),
     archivedAt: optNum(value.archivedAt, `${field}.archivedAt`, errors),
+    ...decodeReiFacts(value, field, errors),
   };
 }
 
@@ -470,12 +526,14 @@ function decodeBookProposal(value: unknown, field: string, errors: string[]): Bo
     id: str(value.id, `${field}.id`, errors),
     kind: "add-property",
     status: "open",
-    origin: value.origin === "ask" ? "ask" : "manual",
+    origin: value.origin === "ask" || value.origin === "rei" ? value.origin : "manual",
     fields: {
       address: text(fieldsRec.address, `${field}.fields.address`, errors),
       tenantName: text(fieldsRec.tenantName, `${field}.fields.tenantName`, errors),
       tenantPhone: text(fieldsRec.tenantPhone, `${field}.fields.tenantPhone`, errors),
       weeklyRentCents: num(fieldsRec.weeklyRentCents, `${field}.fields.weeklyRentCents`, errors),
+      ...(fieldsRec.ownerName !== undefined ? { ownerName: text(fieldsRec.ownerName, `${field}.fields.ownerName`, errors) } : {}),
+      ...(fieldsRec.rei !== undefined ? { rei: decodeReiRefs(fieldsRec.rei, `${field}.fields.rei`, errors) } : {}),
     },
     createdAt: num(value.createdAt, `${field}.createdAt`, errors),
   };

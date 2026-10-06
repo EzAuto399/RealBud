@@ -1,7 +1,7 @@
 // V3 → in-memory V2-shaped snapshot. Notes stay out of the queue payload.
 import type { DeskSnapshot, Draft, Escalation, LedgerFacts, Property, RecoveryState, WorkItem } from "../shared/contracts.ts";
 import type { DeskFileV2 } from "../shared/desk-v2.ts";
-import type { DeskFileV3 } from "../shared/desk-v3.ts";
+import { propertyReiFacts, type DeskFileV3 } from "../shared/desk-v3.ts";
 
 function viaFromActor(actorId: string | undefined): string | undefined {
   if (!actorId || actorId === "pm" || actorId === "legacy-unknown") return undefined;
@@ -46,11 +46,13 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
     return {
       id: property.id,
       address: property.address,
+      ...(property.propertyCode ? { propertyCode: property.propertyCode } : {}),
       tenantName: tenant?.name ?? "",
       tenantPhone: tenant?.phone ?? "",
       weeklyRentCents: book.tenancies.find((t) => t.propertyId === property.id && t.status === "current")?.weeklyRentCents ?? 0,
       options: property.options,
       notes: notes?.get(property.id),
+      ...propertyReiFacts(property),
     };
   });
 
