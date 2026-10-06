@@ -46,6 +46,16 @@ export function consequentialKind(text: string): BrowserConsequentialKind | null
 export const CREDENTIAL_FIELD = /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b|card number|\bcvv\b|\bbsb\b|account number/i;
 export const SIGN_IN_CONTROL = /\b(sign.?in|log.?in|sign.?on)\b/i;
 export const FINANCIAL_PAGE = /\b(bank|banking|transaction|statement|balance|account number|bpay|bsb)\b/i;
+/** A route the portal's map classes as money or upload is a financial page whatever its words say (REI's batch
+ * payments, end-of-month disbursement and charge screens carry no bank word once the sidebar's menu links are set aside). */
+function financialRoute(address: string, portal: BrowserPortalControls | null): boolean {
+  if (!portal?.financialRoutes?.length) return false;
+  try {
+    const at = new URL(address); if (at.origin !== portal.origin) return false;
+    const path = at.pathname.toLowerCase().replace(/\/+$/, "");
+    return portal.financialRoutes.some(route => path === route || path.startsWith(`${route}/`));
+  } catch { return false; }
+}
 export const SUBMIT_CONTROL = /\b(submit|save|continue|next|confirm|lodge|create|update)\b/i;
 const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
 const READ_AFFORDANCE = /\b(view|show|statement|transaction|history|download|export|search|filter|previous|next page)\b/i;
@@ -272,6 +282,8 @@ export interface BrowserPortalControls {
   /** The portal's pager group exactly (role and accessible name). Without it no pager is read-safe. */
   pager?: { role: string; name: string };
   consequential: readonly string[];
+  /** Routes (lowercase path, no query) the portal's map classes as money or upload: always financial pages. */
+  financialRoutes?: readonly string[];
   /** Where the portal shows the selected account (landmark and role); the grant's marker must be exactly there. */
   accountMarker?: { landmark: string; role: string };
   signInHosts: readonly string[];
@@ -542,7 +554,7 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
   // A declared read-safe control reads on its portal, even on a page that mentions a bank.
   const readSafe = portal !== null && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
-  const financial = !readSafe && FINANCIAL_PAGE.test(`${withoutMenuLinks(text, portal)} ${observation.url}`);
+  const financial = !readSafe && (FINANCIAL_PAGE.test(`${withoutMenuLinks(text, portal)} ${observation.url}`) || financialRoute(String(observation.url ?? ""), portal));
   const kind = consequentialKind(label);
   if (step === "fill") {
     if (typeof args.value !== "string" || args.value.length > 2000 || /[\x00-\x1f]/.test(args.value)) return { class: "out-of-scope", step, reason: "Use one ordinary field value without key presses." };

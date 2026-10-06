@@ -526,6 +526,12 @@ describe("a portal pack's declared read-safe controls", () => {
     const live = vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"', '    navigation "Main"',
       '      @e2 link "Bank reconciliation" url="/customers/reconciliation/bankreconciliation"', "    main", '      heading "Arrears"', '      @e3 textbox "From day" value=""'], "https://portal.example/arrears");
     expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, live))).toBe(true);
+    // A money screen whose words carry no bank term is still financial by its address.
+    const batch = vom(['  RootWebArea "Batch Payments"', "    banner", '      @e20 button "FICT1"', '    navigation "Main"', '      @e2 link "Bank reconciliation"',
+      "    main", '      heading "Batch Payments"', '      @e3 textbox "Reference" value=""'], "https://portal.example/customers/batchpayments/index");
+    const mapped = { ...PORTAL, financialRoutes: ["/customers/batchpayments/index"] };
+    expect(use("browser_fill", { ref: "@e3", value: "7" }, batch, mapped).classification).toMatchObject({ class: "consequential", reason: "This page is for reading. Enter bank and financial details yourself." });
+    expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, batch))).toBe(true);
     // A link in the page's content named like a menu item still counts.
     const inMain = vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"', "    main", '      heading "Arrears"',
       '      @e2 link "Bank reconciliation"', '      @e3 textbox "From day" value=""'], "https://portal.example/arrears");
