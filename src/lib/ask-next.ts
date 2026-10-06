@@ -116,7 +116,7 @@ function pushFocusRecipeActions(next: AskNext[], recipe: AskSavedJob, threadIdle
     next.push({
       id: "attend-now",
       label: "Run beside me now",
-      description: "Start this job beside you — stay in Ask for Bud's requests.",
+      description: "Start this job beside you — stay in Work for Bud's requests.",
       kind: "attend",
       recipeId: recipe.id,
     });

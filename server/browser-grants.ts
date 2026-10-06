@@ -40,7 +40,7 @@ export const ASK_TASK_OFFER_MS = 60 * 60_000;
 
 /** The Ask reply that carries the card. It stands alone where the card cannot show (a phone). */
 export const BROWSER_TASK_OFFER =
-  "I can do this now in your browser. Check what it covers, then press **Start this task** in Ask on this computer. Payments, signatures, messages and notices each still ask you first.";
+  "I can do this now in your browser. Check what it covers, then press **Start this task** in Work on this computer. Payments, signatures, messages and notices each still ask you first.";
 export const BROWSER_TASK_UNAVAILABLE =
   "I couldn't prepare this browser task, so nothing was done in your browser. Check this computer's disk space, then ask again.";
 

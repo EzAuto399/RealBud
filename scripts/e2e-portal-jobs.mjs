@@ -432,7 +432,7 @@ try {
   );
   const intakeReply = lastBotText(intakeBud);
   const recipesAfterIntake = (await api("GET", "/api/recipes")).body?.recipes ?? [];
-  if (/Press \*\*Approve the plan\*\* here in Ask/i.test(intakeReply) || /Approve the plan on/.test(intakeReply)) {
+  if (/Press \*\*Approve the plan\*\* here in Work/i.test(intakeReply) || /Approve the plan on/.test(intakeReply)) {
     check("intake path: draft saved with approve-the-plan reply", recipesAfterIntake.length > recipesBefore, intakeReply.slice(0, 80));
     console.log("      (harness: fake worker shaped a saved shadow job)");
   } else if (/model isn't answering right now/i.test(intakeReply)) {

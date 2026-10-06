@@ -99,7 +99,7 @@ describe("ask next actions", () => {
       threadIdle: true,
       recipes: [pending],
       lastBotText:
-        "I can take this over as a saved job. Here's the plan:\n**Building link payment review**\n1. Open\nPress **Approve the plan** here in Ask, then **Run beside me**.",
+        "I can take this over as a saved job. Here's the plan:\n**Building link payment review**\n1. Open\nPress **Approve the plan** here in Work, then **Run beside me**.",
     });
     expect(next[0]).toMatchObject({
       id: "approve-plan",
@@ -129,7 +129,7 @@ describe("ask next actions", () => {
       lastRunAt: 100,
       threadIdle: true,
       recipes: [pending],
-      lastBotText: "Here's the plan:\n**Levy check**\nPress **Approve the plan** here in Ask.",
+      lastBotText: "Here's the plan:\n**Levy check**\nPress **Approve the plan** here in Work.",
     });
     expect(next[0]).toMatchObject({
       id: "set-site",
