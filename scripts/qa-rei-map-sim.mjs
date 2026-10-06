@@ -107,7 +107,7 @@ const ORIGIN = "https://rei-mock.fictional.test";
 const AGENCY = "Fictional Realty Office";
 const B = "FICT1";
 const REICID = "fictional-reicid-1";
-const CHILDREN = { Tenants: [["Arrears", "/customers/arrears/"]], Receipts: [["Tenant receipts", "/customers/transaction/tenantreceipt"], ["Bulk receipting", "/customers/importbanklink/index"]], Process: [["Bank reconciliation", "/customers/reconciliation/bankreconciliation"]], Settings: [["Integrations", "/RequesterIntegrations"]] };
+const CHILDREN = { Receipts: [["Bulk Receipting", "/customers/importbanklink/index"], ["Tenant", "/customers/transaction/tenantreceipt"]], Process: [["Arrears", "/customers/arrears/"], ["Bank Reconciliation", "/customers/reconciliation/bankreconciliation"]], Settings: [["Integrations", "/RequesterIntegrations"]] };
 const ROUTES = Object.fromEntries(screens.filter(s => s.menu.length === 1).map(s => [s.menu[0], s.route]));
 ROUTES.Dashboard = "/dashboard";
 const tenants = [

@@ -514,6 +514,23 @@ describe("a portal pack's declared read-safe controls", () => {
     expect(use("browser_click_semantic", { ref: "@e3" })).toMatchObject({ decision: "ask", once: true, classification: { class: "unknown" } });
   });
 
+  it("a menu link named for banking does not make an ordinary page financial; the page's own words still do", () => {
+    const arrears = (extra: string[]) => vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"',
+      '    navigation "Main"', '      @e1 link "Process"', '        @e2 link "Bank reconciliation"',
+      "    main", '      heading "Arrears"', '      @e3 textbox "From day" value=""', ...extra], "https://portal.example/arrears");
+    expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, arrears([])))).toBe(true);
+    expect(use("browser_fill", { ref: "@e3", value: "7" }, arrears(['      StaticText "Statement balance: 1,185.00"'])).classification)
+      .toMatchObject({ class: "consequential", reason: "This page is for reading. Enter bank and financial details yourself." });
+    expect(use("browser_fill", { ref: "@e3", value: "7" }, arrears([]), null).classification).toMatchObject({ class: "consequential" });
+    // As live pages show a link: with its address on the line.
+    const live = vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"', '    navigation "Main"',
+      '      @e2 link "Bank reconciliation" url="/customers/reconciliation/bankreconciliation"', "    main", '      heading "Arrears"', '      @e3 textbox "From day" value=""'], "https://portal.example/arrears");
+    expect(routine(use("browser_fill", { ref: "@e3", value: "7" }, live))).toBe(true);
+    // A link in the page's content named like a menu item still counts.
+    const inMain = vom(['  RootWebArea "Arrears"', "    banner", '      @e20 button "FICT1"', "    main", '      heading "Arrears"',
+      '      @e2 link "Bank reconciliation"', '      @e3 textbox "From day" value=""'], "https://portal.example/arrears");
+    expect(use("browser_fill", { ref: "@e3", value: "7" }, inMain).classification).toMatchObject({ class: "consequential" });
+  });
   it("keeps Save, Process, Finalise and Cancel on the same bank page approval-only", () => {
     expect(use("browser_click_semantic", { ref: "@e7" })).toMatchObject({ decision: "deny", classification: { class: "consequential", kind: "pay" } });
     for (const ref of ["@e8", "@e9"]) {
@@ -836,15 +853,15 @@ describe("a page as every sink keeps it", () => {
 
 describe("the account marker reads only the page's own chrome", () => {
   const where = { landmark: "list", role: "button" };
-  const topBar = '@native-ax 1\nrootwebarea\n  generic\n    @e1 link "REI Cloud v 26.0922.0 P"\n    list\n      listitem\n        @e2 button "AUS06"';
+  const topBar = '@native-ax 1\nrootwebarea\n  generic\n    @e1 link "REI Cloud v 26.0922.0 P"\n    list\n      listitem\n        @e2 button "FICT1"';
   it("reads the first button in the top bar's list, as live REI shows it", () => {
-    expect(portalAccountName(topBar, where)).toBe("AUS06");
+    expect(portalAccountName(topBar, where)).toBe("FICT1");
   });
   it("never takes a list from the page's content, a form, a dialog, a table or a widget region", () => {
     for (const box of ["main", "form", "dialog", "grid", "region", "article"]) {
       const content = `@native-ax 1\nrootwebarea\n  ${box}\n    list\n      listitem\n        @e1 button "OTHER1"`;
       expect(portalAccountName(content, where)).toBeNull();
-      expect(portalAccountName(`${content}\n  generic\n    list\n      listitem\n        @e2 button "AUS06"`, where)).toBe("AUS06");
+      expect(portalAccountName(`${content}\n  generic\n    list\n      listitem\n        @e2 button "FICT1"`, where)).toBe("FICT1");
     }
   });
 });

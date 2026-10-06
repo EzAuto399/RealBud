@@ -8,10 +8,54 @@
   "version": "26.0922.0",
   "evidence": "Read-only structural map from the owner's signed-in session. No record data. Not a completed RealBud task.",
   "origin": "https://app.reimasterapps.com.au",
-  "signIn": { "host": "reimasterapps.b2clogin.com", "policy": "b2c_1_signin", "detect": "title 'Choose your account' or text 'Sign in with your email address'", "handling": "pause-for-person" },
-  "scope": { "urlParam": "reicid", "headerBusinessButton": "business code in top bar", "rule": "stop if reicid or business changes during a task", "observed2026-10-02": "after sign-in addresses carry no reicid; the business is the top-bar code, so scope by that code. A code mismatch always stops; a missing reicid alone is not out of scope" },
-  "frame": { "content": ".page-content", "sidebar": "nav, aside", "gridSearch": "input[type=search] labelled 'Search:'", "rowIds": ["data-tenant-id", "data-owner-id", "data-property-id", "data-id"], "piiAttributes": ["data-email"], "editLock": "heading 'Editing By <user>' means stop" },
-  "overlays": { "reminderModal": { "safeClose": ["×", "Close"], "never": ["Dismiss All", "Remind All Again"] }, "preloadedDialogs": ["New Email", "New SMS", "New Letter", "New Form", "REI Forms Live", "Template List", "Cloud Documents"] },
+  "signIn": {
+    "host": "reimasterapps.b2clogin.com",
+    "policy": "b2c_1_signin",
+    "detect": "title 'Choose your account' or text 'Sign in with your email address'",
+    "handling": "pause-for-person"
+  },
+  "scope": {
+    "urlParam": "reicid",
+    "headerBusinessButton": "business code in top bar",
+    "rule": "stop if reicid or business changes during a task",
+    "observed2026-10-02": "after sign-in addresses carry no reicid; the business is the top-bar code, so scope by that code. A code mismatch always stops; a missing reicid alone is not out of scope"
+  },
+  "frame": {
+    "content": ".page-content",
+    "sidebar": "nav, aside",
+    "gridSearch": "input[type=search] labelled 'Search:'",
+    "rowIds": [
+      "data-tenant-id",
+      "data-owner-id",
+      "data-property-id",
+      "data-id"
+    ],
+    "piiAttributes": [
+      "data-email"
+    ],
+    "editLock": "heading 'Editing By <user>' means stop"
+  },
+  "overlays": {
+    "reminderModal": {
+      "safeClose": [
+        "×",
+        "Close"
+      ],
+      "never": [
+        "Dismiss All",
+        "Remind All Again"
+      ]
+    },
+    "preloadedDialogs": [
+      "New Email",
+      "New SMS",
+      "New Letter",
+      "New Form",
+      "REI Forms Live",
+      "Template List",
+      "Cloud Documents"
+    ]
+  },
   "riskClasses": {
     "read": "allowed within task grant plus scope check",
     "local-ui": "allowed",
@@ -23,33 +67,3812 @@
     "never": "refuse"
   },
   "routes": [
-    { "path": "/customers/dashboard", "name": "Dashboard", "class": "read" },
-    { "path": "/customers/owner", "name": "Owners list", "class": "read", "columns": ["Reference", "Surname", "Firstname", "Properties", "Email", "Mobile", "Home Phone", "Work Phone", "Fax", "Address"], "actions": "send" },
-    { "path": "/customers/owner/details?ownerid={id}", "name": "Owner record (edit form)", "class": "read", "tabs": ["Details", "Disbursement", "Account", "Invoices", "Other", "Tasks / Notes", "Document Mgmt", "Portal"], "save": "record-change" },
-    { "path": "/customers/property", "name": "Rentals list", "class": "read", "columns": ["Reference", "Description", "Owner", "Tenants", "Portfolio", "Commission", "Asking Rent", "Letting Type", "Zone", "Key No.", "No. Beds", "No. Bath", "Car Accom.", "Address"], "views": ["Default View", "Key Register", "Properties Available For Rent", "Routine Inspections", "Pool Compliance (Properties With Pool)", "Management Agreement Expiring Within 30 Days"], "actionMenu": ["Email to Owner", "SMS to Owner", "Letter to Owner", "Form to Owner", "Mail Merge to Property", "Apply Automation", "Re-Assign Portfolios", "Re-Assign Template", "Task Reports"] },
-    { "path": "/customers/property/details?propertyId={id}", "name": "Rental record (edit form)", "class": "read", "tabs": ["Details", "Commissions", "Deductions", "Account", "Tasks / Notes", "Document Mgmt", "Ownership Change", "Setup", "Booking Charges", "Other Settings", "Upload To Web", "BPAY Details"], "save": "record-change" },
-    { "path": "/customers/tenant", "name": "Tenants list", "class": "read", "loadComplete": "footer 'N records · 0 row(s) selected'; the grid shows 'No records to display' first and fills a moment later", "paging": "scrolls; no numbered pages", "columns": ["Reference", "Surname", "Firstname", "Property", "Rent", "Paid To", "Rent Credit", "Days +/-", "Amount Owing", "Lease Expiry", "Vacating", "Owner", "BPay/Ref No.", "Email", "Mobile", "Home Phone", "Work Phone", "Fax"], "views": ["Arrears (All)", "Arrears - 1 to 6 Days", "Arrears - 7 to 13 Days", "Arrears - 14 to 20 Days", "Arrears - 21 to 27 Days", "Arrears - 28+ Days", "Arrears - 7+ Days", "Bond Summary", "Bonds In Trust", "Lease Information", "Leases Expiring Within The Next 30 Days", "Rent Reviews Due Within The Next 30 Days", "Vacating (All Dates)", "In Advance", "Current"], "actionMenu": ["Email to Tenant", "SMS to Tenant", "Letter to Tenant", "Mail Merge to Tenant", "Form to Tenant", "Tenant Ledger", "Invite to Portal", "Apply Automation"] },
-    { "path": "/customers/tenant/account?tenantId={id}", "name": "Tenant ledger", "class": "read", "filters": ["Period", "Transaction", "Financial Year", "Pending"], "columns": ["Date", "Reference", "Description", "Account", "Amount Excl.", "Tax", "Amount Incl."] },
-    { "path": "/customers/supplier", "name": "Suppliers list", "class": "read" },
-    { "path": "/customers/task", "name": "Tasks", "class": "read", "selects": { "TaskView": ["All Tasks", "Tasks Due Today", "Today's Reminders", "Overdue Reminders", "All Reminders"], "TaskDateFilterType": ["No Filter", "Due Date", "End Date", "Reminder Date", "Completed", "Created", "Last Modified"] } },
-    { "path": "/customers/arrears/", "name": "Arrears", "class": "read", "filters": ["Days arrears are [Greater Than|…] n", "From Date", "Property Portfolio", "Hide Vacated Tenants"], "button": "Load" },
-    { "path": "/customers/importbanklink/index", "name": "Bulk Receipting (bank file import)", "class": "upload", "select": "BankLinkFormat", "fileInput": "bank-link-file", "accept": ".txt,.pay,.brf,.erp,.txn,.aba,.csv", "formats": ["(*.ABA) File", "(*.BRF) File", "(*.ERP) File", "(*.TXN) File", "ANZ(csv file)", "Bank of Queensland(csv file)", "BankWest(csv file)", "Bendigo(csv file)", "Commonwealth(csv file)", "Commonwealth - New(csv file)", "Corum", "HANDeRENT Secure Payments", "IP Payments", "NAB Easy Rent", "NAB Reverse Format(csv file)", "NAB(csv file)", "Paycorp - RentPay", "Rental Rewards", "StrataPay", "Suncorp(csv file)", "Westpac(csv file)", "Custom(csv file)"], "defaultFormat": "ANZ(csv file)", "pendingImport": "a loaded-but-unprocessed import appears on this page (display not yet observed); with nothing loaded no grid shows. Never read pending imports from Pending transactions", "then": { "Process Pending": "money", "Delete Pending": "money", "Save": "money" } },
-    { "path": "/customers/transaction/tenantreceipt", "name": "Tenant receipt", "class": "money", "listColumns": ["Reference", "Name", "B-Pay D/Cr Ref", "Paid To", "Rent Credit", "Days +/-", "Amt. Owing", "Days Adj.", "Property"] },
-    { "path": "/customers/transaction/ownerreceipt", "name": "Owner receipt", "class": "money" },
-    { "path": "/customers/transaction/supplierreceipt", "name": "Supplier receipt", "class": "money" },
-    { "path": "/customers/transaction/payment", "name": "Trust account payment", "class": "money", "fields": ["payment_type (Cheque|Electronic)", "Date", "payment.payee", "payment_fund_from", "payment.eftname", "BankId", "payment.eftbsb", "payment.eftnumber", "payment.eftreference", "payment.eftfile"] },
-    { "path": "/customers/batchpayments/index", "name": "Batch payments", "class": "money" },
-    { "path": "/customers/transaction/charge", "name": "Charges", "class": "money" },
-    { "path": "/customers/transaction/journal", "name": "Journals", "class": "money" },
-    { "path": "/customers/taxinvoice/normal", "name": "Tax invoices", "class": "read", "newInvoice": "money" },
-    { "path": "/customers/transaction/banking", "name": "Banking close", "class": "money", "irreversible": ["Finalise"] },
-    { "path": "/customers/reconciliation/bankreconciliation", "name": "Bank reconciliation", "class": "read", "readTargets": ["3 - Way summary", "BALANCED/NOT BALANCED badge", "Reconciled Balance", "Cashbook Balance", "Money Held In Trust"], "update": "money" },
-    { "path": "/customers/disbursement/eom", "name": "End of month disbursement", "class": "money", "irreversible": ["Next", "Finalise"] },
-    { "path": "/customers/transaction/pendingtransactions", "name": "Pending transactions", "class": "read", "lock": "Editing By <user>", "lists": "pending payments, levies and invoices (owner/business, description, amount, sufficient funds); not bank imports", "never": ["Process Pending", "Delete Pending", "Process"] },
-    { "path": "/report/reportlist", "name": "Reports", "class": "export", "outputOptions": { "Export Only": "export", "Email Only": "send", "Export & Email": "send" }, "parametersPopup": { "Receipt Register": "#reportParameterOwnerList_popup", "Receipt Register Range": "#reportParameterOwnerList_popup" }, "note": "opening a report shows its parameters popup before any output; running and downloading it is an export (approval)" },
-    { "path": "/account/logout", "name": "Log out", "class": "never" },
-    { "path": "/b2c/resetpassword", "name": "Reset password", "class": "never" },
-    { "path": "/AdminSettings/UserAdmin", "name": "Admin settings", "class": "never" },
-    { "path": "/RequesterIntegrations", "name": "Integrations", "class": "never", "groups": ["My Connections", "Accounting", "Reservations", "Marketing", "Forms", "Payment Gateway", "STR", "Xero", "RoomPriceGenie", "Mobile Integration"] }
-  ]
+    {
+      "path": "/customers/dashboard",
+      "name": "Dashboard",
+      "class": "read"
+    },
+    {
+      "path": "/customers/owner",
+      "name": "Owners list",
+      "class": "read",
+      "columns": [
+        "Reference",
+        "Surname",
+        "Firstname",
+        "Properties",
+        "Email",
+        "Mobile",
+        "Home Phone",
+        "Work Phone",
+        "Fax",
+        "Address"
+      ],
+      "actions": "send"
+    },
+    {
+      "path": "/customers/owner/details?ownerid={id}",
+      "name": "Owner record (edit form)",
+      "class": "read",
+      "tabs": [
+        "Details",
+        "Disbursement",
+        "Account",
+        "Invoices",
+        "Other",
+        "Tasks / Notes",
+        "Document Mgmt",
+        "Portal"
+      ],
+      "save": "record-change"
+    },
+    {
+      "path": "/customers/property",
+      "name": "Rentals list",
+      "class": "read",
+      "columns": [
+        "Reference",
+        "Description",
+        "Owner",
+        "Tenants",
+        "Portfolio",
+        "Commission",
+        "Asking Rent",
+        "Letting Type",
+        "Zone",
+        "Key No.",
+        "No. Beds",
+        "No. Bath",
+        "Car Accom.",
+        "Address"
+      ],
+      "views": [
+        "Default View",
+        "Key Register",
+        "Properties Available For Rent",
+        "Routine Inspections",
+        "Pool Compliance (Properties With Pool)",
+        "Management Agreement Expiring Within 30 Days"
+      ],
+      "actionMenu": [
+        "Email to Owner",
+        "SMS to Owner",
+        "Letter to Owner",
+        "Form to Owner",
+        "Mail Merge to Property",
+        "Apply Automation",
+        "Re-Assign Portfolios",
+        "Re-Assign Template",
+        "Task Reports"
+      ]
+    },
+    {
+      "path": "/customers/property/details?propertyId={id}",
+      "name": "Rental record (edit form)",
+      "class": "read",
+      "tabs": [
+        "Details",
+        "Commissions",
+        "Deductions",
+        "Account",
+        "Tasks / Notes",
+        "Document Mgmt",
+        "Ownership Change",
+        "Setup",
+        "Booking Charges",
+        "Other Settings",
+        "Upload To Web",
+        "BPAY Details"
+      ],
+      "save": "record-change"
+    },
+    {
+      "path": "/customers/tenant",
+      "name": "Tenants list",
+      "class": "read",
+      "loadComplete": "footer 'N records · 0 row(s) selected'; the grid shows 'No records to display' first and fills a moment later",
+      "paging": "scrolls; no numbered pages",
+      "columns": [
+        "Reference",
+        "Surname",
+        "Firstname",
+        "Property",
+        "Rent",
+        "Paid To",
+        "Rent Credit",
+        "Days +/-",
+        "Amount Owing",
+        "Lease Expiry",
+        "Vacating",
+        "Owner",
+        "BPay/Ref No.",
+        "Email",
+        "Mobile",
+        "Home Phone",
+        "Work Phone",
+        "Fax"
+      ],
+      "views": [
+        "Arrears (All)",
+        "Arrears - 1 to 6 Days",
+        "Arrears - 7 to 13 Days",
+        "Arrears - 14 to 20 Days",
+        "Arrears - 21 to 27 Days",
+        "Arrears - 28+ Days",
+        "Arrears - 7+ Days",
+        "Bond Summary",
+        "Bonds In Trust",
+        "Lease Information",
+        "Leases Expiring Within The Next 30 Days",
+        "Rent Reviews Due Within The Next 30 Days",
+        "Vacating (All Dates)",
+        "In Advance",
+        "Current"
+      ],
+      "actionMenu": [
+        "Email to Tenant",
+        "SMS to Tenant",
+        "Letter to Tenant",
+        "Mail Merge to Tenant",
+        "Form to Tenant",
+        "Tenant Ledger",
+        "Invite to Portal",
+        "Apply Automation"
+      ]
+    },
+    {
+      "path": "/customers/tenant/account?tenantId={id}",
+      "name": "Tenant ledger",
+      "class": "read",
+      "filters": [
+        "Period",
+        "Transaction",
+        "Financial Year",
+        "Pending"
+      ],
+      "columns": [
+        "Date",
+        "Reference",
+        "Description",
+        "Account",
+        "Amount Excl.",
+        "Tax",
+        "Amount Incl."
+      ]
+    },
+    {
+      "path": "/customers/supplier",
+      "name": "Suppliers list",
+      "class": "read"
+    },
+    {
+      "path": "/customers/task",
+      "name": "Tasks",
+      "class": "read",
+      "selects": {
+        "TaskView": [
+          "All Tasks",
+          "Tasks Due Today",
+          "Today's Reminders",
+          "Overdue Reminders",
+          "All Reminders"
+        ],
+        "TaskDateFilterType": [
+          "No Filter",
+          "Due Date",
+          "End Date",
+          "Reminder Date",
+          "Completed",
+          "Created",
+          "Last Modified"
+        ]
+      }
+    },
+    {
+      "path": "/customers/arrears/",
+      "name": "Arrears",
+      "class": "read",
+      "filters": [
+        "Days arrears are [Greater Than|…] n",
+        "From Date",
+        "Property Portfolio",
+        "Hide Vacated Tenants"
+      ],
+      "button": "Load"
+    },
+    {
+      "path": "/customers/importbanklink/index",
+      "name": "Bulk Receipting (bank file import)",
+      "class": "upload",
+      "select": "BankLinkFormat",
+      "fileInput": "bank-link-file",
+      "accept": ".txt,.pay,.brf,.erp,.txn,.aba,.csv",
+      "formats": [
+        "(*.ABA) File",
+        "(*.BRF) File",
+        "(*.ERP) File",
+        "(*.TXN) File",
+        "ANZ(csv file)",
+        "Bank of Queensland(csv file)",
+        "BankWest(csv file)",
+        "Bendigo(csv file)",
+        "Commonwealth(csv file)",
+        "Commonwealth - New(csv file)",
+        "Corum",
+        "HANDeRENT Secure Payments",
+        "IP Payments",
+        "NAB Easy Rent",
+        "NAB Reverse Format(csv file)",
+        "NAB(csv file)",
+        "Paycorp - RentPay",
+        "Rental Rewards",
+        "StrataPay",
+        "Suncorp(csv file)",
+        "Westpac(csv file)",
+        "Custom(csv file)"
+      ],
+      "defaultFormat": "ANZ(csv file)",
+      "pendingImport": "a loaded-but-unprocessed import appears on this page (display not yet observed); with nothing loaded no grid shows. Never read pending imports from Pending transactions",
+      "then": {
+        "Process Pending": "money",
+        "Delete Pending": "money",
+        "Save": "money"
+      }
+    },
+    {
+      "path": "/customers/transaction/tenantreceipt",
+      "name": "Tenant receipt",
+      "class": "money",
+      "listColumns": [
+        "Reference",
+        "Name",
+        "B-Pay D/Cr Ref",
+        "Paid To",
+        "Rent Credit",
+        "Days +/-",
+        "Amt. Owing",
+        "Days Adj.",
+        "Property"
+      ]
+    },
+    {
+      "path": "/customers/transaction/ownerreceipt",
+      "name": "Owner receipt",
+      "class": "money"
+    },
+    {
+      "path": "/customers/transaction/supplierreceipt",
+      "name": "Supplier receipt",
+      "class": "money"
+    },
+    {
+      "path": "/customers/transaction/payment",
+      "name": "Trust account payment",
+      "class": "money",
+      "fields": [
+        "payment_type (Cheque|Electronic)",
+        "Date",
+        "payment.payee",
+        "payment_fund_from",
+        "payment.eftname",
+        "BankId",
+        "payment.eftbsb",
+        "payment.eftnumber",
+        "payment.eftreference",
+        "payment.eftfile"
+      ]
+    },
+    {
+      "path": "/customers/batchpayments/index",
+      "name": "Batch payments",
+      "class": "money"
+    },
+    {
+      "path": "/customers/transaction/charge",
+      "name": "Charges",
+      "class": "money"
+    },
+    {
+      "path": "/customers/transaction/journal",
+      "name": "Journals",
+      "class": "money"
+    },
+    {
+      "path": "/customers/taxinvoice/normal",
+      "name": "Tax invoices",
+      "class": "read",
+      "newInvoice": "money"
+    },
+    {
+      "path": "/customers/transaction/banking",
+      "name": "Banking close",
+      "class": "money",
+      "irreversible": [
+        "Finalise"
+      ]
+    },
+    {
+      "path": "/customers/reconciliation/bankreconciliation",
+      "name": "Bank reconciliation",
+      "class": "read",
+      "readTargets": [
+        "3 - Way summary",
+        "BALANCED/NOT BALANCED badge",
+        "Reconciled Balance",
+        "Cashbook Balance",
+        "Money Held In Trust"
+      ],
+      "update": "money"
+    },
+    {
+      "path": "/customers/disbursement/eom",
+      "name": "End of month disbursement",
+      "class": "money",
+      "irreversible": [
+        "Next",
+        "Finalise"
+      ]
+    },
+    {
+      "path": "/customers/transaction/pendingtransactions",
+      "name": "Pending transactions",
+      "class": "read",
+      "lock": "Editing By <user>",
+      "lists": "pending payments, levies and invoices (owner/business, description, amount, sufficient funds); not bank imports",
+      "never": [
+        "Process Pending",
+        "Delete Pending",
+        "Process"
+      ]
+    },
+    {
+      "path": "/report/reportlist",
+      "name": "Reports",
+      "class": "export",
+      "outputOptions": {
+        "Export Only": "export",
+        "Email Only": "send",
+        "Export & Email": "send"
+      },
+      "parametersPopup": {
+        "Receipt Register": "#reportParameterOwnerList_popup",
+        "Receipt Register Range": "#reportParameterOwnerList_popup"
+      },
+      "note": "opening a report shows its parameters popup before any output; running and downloading it is an export (approval)"
+    },
+    {
+      "path": "/account/logout",
+      "name": "Log out",
+      "class": "never"
+    },
+    {
+      "path": "/b2c/resetpassword",
+      "name": "Reset password",
+      "class": "never"
+    },
+    {
+      "path": "/AdminSettings/UserAdmin",
+      "name": "Admin settings",
+      "class": "never"
+    },
+    {
+      "path": "/RequesterIntegrations",
+      "name": "Integrations",
+      "class": "never",
+      "groups": [
+        "My Connections",
+        "Accounting",
+        "Reservations",
+        "Marketing",
+        "Forms",
+        "Payment Gateway",
+        "STR",
+        "Xero",
+        "RoomPriceGenie",
+        "Mobile Integration"
+      ]
+    }
+  ],
+  "live2026_10_06": {
+    "observed": "2026-10-06",
+    "version": "26.0922.0",
+    "tier": "L",
+    "evidence": "Read-only crawl of the owner-approved signed-in session by RealBud dev tooling: GET navigation to menu pages and DOM reads only. Nothing clicked, typed, saved or sent. UI labels only; no rows, field values, names, office zones/categories, account codes or query strings.",
+    "chrome": {
+      "topBar": "first top-level generic: link 'REI Cloud v <version> P' (UI version), then a list whose first button is the business code (account marker {landmark: list, role: button}); no banner or contentinfo landmark",
+      "sidebar": "list of menu links; groups (Receipts, Process, Settings, Tools, My Profile, Communities) expand in place",
+      "footer": "'2026 © REI Master Pty Ltd' (no version)"
+    },
+    "grids": {
+      "syncfusion": "Record lists (Owners, Rentals, Tenants, Suppliers, Contacts, Sales, Listings, Agents, Pool of Owners) are Syncfusion grids: no pager; the footer says 'N records - M row(s) selected'. The first 90 rows render; more load only when the grid itself scrolls. A read is complete only when rendered rows == N (Suppliers 60/60 complete on first read; Tenants first read 90 of 106). Keyboard keys do not load more rows. Column menu (⋮) holds Autofit, Sort, Columns, Filter only: no export.",
+      "datatables": "Process, Receipts and Tasks screens are DataTables: 'Search:' box, 'Show entries' select, Previous / page numbers / Next pager; column headers read '<name>: activate to sort column …'."
+    },
+    "listActionMenu": "Every record list has an 'Action' dropdown (top right, beside 'Add New'). Opening it changes nothing. Its items are Send (Email/SMS/Letter/Form/Mail Merge/Invite to Portal), Record change (Apply Automation, Re-Assign …, Room Feature …, Delete Statement Message, Sync to Outlook, Complete/Retry Task(s)) or reports (Statement, Ledger, Task Reports). There is no Export item on any list.",
+    "reports": {
+      "route": "/report/reportlist",
+      "layout": "Category tables of report links; a report link opens a hidden Bootstrap parameter modal (#reportParameterOwnerList_popup for most, #reportParameterRange_popup for range reports, #adminReportParameter_popup for Admin) loaded by data attributes (data-telerikname = the Telerik .trdp report).",
+      "parameterModal": {
+        "output": {
+          "select": "Filter1",
+          "options": [
+            "All Records",
+            "Export Only",
+            "Email Only",
+            "Export & Email"
+          ],
+          "rule": "Export Only, never an Email option"
+        },
+        "buttons": [
+          "Close",
+          "Preview",
+          "Send Email"
+        ],
+        "never": [
+          "Send Email",
+          "Email Only",
+          "Export & Email"
+        ],
+        "note": "Preview opens the Telerik viewer; its export formats were not opened on 6 Oct (next live look)."
+      },
+      "catalogue": {
+        "Admin": [
+          "Inspection - Summary",
+          "Lease Expiry",
+          "Log Report",
+          "Maintenance",
+          "Rental Arrears",
+          "Rental Review"
+        ],
+        "Bond": [
+          "Bond Balance",
+          "Bond Balance Historical",
+          "Bond Ledger",
+          "Bond Ledger EOM"
+        ],
+        "Bookings": [
+          "Arrival Report",
+          "Booking Information",
+          "Booking Register",
+          "Bookings By Agent",
+          "Daily Flash",
+          "Departure Report",
+          "Deposit Due",
+          "Funds Held in Trust",
+          "Holiday Guest List",
+          "In House List",
+          "Length of Stay",
+          "Marketing By Agent",
+          "Marketing By Region",
+          "Marketing By Source",
+          "Occupancy By Day",
+          "Occupancy By Month",
+          "Occupancy By Owner",
+          "Occupancy By Room Type"
+        ],
+        "Business": [
+          "Business Ledger",
+          "Business Ledger EOM"
+        ],
+        "Cashbook": [
+          "Cashbook Monthly (Consolidated)",
+          "Cashbook Monthly (Consolidated) EOM",
+          "Cashbook Monthly (Detailed)",
+          "Cashbook Monthly (Detailed) EOM"
+        ],
+        "Deposit": [
+          "Deposit Balance",
+          "Deposit Balance Historical",
+          "Deposit Ledger",
+          "Deposit Ledger EOM"
+        ],
+        "Housekeeping": [
+          "Housekeeping Report"
+        ],
+        "Income": [
+          "Income Breakdown Full",
+          "Income Breakdown Portfolio",
+          "Income Breakdown Summary",
+          "Income Summary Month By Month"
+        ],
+        "Management": [
+          "Comparative Fee Report (Monthly Comparison)",
+          "Fee Report",
+          "Properties Lost Gained",
+          "Rent Roll",
+          "Rent Roll Valuation",
+          "Residential Commission",
+          "Statistics Report"
+        ],
+        "Owner": [
+          "Owner Balance",
+          "Owner Balance Historical",
+          "Owner Financial Year Detailed Summary",
+          "Owner Financial Year Pooled Summary",
+          "Owner Financial Year Summary",
+          "Owner Ledger",
+          "Owner Ledger EOM",
+          "Owner Ledgers (All)",
+          "Owner Listing (Contact Numbers)",
+          "Owner Property Tenant Connection",
+          "Owner Statement",
+          "Owner Statement Pooled Owner"
+        ],
+        "Reconciliation": [
+          "3 Way Balance",
+          "3 Way Balance Historical",
+          "Adjustments",
+          "Adjustments Historical",
+          "Unbanked Receipts (Cash On Hand)",
+          "Unbanked Receipts (Cash On Hand) Historical",
+          "Unpresented Deposits",
+          "Unpresented Deposits Historical",
+          "Unpresented Payments",
+          "Unpresented Payments Historical"
+        ],
+        "Sale": [
+          "Sale Balance Historical",
+          "Sale Balance Summary",
+          "Sale Ledger (Individual)",
+          "Sale Ledgers (All)"
+        ],
+        "Supplier": [
+          "Supplier Balance",
+          "Supplier Balance Historical",
+          "Supplier Ledger",
+          "Supplier Ledger EOM",
+          "Supplier Ledgers (All)",
+          "Supplier Statement"
+        ],
+        "Tenant": [
+          "Tenant Ledger",
+          "Tenant Ledger EOM",
+          "Tenant Ledgers (All)",
+          "Tenant Listing (Contact Details)"
+        ],
+        "Transactions": [
+          "Charges",
+          "Deposit Breakdown",
+          "Journals",
+          "Payment Register",
+          "Payment Register Breakdown",
+          "Payment Register EOM",
+          "Payment Register Range",
+          "Payment Reversal Register",
+          "Payment Reversal Register EOM",
+          "Payment Reversal Register Range",
+          "Receipt Register",
+          "Receipt Register EOM",
+          "Receipt Register Range",
+          "Receipt Reversal Register",
+          "Receipt Reversal Register EOM",
+          "Reprint BPAY Report",
+          "Reprint EFT Report",
+          "Reprint Receipt"
+        ]
+      }
+    },
+    "bulkReceipting": {
+      "route": "/customers/importbanklink/index",
+      "fileFormat": "ANZ(csv file)",
+      "note": "The File Format button shows the office's bank format; Austin's is ANZ CSV."
+    },
+    "menuTree": [
+      {
+        "menu": [
+          "Dashboard"
+        ],
+        "route": "/customers/dashboard",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Business"
+        ],
+        "route": "/customers/businessdetail",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Owners"
+        ],
+        "route": "/customers/owner",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Pool of Owners"
+        ],
+        "route": "/customers/pooling",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Contacts"
+        ],
+        "route": "/customers/contact",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Rentals"
+        ],
+        "route": "/customers/property",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Tenants"
+        ],
+        "route": "/customers/tenant",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Suppliers"
+        ],
+        "route": "/customers/supplier",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities"
+        ],
+        "route": "/customers/communities",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "Community Owner"
+        ],
+        "route": "/customers/communities/owner",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "Common Property"
+        ],
+        "route": "/customers/communities/property",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "BC Committee"
+        ],
+        "route": "/customers/communities/committee",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "BC Manager"
+        ],
+        "route": "/customers/communities/manager",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "BC Tasks"
+        ],
+        "route": "/customers/communities/tasks",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "BC Keys"
+        ],
+        "route": "/customers/communities/keys",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Communities",
+          "Settings"
+        ],
+        "route": "/customers/communities/settings",
+        "class": "read",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Sales"
+        ],
+        "route": "/customers/sales",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Listings"
+        ],
+        "route": "/customers/listing",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Agents"
+        ],
+        "route": "/customers/bookingagent",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Booking Calendar"
+        ],
+        "route": "/booking/calendar",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Tasks"
+        ],
+        "route": "/customers/task",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Bulk Receipting"
+        ],
+        "route": "/customers/importbanklink/index",
+        "class": "upload",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Tenant"
+        ],
+        "route": "/customers/transaction/tenantreceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Owner"
+        ],
+        "route": "/customers/transaction/ownerreceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Bond Refund"
+        ],
+        "route": "/customers/transaction/bondrefundreceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Sale"
+        ],
+        "route": "/customers/transaction/salereceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Receipts",
+          "Supplier"
+        ],
+        "route": "/customers/transaction/supplierreceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Arrears"
+        ],
+        "route": "/customers/arrears/",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Banking"
+        ],
+        "route": "/customers/transaction/banking",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Bank Reconciliation"
+        ],
+        "route": "/customers/reconciliation/bankreconciliation",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Change Deposits"
+        ],
+        "route": "/customers/transaction/deposits",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Charges"
+        ],
+        "route": "/customers/transaction/charge",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Charges - Batch"
+        ],
+        "route": "/customers/batchpayments/bulkcharge",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Direct Debit Tenants"
+        ],
+        "route": "/customers/transaction/directdebittenants",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Disbursement",
+          "End Of Month"
+        ],
+        "route": "/customers/disbursement/eom",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Disbursement",
+          "Interim"
+        ],
+        "route": "/customers/disbursement/interimdisbursement",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Disbursement",
+          "History"
+        ],
+        "route": "/customers/disbursement/history",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Journals"
+        ],
+        "route": "/customers/transaction/journal",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Payments"
+        ],
+        "route": "/customers/transaction/payment",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Payments - Batch"
+        ],
+        "route": "/customers/batchpayments/index",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Pending Transactions"
+        ],
+        "route": "/customers/transaction/pendingtransactions",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Pre-Disbursement"
+        ],
+        "route": "/customers/transaction/disbursementcheck",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Re-allocate Expenses"
+        ],
+        "route": "/customers/transaction/reallocateexpenses",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Reversals",
+          "Reverse Payments"
+        ],
+        "route": "/customers/transaction/reversepayment",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Reversals",
+          "Reverse Receipts"
+        ],
+        "route": "/customers/transaction/reversereceipt",
+        "class": "money",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Tax Invoices",
+          "Normal"
+        ],
+        "route": "/customers/taxinvoice/normal",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Process",
+          "Tax Invoices",
+          "Recurring"
+        ],
+        "route": "/customers/taxinvoice/recurring",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Reports"
+        ],
+        "route": "/report/reportlist",
+        "class": "export",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Settings",
+          "Automation"
+        ],
+        "route": "/automation",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Account Code"
+        ],
+        "route": "/customers/accountcode",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Admin Settings"
+        ],
+        "route": "/AdminSettings/UserAdmin",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Banks"
+        ],
+        "route": "/customers/bank",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Businesses"
+        ],
+        "route": "/Customers/Setting/Businesses",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Charge Batch"
+        ],
+        "route": "/customers/batchpayments/chargebatchtemplate",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Journal Templates"
+        ],
+        "route": "/customers/transaction/JournalTemplates",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details"
+        ],
+        "route": "/customers/provider",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Connection Details"
+        ],
+        "route": "/customers/provider/connectiondetails",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Building Details"
+        ],
+        "route": "/customers/provider/buildingdetails",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Building Features"
+        ],
+        "route": "/customers/provider/buildingfeatures",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Booking Options"
+        ],
+        "route": "/customers/provider/bookingoptions",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Online Extras"
+        ],
+        "route": "/customers/provider/onlineextras",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Online Images"
+        ],
+        "route": "/customers/provider/onlineimages",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Other Settings"
+        ],
+        "route": "/customers/provider/othersettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Booking / Reservation",
+          "Reservation Provider Details",
+          "Promo Codes"
+        ],
+        "route": "/customers/provider/promocodes",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Card Types"
+        ],
+        "route": "/customers/card",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Communities",
+          "Schemes"
+        ],
+        "route": "/customers/communities/schemes",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Communities",
+          "BC Managers"
+        ],
+        "route": "/customers/communities/bcmanagers",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Communities",
+          "Committee"
+        ],
+        "route": "/customers/communities/bccommittees",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Direct Debit Group"
+        ],
+        "route": "/customers/directdebitgroup",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Disbursement Groups"
+        ],
+        "route": "/customers/disbursementgroup",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Document Categories"
+        ],
+        "route": "/customers/document/categories",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "EFT Setup",
+          "For Payments"
+        ],
+        "route": "/customers/setting/eftpayment",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "EFT Setup",
+          "For Direct Debits"
+        ],
+        "route": "/customers/setting/eftdirectdebit",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "EFT Terminals"
+        ],
+        "route": "/customers/eftterminal",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "General"
+        ],
+        "route": "/customers/generalconfig/general",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Defaults"
+        ],
+        "route": "/customers/generalconfig/defaults",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Statements"
+        ],
+        "route": "/customers/generalconfig/statements",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Receipts"
+        ],
+        "route": "/customers/generalconfig/receipts",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Reservations"
+        ],
+        "route": "/customers/generalconfig/reservations",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Other",
+          "Email Settings"
+        ],
+        "route": "/customers/generalconfig/emailsettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Other",
+          "Key Number"
+        ],
+        "route": "/customers/generalconfig/other",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Other",
+          "Task Settings"
+        ],
+        "route": "/customers/generalconfig/tasksettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "General Config",
+          "Other",
+          "Sales Settings"
+        ],
+        "route": "/customers/generalconfig/salessettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Integrations"
+        ],
+        "route": "/RequesterIntegrations",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Maintenance Types"
+        ],
+        "route": "/customers/maintenancetype",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Portfolios",
+          "Property"
+        ],
+        "route": "/customers/portfolio/index",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Portfolios",
+          "Sale"
+        ],
+        "route": "/customers/portfolio/index",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Portfolios",
+          "Contact"
+        ],
+        "route": "/customers/portfolio/index",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Portal Settings"
+        ],
+        "route": "/customers/portalsetting",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Profiles"
+        ],
+        "route": "/role",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Property / Room Types"
+        ],
+        "route": "/customers/roomtype",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Rental Inclusions"
+        ],
+        "route": "/customers/rentalinclusions",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "SMS Settings"
+        ],
+        "route": "/customers/generalconfig/smssettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Tax Invoices",
+          "Default Settings"
+        ],
+        "route": "/customers/taxinvoice/defaultsetting",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Tax Invoices",
+          "Recurring Batches"
+        ],
+        "route": "/customers/taxinvoice/invoicebatch",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Templates",
+          "Email"
+        ],
+        "route": "/customers/communication/emailtemplates",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Templates",
+          "SMS"
+        ],
+        "route": "/customers/communication/smstemplates",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Templates",
+          "Letter"
+        ],
+        "route": "/customers/communication/lettertemplates",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Templates",
+          "Mail Merge"
+        ],
+        "route": "/customers/communication/mailmerge",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Templates",
+          "Inspection"
+        ],
+        "route": "/customers/communication/inspection",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users"
+        ],
+        "route": "/user",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users",
+          "Details"
+        ],
+        "route": "/user/details",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users",
+          "Portfolios"
+        ],
+        "route": "/user/portfolios",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users",
+          "Two Factor Auth"
+        ],
+        "route": "/user/twofactorauth",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users Password Control"
+        ],
+        "route": "/user/passwordcontrol",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Users Login/out History"
+        ],
+        "route": "/user/userloginhistory",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Contact Type"
+        ],
+        "route": "/customers/contact/contactscategorytype/1",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Car Accomodation"
+        ],
+        "route": "/customers/contact/contactscategorytype/32",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Hobbies And Interests"
+        ],
+        "route": "/customers/contact/contactscategorytype/58",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Locations"
+        ],
+        "route": "/customers/contact/contactscategorytype/38",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Occupation"
+        ],
+        "route": "/customers/contact/contactscategorytype/56",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Parking Requirements"
+        ],
+        "route": "/customers/contact/contactscategorytype/33",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Property Types"
+        ],
+        "route": "/customers/contact/contactscategorytype/2",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Ratings"
+        ],
+        "route": "/customers/contact/contactscategorytype/54",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Referred By"
+        ],
+        "route": "/customers/contact/contactscategorytype/55",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Requirements / Features"
+        ],
+        "route": "/customers/contact/contactscategorytype/4",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Sources"
+        ],
+        "route": "/customers/contact/contactscategorytype/39",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Status"
+        ],
+        "route": "/customers/contact/contactscategorytype/51",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Tenancy Terms"
+        ],
+        "route": "/customers/contact/contactscategorytype/34",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "Grouping And Searchable Items"
+        ],
+        "route": "/customers/contact/contactscategorytype/30",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "User Defined List 1"
+        ],
+        "route": "/customers/contact/contactscategorytype/11",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "User Defined List 2"
+        ],
+        "route": "/customers/contact/contactscategorytype/12",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "User Defined List 3"
+        ],
+        "route": "/customers/contact/contactscategorytype/13",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "User Defined List 4"
+        ],
+        "route": "/customers/contact/contactscategorytype/14",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Contacts",
+          "User Defined List 5"
+        ],
+        "route": "/customers/contact/contactscategorytype/15",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Owners"
+        ],
+        "route": "/customers/settings/list/owner",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Rentals"
+        ],
+        "route": "/customers/settings/list/property",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Suppliers"
+        ],
+        "route": "/customers/settings/list/supplier",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Tasks",
+          "Tasks"
+        ],
+        "route": "/customers/settings/userDefinedFields/Task",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Tasks",
+          "To Do"
+        ],
+        "route": "/customers/settings/userDefinedFields/ToDo",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Tenants"
+        ],
+        "route": "/customers/settings/list/tenant",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "User Defined Fields",
+          "Listing"
+        ],
+        "route": "/customers/settings/list/listing",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Web Advertising Sites"
+        ],
+        "route": "/customers/webadvertisingprovider",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Settings",
+          "Zone & Region"
+        ],
+        "route": "/customers/zoneregion",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "Tools",
+          "Email Activity"
+        ],
+        "route": "/customers/communication/emailactivity",
+        "class": "read",
+        "visited": true
+      },
+      {
+        "menu": [
+          "Tools",
+          "Office 365 Email Activity"
+        ],
+        "route": "/user/usergraphemailqdetail",
+        "class": "read",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Email"
+        ],
+        "route": "/customers/user/emails",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "SMS"
+        ],
+        "route": "/customers/user/updateusersettings",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Signature"
+        ],
+        "route": "/customers/user/signature",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Reminders"
+        ],
+        "route": "/customers/user/reminders",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Window Accounts"
+        ],
+        "route": "/winuser/verifywinuser",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Change Management"
+        ],
+        "route": "/customers/transaction/CheckForInactiveRecordsWithBalances",
+        "class": "hand-over",
+        "visited": false
+      },
+      {
+        "menu": [
+          "My Profile",
+          "Others"
+        ],
+        "route": "/customers/user/others",
+        "class": "hand-over",
+        "visited": false
+      }
+    ],
+    "screens": [
+      {
+        "route": "/customers/dashboard",
+        "title": "Dashboard",
+        "tabs": [
+          "RENTALS",
+          "BOOKINGS"
+        ],
+        "buttons": [
+          "EDIT"
+        ],
+        "links": [
+          "Properties",
+          "Leases",
+          "Task Summary",
+          "Bonds",
+          "Deposits"
+        ]
+      },
+      {
+        "route": "/customers/businessdetail",
+        "title": "Details",
+        "redirectsTo": "/Customers/BusinessDetail/Contact",
+        "buttons": [
+          "Add Document",
+          "Reports",
+          "Upload Logo",
+          "Save",
+          "Cancel"
+        ],
+        "links": [
+          "Details",
+          "Banking",
+          "Account",
+          "Document Mgmt",
+          "Xero Xero"
+        ],
+        "fields": [
+          "Entity Name",
+          "Licencee",
+          "A.B.N",
+          "A.C.N",
+          "Trading Name",
+          "Licence No.",
+          "Mobile",
+          "Email",
+          "Phone",
+          "Fax",
+          "Direct Dial",
+          "Building Name",
+          "Web Site",
+          "Address 1",
+          "Address 2",
+          "City / Suburb",
+          "State",
+          "Postcode"
+        ]
+      },
+      {
+        "route": "/customers/owner",
+        "title": "Owners",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View",
+              "Special Notes"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Surname",
+          "Firstname",
+          "Properties",
+          "Email",
+          "Mobile",
+          "Home Phone",
+          "Work Phone",
+          "Fax",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "SMS to Owner",
+              "Letter to Owner",
+              "Form to Owner",
+              "Mail Merge to Owner",
+              "Apply Automation",
+              "Owner Statement",
+              "Delete Statement Message",
+              "Owner Ledger",
+              "Owner Financial Year Summary",
+              "Owner Financial Year Detailed",
+              "Task Reports",
+              "Invite to Portal",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/pooling",
+        "title": "Pool of Owners",
+        "buttons": [
+          "Active",
+          "All",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Surname"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/contact",
+        "title": "Contacts",
+        "buttons": [
+          "Active",
+          "All Records",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Contact Type"
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "File As",
+          "Surname",
+          "Firstname",
+          "Company",
+          "Email",
+          "Contact Portfolio",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Contact",
+              "SMS to Contact",
+              "Letter to Contact",
+              "Form to Contact",
+              "Mail Merge to Contact",
+              "Apply Automation",
+              "Task Reports",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/property",
+        "title": "Rentals",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Body Corporate",
+              "Body Corporate Due Within 30 Days",
+              "Building Inspections",
+              "Building Inspections Due Within 30 Days",
+              "Building Insurance",
+              "Building Insurance Due Within 30 Days",
+              "Commercial",
+              "Contents Insurance",
+              "Contents Insurance Due Within 30 Days",
+              "Council Rates",
+              "Council Rates Due Within 30 Days",
+              "Holiday",
+              "Key Register",
+              "Landlord Insurance",
+              "Lock Up",
+              "Management Agreement Expiring Within 30 Days",
+              "Management Agreement Expiry Dates",
+              "None",
+              "Outside Agent",
+              "Owner Occupier",
+              "Permanent",
+              "Pest Control",
+              "Pest Control Due Within 30 Days",
+              "Pest Inspections"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Owner",
+          "Tenants",
+          "Portfolio",
+          "Commission",
+          "Commission Name",
+          "Asking Rent",
+          "Room Type",
+          "Letting Type",
+          "Zone",
+          "Additional Comm1",
+          "Additional Comm2",
+          "Key No.",
+          "Extention",
+          "No. Beds",
+          "No. Bath",
+          "Car Accom.",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "SMS to Owner",
+              "Letter to Owner",
+              "Form to Owner",
+              "Mail Merge to Property",
+              "Apply Automation",
+              "Re-Assign Portfolios",
+              "Re-Assign Template",
+              "Re-Assign Copy Last Inspection",
+              "Re-Assign Housekeeper",
+              "Room Feature - Basic",
+              "Room Feature - Additional",
+              "Task Reports"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/tenant",
+        "title": "Tenants",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Arrears (All)",
+              "Arrears - 1 to 6 Days",
+              "Arrears - 7 to 13 Days",
+              "Arrears - 14 to 20 Days",
+              "Arrears - 21 to 27 Days",
+              "Arrears - 28+ Days",
+              "Arrears - 7+ Days",
+              "Other Tenants",
+              "Bond Summary",
+              "Bonds In Trust",
+              "Contact Information",
+              "Current",
+              "Deposits In Trust",
+              "In Advance",
+              "Lease Information",
+              "Leases Expiring Within The Next 30 Days",
+              "Leases Expiring Within The Next 60 Days",
+              "Leases Expiring Within The Next 90 Days",
+              "Rent Reviews Due Within The Next 30 Days",
+              "Rental Status",
+              "Special Notes",
+              "Vacating (All Dates)",
+              "Vacating Today"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Surname",
+          "Firstname",
+          "Property",
+          "Rent",
+          "Paid To",
+          "Rent Credit",
+          "Days +/-",
+          "Amount Owing",
+          "Lease Expiry",
+          "Vacating",
+          "Owner",
+          "BPay/Ref No.",
+          "Email",
+          "Mobile",
+          "Home Phone",
+          "Work Phone",
+          "Fax"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "Email to Tenant",
+              "SMS to Owner",
+              "SMS to Tenant",
+              "Letter to Owner",
+              "Letter to Tenant",
+              "Mail Merge to Owner",
+              "Mail Merge to Tenant",
+              "Apply Automation",
+              "Form to Owner",
+              "Form to Tenant",
+              "Tenant Ledger",
+              "Task Reports",
+              "Invite to Portal",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/supplier",
+        "title": "Suppliers",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View",
+              "Supplier Insurance Details"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Phone",
+          "Phone A/H",
+          "Mobile",
+          "Fax",
+          "Email",
+          "Address",
+          "Category"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Supplier",
+              "SMS to Supplier",
+              "Letter to Supplier",
+              "Form to Supplier",
+              "Mail Merge to Supplier",
+              "Apply Automation",
+              "Supplier Statement",
+              "Supplier Ledger",
+              "Task Reports",
+              "Delete Statement Message",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities",
+        "title": "Communities",
+        "redirectsTo": "/customers/communities/schemes",
+        "links": [
+          "Add New"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Scheme Name",
+          "No Lots",
+          "Actual Lots"
+        ]
+      },
+      {
+        "route": "/customers/communities/owner",
+        "title": "Owners",
+        "redirectsTo": "/Customers/Owner",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View",
+              "Special Notes"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Surname",
+          "Firstname",
+          "Properties",
+          "Email",
+          "Mobile",
+          "Home Phone",
+          "Work Phone",
+          "Fax",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "SMS to Owner",
+              "Letter to Owner",
+              "Form to Owner",
+              "Mail Merge to Owner",
+              "Apply Automation",
+              "Owner Statement",
+              "Delete Statement Message",
+              "Owner Ledger",
+              "Owner Financial Year Summary",
+              "Owner Financial Year Detailed",
+              "Task Reports",
+              "Invite to Portal",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities/property",
+        "title": "Rentals",
+        "redirectsTo": "/Customers/Property",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Body Corporate",
+              "Body Corporate Due Within 30 Days",
+              "Building Inspections",
+              "Building Inspections Due Within 30 Days",
+              "Building Insurance",
+              "Building Insurance Due Within 30 Days",
+              "Commercial",
+              "Contents Insurance",
+              "Contents Insurance Due Within 30 Days",
+              "Council Rates",
+              "Council Rates Due Within 30 Days",
+              "Holiday",
+              "Key Register",
+              "Landlord Insurance",
+              "Lock Up",
+              "Management Agreement Expiring Within 30 Days",
+              "Management Agreement Expiry Dates",
+              "None",
+              "Outside Agent",
+              "Owner Occupier",
+              "Permanent",
+              "Pest Control",
+              "Pest Control Due Within 30 Days",
+              "Pest Inspections"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Owner",
+          "Tenants",
+          "Portfolio",
+          "Commission",
+          "Commission Name",
+          "Asking Rent",
+          "Room Type",
+          "Letting Type",
+          "Zone",
+          "Additional Comm1",
+          "Additional Comm2",
+          "Key No.",
+          "Extention",
+          "No. Beds",
+          "No. Bath",
+          "Car Accom.",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "SMS to Owner",
+              "Letter to Owner",
+              "Form to Owner",
+              "Mail Merge to Property",
+              "Apply Automation",
+              "Re-Assign Portfolios",
+              "Re-Assign Template",
+              "Re-Assign Copy Last Inspection",
+              "Re-Assign Housekeeper",
+              "Room Feature - Basic",
+              "Room Feature - Additional",
+              "Task Reports"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities/committee",
+        "title": "Owners",
+        "redirectsTo": "/Customers/Owner",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Zones",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View",
+              "Special Notes"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Surname",
+          "Firstname",
+          "Properties",
+          "Email",
+          "Mobile",
+          "Home Phone",
+          "Work Phone",
+          "Fax",
+          "Address"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "SMS to Owner",
+              "Letter to Owner",
+              "Form to Owner",
+              "Mail Merge to Owner",
+              "Apply Automation",
+              "Owner Statement",
+              "Delete Statement Message",
+              "Owner Ledger",
+              "Owner Financial Year Summary",
+              "Owner Financial Year Detailed",
+              "Task Reports",
+              "Invite to Portal",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities/manager",
+        "title": "Suppliers",
+        "redirectsTo": "/customers/supplier",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View",
+              "Supplier Insurance Details"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Phone",
+          "Phone A/H",
+          "Mobile",
+          "Fax",
+          "Email",
+          "Address",
+          "Category"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Supplier",
+              "SMS to Supplier",
+              "Letter to Supplier",
+              "Form to Supplier",
+              "Mail Merge to Supplier",
+              "Apply Automation",
+              "Supplier Statement",
+              "Supplier Ledger",
+              "Task Reports",
+              "Delete Statement Message",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities/tasks",
+        "title": "Tasks",
+        "redirectsTo": "/Customers/Task",
+        "buttons": [
+          "Tasks Due Today",
+          "All",
+          "All Records",
+          "No Filter",
+          "Action"
+        ],
+        "links": [
+          "Previous",
+          "Next"
+        ],
+        "filters": [
+          {
+            "name": "Show entries"
+          }
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Date Due",
+          "Subject",
+          "Booking",
+          "Owner",
+          "Property",
+          "Tenant",
+          "Supplier",
+          "Contact",
+          "Sales",
+          "Listing",
+          "Priority",
+          "Status",
+          "Completed",
+          "Scheduled",
+          "Assigned To"
+        ],
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Complete Task(s)",
+              "Retry Task(s)",
+              "Form 9"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/communities/keys",
+        "title": "Other Settings",
+        "redirectsTo": "/Customers/GeneralConfig/Other",
+        "buttons": [
+          "Add New Key"
+        ],
+        "links": [
+          "Key Number"
+        ],
+        "columns": [
+          "No.",
+          "KeyBox",
+          "Property Ref.",
+          "Property Description",
+          "Key Number",
+          "Status"
+        ]
+      },
+      {
+        "route": "/customers/sales",
+        "title": "Sales",
+        "buttons": [
+          "Active",
+          "All Records",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Sale Status",
+            "options": [
+              "All Records",
+              "Expression of Interest",
+              "Listed",
+              "Withdrawn",
+              "Under Contract",
+              "Fallen Through",
+              "Unconditional",
+              "Complete"
+            ]
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Deposit and Advertising View",
+              "Key Dates View"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Price",
+          "Sale Status",
+          "Settlement",
+          "Seller Ref",
+          "Surname",
+          "Firstname",
+          "Company",
+          "Buyer Ref"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Sale Receipt",
+              "Email to Sale",
+              "SMS to Seller",
+              "SMS to Seller Solicitor",
+              "SMS to Buyer",
+              "SMS to Buyer Solicitor",
+              "Letter to Sale",
+              "Mail Merge to Sale",
+              "Apply Automation",
+              "Form to Buyer",
+              "Form to Seller",
+              "Commission Summary",
+              "Ledger",
+              "Statement",
+              "Sale Summary"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/listing",
+        "title": "Listing",
+        "buttons": [
+          "Active",
+          "All Records",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "Listing Status",
+            "options": [
+              "All Records",
+              "Appraisal",
+              "Current Listing",
+              "Off Market",
+              "Outside Listing",
+              "Under Contract"
+            ]
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Listing - Upload to Web View",
+              "Listing - Sales Information View",
+              "Exclusive Listing View"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "File As",
+          "Listing Type",
+          "Property Type",
+          "Price",
+          "Listing Status",
+          "Zone",
+          "Portfolio",
+          "Record Created",
+          "Record Archived"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Listing",
+              "SMS to Owner",
+              "SMS to Tenant",
+              "SMS to Solicitor",
+              "SMS to Other",
+              "SMS to Viewed Property",
+              "Letter to Listing",
+              "Mail Merge to Listing",
+              "Apply Automation"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/bookingagent",
+        "title": "Agents",
+        "buttons": [
+          "Active",
+          "All",
+          "Default View",
+          "Action"
+        ],
+        "links": [
+          "Add New"
+        ],
+        "filters": [
+          {
+            "name": "Status",
+            "options": [
+              "Active",
+              "Inactive",
+              "All"
+            ]
+          },
+          {
+            "name": "Category",
+            "options": "office-defined"
+          },
+          {
+            "name": "View",
+            "options": [
+              "Default View",
+              "Disbursement View"
+            ]
+          }
+        ],
+        "fields": [
+          "Search"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Phone",
+          "Phone A/H",
+          "Mobile",
+          "Fax",
+          "Email",
+          "Address",
+          "Category"
+        ],
+        "footer": "N records - M row(s) selected",
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Booking Agent",
+              "SMS to Booking Agent",
+              "Letter to Booking Agent",
+              "Form to Booking Agent",
+              "Mail Merge to Booking Agent",
+              "Apply Automation",
+              "Booking Agent Statement",
+              "Booking Agent Ledger",
+              "Task Reports",
+              "Delete Statement Message",
+              "Sync to Outlook"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/booking/calendar",
+        "title": "Booking Calendar",
+        "buttons": [
+          "Add New",
+          "Group Wizard",
+          "Search",
+          "Room Search",
+          "Availability",
+          "Inventory",
+          "Housekeeping",
+          "Reports",
+          "Tariffs",
+          "Online Rates",
+          "Go To Dashboard",
+          "Refresh"
+        ],
+        "links": [
+          "Add New",
+          "Search",
+          "Availability",
+          "Inventory",
+          "Housekeeping",
+          "Reports",
+          "Tariffs",
+          "Online Rates"
+        ]
+      },
+      {
+        "route": "/customers/task",
+        "title": "Tasks",
+        "buttons": [
+          "Tasks Due Today",
+          "All",
+          "All Records",
+          "No Filter",
+          "Action"
+        ],
+        "links": [
+          "Previous",
+          "Next"
+        ],
+        "filters": [
+          {
+            "name": "Show entries"
+          }
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Date Due",
+          "Subject",
+          "Booking",
+          "Owner",
+          "Property",
+          "Tenant",
+          "Supplier",
+          "Contact",
+          "Sales",
+          "Listing",
+          "Priority",
+          "Status",
+          "Completed",
+          "Scheduled",
+          "Assigned To"
+        ],
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Complete Task(s)",
+              "Retry Task(s)",
+              "Form 9"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/importbanklink/index",
+        "title": "Import Bank Link File",
+        "buttons": [
+          "ANZ(csv file)"
+        ]
+      },
+      {
+        "route": "/customers/transaction/tenantreceipt",
+        "title": "Tenant Receipts",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Name",
+          "B-Pay D/Cr Ref",
+          "Paid To",
+          "Rent Credit",
+          "Days +/-",
+          "Amt. Owing",
+          "Days Adj.",
+          "Property"
+        ]
+      },
+      {
+        "route": "/customers/transaction/ownerreceipt",
+        "title": "Owner Receipts",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Name",
+          "Phone (H)",
+          "Phone (W)",
+          "Mobile",
+          "Email",
+          "Fax"
+        ]
+      },
+      {
+        "route": "/customers/transaction/bondrefundreceipt",
+        "title": "Bond Refund Receipts",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Name",
+          "B-Pay D/Cr Ref",
+          "Paid To",
+          "Rent Credit",
+          "Days +/-",
+          "Amt. Owing",
+          "Days Adj.",
+          "Property"
+        ]
+      },
+      {
+        "route": "/customers/transaction/salereceipt",
+        "title": "Sale Receipts",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Purchaser",
+          "Purchaser Company",
+          "Vendor",
+          "Vendor Company"
+        ]
+      },
+      {
+        "route": "/customers/transaction/supplierreceipt",
+        "title": "Supplier Receipts",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Description",
+          "Phone",
+          "Phone (A/H)",
+          "Mobile",
+          "Email",
+          "Fax"
+        ]
+      },
+      {
+        "route": "/customers/arrears/",
+        "title": "Arrears",
+        "buttons": [
+          "Greater Than",
+          "All Records",
+          "Load",
+          "Action"
+        ],
+        "links": [
+          "Previous",
+          "Next"
+        ],
+        "filters": [
+          {
+            "name": "Show entries",
+            "options": [
+              "All"
+            ]
+          }
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Surname(s)",
+          "Rent",
+          "Per",
+          "Paid To",
+          "Rent Credit",
+          "Days Arrears",
+          "Amt. Owing",
+          "Days Adj.",
+          "Vacating"
+        ],
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email to Owner",
+              "Email to Tenant",
+              "SMS to Owner",
+              "SMS to Tenant",
+              "Letter to Owner",
+              "Letter to Tenant",
+              "Form to Tenant",
+              "Form 11",
+              "Arrears Report",
+              "Go to Tenant"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/transaction/banking",
+        "title": "Banking",
+        "buttons": [
+          "Finalise",
+          "All"
+        ],
+        "fields": [
+          "Cash and Cheque Receipts Only",
+          "Card Receipts Only",
+          "Cash, Cheques and Card Receipts",
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Date",
+          "Tender Type",
+          "Received From",
+          "Amount"
+        ]
+      },
+      {
+        "route": "/customers/reconciliation/bankreconciliation",
+        "title": "Bank Reconciliation",
+        "headings": [
+          "3 - Way summary"
+        ],
+        "buttons": [
+          "Reports",
+          "Options",
+          "Update"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Date",
+          "Reference",
+          "Type",
+          "Description",
+          "Debit",
+          "Credit",
+          "Recon."
+        ],
+        "menus": [
+          {
+            "button": "Reports",
+            "items": [
+              "Create Bank Reconciliation Snapshot",
+              "Historical Reports",
+              "Reconciliation 3 Way Balance",
+              "Reconciliation Adjustments",
+              "Reconciliation Unbanked Receipts (Cash On Hand)",
+              "Reconciliation Unpresented Payments",
+              "Reconciliation Unpresented Deposits",
+              "Export All Reconciliation Reports"
+            ]
+          },
+          {
+            "button": "Options",
+            "items": [
+              "Add An Adjustment",
+              "Delete Marked (Reconciled) Adjustments",
+              "Show Updated (Reconciled) Payments",
+              "Show Updated (Reconciled) Deposits",
+              "Hide Updated (Reconciled) Transactions",
+              "Change Payment Reference Number (Unpresented Cheques Only)"
+            ]
+          },
+          {
+            "button": "Reports",
+            "items": [
+              "Create Bank Reconciliation Snapshot",
+              "Historical Reports"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/transaction/deposits",
+        "title": "Change Deposits",
+        "fields": [
+          "Change a Deposit To Rent",
+          "Change a Deposit To Bond",
+          "Search:"
+        ],
+        "columns": [
+          "Date",
+          "Reference",
+          "Received From",
+          "Description (First Line of Receipt)",
+          "Amount"
+        ]
+      },
+      {
+        "route": "/customers/transaction/charge",
+        "title": "Charges",
+        "headings": [
+          "Transaction Summary"
+        ],
+        "buttons": [
+          "Save",
+          "Selected Properties"
+        ],
+        "links": [
+          "Cancel"
+        ]
+      },
+      {
+        "route": "/customers/batchpayments/bulkcharge",
+        "title": "Bulk Charge",
+        "buttons": [
+          "Cancel",
+          "Batch Options"
+        ],
+        "fields": [
+          "Individual Recipient",
+          "Multiple Recipients"
+        ]
+      },
+      {
+        "route": "/customers/transaction/directdebittenants",
+        "title": "Process Direct Debits For Tentants",
+        "buttons": [
+          "Process File"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Name(s)",
+          "Amount"
+        ]
+      },
+      {
+        "route": "/customers/disbursement/eom",
+        "title": "End of Month",
+        "headings": [
+          "Please check carefully before proceeding."
+        ],
+        "buttons": [
+          "Next",
+          "Finalise",
+          "All",
+          "Ok"
+        ],
+        "fields": [
+          "Cash and Cheque Receipts Only",
+          "Card Receipts Only",
+          "Cash, Cheques and Card Receipts",
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Date",
+          "Tender Type",
+          "Received From",
+          "Amount"
+        ]
+      },
+      {
+        "route": "/customers/disbursement/interimdisbursement",
+        "title": "Interim Disbursement",
+        "headings": [
+          "Select Disbursement Group"
+        ]
+      },
+      {
+        "route": "/customers/disbursement/history",
+        "title": "Disbursement History",
+        "columns": [
+          "Start",
+          "End",
+          "Type",
+          "Period",
+          "Status",
+          "Description",
+          "Performed By"
+        ]
+      },
+      {
+        "route": "/customers/transaction/journal",
+        "title": "Journals",
+        "headings": [
+          "Journal Items"
+        ],
+        "buttons": [
+          "Add",
+          "Batch Options",
+          "Save"
+        ],
+        "links": [
+          "Cancel"
+        ],
+        "columns": [
+          "Ledger Type",
+          "Reference",
+          "Description",
+          "Account Code",
+          "Include GST",
+          "Debit",
+          "Credit"
+        ],
+        "menus": [
+          {
+            "button": "Batch Options",
+            "items": [
+              "Save this journal as a template",
+              "Select a journal template",
+              "Journal templates"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/transaction/payment",
+        "title": "Trust Account Payment",
+        "headings": [
+          "Payment Type",
+          "Payment Details",
+          "Draw Funds From",
+          "Transaction Summary",
+          "Payee's EFT Details",
+          "Payment Total"
+        ],
+        "buttons": [
+          "Save"
+        ],
+        "links": [
+          "Cancel"
+        ],
+        "fields": [
+          "Cheque Payment",
+          "Electronic Payment"
+        ],
+        "columns": [
+          "Description",
+          "Exclusive",
+          "Tax",
+          "Inclusive"
+        ]
+      },
+      {
+        "route": "/customers/batchpayments/index",
+        "title": "Batch Payments",
+        "buttons": [
+          "Set Payment Type"
+        ],
+        "links": [
+          "close",
+          "Click here to setup BPAY"
+        ]
+      },
+      {
+        "route": "/customers/transaction/pendingtransactions",
+        "title": "Pending Transactions",
+        "buttons": [
+          "Process"
+        ],
+        "fields": [
+          "Process Pending",
+          "Delete Pending",
+          "Search:"
+        ],
+        "columns": [
+          "Date",
+          "Reference",
+          "Owner/Business",
+          "Description",
+          "Amount",
+          "Sufficient Funds",
+          "All"
+        ]
+      },
+      {
+        "route": "/customers/transaction/disbursementcheck",
+        "title": "Pre-Disbursement Check",
+        "buttons": [
+          "Owners Account Preview"
+        ],
+        "fields": [
+          "Inactive Active Status",
+          "Search:"
+        ],
+        "columns": [
+          "Reference",
+          "Name",
+          "Method",
+          "Pre Disb. Bal.",
+          "Admin Fees",
+          "Commission",
+          "Deductions",
+          "Withhold",
+          "Withhold Reason",
+          "Balance",
+          "TOTALS",
+          "(0 Records)",
+          "$0.00"
+        ]
+      },
+      {
+        "route": "/customers/transaction/reallocateexpenses",
+        "title": "Re-allocate Expenses",
+        "buttons": [
+          "Select an Owner",
+          "Select a Supplier",
+          "Load Business Details",
+          "Current Month",
+          "No Sorting",
+          "No Filters",
+          "Select All"
+        ]
+      },
+      {
+        "route": "/customers/transaction/reversepayment",
+        "title": "Reverse Payments",
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Date",
+          "Reference",
+          "Amount",
+          "Payee"
+        ]
+      },
+      {
+        "route": "/customers/transaction/reversereceipt",
+        "title": "Reverse Receipts",
+        "headings": [
+          "Reverse Receipt"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Date",
+          "Reference",
+          "Received From",
+          "Description",
+          "Amount"
+        ]
+      },
+      {
+        "route": "/customers/taxinvoice/normal",
+        "title": "Normal Tax Invoices",
+        "buttons": [
+          "No Filters",
+          "Financial Period",
+          "Action"
+        ],
+        "links": [
+          "New Invoice"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Invoice No.",
+          "Date",
+          "Description",
+          "Reference",
+          "Amount Incl.",
+          "Amount Paid",
+          "Amount Due",
+          "Contra"
+        ],
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Select All",
+              "Select None",
+              "Email Invoice",
+              "Age Analysis"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/customers/taxinvoice/recurring",
+        "title": "Recurring Tax Invoices",
+        "buttons": [
+          "No Filters",
+          "All",
+          "Action"
+        ],
+        "links": [
+          "New Invoice"
+        ],
+        "fields": [
+          "Search:"
+        ],
+        "columns": [
+          "Recurring No.",
+          "Description",
+          "Reference",
+          "Amount Incl.",
+          "Amount Paid",
+          "Amount Due",
+          "Contra"
+        ],
+        "menus": [
+          {
+            "button": "Action",
+            "items": [
+              "Apply Recurring Batch"
+            ]
+          }
+        ]
+      },
+      {
+        "route": "/report/reportlist",
+        "title": "Report List",
+        "fields": [
+          "Search:"
+        ]
+      },
+      {
+        "route": "/customers/communication/emailactivity",
+        "title": "Email Activity",
+        "buttons": [
+          "Search"
+        ],
+        "fields": [
+          "From Date",
+          "To Date",
+          "Email (Optional)"
+        ]
+      }
+    ]
+  }
 }

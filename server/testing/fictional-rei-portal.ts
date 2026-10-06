@@ -37,7 +37,7 @@ import { parsePortalRecipePack, type PortalRecipePack } from "../portal-recipe.t
  * screen before this can be added to the pack. */
 export const FICTIONAL_PENDING_RECIPE = "bulk-receipting-pending";
 const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: [],
-  steps: [{ nav: ["Receipts", "Bulk receipting"] }, { check: "account" }, { wait: "table" }, { read: "table" }, { paginate: true }],
+  steps: [{ nav: ["Receipts", "Bulk Receipting"] }, { check: "account" }, { wait: "table" }, { read: "table" }, { paginate: true }],
   stopBefore: ["Process Receipts", "Receipt All", "Save", "Post", "Finalise"],
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
@@ -67,9 +67,9 @@ const AGENCY = "Fictional Realty Office";
 const TOP = ["Dashboard", "Business", "Owners", "Pool of Owners", "Contacts", "Rentals", "Tenants", "Suppliers", "Communities", "Sales", "Listings", "Agents", "Booking Calendar", "Tasks", "Receipts", "Process", "Reports", "Settings", "Tools", "My Profile"];
 const ROUTES: Record<string, string> = { Dashboard: "/customers/dashboard", Owners: "/customers/owner", Rentals: "/customers/property", Tenants: "/customers/tenant", Tasks: "/customers/task", Reports: "/report/reportlist", Suppliers: "/customers/supplier", Contacts: "/customers/contact" };
 const CHILDREN: Record<string, Array<[string, string]>> = {
-  Tenants: [["Arrears", "/customers/arrears/"]],
-  Receipts: [["Tenant receipts", "/customers/transaction/tenantreceipt"], ["Bulk receipting", "/customers/importbanklink/index"]],
-  Process: [["Bank reconciliation", "/customers/reconciliation/bankreconciliation"], ["Pending transactions", "/customers/transaction/pendingtransactions"]],
+  // Live REI menu labels and parents (6 Oct 2026).
+  Receipts: [["Bulk Receipting", "/customers/importbanklink/index"], ["Tenant", "/customers/transaction/tenantreceipt"]],
+  Process: [["Arrears", "/customers/arrears/"], ["Bank Reconciliation", "/customers/reconciliation/bankreconciliation"], ["Pending Transactions", "/customers/transaction/pendingtransactions"]],
   Settings: [["Integrations", "/RequesterIntegrations"]],
 };
 const TENANTS = [

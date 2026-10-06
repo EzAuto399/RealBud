@@ -52,3 +52,27 @@ Demo rehearsal (Mac, fake providers): `scripts/qa-austin-showcase.mjs` passes 8/
   - The local private event log keeps short numeric ids and name-like path segments in masked paths. Owner call whether to mask those too.
 
 Checkpoint links: `docs/KEVIN-SHERRY-WORKFLOWS-2026-10-04.md`.
+
+## 6 October: live REI Cloud read and site map (owner-approved, read-only)
+Evidence tier: live integration, read-only. Nothing in REI was clicked to change, typed, saved, sent or uploaded.
+- **Bud reads live REI pages now.** Two of our own bugs had blocked every read. The page reader refused REI's "clickable" boxes, and the account check looked for a banner REI doesn't have. Now Bud reads the Suppliers and Dashboard pages and finds the top-bar business code. Tests cover both fixes.
+- **Banking-page check fixed.** REI's sidebar always lists "Banking" and "Bank Reconciliation", which made every REI page look financial and blocked plain filters. Exact menu links no longer count; the page's own words still do.
+- **Site map in Bud's REI pack:** `pack/workflows/austin-accounts/support/rei-cloud-navigation/site-map.json` → `live2026_10_06`. It holds:
+  - the full menu tree (143 routes, Settings and My Profile marked hand-over and not visited)
+  - 48 screens with their filters, columns and Action menus
+  - grid behaviour and the report catalogue (15 categories)
+  - the report parameter box (Output "Export Only", never Email)
+  - Austin's bank format "ANZ(csv file)"
+
+  UI labels only: no rows, names, values, office zones or account codes.
+- **Recipes corrected to the live menu:**
+  - Arrears and Bank Reconciliation are under Process.
+  - "Bulk Receipting" and "Tenant" are under Receipts.
+  - The live Action-menu items are now consequential labels.
+  - The arrears filters are read-only.
+  - The REI map simulation passes 32/32 with a clean lint.
+- **Directory refresh, the next step:**
+  - No list has an Export item.
+  - Suppliers: the grid shows all 60 rows, so W4 can read it directly with no download.
+  - Tenants: the grid shows 90 of 106 rows until the grid scrolls, so W1 needs a scroll-aware read or the "Tenant Listing (Contact Details)" report through Preview. The viewer's export formats are not seen yet.
+  - Until then, tenant-list and supplier-list are tier U and stop at "control missing".

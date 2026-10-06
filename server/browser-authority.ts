@@ -301,6 +301,24 @@ export function accountMarkerShown(text: string, marker: string): boolean {
 function portalMarkerShown(text: string, where: { landmark: string; role: string }, marker: string): boolean {
   return portalAccountName(text, where) === marker.trim() && marker.trim() !== "";
 }
+/** The page without the portal's own menu links: REI's sidebar lists "Bank Reconciliation" and "Bulk Receipting",
+ * which never make the page itself financial. Only a link whose whole name is a declared menu name, outside the
+ * page's content (main, forms, dialogs, tables, regions), is dropped; the page's own words stay. Links the pack
+ * does not declare (REI's "Banking") still count, so pages under Process still read as financial. */
+function withoutMenuLinks(text: string, portal: BrowserPortalControls | null): string {
+  if (!portal?.menu.length) return text;
+  const open: { indent: number; role: string }[] = [];
+  return text.split("\n").filter(line => {
+    const indent = line.length - line.trimStart().length;
+    const role = line.trimStart().match(/^(?:@e\d+\s+)?([a-z][\w-]*)/)?.[1] ?? "";
+    while (open.length && open[open.length - 1].indent >= indent) open.pop();
+    const inContent = open.some(at => PAGE_CONTENT_ROLE.has(at.role));
+    open.push({ indent, role });
+    const name = line.match(/^\s*(?:@e\d+\s+)?link\s+"((?:[^"\\]|\\.)*)"\s*(?:\[[^\]]*\]\s*)*(?:url="(?:[^"\\]|\\.)*")?\s*$/)?.[1];
+    if (name === undefined || inContent) return true;
+    try { return !portal.menu.includes(JSON.parse(`"${name}"`) as string); } catch { return true; }
+  }).join("\n");
+}
 /** The account name a portal shows at its declared place (REI's top-bar business code), or null when nothing is shown there. */
 export function portalAccountName(text: string, where: { landmark: string; role: string }): string | null {
   if (!isStructuredBrowserObservation(text)) return null;
@@ -317,7 +335,7 @@ export function browserAccountMarkerShown(text: string, marker: string, portal?:
   return portal?.accountMarker ? isStructuredBrowserObservation(text) && portalMarkerShown(text, portal.accountMarker, marker) : accountMarkerShown(text, marker);
 }
 const FORM_ROLE = new Set(["form", "dialog", "alertdialog"]);
-export const PAGE_CONTENT_ROLE = new Set(["main", "form", "dialog", "alertdialog", "table", "grid", "treegrid", "row", "rowgroup", "region", "article"]);
+export const PAGE_CONTENT_ROLE = new Set(["main", "form", "dialog", "alertdialog", "table", "grid", "treegrid", "row", "rowgroup", "region", "article", "complementary", "tabpanel"]);
 /** Groups that hold their own controls: a filter or search bar, a pager, a menu. */
 const GROUP_ROLE = new Set(["navigation", "search", "toolbar", "group"]);
 const descendants = (node: VomNode): VomNode[] => node.children.flatMap(child => [child, ...descendants(child)]);
@@ -524,7 +542,7 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
   // A declared read-safe control reads on its portal, even on a page that mentions a bank.
   const readSafe = portal !== null && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
-  const financial = !readSafe && FINANCIAL_PAGE.test(`${text} ${observation.url}`);
+  const financial = !readSafe && FINANCIAL_PAGE.test(`${withoutMenuLinks(text, portal)} ${observation.url}`);
   const kind = consequentialKind(label);
   if (step === "fill") {
     if (typeof args.value !== "string" || args.value.length > 2000 || /[\x00-\x1f]/.test(args.value)) return { class: "out-of-scope", step, reason: "Use one ordinary field value without key presses." };

@@ -8,7 +8,9 @@ study exception below does not apply to Bud. Nothing here grants authority.
 Placeholders only; no record data, names, emails or account values.
 
 Origin `https://app.reimasterapps.com.au` · mapped UI version **26.0922.0** ·
-revised 25 September 2026. Routes omit query strings. No customer rows,
+revised 6 October 2026 (live read-only crawl: full menu tree, 48 screens,
+Action menus and the report catalogue are in `../site-map.json` →
+`live2026_10_06`). Routes omit query strings. No customer rows,
 account identifiers, cookies or credentials appear here.
 
 **Evidence tier** on every screen and recipe:
@@ -18,6 +20,9 @@ read-only; RealBud/Hermes did not perform those reads) ·
 `S` passed the fictional simulation (`scripts/qa-rei-map-sim.mjs`). The mock
 is built from this map, so `S` proves a recipe is executable and its traps are
 handled — never that REI behaves this way ·
+`L` live read-only crawl by RealBud dev tooling in the owner-approved session
+(6 Oct: GET navigation to menu pages and DOM reads only; nothing clicked,
+typed, saved or sent) ·
 `U` label seen in navigation only; entry, controls and effect unobserved.
 A recipe is only as proven as its weakest tier. No live write, import,
 export, report Preview, payment or send has been tested on REI.
@@ -53,8 +58,8 @@ Tools · My Profile.
 |---|---|---|
 | Records: Owners, Rentals, Tenants, Suppliers, Contacts, Agents, Listings, Sales, Communities, Pool of Owners | Lists with Search, Status, Category, View | Read |
 | Tasks | Views, Type, Status, Portfolio, Scheme, Archived, date range | Read |
-| Receipts | Tenant receipts, Bulk receipting | Read; upload + preview with an upload grant; receipting is consequential |
-| Process | Banking, deposits, charges/bulk charges, direct debit, disbursement, end of month, history, journals, payments/pending transactions, expense reallocations, reversals, tax invoices | **Human by default** — every effect is financial |
+| Receipts | Bulk Receipting, Tenant, Owner, Bond Refund, Sale, Supplier (`L`) | Read; upload + preview with an upload grant; receipting is consequential |
+| Process | Arrears, Banking, Bank Reconciliation, Change Deposits, Charges (+ Batch), Direct Debit Tenants, Disbursement (End Of Month, Interim, History), Journals, Payments (+ Batch), Pending Transactions, Pre-Disbursement, Re-allocate Expenses, Reversals, Tax Invoices (`L`); earlier notes: banking, deposits, charges/bulk charges, direct debit, disbursement, end of month, history, journals, payments/pending transactions, expense reallocations, reversals, tax invoices | **Human by default** — every effect is financial |
 | Reports | Administration/arrears/inspections/leases, bonds, bookings, cashbooks, income/fees, owners, reconciliations, sales, suppliers, tenants, transaction registers | Read parameter modal; Export Only requires per-instance download approval |
 | Settings | Automation, businesses, accounts/banks, portfolios, templates, integrations, portal settings, profiles, users | **Hand over** (auth, bank/EFT, users, security) — Integrations list is read-only study |
 | Tools · My Profile | Email activity · communication and account settings | Read email activity only; never My Profile |
@@ -70,19 +75,19 @@ likely home but was not observed — confirm on the first live run.
 screens:
   - {id: agents, label: Agents, menu: [Agents], route: /customers/bookingagent, tier: C, controls: [Search, Status, Category, View], views: [Default, Disbursement], columns: [reference, description, contact]}
   - {id: rentals, label: Rentals, menu: [Rentals], route: /customers/property, tier: C, controls: [Search, Status, Category, Zone, View], columns: [owner, tenant, portfolio, rent, room/letting type], views: [inspection, lease expiry, management expiry, rates/insurance, pest, pool, smoke, water, vacancy, key register]}
-  - {id: tenants, label: Tenants, menu: [Tenants], route: /customers/tenant, tier: C, controls: [Search, Status, Category, Zone, View], columns: [paid to, rent credit, days, amount owing, lease expiry, vacating]}
+  - {id: tenants, label: Tenants, menu: [Tenants], route: /customers/tenant, tier: L, controls: [Search, Status, Category, Zone, View], columns: [paid to, rent credit, days, amount owing, lease expiry, vacating]}
   - {id: owners, label: Owners, menu: [Owners], route: /customers/owner, tier: C, controls: [Search, Status, Category, Zone, View], columns: [properties, contact]}
-  - {id: suppliers, label: Suppliers, menu: [Suppliers], route: /customers/supplier, tier: C, controls: [Search, Status, Category, View], columns: [reference, description, contact]}
+  - {id: suppliers, label: Suppliers, menu: [Suppliers], route: /customers/supplier, tier: L, controls: [Search, Status, Category, View], columns: [reference, description, contact]}
   - {id: contacts, label: Contacts, menu: [Contacts], route: /customers/contact, tier: C, controls: [Search, Status, Contact type], columns: [file as, company, portfolio, contact]}
   - {id: tasks, label: Tasks, menu: [Tasks], route: /customers/task, tier: C, controls: [View, Type, Status, Portfolio, Scheme, Archived, From, To], columns: [due date, priority, assigned to, linked record]}
   - {id: listings, label: Listings, menu: [Listings], route: /customers/listing, tier: C, controls: [Search, Status, Category, Listing status, View], columns: [type, price, zone, portfolio, archive]}
   - {id: sales, label: Sales, menu: [Sales], route: /customers/sales, tier: C, controls: [Search, Status, Category, Sales status, View], columns: [settlement, seller, buyer]}
-  - {id: arrears, label: Arrears, menu: [Tenants, Arrears], menu_confirmed: false, route: /customers/arrears/, tier: C, controls: [Day condition, From day, Property portfolio, Hide vacated tenants, Search], stop: [Notice, Email, SMS, Send], columns: [paid to, rent credit, days arrears, amount owing]}
-  - {id: tenant-receipts, label: Tenant receipts, menu: [Receipts, Tenant receipts], menu_confirmed: false, route: /customers/transaction/tenantreceipt, tier: C, controls: [Search, Tenant], stop: [Save, Post, Submit], note: "Selecting a tenant prepares a receipt form; stop there."}
-  - {id: bulk-receipting, label: Bulk receipting, menu: [Receipts, Bulk receipting], menu_confirmed: false, route: /customers/importbanklink/index, tier: C, controls: [File Format, Load File], stop: [Process Receipts, Receipt All, Save, Post, Finalise], formats_advertised: [ABA, BRF, ERP, TXN, common AU bank CSVs, Custom CSV, StrataPay, payment providers]}
-  - {id: bank-reconciliation, label: Bank reconciliation, menu: [Process, Bank reconciliation], menu_confirmed: false, route: /customers/reconciliation/bankreconciliation, tier: C, controls: [Business, Statement balance, Reconciliation date, Search], stop: [Reconcile, Save, Tick, Finalise], columns: [debit, credit, reconciled]}
+  - {id: arrears, label: Arrears, menu: [Process, Arrears], route: /customers/arrears/, tier: L, controls: [Day condition, From day, Property portfolio, Hide vacated tenants, Search], stop: [Notice, Email, SMS, Send], columns: [paid to, rent credit, days arrears, amount owing]}
+  - {id: tenant-receipts, label: Tenant, menu: [Receipts, Tenant], route: /customers/transaction/tenantreceipt, tier: L, controls: [Search, Tenant], stop: [Save, Post, Submit], note: "Selecting a tenant prepares a receipt form; stop there."}
+  - {id: bulk-receipting, label: Bulk Receipting, menu: [Receipts, Bulk Receipting], route: /customers/importbanklink/index, tier: L, format_selected_live: ANZ(csv file), controls: [File Format, Load File], stop: [Process Receipts, Receipt All, Save, Post, Finalise], formats_advertised: [ABA, BRF, ERP, TXN, common AU bank CSVs, Custom CSV, StrataPay, payment providers]}
+  - {id: bank-reconciliation, label: Bank Reconciliation, menu: [Process, Bank Reconciliation], route: /customers/reconciliation/bankreconciliation, tier: L, controls: [Business, Statement balance, Reconciliation date, Search], stop: [Reconcile, Save, Tick, Finalise, Update, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot], columns: [debit, credit, reconciled]}
   - {id: reports, label: Reports, menu: [Reports], route: /report/reportlist, tier: C, controls: [Search], note: "A report opens an async parameter modal. Export Only is a file download needing the fence's approval; report generation was not tested live."}
-  - {id: integrations, label: Integrations, menu: [Settings, Integrations], menu_confirmed: false, route: /RequesterIntegrations, tier: C, controls: [Search], tabs: [My Connections, Accounting, Reservations, Marketing, Forms, Payment Gateway, STR], listed: [Xero, RoomPriceGenie, Mobile Integration], note: "Read only. A listed integration is not API entitlement."}
+  - {id: integrations, label: Integrations, menu: [Settings, Integrations], route: /RequesterIntegrations, tier: C, controls: [Search], tabs: [My Connections, Accounting, Reservations, Marketing, Forms, Payment Gateway, STR], listed: [Xero, RoomPriceGenie, Mobile Integration], note: "Read only. A listed integration is not API entitlement."}
 ```
 
 ## 4. Recipes
@@ -136,7 +141,7 @@ kind: read
 tier: [C, S]
 inputs: [min_days]
 steps:
-  - nav: [Tenants, Arrears]
+  - nav: [Process, Arrears]
   - check: account
   - wait: table
   - type: {field: From day, value: "{min_days}"}
@@ -185,25 +190,29 @@ note: >-
   live readback until an approved export is inspected.
 ```
 
-Directory exports (tenant-list, supplier-list): **PLACEHOLDER — the real REI
-export location is not mapped yet.** Both recipes read the list's own grid
-first (its "N records" footer is the count the export must match), then open
-the export through Reports like `receipt-register`, clicking the report by
-name without typing (the task grants no typing). The report names below are
-deliberately fake so a live run stops at "control missing" instead of opening
-the wrong report. When the owner's screenshots confirm the real path (the
-Tenants "Action" menu, or a Reports › Tenants / Suppliers category report),
-replace each `(placeholder)` name — the recipe's `click` label and its entry
-in `read_safe_labels` (section 6) — then run
-`node scripts/rei-recipes.mjs --write`. If the real export is an Action-menu
-item on the list itself, replace the Reports steps with `click` steps on that
-list. The fictional portal reads these names from `recipes.json`, so it follows.
+Directory exports (tenant-list, supplier-list), live findings 6 Oct (`L`):
+- No list has an Export item. Every list's **Action** menu holds Send, Record
+  change and report items only (`../site-map.json` → `live2026_10_06.screens`).
+- **Suppliers**: the grid renders every row on first load (60 of 60 records),
+  with Reference, Description, Phone, Phone A/H, Mobile, Fax, Email, Address,
+  Category. A grid read whose row count equals the "N records" footer is the
+  complete list. No download is needed. Reports has no supplier contact listing.
+- **Tenants**: the grid renders the first 90 rows. More load only when the
+  grid itself scrolls (Tenants: 90 of 106), and keys do not load more. Columns
+  include Reference, Surname, Firstname, Property, Rent and BPay/Ref No. The
+  only export is Reports › Tenant › **Tenant Listing (Contact Details)**: the
+  link opens the parameter modal, Output (`Filter1`) = **Export Only** (never
+  Email Only or Export & Email), then **Preview** opens the Telerik viewer,
+  whose export formats are not yet observed.
+- So both recipes below stay tier `U` until Refresh from REI reads the grid
+  (suppliers) and the grid-or-report path (tenants) live. Their report names
+  remain deliberately fake so a live run stops at "control missing".
 
 ```yaml
 recipe: tenant-list
 workflow: Austin W1 tenant directory (REI Reference → bank file last column)
 kind: prepare
-tier: [S]
+tier: [U]
 grant_needs: [download]
 steps:
   - nav: [Tenants]
@@ -229,7 +238,7 @@ note: >-
 recipe: supplier-list
 workflow: Austin W4 supplier directory (listed senders)
 kind: prepare
-tier: [S]
+tier: [U]
 grant_needs: [download]
 steps:
   - nav: [Suppliers]
@@ -259,7 +268,7 @@ tier: [C, S]
 inputs: [bank_format, approved_file, expected_rows, expected_total]
 grant_needs: [upload]
 steps:
-  - nav: [Receipts, Bulk receipting]
+  - nav: [Receipts, Bulk Receipting]
   - check: account
   - select: {field: File Format, option: "{bank_format}"}
   - upload: {field: Load File, file: "{approved_file}"}
@@ -300,12 +309,12 @@ recipe: bank-reconciliation-read
 kind: read
 tier: [C, S]
 steps:
-  - nav: [Process, Bank reconciliation]
+  - nav: [Process, Bank Reconciliation]
   - check: account
   - wait: table
   - read: table
   - paginate: true
-stop_before: [Reconcile, Save, Tick, Finalise]
+stop_before: [Reconcile, Save, Tick, Finalise, Update, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot]
 success: unreconciled debits/credits listed; nothing ticked, typed or saved
 note: Never type into Statement balance or Reconciliation date.
 ```
@@ -409,8 +418,8 @@ A click, upload, toast or HTTP 200 is **not** a readback.
 ## 6. Labels Bud may and may not press
 
 ```yaml
-read_safe_labels: [Search, Status, Category, Zone, View, Action, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
-consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit]
+read_safe_labels: [Search, Status, Category, Zone, View, Action, From day, Hide vacated tenants, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel, Tenant list export (placeholder), Supplier list export (placeholder)]
+consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit, Send Email, Email Only, Export & Email, Process File, Update, Apply Automation, Apply Recurring Batch, Complete Task(s), Retry Task(s), Form 9, Form 11, Invite to Portal, Sync to Outlook, Delete Statement Message, Re-Assign Portfolios, Re-Assign Template, Re-Assign Copy Last Inspection, Re-Assign Housekeeper, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot, Set Payment Type, Email Invoice]
 forbidden_areas: [Settings, My Profile, Process › Disbursement, Process › End of Month, Process › Journals, Process › Reversals, Process › Direct Debit, Process › Payments]
 ```
 
@@ -434,13 +443,20 @@ broad grant. Read-only study of Settings › Integrations is the one exception.
 
 ## 8. Coverage gaps — next live study (read-only)
 
-1. Confirm parent menus for Arrears, Tenant receipts, Bulk receipting, Bank
-   reconciliation and Integrations.
-2. Bulk receipting: Austin's File Format choice; preview columns and buttons
-   (fictional or sandbox file first).
+Answered by the 6 Oct live crawl (`L`): parent menus for Arrears (Process),
+Tenant (Receipts), Bulk Receipting (Receipts), Bank Reconciliation (Process)
+and Integrations (Settings); Austin's bank File Format (ANZ(csv file));
+Dashboard, Business, Booking Calendar and Communities controls (Communities
+sub-pages redirect to Owners, Rentals, Suppliers, Tasks and Settings › Other).
+
+Next live looks (read-only):
+1. The Telerik viewer behind a report's Preview: its export formats and the
+   Tenant Listing (Contact Details) columns, with a separately approved download.
+2. Refresh from REI by reading the Suppliers grid, and the Tenants grid after
+   it loads every row.
 3. Supplier bill entry point (Austin WF2).
-4. Dashboard, Business, Booking Calendar and Communities controls.
-5. Receipt Register Export Only control, file format, account/period scope and columns with a separately approved download.
+4. Receipt Register Export Only control, file format, account/period scope and
+   columns with a separately approved download.
 
 Per workflow also test: one record, empty and multiple results, pagination,
 changed account, session expiry, Stop/takeover, uncertain completion and

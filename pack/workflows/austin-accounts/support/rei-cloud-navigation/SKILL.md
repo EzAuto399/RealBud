@@ -5,7 +5,7 @@ description: "Find your way around REI Cloud in the person's signed-in session: 
 
 # REI Cloud navigation
 
-Part of the Auston Realty add-on workflow pack (`austin-office`). It is not RealBud core. It is derived from a read-only structural map of REI Cloud v26.0922.0 observed on 24 September 2026 (`site-map.json` beside this file). The map holds structure only: no names, addresses, emails, amounts or account numbers.
+Part of the Auston Realty add-on workflow pack (`austin-office`). It is not RealBud core. It is derived from read-only structural maps of REI Cloud v26.0922.0 observed on 24 September and 6 October 2026 (`site-map.json` beside this file; `live2026_10_06` holds the full menu tree, 48 screens with their filters, columns and Action menus, and the report catalogue). The map holds structure only: no names, addresses, emails, amounts or account numbers.
 
 Placeholders stand for account values. Never write the real values into notes, logs, receipts or proposals:
 - `{reicid}`: the database ID REI puts on every app URL.
@@ -42,7 +42,9 @@ This skill grants nothing. It describes where things are; it does not permit any
 - Target rows by `data-tenant-id`, `data-owner-id`, `data-property-id` or `data-id`. Never by screen position, row order or a person's name.
 - Grids also carry `data-email`. Never copy it into notes, logs or receipts.
 - The grid `Search:` box and the Status, Category, Zones and View selects are read-only filters.
-- The **Action** bulk menu on lists opens email, SMS, letter, form, mail merge, automation and re-assign actions. Treat it as Send or Record change.
+- The **Action** button on every list (top right, beside Add New) only opens a menu; opening it changes nothing. Every item in it is Send (Email, SMS, Letter, Form, Mail Merge, Invite to Portal), Record change (Apply Automation, Re-Assign …, Delete Statement Message, Sync to Outlook, Complete or Retry Task(s), Form 9 / Form 11 notices) or a report. Treat each item as Send or Record change. No list has an Export item.
+- Record lists are grids with an "N records" footer. Suppliers render every row; Tenants render the first 90 and load more only as the grid scrolls. A list is complete only when the rows you read equal the footer count.
+- Reports open a parameter box. Output must be **Export Only**; never choose Email Only or Export & Email, and never press Send Email.
 - Owner, Rental and Tenant detail pages open as live edit forms ("Update Owner"). Every field and the **Active** toggle are live. Never type into them while reading. Save and Cancel stay disabled until a field changes; if a field changed by accident, stop and tell the person.
 
 ## Overlays
