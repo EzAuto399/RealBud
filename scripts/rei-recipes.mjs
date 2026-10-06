@@ -75,6 +75,10 @@ export function buildReiRecipes(mapText, siteMapText) {
     versionMarker: ADAPTER.uiVersion,
     pagination: ADAPTER.pagination,
     labels: { readSafe: labels.read_safe_labels.filter(label => !ADAPTER.notReadSafe.includes(label)), consequential: labels.consequential_labels, forbiddenAreas: labels.forbidden_areas },
+    // Money and upload screens from both site-map observations: the classifier treats them as financial pages.
+    financialRoutes: [...new Set([...siteMap.routes, ...(siteMap.live2026_10_06?.menuTree ?? []).map(entry => ({ path: entry.route, class: entry.class }))]
+      .filter(route => route.class === "money" || route.class === "upload")
+      .map(route => route.path.split("?")[0].toLowerCase().replace(/\/+$/, "")))].sort(),
     screens: screens.map(screen => ({ id: screen.id, label: screen.label, menu: screen.menu, route: screen.route, stop: screen.stop ?? [] })),
     routes,
     recipes,

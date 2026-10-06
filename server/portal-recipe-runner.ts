@@ -143,7 +143,8 @@ export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalContr
   const pagination = [pack.pagination.next, ...(pack.pagination.previous ? [pack.pagination.previous] : [])];
   return { origin: new URL(pack.origin).origin, readSafe: [...pack.labels.readSafe], menu: [...menu], pagination,
     ...(pack.pagination.landmark ? { pager: { ...pack.pagination.landmark } } : {}), consequential: [...pack.labels.consequential],
-    signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker } };
+    signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker },
+    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}) };
 }
 
 // ── page model (the helper's VOM text) ───────────────────────────────────
