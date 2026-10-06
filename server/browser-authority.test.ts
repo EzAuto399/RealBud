@@ -19,6 +19,7 @@ import {
   approvalUrl,
   pageOrigin,
   withPageOrigin,
+  portalAccountName,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
@@ -829,6 +830,21 @@ describe("a page as every sink keeps it", () => {
     // Only a request carrying a page address changes.
     for (const other of [{ type: "request.resolved", params: { url: page } }, { type: "request.opened", summary: page }, { type: "turn.started" }]) {
       expect(withPageOrigin(other)).toBe(other);
+    }
+  });
+});
+
+describe("the account marker reads only the page's own chrome", () => {
+  const where = { landmark: "list", role: "button" };
+  const topBar = '@native-ax 1\nrootwebarea\n  generic\n    @e1 link "REI Cloud v 26.0922.0 P"\n    list\n      listitem\n        @e2 button "AUS06"';
+  it("reads the first button in the top bar's list, as live REI shows it", () => {
+    expect(portalAccountName(topBar, where)).toBe("AUS06");
+  });
+  it("never takes a list from the page's content, a form, a dialog, a table or a widget region", () => {
+    for (const box of ["main", "form", "dialog", "grid", "region", "article"]) {
+      const content = `@native-ax 1\nrootwebarea\n  ${box}\n    list\n      listitem\n        @e1 button "OTHER1"`;
+      expect(portalAccountName(content, where)).toBeNull();
+      expect(portalAccountName(`${content}\n  generic\n    list\n      listitem\n        @e2 button "AUS06"`, where)).toBe("AUS06");
     }
   });
 });

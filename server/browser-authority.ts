@@ -305,7 +305,9 @@ function portalMarkerShown(text: string, where: { landmark: string; role: string
 export function portalAccountName(text: string, where: { landmark: string; role: string }): string | null {
   if (!isStructuredBrowserObservation(text)) return null;
   const { nodes } = parseVom(text);
-  const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode));
+  // The page's own chrome, never its content: a list (REI's top bar has no banner) inside the main area, a form,
+  // a dialog, a table or a widget region is page content, so it can never stand in for the business code.
+  const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(at => hiddenNode(at) || PAGE_CONTENT_ROLE.has(at.role)));
   const shown = landmark ? descendants(landmark).find(node => node.role === where.role.toLowerCase() && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode)) : undefined;
   return shown?.name?.trim() || null;
 }
@@ -315,6 +317,7 @@ export function browserAccountMarkerShown(text: string, marker: string, portal?:
   return portal?.accountMarker ? isStructuredBrowserObservation(text) && portalMarkerShown(text, portal.accountMarker, marker) : accountMarkerShown(text, marker);
 }
 const FORM_ROLE = new Set(["form", "dialog", "alertdialog"]);
+export const PAGE_CONTENT_ROLE = new Set(["main", "form", "dialog", "alertdialog", "table", "grid", "treegrid", "row", "rowgroup", "region", "article"]);
 /** Groups that hold their own controls: a filter or search bar, a pager, a menu. */
 const GROUP_ROLE = new Set(["navigation", "search", "toolbar", "group"]);
 const descendants = (node: VomNode): VomNode[] => node.children.flatMap(child => [child, ...descendants(child)]);
