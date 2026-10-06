@@ -84,7 +84,7 @@ try {
   }
   await page.screenshot({ path: join(output, '02-installed.png') });
   await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
-  await page.reload(); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.goto(base + '/#/schedule'); await page.reload(); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   pass('Importing both role packs sets all six workflows to Brisbane time and leaves every one off');
 
   // ── 2. Schedule lists all six with Brisbane times and Off ──
