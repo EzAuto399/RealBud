@@ -2,6 +2,7 @@ import * as nodePath from 'node:path';
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
+import { MessageChannel, Worker, isMainThread, receiveMessageOnPort, workerData, type MessagePort } from 'node:worker_threads';
 
 const execFileAsync = promisify(execFile);
 
@@ -189,10 +190,13 @@ const NATIVE_FAILURES = {
   26: 'acl-inspection-failed',
 } as const;
 
-type PrivacyFailure = (typeof NATIVE_FAILURES)[keyof typeof NATIVE_FAILURES]
-  | 'invalid-path-or-kind' | 'system-root-unavailable' | 'powershell-not-found'
-  | 'powershell-launch-denied' | 'output-limit-exceeded' | 'process-terminated'
-  | 'native-command-failed';
+const OTHER_FAILURES = [
+  'invalid-path-or-kind', 'system-root-unavailable', 'powershell-not-found',
+  'powershell-launch-denied', 'output-limit-exceeded', 'process-terminated',
+  'native-command-failed',
+] as const;
+type PrivacyFailure = (typeof NATIVE_FAILURES)[keyof typeof NATIVE_FAILURES] | (typeof OTHER_FAILURES)[number];
+const FAILURES: ReadonlySet<string> = new Set([...Object.values(NATIVE_FAILURES), ...OTHER_FAILURES]);
 
 /** One ordered admission. `verify` never repairs; `restrict` owns a new object. */
 export type WindowsFilePrivacyOperation = {
@@ -289,9 +293,9 @@ function literalPath(path: string): string {
   return path;
 }
 
-function privacyInvocation(
-  operations: WindowsFilePrivacyOperation[],
-): { executable: string; args: string[]; env: NodeJS.ProcessEnv; literals: string[] } | null {
+type Invocation = { executable: string; args: string[]; env: NodeJS.ProcessEnv; literals: string[] };
+
+function privacyInvocation(operations: WindowsFilePrivacyOperation[]): Invocation | null {
   if (process.platform !== 'win32') {
     return null;
   }
@@ -363,17 +367,7 @@ export async function windowsFilePrivacyBatch(operations: WindowsFilePrivacyOper
   const planned = (Array.isArray(operations) ? operations : []).map(({ path, kind, action }) => ({ path, kind, action }));
   if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
   if (process.env.REALBUD_WINDOWS_PRIVACY_HOST !== '0') {
-    // Same script and policy, one long-lived process: an admission costs the
-    // .NET ACL calls, not a PowerShell launch (about 0.2 s, seconds on a busy PC).
-    for (const [index, operation] of planned.entries()) {
-      const { result, detail } = await hostAdmission(invocation, invocation.literals[index]!, operation.kind, operation.action);
-      if (result !== 0) {
-        throw new WindowsFilePrivacyError(
-          NATIVE_FAILURES[result as keyof typeof NATIVE_FAILURES] ?? 'native-command-failed', result, false,
-          index, planned.length, privacyDetail(detail)?.text ?? null,
-        );
-      }
-    }
+    await hostBatch(invocation, planned);
     return planned.map(operation => ({ ...operation, applied: true }));
   }
   try {
@@ -445,6 +439,20 @@ function startHost(invocation: { executable: string; args: string[]; env: NodeJS
   return started;
 }
 
+// Same script and policy, one long-lived process: an admission costs the .NET
+// ACL calls, not a PowerShell launch (about 0.2 s, seconds on a busy PC).
+async function hostBatch(invocation: Invocation, planned: WindowsFilePrivacyOperation[]): Promise<void> {
+  for (const [index, operation] of planned.entries()) {
+    const { result, detail } = await hostAdmission(invocation, invocation.literals[index]!, operation.kind, operation.action);
+    if (result !== 0) {
+      throw new WindowsFilePrivacyError(
+        NATIVE_FAILURES[result as keyof typeof NATIVE_FAILURES] ?? 'native-command-failed', result, false,
+        index, planned.length, privacyDetail(detail)?.text ?? null,
+      );
+    }
+  }
+}
+
 function hostAdmission(
   invocation: { executable: string; args: string[]; env: NodeJS.ProcessEnv },
   literal: string, kind: 'file' | 'directory', action: 'restrict' | 'verify',
@@ -465,12 +473,18 @@ function hostAdmission(
  * the order; the script stops at the first refusal, so nothing after a failure
  * is applied and the failure carries the same numeric exit code as a single
  * call. Only batch operations whose order is already safe: an admission that
- * must gate a write still has to happen before that write.
+ * must gate a write still has to happen before that write. It is served by the
+ * same long-lived host as the asynchronous form (see syncHostBatch), or by a
+ * one-shot launch when REALBUD_WINDOWS_PRIVACY_HOST is '0'.
  */
 export function windowsFilePrivacyBatchSync(operations: WindowsFilePrivacyOperation[]): WindowsFilePrivacyResult[] {
   const invocation = privacyInvocation(operations);
   const planned = (Array.isArray(operations) ? operations : []).map(({ path, kind, action }) => ({ path, kind, action }));
   if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
+  if (process.env.REALBUD_WINDOWS_PRIVACY_HOST !== '0') {
+    syncHostBatch(invocation, planned);
+    return planned.map(operation => ({ ...operation, applied: true }));
+  }
   try {
     execFileSync(invocation.executable, invocation.args, {
       env: invocation.env, shell: false, windowsHide: true, timeout: 120_000,
@@ -491,4 +505,74 @@ export function windowsFilePrivacyBatchSync(operations: WindowsFilePrivacyOperat
 /** The same policy for existing synchronous installer/profile call paths. */
 export function windowsFilePrivacySync(path: string, kind: 'file' | 'directory', restrict = false): void {
   windowsFilePrivacyBatchSync([{ path, kind, action: restrict ? 'restrict' : 'verify' }]);
+}
+
+// Synchronous callers (about forty storage paths) used to launch a cold
+// powershell.exe each, 2-3 s apiece, freezing the service for half a minute
+// when they stacked. They now wait on a worker thread that owns its own
+// long-lived host and runs the same hostBatch. The main thread blocks on one
+// shared word: 1 = replied, 2 = the worker is gone. A timeout, a dead worker,
+// a mismatched or malformed reply refuses (never admits) and the next call
+// starts a fresh worker. Idle, neither the worker nor its host keeps the
+// process alive.
+type SyncHost = { worker: Worker; port: MessagePort; signal: Int32Array; nextId: number };
+type SyncFailure = { category: string; nativeExitCode: number | null; operationIndex: number | null; detail: string | null };
+let syncHost: SyncHost | null = null;
+const SYNC_HOST_MARKER = 'realbudWindowsPrivacySyncHost';
+
+function startSyncHost(): SyncHost {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  const { port1, port2 } = new MessageChannel();
+  // Source mode runs this .ts under strip-types (the worker inherits execArgv);
+  // the packaged build runs the compiled .js beside it.
+  const worker = new Worker(new URL(import.meta.url), {
+    workerData: { [SYNC_HOST_MARKER]: true, port: port2, signal }, transferList: [port2],
+  });
+  const started: SyncHost = { worker, port: port1, signal, nextId: 1 };
+  const forget = () => { if (syncHost === started) syncHost = null; };
+  worker.on('error', forget);
+  worker.on('exit', forget);
+  worker.unref(); port1.unref();
+  return started;
+}
+
+function endSyncHost(target: SyncHost): WindowsFilePrivacyError {
+  if (syncHost === target) syncHost = null;
+  target.worker.terminate().catch(() => { /* already gone */ });
+  return nativeFailure({ killed: true });
+}
+
+function syncHostBatch(invocation: Invocation, planned: WindowsFilePrivacyOperation[]): void {
+  // 1 -> 0 readies a worker that answered before; a 2 means it has gone.
+  if (syncHost && Atomics.compareExchange(syncHost.signal, 0, 1, 0) === 2) endSyncHost(syncHost);
+  const target = syncHost ??= startSyncHost();
+  const id = target.nextId++;
+  target.port.postMessage({ id, invocation, planned });
+  if (Atomics.wait(target.signal, 0, 0, HOST_TIMEOUT_MS) === 'timed-out' || Atomics.load(target.signal, 0) !== 1) throw endSyncHost(target);
+  const reply = receiveMessageOnPort(target.port)?.message as { id?: unknown; failure?: SyncFailure | null } | undefined;
+  if (!reply || reply.id !== id || reply.failure === undefined) throw endSyncHost(target);
+  if (reply.failure === null) return;
+  // Rebuild the refusal from its fields, accepting only what this module can produce.
+  const { category, nativeExitCode, operationIndex, detail } = reply.failure;
+  if (
+    !FAILURES.has(category) ||
+    !(nativeExitCode === null || (Number.isInteger(nativeExitCode) && nativeExitCode >= 0 && nativeExitCode <= 0xffff_ffff)) ||
+    !(operationIndex === null || (Number.isInteger(operationIndex) && operationIndex >= 0 && operationIndex < planned.length)) ||
+    !(detail === null || (typeof detail === 'string' && privacyDetail(`[windows-acl] ${detail}`)?.text === detail))
+  ) throw endSyncHost(target);
+  throw new WindowsFilePrivacyError(category as PrivacyFailure, nativeExitCode, false, operationIndex, planned.length, detail);
+}
+
+if (!isMainThread && (workerData as Record<string, unknown> | null)?.[SYNC_HOST_MARKER] === true) {
+  const { port, signal } = workerData as { port: MessagePort; signal: Int32Array };
+  const answer = (value: number) => { Atomics.store(signal, 0, value); Atomics.notify(signal, 0); };
+  process.on('exit', () => answer(2));
+  port.on('message', ({ id, invocation, planned }: { id: number; invocation: Invocation; planned: WindowsFilePrivacyOperation[] }) => {
+    hostBatch(invocation, planned).then(
+      () => null,
+      (error: unknown): SyncFailure => error instanceof WindowsFilePrivacyError
+        ? { category: error.category, nativeExitCode: error.nativeExitCode, operationIndex: error.operationIndex, detail: error.detail }
+        : { category: 'native-command-failed', nativeExitCode: null, operationIndex: null, detail: null },
+    ).then(failure => { port.postMessage({ id, failure }); answer(1); });
+  });
 }
