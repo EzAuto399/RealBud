@@ -82,6 +82,7 @@ Use a skill when it fits the request:
 ## Lessons
 - When scripting build → install, gate the install on the build's success and on the new app's version string; never swap /Applications from a stale release/ folder.
 <!-- Newest on top. "When X, do Y". Delete what no longer applies. -->
+- When changing `electron-builder.yml` files or extraResources, run `electron-builder --dir` locally and check the packaged `/api/health` version before merging; a regex test on the YAML once shipped a config that built no installer.
 - When adding a UI control, click it in the running app and confirm it changes something visible (including on an empty book); remove decorative controls rather than ship no-ops.
 - When moving UI controls, check 390px: below 600px only `.rb-sidebar-navigation` shows, so footer-only entries vanish on phones.
 - When a QA script fails on copy or server behaviour another session changed, report it to that session; don't rewrite their fixture expectations.
