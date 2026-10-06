@@ -16,6 +16,7 @@ import {
   BROWSER_LEGACY_JOB_ORIGIN,
   BROWSER_TASK_GRANT_PURPOSE,
   BROWSER_TASK_GRANT_VERSION,
+  LOOP_READ_ACTIONS,
   browserTaskSite,
   legacyBrowserActions,
   parseBrowserTaskGrant,
@@ -90,6 +91,7 @@ const KEY_SPEC = "Use one key, such as Enter, Tab, Escape or an arrow key, with 
 const CHOICES = "Choose one to twenty option values from the observed list.";
 const UPLOAD_NOT_GRANTED = "Only files given to this task can be uploaded. Ask the person to add the file to the task.";
 const ASK_ONCE = "Bud asks before this step, once, with the details shown on the page.";
+export const LOOP_READ_ONLY = "This scheduled refresh only reads. It never downloads, uploads, submits, pays, sends or changes anything, and nobody is at the screen to ask.";
 export const UNUSUAL_NAME = "This control's name had unusual text, which is not shown here. Check the page before allowing.";
 
 // ── page and URL helpers (shared with the broker) ────────────────────────
@@ -1091,6 +1093,18 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const site = siteFor(grant, url);
   const host = hostOf(url);
   const label = "label" in classification && classification.label ? controlName(classification.label) : "";
+  // A loop's unattended read (route loop-read): nobody is at the screen to ask, so a step is plainly read-only or
+  // refused. Reading, a same-site read-only address, a filter field and a declared read-safe control only; never a
+  // download, upload, submit, consequential or unclassified step, whatever the grant, a rule or the recipe says.
+  if (grant.route === "loop-read") {
+    const routine = classification.class === "routine" && !classification.unusualName && (LOOP_READ_ACTIONS as readonly string[]).includes(classification.action) &&
+      grant.actions.includes(classification.action) ? classification : null;
+    const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" ||
+      routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
+      (routine.step === "fill" || routine.step === "select" || routine.step === "press") && (routine.action === "fill" || routine.action === "keys") ||
+      routine.step === "click" && browserReadOnlyAction(grant, observation!, tool, args, options.portal));
+    return readOnly ? { decision: "allow", classification, fence: { surface: "portal-read", origin: site, ruleOffer: null }, note: "read-only loop" } : deny(LOOP_READ_ONLY);
+  }
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.
   const toolAction = classification.step ? TOOL_ACTIONS[classification.step] : undefined;
   if (toolAction && !grant.actions.includes(toolAction)) return deny(missingAction(toolAction));

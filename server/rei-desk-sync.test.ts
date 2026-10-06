@@ -229,7 +229,7 @@ describe("REI read through the fictional portal into Desk", () => {
     expect(result.outcome, result.detail).toBe("completed");
     expect(mock.effects).toEqual([]);
     const { desk, tick } = liveDesk();
-    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
     const sync = syncReiReadIntoDesk(desk, { runs, results: result.results, observedAt: tick(1000) })!;
     expect(sync.fresh).toEqual(["tenants", "arrears", "owners"]);
     expect(sync.stale).toEqual([]);
@@ -239,10 +239,11 @@ describe("REI read through the fictional portal into Desk", () => {
     expect(snap.properties).toHaveLength(1);
     expect(snap.book!.bookProposals.map((card) => card.address).sort()).toEqual(["FP-01", "FP-03", "FP-05", "FP-06", "FP-07", "FP-08", "FP-09", "FP-10"]);
     expect(snap.book!.bookProposals.find((card) => card.address === "FP-10")).toMatchObject({ weeklyRentCents: 55_385, ownerName: "Fictional Owner One" });
-    // FT-KILO has no property, FP-04 shows two tenancies, and the arrears grid names tenants
-    // differently from the tenants grid in this fictional portal, so its rows are held.
+    // FT-KILO has no property and FP-04 shows two tenancies. The arrears grid names tenants as the tenants grid
+    // does, so Bravo's arrears row lands; Juliet's (spelled differently by REI, deliberately) is held.
     const issues = snap.book!.importIssues.map((issue) => `${issue.kind} ${issue.rawIdentity}`);
-    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "ambiguous REI property FP-04", "unmatched REI arrears Fictional Tenant Bravo"]));
+    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "ambiguous REI property FP-04", "unmatched REI arrears Fictional Juliet"]));
+    expect(issues.some((issue) => issue.includes("Fictional Tenant Bravo"))).toBe(false);
     expect(issues.some((issue) => issue.includes("REI owner"))).toBe(false);
     expect(snap.lastRunAt).toBeNull();
   });

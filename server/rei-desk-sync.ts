@@ -26,9 +26,9 @@ export function reiPartOf(run: PortalRunRequest): { part: ReiPart; whole: boolea
   return null;
 }
 
-/** Every page was read: the run finished the recipe and the grid footer's count (when shown) was reached. */
+/** Every page was read: the run finished the recipe, no page came back cut short, and the grid footer's count (when shown) was reached. */
 const complete = (result: PortalRecipeResult) =>
-  result.outcome === "completed" && result.table !== "unread" && (result.footer === undefined || result.rows.length >= result.footer);
+  result.outcome === "completed" && result.table !== "unread" && !result.truncated && (result.footer === undefined || result.rows.length >= result.footer);
 
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function cell(row: Record<string, string>, ...names: string[]): string {
@@ -168,11 +168,12 @@ export function syncReiReadIntoDesk(desk: Desk, input: { runs: PortalRunRequest[
   return { ...applied, stale: REI_PARTS.filter((part) => !fresh[part]) };
 }
 
-/** One line for the person, after the portal read's own reply. */
-export function reiDeskSyncLine(sync: ReiDeskSync): string {
+/** One line for the person, after the portal read's own reply. `freshness: false` leaves out the freshness sentence. */
+export function reiDeskSyncLine(sync: ReiDeskSync, freshness = true): string {
   const bits = [`${sync.updated} propert${sync.updated === 1 ? "y" : "ies"} updated from REI`];
   if (sync.differs) bits.push(`${sync.differs} Desk value${sync.differs === 1 ? "" : "s"} differ${sync.differs === 1 ? "s" : ""} from REI and wait${sync.differs === 1 ? "s" : ""} for you to pick`);
   if (sync.proposed) bits.push(`${sync.proposed} new propert${sync.proposed === 1 ? "y" : "ies"} proposed for you to add`);
   if (sync.held) bits.push(`${sync.held} row${sync.held === 1 ? "" : "s"} held for you to match`);
+  if (!freshness) return `Desk: ${bits.join("; ")}.`;
   return `Desk: ${bits.join("; ")}. ${sync.stale.length ? `Not fresh from REI: ${sync.stale.join(", ")}.` : "Every part is fresh from REI."}`;
 }

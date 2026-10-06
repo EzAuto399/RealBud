@@ -363,7 +363,80 @@ const cases = [
       check("one upstream call per request", upstreamAudit(mv).upstreamRequests === 2 && upstreamAudit(mv).duplicateIdempotencyKeys === 0, JSON.stringify(upstreamAudit(mv)));
     } finally { await mv.close(); }
   } },
+  // REI morning refresh (portable: plain Node children, no disk image or server): the real LoopManager, Desk,
+  // browser runtime, broker and recipe runner against the FICTIONAL REI portal (scripts/resilience/rei-refresh-child.mjs).
+  { id: "8", name: "REI morning refresh: SIGKILL mid-read, then restart", deadlineMs: 20000, async run(dir, check, observe) {
+    const data = join(dir, "data");
+    let c = await reiChild(dir, data, this.deadlineMs);
+    await c.ask({ op: "portal", set: { delayMs: 15 } }); await c.ask({ op: "enable" });
+    const started = (await c.ask({ op: "run" })).result;
+    await c.ask({ op: "wait-observes", n: 6 + Math.floor(random() * 10) });
+    process.kill(c.child.pid, "SIGKILL"); await c.child.closed;
+    c = await reiChild(dir, data, this.deadlineMs);
+    const after = (await c.ask({ op: "state" })).state;
+    const run = after.runs.find((r) => r.id === started.id);
+    check("the killed run reads Interrupted after restart (clean miss)", run?.status === "interrupted", JSON.stringify(run));
+    check("Desk holds nothing from the killed read (no REI stamps, cards or facts)", Object.keys(after.stamps).length === 0 && after.proposals.length === 0, JSON.stringify(after.stamps));
+    await c.ask({ op: "release" });
+    const next = await c.ask({ op: "refresh" });
+    check("after the person releases the earlier browser session, the next refresh completes", next.result.status === "completed" && Object.keys(next.state.stamps).length === 3, next.result.detail);
+    observe({ startupAfterKill: after.startup, observesAtKill: after.portal.observes });
+    await c.ask({ op: "close" }).catch(() => {});
+  } },
+  { id: "9", name: "REI morning refresh: ±24 h wall-clock jump", deadlineMs: 20000, async run(dir, check, observe) {
+    const H = 3600_000, t0 = Date.parse("2026-10-05T06:00:00Z"); // Monday 06:00 UTC; the loop runs weekdays 07:00 (child clock is UTC)
+    const c = await reiChild(dir, join(dir, "data"), this.deadlineMs, t0);
+    await c.ask({ op: "enable" });
+    const steps = [];
+    for (const [label, at] of [["Mon 07:30", t0 + 1.5 * H], ["-24h", t0 - 22.5 * H], ["Mon 07:30 again", t0 + 1.5 * H], ["+24h Tue 07:30", t0 + 25.5 * H], ["restart-free repeat", t0 + 25.5 * H]]) {
+      await c.ask({ op: "tick", now: at }); const st = (await c.ask({ op: "settle" })).state;
+      steps.push({ label, executed: st.executed.length });
+    }
+    const end = (await c.ask({ op: "state" })).state;
+    check("each slot ran once: Monday and Tuesday", end.executed.length === 2 && new Set(end.executed).size === 2, JSON.stringify(steps));
+    observe({ steps, runs: end.runs.map((r) => `${new Date(r.scheduledFor).toISOString().slice(0, 16)} ${r.status}`) });
+    await c.ask({ op: "close" }).catch(() => {});
+  } },
+  { id: "10", name: "REI morning refresh: REI slow, then down, then back", deadlineMs: 20000, async run(dir, check, observe) {
+    const c = await reiChild(dir, join(dir, "data"), this.deadlineMs);
+    const good = await c.ask({ op: "refresh" });
+    await c.ask({ op: "portal", set: { delayMs: 40 } }); await c.ask({ op: "timeout", ms: 600 });
+    const slow = await c.ask({ op: "refresh", now: good.state.now + 3600_000 });
+    check("slow: stops at its timeout and says so; stamps unchanged", /didn't answer in time/.test(slow.result.detail) && JSON.stringify(slow.state.stamps) === JSON.stringify(good.state.stamps), slow.result.detail);
+    await c.ask({ op: "portal", set: { delayMs: null, down: true } }); await c.ask({ op: "timeout", ms: 0 });
+    const down = await c.ask({ op: "refresh" });
+    check("down: failed with a plain reason; stamps unchanged", down.result.status === "failed" && JSON.stringify(down.state.stamps) === JSON.stringify(good.state.stamps), down.result.detail);
+    await c.ask({ op: "portal", set: { down: null } });
+    const back = await c.ask({ op: "refresh", now: good.state.now + 7200_000 });
+    check("back: the next run completes and re-stamps every part", back.result.status === "completed" && Object.values(back.state.stamps).every((at) => at === good.state.now + 7200_000), back.result.detail);
+    observe({ slowMs: slow.result.ms, slow: slow.result.detail, down: down.result.detail });
+    await c.ask({ op: "close" }).catch(() => {});
+  } },
+  { id: "11", name: "REI morning refresh: two refreshes racing", deadlineMs: 20000, async run(dir, check, observe) {
+    const c = await reiChild(dir, join(dir, "data"), this.deadlineMs);
+    await c.ask({ op: "portal", set: { delayMs: 2 } });
+    const race = await c.ask({ op: "race" });
+    check("one completes, the other does not start", race.result.map((r) => r.status).sort().join() === "completed,missed", JSON.stringify(race.result.map((r) => r.detail.slice(0, 100))));
+    check("one borrow of the REI tab and no duplicated cards", race.state.portal.borrows === 1 && race.state.proposals.length === new Set(race.state.proposals.map((p) => p.address)).size, `${race.state.portal.borrows} borrows`);
+    observe({ race: race.result.map((r) => r.status) });
+    await c.ask({ op: "close" }).catch(() => {});
+  } },
 ];
+
+/** A REI refresh child on `data` (scripts/resilience/rei-refresh-child.mjs), loopback-guarded and owned by this harness. */
+async function reiChild(dir, data, deadlineMs, now) {
+  assertMarked(root, data); mkdirSync(data, { recursive: true });
+  const child = fork(join(ROOT, "scripts", "resilience", "rei-refresh-child.mjs"), [], { execArgv: ["--import", guard], stdio: ["ignore", "pipe", "pipe", "ipc"],
+    env: { PATH: `${dirname(NODE)}:/usr/bin:/bin`, HOME: join(dir, "home"), REALBUD_DATA_DIR: data, ...(now ? { REI_CHILD_NOW: String(now) } : {}) } });
+  child.label = "rei-refresh"; child.log = ""; child.closed = new Promise((r) => child.once("close", r)); owned.children.push(child);
+  for (const st of [child.stdout, child.stderr]) st.on("data", (b) => { child.log = (child.log + b).slice(-20000); });
+  await Promise.race([new Promise((r) => child.once("message", r)), child.closed.then(() => { throw new Error(`rei child exited: ${child.log.slice(-1500)}`); })]);
+  const ask = (m) => new Promise((ok, no) => {
+    const t = setTimeout(() => no(new Error(`rei child silent on ${m.op}: ${child.log.slice(-500)}`)), deadlineMs);
+    child.once("message", (v) => { clearTimeout(t); v.ok ? ok(v) : no(new Error(v.error)); }); child.send(m);
+  });
+  return { child, ask };
+}
 
 // ── runner ────────────────────────────────────────────────────────────────
 console.log(`chaos root ${root} (seed ${seed})`);
@@ -412,6 +485,7 @@ try {
       "Relay cases run server/ask-model-relay.ts in a child with a fictional grant; its per-request entitlement check is replaced (no signed entitlement), every other relay check is real.",
       "The service has no injectable wall clock; case 6 drives the real LoopManager in a child. Approval/browser-hold expiry under clock jumps is not covered.",
       "SIGSTOP/SIGCONT simulates sleep; physical laptop sleep, network interface changes and Electron watchdog behaviour remain device tests.",
+      "Cases 8-11 drive the REI morning refresh (real LoopManager, Desk, runtime, broker, runner) in a child against the fictional REI portal, not through the service's HTTP routes or REI Cloud.",
       "Disk-full runs on a 128 MiB APFS image; host disk quotas and Windows are not covered.",
       "macOS only. Not packaged-build, installed-device or customer evidence.",
     ],

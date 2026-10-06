@@ -55,6 +55,8 @@ export interface PortalRecipeResult {
   filters: Record<string, string>;
   table: "rows" | "empty" | "unread";
   pages: number;
+  /** The page the table was read from came back cut short (the helper's size cap): its rows may be incomplete. */
+  truncated?: true;
   /** The grid footer's "N records" count when the table was read, if the page shows one. */
   footer?: number;
   controls?: string[];
@@ -273,7 +275,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   };
 
   // ── page state ──
-  let tabId = 0; let view: PageView | null = null; let stale = true; let drift = false; let uploads = 0;
+  let tabId = 0; let view: PageView | null = null; let stale = true; let drift = false; let uploads = 0; let cut = false;
   const signInOrigins = pack.signIn.hosts.map(host => `https://${host}`);
   const assertAccount = (page: PageView) => {
     if (!page.url) throw handover("account-url-unavailable");
@@ -297,7 +299,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
       const parsed = JSON.parse(raw) as { text?: unknown; truncated?: unknown };
       if (typeof parsed.text === "string") text = parsed.text;
       // A cut-off page cannot prove a complete table; the caller sees the flag.
-      if (parsed.truncated === true && !receipt.flags.includes("page-truncated")) receipt.flags.push("page-truncated");
+      cut = parsed.truncated === true;
+      if (cut && !receipt.flags.includes("page-truncated")) receipt.flags.push("page-truncated");
     } catch { /* plain text */ }
     const page: PageView = { text, root: parsePage(text), url: tap.url(tabId) };
     const at = page.url ? new URL(page.url).origin : null;
@@ -450,6 +453,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           else {
             const table = await waitTable(true);
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
+            if (cut) result.truncated = true;
             if (table.count !== null) result.footer = table.count;
           }
           break;
@@ -466,6 +470,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
             // A page identical to the last one means the click raced a re-render; counting it would double rows.
             if (signature === previous) throw blocked("pagination-stalled");
             previous = signature; result.rows.push(...table.records); result.pages += 1;
+            if (cut) result.truncated = true;
           }
           break;
         }

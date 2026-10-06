@@ -2508,7 +2508,7 @@ function emitLoopAndPulse(payload: unknown) {
   void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'].includes(rec.run.loopId)) return;
+  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'].includes(rec.run.loopId)) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2548,6 +2548,8 @@ loops = new LoopManager({
     })));
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
     if (loop.id === 'rei-supplier-check') return (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail));
+    // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
+    if (loop.id === 'rei-morning-refresh') { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); return result; }
     // W4: reads saved reviewed bills only; no mail, model or browser call.
     // W5: refreshes the saved inspection draft monthly; nothing is booked.
     if (loop.id === 'inspection-draft') return runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
@@ -2685,6 +2687,19 @@ function reiDirectorySync() {
   })().catch(error => { reiDirectoryPromise = undefined; throw error; });
 }
 // ---- END REI directory refresh ----
+let reiRefreshPromise: Promise<import("./rei-morning-refresh.ts").ReiMorningRefresh> | undefined;
+function reiMorningRefresh() {
+  return reiRefreshPromise ??= (async () => {
+    const [{ createReiMorningRefresh }, { readW1Settings }, { localDate }] = await Promise.all([import("./rei-morning-refresh.ts"), import("./w1-host.ts"), import("./redbark-source.ts")]);
+    const lab = w1Lab ? await w1Lab : null;
+    const now = lab?.now ?? Date.now;
+    return createReiMorningRefresh({ desk, runtime: lab?.runtime ?? browserRuntime, now, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+      // Only a work browser that is already open: the clock never launches one.
+      browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
+      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      today: async () => localDate(new Date(now()), await reiWaitTimeZone()) });
+  })().catch(error => { reiRefreshPromise = undefined; throw error; });
+}
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -3527,7 +3542,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','rei-morning-refresh','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {

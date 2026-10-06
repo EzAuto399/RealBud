@@ -1,5 +1,6 @@
 // Austin day-one rehearsal: one fictional Austin-shaped office through the nine
-// steps of outputs/austin-day-one-rehearsal-2026-10-05/REPORT.md section 4, on
+// steps of outputs/austin-day-one-rehearsal-2026-10-05/REPORT.md section 4 (plus
+// step 8, the read-only REI morning refresh loop through the service), on
 // ONE source service (server/bootstrap.ts) with a temp REALBUD home and a
 // loopback-only network guard. Fictional data only (scripts/testing/
 // austin-day-one-seed.json): fixture Gmail connector, fake Redbark, fictional
@@ -361,7 +362,31 @@ try {
     return `${done}; Morning money check read the REI ledger stub for all 6`;
   });
 
-  await step(8, 'Restart: everything kept, nothing reruns', async () => {
+  await step(8, 'REI morning refresh: off by default; signed out is a miss; signed in reads REI into Desk read-only', async () => {
+    const loop = (await request('/api/loops')).loops.find(l => l.id === 'rei-morning-refresh');
+    assert.ok(loop?.available && !loop.enabled, `listed, available and off until the office turns it on: ${JSON.stringify(loop)}`);
+    const effects = (await request('/api/w1/lab', 'POST', { action: 'status' })).effects.length;
+    await request('/api/w1/lab', 'POST', { action: 'sign-out' }); // the REI session ended overnight
+    const missed = await runLoop('rei-morning-refresh');
+    assert.equal(missed.status, 'missed', JSON.stringify(missed));
+    assert.match(missed.detail, /^Missed: sign in to REI\./);
+    let snap = await request('/api/desk');
+    assert.ok(!snap.sources.some(s => s.id.startsWith('src-rei-')), 'a signed-out refresh stamps nothing fresh');
+    await request('/api/w1/lab', 'POST', { action: 'sign-in' }); // the person signs in; Bud never does
+    const read = await runLoop('rei-morning-refresh');
+    assert.equal(read.status, 'completed', JSON.stringify(read));
+    snap = await request('/api/desk');
+    const stamped = snap.sources.filter(s => s.id.startsWith('src-rei-')).map(s => s.id).sort();
+    assert.deepEqual(stamped, ['src-rei-arrears', 'src-rei-owners', 'src-rei-tenants']);
+    const cards = (snap.book?.bookProposals ?? []).filter(card => card.origin === 'rei');
+    assert.ok(cards.length > 0, 'REI properties Desk does not have arrive as cards');
+    assert.equal(snap.properties.length, seed.properties.length, 'nothing is added without a person');
+    assert.equal((await request('/api/w1/lab', 'POST', { action: 'status' })).effects.length, effects, 'the refresh pressed nothing in REI');
+    evidence.reiRefresh = { off: !loop.enabled, missed: missed.detail, read: read.detail, cards: cards.length, stamped };
+    return `off until turned on; signed out → missed ("Missed: sign in to REI."), nothing stamped; signed in → ${read.detail}`;
+  });
+
+  await step(9, 'Restart: everything kept, nothing reruns', async () => {
     const before = { desk: await request('/api/desk'), mail: await request('/api/mail-workspace'), bills: await request('/api/bill-register'), w1: await request('/api/w1/status'), loops: await request('/api/loops') };
     const calls = { worker: workerLog().length, gmail: { ...gmailLog }, redbark: redbarkLog.length };
     await stopService();
@@ -381,7 +406,7 @@ try {
     return `${after.desk.properties.length} properties, ${after.desk.drafts.length} Desk cards, ${after.mail.counts.total} mail items, ${after.bills.occurrences.items.length} bill, W1 import and ${after.loops.runs.length} runs kept; 0 new worker, Gmail or bank calls`;
   });
 
-  await step(9, 'Receipt', async () => `written to ${join(output, 'receipt.json')}`);
+  await step(10, 'Receipt', async () => `written to ${join(output, 'receipt.json')}`);
 } catch (error) {
   failure ??= error instanceof Error ? error.stack : String(error);
   console.error(failure);
