@@ -10,6 +10,8 @@ describe("mac package resource graph", () => {
   it("ships every compiled and Hermes resource the packaged server resolves", () => {
     const config = readFileSync(join(ROOT, "electron-builder.yml"), "utf8");
     expect(config).toMatch(/from: dist-server\/server\s+to: server/);
+    // server/app-version.ts reads ../package.json beside resources/server: health must report the app version.
+    expect(config).toMatch(/from: package\.json\s+to: package\.json/);
     expect(config).toMatch(/from: dist-server\/shared\s+to: shared/);
     expect(config).toMatch(/from: dist-server\/src\s+to: src/);
     expect(config).toMatch(/from: pack\/property\s+to: pack\/property/);

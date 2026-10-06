@@ -54,6 +54,11 @@ extraResources:
     to: ui
   - from: dist-server/server
     to: server
+  # The packaged server reports its version from ../package.json (server/app-version.ts). Without it
+  # /api/health says "unreported", serviceCompatible() never matches, and a slow first start or any
+  # reopen strands the window on the give-up page or retires a healthy service as "older".
+  - from: package.json
+    to: package.json
   - from: dist-server/shared
     to: shared
   - from: dist-server/src

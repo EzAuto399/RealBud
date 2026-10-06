@@ -207,6 +207,7 @@ try {
   if ($gui.exitCode -ne 0) { throw "Installed GUI exited with code $($gui.exitCode)." }
   if ($guiResult.result.title -ne 'RealBud' -or $guiResult.result.capabilities.host.platform -ne 'win32' -or
       $guiResult.result.health.app -ne 'realbud' -or $guiResult.result.health.static -ne $true -or
+      $guiResult.result.health.version -notmatch '^\d+\.\d+\.\d+' -or
       $guiResult.result.company.remoteJoinAvailable -ne $true -or
       $guiResult.result.location -notmatch '^http://127\.0\.0\.1:\d+/$') {
     throw 'Installed GUI renderer receipt did not confirm the RealBud desktop, local service, and join surface.'
