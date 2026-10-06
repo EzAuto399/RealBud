@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CustomerPack, CustomerPackInstallation, CustomerPackPreview, CustomerPackChangePreview, OfficePacksView } from '@shared/customer-packs';
 import { api } from '@/state/store';
 import { PackSkillReview, type PackSkillReviewState } from './PackSkillReview';
@@ -26,8 +26,8 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
     <h4 className="font-medium text-ink">Packs from your office</h4>
     <p className="text-sm text-ink-secondary">Your office shares signed packs for each role on realbud.app. Preview yours, then import it. Its workflows arrive switched off until you review each one.</p>
     {!view ? <p className="text-sm text-ink-secondary">Checking your office for packs…</p>
-      : view.state === 'not-linked' ? <><p className="text-sm">This computer isn’t connected to your office yet. Choose Connect to your office, then check again. You can still preview a pack file below.</p>{again}</>
-      : view.state === 'unavailable' ? <><p className="text-sm">Your office’s packs couldn’t be checked right now. Nothing on this computer changed. You can still preview a pack file below.</p>{again}</>
+      : view.state === 'not-linked' ? <><p className="text-sm">Connect this computer to your office first.</p>{again}</>
+      : view.state === 'unavailable' ? <><p className="text-sm">Your office’s packs couldn’t be checked right now. Nothing on this computer changed.</p>{again}</>
       : <>
         {view.packs.length ? <ul className="divide-y divide-line">{view.packs.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <span className="text-sm"><strong className="font-medium">{item.title}</strong> · version {item.revision}</span>
@@ -38,7 +38,10 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
       </>}
   </section>;
 }
-export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => void | Promise<void> }) {
+/** A pending suggestion, archival or upgrade hold is a review item and stays in view; otherwise instruction history is owner setup. */
+export const skillReviewPending = (state: PackSkillReviewState) => state.proposals.length > 0 || state.pendingUpgrades.length > 0 || state.skillHistories.some(history => !!history.pendingArchive);
+/** Staff see office packs, previews, installed packs and recovery. Owner-only setup sits in one collapsed section; `moreOptions` joins it. */
+export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalled?: () => void | Promise<void>; moreOptions?: ReactNode }) {
   const [installed, setInstalled] = useState<CustomerPackInstallation[]>([]);
   const [office, setOffice] = useState<OfficePacksView | null>(null);
   const [preview, setPreview] = useState<CustomerPackPreview | null>(null);
@@ -65,6 +68,8 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       const upgraded=await api('/api/customer-packs/upgrade/preview',{method:'POST',body:JSON.stringify({pack})}); if(alive.current)setChange(upgraded);
     } else setPreview(result);
   };
+  const skillsNeedReview = !!skills && skillReviewPending(skills);
+  const skillReview = skills && <PackSkillReview state={skills} busy={busy} run={run} reload={async () => { await load(); await onInstalled?.(); }} notice={message => { if (alive.current) setNotice(message); }} mutate={(route, body, message) => void run(async () => { try { await api(route, { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 30_000 }); } finally { await load(); await onInstalled?.(); } if (alive.current) setNotice(message); })} />;
   const download = async (packId: 'office-core' | 'austin-office' | 'department-starters') => {
     const pack = await api(`/api/customer-packs/${packId}/export`);
     const url = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' }));
@@ -72,32 +77,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
     if (alive.current) setNotice('Portable pack downloaded. It includes plans and instructions; no customer records, sign-ins or local approvals.');
   };
   return <section aria-label="Customer workflow pack setup" className="mt-5 border-t border-line pt-4 space-y-4" aria-busy={busy}>
-    <div><h3 className="font-medium text-ink">Customer workflow packs</h3><p className="mt-1 text-sm text-ink-secondary">One portable file brings together the work plans, Bud’s instructions and setup checks. Review it before adding anything to this computer.</p></div>
     <OfficePacks view={office} busy={busy} onPreview={pack => void run(() => inspect(pack))} onRefresh={() => void run(async () => { setOffice(null); await loadOffice(); })} />
-    <div className="rounded-lg bg-inset p-4 space-y-2">
-      <h4 className="font-medium text-ink">Start with department case reviews</h4>
-      <p className="text-sm text-ink-secondary">Five plans for Accounts and Property Management, including general admin, maintenance and inspections. Bud uses the assigned case text to prepare findings and drafts for review.</p>
-      <div className="flex flex-wrap gap-2">
-        <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/department-starters/export')))}>Preview department starter pack</button>
-        <button className={button} disabled={busy} onClick={() => void run(() => download('department-starters'))}>Download department starter pack</button>
-      </div>
-      <p className="text-sm text-ink-secondary">After importing and approving the plans, the office owner chooses which plans each department can use under Departments and access. Connections and per-case approvals remain separate.</p>
-    </div>
-    <div className="flex flex-wrap gap-2">
-      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/office-core/export')))}>Preview real estate office core pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(() => download('office-core'))}>Download office core pack</button>
-      <label className={`${button} inline-flex cursor-pointer items-center has-[:disabled]:opacity-50`}>Preview a pack file<input className="sr-only" type="file" accept="application/json,.json" disabled={busy} onChange={event => {
-        const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
-        void run(async () => { setPreview(null); if (file.size > 500_000) throw new Error('Choose a pack smaller than 500 KB.'); await inspect(JSON.parse(await file.text())); });
-      }} /></label>
-      <button className={button} disabled={busy} onClick={() => void run(load)}>Refresh setup checks</button>
-    </div>
-    {/* The earlier whole-office pack: kept so installed offices can still preview its upgrades. Role packs from the office replace it. */}
-    <details><summary className="min-h-11 cursor-pointer text-sm">Earlier Auston office pack (all workflows in one)</summary><div className="mt-2 flex flex-wrap gap-2">
-      <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
-      <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
-    </div></details>
-    <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in Agency details below.</p>
     {change&&<CustomerPackChangeReview key={change.previewDigest} preview={change} busy={busy} cancel={()=>setChange(null)} apply={()=>void run(async()=>{
       const body={expectedInstalledDigest:change.installedDigest,expectedInstalledRevision:change.installedRevision,expectedDigest:change.digest,expectedPreviewDigest:change.previewDigest,
         ...(change.action==='upgrade'?{pack:change.pack}:{packId:change.pack.id,installationRevision:change.rollbackRevision})};
@@ -109,7 +89,7 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       <h4 className="font-medium">{preview.pack.title} · version {preview.pack.revision}</h4>
       <ul className="list-disc pl-5 text-sm">{preview.pack.workflows.map(workflow => <li key={workflow.id}>{workflow.title}</li>)}</ul>
       <p className="text-sm">{preview.additions.length} new plans · {preview.kept.length} existing plans kept · {preview.skills.filter(skill => skill.state === 'missing').length} instruction skills to install.</p>
-      <p className="text-sm text-ink-secondary">Each plan states which supplied evidence it needs. Import does not fetch mail, download bank files, change REI, test a paid model, approve a plan or turn on a schedule.</p>
+      <p className="text-sm text-ink-secondary">Importing changes nothing outside RealBud. Each workflow stays off until you switch it on.</p>
       <details><summary className="min-h-11 cursor-pointer text-sm">Review included plans and instructions</summary><div className="max-h-96 overflow-auto space-y-3 text-sm">
         {preview.pack.recipes.map(recipe => <details key={recipe.id}><summary className="min-h-11 cursor-pointer">{recipe.title}</summary><p className="whitespace-pre-wrap break-words">{recipe.description}</p><ol className="list-decimal pl-5">{recipe.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></details>)}
         {preview.pack.skills.map(skill => <details key={skill.id}><summary className="min-h-11 cursor-pointer">Instruction skill: {skill.name}</summary><pre className="whitespace-pre-wrap break-words font-sans">{skill.instructions}</pre></details>)}
@@ -122,7 +102,6 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
     </div>}
     {installed.map(pack => <article key={pack.id} className="rounded-lg border border-line p-4 space-y-3">
       <div><h4 className="font-medium">{pack.title} · version {pack.revision}</h4><p className="mt-1 text-sm">{pack.localReady ? 'Plans and instructions installed' : 'Local installation needs attention'}</p></div>
-      <p className="text-sm text-ink-secondary">Local file checks, selected-account checks and a verified business result are separate. A saved connection or installed worker alone does not prove that a workflow can run successfully.</p>
       <ul className="divide-y divide-line">{pack.checks.map(check => <li key={check.id} className="py-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong className="font-medium">{check.label}</strong><span className={check.state === 'passed' ? 'text-agency' : 'text-hold'}>{labels[check.state]}</span></div><p className="mt-1 text-ink-secondary">{check.detail}</p><p className="mt-1">{check.nextAction}</p></li>)}</ul>
       {pack.pendingChange&&<div role="alert" className="rounded border border-hold p-3 space-y-2 text-sm"><p>A reviewed {pack.pendingChange.action} to version {pack.pendingChange.targetRevision} needs recovery. Affected plans remain held. Resume the saved decision; do not import another copy.</p><button className={button} disabled={busy} onClick={()=>void run(async()=>{
         try {await api(`/api/customer-packs/${pack.id}/resume-change`,{method:'POST',body:JSON.stringify({expectedInstalledDigest:pack.digest,expectedInstalledRevision:pack.installationRevision,expectedPreviewDigest:pack.pendingChange!.previewDigest})},{timeoutMs:35_000});}
@@ -136,8 +115,37 @@ export function CustomerPackSetupCard({ onInstalled }: { onInstalled?: () => voi
       <CustomerPackHistory pack={pack} busy={busy} run={run} reload={load} notice={setNotice} showChange={result => { setPreview(null); setChange(result); }} />
       <details><summary className="min-h-11 cursor-pointer text-sm">Installation receipt and update policy</summary><p className="text-sm text-ink-secondary">{pack.receipt.note}</p><p className="mt-2 text-sm">Bud may suggest a reviewed instruction revision below. Published pack content is retained separately; worker safeguards and permissions are unchanged.</p></details>
     </article>)}
-    {skills && <PackSkillReview state={skills} busy={busy} run={run} reload={async () => { await load(); await onInstalled?.(); }} notice={message => { if (alive.current) setNotice(message); }} mutate={(route, body, message) => void run(async () => { try { await api(route, { method: 'POST', body: JSON.stringify(body) }, { timeoutMs: 30_000 }); } finally { await load(); await onInstalled?.(); } if (alive.current) setNotice(message); })} />}
+    {skillsNeedReview && skillReview}
+    <button className={button} disabled={busy} onClick={() => void run(load)}>Refresh setup checks</button>
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     <p role="status" className="text-sm text-ink-secondary">{busy ? 'Checking local pack setup…' : notice}</p>
+    {/* Owner-only setup. Recovery (pending changes, repair) and previews stay outside so nothing urgent hides here. */}
+    <details className="border-t border-line pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-ink focus-visible:outline-2 focus-visible:outline-agency">More setup options (office owner)</summary><div className="mt-3 space-y-4">
+      <div className="rounded-lg bg-inset p-4 space-y-2">
+        <h4 className="font-medium text-ink">Start with department case reviews</h4>
+        <p className="text-sm text-ink-secondary">Five plans for Accounts and Property Management, including general admin, maintenance and inspections. Bud uses the assigned case text to prepare findings and drafts for review.</p>
+        <div className="flex flex-wrap gap-2">
+          <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/department-starters/export')))}>Preview department starter pack</button>
+          <button className={button} disabled={busy} onClick={() => void run(() => download('department-starters'))}>Download department starter pack</button>
+        </div>
+        <p className="text-sm text-ink-secondary">After importing and approving the plans, the office owner chooses which plans each department can use under Departments and access. Connections and per-case approvals remain separate.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/office-core/export')))}>Preview real estate office core pack</button>
+        <button className={button} disabled={busy} onClick={() => void run(() => download('office-core'))}>Download office core pack</button>
+        <label className={`${button} inline-flex cursor-pointer items-center has-[:disabled]:opacity-50`}>Preview a pack file<input className="sr-only" type="file" accept="application/json,.json" disabled={busy} onChange={event => {
+          const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+          void run(async () => { setPreview(null); if (file.size > 500_000) throw new Error('Choose a pack smaller than 500 KB.'); await inspect(JSON.parse(await file.text())); });
+        }} /></label>
+      </div>
+      {/* The earlier whole-office pack: kept so installed offices can still preview its upgrades. Role packs from the office replace it. */}
+      <div className="space-y-2"><h4 className="font-medium text-ink">Earlier Auston office pack (all workflows in one)</h4><div className="flex flex-wrap gap-2">
+        <button className={button} disabled={busy} onClick={() => void run(async () => inspect(await api('/api/customer-packs/austin-office/export')))}>Preview Auston office pack</button>
+        <button className={button} disabled={busy} onClick={() => void run(() => download('austin-office'))}>Download Auston pack</button>
+      </div></div>
+      <p className="text-sm text-ink-secondary">Office core uses your agency’s own identity and reviewed sources. Auston remains a separate customer pack. After import, explicitly choose which pack this agency uses in the Agency step below.</p>
+      {!skillsNeedReview && skillReview}
+      {moreOptions}
+    </div></details>
   </section>;
 }

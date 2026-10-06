@@ -60,7 +60,10 @@ async function open({ reload = false } = {}) {
   await page.evaluate(() => { location.hash = 'schedule-packs'; });
   await card().waitFor();
 }
+// Owner-only pack sources sit in one collapsed section; pending-change recovery stays outside it.
+async function openMore() { const summary = card().locator('summary', { hasText: 'More setup options (office owner)' }); if (!(await summary.evaluate(el => el.parentElement.open))) await summary.click(); }
 async function preview(pack) {
+  await openMore();
   await card().getByLabel('Preview a pack file', { exact: true }).setInputFiles({ name: 'fictional-pack.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(pack)) });
   await change().waitFor();
 }
@@ -114,7 +117,7 @@ syncBuiltinESMExports();
     assert.equal(onboarding.stage, stage);
   }
   page = await context.newPage(); page.setDefaultTimeout(20000); page.on('pageerror', e => errors.push(e.message)); await open();
-  await card().getByRole('button', { name: 'Preview real estate office core pack', exact: true }).click();
+  await openMore(); await card().getByRole('button', { name: 'Preview real estate office core pack', exact: true }).click();
   await card().getByRole('button', { name: 'Import reviewed pack', exact: true }).click(); await settled();
   assert.equal((await installation()).localReady, true);
   const pack = await request('/api/customer-packs/office-core/export'), original = structuredClone(pack), first = (await recipes()).find(r => r.id === pack.recipes[0].id);

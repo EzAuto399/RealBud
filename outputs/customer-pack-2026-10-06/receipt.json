@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-06T06:55:25.904Z",
+  "checkedAt": "2026-10-06T10:10:47.349Z",
   "layer": "actual local HTTP server and rendered browser with fictional pending proposal; no live worker/model/account proof",
   "limits": [
     "Source run, not a packaged or installed app.",
@@ -8,6 +8,7 @@
   ],
   "checks": [
     "Read and mutation routes reject unauthenticated requests",
+    "Drawer opens with office packs visible and owner-only setup collapsed; the native summary toggles with Enter and Space",
     "Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance",
     "Exact native staged edit is visibly reviewed, applied to owned skill, and reverted as revision 3 with baseline/history retained",
     "Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes",

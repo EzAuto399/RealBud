@@ -5,7 +5,8 @@ import type { CustomerPack, OfficePacksView } from '@shared/customer-packs';
 
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 
-import { CustomerPackSetupCard, OfficePacks, parseOfficePacksView } from './CustomerPackSetupCard';
+import { CustomerPackSetupCard, OfficePacks, parseOfficePacksView, skillReviewPending } from './CustomerPackSetupCard';
+import type { PackSkillReviewState } from './PackSkillReview';
 
 const pack = { id: 'austin-accounts', revision: 2, title: 'Fictional accounts role' } as CustomerPack;
 const ready: OfficePacksView = { state: 'ready', packs: [{ id: 'austin-accounts', title: 'Fictional accounts role', revision: 2, digest: 'd'.repeat(64), pack }], refused: [{ id: 'fictional-other', revision: 1, reason: "This pack isn't signed by RealBud, so it wasn't installed." }] };
@@ -22,7 +23,7 @@ describe('Packs from your office', () => {
 
   it('explains empty, unlinked, unavailable and checking states in plain words', () => {
     expect(render({ state: 'ready', packs: [], refused: [] })).toContain('Your office hasn’t shared any packs yet.');
-    expect(render({ state: 'not-linked' })).toContain('Choose Connect to your office, then check again.');
+    expect(render({ state: 'not-linked' })).toContain('Connect this computer to your office first.');
     expect(render({ state: 'unavailable' })).toContain('couldn’t be checked right now. Nothing on this computer changed.');
     expect(render(null)).toContain('Checking your office for packs');
     for (const view of [{ state: 'not-linked' }, { state: 'unavailable' }, ready] as OfficePacksView[]) expect(render(view)).toContain('>Check again</button>');
@@ -36,10 +37,25 @@ describe('Packs from your office', () => {
     expect(() => parseOfficePacksView({ state: 'linked' })).toThrow();
   });
 
-  it('puts the office packs first and keeps the earlier combined Auston pack collapsed', () => {
-    const html = renderToStaticMarkup(createElement(CustomerPackSetupCard, {}));
-    expect(html.indexOf('Packs from your office')).toBeLessThan(html.indexOf('Start with department case reviews'));
-    expect(html).toMatch(/<details><summary[^>]*>Earlier Auston office pack \(all workflows in one\)<\/summary>[\s\S]*Preview Auston office pack/);
-    expect(html).toContain('Preview a pack file');
+  it('keeps office packs visible and puts every owner-only option in one collapsed section at the end', () => {
+    const html = renderToStaticMarkup(createElement(CustomerPackSetupCard, { moreOptions: createElement('p', null, 'Fictional owner extra') }));
+    const more = html.indexOf('<details class="border-t border-line pt-3"><summary');
+    expect(html.match(/More setup options \(office owner\)/g)).toHaveLength(1);
+    expect(html.indexOf('Packs from your office')).toBeLessThan(more);
+    expect(html.indexOf('Refresh setup checks')).toBeLessThan(more);
+    for (const owner of ['Start with department case reviews', 'Preview real estate office core pack', 'Preview a pack file', 'Earlier Auston office pack (all workflows in one)', 'Preview Auston office pack', 'Fictional owner extra']) expect(html.indexOf(owner)).toBeGreaterThan(more);
+    // Collapsed by default and the card's last child, so pending changes, repair and previews never render inside it.
+    expect(html).not.toMatch(/<details[^>]* open/);
+    expect(html.endsWith('</details></section>')).toBe(true);
+    expect(html.slice(more).match(/<details/g)).toHaveLength(1);
+    expect(html).not.toContain('Local file checks');
+  });
+
+  it('keeps instruction review in view only while something waits for review', () => {
+    const idle = { proposals: [], revisions: [], skillHistories: [{ pendingArchive: null }], hasMore: false, pendingUpgrades: [], learning: { supported: true, policyReady: true, enabled: true } } as unknown as PackSkillReviewState;
+    expect(skillReviewPending(idle)).toBe(false);
+    expect(skillReviewPending({ ...idle, proposals: [{}] } as unknown as PackSkillReviewState)).toBe(true);
+    expect(skillReviewPending({ ...idle, pendingUpgrades: [{ packId: 'p', digest: 'd' }] })).toBe(true);
+    expect(skillReviewPending({ ...idle, skillHistories: [{ pendingArchive: { expectedPreviewDigest: 'd' } }] } as unknown as PackSkillReviewState)).toBe(true);
   });
 });

@@ -10,24 +10,11 @@ import { AgencyWorkflowSetup } from './AgencyWorkflowSetup';
 describe('agency workflow setup steps', () => {
   const html = () => renderToStaticMarkup(createElement(AgencyWorkflowSetup, {}));
 
-  it('numbers its tabs as the three steps of the one workspace setup path', () => {
+  it('names its tabs plainly, without step numbers or an explainer paragraph', () => {
     const markup = html();
-    expect(markup).toContain('1. Agency details');
-    expect(markup).toContain('2. Connect your accounts');
-    // Property references and the workflow review are two tabs of one step.
-    expect(markup).toContain('3a. Property references');
-    expect(markup).toContain('3b. Review workflows');
-    // The old seven-step numbering must not reappear beside a step name.
-    expect(markup).not.toContain('3. Agency details');
-    expect(markup).not.toContain('4. Private Gmail source');
-    expect(markup).not.toContain('2. Private Gmail source');
-    expect(markup).not.toContain('6. Review workflows');
-  });
-
-  it('says how the three steps run without claiming a schedule', () => {
-    const markup = html();
-    expect(markup).toContain('All three workspace setup steps happen here');
-    expect(markup).toContain('turning the schedule on as a separate decision');
-    expect(markup).toContain('aria-label="Agency setup steps"');
+    const nav = markup.match(/<nav aria-label="Agency setup steps"[^>]*>(.*?)<\/nav>/)?.[1] ?? '';
+    expect([...nav.matchAll(/>([^<>]+)<\/button>/g)].map(match => match[1])).toEqual(['Agency', 'Gmail', 'Property references', 'Review workflows']);
+    expect(markup).not.toMatch(/\b[1-3][ab]?\. /);
+    expect(markup).not.toContain('All three workspace setup steps happen here');
   });
 });

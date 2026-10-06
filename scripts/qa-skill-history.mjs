@@ -78,7 +78,9 @@ try {
   const historyCard = () => card().getByRole('article', { name: `${pack.skills[0].name} instruction history`, exact: true });
   const archiveRegion = () => card().getByRole('region', { name: 'Review instruction history archival', exact: true });
   const revertRegion = () => card().getByRole('region', { name: 'Review instruction revert', exact: true });
-  async function showHistory() { const toggle = card().getByText('Instruction revision history and revert', { exact: true }); if (!(await historyCard().isVisible())) await toggle.click(); await historyCard().waitFor(); }
+  // Instruction history sits in the owner section unless something waits for review there.
+  async function openMore() { const summary = card().locator('summary', { hasText: 'More setup options (office owner)' }); if (!(await summary.evaluate(el => el.parentElement.open))) await summary.click(); }
+  async function showHistory() { await openMore(); const toggle = card().getByText('Instruction revision history and revert', { exact: true }); if (!(await historyCard().isVisible())) await toggle.click(); await historyCard().waitFor(); }
   async function refresh() { await card().getByRole('button', { name: 'Refresh setup checks', exact: true }).click(); await settled(); await showHistory(); }
   const summary = async () => (await request('/api/customer-packs/skill-proposals')).skillHistories.find(item => item.packId === pack.id && item.skillId === skillId);
   const override = () => journal().installs[pack.id].overrides[skillId];

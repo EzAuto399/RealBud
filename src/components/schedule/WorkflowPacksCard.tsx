@@ -120,12 +120,12 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
         </div>
       </div>
 
-      {/* The role pack from the office comes first: importing it is the setup most people need. */}
-      <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
-      <div className="mt-4"><AgencyWorkflowSetup onSaved={onInstalled} /></div>
+      {/* Office packs, previews, installed packs and recovery stay visible; everything an office owner sets up once goes into the card's one collapsed section. */}
+      <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} moreOptions={<>
+      <AgencyWorkflowSetup onSaved={onInstalled} />
       <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
-      <details className="mt-5 border-t border-line pt-3">
-        <summary className="min-h-11 cursor-pointer text-sm font-medium text-ink">Optional Auston Phase 1 examples and older pack snapshots</summary>
+      <div className="border-t border-line pt-4">
+        <h4 className="font-medium text-ink">Auston Phase 1 examples and older pack snapshots</h4>
         <p className="mt-2 text-sm text-ink-secondary">These customer-specific examples are optional. Importing them does not select an agency, connect an account or enable a schedule. For your own agency, use the guided setup and preview a matching pack above.</p>
 
       {error ? (
@@ -236,7 +236,8 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
           New jobs stay off until you approve the plan. Restore keeps identical local jobs and rejects conflicting edits.
         </p>
       </div>
-      </details>
+      </div>
+      </>} />
     </section>
   );
 }
