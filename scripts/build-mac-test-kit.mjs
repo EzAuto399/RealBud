@@ -23,7 +23,7 @@ await cp(postgres, join(target, 'postgres'), { recursive: true });
 await cp(join(root, 'dist-server'), join(target, 'resources'), { recursive: true });
 await cp(join(root, 'dist'), join(target, 'resources/ui'), { recursive: true });
 await cp(join(root, 'pack/property'), join(target, 'resources/pack/property'), { recursive: true });
-for (const name of ['austin-accounts', 'austin-office', 'office-core']) await cp(join(root, 'pack/workflows', name), join(target, 'resources/pack/workflows', name), { recursive: true });
+for (const name of ['austin-accounts', 'austin-office', 'office-core', 'department-starters']) await cp(join(root, 'pack/workflows', name), join(target, 'resources/pack/workflows', name), { recursive: true });
 await cp(join(root, 'pack/workflows/austin-maintenance-rehearsal/realbud-austin-maintenance-rehearsal-v1.json'), join(target, 'resources/pack/workflows/austin-maintenance-rehearsal/realbud-austin-maintenance-rehearsal-v1.json'));
 await writeFile(join(target, 'resources/package.json'), '{"type":"module"}\n');
 await mkdir(join(target, 'scripts'));
