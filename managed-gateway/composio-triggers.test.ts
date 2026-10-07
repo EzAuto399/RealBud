@@ -145,7 +145,8 @@ test('a pull returns only this computer\'s events: never another computer\'s or 
     const pull = async (id: string, after = 0) => (await s.request(id, '/v1/connectors/events', { after })).body as { events: Array<Record<string, unknown>>; cursor: number; gap: boolean; more: boolean };
     const a1 = await pull('dev-a1');
     assert.deepEqual(a1.events, [{ seq: 1, kind: 'message', source: 'personal', app: 'gmail', event: 'new-message', messageId: 'gm_deva1', receivedAt: new Date(s.f.now()).toISOString() }]);
-    assert.equal(a1.gap, false); assert.equal(a1.more, false); assert.equal(a1.cursor, 3);
+    // The cursor is office A's own top (2): office B's delivery (seq 3) is invisible, even as a count.
+    assert.equal(a1.gap, false); assert.equal(a1.more, false); assert.equal(a1.cursor, 2);
     assert.deepEqual((await pull('dev-a2')).events.map(event => event.seq), [2]);
     assert.deepEqual((await pull('dev-b1')).events.map(event => event.seq), [3]);
     // Acknowledging up to the cursor removes this computer's own rows only.
@@ -331,4 +332,10 @@ test('ensureOfficeProject creates the office webhook subscription once, stores i
     Object.assign(console, original);
     f.close(); rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('webhook secret names are one per office: ids that differ only by case or punctuation never share a secret', () => {
+  const names = ['company-a', 'company_a', 'COMPANY-A', 'company.a'].map(webhookSecretName);
+  assert.equal(new Set(names).size, names.length);
+  for (const name of names) assert.match(name, /^REALBUD_COMPOSIO_WEBHOOK_[A-F0-9]{64}$/);
 });

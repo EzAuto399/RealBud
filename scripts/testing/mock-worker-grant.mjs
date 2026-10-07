@@ -10,7 +10,9 @@ import { serviceSmokeEnv } from '../service-smoke-env.mjs';
 
 export const fictionalWorkerModelKey = `rbk_${'f'.repeat(40)}`;
 
-export function provisionMockWorkerGrant({ executable = process.execPath, resources, home, data, endpoint, credential, companyId, hostInstallationId, preserveFictionalLink = false, memberKey }) {
+// `model` ({ key, baseUrl }) replaces the fictional model, e.g. scripts/eval-golden.mjs --arm live
+// with a capped dev key. It travels on stdin, never argv, and is never printed here.
+export function provisionMockWorkerGrant({ executable = process.execPath, resources, home, data, endpoint, credential, companyId, hostInstallationId, preserveFictionalLink = false, memberKey, model }) {
   // Never import application stores in the harness's own HOME. All writes and
   // credential reads happen in this child with a sanitized disposable home.
   const within = (parent, child) => { const part = relative(parent, child); return part && part !== '..' && !part.startsWith(`..${sep}`) && !part.startsWith(sep); };
@@ -37,11 +39,11 @@ export function provisionMockWorkerGrant({ executable = process.execPath, resour
     applyPropertyPack(process.env.REALBUD_HERMES_HOME);
     const desk = new Desk();
     const access = createWorkerModelAccess({ directory: process.env.REALBUD_DATA_DIR, key: Buffer.from(desk.recoveryKeyHex(), 'hex') });
-    const modelKey = ${JSON.stringify(fictionalWorkerModelKey)};
+    const modelKey = input.model?.key ?? ${JSON.stringify(fictionalWorkerModelKey)};
     const provisioning = { version: 1,
       service: { companyId: input.companyId, hostInstallationId: input.hostInstallationId },
       connector: { endpoint: input.endpoint, credential: input.credential, profile: currentWorkerProfile().profile, apps: ['gmail'] },
-      model: { provider: 'modelvia', baseUrl: 'https://model.fictional.invalid/v1', projectId: 'fictional-qa-project', keyId: 'fictional-qa-key', key: modelKey, spendCapLabel: 'Fictional deterministic worker only' } };
+      model: { provider: 'modelvia', baseUrl: input.model?.baseUrl ?? 'https://model.fictional.invalid/v1', projectId: 'fictional-qa-project', keyId: 'fictional-qa-key', key: modelKey, spendCapLabel: input.model ? 'Capped dev key (eval only)' : 'Fictional deterministic worker only' } };
     const link = createOfficeLink({ directory: process.env.REALBUD_DATA_DIR, appVersion: '0.0.0', origin: 'https://website.fictional.invalid',
       report: async () => ({ appVersion: '0.0.0', workerVersion: null, workerReady: true }),
       provisioning: { ...access, active: async () => (await access.state()).provisioned },
@@ -65,7 +67,7 @@ export function provisionMockWorkerGrant({ executable = process.execPath, resour
   `;
   const result = spawnSync(executable, ['--input-type=module', '-e', script], {
     cwd: root, env: { ...serviceSmokeEnv({ executable, home, data, scratch: home, port: 0 }), ...(memberKey ? { REALBUD_MEMBER: memberKey } : {}) },
-    input: JSON.stringify({ endpoint, credential, companyId, hostInstallationId, preserveFictionalLink, memberKey }), encoding: 'utf8',
+    input: JSON.stringify({ endpoint, credential, companyId, hostInstallationId, preserveFictionalLink, memberKey, ...(model ? { model } : {}) }), encoding: 'utf8',
     // Windows pays a cold PowerShell ACL admission per private file it writes.
     timeout: process.platform === 'win32' ? 180_000 : 30_000,
   });
