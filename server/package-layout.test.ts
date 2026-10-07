@@ -22,17 +22,14 @@ describe("mac package resource graph", () => {
 
   // The workflow pack files the server reads at runtime, relative to the compiled server's parent.
   const RUNTIME_PACK_FILES = [
-    "pack/workflows/austin-accounts/workflows.json",
-    "pack/workflows/austin-accounts/support/LICENSE.upstream",
-    "pack/workflows/austin-accounts/support/email-inbox-triage/SKILL.md",
-    "pack/workflows/austin-accounts/support/rei-cloud-navigation/SKILL.md",
-    "pack/workflows/austin-accounts/support/rei-cloud-navigation/LICENSE",
     "pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json",
     "pack/workflows/austin-accounts/support/rei-cloud-navigation/site-map.json",
     "pack/workflows/austin-office/austin-schedule-v1.json",
+    "pack/workflows/austin-office/realbud-austin-office-v1.json",
+    "pack/workflows/austin-office/realbud-austin-accounts-v1.json",
+    "pack/workflows/austin-office/realbud-austin-property-v1.json",
     "pack/workflows/office-core/realbud-office-core-v1.json",
     "pack/workflows/department-starters/realbud-department-starters-v1.json",
-    "pack/workflows/austin-maintenance-rehearsal/realbud-austin-maintenance-rehearsal-v1.json",
   ];
 
   it("ships every workflow pack the app loads at runtime, in the installer and the Mac test kit", () => {
