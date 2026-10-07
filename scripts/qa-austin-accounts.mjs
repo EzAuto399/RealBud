@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Current-source HTTP pack/job QA with synthetic accounts fixtures.
-// --live uses a disposable copy of the existing RealBud profile login and the
-// unchanged selected upstream executable. Never runs two workers concurrently.
+// Current-source HTTP pack/job QA with synthetic accounts fixtures
+// (server/fixtures/accounts-review). --live needs REALBUD_HERMES_HOME: it copies
+// that home's profile login into a disposable folder and runs its unchanged
+// selected upstream executable. Never runs two workers concurrently.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -21,7 +22,10 @@ assert.ok(out.startsWith(join(root, "outputs/austin-accounts-workflows-2026-09-1
 assert.ok(!existsSync(out), "Choose a new directory; existing evidence is preserved.");
 assert.ok(Number(process.versions.node.split(".")[0]) >= 24, "Use Node 24 or later.");
 const packPath = join(root, "pack/workflows/austin-accounts/workflows.json");
-const fixtureRoot = join(root, "outputs/austin-accounts-workflows-2026-09-13/fixtures");
+// The cases moved from the untracked outputs/ tree into the repository; the
+// manifest still names inputs by their old outputs/ path (see fixturePath).
+const fixtureRoot = join(root, "server/fixtures/accounts-review");
+const legacyFixtureRoot = "outputs/austin-accounts-workflows-2026-09-13/fixtures/";
 const pack = JSON.parse(readFileSync(packPath, "utf8"));
 const manifestPath = join(fixtureRoot, "manifest.json");
 // Non-live mode tests import/export and approval gates only. Model case files
@@ -29,9 +33,12 @@ const manifestPath = join(fixtureRoot, "manifest.json");
 const manifest = live || existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : { cases: [] };
 const selectedCases = manifest.cases.filter(c => (!argument("--case") || c.id === argument("--case")) && (!argument("--workflow") || argument("--workflow").split(",").includes(c.workflowId)));
 if (live) assert.ok(selectedCases.length > 0, "At least one declared case must be selected.");
+for (const entry of manifest.cases) for (const path of [entry.inputFile, ...(entry.files ?? []).map(file => file.source)]) assert.ok(existsSync(fixturePath(path)), `${entry.id}: declared fixture ${path} is missing.`);
+// Never defaults to the installed office's ~/.realbud/hermes: a live run names its source home.
+const engineSource = process.env.REALBUD_HERMES_HOME || null;
+if (live) assert.ok(engineSource, "--live needs REALBUD_HERMES_HOME: the Hermes home whose selected runtime and property profile login this disposable run copies. It is never assumed.");
 mkdirSync(out, { recursive: true, mode: 0o700 });
 const scratch = mkdtempSync(join(tmpdir(), "realbud-accounts-qa-")); chmodSync(scratch, 0o700);
-const engineSource = process.env.REALBUD_HERMES_HOME || join(homedir(), ".realbud/hermes");
 const engineHome = join(scratch, "hermes");
 const qaHome = join(scratch, "home"); mkdirSync(qaHome, { mode: 0o700 });
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -39,7 +46,7 @@ const json = (path, value) => writeFileSync(path, sanitize(JSON.stringify(value,
 const walk = path => !existsSync(path) ? [] : readdirSync(path, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(join(path, entry.name)) : entry.isFile() ? [join(path, entry.name)] : []);
 const hashes = files => Object.fromEntries(files.sort().map(file => [relative(root, file), hash(readFileSync(file))]));
 const inputsBefore = hashes([packPath, ...walk(fixtureRoot), ...walk(join(root, "pack/workflows/austin-accounts/contracts")), ...walk(join(root, "pack/workflows/austin-accounts/support"))]);
-const protectedPaths = ["recipes.json", "job-runs.json", "desk.json", "config.json"].map(name => join(homedir(), ".realbud", name)).concat(["realbud-runtime.json", "profiles/property/config.yaml", "profiles/property/.env", "profiles/property/auth.json"].map(name => join(engineSource, name))).filter(existsSync);
+const protectedPaths = ["recipes.json", "job-runs.json", "desk.json", "config.json"].map(name => join(homedir(), ".realbud", name)).concat(engineSource ? ["realbud-runtime.json", "profiles/property/config.yaml", "profiles/property/.env", "profiles/property/auth.json"].map(name => join(engineSource, name)) : []).filter(existsSync);
 const protectedBefore = new Map(protectedPaths.map(path => [path, hash(readFileSync(path))]));
 const secrets = new Set();
 const sanitize = value => { let s = String(value); for (const secret of secrets) if (secret.length >= 8) s = s.replaceAll(secret, "[redacted]"); return s.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})\b/g, "[redacted]"); };
@@ -120,7 +127,8 @@ async function api(office, method, path, body, authenticated = true) {
   return { status: res.status, body: await res.json() };
 }
 const recipes = async office => (await api(office, "GET", "/api/recipes")).body.recipes;
-function fixturePath(path) { const resolved = resolve(manifest.casePathBase === "repository-root" ? root : fixtureRoot, path); assert.ok(resolved.startsWith(fixtureRoot + sep) || resolved.startsWith(join(root, "pack/workflows/austin-accounts") + sep), "Fixture source must stay in the owned fixture/pack tree."); return resolved; }
+// Product files (pack/) are repository-relative; every other case file lives under fixtureRoot.
+function fixturePath(path) { const resolved = path.startsWith("pack/") ? resolve(root, path) : resolve(fixtureRoot, path.startsWith(legacyFixtureRoot) ? path.slice(legacyFixtureRoot.length) : path); assert.ok(resolved.startsWith(fixtureRoot + sep) || resolved.startsWith(join(root, "pack/workflows/austin-accounts") + sep), "Fixture source must stay in the owned fixture/pack tree."); return resolved; }
 function targetPath(office, target) { const vault = join(office.data, "vault"), path = resolve(vault, target); assert.ok(path.startsWith(vault + sep), "Binding must remain inside the disposable vault."); return path; }
 async function bindCase(office, entry) {
   // Every case is a separate supplied snapshot; leftovers must not satisfy a

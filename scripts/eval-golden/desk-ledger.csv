@@ -1,0 +1,7 @@
+propertyCode,daysSinceDue,rentLanded,levyPaid
+SYN-P01,0,true,true
+SYN-P02,18,false,false
+SYN-P03,14,false,true
+SYN-P04,9,false,false
+SYN-P05,0,true,true
+SYN-P06,21,false,false
