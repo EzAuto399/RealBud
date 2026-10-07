@@ -75,7 +75,7 @@ describe("Bud proposes the REI business code on the review card", () => {
     broker = await startWorkflowSettingsBroker({ turnId: () => "turn-1", settings: () => settings, approve: async summary => { cards.push(summary); return allow; } });
     expect((await call("workflow_settings_read", { target: "rei_account" })).content[0].text).toContain("rei_account (revision 0): marker none; urlValue none");
     const propose = () => call("workflow_settings_propose", { target: "rei_account", values: { marker: "FICT1" }, reason: "Kevin said REI shows FICT1 at the top." });
-    expect(await propose()).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+    expect(await propose()).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
     expect(await readReiAccount(dir)).toBeNull();
     expect(cards[0]).toBe("Change REI business code\nREI business code (shown at the top of REI): none → FICT1\nBud reads REI, and bank imports go to REI, only for this business.\nWhy: Kevin said REI shows FICT1 at the top.");
     allow = true;
