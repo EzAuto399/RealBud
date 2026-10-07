@@ -293,13 +293,10 @@ describe("approval settings (approval_policy)", () => {
     await put({ "app:gmail": "ask", "site:portal.fictional.test": "deny", "class:send": "deny" });
     const refused = async (changes: unknown, text: string, extra?: Record<string, unknown>) =>
       expect(await propose(changes, extra)).toMatchObject({ isError: true, content: [{ text: expect.stringContaining(text) }] });
-    await refused([{ group: "app:gmail", choice: "read-without-asking" }], "name each tool");
-    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: [] }], "name each tool");
-    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS", "GMAIL_SEND_EMAIL"] }], "GMAIL_SEND_EMAIL can change something");
-    // Classified as a read elsewhere, but it deletes a draft.
-    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: ["GMAIL_DELETE_DRAFT"] }], "GMAIL_DELETE_DRAFT can change something");
-    // Another app's read is not one of Gmail's tools.
-    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: ["OUTLOOK_LIST_MESSAGES"] }], "not one of its tools");
+    // A saved choice covers the whole row, so Bud never widens an app: the row would cover more than the tools it named.
+    await refused([{ group: "app:gmail", choice: "read-without-asking" }], "Bud can only make Gmail stricter");
+    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS"] }], "Bud can only make Gmail stricter");
+    await refused([{ group: "site:other.fictional.test", choice: "read-without-asking", tools: ["browser_click"] }], "name browser_read and browser_navigate");
     await refused([{ group: "site:portal.fictional.test", choice: "ask" }], "set to Don't use");
     await refused([{ group: "class:send", choice: "ask" }], "set to Don't use");
     await refused([{ group: "class:pay", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS"] }], "only make Always asks: Payments stricter");
@@ -313,14 +310,13 @@ describe("approval settings (approval_policy)", () => {
     expect((await saved()).local.revision).toBe(1);
   });
 
-  it("widens only for the named read-only tools, after the card", async () => {
+  it("widens only a website's reading, after a card that states the whole effect", async () => {
     const { cards, saved, put } = await desktop();
     await put({ "app:gmail": "ask", "site:portal.fictional.test": "ask" });
-    expect((await propose([{ group: "app:gmail", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS"] },
-      { group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_read"] }])).isError).toBeUndefined();
-    expect(cards[0]).toBe("Change approval settings\nGmail: Ask every time → Read without asking (fetch emails, list threads)\n" +
-      "portal.fictional.test: Ask every time → Read without asking (read the page)\nWhy: Sherry wants to check these first.");
-    expect((await saved()).local.settings.groups).toEqual({ "app:gmail": "read-without-asking", "site:portal.fictional.test": "read-without-asking" });
+    expect((await propose([{ group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_read", "browser_navigate"] }])).isError).toBeUndefined();
+    expect(cards[0]).toBe("Change approval settings\nportal.fictional.test: Ask every time → Read without asking (reading pages and moving between them; filling, uploading and submitting still ask)\n" +
+      "Why: Sherry wants to check these first.");
+    expect((await saved()).local.settings.groups).toEqual({ "app:gmail": "ask", "site:portal.fictional.test": "read-without-asking" });
     expect((await propose([{ group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_click"] }]))).toMatchObject({ isError: true });
   });
 

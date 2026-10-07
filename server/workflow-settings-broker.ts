@@ -19,7 +19,7 @@ import { parseClockTime, parseWeekdays } from "./routines.ts";
 import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
 import type { AgencySetupSettings } from "../shared/agency-setup.ts";
 import { officeAppLabel } from "../shared/office-sources.ts";
-import { APPROVAL_CHOICES, approvalGroupKey, normalizeApprovalSettings, PER_INSTANCE_CLASSES, READ_ONLY_APP_TOOLS, SITE_READ_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { APPROVAL_CHOICES, approvalGroupKey, normalizeApprovalSettings, PER_INSTANCE_CLASSES, SITE_READ_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import type { Loop, LoopId, LoopSchedule } from "../shared/contracts.ts";
 import { validCalendarCadence } from "../shared/routine-clock.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -132,7 +132,7 @@ const REASON = { type: "string", minLength: 1, maxLength: 300, description: "One
 const TOOLS = [
   { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions, (loop_schedule) each workflow's loopId, revision, on/off and clock, and (approval_policy) how often Bud asks before using each app, website and office connector. target is optional (all when omitted). Read only, no card.",
     inputSchema: { type: "object", additionalProperties: false, properties: { target: TARGET } } },
-  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {time (HH:MM), weekdays (0=Sun..6=Sat), and for workflows that repeat every N days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking needs tools naming each tool that only reads (an app's read-only tools, or browser_read and browser_navigate for a website), and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
+  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {time (HH:MM), weekdays (0=Sun..6=Sat), and for workflows that repeat every N days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
@@ -258,21 +258,19 @@ const CHOICE_WORDS: Record<ApprovalChoice, string> = { "read-without-asking": "R
 const RANK: Record<ApprovalChoice, number> = { "read-without-asking": 0, ask: 1, deny: 2 };
 const CLASS_WORDS: Record<string, string> = { pay: "Payments", sign: "Signing", send: "Sending", notice: "Notices", "account-change": "Account changes", trash: "Deleting",
   upload: "Uploading files", submit: "Submitting forms", memory: "Memory changes", consequential: "Other consequential steps", settings: "Settings changes", script: "Scripts" };
-const SITE_TOOL_WORDS: Record<string, string> = { browser_read: "read the page", browser_navigate: "open pages on this site" };
 const groupWords = (group: string) => {
   const cut = group.indexOf(":"), kind = group.slice(0, cut), rest = group.slice(cut + 1);
   if (kind === "class") return `Always asks: ${CLASS_WORDS[rest] ?? rest}`;
   if (kind === "app") return officeAppLabel(rest);
   return kind === "connector" ? `Office connector ${rest}` : rest;
 };
-const toolWords = (group: string, tool: string) => group.startsWith("site:") ? SITE_TOOL_WORDS[tool] ?? tool : tool.replace(/^[A-Z0-9]+_/, "").toLowerCase().replace(/_/g, " ");
 /** What an unset group does today: websites and the locked rows ask; apps and connectors use the recommended default. */
 const unsetChoice = (group: string): ApprovalChoice => group.startsWith("site:") || group.startsWith("class:") ? "ask" : "read-without-asking";
 const APPROVALS_UNBOUND = "Approval settings can't be changed from this conversation. Change them in Workspace → Approvals. Nothing was changed.";
 const approvalSummary = (settings: ApprovalSettings) => Object.entries(settings.groups).map(([group, choice]) => `${group} ${choice}`).join("; ") || "nothing saved, every row uses the recommended setting";
 
 /** Checks one Bud proposal against the settings it read. Stricter changes pass; a widening
- * must name each tool, and each must only read in that app or website. */
+ * is only for a website row (reading and moving between pages); apps and connectors only get stricter. */
 function approvalChanges(view: ApprovalPolicyView, changes: unknown): { next: ApprovalSettings; lines: string[] } | string {
   if (!Array.isArray(changes) || !changes.length || changes.length > 20) return "changes holds 1 to 20 items of {group, choice, tools?}.";
   const groups = { ...view.settings.groups }, lines: string[] = [], seen = new Set<string>();
@@ -297,19 +295,17 @@ function approvalChanges(view: ApprovalPolicyView, changes: unknown): { next: Ap
       continue;
     }
     if (locked || next !== "read-without-asking") return `Bud can only make ${label} stricter.`;
-    if (group.startsWith("connector:")) return `Bud can only make ${label} stricter. The owner chooses which of its tools only read.`;
-    // Group-level widening: Bud must name every tool it would stop asking about.
-    if (!Array.isArray(tools) || !tools.length || tools.length > 20 || tools.some(tool => typeof tool !== "string") || new Set(tools).size !== tools.length) {
-      return `To read ${label} without asking, name each tool. Bud can't stop asking for a whole app or website at once.`;
+    // A saved choice applies to the whole row, so the card must describe the whole row's effect.
+    // An app row's "read without asking" covers every tool the app or the owner treats as a read,
+    // not only the tools Bud names, so Bud never widens an app or connector: people do that in
+    // Workspace → Approvals. A website row's widening is exactly reading and moving between pages.
+    if (!group.startsWith("site:")) return `Bud can only make ${label} stricter. To go back to Recommended or read without asking, use Workspace → Approvals.`;
+    if (!Array.isArray(tools) || !tools.length || tools.some(tool => typeof tool !== "string" || !SITE_READ_TOOLS.has(tool))) {
+      return `To read ${label} without asking, name browser_read and browser_navigate. Nothing else on a website can skip the question.`;
     }
-    const prefix = `${group.slice(4).toUpperCase()}_`;
-    const write = (tools as string[]).find(tool => group.startsWith("site:") ? !SITE_READ_TOOLS.has(tool)
-      // reviewedReads only ever holds allowlisted tools, so an owner-reviewed direct read passes here too.
-      : !READ_ONLY_APP_TOOLS.has(tool) || !tool.startsWith(prefix));
-    if (write) return `${write} can change something in ${label}, or is not one of its tools, so Bud can't stop asking about it.`;
     if (before === next) continue;
     groups[group] = next;
-    lines.push(`${label}: ${before === undefined ? "Recommended" : CHOICE_WORDS[before]} → ${CHOICE_WORDS[next]} (${(tools as string[]).map(tool => toolWords(group, tool)).join(", ")})`);
+    lines.push(`${label}: ${before === undefined ? "Recommended" : CHOICE_WORDS[before]} → ${CHOICE_WORDS[next]} (reading pages and moving between them; filling, uploading and submitting still ask)`);
   }
   if (!lines.length) return `${view.name} already has those approval settings.`;
   try { return { next: normalizeApprovalSettings({ ...view.settings, groups }), lines }; }
