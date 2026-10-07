@@ -215,7 +215,8 @@ describe("gateway pairing and relay", () => {
     await vi.waitFor(() => {
       expect(sent).toEqual([{ channelId: "99", text: "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online." }]);
     });
-    expect(discord.loadChannel()).toMatchObject({ pairedChannelId: "99", pairedName: "Sam" });
+    expect(discord.loadChannel()).toMatchObject({ pairedChannelId: "99", pairedName: "Sam", pairedUserId: "user-1" });
+    expect(discord.discordStatus().discord).toMatchObject({ paired: true, decisions: true });
     expect(startTurn).not.toHaveBeenCalled();
 
     socket.dispatch("MESSAGE_CREATE", dm("88", "hello", "Other"));
@@ -353,8 +354,9 @@ describe("gateway pairing and relay", () => {
 async function bindPairedDesk(
   decided: Array<{ id: string; via?: string; status: string; reason?: string }>,
   fetchFn: DiscordFetch,
+  pairing: Partial<DiscordRecord> = { pairedUserId: "user-1" },
 ) {
-  saveConnected({ pairedChannelId: "99", pairedName: "Sam" });
+  saveConnected({ pairedChannelId: "99", pairedName: "Sam", ...pairing });
   const drafts: Draft[] = [
     {
       id: "d-oak",
@@ -472,14 +474,14 @@ async function bindPairedDesk(
   return store;
 }
 
-function interaction(customId: string, channelId = "99", username = "Yoda") {
+function interaction(customId: string, channelId = "99", username = "Yoda", userId = "user-1") {
   return {
     id: "int-1",
     token: "int-token",
     type: 3,
     channel_id: channelId,
     data: { custom_id: customId, component_type: 2 },
-    user: { username },
+    user: { id: userId, username },
     message: { id: "msg-9" },
   };
 }
@@ -504,13 +506,34 @@ describe("remote decisions", () => {
     expect(startTurn).not.toHaveBeenCalled();
   });
 
-  it("ignores an interaction from an unpaired channel", async () => {
+  it.each([
+    { label: "another channel", channelId: "88", userId: "user-2" },
+    { label: "another sender in the paired DM", channelId: "99", userId: "user-2" },
+  ])("refuses an interaction from $label and changes nothing", async ({ channelId, userId }) => {
     const decided: Array<{ id: string; via?: string; status: string }> = [];
     const callbacks: unknown[] = [];
-    const fetchFn = stubFetch({ onCallback: (_url, body) => callbacks.push(body) });
+    const patches: unknown[] = [];
+    const fetchFn = stubFetch({ onCallback: (_url, body) => callbacks.push(body), onPatch: (_url, body) => patches.push(body) });
     const store = await bindPairedDesk(decided, fetchFn);
-    await discord.handleInteraction(interaction("d:d-oak:deny", "88", "Other"), deps(store, async () => {}, fetchFn));
-    expect(callbacks).toEqual([]);
+    const id = remote.pendingDecisionId("discord")!;
+    await discord.handleInteraction(interaction(`d:${id}:deny`, channelId, "Other", userId), deps(store, async () => {}, fetchFn));
+    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.", flags: 64 } }]);
+    expect(decided).toEqual([]);
+    expect(patches).toEqual([]);
+    expect(remote.pendingDecisionId("discord")).toBe(id);
+  });
+
+  it("sends a legacy pairing (no sender id) no buttons, recipient or wording, and refuses its taps", async () => {
+    const decided: Array<{ id: string; via?: string; status: string }> = [];
+    const bodies: Array<Record<string, unknown>> = [];
+    const callbacks: unknown[] = [];
+    const fetchFn = stubFetch({ onSend: (_c, _t, body) => bodies.push(body!), onCallback: (_url, body) => callbacks.push(body) });
+    const store = await bindPairedDesk(decided, fetchFn, {});
+    expect(bodies).toEqual([{ content: "Courtesy SMS wording is ready. Open Desk to review and decide. To approve from your phone, re-pair from a private chat." }]);
+    expect(remote.pendingDecisionId("discord")).toBeNull();
+    expect(discord.discordStatus().discord).toMatchObject({ paired: true, decisions: false });
+    await discord.handleInteraction(interaction("d:abcdef123456:allow"), deps(store, async () => {}, fetchFn));
+    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.", flags: 64 } }]);
     expect(decided).toEqual([]);
   });
 

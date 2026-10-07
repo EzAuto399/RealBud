@@ -13,6 +13,49 @@
   - Tool cards go to one-to-one chats only.
   - `DESIGN.md:128` ("never offer always-allow") is retired for reads only.
 
+## 0. Review changes (Astra 6 Ultra, 7 Oct). These override sections 2 to 6.
+
+**Blockers fixed in the design**
+
+1. **Only genuinely read-only tools can be widened.**
+   - `classifyAppTool` "read" covers some writes: deleting drafts, uploading attachments, and label edits whose arguments hold Trash or Spam (`app-tool-policy.ts:88,103,212`).
+   - Widening uses a separate exact-name read-only allowlist. Argument-level checks still run before every dispatch.
+   - Direct connections widen only for tools the owner has reviewed (`reviewedReads`), because their names confer no authority (`connected-apps-broker.ts:52`).
+2. **Phone cards go only to private one-to-one chats, from the paired person.**
+   - Telegram pairing accepts any chat id. Callbacks drop chat type and sender (`telegram.ts:378,401,590`).
+   - At pairing, push and callback, check chat type `private` and the immutable sender id.
+   - An existing group pairing gets no tool cards.
+3. **A phone send needs the exact full message.**
+   - Only managed sends carry the full review (`connected-apps-broker.ts:286`). Direct sends show redacted JSON (`:285`).
+   - Direct sends stay desktop-only.
+4. **Deny wins.**
+   - Each department's tool and group settings resolve first, then departments merge strictest-first.
+   - Neither a local saved rule nor a this-task grant can override an effective Ask or Deny.
+   - Standing-rule evaluation (`browser-authority.ts:1115,1187`) and the legacy fence (`portal-fence.ts:183`) must honour site Ask and Deny, not just allow keys.
+
+**Corrections**
+
+- Consequential connectors do run in attended Ask, one approval each (`mcp-connector-broker.ts:89`, `index.ts:2092`).
+- The non-Bud "Always allow" PATCHes the bot's `alwaysAllow` (`store.tsx:1155`). The who-may-change check covers that route as well as `/api/rules`.
+- Remote company routes need the host transport allowlist (`company/host-transport.ts:348`).
+- `/api/bots/:id/respond` (`index.ts:5175`) shares the respond helper with the thread route.
+- `reviewOnce` reports timeouts as `source:"user"` (`core.ts:962-965`). Cards carry a deadline and a resolution reason (`timeout`, `user`, `phone`). Keep the synchronous consume (`:956`), which already prevents replay.
+
+**Simpler UI**
+
+- Three choices per app or site:
+  - "Read without asking": reads run, changes ask.
+  - "Ask every time"
+  - "Don't use"
+
+  `allow` and `ask-writes` were the same thing, so they merge into the first choice. Direct connections default to "Ask every time". Everything else defaults to "Read without asking" only where the read-only allowlist covers it.
+- No per-tool rows in v1, apart from the locked "Always asks" list.
+- Each row says what controls it, e.g. "Set by Accounts" or "Saved on this computer".
+- "Undo in Workspace → Approvals" becomes "Change future approvals in Workspace → Approvals".
+- One store: a read allowance is a policy entry, not a second rule type.
+
+**Packet contract.** Packet A freezes the shared metadata before B, C or D starts: card `deadline`, `resolution`, `answeredBy`, `remote` class, and the renderer card type. A owns `host-transport.ts`. C owns the binding at `index.ts:2078`.
+
 ## 1. Current flows
 
 **Connected apps**

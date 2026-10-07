@@ -518,6 +518,16 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(calls).toHaveLength(0); // no surprise run for the earlier slot
   });
 
+  it("refuses a stale expectedRevision with a 409 and changes nothing", () => {
+    const { manager } = makeManager();
+    expect(manager.patchClock("morning-arrears", { time: "08:15", expectedRevision: 1 }).revision).toBe(2);
+    let refusal: unknown;
+    try { manager.patchClock("morning-arrears", { time: "09:00", expectedRevision: 1 }); } catch (error) { refusal = error; }
+    expect(refusal).toMatchObject({ status: 409, code: "schedule_changed" });
+    expect(() => manager.patchClock("morning-arrears", { time: "09:00", expectedRevision: 0 })).toThrow(/revision/);
+    expect(manager.listLoops()[0]).toMatchObject({ revision: 2, schedule: { time: "08:15" } });
+  });
+
   it("retunes the inbox clock without enabling collection until explicitly enabled", () => {
     const { manager } = makeManager();
     const patched = manager.patchClock('inbound-triage', { time: '09:15', weekdays: [1,2,3,4,5], timezone: 'Australia/Brisbane' });

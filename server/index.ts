@@ -69,6 +69,7 @@ import { createBillFollowUpsApi } from './bill-followups.ts';
 import { recordMorningResult } from './morning-routine-result.ts';
 import { scanGmailReadOnly, readGmailPdfAttachment } from './composio-gmail.ts';
 import { scanManagedMail, readManagedMailAttachment } from './managed-connectors.ts';
+import { ConnectorEvents } from './connector-events.ts';
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
 import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
@@ -2082,6 +2083,8 @@ async function startSeatTurn(
             const previous = (await agencySetup.getConfiguration()).revision;
             try { await agencySetup.save(body); } finally { if ((await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange(); }
           } },
+          // Workflow clocks through the same door as PATCH /api/loops/:id, which pins weekly bills to its reviewed setup.
+          loops: { listLoops: () => loops!.listLoops(), patchClock: async (id, patch) => loops!.patchClock(id, id === 'weekly-bills' ? { ...patch, timezone: (await authorizeBillWorkflow()).settings.timeZone } : patch) },
           writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
             : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
@@ -2389,6 +2392,9 @@ loops = new LoopManager({
     });
   }),
 });
+// "Also check when new mail arrives": gateway event ids wake a loop through runNow; the clock still runs.
+const connectorEvents = new ConnectorEvents({ cfg: () => cfg, company: () => workspaceIdentity.id, loops: loops,
+  runContext: work => workspaceActivity.run(() => withWorkerProfile(desk.memberKeyForWorker(), work)) });
 
 // ---- BEGIN W1 host (bank → reviewed file → REI preview → person posts → readback). Logic in server/w1-host.ts. ----
 // One host per process. The loop's opt-in (available) follows the office's saved
@@ -3325,6 +3331,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }
+    }
+    const newMail = path.match(/^\/api\/loops\/([\w-]+)\/new-mail$/);
+    if (newMail && (method === 'GET' || method === 'POST')) {
+      try { return json(res, 200, method === 'GET' ? await connectorEvents.status(newMail[1]) : await connectorEvents.setNewMail(newMail[1], (await readBody(req)).enabled)); }
+      catch (error) { return json(res, (error as { status?: number }).status ?? 500, { error: error instanceof Error ? error.message : 'New-mail checks could not be changed.' }); }
     }
     loopMatch = path.match(/^\/api\/loops\/([\w-]+)$/);
     if (loopMatch && method === "PATCH") {
@@ -6143,7 +6154,7 @@ async function privateBackupSnapshotLease() {
 function beginPrivateRestore() {
   if (privateRestoreLocked) return;
   assertPrivateBackupIdle(); assertPrivateBackupFresh();
-  privateRestoreLocked=true; loops?.stop(); officeLink.stop(); websiteRequests.stop(); departmentWork.stop();
+  privateRestoreLocked=true; loops?.stop(); connectorEvents.stop(); officeLink.stop(); websiteRequests.stop(); departmentWork.stop();
   stopTelegramBridge(); stopDiscordBridge(); stopSlackBridge(); stopRemoteDecisionFlush();
 }
 const legacyPrivateBackup = createPrivateWorkspaceBackup({directory:DATA_DIR,key:()=>Buffer.from(desk.recoveryKeyHex(),'hex'),workspaceId:workspaceIdentity.id,
@@ -6189,7 +6200,7 @@ server.listen(PORT, "127.0.0.1", () => {
       oplog("boot", "Local session file could not be written; stopping so the owner can recover it.");
       process.exit(1);
     });
-  if (!privateRestoreLocked) loops?.start();
+  if (!privateRestoreLocked) { loops?.start(); connectorEvents.start(); }
   // An approved window that was never confirmed is still missing coverage, so a
   // restart continues the saved checkpoint under its own authority re-check. It
   // reads nothing when no window is pending.
@@ -6249,6 +6260,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     stopSlackBridge();
     stopRemoteDecisionFlush();
     loops?.stop();
+    connectorEvents.stop();
     batches.stop();
     watchdog.stop();
     cancelBootstrapInstall();

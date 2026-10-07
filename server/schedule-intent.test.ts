@@ -40,4 +40,8 @@ describe("scheduleIntentReply", () => {
     expect(reply).not.toMatch(/clock|timer|projection|5-step/i);
     expect(reply!.split(/\s+/).length).toBeLessThan(70);
   });
+
+  it("leaves moving the built Morning money check to Bud's approval card", () => {
+    expect(scheduleIntentReply("schedule morning money every Wednesday")).toBeNull();
+  });
 });

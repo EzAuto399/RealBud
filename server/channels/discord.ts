@@ -18,6 +18,7 @@ import {
   decideRemotely,
   parseDecisionCallback,
   decideRemoteText,
+  remoteSenderMayDecide,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -29,6 +30,8 @@ export type DiscordRecord = {
   botUsername: string;
   pairedChannelId: string | null;
   pairedName: string | null;
+  /** Discord user id of the person who paired (pairing only happens in a DM). */
+  pairedUserId?: string | null;
   connectedAt: number;
   lastMessageAt: number | null;
 };
@@ -66,6 +69,7 @@ export type DiscordWebSocketFactory = (url: string) => DiscordSocketLike;
 
 const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
+const ONLY_PAIRED = "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.";
 const BAD_TOKEN = "that token did not answer — check it against the Discord developer portal";
 const CLIP_AT = 1900;
 const BACKOFF_START_MS = 1_000;
@@ -120,6 +124,7 @@ function asChannel(value: unknown): DiscordRecord | null {
     botUsername: typeof row.botUsername === "string" ? row.botUsername : "",
     pairedChannelId,
     pairedName: typeof row.pairedName === "string" ? row.pairedName : null,
+    pairedUserId: typeof row.pairedUserId === "string" && row.pairedUserId.trim() ? row.pairedUserId : null,
     connectedAt: typeof row.connectedAt === "number" && Number.isFinite(row.connectedAt) ? row.connectedAt : 0,
     lastMessageAt: typeof row.lastMessageAt === "number" && Number.isFinite(row.lastMessageAt) ? row.lastMessageAt : null,
   };
@@ -153,8 +158,14 @@ export function toPublic(record: DiscordRecord | null): DiscordPublic {
     botUsername: record.botUsername,
     pairedName: record.pairedName,
     paired: record.pairedChannelId != null,
+    decisions: decisionSender(record) != null,
     lastMessageAt: record.lastMessageAt,
   };
+}
+
+/** Pairings saved before sender ids were kept are not for decisions. */
+function decisionSender(record: DiscordRecord | null): string | null {
+  return record?.pairedChannelId != null && record.pairedUserId ? record.pairedUserId : null;
 }
 
 export function discordStatus(): { discord: DiscordPublic } {
@@ -351,7 +362,7 @@ export function flushDiscordRelayForThread(threadId: string): void {
   })();
 }
 
-function asInbound(value: unknown): { channelId: string; name: string; text: string; dm: boolean; bot: boolean } | null {
+function asInbound(value: unknown): { channelId: string; userId: string | null; name: string; text: string; dm: boolean; bot: boolean } | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.channel_id !== "string" || !row.channel_id) return null;
@@ -361,6 +372,7 @@ function asInbound(value: unknown): { channelId: string; name: string; text: str
   const text = typeof row.content === "string" ? row.content : "";
   return {
     channelId: row.channel_id,
+    userId: typeof author?.id === "string" && author.id ? author.id : null,
     name,
     text,
     dm: row.guild_id == null,
@@ -382,7 +394,7 @@ async function handleInboundAdmitted(value: unknown, deps: DiscordDeps): Promise
   const now = deps.now ?? Date.now;
   if (record.pairedChannelId == null) {
     if (!matchesPairingCode("discord", inbound.text, now())) return;
-    const next = { ...record, pairedChannelId: inbound.channelId, pairedName: inbound.name, lastMessageAt: now() };
+    const next = { ...record, pairedChannelId: inbound.channelId, pairedName: inbound.name, pairedUserId: inbound.userId, lastMessageAt: now() };
     saveChannel(next);
     clearPairingCode("discord");
     try {
@@ -409,7 +421,7 @@ async function handleInboundAdmitted(value: unknown, deps: DiscordDeps): Promise
   saveChannel({ ...record, lastMessageAt: now() });
   const continuation = channelContinuation(inbound.text, deps.store);
   if (continuation !== null) { await relayText(continuation, deps); return; }
-  const result = await decideRemoteText("discord", inbound.channelId, inbound.text, inbound.name);
+  const result = await decideRemoteText("discord", inbound.channelId, inbound.text, inbound.name, inbound.userId);
   if (result) {
     try {
       await sendMessage(fetchFn, record.botToken, inbound.channelId, result.ok ? result.stamp : result.message);
@@ -428,6 +440,7 @@ function asInteraction(value: unknown): {
   channelId: string;
   messageId: string;
   customId: string;
+  userId: string | null;
   name: string;
 } | null {
   if (!value || typeof value !== "object") return null;
@@ -439,16 +452,17 @@ function asInteraction(value: unknown): {
   if (typeof data?.custom_id !== "string" || !data.custom_id) return null;
   const message = row.message && typeof row.message === "object" ? (row.message as { id?: unknown }) : null;
   const messageId = typeof message?.id === "string" ? message.id : "";
-  const user = row.user && typeof row.user === "object" ? (row.user as { username?: unknown }) : null;
+  const user = row.user && typeof row.user === "object" ? (row.user as { id?: unknown; username?: unknown }) : null;
   const member = row.member && typeof row.member === "object" ? (row.member as { user?: unknown }) : null;
-  const memberUser = member?.user && typeof member.user === "object" ? (member.user as { username?: unknown }) : null;
+  const memberUser = member?.user && typeof member.user === "object" ? (member.user as { id?: unknown; username?: unknown }) : null;
+  const id = user?.id ?? memberUser?.id;
   const username =
     typeof user?.username === "string" && user.username.trim()
       ? user.username.trim()
       : typeof memberUser?.username === "string" && memberUser.username.trim()
         ? memberUser.username.trim()
         : "Discord";
-  return { id: row.id, token: row.token, channelId: row.channel_id, messageId, customId: data.custom_id, name: username };
+  return { id: row.id, token: row.token, channelId: row.channel_id, messageId, customId: data.custom_id, userId: typeof id === "string" && id ? id : null, name: username };
 }
 
 export async function handleInteraction(value: unknown, deps: DiscordDeps): Promise<void> {
@@ -459,24 +473,27 @@ export async function handleInteraction(value: unknown, deps: DiscordDeps): Prom
   const interaction = asInteraction(value);
   if (!interaction) return;
   const record = loadChannel();
-  if (!record?.botToken || record.pairedChannelId == null) return;
-  if (interaction.channelId !== record.pairedChannelId) return;
+  if (!record?.botToken) return;
   const parsed = parseDecisionCallback(interaction.customId);
   if (!parsed) return;
   const fetchFn = deps.fetch ?? globalThis.fetch;
   const now = deps.now ?? Date.now;
-  saveChannel({ ...record, lastMessageAt: now() });
+  // Only the paired person, in the paired DM, may decide; anyone else gets a
+  // private notice (type 4, ephemeral) and the card stays exactly as it was.
+  const mayDecide = remoteSenderMayDecide("discord", interaction.channelId, interaction.userId);
+  if (mayDecide) saveChannel({ ...record, lastMessageAt: now() });
   try {
     await fetchFn(`${discordApiBase()}/api/v10/interactions/${interaction.id}/${interaction.token}/callback`, {
       method: "POST",
       headers: restHeaders(record.botToken, true),
-      body: JSON.stringify({ type: 6 }),
+      body: JSON.stringify(mayDecide ? { type: 6 } : { type: 4, data: { content: ONLY_PAIRED, flags: 64 } }),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logQuiet(msg, record.botToken);
   }
-  const result = await decideRemotely("discord", interaction.channelId, parsed.draftId, parsed.decision, undefined, interaction.name);
+  if (!mayDecide) return;
+  const result = await decideRemotely("discord", interaction.channelId, parsed.draftId, parsed.decision, undefined, interaction.name, interaction.userId);
   if (!interaction.messageId) return;
   try {
     await fetchFn(`${discordApiBase()}/api/v10/channels/${interaction.channelId}/messages/${interaction.messageId}`, {
@@ -719,6 +736,9 @@ export function discordDecisionAdapter(): RemoteChannelAdapter {
     pairedKey() {
       const rec = loadChannel();
       return rec?.pairedChannelId ?? null;
+    },
+    pairedSender() {
+      return decisionSender(loadChannel());
     },
     async sendDecision(text, draftId) {
       const rec = loadChannel();

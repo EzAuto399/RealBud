@@ -26,6 +26,11 @@ export const managedConnectorConfigured = (cfg: AppConfig): boolean => cfg.compo
  * no status was read yet: the gateway still enforces. */
 const mailboxAccessByCredential = new Map<string, MailboxAccess>();
 const credentialKey = (credential: string) => createHash('sha256').update(credential).digest('hex');
+/** The gateway's event-trigger states from the last status read, per credential
+ * (by hash), kept out of the status projection like the mailbox scope. */
+export type ManagedTrigger = { app: string; event: string; source: 'personal' | 'office'; state: string };
+const triggersByCredential = new Map<string, ManagedTrigger[]>();
+export const managedConnectorTriggers = (cfg: AppConfig): ManagedTrigger[] => [...(triggersByCredential.get(credentialKey(managedConnectorSettings(cfg).key)) ?? [])];
 /** The office mailbox's scope is kept under its own key: in `both` it differs from the person's own. */
 export const managedMailboxAccess = (credential: string, mailbox: 'personal' | 'office' = 'personal'): MailboxAccess | undefined => mailboxAccessByCredential.get(credentialKey(credential) + (mailbox === 'office' ? ':office' : ''));
 /** `mailbox: 'office'` selects the office shared mailbox for this session; the gateway still checks this computer's grant. */
@@ -57,6 +62,7 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
       response.status===404&&path==='/v1/connectors/authorize'?'That app is not available to connect. Check the app’s name, or ask service support whether it can be added.':
       response.status===409&&['/v1/connectors/mail-scan','/v1/connectors/mail-attachment'].includes(path)?'The Gmail connection changed. Review the connected account and approve the mail source again before scanning.':
       response.status===400&&path==='/v1/connectors/mail-scan'?'This mail scan needs a reviewed Gmail account and a compatible managed service. Update RealBud and ask service support to check the connection.':
+      response.status===409&&path==='/v1/connectors/triggers'?'Gmail is busy or needs checking. Try again in a minute, or check Gmail in Connected apps.':
       response.status===409?'This connection needs recovery. Check its current result with service support before trying again.':'Managed connections could not be checked. Try again when the service is available.';
     throw Object.assign(new Error(message), {status:response.status>=400&&response.status<500?response.status:502});
   }
@@ -118,6 +124,9 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
     new Set(tools.names).size !== tools.names.length || tools.names.some(name => !toolNameAllowed(name, granted))) return invalid();
   if (value.mailboxMode !== undefined && !['personal', 'shared', 'both'].includes(String(value.mailboxMode))) return invalid();
   if (value.officeMailboxAccess !== undefined && value.officeMailboxAccess !== 'full' && value.officeMailboxAccess !== 'read_only') return invalid();
+  const triggers = value.triggers === undefined ? [] : value.triggers;
+  if (!Array.isArray(triggers) || triggers.length > 20 || triggers.some(row => !record(row) || typeof row.app !== 'string' || !APP_SLUG.test(row.app) ||
+    typeof row.event !== 'string' || !TRIGGER_EVENT.test(row.event) || !['personal', 'office'].includes(String(row.source)) || typeof row.state !== 'string' || !TRIGGER_STATE.test(row.state))) return invalid();
   const service = (input: unknown): Service => {
   if (!record(input) || typeof input.connected !== 'boolean' || !status(input.status) || input.accountSelectionRequired !== false ||
     !Array.isArray(input.accounts) || input.accounts.length > 1) return invalid();
@@ -148,6 +157,7 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   // An office mailbox without a reported grant is read-only.
   if (officeShared) mailboxAccessByCredential.set(credentialKey(credential) + ':office', value.officeMailboxAccess === 'full' ? 'full' : 'read_only');
   else mailboxAccessByCredential.delete(credentialKey(credential) + ':office');
+  triggersByCredential.set(credentialKey(credential), (triggers as Record<string, string>[]).map(row => ({ app: row.app!, event: row.event!, source: row.source as 'personal' | 'office', state: row.state! })));
   return {
     checkedAt: new Date(value.checkedAt).toISOString(), managed: true, serviceExpiresAt: Number(value.serviceExpiresAt),
     ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
@@ -158,6 +168,31 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
 }
 const MAX_TOOLS_PER_APP = 400;
 const APP_SLUG = /^[a-z][a-z0-9_]{0,31}$/;
+const TRIGGER_EVENT = /^[a-z][a-z-]{0,39}$/, TRIGGER_STATE = /^[a-z_]{1,40}$/;
+/** Event ids only, after the device's cursor: never a subject, sender, body or
+ * provider message id. `gap` says rows were dropped unread: rescan by horizon. */
+export type ConnectorEventsPage = { events: { seq: number; kind: string; app?: string; event?: string }[]; cursor: number; gap: boolean; more: boolean };
+export async function pullConnectorEvents(cfg: AppConfig, after: number, signal?: AbortSignal): Promise<ConnectorEventsPage> {
+  if (!Number.isSafeInteger(after) || after < 0) throw new Error('The new-mail cursor needs recovery.');
+  const value = await request(cfg, '/v1/connectors/events', { after }, signal) as Record<string, unknown> | null;
+  const invalid = (): never => { throw new Error('The managed connection response needs review.'); };
+  if (!value || typeof value !== 'object' || !Array.isArray(value.events) || value.events.length > 100 || !Number.isSafeInteger(value.cursor) || Number(value.cursor) < 0 ||
+    typeof value.gap !== 'boolean' || typeof value.more !== 'boolean') return invalid();
+  const events = (value.events as unknown[]).map(item => {
+    const row = item as Record<string, unknown> | null;
+    if (!row || typeof row !== 'object' || !Number.isSafeInteger(row.seq) || Number(row.seq) < 1 || typeof row.kind !== 'string' || !TRIGGER_STATE.test(row.kind) ||
+      (row.app !== undefined && (typeof row.app !== 'string' || !APP_SLUG.test(row.app))) || (row.event !== undefined && (typeof row.event !== 'string' || !TRIGGER_EVENT.test(row.event)))) return invalid();
+    return { seq: Number(row.seq), kind: row.kind, ...(row.app ? { app: row.app as string } : {}), ...(row.event ? { event: row.event as string } : {}) };
+  });
+  return { events, cursor: Number(value.cursor), gap: value.gap, more: value.more };
+}
+/** Turns the one allowlisted trigger on or off; the gateway picks the account. */
+export async function setConnectorTrigger(cfg: AppConfig, app: string, event: string, enabled: boolean, expectedPolicyRevision?: number): Promise<{ enabled: boolean; state: string }> {
+  if (!APP_SLUG.test(app) || !TRIGGER_EVENT.test(event) || typeof enabled !== 'boolean') throw Object.assign(new Error('That new-mail check is not available.'), { status: 400 });
+  const value = await request(cfg, '/v1/connectors/triggers', { app, event, enabled }, undefined, expectedPolicyRevision) as Record<string, unknown> | null;
+  if (!value || value.app !== app || value.event !== event || value.enabled !== enabled || typeof value.state !== 'string' || !TRIGGER_STATE.test(value.state)) throw new Error('The managed connection response needs review.');
+  return { enabled, state: value.state };
+}
 /** The gateway's admitted-app list for this credential, checked for shape and
  * for holding every app this installation was linked with. */
 function admittedApps(value: unknown, linked: string[]): string[] | undefined {
