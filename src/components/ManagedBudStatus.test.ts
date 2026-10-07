@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HermesStatus } from "@/state/store";
 import type { OfficeLinkStatus } from "../../server/office-link";
-import { budServiceAction, ManagedBudStatus, RESTART_FAILED, RESTART_HELP } from "./ManagedBudStatus";
+import { budServiceAction, ManagedBudStatus, RESTART_FAILED, RESTART_HELP, RESTART_NOT_OWNED } from "./ManagedBudStatus";
 import { SUPPORT_SAVED } from "./you/SupportCard";
 
 const monitor = vi.hoisted(() => ({ pending: false, error: "", refresh: vi.fn(), lastCheckedAt: null }));
@@ -266,11 +266,24 @@ describe("holds staff clear themselves", () => {
   });
   it("never stops a service this installation does not own, and keeps the failure copy fixed", async () => {
     const external = service({ serviceStatus: vi.fn(async () => ({ running: true, manageable: false })) });
-    expect(await budServiceAction("restart", external)).toEqual({ ok: false, text: RESTART_FAILED });
+    expect(await budServiceAction("restart", external)).toEqual({ ok: false, text: RESTART_NOT_OWNED });
     expect(external.serviceStop).not.toHaveBeenCalled();
+    expect(RESTART_NOT_OWNED).not.toMatch(/Start it from/);
     const failed = service({ serviceStart: vi.fn(async () => ({ ok: false, status: { running: false } })) });
     expect(await budServiceAction("restart", failed)).toEqual({ ok: false, text: RESTART_FAILED });
     expect(RESTART_FAILED).not.toMatch(/backup|restore/i);
+  });
+  it("a restart pressed while a support file is saving waits for it, then restarts", async () => {
+    let release!: () => void;
+    const slow = service({ saveSupportFile: vi.fn(() => new Promise(resolve => { release = () => resolve({ ok: true, officeReport: true }); })) });
+    const saving = budServiceAction("support", slow);
+    const restarting = budServiceAction("restart", slow);
+    await vi.waitFor(() => expect(slow.saveSupportFile).toHaveBeenCalled());
+    expect(slow.serviceStop).not.toHaveBeenCalled();
+    release();
+    expect(await saving).toEqual({ ok: true, text: SUPPORT_SAVED });
+    expect(await restarting).toEqual({ ok: true, text: "RealBud’s service restarted." });
+    expect(slow.serviceStart).toHaveBeenCalledTimes(1);
   });
   it("reports a saved, cancelled or failed support file in fixed words", async () => {
     expect(await budServiceAction("support", service())).toEqual({ ok: true, text: SUPPORT_SAVED });

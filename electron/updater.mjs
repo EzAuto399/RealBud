@@ -18,7 +18,9 @@ import { windowsKeyPrivacyAsync } from "./desk-key-custody.mjs";
 const require = createRequire(import.meta.url);
 
 let autoUpdater = null;
-let win = null;
+// The window to tell about update state: a getter, so a window reopened after
+// the first was closed still hears it.
+let liveWindow = () => null;
 // status: idle | checking | available | downloading | downloaded | error
 let state = { status: "idle" };
 // Whether the in-flight check came from the user's button. Background checks
@@ -31,7 +33,8 @@ let userInitiated = false;
 function setState(patch) {
   state = { ...state, ...patch };
   try {
-    win?.webContents?.send("update:state", state);
+    const target = liveWindow();
+    if (target && !target.isDestroyed()) target.webContents.send("update:state", state);
   } catch {
     /* window gone */
   }
@@ -94,7 +97,7 @@ function install() {
 }
 
 export function startUpdater(mainWindow) {
-  win = mainWindow;
+  liveWindow = typeof mainWindow === "function" ? mainWindow : () => mainWindow;
   // dev / unsigned builds can't auto-update — leave the banner dormant
   if (!app.isPackaged) {
     setState({ status: "idle" });

@@ -25,18 +25,26 @@ type ManagedBudStatusProps = {
 
 export const RESTART_HELP = "RealBud stops and starts its service on this computer. Your work is kept.";
 export const RESTART_FAILED = "RealBud couldn’t confirm its service restarted. Your work is kept. Start it from RealBud service under Settings & help, or contact RealBud support.";
+export const RESTART_NOT_OWNED = "Another RealBud installation on this computer started this service, so only that installation can restart it. Your work is kept.";
 type ServiceNote = { ok: boolean; text: string } | null;
 type ServiceBridge = Partial<BackupServiceBridge> & { saveSupportFile?: () => Promise<unknown> };
-let serviceActionFlight: Promise<ServiceNote> | null = null;
+type ServiceKind = "restart" | "support";
+let serviceActionFlight: { kind: ServiceKind; promise: Promise<ServiceNote> } | null = null;
 
 /** Restart the office service (a Bud update waits for it) or save a support
  * file, through the desktop bridge's existing, owner-checked controls. One at
  * a time across every Bud status view: a second press joins the first. The
  * note is fixed copy, never bridge error text. */
-export function budServiceAction(kind: "restart" | "support", bridge: ServiceBridge | undefined): Promise<ServiceNote> {
-  serviceActionFlight ??= (async (): Promise<ServiceNote> => {
+export function budServiceAction(kind: ServiceKind, bridge: ServiceBridge | undefined): Promise<ServiceNote> {
+  // A press joins an action of the same kind; another kind waits its turn.
+  if (serviceActionFlight?.kind === kind) return serviceActionFlight.promise;
+  const before = serviceActionFlight?.promise.catch(() => null);
+  const promise: Promise<ServiceNote> = (async (): Promise<ServiceNote> => {
+    await before;
     if (kind === "restart") {
       try {
+        const current = await bridge!.serviceStatus!();
+        if (current.running === true && !current.manageable) return { ok: false, text: RESTART_NOT_OWNED };
         await restartBackupService({ serviceStatus: () => bridge!.serviceStatus!(), serviceStop: () => bridge!.serviceStop!(), serviceStart: () => bridge!.serviceStart!() });
         return { ok: true, text: "RealBud’s service restarted." };
       } catch { return { ok: false, text: RESTART_FAILED }; }
@@ -45,8 +53,9 @@ export function budServiceAction(kind: "restart" | "support", bridge: ServiceBri
     try { outcome = supportSaveOutcome(await bridge!.saveSupportFile!()); }
     catch { outcome = supportSaveOutcome(null); }
     return outcome.kind === "saved" ? { ok: true, text: SUPPORT_SAVED } : outcome.kind === "failed" ? { ok: false, text: outcome.message } : null;
-  })().finally(() => { serviceActionFlight = null; });
-  return serviceActionFlight;
+  })().finally(() => { if (serviceActionFlight?.promise === promise) serviceActionFlight = null; });
+  serviceActionFlight = { kind, promise };
+  return promise;
 }
 
 const secondaryButton = "pm-control rounded border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50";

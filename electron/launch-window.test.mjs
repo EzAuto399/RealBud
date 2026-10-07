@@ -81,3 +81,21 @@ describe("launch window before the office service", () => {
     expect(show).toHaveBeenCalledTimes(1);
   });
 });
+
+// main.mjs's own wiring cannot run without Electron, so its launch order is
+// checked in the source: a Dock click during the wait must find a handler, and a
+// quit during the wait must start nothing more.
+describe("main.mjs launch order", () => {
+  it("registers activate before the wait, stops after a quit, and tells the live window about updates", async () => {
+    const { readFileSync } = await import("node:fs");
+    const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+    const activate = main.indexOf('app.on("activate"');
+    const wait = main.indexOf("await launch.decided;");
+    expect(activate).toBeGreaterThan(0);
+    expect(wait).toBeGreaterThan(activate);
+    expect(main.indexOf('app.on("activate"', activate + 1)).toBe(-1);
+    expect(main.slice(wait, wait + 200)).toMatch(/if \(appQuitting\(\)\) return;/);
+    expect(main).not.toMatch(/win \?\?= createWindow\(\)/);
+    expect(main).toMatch(/startUpdater\(\(\) =>/);
+  });
+});

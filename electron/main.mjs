@@ -254,7 +254,7 @@ async function startServerPackaged({ onlyPort = null } = {}) {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Getting your office ready</h2><p style="color:#fcfcfc99;line-height:1.5">Your desk opens here by itself as soon as it is ready. The first start on a computer can take a few minutes.</p><p style="color:#fcfcfc99;line-height:1.5">There is nothing you need to do. Your saved work stays on this computer while you wait.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Getting your office ready</h2><p style="color:#fcfcfc99;line-height:1.5">Your desk opens here by itself as soon as it is ready. The first start on a computer can take a few minutes.</p><p style="color:#fcfcfc99;line-height:1.5">There is nothing you need to do. Your saved work stays on this computer while you wait.</p><p style="color:#fcfcfc99;line-height:1.5">If this page stays, quit RealBud and open it again.</p></div></body>`,
   );
 
 // Shown when the dedicated bounded wait runs out. The ordinary background
@@ -1575,6 +1575,11 @@ app.whenReady().then(async () => {
     onStatus: (status) => slog(`service ${status.state} restarts=${status.restarts}${status.lastExitCode === null ? "" : ` exit=${status.lastExitCode}`}`),
   });
   let win = null;
+  // Registered before the wait: closing the waiting window and clicking the Dock
+  // opens a window that waits on the same decision (createWindow's default).
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) win = createWindow();
+  });
   if (app.isPackaged) {
     // The window comes first, on the waiting page: a slow first start used to show
     // nothing at all for over a minute. The decision behind it is the same single
@@ -1595,18 +1600,19 @@ app.whenReady().then(async () => {
     pendingLaunchDecision = launch.decided;
     await launch.decided;
     pendingLaunchDecision = null;
+    // Closing the waiting window on Windows quits mid-start: start nothing more.
+    if (appQuitting()) return;
     if (!smokeMode) startServiceWatchdog();
   }
   // After the service decision, because applying the settings reads the office's
   // last reported schedule state and must not delay the window.
   startServicePersistence();
-  win ??= createWindow();
+  // Unpackaged runs open their window here. A launch window closed during the
+  // wait stays closed; the Dock (activate) opens a new one.
+  if (!app.isPackaged) win = createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
-  // the user's click, installs on "Restart to update"
-  startUpdater(win);
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  // the user's click, installs on "Restart to update". It always tells the live window.
+  startUpdater(() => (win && !win.isDestroyed() ? win : BrowserWindow.getAllWindows()[0] ?? null));
 });
 
 app.on("window-all-closed", () => {
