@@ -9,6 +9,8 @@ export function youHashTarget(hash: string): string | null {
     case "you-jobs": return "you-jobs";
     case "connected-apps":
     case "you-connected-apps": return "you-connected-apps";
+    case "you-rules":
+    case "you-approvals": return "you-approvals";
     case "you-phone": return "you-phone";
     case "you-office": return "you-office";
     case "you-website": return "you-website";

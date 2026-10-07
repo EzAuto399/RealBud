@@ -397,8 +397,9 @@ type Action =
       requestId: string;
       behavior: "allow" | "deny" | "answer";
       message?: string;
-      /** Expiring provider-native grant for matching steps in this task. */
-      scope?: "once" | "session";
+      /** Expiring provider-native grant for matching steps in this task. A read
+       * offer answers `task` (this app's reads for this task) or `always-reads`. */
+      scope?: "once" | "session" | "task" | "always-reads";
       /** Standing site rule saved with this allow (portal read/prefill). */
       rule?: { surface: PortalRuleOfferSurface; origin: string };
       /** remember this exact grant (the server's allowKey) for the bot */

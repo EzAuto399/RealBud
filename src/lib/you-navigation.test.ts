@@ -38,6 +38,7 @@ describe("settings navigation", () => {
     ["#you-service-admin", "you-service-admin"],
     ["#you-memory", "you-memory"], ["#you-settings", "you-settings"],
     ["#you-browser", "you-browser"],
+    ["#you-approvals", "you-approvals"], ["#you-rules", "you-approvals"],
   ])("resolves %s to its settings section", (hash, id) => {
     expect(youHashTarget(hash)).toBe(id);
   });
