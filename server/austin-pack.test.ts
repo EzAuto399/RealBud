@@ -89,6 +89,24 @@ describe('installing the Austin pack', () => {
     expect(loop('maintenance-review')).toMatchObject({ enabled: true, schedule: { timezone: 'Australia/Brisbane' } });
   });
 
+  it('reports a pack loop id with no loop on this PC as unknown and sets nothing for it', async () => {
+    const { pack, loops, loop } = office();
+    loops.patchClock('weekly-bills', { time: '09:15' });
+    const before = loops.listLoops();
+    const results = await pack.applyPackLoops([
+      { id: 'recipe-fictional-missing-job', schedule: { type: 'daily', time: '08:00', weekdays: [1] } },
+      { id: 'weekly-bills', schedule: { type: 'daily', time: '08:00', weekdays: [1] } },
+      { id: 'owner-letter', schedule: { type: 'daily', time: '16:00', weekdays: [5] } },
+    ]);
+    expect(results).toEqual([
+      { loopId: 'recipe-fictional-missing-job', outcome: 'unknown' },
+      { loopId: 'weekly-bills', outcome: 'kept' },
+      { loopId: 'owner-letter', outcome: 'applied' },
+    ]);
+    expect(loops.listLoops().map(l => l.id)).toEqual(before.map(l => l.id));
+    expect(loop('weekly-bills')).toMatchObject({ enabled: false, schedule: { time: '09:15' } });
+  });
+
   it("sets the confirmed maintenance month rule only while the office has not chosen one", async () => {
     const untouched = office();
     await untouched.pack.install();

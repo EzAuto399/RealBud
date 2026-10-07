@@ -482,13 +482,21 @@ export class LoopManager {
    * change bumps revision and recomputes nextRunAt strictly forward — a
    * retune never backfills an already-passed slot. An idempotent PATCH
    * (values identical to current) is acknowledged without touching the
-   * bookmark or revision, so it can never swallow a pending slot. */
-  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string; intervalDays?: number | null; anchorDate?: string }): Loop {
+   * bookmark or revision, so it can never swallow a pending slot.
+   * `expectedRevision`, when given, is compare-and-set: a stale one is a 409
+   * with code "schedule_changed" and nothing changes. */
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string; intervalDays?: number | null; anchorDate?: string; expectedRevision?: number }): Loop {
     this.assertWritable();
     this.refreshRecipeLoops();
     this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
+    if (patch.expectedRevision !== undefined && (!Number.isSafeInteger(patch.expectedRevision) || patch.expectedRevision < 1)) {
+      throw Object.assign(new Error("A saved schedule revision is required."), { status: 400 });
+    }
+    if (patch.expectedRevision !== undefined && patch.expectedRevision !== loop.revision) {
+      throw Object.assign(new Error("This schedule changed. Reload it before changing it."), { status: 409, code: "schedule_changed" });
+    }
     if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
       throw Object.assign(new Error("enabled must be true or false"), { status: 400 });
     }
