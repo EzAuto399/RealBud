@@ -205,11 +205,17 @@ export function createW1Host(deps: W1HostDeps) {
     for (let guard = 0; saved.value.supersededBy && guard < 1000; guard++) saved = bank.get(saved.value.supersededBy.id);
     return saved;
   };
+  /** Batch ids held by a W1 import that is not abandoned: the store never rebuilds those (createFromRedbark). */
+  const openImport = async () => {
+    const held = new Set((await store.list()).filter(run => !(run.step === "done" && run.outcome === "abandoned"))
+      .flatMap(run => [run.fetch?.batchId, run.review?.batchId, run.upload?.batchId]));
+    return (batchId: string) => held.has(batchId);
+  };
   const source: W1BankSource = {
     async pull({ account, today: day }) {
       const bank = deps.store();
       try {
-        const summary = await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account, today: day, rules: bank.settings()?.rules ?? [] });
+        const summary = await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account, today: day, rules: bank.settings()?.rules ?? [], openImport: await openImport() });
         return { window: summary.window, coverageRevision: summary.coverage.revision,
           batch: summary.batch ? { id: summary.batch.id, transactionIds: provenanceIds(bank, summary.batch.id) } : null };
       } catch (error) { note(message(error)); throw error; }
@@ -510,7 +516,7 @@ export function createW1Host(deps: W1HostDeps) {
       const body = await readBody();
       if (!keys(body, ["account"]) || typeof body.account !== "string") return { status: 400, body: { error: "Choose the bank account to pull." } };
       const bank = deps.store();
-      return { status: 200, body: await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account: body.account, today: await deps.today(), rules: bank.settings()?.rules ?? [] }) };
+      return { status: 200, body: await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account: body.account, today: await deps.today(), rules: bank.settings()?.rules ?? [], openImport: await openImport() }) };
     }
     if (path === "/api/w1/runs/start" && method === "POST") {
       await ready;

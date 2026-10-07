@@ -12,7 +12,8 @@ import { readBankTransactions } from "./bank-provider.ts";
 import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
-import { createTenantDirectoryStore, type TenantEntry } from "./tenant-directory.ts";
+import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash, type TenantEntry } from "./tenant-directory.ts";
+import { tenantDirectoryRules } from "./bank-reference.ts";
 import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
@@ -452,6 +453,67 @@ describe("W1 host", () => {
       expect(now.closable).toBe(true);
       now = await f.act("abandon");
       expect(now.run).toMatchObject({ step: "done", outcome: "abandoned" });
+    });
+
+    const OLDER = "This review was made with an older REI tenant list. Correct the mapping before preparing it again.";
+    const saveList = (f: { db: WorkflowDatabase; tenants: { directory: unknown } }, list: TenantEntry[], expectedRevision: number) => {
+      createTenantDirectoryStore(f.db).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: String(expectedRevision).repeat(64), rows: list.length }, expectedRevision });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+    };
+
+    it("a batch no one reviewed is rebuilt from the changed list once its import is closed, and goes to REI", windowsAdmissionTimeout(255), async () => {
+      const f = await fixture();
+      saveList(f, [tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")], 0);
+      await f.configure();
+      await f.lab.handle({ action: "sign-in" });
+      await f.call("/api/w1/runs/start");
+      const batchId = (await f.settle()).run!.fetch!.batchId;
+      saveList(f, [tenant("FT-BRAVO", "FP-02")], 1);
+      const hints = vi.spyOn(f.store, "addJevHints");
+      // A pull while the open import still holds the batch: never rebuilt under it.
+      await expect(f.call("/api/w1/pull", "POST", { account: ACCOUNT })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(OLDER) });
+      expect(f.store.get(batchId).revision).toBe(1);
+      await f.act("abandon");
+      // Prepared again: the same record, rebuilt from the current list as a new revision; Jev is not asked again.
+      await f.call("/api/w1/runs/start");
+      let now = await f.settle();
+      expect(now.run).toMatchObject({ step: "review", fetch: { batchId } });
+      expect(f.store.get(batchId).revision).toBe(2);
+      expect(f.store.tenantSource(batchId)).toMatchObject({ source: "rei-directory", hash: tenantListHash([tenant("FT-BRAVO", "FP-02")]) });
+      expect(hints).not.toHaveBeenCalled();
+      await f.review(batchId);
+      await f.act("advance");
+      const sent = await f.answer();
+      expect(sent.tools).toContain("browser_upload");
+      // Past the gate and sent (the fictional REI names directory tenants differently, so its preview is not compared here).
+      expect(sent.run).toMatchObject({ step: "handoff", upload: { batchId } });
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("a reviewed batch from an older list is never rebuilt: closed, prepared again, it asks for a corrected mapping, which then goes to REI", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      const batchId = (await f.host.status()).run!.fetch!.batchId, source = f.store.tenantSource(batchId);
+      saveList(f, [tenant("FT-BRAVO", "FP-02")], 1);
+      await refused(f, "The REI tenant list changed since this batch was prepared. Prepare it again.");
+      await f.act("abandon");
+      await f.call("/api/w1/runs/start");
+      let now = await f.settle();
+      expect(now.note).toBe(OLDER);
+      expect(now.run).toMatchObject({ step: "fetch", attention: { reason: "fetch_failed" } });
+      // Left as the person reviewed it, with the list it was built from.
+      const saved = f.store.get(batchId);
+      expect(saved).toMatchObject({ revision: 2, value: { result: expect.any(Object), decisions: expect.any(Array) } });
+      expect(f.store.tenantSource(batchId)).toEqual(source);
+      // Correct mapping or decisions: a new review built on the current list, reviewed, then the run is prepared again.
+      const { columns, dateFormat, rules } = saved.value.batch.input;
+      const next = f.store.amend(batchId, { mapping: { columns, dateFormat, rules: tenantDirectoryRules(tenantDirectoryCsv([tenant("FT-BRAVO", "FP-02")]), rules) }, reason: "Fictional: current REI tenant list", revision: saved.revision });
+      // FT-CHARLIE is no longer on REI's list: the person holds that payment.
+      await f.review(next.id, reference => reference === "FT-CHARLIE" ? "hold" : null);
+      await f.act("advance");
+      const sent = await f.answer();
+      expect(sent.tools).toContain("browser_upload");
+      expect(sent.run).toMatchObject({ step: "handoff", upload: { batchId: next.id } });
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
     });
 
     it("an upload whose reply was lost can't be closed until REI's register shows nothing", windowsAdmissionTimeout(255), async () => {
