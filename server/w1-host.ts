@@ -28,7 +28,10 @@
 // REI account: REI reads the office's ANZ export natively (File Format
 // "ANZ(csv file)", the office default), so that is the default format. After
 // sign-in REI's addresses carry no reicid; the top-bar business code is the
-// account and the reicid is optional (kept when an office saved one).
+// account and the reicid is optional (kept when an office saved one). The
+// account lives in server/rei-account.ts, shared with every REI read; these
+// settings hold the bank account and file format (older files also hold `rei`,
+// which rei-account.ts reads as the account until it is saved there).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { HumanHandoffs } from "./human-handoffs.ts";
@@ -41,11 +44,12 @@ import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { answerPortalRecipeAsk, loadPortalRecipePackWithPaths, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { readReiAccount, saveReiAccount, validReiRef, type ReiAccountRef } from "./rei-account.ts";
 import { isFresh, REI_FRESH_MS } from "./source-gate.ts";
 import { pullRedbarkReview } from "./redbark-source.ts";
 import { amountCents, isoDate, reconcilePreview, type W1PreviewReconciliation, type W1RegisterBaseline } from "./w1-rei-reconciliation.ts";
 import { assertW1ReiBatch, awaitPosting, captureBaseline, preview, readback, W1_REI_PORTAL, w1ImportProof, w1ReiAccountKey, w1ReiGrantNeeds, type W1ImportProof, type W1PreviewOutcome, type W1ReiBatch, type W1ReiContext } from "./w1-rei-workflow.ts";
-import { isActive, serializeFile, W1StateStore, W1_DESTINATION, type W1Preview, type W1ReadbackFound, type W1Run } from "./w1-state.ts";
+import { isActive, serializeFile, W1StateStore, type W1Preview, type W1ReadbackFound, type W1Run } from "./w1-state.ts";
 import { createW1Workflow, type W1BankSource, type W1Inspection, type W1ReiBridge, type W1Readback, type W1Session } from "./w1-workflow.ts";
 import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-in-wait.ts";
 import { REDBARK_ACCOUNT_ID } from "../shared/bank-source.ts";
@@ -62,18 +66,18 @@ const money = (cents: number) => (cents / 100).toFixed(2);
 const txid = (rowId: string) => rowId.replace(/^redbark:/, "");
 
 // ── office settings: which bank account feeds which REI account ────────────
-/** `rei.marker`: the business code in REI's top bar (the account scope). `rei.urlValue`: a reicid, only when the office saved one. */
-export interface W1Settings { version: 1; kind: "w1-settings"; account: string; rei: { urlValue?: string; marker: string }; bankFormat: string; revision: number; savedAt: string }
+/** `account`: the bank account. `rei` only in files saved before the REI account had its own store (server/rei-account.ts). */
+export interface W1Settings { version: 1; kind: "w1-settings"; account: string; rei?: ReiAccountRef; bankFormat: string; revision: number; savedAt: string }
+/** The settings with the office's REI account (server/rei-account.ts) as `rei`. */
+export type W1Office = W1Settings & { rei: ReiAccountRef };
 /** REI's Bulk Receipting File Format for the office's ANZ export (the office default on that page). */
 export const W1_DEFAULT_BANK_FORMAT = "ANZ(csv file)";
 /** The run's destination: the saved reicid, else the top-bar business code. */
-const destinationOf = (office: W1Settings) => w1ReiAccountKey(office.rei);
+const destinationOf = (office: W1Office) => w1ReiAccountKey(office.rei);
 const settingsPath = (dataDir: string) => join(dataDir, "w1", "settings.json");
 function validSettings(v: unknown): W1Settings {
-  if (!keys(v, ["version", "kind", "account", "rei", "bankFormat", "revision", "savedAt"]) || v.version !== 1 || v.kind !== "w1-settings" ||
-      typeof v.account !== "string" || !REDBARK_ACCOUNT_ID.test(v.account) || !(keys(v.rei, ["marker"]) || keys(v.rei, ["urlValue", "marker"])) ||
-      (v.rei.urlValue !== undefined && (typeof v.rei.urlValue !== "string" || !W1_DESTINATION.test(v.rei.urlValue))) || !plain(v.rei.marker, 100) ||
-      !W1_DESTINATION.test(w1ReiAccountKey(v.rei as W1Settings["rei"])) || !plain(v.bankFormat, 100) ||
+  if (!(keys(v, ["version", "kind", "account", "bankFormat", "revision", "savedAt"]) || keys(v, ["version", "kind", "account", "rei", "bankFormat", "revision", "savedAt"]) && validReiRef(v.rei)) ||
+      v.version !== 1 || v.kind !== "w1-settings" || typeof v.account !== "string" || !REDBARK_ACCOUNT_ID.test(v.account) || !plain(v.bankFormat, 100) ||
       !Number.isSafeInteger(v.revision) || Number(v.revision) < 1 || typeof v.savedAt !== "string") {
     return fail(503, "The saved bank import settings need recovery. Nothing was changed.");
   }
@@ -82,6 +86,11 @@ function validSettings(v: unknown): W1Settings {
 export async function readW1Settings(dataDir: string): Promise<W1Settings | null> {
   const saved = await readPrivateJson(settingsPath(dataDir));
   return saved === undefined ? null : validSettings(saved);
+}
+/** The bank settings with the office's REI account, or null until both are saved. */
+export async function readW1Office(dataDir: string): Promise<W1Office | null> {
+  const [settings, account] = await Promise.all([readW1Settings(dataDir), readReiAccount(dataDir)]);
+  return settings && account ? { ...settings, rei: { marker: account.marker, ...(account.urlValue ? { urlValue: account.urlValue } : {}) } } : null;
 }
 
 export interface W1HostDeps {
@@ -190,7 +199,7 @@ export function createW1Host(deps: W1HostDeps) {
   })();
   /** A batch's proof, only while it names the saved REI account (same business code and reicid or none). */
   const currentProof = async (batchId: string) => {
-    const [proof, office] = await Promise.all([saved_.proof(batchId), readW1Settings(deps.dataDir)]);
+    const [proof, office] = await Promise.all([saved_.proof(batchId), readW1Office(deps.dataDir)]);
     return proof && office && sameW1Destination(proof.destination, office.rei) ? proof : null;
   };
 
@@ -237,7 +246,7 @@ export function createW1Host(deps: W1HostDeps) {
   };
 
   // ── REI over the portal recipe runner ──
-  const settings = async () => (await readW1Settings(deps.dataDir)) ?? fail(409, "Choose the bank account and REI account for bank imports first.");
+  const settings = async () => (await readW1Office(deps.dataDir)) ?? fail(409, "Choose the bank account and REI account for bank imports first.");
   const runFor = async (attemptId: string) => (await store.list()).find(run => run.upload?.attemptId === attemptId) ?? fail(404, "That upload is not part of a saved bank import.");
   /** The REI import file and its rows, exactly as reviewed. Throws a sentence when REI receipting cannot take it.
    * `sending`: the file is about to go to REI, so its tenants must still be the saved list's. */
@@ -473,7 +482,7 @@ export function createW1Host(deps: W1HostDeps) {
     await ready;
     // Read "working" before the run, so a run read while work was going on is never shown as settled.
     const busy = new Set(working.keys());
-    const run = await latest(), office = await readW1Settings(deps.dataDir);
+    const run = await latest(), office = await readW1Office(deps.dataDir);
     // "Close and prepare again" without a readback: only an upload attempt the evidence proves never started.
     const closable = !!run && !busy.has(run.id) && run.step === "check_outcome" && run.uncertain?.kind === "upload" && !!run.upload && !run.upload.preview && await saved_.notSent(run.upload.attemptId);
     return { settings: office, run, closable, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
@@ -487,19 +496,24 @@ export function createW1Host(deps: W1HostDeps) {
       const body = await readBody();
       // The REI account is its top-bar business code; a reicid and the file format are optional (default ANZ(csv file)).
       const shape = object(body) && ["account", "reiBusiness", "expectedRevision"].every(key => key in body) &&
-        Object.keys(body).every(key => ["account", "reiAccount", "reiBusiness", "bankFormat", "expectedRevision"].includes(key)) &&
-        (body.reiAccount === undefined || typeof body.reiAccount === "string") && (body.bankFormat === undefined || typeof body.bankFormat === "string");
+        Object.keys(body).every(key => ["account", "reiAccount", "reiBusiness", "bankFormat", "expectedRevision", "reiRevision"].includes(key)) &&
+        (body.reiAccount === undefined || typeof body.reiAccount === "string") && (body.bankFormat === undefined || typeof body.bankFormat === "string") &&
+        (body.reiRevision === undefined || Number.isSafeInteger(body.reiRevision));
       if (!shape) return { status: 400, body: { error: "Choose the bank account and the business shown in REI's top bar." } };
       const current = await readW1Settings(deps.dataDir);
       if (body.expectedRevision !== (current?.revision ?? 0)) return { status: 409, body: { error: "The bank import settings changed. Reload them and try again." } };
       if ((await store.list()).some(isActive)) return { status: 409, body: { error: "Finish or close the open bank import before changing these settings." } };
       const reicid = typeof body.reiAccount === "string" && body.reiAccount.trim() ? body.reiAccount.trim() : undefined;
-      const next = validSettings({ version: 1, kind: "w1-settings", account: body.account, rei: { ...(reicid ? { urlValue: reicid } : {}), marker: body.reiBusiness },
+      const next = validSettings({ version: 1, kind: "w1-settings", account: body.account,
         bankFormat: typeof body.bankFormat === "string" && body.bankFormat.trim() ? body.bankFormat.trim() : W1_DEFAULT_BANK_FORMAT,
         revision: (current?.revision ?? 0) + 1, savedAt: new Date().toISOString() });
+      // The REI account is the office's one REI account (server/rei-account.ts): saved there when it is new or changed, against
+      // the revision the person saw (`reiRevision`, 0 when the form saw none), so a code saved meanwhile is never overwritten (409).
+      const rei = await readReiAccount(deps.dataDir);
+      if (!rei || rei.revision === 0 || rei.marker !== body.reiBusiness || rei.urlValue !== reicid) await saveReiAccount(deps.dataDir, { marker: body.reiBusiness, urlValue: reicid }, Number(body.reiRevision ?? 0));
       await writePrivateJson(settingsPath(deps.dataDir), next);
       deps.onSettings?.(next);
-      return { status: 200, body: { settings: next } };
+      return { status: 200, body: { settings: await readW1Office(deps.dataDir) } };
     }
     if (path === "/api/w1/coverage" && method === "GET") {
       const account = query.get("account") ?? "";
@@ -559,7 +573,7 @@ export function createW1Host(deps: W1HostDeps) {
    * tells the Schedule row what the run waits for. */
   async function runLoop(noteRun: (detail: string) => void = () => {}): Promise<{ ok: boolean; status?: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }> {
     await ready;
-    const office = await readW1Settings(deps.dataDir);
+    const office = await readW1Office(deps.dataDir);
     if (!office) return { ok: false, status: "failed", detail: "Choose the bank account and REI account for bank imports first." };
     let run = (await store.list()).find(item => isActive(item) && item.account === office.account) ?? null;
     try { run ??= await workflow.start({ account: office.account, destination: destinationOf(office) }); }

@@ -44,6 +44,10 @@ export interface SignInRuntime {
   openSignInTab(url: string): Promise<string>; signInTabUrl(targetId: string): Promise<string | null>;
   /** Loads `url` again in the same tab: never a second tab. Absent: a long wait does not refresh. */
   reloadSignInTab?(targetId: string, url: string): Promise<void>;
+  /** Brings the open sign-in tab forward; false once it has closed. Absent: an open tab is left where it is. */
+  showSignInTab?(targetId: string): Promise<boolean>;
+  /** The work browser's open tabs, by address only. Absent: every handover opens its own tab. */
+  signInTabs?(): Promise<Array<{ targetId: string; url: string }>>;
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -138,8 +142,28 @@ interface Handover {
   until: number | null;
   /** Ends the current poll's sleep (Done). */
   nudge(): void;
+  /** Puts the sign-in page in front of the person again: the same tab, or a new one once it has closed. */
+  show(): Promise<void>;
 }
 const handovers = new Map<string, Handover>();
+/** Each site's last sign-in fact in this process (by site name): a handover's end, or a host read that found the
+ * site signed in or out (noteSiteSignIn). Never persisted: after a restart the site reads as not checked. */
+const lastSeen = new Map<string, { signedIn: boolean; at: number }>();
+/** A host read (e.g. the REI morning refresh) found the site signed in or signed out. */
+export function noteSiteSignIn(site: string, signedIn: boolean, at = Date.now()): void { lastSeen.set(site, { signedIn, at }); }
+/** The site's sign-in as RealBud last saw it: a handover waiting on it now, else the last fact, else unknown. */
+export function siteSignInState(site: string): { state: "needed" | "signed_in" | "unknown"; at: number | null; waiting: string | null } {
+  const open = [...handovers.values()].find(item => item.site.name === site && (item.state === "waiting" || item.state === "wrong_account"));
+  if (open) return { state: "needed", at: null, waiting: open.id };
+  const seen = lastSeen.get(site);
+  return seen ? { state: seen.signedIn ? "signed_in" : "needed", at: seen.at, waiting: null } : { state: "unknown", at: null, waiting: null };
+}
+/** Brings a waiting handover's sign-in page forward (Desk's "Sign in to REI"); false once it has ended. */
+export async function signInShow(id: string): Promise<boolean> {
+  const item = handovers.get(id);
+  if (!item || item.state !== "waiting" && item.state !== "wrong_account") return false;
+  await item.show(); return true;
+}
 const settledListeners = new Set<(event: { threadId: string | null; id: string; outcome: SignInOutcome; origin: string; site: string; inTurn: boolean }) => void>();
 /** The host starts the continue turn when a sign-in finishes after the tool call stopped waiting. */
 export function onSignInSettled(listener: Parameters<typeof settledListeners.add>[0]): () => void {
@@ -183,10 +207,25 @@ async function begin(site: SignInSite, url: string, input: { reason: string; acc
   if (open) return open;
   const runtime = deps.runtime ?? browserRuntime;
   const now = deps.now ?? Date.now;
-  const targetId = await runtime.openSignInTab(url);
+  // A tab already on the site or its sign-in page (yesterday's, with no handover left) is loaded at the sign-in address and
+  // brought forward instead: a second site tab would leave two portal tabs, which a portal run refuses to choose between.
+  const openTab = async () => {
+    const tabs = runtime.signInTabs && runtime.reloadSignInTab ? await runtime.signInTabs().catch(() => []) : [];
+    const reuse = tabs.find(tab => onSignInPage(site, tab.url) || URL.canParse(tab.url) && new URL(tab.url).origin === site.origin);
+    if (!reuse) return runtime.openSignInTab(url);
+    await runtime.reloadSignInTab!(reuse.targetId, url);
+    await runtime.showSignInTab?.(reuse.targetId).catch(() => false);
+    return reuse.targetId;
+  };
+  let targetId = await openTab();
   const long = input.until !== undefined;
   const item: Handover = { id: randomUUID(), threadId, site, reason: input.reason.slice(0, 300), account: input.account ?? null, state: "waiting", done: false, stopped: false, inTurn: true, stop: () => {}, settled: Promise.resolve("stopped"),
-    until: input.until ?? null, nudge: () => {} };
+    until: input.until ?? null, nudge: () => {},
+    // The same tab brought forward while it is open (a second sign-in tab would leave two REI tabs); a closed one opens again and is watched instead.
+    show: async () => {
+      const open = runtime.showSignInTab ? await runtime.showSignInTab(targetId).catch(() => false) : await runtime.signInTabUrl(targetId).then(value => value !== null, () => false);
+      if (!open) targetId = await openTab();
+    } };
   handovers.set(item.id, item);
   const started = now(); const limit = long ? input.until! - started : deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS; const signal = input.signal;
   // The first terminal outcome wins and is final: Stop, an aborted signal or
@@ -199,6 +238,8 @@ async function begin(site: SignInSite, url: string, input: { reason: string; acc
     if (final) return; final = outcome;
     signal?.removeEventListener("abort", aborted);
     item.state = outcome === "wrong_account" ? "timed_out" : outcome;
+    // Wall-clock time, like the loop runs it is compared with (a test lab may move the handover's own clock).
+    noteSiteSignIn(site.name, outcome === "signed_in");
     const event = { threadId, id: item.id, outcome, origin: site.origin, site: site.name, inTurn: item.inTurn };
     for (const listener of settledListeners) { try { listener(event); } catch { /* display only */ } }
     // Keep the ended strip briefly so the person sees how it ended.

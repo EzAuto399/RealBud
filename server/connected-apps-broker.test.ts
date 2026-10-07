@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, recordConnectedAppApproval, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
 import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { defaultApprovalSettings, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, APPROVAL_TIMED_OUT_RECEIPT, type ApprovalAnswer } from "./approval-answer.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import { createApprovalSettings, governApprovals, OFFICE_NOT_CHECKED } from "./approval-settings.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -96,7 +97,7 @@ describe("connected app result classification", () => {
 describe("connected app authoritative broker", () => {
   let upstream: Server, broker: ConnectedAppsBroker;
   let active: boolean;
-  let approve = vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>();
+  let approve = vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<ApprovalAnswer>>();
   let received: any[];
   let url: string;
   let requestId: number;
@@ -205,6 +206,16 @@ describe("connected app authoritative broker", () => {
     expect(rows).toHaveLength(2);
     expect(rows.map(row => [row.status, row.approval])).toEqual(expect.arrayContaining([
       ["succeeded", "Allowed once by Fictional Sam via Telegram · 2:16 pm"], ["denied", "Denied by Fictional Alex via Slack · 2:17 pm"]]));
+  });
+  it("tells Bud a card nobody answered apart from Don't allow, and names it on the receipt", async () => {
+    approve.mockResolvedValueOnce({ allowed: false, resolution: "timeout" });
+    const timedOut = await invoke("tools/call", { name: "write" });
+    expect(timedOut.body.result).toMatchObject({ isError: true, content: [{ text: APPROVAL_TIMED_OUT }] });
+    approve.mockResolvedValueOnce({ allowed: false, resolution: "user" });
+    const denied = await invoke("tools/call", { name: "write" });
+    expect(denied.body.result).toMatchObject({ isError: true, content: [{ text: `${APPROVAL_DENIED} Do not retry without a new user request.` }] });
+    expect(received).toHaveLength(0);
+    expect(operations.list().map(row => [row.status, row.approval])).toEqual(expect.arrayContaining([["denied", APPROVAL_TIMED_OUT_RECEIPT], ["denied", undefined]]));
   });
   it("reuses a denial on duplicate delivery", async () => {
     await invoke("tools/call", { name: "write" }, 5);

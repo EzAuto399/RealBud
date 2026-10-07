@@ -205,7 +205,7 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
   /** `note`: the scheduled check's Schedule row, whose run waits on REI's sign-in page until the office day ends. */
   async function execute(run: Run, signal: AbortSignal, note?: (detail: string) => void) {
     const account = await deps.account();
-    if (!account) return fail(409, "Save the REI business code (Schedule → Bank reference review → Set up bank imports) before refreshing from REI.");
+    if (!account) return fail(409, "Save the REI business code (Schedule → Bank reference review → Refresh from REI) before refreshing from REI.");
     // Cold start: open the work browser first; a browser that is still not ready goes to the sign-in handover.
     if (!(await deps.browserId())) {
       try { await deps.runtime.connect?.(); } catch { return fail(409, NO_BROWSER); }

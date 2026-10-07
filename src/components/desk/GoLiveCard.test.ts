@@ -11,6 +11,7 @@ const officeFixture = vi.hoisted(() => ({ snapshot: null as unknown }));
 vi.mock('@/lib/connected-apps-refresh', () => ({ useOfficeSources: () => ({ snapshot: officeFixture.snapshot, loading: false, error: '' }) }));
 
 import { GoLiveCard, READ_RETRY_DELAYS_MS, boundedRead, dismissSetUp } from './GoLiveCard';
+import { readGetStartedLocal, saveGetStartedLocal } from '@/lib/first-day';
 
 const plan = { reads: 'r', waitsFor: 'w', notifies: 'n', approval: 'a' };
 const pack = (gmail = false): AustinPackView => ({
@@ -104,6 +105,11 @@ describe('Get started card', () => {
     vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) });
     expect(render({ ...linked, austinPack: pack(true) })).toContain('You’re set up.');
     dismissSetUp();
+    // The finished line goes; the first-day guide stays until it is dismissed too.
+    const guideOnly = render({ ...linked, austinPack: pack(true) });
+    expect(guideOnly).not.toContain('You’re set up.');
+    expect(guideOnly).toContain('aria-label="Your first day with Bud"');
+    saveGetStartedLocal({ ...readGetStartedLocal(), guideDismissed: true });
     expect(render({ ...linked, austinPack: pack(true) })).toBe('');
     // Dismissal is for the finished line only; unfinished setup still shows the checklist.
     storeWith(['bank-references'], { ready: true });
@@ -112,6 +118,58 @@ describe('Get started card', () => {
     storeWith(['bank-references', 'inbound-triage', 'maintenance-review'], { ready: true });
     expect(() => dismissSetUp()).not.toThrow();
     expect(render({ ...linked, austinPack: pack(true) })).toContain('You’re set up.');
+  });
+
+  it('shows progress, lets the current step be skipped for now and brought back, and never counts a skipped step as done', () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value), removeItem: (key: string) => void saved.delete(key) });
+    storeWith([], { ready: true });
+    const before = render(linked);
+    expect(before).toContain('role="progressbar" aria-label="Get started progress" aria-valuemin="0" aria-valuemax="5" aria-valuenow="3"');
+    expect(before.match(/>Skip for now</g)).toHaveLength(1);
+    expect(before).toContain('aria-label="Skip for now: Connect the office Gmail"');
+    saveGetStartedLocal({ ...readGetStartedLocal(), skipped: ['gmail'] });
+    const after = render(linked);
+    expect(after).toContain('3 of 5 done · 1 skipped');
+    expect(after).toContain('4. Connect the office Gmail<span class="text-[12px] text-ink-muted"> · Skipped</span>');
+    expect(after).toContain('aria-label="Back to this step: Connect the office Gmail"');
+    // The next open step is now the one current action.
+    expect(after).toContain('aria-label="Skip for now: Review and switch on your workflows"');
+    expect(after).not.toContain('You’re set up.');
+  });
+
+  it('hands Desk\'s one filled action to another card when quiet', () => {
+    const loud = render({ agencyName: '' });
+    expect(loud).toMatch(/border-agency bg-agency text-white[^"]*"[^>]*>Enter link code/);
+    const quiet = render({ agencyName: '', quiet: true });
+    expect(quiet).toContain('>Enter link code</button>');
+    expect(quiet).not.toMatch(/bg-agency text-white[^"]*"[^>]*>Enter link code/);
+  });
+
+  it('shows this computer\'s role workflows on the first day, folded until setup is done, with what each reads and asks', () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value), removeItem: (key: string) => void saved.delete(key) });
+    const sherry: AustinPackView = { ...pack(true), installed: { revision: 1, at: 1, loopIds: ['maintenance-review', 'rei-supplier-check', 'inspection-draft'] } };
+    storeWith([], { ready: true });
+    const folded = render({ ...linked, austinPack: sherry });
+    expect(folded).toContain('aria-label="Your first day with Bud"');
+    expect(folded).toContain('aria-expanded="false"');
+    expect(folded).toContain('· 0 of 2 tried');
+    expect(folded).not.toContain('Try it with Bud');
+    // Kevin's three, unfolded once setup is done; one tried shows as tried.
+    saveGetStartedLocal({ ...readGetStartedLocal(), tried: ['weekly-bills'] });
+    const kevin: AustinPackView = { ...pack(true), installed: { revision: 1, at: 1, loopIds: ['bank-references', 'weekly-bills', 'inbound-triage'] } };
+    store.state = { hermes: { ready: true }, activityLoad: { jobs: 'ready', routines: 'ready' }, loops: ['bank-references', 'weekly-bills', 'inbound-triage', 'maintenance-review'].map(id => loop(id, id, true)) };
+    const open = render({ ...linked, austinPack: kevin });
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('· 1 of 3 tried');
+    for (const name of ['Bank reference review', 'Weekly bills review', 'Morning priorities']) expect(open).toContain(`aria-label="Try it with Bud: ${name}"`);
+    expect(open).not.toContain('Maintenance checks');
+    expect(open).toContain('<span class="text-ink">Needs your OK:</span> Uploading the exact file to REI.');
+    expect(open).toContain('aria-label="Tried"');
+    // No role pack, or a pack that could not be read: no guide.
+    expect(render({ ...linked, austinPack: { ...pack(true), installed: null } })).not.toContain('Your first day with Bud');
+    expect(render({ ...linked, austinPack: 'unavailable' })).not.toContain('Your first day with Bud');
   });
 
   it('names the app the linked office service offers with no account, without a role pack', () => {

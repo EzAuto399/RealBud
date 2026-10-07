@@ -110,6 +110,8 @@ const LEGACY_SHIPPED: Readonly<Record<string, readonly string[]>> = {
     "c7dcdea8b878e366db9b82c8663a7db90c7bdc9de1491a0bd41735cea59b1d54", "d98188e07093c803576c1690985573336a5bfbd54edc91d94a960f6638603a9f",
     // Last property-management SOUL (2026-10-07), so a profile with a damaged record still takes the neutral one.
     "1aee1058db6dec321da6791c5575f86799f58748321b2fad80f17c4e5a7b7c44",
+    // Neutral SOUL before Bud could propose a workflow's new time (2026-10-08).
+    "e7991443b5d1bc198277b04845090ca13dccf0d617df4758fce79e8d024faa04",
   ],
   "skills/morning-arrears/SKILL.md": ["f52e1dc7954e750eada6b35d97e367c3c9a2bb5488947694968c53447e8ba1df"],
 };
