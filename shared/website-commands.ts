@@ -1,5 +1,4 @@
-/** Versioned website request protocol. No source data, recipe ids, paths or instructions. */
-export const WEBSITE_COMMAND_PROTOCOL = 1 as const;
+// Versioned website request protocol. No source data, recipe ids, paths or instructions.
 export const COMMAND_PAGE_SIZE = 32;
 export const COMMAND_OPERATIONS = ['morning-review', 'prepare-recipe'] as const;
 export type WebsiteCommandOperation = typeof COMMAND_OPERATIONS[number];

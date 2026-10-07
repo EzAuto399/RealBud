@@ -23,8 +23,6 @@ export interface BudRule {
   origin?: string;
 }
 
-export const PORTAL_RULE_SURFACES: readonly PortalRuleSurface[] = ["portal-read", "portal-prefill"];
-
 function rulesPath(): string {
   return join(DATA_DIR, "rules.json");
 }

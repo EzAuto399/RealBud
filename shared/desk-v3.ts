@@ -53,7 +53,6 @@ export type TenancyLifecycle = (typeof TENANCY_LIFECYCLES)[number];
 export type ImportIssueKind = (typeof IMPORT_ISSUE_KINDS)[number];
 export type ImportIssueStatus = (typeof IMPORT_ISSUE_STATUSES)[number];
 export type ClosedHandoffOperation = (typeof CLOSED_HANDOFF_OPERATIONS)[number];
-export type ForbiddenHandoffAction = (typeof FORBIDDEN_HANDOFF_ACTIONS)[number];
 export const CASE_STATES = [
   "proposed",
   "approved",

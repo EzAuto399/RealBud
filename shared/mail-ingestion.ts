@@ -1,10 +1,4 @@
 /** Mail is untrusted evidence. These records never grant tool or send authority. */
-export interface MailSourceScope {
-  historyDays: number;
-  includeSent: boolean;
-  maxMessages: number;
-  attachmentPolicy: 'metadata-only';
-}
 export interface MailScanRequest {
   windowStartAt: number;
   windowEndAt: number;

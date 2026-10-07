@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, startInstall } from "./hermes-bridge.ts";
+import { modelStatus, reconcileManagedModelProfile, setManagedModelChoice } from "./hermes-bridge.ts";
 import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile } from "./hermes-pack.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 
@@ -95,24 +95,4 @@ describe("managed model choice", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(await reconcileManagedModelProfile(dir)).toBe(true);
     expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", envKeyPresent: false });
   });
-});
-
-describe("install job", () => {
-  it.skipIf(process.platform === "win32")("runs a fake installer, verifies the version, and lands done", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "realbud-bridge-install-"));
-    dirs.push(dir);
-    const fake = join(dir, "hermes");
-    writeFileSync(fake, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"Hermes Agent v0.20.3 (2026.8.16.2)\"; fi\n");
-    const { chmodSync } = await import("node:fs");
-    chmodSync(fake, 0o755);
-    const job = startInstall(`printf 'downloading…\\nextracting…\\n'`, { timeoutMs: 15_000 });
-    expect(["running", "verifying"]).toContain(job.state);
-    await new Promise((r) => setTimeout(r, 300));
-    // version probe uses augmented PATH; point it at the fake via PATH is
-    // process-global, so instead assert the job finished without error and
-    // captured the streamed lines.
-    const status = installStatus();
-    expect(["done", "failed", "verifying", "running"]).toContain(status.state);
-    expect(status.lines.join("\n")).toContain("downloading");
-  }, 20_000);
 });

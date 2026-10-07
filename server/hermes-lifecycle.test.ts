@@ -6,8 +6,9 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { installInFlight, startInstall } from "./hermes-bridge.ts";
-import { repairExistingProfile, startRepair, uninstallWorker, WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
+import { cancelBootstrapInstall, installInFlight, startBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
+import { repairExistingProfile, uninstallWorker, WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
+import type { runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
@@ -222,7 +223,7 @@ describe("uninstallWorker", () => {
   });
 });
 
-describe("startRepair", WINDOWS_PROFILE_TEST_OPTIONS, () => {
+describe("repairExistingProfile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it("repairs the property pack without replacing an independent 0.21 runtime or model", async () => {
     const home = tempDir("realbud-repair-profile-");
     const profile = join(home, "profiles", HERMES_PIN.profile);
@@ -268,15 +269,18 @@ describe("startRepair", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   });
 
   it("returns 409 while an install job is running", async () => {
-    const job = startInstall("sleep 3", { timeoutMs: 8_000 });
-    expect(["running", "verifying", "preflight"]).toContain(job.state);
-    expect(installInFlight()).toBe(true);
-    expect(() => startRepair("true")).toThrow(/already running/);
-    await expect(uninstallWorker()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Let Bud setup finish/) });
+    const waiting: typeof runWorkerBootstrap = async options => {
+      await new Promise<void>(resolve => options.signal.addEventListener("abort", () => resolve(), { once: true }));
+      options.signal.throwIfAborted();
+    };
+    startBootstrapInstall({ run: waiting });
     try {
-      startRepair("true");
-    } catch (err) {
-      expect((err as { status?: number }).status).toBe(409);
+      expect(installInFlight()).toBe(true);
+      await expect(repairExistingProfile()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already running/) });
+      await expect(uninstallWorker()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Let Bud setup finish/) });
+    } finally {
+      cancelBootstrapInstall();
+      await waitForBootstrapStop();
     }
   });
 });
