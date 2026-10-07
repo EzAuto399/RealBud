@@ -12,7 +12,7 @@ import { BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
 import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, verifiedShippedRecipesText, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
@@ -51,8 +51,8 @@ describe("portal recipe task cards", () => {
   it("proposes exactly what the recipes need, including the sign-in host, and only read recipes", async () => {
     const live = await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "morning", inputs: MORNING_INPUTS, account: ACCOUNT });
     expect(live.sites).toEqual(["https://app.reimasterapps.com.au", "https://reimasterapps.b2clogin.com"]);
-    expect(live.actions).toEqual(expect.arrayContaining(["read", "click", "navigate", "fill", "keys"]));
-    expect(live.actions).not.toContain("submit");
+    // The morning reads choose Show entries and type nothing: no keys.
+    expect(live.actions.sort()).toEqual(["click", "fill", "navigate", "read"]);
     expect(live.recipe.runs.map(run => run.recipe)).toEqual(["open-session", "arrears-review", "tasks-due", "bank-reconciliation-read"]);
     expect(live.recipe.runs[1].inputs).toEqual({ min_days: "1" });
     expect(live.request).toContain("Read only");
@@ -60,10 +60,26 @@ describe("portal recipe task cards", () => {
     expect((await portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT })).recipe.runs.map(run => run.recipe)).toEqual(["open-session", "bank-reconciliation-read"]);
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "receipt-register", inputs: MORNING_INPUTS, account: ACCOUNT })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Only read recipes/) });
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "arrears-review", account: ACCOUNT })).rejects.toMatchObject({ status: 400 });
+    // tenant-list only reads its grid, so Ask can run it; a learned path that ends in a download is not a read any more.
+    expect((await portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "tenant-list", account: ACCOUNT })).recipe.runs.map(run => run.recipe)).toEqual(["open-session", "tenant-list"]);
+    const learned = async () => { const pack = fictionalReiPack(); return { ...pack, recipes: { ...pack.recipes, "tenant-list": { ...pack.recipes["tenant-list"], steps: [...pack.recipes["tenant-list"].steps, { download: { label: "Export" } }] } } }; };
+    await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "tenant-list", account: ACCOUNT }, learned)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Only read recipes/) });
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "morning", inputs: MORNING_INPUTS, account: { urlValue: "x" } })).rejects.toMatchObject({ status: 400 });
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "../secrets", target: "morning", account: ACCOUNT })).rejects.toMatchObject({ status: 404 });
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "nope", account: ACCOUNT })).rejects.toMatchObject({ status: 404 });
     expect((await loadPortalRecipePack("rei-cloud")).portal).toBe("rei-cloud");
+  });
+
+  it("loads the shipped recipes only when their text matches the reviewed digest", async () => {
+    const real = await verifiedShippedRecipesText("rei-cloud");
+    expect(JSON.parse(real).portal).toBe("rei-cloud");
+    // A CRLF checkout of the same text passes; one changed byte, or a missing pin, is refused before anything is parsed.
+    const read = (edit: (text: string, path: string) => string) => (path: string) => Promise.resolve(edit(readFileSync(path, "utf8"), path));
+    expect(await verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("recipes.json") ? text.replace(/\n/g, "\r\n") : text))).toBe(real);
+    await expect(verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("recipes.json") ? text.replace("\"read\"", "\"prepare\"") : text)))
+      .rejects.toMatchObject({ status: 409, message: "These REI recipes were changed after review. Reinstall RealBud." });
+    await expect(verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("provenance.json") ? "{}" : text))).rejects.toMatchObject({ status: 409 });
+    await expect(verifiedShippedRecipesText("../x")).rejects.toMatchObject({ status: 404 });
   });
 
   it("saves the recipe with the card, binds the account marker in the grant, and keeps older records loadable", async () => {
@@ -154,6 +170,34 @@ describe("running a started recipe task", () => {
       expect(text).not.toContain("Nothing was saved");
       expect(text).toContain("RealBud cannot confirm what changed in the portal");
     }
+  });
+
+  it("reads the default arrears grid and keeps the rows at or above min_days, saying how many REI showed", async () => {
+    const f = await fixture();
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "arrears-review", inputs: { min_days: "10" }, account: ACCOUNT }, fictional), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: fictional, ...f.stores });
+    expect(result.outcome, result.detail).toBe("completed");
+    // Only the named Show entries control was touched; the day filter is RealBud's.
+    expect(f.mock.calls.filter(args => ["fill", "select", "press"].includes(args[0])).map(args => args[0])).toEqual(["select"]);
+    expect(result.results[1]).toMatchObject({ footer: 7, filtered: { read: 7, unapplied: [] } });
+    expect(result.results[1].rows).toHaveLength(5);
+    expect(portalRecipeTaskReply(result)).toContain("**arrears-review**: 5 rows over 2 pages, kept from 7 read; stopped before Notice.");
+  });
+
+  it("records a row filter it could not apply in the receipt: every row kept, flagged for loop records too", async () => {
+    const f = await fixture();
+    // A portal whose arrears grid has no Days Arrears column: the filter cannot run.
+    const renamed = async () => { const pack = fictionalReiPack(); const recipe = pack.recipes["arrears-review"];
+      return { ...pack, recipes: { ...pack.recipes, "arrears-review": { ...recipe, rowFilter: recipe.rowFilter!.map(filter => ({ ...filter, column: "Days Overdue" })) } } }; };
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "arrears-review", inputs: { min_days: "10" }, account: ACCOUNT }, renamed), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: renamed, ...f.stores });
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(result.results[1]).toMatchObject({ filtered: { read: 7, unapplied: ["Days Overdue"] } });
+    expect(result.results[1].rows).toHaveLength(7);
+    expect(result.receipt.flags).toContain("row-filter-unapplied: arrears-review Days Overdue");
+    expect(portalRecipeTaskReply(result)).toContain("Check: row-filter-unapplied: arrears-review Days Overdue.");
   });
 
   it("keeps a host's hold on the grant from Start until the task ends, across the run", async () => {

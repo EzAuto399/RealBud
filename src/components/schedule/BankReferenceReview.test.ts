@@ -40,6 +40,12 @@ describe("W1 run strip", () => {
     expect(buttons(mismatch)).toEqual(["Close this import"]);
     expect(strip(run({ step: "check_outcome" }))).toContain("Check previous upload first");
     expect(buttons(strip(run({ step: "check_outcome", attention: { reason: "nothing_found", message: "x" } })))).toEqual(["Upload again", "Close this import"]);
+    // An unknown outcome closes directly only when the host proves the upload never started.
+    const unknown = run({ step: "check_outcome", attention: { reason: "outcome_unknown", message: "x" } });
+    expect(buttons(strip(unknown))).toEqual(["Check again"]);
+    expect(buttons(strip({ ...unknown, closable: true }))).toEqual(["Check again", "Close and prepare again"]);
+    expect(parseW1Status({ ...unknown, closable: true }).closable).toBe(true);
+    expect(() => parseW1Status({ ...unknown, closable: "yes" })).toThrow();
   });
 
   it("puts the person's approval first, shows readback results and says when the import is done", () => {

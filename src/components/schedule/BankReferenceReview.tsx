@@ -298,6 +298,8 @@ export type W1Status = {
     fetch: { from: string; to: string; batchId: string; transactionIds: string[] } | null; handoff: { at: string } | null;
     upload: { preview: { warnings: string[] } | null } | null; confirm: { coveredThrough: string | null } | null };
   working: boolean; ask: { requestId: string; tool: string; summary: string } | null; note: string | null;
+  /** The open upload attempt provably never started (RealBud refused it first): it may be closed without a readback. */
+  closable?: boolean;
   readback: { accepted: number; rejected: number; pending: number; warnings: string[] } | null; handoff: string | null;
   /** While the run waits for the person to sign in to REI: the handover's thread. */
   signIn?: string | null;
@@ -310,7 +312,7 @@ const text = (v: unknown) => typeof v === "string";
 export function parseW1Status(value: unknown): W1Status {
   const bad = () => { throw new Error("The bank import status could not be checked. Refresh and try again."); };
   if (!record(value) || typeof value.working !== "boolean" || !(value.note === null || text(value.note)) || !(value.handoff === null || text(value.handoff)) ||
-    !(value.signIn === undefined || value.signIn === null || text(value.signIn))) return bad();
+    !(value.signIn === undefined || value.signIn === null || text(value.signIn)) || !(value.closable === undefined || typeof value.closable === "boolean")) return bad();
   const { settings, run, ask, readback } = value;
   if (!(settings === null || record(settings) && text(settings.account) && record(settings.rei) && text(settings.rei.marker) && (settings.rei.urlValue === undefined || text(settings.rei.urlValue)) && text(settings.bankFormat) && Number.isSafeInteger(settings.revision))) return bad();
   if (!(ask === null || record(ask) && text(ask.requestId) && text(ask.tool) && text(ask.summary))) return bad();
@@ -417,7 +419,8 @@ export function w1View(status: W1Status, reviewReady: boolean): View {
     case "readback": return { headline: reason ? message! : "Ready to check REI's result", primary: ["advance", reason ? "Check again" : "Continue"] };
     case "check_outcome": return reason === "nothing_found"
       ? { headline: "REI shows nothing from the previous upload", detail: "You can upload the reviewed file again.", primary: ["retry-upload", "Upload again"], secondary: ["abandon", "Close this import"] }
-      : { headline: "Check previous upload first", detail: reason ? message : "Bud reads REI's receipt list before anything else. Nothing is uploaded again until you decide.", primary: ["advance", reason ? "Check again" : "Check REI"] };
+      : { headline: "Check previous upload first", detail: reason ? message : "Bud reads REI's receipt list before anything else. Nothing is uploaded again until you decide.", primary: ["advance", reason ? "Check again" : "Check REI"],
+        ...(status.closable ? { secondary: ["abandon", "Close and prepare again"] as [W1Action, string] } : {}) };
     case "confirm": return { headline: reason ? message! : "Confirming the import", primary: ["advance", "Try again"] };
   }
 }

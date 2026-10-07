@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
 import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -201,7 +201,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(() => applyPropertyPack(home)).toThrow(/duplicate/);
     expect(readFileSync(path, "utf8")).toBe(duplicate);
   });
-  it("writes SOUL, manual approvals, and the morning-arrears skill", () => {
+  it("writes SOUL, manual approvals, and the morning-arrears skill the core morning check preloads", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-"));
     dirs.push(home);
     const result = applyPropertyPack(home);
@@ -211,7 +211,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(result.wrote).toEqual(expect.arrayContaining(["SOUL.md", "config.yaml", "skills/"]));
     const soul = readFileSync(join(result.dir, "SOUL.md"), "utf8");
     expect(soul).toMatch(/Draft only/);
-    expect(soul).toMatch(/No notices\. No trust/);
+    expect(soul).toMatch(/No notices\. No money moves/);
     expect(soul).not.toMatch(/send the SMS/i);
     const config = readFileSync(join(result.dir, "config.yaml"), "utf8");
     expect(config).toMatch(/mode:\s*manual/);
@@ -404,7 +404,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     const disabled: string[] = parse(readFileSync(join(dir, "config.yaml"), "utf8"), { version: "1.1" }).skills.disabled;
-    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS].sort());
+    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS, ...RETIRED_PACK_SKILLS].sort());
     // Mail, messaging, social posting, coding agents and desktop control stay out of Ask's index.
     for (const name of ["himalaya", "email-inbox-triage", "google-workspace", "imessage", "xurl", "computer-use", "claude-code", "codex"]) expect(disabled).toContain(name);
     for (const name of ["hermes-agent", "pdf", "xlsx", "docx", ...PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, ...readdirSync(join(PACK_DIR, "skills"))]) expect(disabled).not.toContain(name);
@@ -472,13 +472,29 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(skillScopeReady(home)).toBe(true);
     applyPropertyPack(home);
     const disabled: string[] = parse(readFileSync(path, "utf8"), { version: "1.1" }).skills.disabled;
-    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS, "sample-office-hidden"].sort());
+    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS, ...RETIRED_PACK_SKILLS, "sample-office-hidden"].sort());
     expect(skillScopeReady(home)).toBe(true);
   });
 
+  it("retires domain-intel and intake-properties: never installed, hidden on Repair, never a readiness gate", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-retired-skills-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(RETIRED_PACK_SKILLS).toEqual(["domain-intel", "intake-properties"]);
+    for (const name of RETIRED_PACK_SKILLS) expect(existsSync(join(dir, "skills", name))).toBe(false);
+    // A profile installed by an earlier pack keeps its copies (install never deletes) and an older floor.
+    for (const name of RETIRED_PACK_SKILLS) { privateFixtureDirectory(join(dir, "skills", name)); writeFileSync(join(dir, "skills", name, "SKILL.md"), `# ${name}\n`); }
+    const old = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    old.setIn(["skills", "disabled"], old.createNode([...OFF_SCOPE_BUNDLED_SKILLS].sort()));
+    writeFileSync(path, old.toString());
+    expect(propertyWorkroomReady(home)).toBe(true);
+    applyPropertyPack(home);
+    expect(parse(readFileSync(path, "utf8"), { version: "1.1" }).skills.disabled).toEqual(expect.arrayContaining([...RETIRED_PACK_SKILLS]));
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
   it("installs the staged upstream optional skills byte for byte beside RealBud's own", () => {
-    const staged = ["decision-questionnaire", "domain-intel", "one-three-one-rule", "rss-feeds", "simple-english"];
-    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["intake-properties", "morning-arrears", "portal-explore", "working-rules", ...staged].sort());
+    const staged = ["decision-questionnaire", "one-three-one-rule", "rss-feeds", "simple-english"];
+    expect(readdirSync(join(PACK_DIR, "skills")).sort()).toEqual(["morning-arrears", "portal-explore", "working-rules", ...staged].sort());
     const home = mkdtempSync(join(tmpdir(), "realbud-optional-skills-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     for (const name of staged) {
@@ -519,7 +535,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const recordPath = join(dir, ".realbud-shipped.json");
     const sha = (text: string) => createHash("sha256").update(text).digest("hex");
     expect(ensurePropertyPack(home)).toMatchObject({ wrote: [], kept: [] });
-    const unchanged = "skills/morning-arrears/SKILL.md", edited = "skills/intake-properties/SKILL.md", added = "skills/working-rules/SKILL.md";
+    const unchanged = "skills/morning-arrears/SKILL.md", edited = "skills/portal-explore/SKILL.md", added = "skills/working-rules/SKILL.md";
     // Simulate an earlier pack: SOUL and one skill hold bytes RealBud shipped before.
     const record = JSON.parse(readFileSync(recordPath, "utf8"));
     record.pack = "earlier-pack";

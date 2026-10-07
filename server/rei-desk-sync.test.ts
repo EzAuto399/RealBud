@@ -184,6 +184,12 @@ describe("rows Desk cannot place", () => {
 });
 
 describe("freshness per part", () => {
+  it("judges a filtered read whole by the rows REI showed, not the rows RealBud's row filter kept", () => {
+    const { desk, tick } = liveDesk();
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [{ ...done("arrears-review", [], { footer: 3 }), filtered: { read: 3, unapplied: [] } }], observedAt: tick(1000) })!.fresh).toEqual(["arrears"]);
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [{ ...done("arrears-review", [], { footer: 3 }), filtered: { read: 2, unapplied: [] } }], observedAt: tick(1000) })!.fresh).toEqual([]);
+  });
+
   it("stamps only parts read completely; a partial or searched read leaves its part stale and the book's check untouched", () => {
     const { desk, tick, now } = liveDesk();
     const before = desk.snapshot();
@@ -271,12 +277,13 @@ describe("REI read through the fictional portal into Desk", () => {
     expect(bravoProperty(desk)).toMatchObject({ weeklyRentCents: 50_000, differs: [{ field: "weeklyRentCents", rei: 54_000 }], owner: { name: "Fictional Owner One" }, amountOwingCents: 54_000, rei: { property: "FP-02", tenancy: "FT-BRAVO" } });
     // Every other property REI lists is a card; nothing was added.
     expect(snap.properties).toHaveLength(1);
-    expect(snap.book!.bookProposals.map((card) => card.address).sort()).toEqual(["FP-01", "FP-03", "FP-05", "FP-06", "FP-07", "FP-08", "FP-09", "FP-10"]);
+    // The Tenants grid's default rows are the Active ones: Delta (inactive, FP-08) and India (vacated, FP-04) are not read, so FP-04 has one tenancy.
+    expect(snap.book!.bookProposals.map((card) => card.address).sort()).toEqual(["FP-01", "FP-03", "FP-04", "FP-05", "FP-06", "FP-07", "FP-09", "FP-10"]);
     expect(snap.book!.bookProposals.find((card) => card.address === "FP-10")).toMatchObject({ weeklyRentCents: 55_385, ownerName: "Fictional Owner One" });
-    // FT-KILO has no property and FP-04 shows two tenancies. The arrears grid names tenants as the tenants grid
-    // does, so Bravo's arrears row lands; Juliet's (spelled differently by REI, deliberately) is held.
+    // FT-KILO has no property. The arrears grid names tenants as the tenants grid does, so Bravo's arrears row
+    // lands; Juliet's (spelled differently by REI, deliberately) is held, and so is vacated India's (not hidden any more).
     const issues = snap.book!.importIssues.map((issue) => `${issue.kind} ${issue.rawIdentity}`);
-    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "ambiguous REI property FP-04", "unmatched REI arrears Fictional Juliet"]));
+    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "unmatched REI arrears Fictional Juliet", "unmatched REI arrears Fictional Tenant India"]));
     expect(issues.some((issue) => issue.includes("Fictional Tenant Bravo"))).toBe(false);
     expect(issues.some((issue) => issue.includes("REI owner"))).toBe(false);
     expect(snap.lastRunAt).toBeNull();

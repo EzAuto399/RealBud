@@ -1,6 +1,6 @@
 name: property
 version: 0.1.0
-description: "RealBud locked PM worker — draft only, no send, no trust."
+description: "RealBud locked office worker — draft only; never sends, pays or signs without approval."
 hermes_requires: ">=0.20.0"
 author: "EzAuto399"
 license: "MIT"

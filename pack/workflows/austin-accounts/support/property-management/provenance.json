@@ -1,0 +1,15 @@
+{
+  "name": "property-management",
+  "pack": "austin-office",
+  "packRevision": 6,
+  "packSha256": "30a01d5df074494150963ac910873c4c482d12d1e1d19e7b8b7268d33549eceb",
+  "author": "RealBud (first-party)",
+  "license": "MIT",
+  "firstParty": true,
+  "derivedFrom": "Moved out of RealBud core on 2026-10-07 (owner decision: neutral core, PM in pack): the property-management identity line, voice and rules from pack/property/SOUL.md and shared/bud-identity.ts, and the intake format from the retired core skill pack/property/skills/intake-properties/SKILL.md. Wording kept; no rule loosened.",
+  "sha256": "abae81b3d6d57a8487787d0634fecb99c4d8673869bdac2862a953b834da479f",
+  "licenseSha256": "ccfcb516f93a4aeb557bd5528f73628094b5b4036f37db7e8f5e41fd9747b11d",
+  "bindingPath": "workflow-support/property-management/SKILL.md",
+  "allowedReuse": "Property-management wording, rules and intake format for preparation in an Auston office. Grants no tools, account access, sending, payment or schedules; RealBud's approvals and portal fence stay the only authority.",
+  "importLimitation": "The customer pack carries SKILL.md and LICENSE only. This provenance file is a source reference and is not part of the published pack."
+}
