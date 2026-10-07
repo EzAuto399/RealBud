@@ -87,7 +87,7 @@ describe("hard gates (canary)", () => {
   it("the pack soul refuses send, pay, and notices in its own words", () => {
     const soul = readFileSync(join(PACK_DIR, "SOUL.md"), "utf8");
     expect(soul).toMatch(/Draft only/);
-    expect(soul).toMatch(/No notices\. No trust/);
+    expect(soul).toMatch(/No notices\. No money moves/);
     expect(soul).toMatch(/never send/i);
   });
 

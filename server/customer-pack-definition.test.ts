@@ -18,9 +18,9 @@ describe('Austin office pack definition', () => {
 
   it('carries REI Cloud navigation in the Austin add-on pack only, never in office core', () => {
     const austin = validateCustomerPack(austinCustomerPack()), core = validateCustomerPack(officeCoreCustomerPack());
-    expect(austin.revision).toBe(5);
+    expect(austin.revision).toBe(6);
     expect(austin.title).toBe('Auston office workflows');
-    expect(austin.skills.map(skill => skill.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation']);
+    expect(austin.skills.map(skill => skill.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation', 'property-management']);
     expect(`realbud-${austin.id}-rei-cloud-navigation`.length).toBeLessThanOrEqual(64);
     expect(core.skills.map(skill => skill.id)).not.toContain('rei-cloud-navigation');
     expect(JSON.stringify(core)).not.toMatch(/rei-cloud-navigation|reimasterapps|reicid/i);
@@ -80,6 +80,23 @@ describe('Austin office pack definition', () => {
     expect(websiteMap).toMatch(/recipe: receipt-register[\s\S]*?grant_needs: \[download\][\s\S]*?- select: \{field: Output, option: Export Only\}/);
     expect(websiteMap).toMatch(/recipe: open-session[\s\S]*?- check: account/);
     expect(JSON.stringify(austinCustomerPack())).not.toMatch(/task-recipes|website-map/);
+  });
+
+  it('carries the property-management wording moved out of core Bud, with provenance pinned to this revision', () => {
+    const pm = join(root, 'pack', 'workflows', 'austin-accounts', 'support', 'property-management');
+    const provenance = JSON.parse(readFileSync(join(pm, 'provenance.json'), 'utf8'));
+    const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
+    const pack = validateCustomerPack(austinCustomerPack()), skill = pack.skills.find(item => item.id === 'property-management')!;
+    expect(provenance).toMatchObject({ name: 'property-management', pack: 'austin-office', packRevision: 6, firstParty: true,
+      sha256: sha(readFileSync(join(pm, 'SKILL.md'))), licenseSha256: sha(readFileSync(join(pm, 'LICENSE'))) });
+    // The published revision-6 pack; the next reviewed revision moves this pin.
+    expect(sha(JSON.stringify(pack))).toBe(provenance.packSha256);
+    expect(skill.instructions).toMatch(/Australian residential property-management desk assistant/);
+    expect(skill.instructions).toMatch(/No notices\. No trust/);
+    expect(skill.instructions).toMatch(/"weeklyRentCents"/);
+    expect(skill.instructions).toMatch(/It is not RealBud core/);
+    expect(`realbud-austin-accounts-${skill.id}`.length).toBeLessThanOrEqual(64);
+    expect(JSON.stringify(validateCustomerPack(officeCoreCustomerPack()))).not.toMatch(/property-management desk|Form 11|weeklyRentCents/);
   });
 
   it('points the REI map simulation at the Austin reference, never at the core Hermes profile', () => {

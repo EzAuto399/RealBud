@@ -3,12 +3,13 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
-import { austinCustomerPack } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinCustomerPack } from './customer-pack-definition.ts';
 const recipeRoot=vi.hoisted(()=>{const value=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-upgrade-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=value;return value;});
 import { withFictionalPublisher } from './testing/pack-publisher.ts';
-const {createCustomerPackService:createPackService,validateCustomerPackUpgradeJournal}=await import('./customer-packs.ts');
+const {createCustomerPackService:createPackService,validateCustomerPackUpgradeJournal,validateCustomerPack}=await import('./customer-packs.ts');
 const createCustomerPackService=withFictionalPublisher(createPackService);
 const {saveRecipe,saveRecipesAtomically,resetRecipeApprovalsAtomically,loadRecipes,getRecipe,patchRecipe}=await import('./recipes.ts');
 const roots:string[]=[];
@@ -31,12 +32,14 @@ async function fixture(initial=pack()) {
     native:join(root,`profile/skills/realbud-${initial.id}-${initial.skills[0].id}/SKILL.md`),
     journal:async()=>JSON.parse(await readFile(join(root,'customer-packs.json'),'utf8'))};
 }
+/** Revision 6 (accounts revision 2) added the property-management skill; earlier revisions never had it. */
+const withoutPm=(pack:CustomerPack):CustomerPack=>({...pack,skills:pack.skills.filter(skill=>skill.id!=='property-management')});
 const request=(preview:CustomerPackChangePreview)=>({pack:preview.pack,expectedInstalledDigest:preview.installedDigest,expectedInstalledRevision:preview.installedRevision,expectedDigest:preview.digest,expectedPreviewDigest:preview.previewDigest});
 const resume=(id:string,installed:any)=>({route:`/api/customer-packs/${id}/resume-change`,body:{expectedInstalledDigest:installed.digest,expectedInstalledRevision:installed.installationRevision,expectedPreviewDigest:installed.pendingChange.previewDigest}});
 
 describe('reviewed customer pack version changes with real recipe writes',()=>{
   it('holds Auston revision-3 approvals unchanged until its source-provenance upgrade is reviewed', async () => {
-    const next = austinCustomerPack(), previous = structuredClone(next);
+    const next = austinCustomerPack(), previous = withoutPm(structuredClone(next));
     const source = JSON.parse(readFileSync(new URL('../pack/workflows/austin-accounts/workflows.json', import.meta.url), 'utf8')) as { recipes: CustomerPack['recipes'] };
     previous.revision = 3;
     previous.recipes = previous.recipes.map(recipe => ({ ...recipe, steps: recipe.steps.slice(1),
@@ -49,7 +52,7 @@ describe('reviewed customer pack version changes with real recipe writes',()=>{
     patchRecipe(id, { planApproved: true, expectedRevision: getRecipe(id)!.revision });
     const before = loadRecipes(true);
     const preview = await f.service.previewUpgrade(next);
-    expect(next.revision).toBe(5);
+    expect(next.revision).toBe(6);
     expect(preview.canApply).toBe(true);
     expect(loadRecipes(true)).toEqual(before);
     expect(getRecipe(id)).toMatchObject({ status: 'active', approvedRevision: getRecipe(id)!.revision });
@@ -57,7 +60,7 @@ describe('reviewed customer pack version changes with real recipe writes',()=>{
     expect(preview.recipes.find(row => row.id === id)!.after.title).toBe('Fictional locally named morning review');
 
     const done = await f.service.upgrade(request(preview));
-    expect(done).toMatchObject({ revision: 5, installationRevision: 2, localReady: true });
+    expect(done).toMatchObject({ revision: 6, installationRevision: 2, localReady: true });
     expect(done.history).toHaveLength(1);
     for (const recipe of next.recipes) {
       expect(getRecipe(recipe.id)).toMatchObject({ description: recipe.description, steps: recipe.steps,
@@ -67,7 +70,7 @@ describe('reviewed customer pack version changes with real recipe writes',()=>{
   });
 
   it('reviews the Auston revision-4 to revision-5 cadence guidance as proposals and leaves every local clock disabled', async () => {
-    const next = austinCustomerPack(), previous = structuredClone(next);
+    const next = austinCustomerPack(), previous = withoutPm(structuredClone(next));
     previous.revision = 4;
     // Prior source-neutral revision, before the user's Gmail/cadence clarification.
     const operatingStep = /^(W2 target:|Use emailed or supplied Property\.csv|Propose new bills|Weekly W2 orchestration|W3 runs daily|Prepare priorities:)/;
@@ -80,13 +83,46 @@ describe('reviewed customer pack version changes with real recipe writes',()=>{
     expect(preview.canApply).toBe(true);
     expect(loadRecipes(true)).toEqual(before);
     const done = await f.service.upgrade(request(preview));
-    expect(done).toMatchObject({ revision: 5, installationRevision: 2, localReady: true });
+    expect(done).toMatchObject({ revision: 6, installationRevision: 2, localReady: true });
     expect(getRecipe(id)!.title).toBe('Fictional locally named weekly bills');
     expect(getRecipe(id)!.steps.join('\n')).toContain('Weekly W2 orchestration is not implemented');
     expect(getRecipe(id)!.steps.join('\n')).toContain('only host receipts prove calendar writes or in-app notification');
     for (const recipe of next.recipes) expect(getRecipe(recipe.id)).toMatchObject({
       steps: recipe.steps, status: 'shadow', schedule: null, approvedRevision: null, planApprovedAt: null,
     });
+  });
+
+  // Exactly the bytes offices installed before the property-management revision.
+  it.each([
+    ['austin-office', austinCustomerPack, 5, '8b129048e293eac9b6957aa0bbe578a0852520f368cd8fc530f2b96b045c6767'],
+    ['austin-accounts', austinAccountsCustomerPack, 1, '9e0a04903a43183a1fe6ba6932acd4cb8d2845e4564acee26fbc6f64dcfc1af7'],
+  ] as const)('upgrades an existing %s install from the published revision to the property-management revision cleanly', async (_id, build, revision, published) => {
+    const sha = (pack: CustomerPack) => createHash('sha256').update(JSON.stringify(validateCustomerPack(pack))).digest('hex');
+    const next = build(), previous = { ...withoutPm(structuredClone(next)), revision };
+    expect(sha(previous)).toBe(published);
+    expect(next.revision).toBe(revision + 1);
+    const root = privateTempRoot(join(realpathSync(tmpdir()), 'rb-pack-upgrade-builtin-')); roots.push(root);
+    const options = { directory: root, profileDirectory: () => join(root, 'profile'), workroomDirectory: () => join(root, 'vault'),
+      activeRecipeIds: () => [], resetRecipeApprovals: resetRecipeApprovalsAtomically, saveRecipes: saveRecipesAtomically };
+    // Installed earlier as a signed published pack (fictional publisher key)...
+    const website = createCustomerPackService(options);
+    await website.install(previous, (await website.preview(previous)).digest);
+    // ...then this app offers its own unsigned built-in, admitted because it matches the shipped bytes.
+    const service = createPackService(options);
+    // Importing the new built-in over it is held: the installed revision is immutable and nothing is replaced.
+    const imported = await service.preview(next);
+    expect(imported.canInstall).toBe(false);
+    expect(imported.conflicts).toContain('An installed pack revision is immutable. Review an upgrade separately; the existing pack and local edits are kept.');
+    const preview = await service.previewUpgrade(next);
+    expect(preview).toMatchObject({ conflicts: [], canApply: true, digest: sha(next) });
+    expect(preview.skills.find(skill => skill.id === 'property-management')).toMatchObject({ action: 'add' });
+    expect(preview.recipes.every(row => row.action === 'preserve')).toBe(true);
+    const done = await service.upgrade(request(preview));
+    expect(done).toMatchObject({ revision: revision + 1, digest: sha(next), installationRevision: 2, localReady: true });
+    expect(await readFile(join(root, `profile/skills/realbud-${next.id}-property-management/SKILL.md`), 'utf8')).toContain(`Pack ${next.id}, revision ${revision + 1}.`);
+    expect(await readFile(join(root, 'vault/workflow-support/property-management/SKILL.md'), 'utf8')).toBe(next.skills.find(skill => skill.id === 'property-management')!.instructions);
+    // The standard upgrade outcome: plans stay, back in shadow with approvals and clocks cleared for review.
+    for (const recipe of next.recipes) expect(getRecipe(recipe.id)).toMatchObject({ steps: recipe.steps, status: 'shadow', schedule: null, approvedRevision: null });
   });
 
   it('three-way merges publisher changes with unrelated local edits, clears siteNotes, approvals and schedules, and reconciles exact retry',async()=>{

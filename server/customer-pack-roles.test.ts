@@ -56,10 +56,10 @@ describe('Auston role packs', () => {
   it("gives Kevin W1–W3 and Sherry W4, the supplier check and W5, every loop off at the schedule file's Brisbane times", () => {
     const schedule = loadAustinPack();
     const accounts = validateCustomerPack(austinAccountsCustomerPack()), property = validateCustomerPack(austinPropertyCustomerPack());
-    expect(accounts).toMatchObject({ id: 'austin-accounts', revision: 1, title: 'Auston accounts — Kevin' });
+    expect(accounts).toMatchObject({ id: 'austin-accounts', revision: 2, title: 'Auston accounts — Kevin' });
     expect(accounts.workflows.map(w => w.id)).toEqual(['bank-references', 'bills-calendar', 'morning-priorities']);
     expect(accounts.recipes).toHaveLength(4);
-    expect(accounts.skills.map(s => s.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation']);
+    expect(accounts.skills.map(s => s.id)).toEqual(['email-inbox-triage', 'rei-cloud-navigation', 'property-management']);
     expect(JSON.stringify(accounts.recipes)).toContain('realbud-austin-accounts-email-inbox-triage');
     expect(JSON.stringify(accounts.recipes)).not.toContain('realbud-austin-office-');
     for (const role of ['inbox-triage', 'invoice-review', 'bill-exceptions', 'bank-reference-prep'] as const) expect(accounts.recipes.map(r => r.id)).toContain(workflowRecipeId('austin-accounts', role));
@@ -136,7 +136,7 @@ describe('packs from your office', () => {
     expect(result?.status).toBe(200);
     const body = result!.body as Extract<OfficePacksView, { state: 'ready' }>;
     expect(body.state).toBe('ready');
-    expect(body.packs.map(p => [p.id, p.title, p.revision])).toEqual([['austin-accounts', 'Auston accounts — Kevin', 1]]);
+    expect(body.packs.map(p => [p.id, p.title, p.revision])).toEqual([['austin-accounts', 'Auston accounts — Kevin', 2]]);
     expect(body.packs[0].digest).toBe((await f.packs.preview(signed)).digest);
     expect(body.refused.map(r => r.id)).toEqual(['austin-property', 'austin-property-copy', 'austin-accounts', 'garbled']);
     expect(body.refused[0].reason).toBe(UNSIGNED_PACK_MESSAGE);
@@ -149,7 +149,7 @@ describe('packs from your office', () => {
   it('refuses an unsigned built-in copy outright and passes through not-linked or unavailable', async () => {
     const unsigned = validateCustomerPack(austinAccountsCustomerPack());
     const refusing = await office({ officePacks: ready(listing(unsigned)) }).packs.handle('/api/customer-packs/office', 'GET');
-    expect(refusing?.body).toEqual({ state: 'ready', packs: [], refused: [{ id: 'austin-accounts', revision: 1, reason: UNSIGNED_PACK_MESSAGE }] });
+    expect(refusing?.body).toEqual({ state: 'ready', packs: [], refused: [{ id: 'austin-accounts', revision: 2, reason: UNSIGNED_PACK_MESSAGE }] });
     for (const state of ['not-linked', 'unavailable'] as const) expect((await office({ officePacks: async () => ({ state }) }).packs.handle('/api/customer-packs/office', 'GET'))?.body).toEqual({ state });
     expect((await office().packs.handle('/api/customer-packs/office', 'GET'))?.body).toEqual({ state: 'not-linked' });
   });

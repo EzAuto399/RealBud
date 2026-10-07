@@ -108,6 +108,8 @@ const LEGACY_SHIPPED: Readonly<Record<string, readonly string[]>> = {
     "87e7cf2b510adff407e3f4ce092bc1f551ae8cc98e891f318abfce1707b0754c", "a66ff693e675383f53103c5233b34a745509968ef4dacc9fde8d39576e4109d6",
     "ab939a24fd3d4f71d5d68c390b3191950b090acd8610a7b72c19f89eb335e46d", "b0edfaea1858037f65cf2e80b21562d6a505d8a4777a91ea01c3767ad82f890c",
     "c7dcdea8b878e366db9b82c8663a7db90c7bdc9de1491a0bd41735cea59b1d54", "d98188e07093c803576c1690985573336a5bfbd54edc91d94a960f6638603a9f",
+    // Last property-management SOUL (2026-10-07), so a profile with a damaged record still takes the neutral one.
+    "1aee1058db6dec321da6791c5575f86799f58748321b2fad80f17c4e5a7b7c44",
   ],
   "skills/morning-arrears/SKILL.md": ["f52e1dc7954e750eada6b35d97e367c3c9a2bb5488947694968c53447e8ba1df"],
 };
@@ -303,6 +305,13 @@ export const PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS: readonly string[] = [
   "powerpoint", "weekly-review-planning",
 ];
 
+/** Skills earlier packs shipped in `skills/` and no longer do: `domain-intel`
+ * (unused domain recon) and `intake-properties` (now the Auston pack's
+ * `property-management` skill). Install never deletes profile files, so Repair
+ * hides any copy left in an existing profile through `skills.disabled`. Not a
+ * readiness requirement: a profile not yet repaired keeps working. */
+export const RETIRED_PACK_SKILLS: readonly string[] = ["domain-intel", "intake-properties"];
+
 const UNREADABLE_LEARNING = "Bud’s learning settings could not be read. The existing file has been kept.";
 
 /** `skills.disabled` as upstream reads it (agent/skill_utils.py
@@ -355,7 +364,7 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   }
   const reopened = new Set(PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS);
   const officeHidden = disabledSkillNames(result.getIn(["skills", "disabled"])).filter(name => !reopened.has(name));
-  const disabled = new Set([...officeHidden, ...OFF_SCOPE_BUNDLED_SKILLS]);
+  const disabled = new Set([...officeHidden, ...OFF_SCOPE_BUNDLED_SKILLS, ...RETIRED_PACK_SKILLS]);
   result.setIn(["skills", "disabled"], result.createNode([...disabled].sort()));
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
   // Owned whole: with titles off, the rest of the block (provider, model) is unused.
