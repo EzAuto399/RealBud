@@ -76,6 +76,11 @@ type Report = { appVersion: string; workerVersion: string | null; workerReady: b
  * leaves the server. */
 export type BrowserLinkRequest = { approvalUrl: string; displayCode: string; expiresAt: string };
 type Saved = { version: 1; id: string; token: string; label: string; code?: string; companyId?: string; agencyLabel?: string; revoked?: boolean; lastReportedAt?: string;
+  /** When this computer learned the website no longer accepts it. */
+  revokedAt?: string;
+  /** Since when the website has said the office account is inactive. Nothing
+   * is withdrawn; the next accepted report clears it. */
+  officeInactiveAt?: string;
   /** A grant was applied for this link. Survives restart, so a repeated report
    * reply cannot re-apply provisioning that is already in force. */
   provisioned?: boolean;
@@ -91,7 +96,10 @@ export type BrowserLinkView =
   | ({ state: "pending" } & BrowserLinkRequest)
   | { state: "linked"; agencyLabel: string }
   | { state: "expired" | "declined" };
-export type OfficeLinkStatus = { state: "unlinked" | "pending" | "linked" | "revoked"; id?: string; label?: string; agencyLabel?: string; lastReportedAt?: string; error?: string;
+export type OfficeLinkStatus = { state: "unlinked" | "pending" | "linked" | "revoked"; id?: string; label?: string; agencyLabel?: string; lastReportedAt?: string; revokedAt?: string; error?: string;
+  /** Linked, but the website says the office account is inactive: check-ins
+   * pause and resume by themselves. Nothing on this computer is removed. */
+  officeInactive?: boolean;
   /** Present while a browser approval is pending, so the card resumes it. */
   browser?: BrowserLinkRequest;
   /** Linked only: a vendor grant (Bud's model access) is in force here. */
@@ -295,7 +303,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     const skipped = provisioned.provisioned === false && saved?.provisioningSkipped ? { provisioningSkipped: saved.provisioningSkipped } : {};
     const issue = provisioned.provisioned ? (await modelKeyHealth(saved!.id)).issue : undefined;
     const modelKey = issue ? { modelKey: issue } : {};
-    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...skipped, ...modelKey, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
+    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, ...(saved.revoked && saved.revokedAt ? { revokedAt: saved.revokedAt } : {}), ...(saved.companyId && !saved.revoked && saved.officeInactiveAt ? { officeInactive: true } : {}), usage: usageState, ...browser, ...provisioned, ...skipped, ...modelKey, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
   }
   /** Reads the website answers from its own records. */
   const REQUEST_TIMEOUT_MS = 10_000;
@@ -602,9 +610,19 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // 401/403 is the website saying this installation's access is gone. Stop
       // using the vendor grant immediately; every saved work record is kept.
       if (response.status === 401 || response.status === 403) {
-        try { await save({ ...saved, revoked: true }); }
+        try { await save({ ...saved, revoked: true, revokedAt: new Date().toISOString() }); }
         finally { await options.provisioning?.withdraw(); }
         return;
+      }
+      // 423 office_inactive: this computer is still valid but the office account
+      // is not active (owner or subscription). Pause, keep the grant and link,
+      // and let the ordinary timer check in again. Spend is the gateway's call.
+      if (response.status === 423) {
+        const answer = await response.json().catch(() => null) as { error?: unknown } | null;
+        if (answer?.error === "office_inactive") {
+          if (!saved.officeInactiveAt) await save({ ...saved, officeInactiveAt: new Date().toISOString() });
+          throw new Error("Your office’s RealBud account is inactive, so this computer can’t check in. Nothing was removed; it reconnects by itself once the account is active again.");
+        }
       }
       if (response.status === 429) {
         reportRetryAt = Date.now() + retryAfterMs(response.headers.get("retry-after"));
@@ -620,7 +638,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // revocable key with whatever this reply happened to carry.
       let provisioned = active && !replaceKey;
       let newlyApplied = false;
-      const { provisioningSkipped: previous, ...rest } = saved;
+      // An accepted report also ends any "office inactive" pause.
+      const { provisioningSkipped: previous, officeInactiveAt: _inactive, ...rest } = saved;
       let skipped = previous;
       if (!provisioned) {
         const body = await response.json().catch(() => null) as { provisioning?: unknown } | null;

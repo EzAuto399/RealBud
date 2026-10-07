@@ -576,7 +576,7 @@ describe("one-shot managed model access", () => {
     const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
     setWorkerModelAccessSnapshot({});
     setWorkerModelGrant({ state: "withdrawn" });
-    expect(await run(kind, test)).toMatchObject({ detail: expect.stringMatching(/withdrawn/i) });
+    expect(await run(kind, test)).toMatchObject({ detail: expect.stringMatching(/office access ended/i) });
     expect(() => readFileSync(test.evidence, "utf8")).toThrow();
   });
 });
