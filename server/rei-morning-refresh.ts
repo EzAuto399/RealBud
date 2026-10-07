@@ -21,7 +21,7 @@ import type { PortalPathStore } from "./portal-path-overrides.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, type PortalRunRequest, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { REI_PARTS, reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
+import { REI_PARTS, reiDeskSyncLine, reiPartOf, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
 import type { LoopExecuteResult } from "./routines.ts";
 import { reiPartsFreshness } from "./source-gate.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
@@ -30,6 +30,10 @@ const PORTAL = "rei-cloud";
 export const REI_SIGN_IN_MISSED = "Missed: sign in to REI.";
 const SIGN_IN_HOW = "Bud never signs in for you: sign in to REI Cloud in the work browser, then run the refresh again from Schedule.";
 const SIGNED_OUT = new Set(["sign-in", "choose-tab", "account-url-unavailable"]);
+/** The runner's reasons for a REI page that no longer matches the shipped recipe. */
+const PAGE_CHANGED = new Set(["field-missing", "control-missing", "menu-label-missing", "unexpected-page", "table-did-not-settle"]);
+const pageChanged = (result: PortalRunResult) => result.outcome === "blocked"
+  && (PAGE_CHANGED.has(result.reason ?? "") || (result.reason === "broker-refused" && /page changed/i.test(result.detail ?? "")));
 /** Long enough for a large book; a slower REI ends as a miss and the next run starts clean. */
 export const REI_REFRESH_TIMEOUT_MS = 10 * 60_000;
 
@@ -99,6 +103,11 @@ export function createReiMorningRefresh(deps: ReiMorningRefreshDeps) {
       detail: [`Missed: more than one REI tab is open (${new URL(pack.origin).host}), so Bud didn't choose one. Close the extra REI tabs, keep one signed in, then run the refresh again. Nothing was read.`, notFresh(staleNow())].filter(Boolean).join(" ") };
     // One apply, after the read: rows of parts read completely are fresh, partial rows still count as REI's but stay stale.
     const sync = syncReiReadIntoDesk(deps.desk, { runs, results: result.results, observedAt: now() })!;
+    // REI's page changed under one part's recipe: tell the office once per part on Desk (Needs you), not only in this run line.
+    if (pageChanged(result)) {
+      const part = reiPartOf(runs[result.results.findIndex(item => item.outcome === "blocked")] ?? { recipe: "" })?.part;
+      if (part) deps.desk.noteReiPageChanged(part);
+    }
     const tasks = result.results[runs.findIndex(run => run.recipe === "tasks-due")];
     const tasksLine = tasks?.outcome === "completed" ? ` REI shows ${tasks.rows.length} task${tasks.rows.length === 1 ? "" : "s"} due today.` : "";
     // Say what THIS run applied and read whole, never that an earlier read is fresh from this one.

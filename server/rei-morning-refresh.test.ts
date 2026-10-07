@@ -17,6 +17,7 @@ import { LoopManager } from "./routines.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictionalBook, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 
 const dirs: string[] = [];
 const managers: LoopManager[] = [];
@@ -228,6 +229,34 @@ describe("the REI morning refresh", () => {
       expect(reiStamps(f.desk).map(([id]) => id)).not.toContain("src-rei-owners");
       expect(f.mock.calls.filter(call => ["fill", "select", "press"].includes(call[0]) && f.mock.calls.indexOf(call) > f.mock.calls.findIndex(c => c[0] === "navigate" && c[1].includes("/customers/owner")))).toEqual([]);
     }
+  });
+
+  it("REI's page changed under one part: one Needs-you item for that part, updated in place, cleared when it next reads whole", async () => {
+    const f = await fixture({ redirects: { "/customers/owner": "/customers/owner/details" } });
+    const needsYou = () => buildDeskQueue(f.desk.snapshot()).filter(row => row.bucket === "now" && row.address.startsWith("REI Cloud"));
+    const first = await f.refresh.run();
+    expect(first.detail).toMatch(/unexpected-page/);
+    expect(needsYou()).toEqual([expect.objectContaining({ address: "REI Cloud owners", kind: "import-issue",
+      meta: "REI's page changed, so Bud couldn't read owners. Desk stays marked not fresh. RealBud needs a recipe update; nothing in REI was changed." })]);
+    expect(recoveryPlanFor(needsYou()[0]!)).toMatchObject({ headline: "REI's page changed", action: "none" });
+    expect(reiStamps(f.desk).map(([id]) => id)).not.toContain("src-rei-owners");
+    // The next morning fails the same way: still one item, updated in place.
+    const seen = needsYou()[0]!.updatedAt;
+    f.tick(24 * 3_600_000);
+    await f.refresh.run();
+    expect(needsYou()).toHaveLength(1);
+    expect(needsYou()[0]!.updatedAt).toBeGreaterThan(seen);
+    expect(f.desk.snapshot().workItems.filter(item => item.occurrenceKey.startsWith("rei-page-changed:"))).toHaveLength(1);
+    // Signed out stays its own "Missed: sign in to REI" path and adds no page-changed item.
+    f.tick(1000);
+    const signedOut = await createReiMorningRefresh({ ...f.deps, runtime: await runtimeFor(f.root, { signedOut: true }) }).run();
+    expect(signedOut.detail.startsWith(REI_SIGN_IN_MISSED)).toBe(true);
+    expect(needsYou()).toHaveLength(1);
+    // Owners read whole again: the item clears.
+    f.tick(1000);
+    const fixed = await createReiMorningRefresh({ ...f.deps, runtime: await runtimeFor(f.root, {}) }).run();
+    expect(fixed.status, fixed.detail).toBe("completed");
+    expect(needsYou()).toEqual([]);
   });
 
   it("a page the browser helper cut short is never fresh, even when the cut hides the grid's record count", async () => {
