@@ -32,6 +32,15 @@ describe("computer history", () => {
     expect(typeof listed[0]?.id).toBe("string");
   });
 
+  it("keeps an Ask turn's Modelvia requests and tokens, and loads entries saved without them", () => {
+    writeFileSync(join(dataDir, "computer-history.json"), JSON.stringify({ entries: [{ id: "old", at: 1, kind: "turn", name: "ask turn", ok: true, detail: "" }] }));
+    appendHistory({ kind: "turn", name: "ask turn", ok: true, at: 2, usage: { requestIds: ["req-fictional-ask", "bad id"], calls: 3, inputTokens: 10, outputTokens: 5 } });
+    const [latest, old] = listHistory(50);
+    expect(latest?.usage).toEqual({ requestIds: ["req-fictional-ask"], calls: 3, inputTokens: 10, outputTokens: 5 });
+    expect(old).toMatchObject({ id: "old" });
+    expect(old).not.toHaveProperty("usage");
+  });
+
   it("caps at 200 and drops the oldest", () => {
     const seeded = Array.from({ length: 199 }, (_, i) => ({
       id: `e${i}`,

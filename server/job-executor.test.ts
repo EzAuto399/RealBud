@@ -1,4 +1,5 @@
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,11 @@ import { JobRunStore } from "./job-runs.ts";
 import { JOB_OUTPUT_MAX_CHARS } from "../shared/job-output.ts";
 import { deskContextMarkdown, DESK_CONTEXT_MAX_CHARS } from "./desk-context.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
+import { parseJobRun } from "./job-run-validation.ts";
+import { startAskModelRelay } from "./ask-model-relay.ts";
+import { fakeHermes } from "./testing/fake-hermes.ts";
+import { clearManagedAccess, grantManagedAccess } from "./testing/managed-grant.ts";
+import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 
 const dirs: string[] = [];
 // Each store holds its execution-history database open in the fixture folder;
@@ -246,6 +252,63 @@ describe("executeRecipeJob", () => {
     expect(result.run.status).toBe("completed");
     const loaded = track(new JobRunStore({ file })).get(result.run.id);
     expect(loaded?.evidence.find((item) => item.kind === "output")?.note).toBe(report);
+  });
+
+  it("records the Modelvia request ids the relay saw on the run, through a reload, and still loads a run saved without them", async () => {
+    // A fictional gateway answering one non-streamed completion with its request id.
+    const gateway = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-job" });
+      response.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 21, completion_tokens: 8 } }));
+    });
+    await new Promise<void>(done => gateway.listen(0, "127.0.0.1", done));
+    const hermes = fakeHermes("unused");
+    const relay = await startAskModelRelay({ root: hermes.dir, overlayDir: join(hermes.dir, "relay-overlay"), serviceFailure: () => null });
+    try {
+      grantManagedAccess(hermes.dir, { baseUrl: `http://127.0.0.1:${(gateway.address() as { port: number }).port}/v1` });
+      // The worker reaches the model only through the relay named in its overlay, with its relay token.
+      const model = MANAGED_MODEL_CHOICES.find(choice => choice.id === "flash-high")!.model;
+      const script = join(hermes.dir, "relay-worker.mjs");
+      writeFileSync(script, [
+        "#!/usr/bin/env node",
+        "import { readFileSync } from 'node:fs';",
+        "import { join } from 'node:path';",
+        "if (process.argv.includes('--version')) { console.log('Hermes Agent v0.20.3 (2026.8.16.2)'); process.exit(0); }",
+        "const relay = JSON.parse(readFileSync(join(process.env.HERMES_MANAGED_DIR, 'config.yaml'), 'utf8')).providers.realbud.base_url;",
+        `const answer = await fetch(relay + '/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + process.env.REALBUD_MODEL_API_KEY }, body: JSON.stringify({ model: ${JSON.stringify(model)}, messages: [{ role: 'user', content: 'fictional' }] }) });`,
+        "await answer.text();",
+        "console.log(JSON.stringify({ summary: 'Prepared', evidence: ['Fictional source'], outputs: ['Fictional draft'], needsApproval: [] }));",
+      ].join("\n"));
+      chmodSync(script, 0o755);
+      const dir = mkdtempSync(join(tmpdir(), "realbud-job-usage-"));
+      dirs.push(dir);
+      const file = join(dir, "runs.json");
+      const result = await executeRecipeJob(job({ capabilities: ["analyse", "draft"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "usage-run" }, {
+        store: track(new JobRunStore({ file })), worker: { cli: script, root: hermes.dir },
+      });
+      const usage = { requestIds: ["req-fictional-job"], calls: 1, inputTokens: 21, outputTokens: 8 };
+      expect(result.run).toMatchObject({ status: "completed", usage });
+      expect(parseJobRun(JSON.parse(JSON.stringify(result.run)))?.usage).toEqual(usage);
+      expect(track(new JobRunStore({ file })).get(result.run.id)?.usage).toEqual(usage);
+      const { usage: _usage, ...saved } = result.run;
+      const old = parseJobRun(JSON.parse(JSON.stringify(saved)));
+      expect(old).toMatchObject({ id: result.run.id, status: "completed" });
+      expect(old).not.toHaveProperty("usage");
+    } finally {
+      clearManagedAccess();
+      await relay.close();
+      gateway.closeAllConnections();
+      await new Promise<void>(done => gateway.close(() => done()));
+      rmSync(hermes.dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("keeps the worker's Modelvia requests on a run that failed after the worker answered", async () => {
+    const usage = { requestIds: ["req-fictional-failed"], calls: 2 };
+    const result = await executeRecipeJob(job({ capabilities: ["analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "usage-failed" }, {
+      store: store(), ask: async () => ({ ok: false, detail: "Bud could not answer.", usage }),
+    });
+    expect(result.run).toMatchObject({ status: "failed", usage });
   });
 
   it("rejects an oversized store write before changing the run's state", () => {

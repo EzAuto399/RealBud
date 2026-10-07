@@ -298,6 +298,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         wrapUpSent: boolean;
         /** Hermes' one status line answering the wrap-up `/steer`. */
         steerAckPending: boolean;
+        /** ACP's token counts for this turn, when the agent reported them. */
+        tokens?: { input?: number; output?: number };
         done: Promise<void>;
         resolveDone: () => void;
       }
@@ -633,7 +635,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const text = (run.sawTool ? run.answerText || run.text : run.text).trim();
             if (text) emit({ ...eventBase(run), type: "item.completed", itemType: "assistant_text", text });
           }
-          emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null });
+          // Everything the relay forwarded since the last turn settled, so a
+          // background call between turns lands on the next turn, not nowhere.
+          const usage = modelLease?.takeUsage();
+          if (usage && run.tokens) {
+            if (run.tokens.input !== undefined) usage.inputTokens = run.tokens.input;
+            if (run.tokens.output !== undefined) usage.outputTokens = run.tokens.output;
+          }
+          emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null, ...(usage && (usage.calls || run.tokens) ? { usage } : {}) });
           run.resolveDone();
           if (keepWarm && !closed) park();
           else terminate();
@@ -1243,6 +1252,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // ACP PromptResponse.usage (Hermes); `_meta` kept for older agents.
             const usage = result?.usage ?? result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
+              run.tokens = {
+                ...(Number.isSafeInteger(usage.inputTokens) && usage.inputTokens >= 0 ? { input: usage.inputTokens } : {}),
+                ...(Number.isSafeInteger(usage.outputTokens) && usage.outputTokens >= 0 ? { output: usage.outputTokens } : {}),
+              };
               emit({
                 ...eventBase(run),
                 type: "thread.token-usage.updated",

@@ -23,6 +23,8 @@ import { workerModelGrant } from './worker-model-access.ts';
 import { DATA_DIR } from './config.ts';
 import { sandboxedLaunch, trackSandboxedChild, type SandboxedLaunch } from './worker-network-sandbox.ts';
 import { ensureProfileSkeleton } from './drivers/acp/hermes.ts';
+import { emptyRunUsage, noteModelviaReply, noteModelviaRequest } from './run-cost.ts';
+import type { RunUsage } from '../shared/contracts.ts';
 
 // Runtime changes require a new isolation capture, rather than admitting a
 // version label alone. Each admitted upstream commit maps to the sha256 of the
@@ -83,7 +85,8 @@ export function relayRefusalDetail(status: number, body: Uint8Array): string | n
 }
 const unavailable = 'This worker route cannot prepare an isolated department case. Check the supported worker setup.';
 const cancelled = 'Preparation cancelled.';
-type Result = { ok: true; stdout: string } | { ok: false; detail: string };
+/** `usage`: the Modelvia requests this preparation made, when it made any. */
+type Result = ({ ok: true; stdout: string } | { ok: false; detail: string }) & { usage?: RunUsage };
 export interface DepartmentWorkerOptions {
   signal?: AbortSignal;
   /** The caller rechecks company/claim/worker authority immediately before spawn. */
@@ -127,6 +130,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     windowsFilePrivacySync(scratch, 'directory', true);
     const token = randomBytes(32).toString('hex'), runId = randomBytes(16).toString('hex');
     let route: { base_url: string; api_key: string; model: string } | undefined;
+    const usage = emptyRunUsage();
     let refusal: string | null = null;
     let deny: () => void = () => {};
     relay = createServer(async (request, response) => {
@@ -160,9 +164,14 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
         headers.authorization = `Bearer ${route.api_key}`;
         headers['idempotency-key'] = relayIdempotencyKey(runId, body);
         const upstream = await fetch(route.base_url + request.url, { method: 'POST', headers, body, redirect: 'error', signal: forwarding.signal });
+        noteModelviaRequest(usage, upstream.headers.get('x-request-id'));
         const received: Uint8Array[] = []; let total = 0;
         if (upstream.body) for await (const part of upstream.body) { total += part.length; if (total > 2 * 1024 * 1024) throw new Error(); received.push(part); }
         refusal = relayRefusalDetail(upstream.status, Buffer.concat(received)) ?? refusal;
+        // A buffered JSON answer gives its tokens (or a 409's original receipt id); a stream keeps its header id only.
+        if (/^application\/json\b/i.test(upstream.headers.get('content-type') ?? '')) {
+          try { noteModelviaReply(usage, JSON.parse(Buffer.concat(received).toString('utf8'))); } catch { /* counted by its header id */ }
+        }
         response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });
         response.end(Buffer.concat(received));
       } catch {
@@ -193,7 +202,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     ensureProfileSkeleton(profileDirectory);
     try { launch = sandboxedLaunch(python, ['-I', '-B', helper], env, { loopbackPorts: [address.port], writable: [scratch], reads: [['deny', DATA_DIR], ['allow', runtimeHome], ['allow', profileDirectory]] }); }
     catch { return { ok: false, detail: unavailable }; }
-    return await new Promise<Result>(accept => {
+    const settled = await new Promise<Result>(accept => {
       const child = trackSandboxedChild(spawnCli(launch.command, launch.args, { cwd: scratch, env, stdio: ['pipe', 'pipe', 'pipe'], privateFiles: true }));
       let size = 0, killed = false, failed = false;
       const chunks: Buffer[] = [];
@@ -220,6 +229,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
       });
       child.stdin.end(JSON.stringify({ runtimeDirectory, prompt, relayUrl, relayToken: token, maxTurns: Math.max(1, Math.min(12, Math.floor(opts.maxTurns ?? 6))) }));
     });
+    return usage.calls ? { ...settled, usage } : settled;
   } catch { return { ok: false, detail: opts.signal?.aborted ? cancelled : unavailable }; }
   finally {
     forwarding.abort();

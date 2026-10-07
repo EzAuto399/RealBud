@@ -821,8 +821,89 @@ describe.runIf(Boolean(nativeCli) && process.platform !== "win32")("context wind
   }, 90_000);
 });
 
+describe("Ask model relay usage", () => {
+  it("counts each forwarded request's Modelvia id, and tokens only from a non-streamed JSON answer", async () => {
+    const stream = 'data: {"choices":[],"usage":{"prompt_tokens":99,"completion_tokens":99}}\n\ndata: [DONE]\n\n';
+    const root = home(), gateway = await upstream((response, seen) => {
+      if (seen.body.stream === true) {
+        response.writeHead(200, { "content-type": "text/event-stream", "x-request-id": "req-fictional-stream" });
+        response.end(stream);
+      } else {
+        response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-json" });
+        response.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } }));
+      }
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token, lease } = await relayFor(root);
+    const model = "deepseek-v4.1-flash";
+    expect(await (await post(relay, { model, messages }, token)).json()).toEqual({ choices: [], usage: { prompt_tokens: 7, completion_tokens: 3 } });
+    // A stream passes byte for byte and is not read for usage.
+    expect(await (await post(relay, { model, messages, stream: true }, token, { accept: "text/event-stream" })).text()).toBe(stream);
+    expect(gateway.seen[1]!.body.stream_options).toBeUndefined();
+    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-json", "req-fictional-stream"], calls: 2, inputTokens: 7, outputTokens: 3 });
+    expect(lease.takeUsage()).toEqual({ requestIds: [], calls: 0 });
+  });
+
+  it("takes a 409's original receipt id from its JSON body", async () => {
+    const original = { requestId: "req-fictional-original", state: "settled", model: "deepseek-v4.1-flash", priceBasis: "retail", chargedNanoAud: "100" };
+    const root = home(), gateway = await upstream(response => {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { code: "request_already_processed", message: "fictional" }, receipt: original }));
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token, lease } = await relayFor(root);
+    expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(409);
+    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-original"], calls: 1 });
+  });
+
+  it("records into a one-shot launch's own counter", async () => {
+    const root = home(), gateway = await upstream((response) => {
+      response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-once" });
+      response.end("{}");
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    await relayFor(root);
+    const usage = { requestIds: [] as string[], calls: 0 };
+    await withAskModelRelayLease(async () => {
+      const env: NodeJS.ProcessEnv = {};
+      expect(applyAskModelRelayEnv(env, root)).toBeNull();
+      const relayUrl = JSON.parse(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).providers.realbud.base_url;
+      expect((await fetch(`${relayUrl}/chat/completions`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.REALBUD_MODEL_API_KEY}` }, body: JSON.stringify({ model: "deepseek-v4.1-flash", messages }) })).status).toBe(200);
+    }, { usage });
+    expect(usage).toEqual({ requestIds: ["req-fictional-once"], calls: 1 });
+  });
+});
+
 describe("Ask worker key custody", () => {
   const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
+
+  it("puts the relay's requests and ACP's tokens on the turn that made them", async () => {
+    const root = home(), gateway = await upstream((response) => {
+      response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-turn" });
+      response.end("{}");
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "sonnet-high" });
+    const { relay } = await relayFor(root);
+    chmodSync(FAKE_CLI, 0o755);
+    const dump = join(root, "fake-acp-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    cleanups.push(() => { delete process.env.FAKE_ACP_DUMP; });
+    const instance = await HermesAgentDriver.create({
+      instanceId: "fictional-ask", displayName: "Bud", enabled: true,
+      environment: { REALBUD_HERMES_HOME: root }, config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    cleanups.push(async () => { recorder.stop(); await instance.dispose(); });
+    const settled = (turnId: string) => recorder.until(event => (event.type === "turn.completed" && event.turnId === turnId) || event.type === "runtime.error");
+    const first = await instance.adapter.sendTurn({ threadId: "usage", text: "hi" });
+    // The fake agent reports ACP tokens but made no model request.
+    expect(await settled(first.turnId)).toMatchObject({ type: "turn.completed", usage: { requestIds: [], calls: 0, inputTokens: 10, outputTokens: 5 } });
+    // The warm worker's next model call lands on the next turn.
+    const turnToken = (JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> }).env.REALBUD_MODEL_API_KEY!;
+    expect((await post(relay, { model: "claude-sonnet-5.5", messages }, turnToken)).status).toBe(200);
+    const second = await instance.adapter.sendTurn({ threadId: "usage", text: "again" });
+    expect(await settled(second.turnId)).toMatchObject({ type: "turn.completed", usage: { requestIds: ["req-fictional-turn"], calls: 1, inputTokens: 10, outputTokens: 5 } });
+  }, 30_000);
 
   it("launches Ask with the relay token and overlay, never the office key, and never writes the key to the profile", async () => {
     const root = home(), gateway = await upstream(json({}));

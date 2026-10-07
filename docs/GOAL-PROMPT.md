@@ -1,5 +1,7 @@
 # RealBud — current working direction
 
+Platform gaps plan, 7 October: [Platform gaps plan](PLATFORM-GAPS-2026-10-07.md) turns the Gumloop/bops comparison into five workstreams with owner direction: per-run AI cost from Modelvia receipts, golden-task evals that gate every Hermes or model bump, packs declaring their own workflows, Composio event triggers through the gateway, and approval settings (owner decisions first). Plan and source surveys only; nothing merged.
+
 Onboarding, 7 October: [Onboarding end to end](ONBOARDING-E2E-2026-10-07.md) closes the gaps between invite, website, download, link and first work. The window opens before the service starts, linking lands on Desk with Get started, Bud setup holds can be cleared by staff, and role packs are offered in the staff path. On the website, owners no longer dead-end after setup, link codes last one hour with a copy-ready staff message, and RealBud uploads office packs (website PR #26, not deployed). Source, local tests and fictional renderer QA only.
 
 Latest continuation, 7 October (owner away): [Owner-away work session](OWNER-AWAY-2026-10-07.md) merged watch and learn, the W1 readback for REI's real export, Jev (bank hints, drifted controls, mail screening), Hermes capability fixes, onboarding fixes, the neutral core Bud and ~8k lines of dead code; `main` is the only branch. macOS local tests and an ad-hoc packaged build pass; Windows evidence is GitHub-runner targeted tests only — the installed-device VM run waits for the owner's sign-in.

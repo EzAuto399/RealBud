@@ -13,11 +13,13 @@ import {
   type JobRunTrigger,
   type JobRunSpecSnapshot,
   type Recipe,
+  type RunUsage,
 } from "../shared/contracts.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { cleanText, cleanEvidence, cleanApprovals, parseJobRun } from './job-run-validation.ts';
+import { cleanRunUsage } from './run-cost.ts';
 import { ExecutionHistory, executionDigest } from './execution-history.ts';
 import { jobHistoryBinding } from './execution-history-backup.ts';
 import type { WorkflowDatabase } from './workflow-database.ts';
@@ -92,6 +94,8 @@ export interface SettleJobRunInput {
   evidence?: JobRunEvidence[];
   approvalRequests?: string[];
   legacySessionId?: string;
+  /** The Modelvia requests the attempt made. */
+  usage?: RunUsage;
 }
 
 function cloneRun(run: JobRun): JobRun {
@@ -106,6 +110,7 @@ function cloneRun(run: JobRun): JobRun {
     },
     evidence: run.evidence.map((item) => ({ ...item })),
     approvalRequests: [...run.approvalRequests],
+    ...(run.usage ? { usage: { ...run.usage, requestIds: [...run.usage.requestIds] } } : {}),
   };
 }
 
@@ -319,6 +324,8 @@ export class JobRunStore {
     run.approvalRequests = cleanApprovals(result.approvalRequests);
     run.finishedAt = now;
     if (result.legacySessionId) run.legacySessionId = result.legacySessionId;
+    const usage = cleanRunUsage(result.usage);
+    if (usage) run.usage = usage;
     this.replace(run);
     this.emitRun(run);
     oplog("routine", run.detail, {
