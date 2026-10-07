@@ -294,7 +294,8 @@ try {
   const bankCsv = "Date,Amount,Narrative,Reference\n2026-09-10,500.00,FICTIONAL RENT,P101\n2026-09-10,500.00,FICTIONAL TRANSFER,\n";
   assert.equal((await api("GET", "/api/bank-reference", undefined, "")).status, 401);
   await page.getByRole("button", { name: /^Schedule\b/ }).first().click();
-  await page.getByRole("button", { name: "Open job: Bank reference review", exact: true }).click();
+  // A fresh office has no role pack, so Schedule's list leaves the Auston job out (#114); the sidebar's loop link opens it.
+  await page.getByRole("button", { name: /^Bank reference review\b/ }).first().click();
   await page.getByText("Prepare a new export", { exact: true }).click();
   await page.getByLabel("Bank CSV", { exact: true }).setInputFiles({ name: "fictional-bank.csv", mimeType: "text/csv", buffer: Buffer.from(bankCsv) });
   for (const [key, value] of Object.entries({ date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" })) await page.getByLabel(`${key} column`, { exact: true }).fill(value);

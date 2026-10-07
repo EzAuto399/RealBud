@@ -173,12 +173,19 @@ try {
   await strip().getByText('Allow Bud to upload the reviewed file to REI?', { exact: true }).waitFor();
   await capture('w1-upload-approval-after-sign-in', strip());
   await strip().getByRole('button', { name: "Don't allow", exact: true }).click();
+  // A declined upload is unknown until REI's complete Receipt Register is read (#114); its download is the person's to allow.
+  const checking = await until(() => run(resumed.id), r => /^Waiting for you to allow the download of REI's Receipt Register/.test(r.detail ?? ''), 'Schedule asks for the Receipt Register download');
+  assert.equal(checking.status, 'running');
+  await strip().getByText("Allow Bud to download REI's receipt list to check the result?", { exact: true }).waitFor();
+  assert.equal(await strip().getByRole('button', { name: 'Upload again', exact: true }).count(), 0, 'no re-upload before the register is read');
+  await capture('w1-register-check-after-declined-upload', strip());
+  await strip().getByRole('button', { name: 'Allow', exact: true }).click();
   const after = await settled(resumed.id);
   assert.equal(after.status, 'awaiting-approval');
   assert.match(after.detail, /^REI shows nothing from the earlier upload/);
   portal = await lab('status');
   assert.deepEqual([portal.uploads, portal.effects], [0, []]);
-  pass(`Signed in to the saved business: the run carried on with no Continue or Done (${tools.join(', ') || 'no other asks'} allowed), stopped at "${asking.detail}"; denied in the strip, so nothing reached REI (${after.detail})`);
+  pass(`Signed in to the saved business: the run carried on with no Continue or Done (${tools.join(', ') || 'no other asks'} allowed), stopped at "${asking.detail}"; denied in the strip, then "${checking.detail}" and, once allowed there, REI's complete register showed nothing reached REI (${after.detail})`);
 
   // ── 5. Supplier list check: signed in to another business after waiting → the plain mismatch message ──
   await restart(); // the fictional portal starts signed out again
