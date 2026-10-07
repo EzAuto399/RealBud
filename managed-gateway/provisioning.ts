@@ -35,6 +35,8 @@ import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServi
 import type { UsageLedger } from './ledger.ts';
 import { carryMailboxGrant } from './office-mailbox.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
+import { composioAppAdapter, type ComposioAppAdapter } from './composio-apps.ts';
+import { composioWebhookClient, disableTriggers, webhookSecretName, type ComposioWebhookClient } from './composio-triggers.ts';
 import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaRotatedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
@@ -208,7 +210,8 @@ export function provisionConnector({ registry, deviceFile, clientOutput, endpoin
 // Secret store
 // ---------------------------------------------------------------------------
 
-const SECRET_NAME = /^REALBUD_COMPOSIO_PROJECT_[A-Z0-9_]{1,80}$/;
+/** An office project key, or an office webhook signing secret (composio-triggers.ts). */
+const SECRET_NAME = /^REALBUD_COMPOSIO_(PROJECT|WEBHOOK)_[A-Z0-9_]{1,80}$/;
 
 /** Named vendor secrets, addressed by the same `projectKeyEnv` indirection the
  * device registry already uses. Values never appear in a response, a descriptor,
@@ -236,7 +239,7 @@ export function fileSecretStore(directory: string, io: DurableIo = nodeIo): Secr
   };
   // Startup reconciliation: an interrupted write leaves only a temp file, never
   // an admitted secret.
-  removeOrphanTemps(directory, 'REALBUD_COMPOSIO_PROJECT_');
+  removeOrphanTemps(directory, 'REALBUD_COMPOSIO_');
   return {
     read(name) {
       const file = path(name);
@@ -435,11 +438,17 @@ export interface ProvisioningOptions {
   serviceIssuer?: ServiceIssuer;
   /** For `/ready`; defaults to whether `serviceIssuer` is present. */
   serviceIssuerState?: ServiceIssuerState;
+  /** The office project's Composio webhook subscription, made in `ensureOfficeProject`
+   * when `baseUrl` (this gateway's HTTPS origin) is set. Absent, none is made. */
+  webhooks?: { baseUrl: string; client: ComposioWebhookClient };
+  /** Turns off a revoked installation's event triggers. Absent, revoke leaves them. */
+  triggerApps?: Pick<ComposioAppAdapter, 'setTriggerStatus'>;
 }
 
 export class InstallationProvisioning {
   private readonly options: ProvisioningOptions;
   private readonly endpoint: string;
+  private readonly webhookBase?: string;
   /** Recent desktop grant asks per installation (in memory, per process). */
   private readonly grantAsks = new Map<string, number[]>();
   constructor(options: ProvisioningOptions) {
@@ -448,6 +457,11 @@ export class InstallationProvisioning {
     requireThat(isAbsolute(options.registry), 'connector_registry_unavailable', 503);
     requireThat(options.requestCapNanoAud === undefined || NANO_AUD.test(options.requestCapNanoAud), 'modelvia_request_cap_invalid', 503);
     this.options = options; this.endpoint = url.origin;
+    if (options.webhooks) {
+      let base: URL | undefined; try { base = new URL(options.webhooks.baseUrl); } catch { /* refused below */ }
+      requireThat(base && base.protocol === 'https:' && !base.username && !base.password && !base.search && !base.hash && base.pathname === '/', 'connector_webhook_base_invalid', 503);
+      this.webhookBase = base!.origin;
+    }
     ensureProvisioningTable(options.ledger);
   }
 
@@ -616,7 +630,40 @@ export class InstallationProvisioning {
       }
       return created.id;
     });
+    if (this.webhookBase) await this.ensureWebhook(companyId, projectKeyEnv);
     return { projectId, projectKeyEnv };
+  }
+
+  /**
+   * The office project's one webhook subscription and its signing secret in the
+   * store. Nothing to do while the secret is held. Otherwise the project's
+   * subscription is created, or, when one exists (a secret lost or never
+   * stored), its secret is rotated: either way the new secret is stored once. A
+   * failed store is repaired the same way on the next call. The secret is never
+   * logged, audited or returned.
+   */
+  private async ensureWebhook(companyId: string, projectKeyEnv: string): Promise<void> {
+    const name = webhookSecretName(companyId);
+    // The company id is a path segment of the webhook URL (http.ts).
+    requireThat(SECRET_NAME.test(name) && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(companyId), 'invalid_id');
+    const client = this.options.webhooks!.client, url = `${this.webhookBase}/v1/webhooks/composio/${companyId}`;
+    await serialized(`composio-webhook:${companyId}`, async () => {
+      if (this.options.secrets.read(name)) return;
+      const apiKey = this.options.secrets.read(projectKeyEnv); requireThat(apiKey, 'connector_project_key_unavailable', 409);
+      let subscription: { id: string; secret: string }, rotated = false;
+      try {
+        const existing = await client.list(apiKey!);
+        requireThat(existing.length <= 1, 'connector_webhook_ambiguous', 409);
+        if (existing[0]) {
+          // Never repoint a subscription silently: an operator decides.
+          requireThat(existing[0].url === url, 'connector_webhook_url_mismatch', 409);
+          subscription = await client.rotate(apiKey!, existing[0].id); rotated = true;
+        } else subscription = await client.create(apiKey!, url);
+      } catch (error) { throw error instanceof GatewayError ? error : new GatewayError('connector_webhook_unconfirmed', 503); }
+      try { this.options.secrets.write(name, subscription.secret); } catch { throw new GatewayError('connector_webhook_secret_unwritable', 503); }
+      this.options.ledger.db.transaction(() => this.options.ledger.db.append(companyId, 'connector_webhook_subscribed', null, this.options.ledger.now(),
+        { subscriptionId: subscription.id, ...(rotated ? { secretRotated: true } : {}) }));
+    });
   }
 
   /**
@@ -1033,7 +1080,16 @@ export class InstallationProvisioning {
       // A pending record has no deviceId yet; the device it may have admitted is
       // keyed by the installation id.
       const deviceId = saved!.deviceId ?? installationId;
-      updateRegistry(this.options.registry, devices => ({ devices: devices.map(entry => entry.id === deviceId && entry.companyId === companyId ? { ...entry, active: false } : entry) }));
+      let userId: string | undefined;
+      updateRegistry(this.options.registry, devices => {
+        userId = devices.find(entry => entry.id === deviceId && entry.companyId === companyId)?.userId;
+        return { devices: devices.map(entry => entry.id === deviceId && entry.companyId === companyId ? { ...entry, active: false } : entry) };
+      });
+      // The computer's own event triggers stop with it. A provider failure is
+      // audited by disableTriggers and never holds the revoke.
+      if (userId && this.options.triggerApps) {
+        await disableTriggers({ ledger: this.options.ledger, secret: name => this.options.secrets.read(name), apps: this.options.triggerApps }, companyId, row => row.user_id === userId, 'installation_revoked');
+      }
       for (;;) {
         const current = currentWork(), work = current.revocationWork!;
         if (work.pendingSince !== undefined && !work.discovered) {
@@ -1363,6 +1419,7 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
     // Optional: without a signer the desktop receives no service grant, and
     // `/ready` says so. Never a reason to refuse provisioning.
     const signer = serviceIssuerFromEnv(env);
+    const composioBase = value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {};
     return { secrets, provisioning: new InstallationProvisioning({
       ...(signer.issuer ? { serviceIssuer: signer.issuer } : {}), serviceIssuerState: signer.state,
       ledger: options.ledger,
@@ -1377,6 +1434,9 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
       }),
       modelvia: options.modelvia ?? model.modelvia,
       authConfigs: options.authConfigs ?? composioAuthConfigClient({ fetch: options.fetch, oauthApps: oauthAppsFromEnv(env), ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}) }),
+      triggerApps: composioAppAdapter({ fetch: options.fetch, ...composioBase }),
+      // Opt-in: with this gateway's origin set, each office project gets its webhook subscription.
+      ...(value('REALBUD_COMPOSIO_WEBHOOK_BASE_URL') ? { webhooks: { baseUrl: value('REALBUD_COMPOSIO_WEBHOOK_BASE_URL'), client: composioWebhookClient({ fetch: options.fetch, ...composioBase }) } } : {}),
       requestCapNanoAud: model.requestCapNanoAud,
       // The composed client always reads terms; an injected one only if it can.
       ...(hasCustomerTerms(options.modelvia ?? model.modelvia) ? { terms: (options.modelvia ?? model.modelvia) as unknown as ModelviaTermsClient } : {}),

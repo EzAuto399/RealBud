@@ -17,6 +17,7 @@ import { TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-con
 import { composioAppAdapter, type AppAccount, type AppBinding, type AppTool, type ComposioAppAdapter } from './composio-apps.ts';
 import { classifyAppToolCall } from '../shared/app-tool-policy.ts';
 import { serialized } from './serialized.ts';
+import { ComposioTriggers, officeUserId, triggerSpec } from './composio-triggers.ts';
 
 export interface ConnectorDevice {
   id: string; companyId: string; licenseId: string; memberId: string; installationId: string;
@@ -107,6 +108,8 @@ const labelled = (transport: Transport, label: string): Transport => !label ? tr
 } };
 export class ManagedConnectors {
   readonly officeMailbox: OfficeMailbox;
+  /** Composio event triggers: the signed webhook, the per-device event pull and the trigger switch. */
+  readonly triggers: ComposioTriggers;
   private readonly sessions = new Map<string, Session>();
   private readonly inflight = new Set<string>();
   private readonly rates = new Map<string, { starts: number; count: number }>();
@@ -116,7 +119,10 @@ export class ManagedConnectors {
   constructor(options: ConnectorOptions) {
     this.options = options;
     this.apps = options.apps ?? composioAppAdapter();
-    this.officeMailbox = new OfficeMailbox(options, (company, authority) => this.rebindOfficeGmail(company, authority));
+    // A mode change stops the triggers on a mailbox the new mode no longer serves.
+    this.officeMailbox = new OfficeMailbox(options, (company, authority) => this.rebindOfficeGmail(company, authority),
+      (company, retired) => this.triggers.disable(company, row => row.user_id === officeUserId(company) ? retired.office : retired.personal, 'mailbox_mode_changed'));
+    this.triggers = new ComposioTriggers({ ledger: options.ledger, devices: options.devices, secret: options.secret, mailbox: this.officeMailbox, apps: this.apps });
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS connector_links (device TEXT PRIMARY KEY, binding TEXT NOT NULL, state TEXT NOT NULL, result TEXT, created INTEGER NOT NULL)');
     // One office-wide Composio-managed auth config per app, created on demand.
     // `pending` is the durable create intent: never a second POST for it.
@@ -468,7 +474,7 @@ export class ManagedConnectors {
   async handle(input: { token: string; profile: string; method: string; path: string; body?: unknown; session?: string; policyRevision?: number; mailbox?: MailboxSource; signal: AbortSignal }): Promise<ConnectorResponse> {
     let device = this.current(input.token, input.profile); const now = this.options.ledger.now();
     const policy=this.officeMailbox.policy(device.companyId);
-    if (input.path !== '/v1/connectors/status' && input.path !== '/v1/connectors/authorize') {
+    if (!['/v1/connectors/status', '/v1/connectors/authorize', '/v1/connectors/events'].includes(input.path)) {
       requireThat((policy.mode === 'personal' && policy.revision === 0 && input.policyRevision === undefined) || input.policyRevision === policy.revision, 'office_mailbox_review_required', 409);
     }
     // Which mailbox this request uses. In `both` the office mailbox is chosen only
@@ -483,6 +489,8 @@ export class ManagedConnectors {
     for (const [key, rate] of this.rates) if (rate.starts + 60_000 <= now) this.rates.delete(key);
     const rate = this.rates.get(device.id) ?? { starts: now, count: 0 };
     requireThat(rate.count < 120, 'connector_rate_limited', 429); rate.count++; this.rates.set(device.id, rate);
+    // The event pull is a local read: it never waits on another request of this device.
+    if (input.path === '/v1/connectors/events' && input.method === 'POST') return { status: 200, body: this.triggers.pull(device, input.body) };
     requireThat(!this.inflight.has(device.id), 'connector_busy', 409); this.inflight.add(device.id);
     let fingerprint = this.fingerprint(device, source);
     const current = () => { input.signal.throwIfAborted(); requireThat(this.fingerprint(this.current(input.token, input.profile), source) === fingerprint, 'connector_binding_changed', 409); };
@@ -518,6 +526,19 @@ export class ManagedConnectors {
         const result = await (this.options.scan ?? scanGmailReadOnly)({ ...binding, assertAuthority: assertScanAuthority }, request, input.signal);
         assertScanAuthority(); return { status: 200, body: result };
       }
+      if (input.path === '/v1/connectors/triggers' && input.method === 'POST') {
+        object(input.body); exact(input.body, ['app', 'event', 'enabled']);
+        const spec = triggerSpec(input.body.app, input.body.event), enabled = input.body.enabled;
+        requireThat(typeof enabled === 'boolean', 'invalid_fields');
+        this.admit(device, spec.app);
+        // The gateway's own binding: the caller names no account, provider user or project.
+        const binding = { ...this.binding(device, source), assertAuthority: current };
+        if (enabled) {
+          const access = await (this.options.access ?? getGmailReadOnlyAccess)(binding); current();
+          requireThat(binding.accountId && access.services.gmail?.accounts.some(account => account.id === binding.accountId && account.status === 'ACTIVE'), 'connector_account_not_connected', 409);
+        }
+        return { status: 200, body: await this.triggers.set(device.companyId, device.projectKeyEnv, binding, spec, enabled as boolean, input.signal) };
+      }
       if (input.path === '/v1/connectors/status' && input.method === 'GET') {
         const services: Record<string, ServiceStatus> = {}; const names: string[] = []; let officeShared: ServiceStatus | undefined;
         if (appsOf(device).includes('gmail')) {
@@ -550,7 +571,9 @@ export class ManagedConnectors {
           sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true, mailboxMode: policy.mode,
           ...(officeShared ? { officeShared, officeMailboxAccess: this.officeMailbox.mailboxAccess(device.companyId, 'office') } : {}),
           // Lets the desktop say "the owner must enable this" instead of showing a send card the gateway would refuse.
-          ...(appsOf(device).includes('gmail') ? { mailboxAccess: this.officeMailbox.mailboxAccess(device.companyId) } : {}), apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
+          ...(appsOf(device).includes('gmail') ? { mailboxAccess: this.officeMailbox.mailboxAccess(device.companyId) } : {}), apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt,
+          // Event triggers this computer reads, with `expired` / `provider_disabled` when Composio said so.
+          triggers: this.triggers.status(device) } };
       }
       if (input.path === '/v1/connectors/authorize' && input.method === 'POST') {
         object(input.body); exact(input.body, ['app']);

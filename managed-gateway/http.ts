@@ -33,7 +33,9 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * TLS termination, request concurrency/rate limits and external identity admission are
  * explicit deployment gates. No cookie auth or permissive CORS is installed.
  *
- * Routes: GET /health, GET /ready, /v1/connectors/*, POST
+ * Routes: GET /health, GET /ready, /v1/connectors/* (including the device's POST
+ * /v1/connectors/events pull and POST /v1/connectors/triggers switch;
+ * composio-triggers.ts), the signed POST /v1/webhooks/composio/{companyId}, POST
  * /v1/portal/installations/{provision,revoke}, the desktop's POST
  * /v1/installations/service-entitlement (its own connector credential), the operator-only POST
  * /v1/operator/offices/ai-access, PUT|GET /v1/operator/offices/entitlement, POST /v1/operator/offices/ai-markup[/sync],
@@ -123,6 +125,16 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         const event=json(raw); object(event);
         reply(res,200,await (String(event.type).startsWith('refund.')?billing().refundWebhook(raw,signature):billing().webhook(raw,signature))); return;
       }
+      // Composio's signed trigger events for one office. The path only selects
+      // that office's webhook secret; the body is trusted after the HMAC over these
+      // raw bytes, and only allowlisted ids are kept (composio-triggers.ts).
+      const composioWebhook=/^\/v1\/webhooks\/composio\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,159})$/.exec(url.pathname);
+      if(req.method==='POST' && composioWebhook) {
+        requireThat(options.connectors,'connectors_unavailable',503);
+        requireThat(!url.search,'invalid_query');
+        const raw=await body(req,256_000);
+        reply(res,200,options.connectors.triggers.webhook(composioWebhook[1]!,{id:req.headers['webhook-id'],timestamp:req.headers['webhook-timestamp'],signature:req.headers['webhook-signature']},raw)); return;
+      }
       if(url.pathname.startsWith('/v1/connectors/')) {
         requireThat(options.connectors, 'connectors_unavailable', 503);
         requireThat(!url.search, 'invalid_connector_query');
@@ -181,7 +193,7 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
           // project or a project without its key). Pending: transient; call again.
           const code=error instanceof GatewayError?error.code:'connector_project_failed';
           if(code==='tenant_unavailable') { reply(res,404,{companyId,projectName,state:'held',error:code}); return; }
-          const held=['connector_project_ambiguous','connector_project_key_unavailable','connector_project_key_orphaned','invalid_id','invalid_connector_secret_reference'].includes(code);
+          const held=['connector_project_ambiguous','connector_project_key_unavailable','connector_project_key_orphaned','connector_webhook_ambiguous','connector_webhook_url_mismatch','invalid_id','invalid_connector_secret_reference'].includes(code);
           reply(res,held?(code.startsWith('invalid_')?400:409):503,{companyId,projectName,state:held?'held':'pending',error:code});
         }
         return;

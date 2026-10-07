@@ -43,6 +43,7 @@ function setup() {
   const bindings: { op: string; slug: string; binding: AppBinding }[] = [];
   const accounts = new Map<string, { id: string; status: string }[]>();
   const apps: ComposioAppAdapter = {
+    async upsertTrigger() { throw new Error('unused'); }, async setTriggerStatus() { throw new Error('unused'); },
     async listAccounts(binding, slug) { bindings.push({ op: 'accounts', slug, binding }); return accounts.get(`${binding.apiKey}:${binding.authConfigId}:${binding.userId}`) ?? []; },
     async authorize(binding) { bindings.push({ op: 'authorize', slug: '', binding }); if (refuseLink) throw Object.assign(new Error('Connected app: the provider refused the request.'), { status: refuseLink }); return { url: 'https://connect.composio.dev/link/fictional', accountId: `acct_${binding.userId}`, expiresAt: new Date(f.now() + 600_000).toISOString() }; },
     async listTools(binding, slug) { bindings.push({ op: 'tools', slug, binding }); const up = slug.toUpperCase(); return [
@@ -183,6 +184,7 @@ test('Ask runs the full Gmail toolkit under the mailbox policy, only on a verifi
     const names = ['GMAIL_LIST_THREADS', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_SEND_EMAIL', 'GMAIL_SEND_DRAFT', 'GMAIL_MOVE_TO_TRASH', 'GMAIL_DELETE_MESSAGE', 'GMAIL_CREATE_FILTER', 'GMAIL_UPDATE_VACATION_SETTINGS'];
     const apps: ComposioAppAdapter = {
       async listAccounts() { return []; }, async authorize() { throw new Error('unused'); },
+      async upsertTrigger() { throw new Error('unused'); }, async setTriggerStatus() { throw new Error('unused'); },
       // As the real adapter does: every toolkit tool, classified by the shared policy (Composio's own hints included).
       async listTools(_binding, slug) { return names.map(name => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, policy: classifyAppTool(name, { app: slug, annotations: name === 'GMAIL_SEND_DRAFT' ? { destructiveHint: true } : undefined }) })); },
       async execute(binding, slug, tool, args) { assert.equal(slug, 'gmail'); executed.push({ tool, accountId: binding.accountId, apiKey: binding.apiKey, args }); return { content: [{ type: 'text', text: '{}' }] }; },
@@ -215,6 +217,7 @@ test('an office shared mailbox keeps the three bounded reads it was granted; the
   try {
     const executed: string[] = [];
     const apps: ComposioAppAdapter = { async listAccounts() { return []; }, async authorize() { throw new Error('unused'); },
+      async upsertTrigger() { throw new Error('unused'); }, async setTriggerStatus() { throw new Error('unused'); },
       async listTools() { return []; }, async execute(_b, _s, tool) { executed.push(tool); return { content: [] }; } };
     const broker = s.make({ apps });
     // The office granted this desktop its shared mailbox before the 2026-10-02 decision.
