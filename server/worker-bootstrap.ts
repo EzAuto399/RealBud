@@ -2,8 +2,9 @@
 // messaging gateway or desktop app installer.
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp, open } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
+import { mkdirPrivateSync, writeFileAtomic } from "./atomic.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
@@ -12,6 +13,7 @@ import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { DOCUMENT_TOOLS_NEED_REPAIR, ensureDocumentDeps } from "./hermes-document-deps.ts";
+import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 
 // The OS releases this transaction lock on process death. The durable child
 // record separately prevents a retry from overlapping an orphaned installer.
@@ -285,6 +287,26 @@ const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: st
   if (signal.aborted || recordFailed) abort();
 });
 
+/**
+ * Windows setup's own Git file in a fresh temporary folder. The folder, then
+ * the empty file, get their protected descriptor before any content goes in,
+ * as restrictNewSync did, but without blocking the service while PowerShell
+ * runs (Windows issues log #43). The caller removes the folder.
+ */
+export async function writeBootstrapGitConfig(directory: string): Promise<string> {
+  await windowsFilePrivacy(directory, "directory", true);
+  const file = join(directory, "config"), handle = await open(file, "wx", 0o600);
+  try {
+    await windowsFilePrivacy(file, "file", true);
+    // longpaths: the pinned Hermes tree has files ~160 characters deep, and the
+    // per-release runtime folder under a Windows profile puts the clone past
+    // MAX_PATH, so checkout fails ("unable to checkout working tree").
+    await handle.writeFile("[core]\n\tautocrlf = false\n\tlongpaths = true\n");
+    await handle.sync();
+  } finally { await handle.close(); }
+  return file;
+}
+
 export const runBootstrapStage: StageRun = async (invocation, home, signal, recordHome = home) => {
   signal.throwIfAborted();
   let gitConfigDirectory: string | undefined;
@@ -292,13 +314,8 @@ export const runBootstrapStage: StageRun = async (invocation, home, signal, reco
   try {
     let gitConfigFile: string | undefined;
     if (process.platform === "win32") {
-      gitConfigDirectory = mkdtempSync(join(tmpdir(), "realbud-bootstrap-git-"));
-      restrictNewSync([{ path: gitConfigDirectory, kind: "directory" }]);
-      gitConfigFile = join(gitConfigDirectory, "config");
-      // longpaths: the pinned Hermes tree has files ~160 characters deep, and the
-      // per-release runtime folder under a Windows profile puts the clone past
-      // MAX_PATH, so checkout fails ("unable to checkout working tree").
-      writeFileAtomic(gitConfigFile, "[core]\n\tautocrlf = false\n\tlongpaths = true\n", 0o600);
+      gitConfigDirectory = await mkdtemp(join(tmpdir(), "realbud-bootstrap-git-"));
+      gitConfigFile = await writeBootstrapGitConfig(gitConfigDirectory);
     }
     const env = bootstrapStageEnv(home, { ...process.env, PATH: augmentedPath() }, process.platform, gitConfigFile);
     await startBootstrapStage(invocation, recordHome, signal, env);
