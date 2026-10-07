@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, recordConnectedAppApproval, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
 import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
-import { defaultApprovalSettings, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { defaultApprovalSettings, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
@@ -940,6 +940,68 @@ describe("connected app authoritative broker", () => {
       expect(operations.list().filter(row => row.status === "started" || row.status === "succeeded")).toEqual([]);
     });
 
+    const managed = async () => {
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, managed: true, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card), approvalSettings: async () => settings });
+    };
+    it("refuses an operation whose locked row is Don't use, and keeps a shortened card off the phone", async () => {
+      await managed();
+      settings = [saved({ "class:upload": "deny", "class:trash": "deny" })];
+      for (const call of [{ name: "OUTLOOK_ADD_MAIL_ATTACHMENT", arguments: { message_id: "fictional-1" } }, { name: "GMAIL_DELETE_DRAFT", arguments: { draft_id: "fictional-2" } }]) {
+        expect((await invoke("tools/call", call)).body.result.content[0].text, call.name).toContain("This kind of action is set to Don't use");
+      }
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      // With nothing locked they still run without a card, as today.
+      settings = [];
+      expect((await invoke("tools/call", { name: "GMAIL_DELETE_DRAFT", arguments: { draft_id: "fictional-2" } })).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      settings = [saved({ "app:gmail": "ask" })];
+      await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test", body: "Short fictional note" } });
+      expect(review.mock.calls[0][2]?.remote).toBe("write");
+      review.mockClear();
+      await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test", body: "x".repeat(500) } });
+      expect(review.mock.calls[0][0]).toContain("see Exact request");
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+      settings = []; review.mockClear();
+      await invoke("tools/call", { name: "SLACK_POST_MESSAGE", arguments: { channel: "fictional", text: "y".repeat(500) } });
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+    });
+
+    it("on an office desktop whose settings could not be checked, cards what would run and says why", async () => {
+      await managed();
+      settings = [saved(), uncheckedOfficeSettings()];
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][0]).toContain(OFFICE_UNCHECKED);
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      // A this-task grant cannot pass it; this computer's Don't use and blocked tools still refuse.
+      taskReadGrants.add(threadId, "app:gmail"); review.mockClear();
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: { query: "again" } })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      settings = [saved({ "app:gmail": "deny" }), uncheckedOfficeSettings()]; review.mockClear();
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: { query: "third" } })).body.result.content[0].text).toContain("Gmail is set to Don't use");
+      expect((await invoke("tools/call", { name: "GMAIL_DELETE_MESSAGE", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+    });
+
+    it("re-reads the settings after the person approves: Don't use saved meanwhile refuses, with a refused receipt", async () => {
+      review.mockImplementation(async () => { settings = [saved({ "app:gmail": "deny" })]; return true; });
+      const result = await invoke("tools/call", fetchMail);
+      expect(review).toHaveBeenCalledOnce();
+      expect(result.body.result.content[0].text).toBe("Approval settings changed to Don't use for Gmail; Bud did not do it.");
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_FETCH_EMAILS", status: "denied" })]);
+      // Settings that need recovery after the card refuse too.
+      settings = []; review.mockImplementation(async () => { settings = null as unknown as ApprovalSettings[]; return true; });
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => { if (!settings) throw new Error("needs recovery"); return settings; } });
+      expect((await invoke("tools/call", fetchMail)).body.result.content[0].text).toContain("need recovery");
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+    });
+
     it("refuses when the settings need recovery, and keeps the boundary's own refusals", async () => {
       broker.close();
       broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
@@ -959,9 +1021,10 @@ describe("connected app authoritative broker", () => {
 
 describe("approval settings: every connected-app decision with nothing saved equals today's", () => {
   const SLUGS = [...new Set([...READ_ONLY_APP_TOOLS, ...MAIL_SENDS, "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_MOVE_TO_TRASH", "GMAIL_DELETE_MESSAGE", "GMAIL_CREATE_FILTER",
+    "GMAIL_DELETE_DRAFT", "GMAIL_UPDATE_DRAFT", "OUTLOOK_ADD_MAIL_ATTACHMENT", "OUTLOOK_CREATE_FORWARD_DRAFT", "XERO_CREATE_PAYMENT", "STRIPE_CREATE_TRANSFER", "DOCUSIGN_SIGN_ENVELOPE",
     "GMAIL_FROBNICATE", "OUTLOOK_MOVE_MESSAGE", "XERO_LIST_INVOICES", "XERO_CREATE_INVOICE", "XERO_DELETE_INVOICE", "SLACK_POST_MESSAGE", "SLACK_SEARCH_MESSAGES",
     "GOOGLECALENDAR_CREATE_EVENT", "NOTION_BULK_ARCHIVE_PAGES", "GITHUB_REVOKE_TOKEN", "send_email", "READ"])];
-  const ARGS: Array<Record<string, unknown>> = [{}, { add_label_ids: ["TRASH"] }, { destination_id: "archive" }, { status: "cancelled" }];
+  const ARGS: Array<Record<string, unknown>> = [{}, { add_label_ids: ["TRASH"] }, { destination_id: "archive" }, { status: "cancelled" }, { attachment: { name: "fictional.pdf" } }];
   const today = (policy: string) => policy === "read" ? "run" : policy === "review" ? "card" : "refuse";
   it.each(SLUGS)("%s", slug => {
     for (const args of ARGS) {
@@ -990,7 +1053,29 @@ describe("approval settings: every connected-app decision with nothing saved equ
     expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).toMatchObject({ decision: "card", remote: "read" });
     expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).not.toHaveProperty("offer");
     const reads: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "app:xero": "read-without-asking" }, reviewedReads: [] };
-    expect(appVerdict([{ slug: "XERO_CREATE_INVOICE", args: {} }], [reads], { direct: false })).toMatchObject({ decision: "card", remote: "write" });
+    expect(appVerdict([{ slug: "XERO_CREATE_INVOICE", args: {} }], [reads], { direct: false })).toMatchObject({ decision: "card", remote: "desktop-only" });
+  });
+  it("classes what a tool actually does: a locked Don't use refuses it, and only exact reads and a few safe in-app writes reach a phone", () => {
+    const locked = (...classes: string[]): ApprovalSettings[] => [{ version: 1, purpose: "approval-settings", groups: Object.fromEntries(classes.map(cls => [`class:${cls}`, "deny"])), reviewedReads: [] }];
+    const row = (slug: string, args: Record<string, unknown> = {}) => [{ slug, args }];
+    for (const [slug, cls, args] of [["OUTLOOK_ADD_MAIL_ATTACHMENT", "upload"], ["GMAIL_DELETE_DRAFT", "trash"], ["XERO_CREATE_PAYMENT", "pay"], ["STRIPE_CREATE_TRANSFER", "pay"],
+      ["SLACK_POST_MESSAGE", "send"], ["OUTLOOK_REPLY_EMAIL", "send"], ["DOCUSIGN_SIGN_ENVELOPE", "sign"], ["GMAIL_ADD_LABEL_TO_EMAIL", "trash", { add_label_ids: ["TRASH"] }],
+      ["GMAIL_CREATE_EMAIL_DRAFT", "upload", { attachment: { name: "fictional.pdf" } }], ["send_email", "send"]] as Array<[string, string, Record<string, unknown>?]>) {
+      for (const direct of [false, true]) expect(appVerdict(row(slug, args), locked(cls), { direct }), `${slug} ${direct}`).toMatchObject({ decision: "refuse", reason: expect.stringContaining("This kind of action is set to Don't use") });
+    }
+    // Reading the same resources, and drafting, is none of those operations.
+    const all = locked("pay", "sign", "send", "notice", "account-change", "trash", "upload", "submit");
+    for (const slug of ["XERO_LIST_PAYMENTS", "GMAIL_GET_ATTACHMENT", "OUTLOOK_LIST_OUTLOOK_ATTACHMENTS", "GMAIL_LIST_DRAFTS", "GMAIL_CREATE_EMAIL_DRAFT", "OUTLOOK_CREATE_FORWARD_DRAFT", "OUTLOOK_GET_PROFILE"])
+      expect(appVerdict(row(slug), all, { direct: false }).decision, slug).toBe("run");
+    // Phone: exact reads as reads, a Gmail draft or label edit as a write, everything else desktop only.
+    const ask: ApprovalSettings[] = [{ version: 1, purpose: "approval-settings", groups: { "app:gmail": "ask", "app:outlook": "ask", "app:xero": "ask" }, reviewedReads: [] }];
+    expect(appVerdict(row("GMAIL_LIST_THREADS"), ask, { direct: false })).toMatchObject({ decision: "card", remote: "read" });
+    expect(appVerdict(row("GMAIL_CREATE_EMAIL_DRAFT", { body: "Fictional" }), ask, { direct: false })).toMatchObject({ decision: "card", remote: "write" });
+    expect(appVerdict(row("GMAIL_ADD_LABEL_TO_EMAIL", { remove_label_ids: ["INBOX"] }), ask, { direct: false })).toMatchObject({ decision: "card", remote: "write" });
+    for (const [slug, args] of [["GMAIL_DELETE_DRAFT", {}], ["OUTLOOK_ADD_MAIL_ATTACHMENT", {}], ["XERO_LIST_INVOICES", {}], ["GMAIL_ADD_LABEL_TO_EMAIL", { add_label_ids: ["SPAM"] }],
+      ["GMAIL_CREATE_EMAIL_DRAFT", { attachment: { name: "fictional.pdf" } }]] as Array<[string, Record<string, unknown>]>)
+      expect(appVerdict(row(slug, args), ask, { direct: false }), slug).toMatchObject({ decision: "card", remote: "desktop-only" });
+    for (const slug of ["XERO_CREATE_PAYMENT", "SLACK_POST_MESSAGE", "GOOGLECALENDAR_CREATE_EVENT"]) expect(appVerdict(row(slug), [], { direct: false }), slug).toMatchObject({ decision: "card", remote: "desktop-only" });
   });
 });
 

@@ -20,7 +20,7 @@ import { EventBus } from "./harness/bus.ts";
 import type { Store } from "./store.ts";
 import { websiteRunReceipt } from "./website-work-adapters.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
-import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
+import { OFFICE_UNCHECKED, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
@@ -113,6 +113,37 @@ describe("approval settings, read on every step", () => {
     expect((await f.request("browser_read", { tab_id: 1 })).isError).not.toBe(true);
     expect(f.approve).toHaveBeenCalledOnce();
     expect(f.approve.mock.calls[0][4]).toMatchObject({ fence: { surface: "portal-read", ruleOffer: null } });
+  });
+
+  it("checks the settings again after the person approves: a Don't use saved meanwhile refuses a carded borrow, read or open", async () => {
+    let current: ApprovalSettings[] = saved({ "site:portal.example": "ask" });
+    const f = await fixture(undefined, { approvalSettings: async () => current });
+    const changed = "Approval settings changed to Don't use for portal.example; Bud did not do it.";
+    const refuseNext = () => f.approve.mockImplementationOnce(async () => { current = saved({ "site:portal.example": "deny" }); return true; });
+    refuseNext();
+    expect((await f.request("browser_borrow", { tab_id: 1 })).content[0].text).toBe(changed);
+    expect(f.calls.some(call => call[0] === "tab" && call[1] === "borrow")).toBe(false);
+    current = saved({ "site:portal.example": "ask" });
+    await f.request("browser_borrow", { tab_id: 1 });
+    expect(f.calls.some(call => call[0] === "tab" && call[1] === "borrow")).toBe(true);
+    const observed = () => f.calls.filter(call => call[0] === "observe").length;
+    const before = observed();
+    refuseNext();
+    expect((await f.request("browser_read", { tab_id: 1 })).content[0].text).toBe(changed);
+    expect(observed()).toBe(before);
+    current = saved({ "site:portal.example": "ask" });
+    refuseNext();
+    expect((await f.request("browser_navigate", { tab_id: 1, url: "https://portal.example/reports" })).content[0].text).toBe(changed);
+    expect(f.calls.some(call => call[0] === "navigate")).toBe(false);
+    expect((await f.operations.list()).filter(row => row.status === "denied").map(row => row.toolName).sort()).toEqual(["browser_borrow", "browser_navigate", "browser_read"]);
+  });
+
+  it("asks before every step on an office desktop whose settings could not be checked, and says why", async () => {
+    const f = await fixture(undefined, { rules: [{ key: "portal:read:portal.example", decision: "allow" }],
+      approvalSettings: async () => [{ version: 1, purpose: "approval-settings", groups: {}, reviewedReads: [] }, uncheckedOfficeSettings()] });
+    await f.request("browser_borrow", { tab_id: 1 });
+    expect(f.approve).toHaveBeenCalledOnce();
+    expect(f.approve.mock.calls[0][2]).toContain(OFFICE_UNCHECKED);
   });
 });
 

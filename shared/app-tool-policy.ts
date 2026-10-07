@@ -182,6 +182,8 @@ function namedPolicy(name: string, rest: string, annotations: AppToolAnnotations
   return reads && annotations?.readOnlyHint !== false ? "read" : "review";
 }
 
+/** Gmail label edits: archive, read and star run; one touching TRASH or SPAM hides mail. */
+const LABEL_EDITS = new Set(["GMAIL_ADD_LABEL_TO_EMAIL", "GMAIL_MODIFY_THREAD_LABELS", "GMAIL_BATCH_MODIFY_MESSAGES"]);
 // Nesting past six levels is not a label list; it is held for review.
 const hiddenLabel = (value: unknown, depth = 0): boolean => depth >= 6 || (typeof value === "string" ? ["TRASH", "SPAM"].includes(value.toUpperCase())
   : Array.isArray(value) ? value.some(item => hiddenLabel(item, depth + 1))
@@ -209,12 +211,47 @@ export function classifyAppToolCall(name: unknown, args: unknown, options: { app
   const policy = classifyAppTool(name, options);
   if (policy === "blocked" || typeof name !== "string") return "blocked";
   if (/^(GOOGLECALENDAR|GOOGLE_CALENDAR|OUTLOOK|OUTLOOKCALENDAR)_/.test(name) && !isMailTool(name) && cancelsEvent(args)) return "blocked";
-  if (policy === "read" && (name === "GMAIL_ADD_LABEL_TO_EMAIL" || name === "GMAIL_MODIFY_THREAD_LABELS" || name === "GMAIL_BATCH_MODIFY_MESSAGES") && hiddenLabel(args)) return "review";
+  if (policy === "read" && LABEL_EDITS.has(name) && hiddenLabel(args)) return "review";
   if (policy === "review" && MAIL_MOVES.has(name) && args && typeof args === "object" && !Array.isArray(args)) {
     const destination = (args as Record<string, unknown>).destination_id;
     if (typeof destination === "string" && ["archive", "inbox"].includes(destination.toLowerCase())) return "read";
   }
   return policy;
+}
+
+/** A per-instance operation a tool performs (the locked "Always asks" rows in Workspace → Approvals). */
+export type AppToolOperation = "pay" | "sign" | "send" | "notice" | "account-change" | "trash" | "upload" | "submit";
+const OPERATION_TOKENS: ReadonlyArray<[AppToolOperation, ReadonlySet<string>]> = [
+  ["pay", new Set(["PAY", "PAYS", "PAYMENT", "PAYMENTS", "PAYOUT", "PAYOUTS", "TRANSFER", "TRANSFERS", "CHARGE", "CHARGES", "REFUND", "REFUNDS"])],
+  ["sign", new Set(["SIGN", "SIGNS", "SIGNATURE", "SIGNATURES", "ESIGN", "COUNTERSIGN"])],
+  ["send", new Set(["SEND", "SENDS"])],
+  ["notice", new Set(["NOTICE", "NOTICES"])],
+  ["account-change", new Set(["ACCOUNT", "ACCOUNTS", "SETTING", "SETTINGS", "PROFILE", "PREFERENCES", "PASSWORD"])],
+  ["trash", new Set(["DELETE", "TRASH", "REMOVE", "PURGE", "DESTROY", "ERASE", "WIPE"])],
+  ["upload", new Set(["UPLOAD", "UPLOADS", "ATTACH", "ATTACHMENT", "ATTACHMENTS"])],
+  ["submit", new Set(["SUBMIT"])],
+];
+/** Reply, forward and post deliver a message, unless the tool only writes a draft of one. */
+const DELIVERS = new Set(["REPLY", "FORWARD", "POST", "PUBLISH", "BROADCAST"]);
+/**
+ * The per-instance operations a call performs, read conservatively from its
+ * name's verb and resource tokens (and, for a mail label edit or a file
+ * argument, its arguments). A read by name performs none. These never decide
+ * whether a call runs or asks; a locked Don't use refuses them, and they keep a
+ * card off the phone. A name outside the `APP_VERB` shape is read whole.
+ */
+export function appToolOperations(name: string, args: unknown): AppToolOperation[] {
+  // The app's own token counts too: a direct tool named SEND_EMAIL sends.
+  const tokens = name.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  const rest = APP_TOOL_NAME.test(name) ? tokens.slice(1) : tokens;
+  const verb = rest[0] === "BATCH" ? rest[1] : rest[0];
+  if (KNOWN_READS.has(name) || (verb !== undefined && READ_VERBS.has(verb) && !rest.some(token => WRITE_TOKENS.has(token) || BLOCKED_TOKENS.has(token)))) return [];
+  const found = new Set(OPERATION_TOKENS.filter(([, set]) => tokens.some(token => set.has(token))).map(([operation]) => operation));
+  if (MAIL_SENDS.has(name) || (tokens.some(token => DELIVERS.has(token)) && !tokens.some(token => token === "DRAFT" || token === "DRAFTS"))) found.add("send");
+  const fields = args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {};
+  if (LABEL_EDITS.has(name) && hiddenLabel(fields)) found.add("trash");
+  if ([fields.attachment, fields.attachments].some(value => value !== undefined && value !== null && value !== "" && !(Array.isArray(value) && !value.length))) found.add("upload");
+  return [...found];
 }
 
 /** The strictest class wins across a batch; an empty batch is nothing to allow. */

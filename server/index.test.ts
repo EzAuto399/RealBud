@@ -789,6 +789,26 @@ describe("harness HTTP API", () => {
     expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
   });
 
+  it("keeps a website's Ask every time once-only, so neither a site rule nor a generic rule answers it", () => {
+    // Source contract (needs a live ACP permission request): the fence's settings ask keeps provider-once,
+    // and the generic rule evaluation skips that request.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("function attachFenceToOpened(");
+    const attach = source.slice(start, source.indexOf("bus.subscribe(", start));
+    expect(attach).toContain("!decision.siteAsks && canUseReviewedPortalRules(event, decision)");
+    expect(source).toContain("siteAsks = decision.siteAsks === true;");
+    expect(source).toContain("if (permission && !onceApproval && !fromBroker && !siteAsks && asker && event.requestId");
+  });
+
+  it("verifies an office desktop's department settings with the person's own session before a turn's first governed step", () => {
+    // Source contract (a turn needs a real worker): the check runs before the worker gets any broker.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const verify = "if (opts?.memberSession) { await approvals.verifyIfMissing({ headers: { 'x-realbud-member-session': opts.memberSession } }).catch(() => {}); await governingApprovals().catch(() => {}); assertDispatch(); }";
+    expect(source).toContain(verify);
+    expect(source.indexOf(verify)).toBeLessThan(source.indexOf("const access = !opts?.systemExtra ? await refreshOfficeSources() : null;"));
+    expect(source.indexOf(verify)).toBeGreaterThan(source.indexOf("store.patchBot(bot.id, { busy: true, unread: false });\n  expectedStoppedThreads.delete(threadId);"));
+  });
+
   it("answers a phone tap on a live action card through the same live-request helper", () => {
     // Source contract: the phone path is answerLiveRequest with no request (so no saved rule or
     // always-reads), and the card's answeredBy and the app receipt come from that one helper.

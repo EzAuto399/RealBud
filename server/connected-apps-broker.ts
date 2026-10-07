@@ -7,8 +7,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { readMcpRpcResponse } from "./composio.ts";
 import { redactSecrets, redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, validAppToolName, validAppToolSlug, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
-import { approvalGroupKey, decide, defaultApprovalSettings, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { appToolOperations, classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
+import { approvalGroupKey, decide, defaultApprovalSettings, lockedOff, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { approvalsEditableHere, governingApprovals } from "./approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import { managedMailboxAccess } from "./managed-connectors.ts";
@@ -290,21 +290,28 @@ export async function startConnectedAppsBroker(options: {
             let review = policy === "review";
             let approval: string | undefined;
             let card: ApprovalCardDetails = {};
+            let unchecked = false;
             const rows = appRows(call);
+            const how = { direct: !options.managed || Boolean(options.localTransport), local: Boolean(options.localTransport) };
+            const readSettings = options.approvalSettings ?? governingApprovals;
             if (rows.length) {
               let settings: ApprovalSettings[];
-              try { settings = await (options.approvalSettings ?? governingApprovals)(); }
+              try { settings = await readSettings(); }
               catch { return errorResult(APPROVALS_RECOVERY); }
-              const verdict = appVerdict(rows, settings, { direct: !options.managed || Boolean(options.localTransport), local: Boolean(options.localTransport) });
+              const verdict = appVerdict(rows, settings, how);
               if (verdict.decision === "refuse") return errorResult(verdict.reason);
               review = verdict.decision === "card" && !(verdict.offer && taskReadGrants.has(options.threadId, verdict.offer.group));
+              unchecked = settings.some(item => item.unchecked);
               card = { remote: options.managed && !options.localTransport && MAIL_SENDS.has(call.name) ? "send" : verdict.remote,
                 ...(verdict.offer ? { readOffer: { ...verdict.offer, always: await approvalsEditableHere() } } : {}) };
             }
             if (review) {
               const safe = redactSecrets(call) as Call;
               const hide = (text: string) => redactSecretsInText(text.replaceAll(options.key, "[private app key]"));
-              let summary = hide(appCard(safe, { office, account: options.localTransport ? options.readOnlyAccountId || "the account selected in Connected apps" : undefined }));
+              const shown = appCardText(safe, { office, account: options.localTransport ? options.readOnlyAccountId || "the account selected in Connected apps" : undefined });
+              let summary = hide(shown.text);
+              // A phone approves only what it shows in full: a shortened or redacted card stays on this computer.
+              if ((card.remote === "read" || card.remote === "write") && (!shown.complete || summary !== shown.text || JSON.stringify(safe) !== JSON.stringify(call))) card = { ...card, remote: "desktop-only" };
               let detail = hide(JSON.stringify(safe, null, 2));
               if (options.managed && !options.localTransport && MAIL_SENDS.has(call.name)) {
                 // A message is approved only as the person will see it sent:
@@ -315,15 +322,21 @@ export async function startConnectedAppsBroker(options: {
                 summary = review.card; detail = review.exact;
                 if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
+              if (unchecked) summary = `${summary}\n${OFFICE_UNCHECKED}`;
               // The review id rides on the card and is read back after the answer so the receipt names a phone answer.
               const reviewId = randomBytes(6).toString("hex");
               openReviews.set(reviewId, { threadId: options.threadId });
               let approved: boolean;
               try { approved = await options.approve(summary, controller.signal, { ...card, detail, reviewId }); }
               finally { approval = openReviews.get(reviewId)?.approval; openReviews.delete(reviewId); }
-              if (!approved) {
-                operations.deny({ ...receipt, ...(approval ? { approval } : {}) });
-                return errorResult("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
+              const refused = (text: string) => { operations.deny({ ...receipt, ...(approval ? { approval } : {}) }); return errorResult(text); };
+              if (!approved) return refused("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
+              // A Don't use saved while the card waited still refuses it.
+              if (rows.length) {
+                let now: ApprovalSettings[];
+                try { now = await readSettings(); } catch { return refused(APPROVALS_RECOVERY); }
+                const again = appVerdict(rows, now, how);
+                if (again.decision === "refuse") return refused(`Approval settings changed to Don't use for ${again.label}; Bud did not do it.`);
               }
             }
             if (controller.signal.aborted || closed || !options.isActive()) {
@@ -491,35 +504,44 @@ const appGroup = (slug: string): string | null => {
 const APP_LABELS: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", googlecalendar: "Google Calendar", googledrive: "Google Drive", googlesheets: "Google Sheets", googledocs: "Google Docs" };
 const appLabel = (group: string) => { const toolkit = group.slice(4); return APP_LABELS[toolkit] ?? toolkit.charAt(0).toUpperCase() + toolkit.slice(1); };
 const STRICTNESS: Record<ApprovalDecision, number> = { run: 0, card: 1, refuse: 2 };
-type AppVerdict = { decision: "refuse"; reason: string }
-  | { decision: "run" | "card"; remote: NonNullable<ApprovalCardDetails["remote"]>; offer?: { appLabel: string; group: string } };
+/** In-app changes a phone may approve: writing or editing a Gmail draft, and a
+ * label edit the policy lets run (never Trash or Spam). Everything else that changes is desktop only. */
+const PHONE_WRITES = new Set(["GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_UPDATE_DRAFT", "GMAIL_ADD_LABEL_TO_EMAIL", "GMAIL_MODIFY_THREAD_LABELS"]);
+type Remote = NonNullable<ApprovalCardDetails["remote"]>;
+type AppVerdict = { decision: "refuse"; reason: string; label: string }
+  | { decision: "run" | "card"; remote: Remote; offer?: { appLabel: string; group: string } };
 /** The strictest answer across a call's rows. A managed row is classed as the
  * policy above classes it; a direct row only so an owner-reviewed read can run
  * (it never refuses what a direct connection reviews today). A row no setting
- * can name keeps today's answer. */
+ * can name keeps today's answer. What a row actually does (pays, sends,
+ * deletes, uploads…) never changes run or card; a locked Don't use on it refuses. */
 export function appVerdict(rows: AppRow[], settings: readonly ApprovalSettings[], how: { direct: boolean; local?: boolean }): AppVerdict {
   const list = settings.length ? settings : [defaultApprovalSettings()];
   const calls = rows.map(row => {
     const policy: Policy = how.direct ? (classifyAppToolCall(row.slug, row.args) === "read" ? "read" : "review") : namespacedPolicy(row.slug, row.args);
-    const cls: ApprovalCallClass = policy === "read" ? "read" : policy === "blocked" ? "blocked" : MAIL_SENDS.has(row.slug) ? "send" : /_TO_TRASH$/.test(row.slug) ? "trash" : "write";
+    const operations = appToolOperations(row.slug, row.args);
+    const cls: ApprovalCallClass = policy === "read" ? "read" : policy === "blocked" ? "blocked" : operations[0] ?? "write";
     const group = appGroup(row.slug);
     const call: ApprovalCall | null = group ? { group, tool: row.slug, args: row.args, cls, ...(how.direct ? { direct: true } : {}) } : null;
-    const decision: ApprovalDecision = call ? decide(list, call) : how.direct || policy === "review" ? "card" : policy === "blocked" ? "refuse" : "run";
-    return { row, call, decision };
+    const decision: ApprovalDecision = lockedOff(list, operations) ? "refuse" : call ? decide(list, call)
+      : policy === "blocked" ? "refuse" : how.direct || policy === "review" || list.some(item => item.unchecked) ? "card" : "run";
+    // A phone sees exact reads as reads, and a few in-app changes as writes; names confer no authority on a
+    // direct connection, so only the owner's reviewed reads may be answered away from this computer.
+    const phone: Remote = operations.length || cls !== "read" ? "desktop-only"
+      : READ_ONLY_APP_TOOLS.has(row.slug) && (!how.direct || how.local || list.every(item => item.reviewedReads.includes(row.slug))) ? "read"
+      : !how.direct && PHONE_WRITES.has(row.slug) ? "write" : "desktop-only";
+    return { row, call, decision, phone };
   });
-  if (!calls.length) return { decision: "refuse", reason: "Bud received an invalid app action." };
+  if (!calls.length) return { decision: "refuse", reason: "Bud received an invalid app action.", label: "this app" };
   const strictest = calls.reduce((a, b) => STRICTNESS[b.decision] > STRICTNESS[a.decision] ? b : a);
   if (strictest.decision === "refuse") {
     const group = strictest.call?.group;
     const name = group ? appLabel(group) : "this app";
-    return { decision: "refuse", reason: group && list.some(item => item.groups[group] === "deny")
-      ? `${name} is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent or changed.`
-      : `This kind of action is set to Don't use in Workspace → Approvals, so Bud did not do it in ${name}. Nothing was sent or changed.` };
+    return group && list.some(item => item.groups[group] === "deny")
+      ? { decision: "refuse", label: name, reason: `${name} is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent or changed.` }
+      : { decision: "refuse", label: `this kind of action in ${name}`, reason: `This kind of action is set to Don't use in Workspace → Approvals, so Bud did not do it in ${name}. Nothing was sent or changed.` };
   }
-  const reads = calls.every(({ call }) => call?.cls === "read");
-  // Names confer no authority on a direct connection: only the owner's reviewed reads may be answered away from this computer.
-  const remote = reads && (!how.direct || how.local || calls.every(({ row }) => list.every(item => item.reviewedReads.includes(row.slug)))) ? "read"
-    : how.direct ? "desktop-only" : "write";
+  const remote: Remote = calls.some(({ phone }) => phone === "desktop-only") ? "desktop-only" : calls.some(({ phone }) => phone === "write") ? "write" : "read";
   // A read offer only where a grant could apply: one app, exact allowlisted reads, and
   // nothing but a default holding them back (no saved Ask or Don't use, no unreviewed direct tool).
   const group = calls[0].call?.group;
@@ -532,28 +554,35 @@ export function appVerdict(rows: AppRow[], settings: readonly ApprovalSettings[]
  * key fields. Each value is one line (a line break shows as ↵, invisible
  * characters are spelled out); long or nested values point to the exact request. */
 export function appCard(call: Call, where: { office?: string; account?: string } = {}): string {
+  return appCardText(call, where).text;
+}
+/** The card's lines, and whether they show every argument in full (only then may a phone approve it). */
+function appCardText(call: Call, where: { office?: string; account?: string }): { text: string; complete: boolean } {
   const rows = appRows(call);
-  const words = (text: string) => {
-    const plain = visibleMailText(text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[\s_-]+/g, " ").trim().toLowerCase()).slice(0, 60);
-    return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : "Field";
+  let complete = true;
+  const cut = <T>(shown: T): T => { complete = false; return shown; };
+  const words = (text: string, key = false) => {
+    const plain = visibleMailText(text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[\s_-]+/g, " ").trim().toLowerCase());
+    const shown = plain.length > 60 ? (key ? cut(plain.slice(0, 60)) : plain.slice(0, 60)) : plain;
+    return shown ? shown.charAt(0).toUpperCase() + shown.slice(1) : "Field";
   };
   const action = (slug: string) => `${words(appGroup(slug) ? slug.slice(slug.indexOf("_") + 1) : slug)} (${slug})`;
   const value = (item: unknown): string => {
     if (typeof item === "string") {
       const line = visibleMailText(item.replace(/\r\n?|\n/g, " ↵ ").replace(/\t/g, " "));
-      return line.length > 240 ? `${line.slice(0, 240)}… (${item.length} characters, see Exact request)` : line || "(empty)";
+      return line.length > 240 ? cut(`${line.slice(0, 240)}… (${item.length} characters, see Exact request)`) : line || "(empty)";
     }
     if (typeof item === "number" || typeof item === "boolean") return String(item);
     if (item === null) return "none";
     if (Array.isArray(item) && item.every(entry => entry === null || ["string", "number", "boolean"].includes(typeof entry))) {
-      return item.length ? `${item.slice(0, 10).map(value).join(", ")}${item.length > 10 ? `, and ${item.length - 10} more` : ""}` : "none";
+      return item.length ? `${item.slice(0, 10).map(value).join(", ")}${item.length > 10 ? cut(`, and ${item.length - 10} more`) : ""}` : "none";
     }
-    return "see Exact request";
+    return cut("see Exact request");
   };
   const fields = (args: Record<string, unknown>, indent = "") => {
     const entries = Object.entries(args);
-    return [...entries.slice(0, 12).map(([key, item]) => `${indent}${words(key)}: ${value(item)}`),
-      ...(entries.length > 12 ? [`${indent}And ${entries.length - 12} more fields (see Exact request)`] : [])];
+    return [...entries.slice(0, 12).map(([key, item]) => `${indent}${words(key, true)}: ${value(item)}`),
+      ...(entries.length > 12 ? [cut(`${indent}And ${entries.length - 12} more fields (see Exact request)`)] : [])];
   };
   const apps = [...new Set(rows.map(row => appGroup(row.slug)))];
   const named = apps.length === 1 && apps[0] ? appLabel(apps[0]) : null;
@@ -569,7 +598,7 @@ export function appCard(call: Call, where: { office?: string; account?: string }
   } else lines.push(`Action: ${action(call.name)}`, ...fields(call.arguments ?? {}, "  "));
   if (where.account) lines.push("Gmail read-only review: at most 10 threads from the last 7 days, and only thread IDs returned in this task can be read. No sends, drafts or mailbox changes.");
   lines.push("This approval applies once to this request only. The exact request is under Exact request.");
-  return lines.join("\n");
+  return { text: lines.join("\n"), complete };
 }
 
 /** Reads at most 2 KB of a refused gateway reply for its `{ error }` code.

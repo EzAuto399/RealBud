@@ -27,7 +27,7 @@ import {
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
-import { defaultApprovalSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { defaultApprovalSettings, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -1159,6 +1159,29 @@ describe("approval settings for websites (Workspace \u2192 Approvals)", () => {
     expect(authorize(CASES[16], approvals)).toEqual(authorize(CASES[16]));
     expect(authorize(CASES[7], approvals)).toMatchObject({ decision: "deny" });
     expect(authorize(CASES[11], approvals)).toMatchObject({ decision: "deny" });
+  });
+
+  it("Read without asking never opens an address that may change records, and a locked submit row refuses such an open", () => {
+    const approvals = [settings({ "site:portal.example": "read-without-asking" })];
+    for (const url of ["https://portal.example/submit?record=7", "https://portal.example/api/tickets?operation=update"]) {
+      const open: Case = ["write route", grant(), page(""), "browser_navigate", { url }, {}];
+      expect(authorize(open), url).toMatchObject({ decision: "ask" });
+      expect(authorize(open, approvals), url).toEqual(authorize(open));
+      // A standing reading rule keeps today's answer, but a locked submit row refuses it.
+      const ruled: Case = [open[0], open[1], open[2], open[3], open[4], { rules: RULES }];
+      expect(authorize(ruled, [settings({ "class:submit": "deny" })]), url).toMatchObject({ decision: "deny", reason: "This kind of step is set to Don't use in Workspace → Approvals, so Bud did nothing on portal.example." });
+    }
+    expect(authorize(CASES[5], [settings({ "class:submit": "deny" })])).toEqual(authorize(CASES[5]));
+  });
+
+  it("on an office desktop whose settings could not be checked, no rule or task scope runs a step, and a schedule's read stops", () => {
+    const approvals = [settings({}), uncheckedOfficeSettings()];
+    for (const index of [2, 3, 4, 12]) {
+      expect(authorize(CASES[index]), CASES[index][0]).toMatchObject({ decision: "allow" });
+      expect(authorize(CASES[index], approvals), CASES[index][0]).toMatchObject({ decision: "ask" });
+    }
+    expect(authorize(CASES[16], approvals)).toMatchObject({ decision: "deny", reason: expect.stringContaining("Office approval settings could not be checked") });
+    expect(authorize(CASES[2], [settings({ "site:portal.example": "deny" }), uncheckedOfficeSettings()])).toMatchObject({ decision: "deny" });
   });
 
   it("refuses a locked kind of step set to Don't use, and every step while the settings need recovery", () => {

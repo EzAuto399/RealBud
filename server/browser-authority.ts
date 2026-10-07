@@ -1104,8 +1104,10 @@ const APPROVALS_RECOVERY = "The approval settings on this computer need recovery
  * every time; no standing rule or task scope allows the step (an approved
  * workflow's unattended read still runs).
  * `reads`: Read without asking, for a same-site read or open. `refuse`: Don't
- * use (the site, or this kind of step), or settings needing recovery. */
-export type SiteApproval = { kind: "today" | "ask" | "reads" } | { kind: "refuse"; reason: string };
+ * use (the site, or this kind of step: `subject` names which), or settings
+ * needing recovery. An office desktop that could not check its settings asks
+ * (`unchecked`). */
+export type SiteApproval = { kind: "today" | "reads" } | { kind: "ask"; unchecked?: true } | { kind: "refuse"; reason: string; subject?: string };
 /** One decide() per site group that names a page host (strictest wins, deny
  * first). `extra` hosts (a navigation's target) can refuse or ask, never widen. */
 export function siteApproval(approvals: BrowserApprovals | undefined, page: readonly string[], call: { tool: string; args?: Record<string, unknown>; cls: ApprovalCallClass }, extra: readonly string[] = []): SiteApproval {
@@ -1122,20 +1124,26 @@ export function siteApproval(approvals: BrowserApprovals | undefined, page: read
   if (refused) {
     const site = list.some(settings => settings.groups[refused.group] === "deny");
     const host = site ? refused.group.slice(5) : hosts(page)[0] ?? "this site";
-    return { kind: "refuse", reason: site ? `${host} is set to Don't use in Workspace → Approvals, so Bud did nothing there.`
-      : `This kind of step is set to Don't use in Workspace → Approvals, so Bud did nothing on ${host}.` };
+    return site ? { kind: "refuse", subject: host, reason: `${host} is set to Don't use in Workspace → Approvals, so Bud did nothing there.` }
+      : { kind: "refuse", subject: `this kind of step on ${host}`, reason: `This kind of step is set to Don't use in Workspace → Approvals, so Bud did nothing on ${host}.` };
   }
+  if (list.some(settings => settings.unchecked)) return { kind: "ask", unchecked: true };
   if (all.some(group => list.some(settings => settings.groups[group] === "ask"))) return { kind: "ask" };
   return pageGroups.length && decisions.every(row => row.decision === "run") ? { kind: "reads" } : { kind: "today" };
 }
 const CONSEQUENTIAL_CLASS: Record<BrowserConsequentialKind, ApprovalCallClass> = { pay: "pay", sign: "sign", send: "send", notice: "notice", delete: "trash", "account-change": "account-change" };
-/** The approval class of a classified step: reads, changes, and the locked per-step classes. */
-function approvalClass(classification: BrowserClassification): ApprovalCallClass {
+/** The approval class of a classified step: reads, changes, and the locked per-step classes. Opening an
+ * address that may change records (`/submit?record=7`, an API) is a submit, never a read. */
+function approvalClass(classification: BrowserClassification, readOnlyOpen: boolean): ApprovalCallClass {
   if (classification.class === "consequential") return CONSEQUENTIAL_CLASS[classification.kind];
   if (classification.step === "upload") return "upload";
   if (classification.class === "routine" && classification.action === "submit") return "submit";
-  return classification.step === "read" || classification.step === "navigate" || classification.step === "borrow" ? "read" : "write";
+  if (classification.step === "navigate") return readOnlyOpen ? "read" : "submit";
+  return classification.step === "read" || classification.step === "borrow" ? "read" : "write";
 }
+/** An https address whose route only reads (no API, write verb or consequential word), for a check with no current page (the job fence). */
+export const readOnlyRoute = (target: URL): boolean => target.protocol === "https:" && readOnlyAddress(target, target);
+const OFFICE_UNCHECKED_SITE = "Office approval settings could not be checked, so Bud did nothing on this site. Open RealBud to continue.";
 
 // ── authorisation ────────────────────────────────────────────────────────
 export interface BrowserFenceProjection {
@@ -1146,7 +1154,9 @@ export interface BrowserFenceProjection {
 export type BrowserAuthorization =
   | { decision: "allow"; classification: BrowserClassification; fence: BrowserFenceProjection | null; note: string }
   | { decision: "ask"; classification: BrowserClassification; fence: BrowserFenceProjection; once: boolean; summary: string; draft: BrowserApprovalDraft | null }
-  | { decision: "deny"; classification: BrowserClassification; reason: string; draft: BrowserApprovalDraft | null };
+  | { decision: "deny"; classification: BrowserClassification; reason: string; draft: BrowserApprovalDraft | null;
+    /** What a Don't use in Workspace → Approvals refused: a site, or a kind of step on it. */
+    refusedBy?: string };
 export interface BrowserAuthorityOptions {
   rules?: ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
   /** The approval settings that govern this desktop (see `effectiveRules`). Absent: nothing saved. */
@@ -1193,9 +1203,13 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const label = "label" in classification && classification.label ? controlName(classification.label) : "";
   // The site's approval setting: Don't use refuses here; Ask every time and Read without asking apply below.
   const opens = classification.step === "navigate" ? jobBrowserUrl(args.url, grant.sites) : null;
+  // Read without asking (and the open's class) needs the same proof as any read-only step.
+  const readOnlyStep = (classification.step === "read" || classification.step === "navigate") && browserReadOnlyAction(grant, observation!, tool, args, options.portal);
   const setting = siteApproval(options.approvals, [site, host], { tool: `browser_${classification.step}`,
-    args: classification.step === "navigate" ? { url: args.url } : {}, cls: approvalClass(classification) }, opens ? [hostOf(opens)] : []);
-  if (setting.kind === "refuse") return deny(setting.reason);
+    args: classification.step === "navigate" ? { url: args.url } : {}, cls: approvalClass(classification, readOnlyStep) }, opens ? [hostOf(opens)] : []);
+  if (setting.kind === "refuse") return { ...deny(setting.reason), ...(setting.subject ? { refusedBy: setting.subject } : {}) };
+  // Nobody is at the screen to ask, so an unattended read stops while this office desktop cannot check its settings.
+  if (grant.route === "loop-read" && setting.kind === "ask" && setting.unchecked) return deny(OFFICE_UNCHECKED_SITE);
   // A loop's unattended read (route loop-read): nobody is at the screen to ask, so a step is plainly read-only or
   // refused. Reading, a same-site read-only address, and a control the pack declares read-safe that browserReadOnlyAction
   // proves sits apart from anything that changes records; a key is only Tab, never Enter or an arrow that changes a
@@ -1271,8 +1285,8 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   if (rulable && surface !== "portal-submit" && ruleAllows(options.rules, surface, site, url)) {
     return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by rule · ${portalRuleLabel(surface, site)}` };
   }
-  // Read without asking works like a reading rule, for reading the page and opening a same-site address only.
-  if (rulable && setting.kind === "reads" && (step === "read" || step === "navigate")) {
+  // Read without asking works like a reading rule, for reading the page and opening a same-site read-only address only.
+  if (rulable && setting.kind === "reads" && readOnlyStep) {
     return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by approval settings · ${portalRuleLabel("portal-read", site)}` };
   }
   const target = step === "navigate" ? jobBrowserUrl(args.url, grant.sites) : null;
