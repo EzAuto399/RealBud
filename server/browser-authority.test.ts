@@ -992,7 +992,7 @@ describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
   const SHIPPED: BrowserPortalControls = { origin: "https://portal.example", readSafe: ["Search", "Expand row"], menu: [], pagination: [], consequential: [], signInHosts: [] };
   /** Each control alone in its own region, so nothing beside it changes records. */
   const PAGE = (controls: string[], extra: string[] = []) => page(["@vom 1", "L1 page", '  RootWebArea "Tenants"', "    main", ...extra,
-    ...controls.flatMap((control, index) => [`      region "Part ${index}"`, `        @e${index + 1} ${control.startsWith("textbox ") ? control : `button ${JSON.stringify(control)}`}`])].join("\n"),
+    ...controls.flatMap((control, index) => [`      region "Part ${index}"`, `        @e${index + 1} ${/^(?:textbox|link) /.test(control) ? control : `button ${JSON.stringify(control)}`}`])].join("\n"),
   "https://portal.example/customers/tenant");
   const click = (portal: BrowserPortalControls, observation: BrowserObservation, ref: string, grant = task) => ({
     classified: classifyBrowserAction(grant, observation, "browser_click_semantic", { tab_id: 1, ref }, portal),
@@ -1000,7 +1000,7 @@ describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
   });
 
   it("normalises zero-width, trailing-space and fullwidth spellings of Save, and refuses each when confirmed only as learned", () => {
-    const spellings = ["Sa​ve", "Save ", "Ｓａｖｅ"];
+    const spellings = ["Sa\u200bve", "Save ", "Ｓａｖｅ"];
     for (const spelling of spellings) {
       expect(accessibleName(spelling), JSON.stringify(spelling)).toBe("Save");
       expect(learnedPressable(`button ${JSON.stringify(spelling)}`), JSON.stringify(spelling)).toBe(false);
@@ -1015,11 +1015,12 @@ describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
   });
 
   it("pressControl refuses a learned \"Submit:\" or \"Pay now\", by click or Enter", () => {
-    const observation = PAGE(["Submit:", "Pay now", "Pa​y now"]);
-    const portal = { ...SHIPPED, learnedReadSafe: ["Submit:", "Pay now", "Pa​y now"] };
+    const observation = PAGE(["Submit:", "Pay now", "Pa\u200by now"]);
+    const portal = { ...SHIPPED, learnedReadSafe: ["Submit:", "Pay now", "Pa\u200by now"] };
     expect(click(portal, observation, "@e1").classified).toMatchObject({ class: "unknown" });
     expect(click(portal, observation, "@e2").classified).toMatchObject({ class: "consequential", kind: "pay" });
-    expect(click(portal, observation, "@e3").classified).toMatchObject({ class: "unknown" });
+    // The zero-width spelling is pay on its canonical form, so it asks with the payment's facts.
+    expect(click(portal, observation, "@e3").classified).toMatchObject({ class: "consequential", kind: "pay" });
     for (const ref of ["@e1", "@e2", "@e3"]) {
       expect(click(portal, observation, ref).readOnly, ref).toBe(false);
       expect(classifyBrowserAction(task, observation, "browser_press", { tab_id: 1, ref, key: "Enter" }, portal).class, ref).not.toBe("routine");
@@ -1051,5 +1052,29 @@ describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
     // The same harmless learned label reads for an Ask task, never in a loop's unattended read.
     expect(browserReadOnlyAction(task, observation, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, learned)).toBe(true);
     expect(authorizeBrowserAction(loop, observation, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { portal: learned })).toMatchObject({ decision: "deny" });
+  });
+
+  it("classifies a disguised Pay, Confirm or Submit by its canonical form on the press, read and link paths, shipped or learned", () => {
+    const names = ["Pa\u200by", "Ｐａｙ", "Conﬁrm", "Sub\u00admit"];
+    const observation = PAGE([...names, ...names.map(name => `link ${JSON.stringify(name)} url="/customers/tenant/list"`)]);
+    // A pack listing "Pay" as read-safe still never presses a pay control (the consequential table outranks readSafe).
+    const shipped = { ...SHIPPED, readSafe: [...SHIPPED.readSafe, "Pay"] };
+    const learned = { ...SHIPPED, learnedReadSafe: ["Pay", "Confirm", "Submit"] };
+    for (const [which, portal] of [["shipped", shipped], ["learned", learned]] as const) {
+      names.forEach((name, index) => {
+        for (const ref of [`@e${index + 1}`, `@e${index + 5}`]) {
+          const why = `${which} ${JSON.stringify(name)} ${ref}`;
+          const { classified, readOnly } = click(portal, observation, ref);
+          if (index < 2) expect(classified, why).toMatchObject({ class: "consequential", kind: "pay" });
+          else expect(classified.class === "routine" && classified.action === "click", why).toBe(false);
+          expect(classifyBrowserAction(task, observation, "browser_press", { tab_id: 1, ref, key: "Enter" }, portal).class, why).toBe(classified.class);
+          expect(readOnly, why).toBe(false);
+          expect(authorizeBrowserAction(loop, observation, "browser_click_semantic", { tab_id: 1, ref }, { portal }).decision, why).toBe("deny");
+        }
+      });
+    }
+    expect(consequentialKind("Pay:")).toBe("pay");
+    // Folding only adds matches: "Pay\u200bAll" is pay as shown, though its canonical "PayAll" alone would not be.
+    expect(consequentialKind("Pay\u200bAll")).toBe("pay");
   });
 });
