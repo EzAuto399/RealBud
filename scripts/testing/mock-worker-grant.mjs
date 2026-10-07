@@ -65,7 +65,9 @@ export function provisionMockWorkerGrant({ executable = process.execPath, resour
   `;
   const result = spawnSync(executable, ['--input-type=module', '-e', script], {
     cwd: root, env: { ...serviceSmokeEnv({ executable, home, data, scratch: home, port: 0 }), ...(memberKey ? { REALBUD_MEMBER: memberKey } : {}) },
-    input: JSON.stringify({ endpoint, credential, companyId, hostInstallationId, preserveFictionalLink, memberKey }), encoding: 'utf8', timeout: 30000,
+    input: JSON.stringify({ endpoint, credential, companyId, hostInstallationId, preserveFictionalLink, memberKey }), encoding: 'utf8',
+    // Windows pays a cold PowerShell ACL admission per private file it writes.
+    timeout: process.platform === 'win32' ? 180_000 : 30_000,
   });
   assert.equal(result.status, 0, `Fictional model grant setup failed: ${result.error?.message ?? result.stderr}`);
 }

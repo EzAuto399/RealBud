@@ -12,11 +12,12 @@ import { BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
 import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, loadPortalRecipePack, portalRecipeApprovalChannel, verifiedShippedRecipesText, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalTaskPack, portalRecipeApprovalChannel, verifiedShippedRecipesText, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
-import { LEARNED_RECIPES_DAMAGED } from "./learned-recipes.ts";
+import { LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes } from "./learned-recipes.ts";
+import type { LearnedRecipe } from "../shared/learned-recipes.ts";
 import type { PortalPathStore } from "./portal-path-overrides.ts";
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
@@ -219,6 +220,39 @@ describe("running a started recipe task", () => {
     const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime, approve: async () => false, signal: stop.signal, isActive: () => active, load: fictional, ...f.stores });
     expect(result.outcome).toBe("stopped");
     expect((await runtime.status()).active).toBe(false);
+  });
+});
+
+describe("learned confirmations are read-safe only in a task that runs their recipe", () => {
+  const learned = (name: string, label: string): LearnedRecipe => ({ version: 1, purpose: "realbud-learned-recipe", id: `lr_${"1".repeat(24)}`, portal: "rei-cloud", name, title: name,
+    state: "published", steps: [{ click: label }, { read: "controls" }], inputs: [], stopBefore: [], confirmedLabels: [label], flags: [], createdAt: 1, updatedAt: 1, revision: 1 });
+  const merged = () => {
+    const pack = mergeLearnedRecipes(fictionalReiPack(), [learned("learned-a", "Show fictional detail"), learned("learned-b", "Open fictional notes")]);
+    // A shipped-style recipe that runs a learned one: its confirmations come along.
+    pack.recipes.wrapper = { kind: "read", tier: [], inputs: [], grantNeeds: [], steps: [{ run: "learned-b" }], stopBefore: [] };
+    return pack;
+  };
+
+  it("adds nothing to a task that runs only shipped recipes", () => {
+    const pack = merged();
+    const shipped = fictionalReiPack().labels.readSafe;
+    expect(pack.labels.readSafe).toEqual(shipped);
+    expect(learnedReadSafe(pack, [{ recipe: "open-session" }])).toEqual([]);
+    expect(portalTaskPack(pack, [{ recipe: "open-session" }])).toBe(pack);
+    expect(portalTaskPack(pack, [{ recipe: "open-session" }]).labels.readSafe).not.toContain("Show fictional detail");
+  });
+
+  it("adds a learned recipe's own confirmations, and another's only when that one runs too", () => {
+    const pack = merged();
+    const shipped = fictionalReiPack().labels.readSafe;
+    const a = portalTaskPack(pack, [{ recipe: "open-session" }, { recipe: "learned-a" }]);
+    expect(a.labels.readSafe).toEqual([...shipped, "Show fictional detail"]);
+    expect(a.labels.readSafe).not.toContain("Open fictional notes");
+    expect(portalTaskPack(pack, [{ recipe: "learned-b" }]).labels.readSafe).toEqual([...shipped, "Open fictional notes"]);
+    expect(learnedReadSafe(pack, [{ recipe: "learned-a" }, { recipe: "learned-b" }])).toEqual(["Show fictional detail", "Open fictional notes"]);
+    expect(learnedReadSafe(pack, [{ recipe: "wrapper" }])).toEqual(["Open fictional notes"]);
+    // The loaded pack itself is never changed.
+    expect(pack.labels.readSafe).toEqual(shipped);
   });
 });
 

@@ -298,6 +298,7 @@ describe("W1 REI and watch-and-learn recipes", () => {
         expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
         expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
         expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
+        expect(JSON.stringify(used)).not.toContain(LEARNED_LEAK_LABEL); // not read-safe, not a learned set, not a recipe's `confirmed`
       }
     } finally { forget(); await restore(); }
   });

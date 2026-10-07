@@ -23,8 +23,9 @@ async function fixture() {
 }
 
 describe('retained invoice intents through private backup', () => {
-  // Windows runners pay a fully synced SQLite commit per request (31.7 s before the first refusal there).
-  it('preserves 1,001 encrypted request identities and holds an old unfinished intent after different-key restore', process.platform === 'win32' ? { timeout: 240_000 } : {}, async () => {
+  // Every request is a fully synced SQLite commit (31.7 s before the first refusal on a Windows runner);
+  // on a Mac its time follows disk contention and passes 20 s inside a full parallel suite.
+  it('preserves 1,001 encrypted request identities and holds an old unfinished intent after different-key restore', { timeout: process.platform === 'win32' ? 240_000 : 120_000 }, async () => {
     const from = await fixture(), to = await fixture(), db = new WorkflowDatabase({ dir: from.directory, key: from.key });
     try {
       const seed = await proposalBackupFixture(db, from.directory), ids = [seed.id];

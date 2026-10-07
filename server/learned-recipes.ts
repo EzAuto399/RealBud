@@ -1,13 +1,14 @@
 // Watch and learn drafts (docs/decisions/2026-10-07-watch-and-learn.md): the
 // recipes a person showed Bud, kept in DATA_DIR/learned-recipes.json until
 // staff review and publish them. A published recipe is merged into the
-// shipped portal pack as a read recipe; the runner, broker and fence decide
-// every step exactly as for a shipped recipe. Nothing here grants anything.
+// shipped portal pack as a read recipe carrying its own confirmed labels, which
+// are read-safe only in a task that runs it (server/portal-recipe-task.ts); the
+// runner, broker and fence decide every step exactly as for a shipped recipe.
 import { randomUUID } from "node:crypto";
 import { PrivateStorageError, readPrivateJson, writePrivateJson } from "./private-json.ts";
-import { parsePortalRecipePack, type PortalRecipePack, type PortalRecipeStep } from "./portal-recipe.ts";
+import { parsePortalRecipePack, type PortalPackRecipe, type PortalRecipePack, type PortalRecipeStep } from "./portal-recipe.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { AFFIRMATIVE, consequentialKind, CREDENTIAL_FIELD, DOWNLOAD_AFFORDANCE, SIGN_IN_CONTROL, SUBMIT_CONTROL } from "./browser-authority.ts";
+import { accessibleName, AFFIRMATIVE, consequentialKind, CREDENTIAL_FIELD, DOWNLOAD_AFFORDANCE, SIGN_IN_CONTROL, SUBMIT_CONTROL } from "./browser-authority.ts";
 import { LEARN_INPUT, LEARN_MAX_EVENTS, LEARN_MAX_TEXT, LEARN_NAME, learnBlockers, type LearnedRecipe, type LearnFlag, type LearnStep } from "../shared/learned-recipes.ts";
 
 const MAX_BYTES = 2_000_000;
@@ -59,21 +60,43 @@ function stepInputs(steps: LearnStep[]): string[] {
   if (keys.some(key => !LEARN_INPUT.test(key))) throw fail(400, "Input names use lowercase letters, digits and underscores, starting with a letter.");
   return [...new Set(keys)];
 }
+/** The one spelling of a learned label (recorder, compiler, store, risk check): NFKC, invisible format characters
+ * (zero-width, bidi, soft hyphen) dropped, control characters and every kind of space one space, then the broker's
+ * accessibleName (trimmed, one trailing ":" dropped). */
+export function learnLabel(value: string): string {
+  return accessibleName(value.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/[\p{Cc}\s]+/gu, " "));
+}
+/** Printable ASCII and common Latin-1 punctuation (REI is English): anything else, a Cyrillic "а" in "Ѕаvе" or
+ * an accent, could hide a risk word, so Bud can't check it. */
+const LEARN_LABEL_CHARS = /^[\x20-\x7e\u00a1-\u00bf]+$/;
+/** Already in learnLabel's form and made only of characters Bud can check. A stored or recorded label that isn't is never confirmed or published. */
+export const learnLabelSupported = (label: string): boolean => LEARN_LABEL_CHARS.test(label) && learnLabel(label) === label;
+/** A learned recipe as merged into a pack: its own confirmed labels, never the pack's read-safe list. */
+export type LearnedPackRecipe = PortalPackRecipe & { confirmed: string[] };
 const wordIn = (word: string, label: string) => new RegExp(`(?<!\\w)${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`, "i").test(label);
-/** A click label Bud must never press on a reviewer's say-so: it names (even inside a longer
- * label, any case) one of the shipped pack's consequential labels, or it would confirm, submit,
- * pay, sign, send, delete, sign in or download/export by the browser broker's own words. Once confirmed, a label
- * joins read-safe, and pressControl lets read-safe labels through before its submit checks.
+/** A click label Bud must never press on a reviewer's say-so, judged on its learnLabel form: it has characters Bud
+ * can't check, or it names (even inside a longer label, any case, or split by one space or mark: "S ave") one of the
+ * shipped pack's consequential labels, or it would confirm, submit, pay, sign, send, delete, sign in or
+ * download/export by the browser broker's own words. Once confirmed, a label is read-safe in a task that runs its
+ * recipe, and pressControl lets read-safe labels through before its submit checks.
  * An exact shipped read-safe label (Next, Search) is already allowed and is not risky. */
 export function learnLabelRisky(labels: { readSafe: string[]; consequential: string[] }, label: string): boolean {
-  if (labels.readSafe.includes(label)) return false;
-  return labels.consequential.some(word => wordIn(word, label)) || consequentialKind(label) !== null ||
-    SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label) || CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label) || DOWNLOAD_AFFORDANCE.test(label);
+  const name = learnLabel(label);
+  if (!learnLabelSupported(name)) return true;
+  if (labels.readSafe.some(safe => learnLabel(safe) === name)) return false;
+  const joined = [...name.matchAll(/[^A-Za-z0-9]/g)].map(mark => name.slice(0, mark.index) + name.slice(mark.index + 1));
+  return [name, ...joined].some(text => labels.consequential.some(word => wordIn(word, text)) || consequentialKind(text) !== null ||
+    SUBMIT_CONTROL.test(text) || AFFIRMATIVE.test(text) || CREDENTIAL_FIELD.test(text) || SIGN_IN_CONTROL.test(text) || DOWNLOAD_AFFORDANCE.test(text));
 }
+/** Every label a recipe names: clicks, choices, fields, menu items, stop and confirmed labels. */
+const recipeLabels = (recipe: Pick<LearnedRecipe, "steps" | "stopBefore" | "confirmedLabels">): string[] => [...recipe.stopBefore, ...recipe.confirmedLabels,
+  ...recipe.steps.flatMap(step => "click" in step ? [step.click] : "radio" in step ? [step.radio] : "type" in step ? [step.type.field] : "select" in step ? [step.select.field] : "nav" in step ? step.nav : [])];
 /** learnBlockers plus what only the server knows: a confirmed risky label, or a stop label the shipped pack doesn't list.
  * `labels` is always the SHIPPED pack's, never a merged pack whose read-safe list grew. */
 function publishBlockers(recipe: LearnedRecipe, labels: { readSafe: string[]; consequential: string[] }): string[] {
   return [...learnBlockers(recipe, labels),
+    // A tampered file, or a draft recorded before labels were normalised, never brings a hidden spelling in.
+    ...recipeLabels(recipe).filter(label => !learnLabelSupported(label)).map(label => `unsupported label: ${label}`),
     ...recipe.confirmedLabels.filter(label => learnLabelRisky(labels, label)).map(label => `consequential: ${label}`),
     ...recipe.stopBefore.filter(label => !labels.consequential.includes(label)).map(label => `unknown stop: ${label}`)];
 }
@@ -184,6 +207,8 @@ export function createLearnedRecipeStore(file: string) {
         let confirmedLabels = recipe.confirmedLabels;
         if (patch.confirmedLabels !== undefined) {
           if (!texts(patch.confirmedLabels, LEARN_MAX_EVENTS) || patch.confirmedLabels.some(label => !clicks.includes(label))) throw fail(400, "Confirm only labels the recipe clicks.");
+          const unchecked = patch.confirmedLabels.find(label => !learnLabelSupported(label));
+          if (unchecked) throw fail(400, `${unchecked} has characters Bud can't check, so it can't be confirmed.`);
           const consequential = patch.confirmedLabels.find(label => learnLabelRisky(labels, label));
           if (consequential) throw fail(400, `${consequential} changes records, so Bud stops before it and it can't be confirmed.`);
           confirmedLabels = [...new Set(patch.confirmedLabels)];
@@ -230,9 +255,10 @@ export function createLearnedRecipeStore(file: string) {
 export type LearnedRecipeStore = ReturnType<typeof createLearnedRecipeStore>;
 
 /** The SHIPPED pack plus this portal's published learned recipes as read recipes.
- * A shipped recipe name is never overwritten, the publish gate is re-checked against the
- * shipped labels, and confirmed labels (never risky ones) join read-safe. A recipe that
- * fails any check, or makes the pack fail to parse, is skipped alone; the rest still join. */
+ * A shipped recipe name is never overwritten and the publish gate is re-checked against the
+ * shipped labels. The pack's read-safe list never grows: each recipe keeps its own confirmed
+ * labels (`confirmed`), which only a task running it adds (server/portal-recipe-task.ts).
+ * A recipe that fails any check, or makes the pack fail to parse, is skipped alone; the rest still join. */
 export function mergeLearnedRecipes(pack: PortalRecipePack, recipes: LearnedRecipe[]): PortalRecipePack {
   const shipped = pack.labels;
   let out = parsePortalRecipePack(pack);
@@ -241,8 +267,9 @@ export function mergeLearnedRecipes(pack: PortalRecipePack, recipes: LearnedReci
     if (recipe.state !== "published" || recipe.portal !== pack.portal || !recipe.steps.length || Object.hasOwn(out.recipes, recipe.name)) continue;
     if (publishBlockers(recipe, shipped).length) continue;
     const next = structuredClone(out);
-    next.recipes[recipe.name] = { kind: "read", tier: [], inputs: [...recipe.inputs], grantNeeds: [], steps: structuredClone(recipe.steps) as PortalRecipeStep[], stopBefore: [...recipe.stopBefore] };
-    for (const label of recipe.confirmedLabels) if (!next.labels.readSafe.includes(label)) next.labels.readSafe.push(label);
+    const learned: LearnedPackRecipe = { kind: "read", tier: [], inputs: [...recipe.inputs], grantNeeds: [], steps: structuredClone(recipe.steps) as PortalRecipeStep[],
+      stopBefore: [...recipe.stopBefore], confirmed: [...recipe.confirmedLabels] };
+    next.recipes[recipe.name] = learned;
     try { out = parsePortalRecipePack(next); } catch { /* this recipe only */ }
   }
   return parsePortalRecipePack(out);

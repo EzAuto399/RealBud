@@ -1,30 +1,65 @@
 // Shared plumbing for the local chaos harness: a marked disposable root,
 // owned child processes, loopback-only HTTP, and leftover checks.
 // Dev tooling only. Never points at ~/.realbud or any live account.
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const MARKER = ".realbud-chaos-root";
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const WIN = process.platform === "win32";
+
+/**
+ * Minimal child environment: this node first. Windows children also need
+ * SystemRoot and System32 (the service's PowerShell ACL admission) and TEMP.
+ */
+export function childEnv(home, tmp, extra = {}) {
+  const node = dirname(process.execPath);
+  if (!WIN) return { PATH: `${node}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, USERPROFILE: home, ...(tmp ? { TMPDIR: tmp } : {}), ...extra };
+  const sys = process.env.SystemRoot ?? "C:\\Windows";
+  return { PATH: [node, join(sys, "System32"), join(sys, "System32", "WindowsPowerShell", "v1.0")].join(delimiter), SystemRoot: sys, windir: sys,
+    ComSpec: join(sys, "System32", "cmd.exe"), PATHEXT: ".COM;.EXE;.BAT;.CMD", HOME: home, USERPROFILE: home,
+    APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), ...(tmp ? { TEMP: tmp, TMP: tmp } : {}), ...extra };
+}
+
+// One process table for both hosts: "pid ppid command" rows. Windows has no
+// ps, so it asks CIM through PowerShell (about a second per call).
+const TABLE_WIN = ["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)\" }"];
+const parseTable = (out) => out.split(/\r?\n/).map((l) => { const m = l.trim().match(/^(\d+)\s+(\d+)\s*(.*)$/); return m && { pid: +m[1], ppid: +m[2], command: m[3] }; }).filter(Boolean);
+const tableOpts = { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true };
+const isSampler = (command) => command.startsWith("ps ") || command.includes("Win32_Process");
+export function processTable() {
+  try { return parseTable(WIN ? execFileSync("powershell.exe", TABLE_WIN, tableOpts) : execFileSync("ps", ["-ax", "-ww", "-o", "pid=,ppid=,command="], tableOpts)).filter((r) => !isSampler(r.command)); } catch { return null; }
+}
+const processTableAsync = () => new Promise((r) => execFile("powershell.exe", TABLE_WIN, tableOpts, (e, out) => r(e ? null : parseTable(out).filter((x) => !isSampler(x.command)))));
+export const commandOf = (pid) => processTable()?.find((r) => r.pid === pid)?.command ?? "";
+
+/** SIGSTOP/SIGCONT; on Windows the stand-in is NtSuspendProcess / NtResumeProcess. */
+export function suspendProcesses(pids, stop) {
+  if (!WIN) { for (const pid of pids) process.kill(pid, stop ? "SIGSTOP" : "SIGCONT"); return; }
+  const fn = stop ? "NtSuspendProcess" : "NtResumeProcess";
+  const script = `$k = Add-Type -PassThru -Name Suspend -Namespace RealBudChaos -MemberDefinition '[DllImport("ntdll.dll")] public static extern int ${fn}(IntPtr h); [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(int a, bool i, int p); [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);'
+foreach ($p in @(${pids.map(Number).join(",")})) { $h = $k::OpenProcess(0x0800, $false, $p); if ($h -eq [IntPtr]::Zero) { exit 3 }; $r = $k::${fn}($h); [void]$k::CloseHandle($h); if ($r -ne 0) { exit 4 } }`;
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: "pipe", timeout: 60000, windowsHide: true });
+}
 
 /** A fresh temp root carrying a marker; refuses anything near the real data dir. */
 export function markedRoot(prefix = "realbud-chaos-") {
   const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), prefix)));
   const live = resolve(homedir(), ".realbud");
-  if (root === live || root.startsWith(live + "/")) throw new Error("Refusing a root inside ~/.realbud.");
+  if (root === live || root.startsWith(live + sep)) throw new Error("Refusing a root inside ~/.realbud.");
   writeFileSync(join(root, MARKER), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { mode: 0o600 });
   return root;
 }
 
 export function assertMarked(root, path = root) {
   if (!existsSync(join(root, MARKER))) throw new Error(`Not a marked chaos root: ${root}`);
-  if (resolve(path) !== root && !resolve(path).startsWith(root + "/")) throw new Error(`Path escapes the chaos root: ${path}`);
+  if (resolve(path) !== root && !resolve(path).startsWith(root + sep)) throw new Error(`Path escapes the chaos root: ${path}`);
 }
 
 /**
@@ -83,9 +118,7 @@ export const alive = (pid) => { try { process.kill(pid, 0); return true; } catch
 
 /** Processes whose command line mentions the root (every child loads the guard from it). */
 export function processesMentioning(root) {
-  let out = "";
-  try { out = execFileSync("ps", ["-ax", "-ww", "-o", "pid=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }); } catch { return []; }
-  return out.split("\n").filter((l) => l.includes(root)).map((l) => Number(l.trim().split(/\s+/)[0])).filter((pid) => pid && pid !== process.pid);
+  return (processTable() ?? []).filter((r) => r.command.includes(root) && r.pid !== process.pid).map((r) => r.pid);
 }
 
 /**
@@ -94,19 +127,28 @@ export function processesMentioning(root) {
  */
 export class DescendantWatch {
   seen = new Map();
-  sample() {
-    let rows = [];
-    try { rows = execFileSync("ps", ["-ax", "-o", "pid=,ppid=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\n").filter(Boolean).map((l) => { const m = l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/); return m && { pid: +m[1], ppid: +m[2], command: m[3] }; }).filter(Boolean); } catch { return; }
+  sample(rows = processTable()) {
+    if (!rows) return;
     const kids = new Map(); for (const r of rows) (kids.get(r.ppid) ?? kids.set(r.ppid, []).get(r.ppid)).push(r);
     const stack = [process.pid];
-    while (stack.length) for (const r of kids.get(stack.pop()) ?? []) { if (r.command.startsWith("ps ")) continue; this.seen.set(r.pid, r.command); stack.push(r.pid); }
+    while (stack.length) for (const r of kids.get(stack.pop()) ?? []) { this.seen.set(r.pid, r.command); stack.push(r.pid); }
   }
-  start(ms = 250) { this.sample(); this.timer = setInterval(() => this.sample(), ms); this.timer.unref(); }
+  // ponytail: Windows samples every 2 s off the event loop (CIM is slow), so a
+  // descendant that lives under 2 s can go unseen there.
+  start(ms = WIN ? 2000 : 250) {
+    this.sample();
+    this.timer = setInterval(() => {
+      if (!WIN) return this.sample();
+      if (!this.busy) this.busy = processTableAsync().then((rows) => { this.busy = null; this.sample(rows); });
+    }, ms);
+    this.timer.unref();
+  }
   stop() { clearInterval(this.timer); }
   /** Seen descendants still alive with the same command (guards against pid reuse). */
   survivors() {
-    let live = new Map();
-    try { for (const l of execFileSync("ps", ["-ax", "-o", "pid=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\n")) { const m = l.trim().match(/^(\d+)\s+(.*)$/); if (m) live.set(+m[1], m[2]); } } catch { return []; }
+    const rows = processTable();
+    if (!rows) return [];
+    const live = new Map(rows.map((r) => [r.pid, r.command]));
     return [...this.seen].filter(([pid, cmd]) => live.get(pid) === cmd).map(([pid, cmd]) => ({ pid, command: cmd.slice(0, 200) }));
   }
 }

@@ -253,7 +253,9 @@ describe("refresh from REI and watch-and-learn recipes", () => {
     try {
       const merged = await loadPortalRecipePack("rei-cloud");
       expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
-      expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
+      // The confirmation stays with its recipe; the Ask pack's read-safe list is the shipped one.
+      expect(merged.recipes[LEARNED_LEAK_RECIPE]).toMatchObject({ confirmed: [LEARNED_LEAK_LABEL] });
+      expect(merged.labels.readSafe).toEqual(shipped.labels.readSafe);
       vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
 
       // No injected `load`: the refresh picks its own loader.
@@ -265,6 +267,7 @@ describe("refresh from REI and watch-and-learn recipes", () => {
       expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
       expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
       expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
+      expect(JSON.stringify(used)).not.toContain(LEARNED_LEAK_LABEL); // not read-safe, not a learned set, not a recipe's `confirmed`
       // Nor a path approved in Ask: an unattended read never downloads.
       expect(used.recipes["tenant-list"].steps).toEqual(shipped.recipes["tenant-list"].steps);
       expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
