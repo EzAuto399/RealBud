@@ -56,6 +56,8 @@ describe("recipeSitesLine", () => {
 
   it("does not imply a live website when none was authorised", () => {
     expect(recipeSitesLine([])).toBe("No website is authorised");
+    // Listing public sources reads nothing: no search provider is set up.
+    expect(recipeSourceLine({ allowedOrigins: [], capabilities: ["web-research", "analyse"] })).toBe("No live source is authorised — rehearsal uses the saved description only");
     expect(recipeSourceLine({ allowedOrigins: [], capabilities: ["read-book", "read-files"] })).toBe(
       "Reads: current Desk book; private workroom files; no website login is authorised",
     );

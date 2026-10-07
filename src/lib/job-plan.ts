@@ -25,7 +25,8 @@ export const EMPTY_JOB_DRAFT: JobDraftState = { text: "", plan: null, fields: nu
 export const JOB_ABILITY_LABELS: Record<JobCapability, string> = {
   "read-book": "Read this office's book",
   "read-files": "Read workroom files",
-  "web-research": "Research the public web",
+  // No search provider is set up: a run lists the public sources it needs for review (server/job-executor.ts).
+  "web-research": "List public sources to check",
   analyse: "Compare and analyse facts",
   draft: "Prepare drafts for review",
   "portal-read": "Read the named portal",

@@ -98,7 +98,7 @@ function profile(stamp: number | null, legacy: boolean): { root: string; config:
 }
 
 const today = ["delegate_task", "execute_code", "memory", "patch", "process_manage", "read_file", "search_files", "session_search",
-  "skill_manage", "skill_view", "skills_list", "terminal", "todo_list", "web_extract", "web_search", "write_file"];
+  "skill_manage", "skill_view", "skills_list", "terminal", "todo_list", "write_file"];
 
 function officeKept(result: Result) {
   expect(result.effective.model).toBe("claude-sonnet-5.5");
@@ -136,7 +136,7 @@ describe.runIf(Boolean(python && candidate) && process.platform !== "win32")("He
       expect(migrated.warnings).toEqual(["platform 'acp' references unknown toolset 'no_mcp' — did you mean 'hermes-acp'?"]);
       expect(migrated.added!.filter(line => /connections/.test(line))).toEqual([]);
       expect(migrated.effective.platform_toolsets).toEqual({ cli: ["web", "terminal", "file"],
-        acp: ["web", "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution", "no_mcp"] });
+        acp: ["terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution", "no_mcp"] });
       officeKept(migrated);
     }, 240_000);
     it("stays workroom-ready with no Repair, and Ask's tools are unchanged", () => {

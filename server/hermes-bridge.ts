@@ -171,7 +171,8 @@ export async function setManagedModelChoice(body: unknown, opts?: { root?: strin
 /**
  * Bring an installed profile onto the active grant when it does not select it
  * yet: an upgrade from the pre-29-Sep `openai-api` profile, the old `auto`
- * router model, a retired model id, or a stale `.env` key. The office's saved
+ * router model, a retired model id, a stale `.env` key, or a Flash profile
+ * from before it read images through Sonnet (`auxiliary.vision`). The office's saved
  * choice is kept; anything else becomes `flash-high`. Returns whether it wrote.
  * No grant, a withdrawn grant or no installed pack changes nothing: an
  * unpaired computer is refused at launch instead (`managedModelLaunchRefusal`),
@@ -182,7 +183,8 @@ export async function reconcileManagedModelProfile(root?: string, opts?: { dataD
   if (grant.state !== "active" || !packInstalled(root)) return false;
   const profile = managedModelProfile(root);
   if (profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl !== null && normalizedGatewayUrl(profile.baseUrl) === normalizedGatewayUrl(grant.baseUrl) &&
-    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice && !profile.envKeyPresent) return false;
+    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice && !profile.envKeyPresent &&
+    profile.visionReady) return false;
   await recordManagedModelReceipt(applyManagedModelProfile(grant.baseUrl, { root }), opts?.dataDir);
   return true;
 }

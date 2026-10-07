@@ -83,7 +83,7 @@ import { localSessionPath } from "../shared/local-session.mjs";
 import { approvalKey } from "./auto-approve.ts";
 import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } from '../shared/approval-policy.ts';
 import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRules } from './permission-policy.ts';
-import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
+import { applyLawDrift, LAW_WATCH_UNAVAILABLE, lawWatchView, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { appendHistory, listHistory } from "./computer-history.ts";
 import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
@@ -3406,12 +3406,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, 200, lawWatchView());
     }
     if (path === "/api/law-watch/check" && method === "POST") {
-      const result = await runLawWatch({
-        jurisdictions: desk.snapshot().book?.agency?.jurisdictions ?? [],
-      });
-      if (!result) return json(res, 503, { error: "Bud could not re-read the shop reference." });
-      persistLawWatchResult(result);
-      return json(res, 200, lawWatchView());
+      // Nothing can re-read the Acts yet; no worker is started (law-watch.ts).
+      return json(res, 503, { error: LAW_WATCH_UNAVAILABLE });
     }
     if (path === "/api/law-watch/apply" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

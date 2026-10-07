@@ -1,8 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { fakeHermes } from "./testing/fake-hermes.ts";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -14,16 +12,14 @@ const dataDir = vi.hoisted(() => {
 const {
   applyLawDrift,
   LAW_WATCH_ID,
+  LAW_WATCH_UNAVAILABLE,
   loadLawWatch,
   persistLawWatchResult,
-  runLawWatch,
   setLawWatchScheduled,
 } = await import("./law-watch.ts");
 const { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN } = await import("./law-reference.ts");
 const { listRecipes } = await import("./recipes.ts");
 const { seedVault } = await import("./vault.ts");
-
-const dirs: string[] = [];
 
 const driftItem = {
   jurisdiction: "ACT",
@@ -32,10 +28,6 @@ const driftItem = {
   current: "once per 12 months, 8 weeks' written notice",
   note: "Matches the shop reference.",
 };
-
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
 
 afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
@@ -48,48 +40,10 @@ beforeEach(() => {
   seedVault();
 });
 
-describe("runLawWatch", () => {
-  it("parses a drift report and persists it", async () => {
-    const { dir, script } = fakeHermes(
-      `{"drift":[${JSON.stringify(driftItem)}],"checkedSources":["https://legislation.gov.au/act"]}`,
-    );
-    dirs.push(dir);
-    const result = await runLawWatch({ cli: script, root: dir, jurisdictions: ["ACT"] });
-    expect(result).toEqual({
-      drift: [driftItem],
-      checkedSources: ["https://legislation.gov.au/act"],
-    });
-    const saved = persistLawWatchResult(result!);
-    expect(saved.drift).toEqual([driftItem]);
-    expect(saved.checkedSources).toEqual(["https://legislation.gov.au/act"]);
-    expect(saved.lastCheckedAt).toBeGreaterThan(0);
-    expect(loadLawWatch()).toEqual(saved);
-  });
-
-  it("treats empty drift as current", async () => {
-    const { dir, script } = fakeHermes(`{"drift":[],"checkedSources":["https://legislation.nsw.gov.au/x"]}`);
-    dirs.push(dir);
-    const result = await runLawWatch({ cli: script, root: dir, jurisdictions: ["NSW"] });
-    expect(result).toEqual({
-      drift: [],
-      checkedSources: ["https://legislation.nsw.gov.au/x"],
-    });
-  });
-
-  it("returns null when the worker answers junk", async () => {
-    const { dir, script } = fakeHermes("The Acts look about the same to me.");
-    dirs.push(dir);
-    expect(await runLawWatch({ cli: script, root: dir })).toBeNull();
-  });
-
-  it("returns null when a drift item is missing a field", async () => {
-    const { dir, script } = fakeHermes(`{"drift":[{"jurisdiction":"ACT","topic":"bond-cap"}],"checkedSources":[]}`);
-    dirs.push(dir);
-    expect(await runLawWatch({ cli: script, root: dir })).toBeNull();
-  });
-
-  it("does not spawn the live worker under VITEST without a cli stub", async () => {
-    expect(await runLawWatch()).toBeNull();
+describe("law watch check", () => {
+  it("says plainly that no search provider is configured, and has no worker to start", async () => {
+    expect(LAW_WATCH_UNAVAILABLE).toBe("Search provider not configured: Bud can't re-read the legislation sites yet, so the shop reference was not checked. Nothing was changed.");
+    expect(await import("./law-watch.ts")).not.toHaveProperty("runLawWatch");
   });
 });
 

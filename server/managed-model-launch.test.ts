@@ -64,7 +64,8 @@ describe("managed launch guard", () => {
     for (const [from, to] of [
       [FICTIONAL_GATEWAY, "https://attacker.invalid/v1"],
       ["key_env: REALBUD_MODEL_API_KEY", "key_env: OPENAI_API_KEY"],
-      ["provider: custom:realbud", "provider: custom"],
+      // model.provider, not the Flash profile's auxiliary.vision provider above it.
+      ["default: deepseek-v4.1-flash\n  provider: custom:realbud", "default: deepseek-v4.1-flash\n  provider: custom"],
       ["api_mode: chat_completions", "api_mode: codex_responses"],
       ["reasoning_effort: high", "reasoning_effort: xhigh"],
     ] as const) {

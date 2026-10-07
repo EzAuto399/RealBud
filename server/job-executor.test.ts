@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DeskSnapshot, PortalSession, Recipe } from "../shared/contracts.ts";
-import { executeRecipeJob, jobWorkerToolsets, parsePrepareResult, prepareJobPrompt } from "./job-executor.ts";
+import { executeRecipeJob, jobWorkerToolsets, parsePrepareResult, prepareJobPrompt, SEARCH_PROVIDER_NOT_CONFIGURED } from "./job-executor.ts";
 import { JobRunStore } from "./job-runs.ts";
 import { JOB_OUTPUT_MAX_CHARS } from "../shared/job-output.ts";
 import { deskContextMarkdown, DESK_CONTEXT_MAX_CHARS } from "./desk-context.ts";
@@ -114,7 +114,17 @@ describe("prepare result", () => {
   it("maps job capabilities to the narrow Hermes toolsets for that run", () => {
     expect(jobWorkerToolsets(["analyse", "draft"])).toEqual(["todo"]);
     expect(jobWorkerToolsets(["read-book", "analyse"])).toEqual(["file"]);
-    expect(jobWorkerToolsets(["read-files", "web-research", "draft"])).toEqual(["file", "web"]);
+    // No native web and no page reader on a one-shot job: web research adds no tool.
+    expect(jobWorkerToolsets(["read-files", "web-research", "draft"])).toEqual(["file"]);
+    expect(jobWorkerToolsets(["web-research", "analyse"])).toEqual(["todo"]);
+  });
+
+  it("tells a web-research run that no search provider is configured and to list the sources it needs", () => {
+    const prompt = prepareJobPrompt(job({ capabilities: ["web-research", "analyse"] }));
+    expect(prompt).toContain(SEARCH_PROVIDER_NOT_CONFIGURED);
+    expect(prompt).toContain("Put each public source this job needs (its name, and its address when known) in needsApproval for review.");
+    expect(prompt).not.toContain("research public web sources");
+    expect(prepareJobPrompt(job({ capabilities: ["analyse", "draft"] }))).not.toContain("Search provider not configured");
   });
 });
 
@@ -141,6 +151,18 @@ describe("executeRecipeJob", () => {
     expect(instructionContext).toHaveBeenCalledTimes(1);
     expect(ask).toHaveBeenCalledTimes(1);
     expect(source.description).not.toContain(instructions);
+  });
+
+  it("records that no search provider is configured on a web-research run and gives the worker no web tool", async () => {
+    const ask = vi.fn(async (_prompt: string, options: any) => {
+      expect(options.toolsets).toEqual(["todo"]);
+      return { ok: true as const, stdout: JSON.stringify({ summary: "Sources listed", evidence: [], outputs: [], needsApproval: ["Fictional council rates page: address needed"] }) };
+    });
+    const result = await executeRecipeJob(job({ capabilities: ["web-research", "analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "no-search" }, { store: store(), ask });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(result.run.status).toBe("awaiting-approval");
+    expect(result.run.evidence).toContainEqual(expect.objectContaining({ kind: "observation", note: SEARCH_PROVIDER_NOT_CONFIGURED }));
+    expect(result.run.approvalRequests).toEqual(["Fictional council rates page: address needed"]);
   });
 
   it('records an instruction recovery failure without calling the worker', async () => {

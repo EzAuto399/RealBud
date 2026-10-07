@@ -111,7 +111,6 @@ export function recipeSourceLine(recipe: Pick<Recipe, "allowedOrigins" | "capabi
   const sources: string[] = [];
   if (recipe.capabilities.includes("read-book")) sources.push("current Desk book");
   if (recipe.capabilities.includes("read-files")) sources.push("private workroom files");
-  if (recipe.capabilities.includes("web-research")) sources.push("public web research");
   const hasPortal = recipeHasPortalCapability(recipe);
   if (hasPortal) sources.push(recipe.allowedOrigins.length ? `portal: ${recipe.allowedOrigins.join(", ")}` : "portal site still needed");
   if (sources.length) return `Reads: ${sources.join("; ")}${hasPortal ? "" : "; no website login is authorised"}`;

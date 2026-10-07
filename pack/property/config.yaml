@@ -37,11 +37,14 @@ agent:
   coding_context: "off"
   # Hermes 0.21.5 subtracts these at tool granularity from ACP, CLI and every
   # subagent (a child inherits them): no Hermes browser (browser_vault and
-  # browser_exec included), connectors, cron, computer use, images, speech or
-  # kanban. 0.21.3 ACP ignores this list; there RealBud refuses a native browser
-  # call at the host. Owned with platform_toolsets.acp
+  # browser_exec included), connectors, cron, computer use, images, speech,
+  # kanban or native web search/extract (the worker sandbox allows no outbound
+  # connection on macOS, and its keyless tier would send office queries to free
+  # third-party services elsewhere; Bud reads pages through RealBud's own
+  # read_page). 0.21.3 ACP ignores this list; there RealBud refuses a native
+  # browser call at the host. Owned with platform_toolsets.acp
   # (server/hermes-pack.ts WORKER_ACP_TOOLSETS, WORKER_DISABLED_TOOLSETS).
-  disabled_toolsets: [browser, computer_use, connections, cronjob, image_gen, kanban, tts]
+  disabled_toolsets: [browser, computer_use, connections, cronjob, image_gen, kanban, tts, web]
   # One quiet retry cycle (15 s) after a transient model outage, not upstream's
   # five (0.21.5: 15/30/60/60/60 s, longer on Retry-After) that Ask cannot show
   # and that would spend most of the 15-minute turn ceiling waiting. 0.21.3
@@ -58,7 +61,7 @@ agent:
 # no_mcp keeps every configured MCP server out, while servers RealBud mounts
 # per turn over ACP still join. Install and Repair own only platform_toolsets.acp.
 platform_toolsets:
-  acp: [web, terminal, file, vision, todo, memory, session_search, skills, delegation, code_execution, no_mcp]
+  acp: [terminal, file, vision, todo, memory, session_search, skills, delegation, code_execution, no_mcp]
 # Bud's model access comes only from RealBud's grant: never borrow a Codex CLI
 # or Claude Code login from this computer (Hermes 0.21.5
 # agent/credential_sources.py adopt_external_logins_enabled; 0.21.3 has no
@@ -86,7 +89,6 @@ tool_output:
 # one, and both keep execute_code. RealBud's adapter forces upstream
 # HERMES_EXEC_ASK so native scripts require a whole-script decision.
 toolsets:
-  - web
   - terminal
   - file
   - vision
@@ -108,8 +110,12 @@ security:
 # hermes-agent, blocked-page-recovery, document-to-action-items,
 # grounded-citations, humanizer, meeting-action-items and weekly-review-planning
 # stay; RealBud and office skills are never listed there.
+# guard_agent_created: Hermes scans a skill Bud writes (skill_manage) and
+# refuses one with a dangerous verdict (0.21.3 and 0.21.5
+# tools/skill_manager_tool.py `_guard_agent_created_enabled`); upstream default off.
 skills:
   write_approval: true
+  guard_agent_created: true
 memory:
   write_approval: true
   # Hermes defaults are 2200 / 1375 chars, full within weeks. Install and
@@ -126,6 +132,9 @@ auxiliary:
   # No extra model call per session just to name it.
   title_generation:
     enabled: false
+  # auxiliary.vision is the office's model choice, not pack policy: Bud's
+  # model access writes it only for a text-only choice
+  # (server/hermes-pack.ts managedModelConfig), and Install keeps it.
 delegation:
   max_concurrent_children: 2
   max_iterations: 24
@@ -165,6 +174,12 @@ vault:
     enabled: false
   bitwarden:
     enabled: false
+# Hermes' keyless web tier (0.21.3 and 0.21.5 agent/web_search_registry.py
+# `_keyless_tier_enabled`) stays off even though the web toolset is disabled
+# above, so no path sends a query to a free third-party search service. Install
+# and Repair own only web.keyless_fallback.
+web:
+  keyless_fallback: false
 # Install and Repair also own tools.tool_search.defer (server/hermes-pack.ts
 # WORKER_DEFERRED_TOOLS): upstream's default minus todo_list, session_search and
 # process_manage, so those three stay directly visible. Other tool_search
