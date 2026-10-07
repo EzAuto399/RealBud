@@ -8,6 +8,7 @@
 import type { ApprovalPolicy, MemoryApprovalReview } from '../shared/approval-policy.ts';
 import type { MemoryProposalInput, MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
 import type { BrowserApprovalCard } from '../shared/browser-approval-card.ts';
+import type { RunUsage } from '../shared/contracts.ts';
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -65,6 +66,8 @@ export type RuntimeEvent = RuntimeEventBase &
         stopReason?: string | null;
         cost?: number | null;
         denials?: string[];
+        /** The Modelvia requests this turn made through the model relay. */
+        usage?: RunUsage;
       }
     | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string; toolFingerprint?: string }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }

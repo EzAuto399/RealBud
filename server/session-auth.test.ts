@@ -61,6 +61,8 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/abandon"],
     ["POST", "/api/w1/runs/w1run_00000000-0000-0000-0000-000000000000/answer"],
     ["POST", "/api/w1/bank-check"],
+    // Reads Modelvia receipts with the office key.
+    ["GET", "/api/job-runs/run-1/cost"],
   ])("requires the session before %s %s can change work or authority", (method, path) => {
     expect(needsSession(path, method)).toBe(true);
     const req = { url: path, method, headers: { host: "127.0.0.1:8799" } } as unknown as IncomingMessage;

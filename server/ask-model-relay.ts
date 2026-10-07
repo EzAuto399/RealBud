@@ -36,8 +36,11 @@
  * `withAskModelRelayLease`): revoked on completion, error or Stop, it is
  * refused from then on and its in-flight exchanges are aborted. An exchange is
  * also aborted when the grant or key it was admitted under is withdrawn or
- * replaced. This is Ask only: one-shot CLI jobs and loops still receive the
- * key in their launch environment through `applyManagedModelLaunchEnv`.
+ * replaced. Ask turns, one-shot CLI jobs and loops (`recipe-draft.ts`
+ * `askWorker`), `hermes-hands.ts` and `import-inspect.ts` all reason through
+ * this relay; only assigned department cases use their own relay
+ * (`department-worker.ts`). Each lease also counts the Modelvia requests its
+ * exchanges made (`RunUsage`), so a run can show what it cost.
  *
  * The overlay folder is outside the worker's Hermes home and workroom but, on
  * one OS account, nothing a same-user process cannot write. Hermes rereads it
@@ -65,6 +68,8 @@ import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER_ENTRY, managedModelProfil
 import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { MANAGED_VISION_CHOICE, managedModelChoice } from "../shared/managed-model-choices.ts";
 import { noteModelKeyAnswer } from "./office-link.ts";
+import { emptyRunUsage, noteModelviaReply, noteModelviaRequest } from "./run-cost.ts";
+import type { RunUsage } from "../shared/contracts.ts";
 
 /** Office copy when an Ask launch finds no running relay in this process.
  * Listed in `MANAGED_ACCESS_REFUSALS`, so Ask shows exactly this sentence. */
@@ -118,6 +123,8 @@ const FALLBACK_MAX_OUTPUT_TOKENS = 32_000;
 /** Longest 429 wait passed to the worker. Hermes' OpenAI SDK ignores a
  * longer Retry-After and falls back to its own short backoff. */
 const MAX_RETRY_AFTER_SECONDS = 60;
+/** A non-streamed JSON answer larger than this is relayed but not read for usage. */
+const MAX_USAGE_BODY_BYTES = 2 * 1024 * 1024;
 /** Abort reason for an exchange whose grant or key was withdrawn mid-flight. */
 const GRANT_ENDED = Symbol("grant ended");
 /** Read-only after writing; any other mode is a change made outside RealBud. */
@@ -160,7 +167,7 @@ interface RelayCapability {
    * charged again. Never shared across executions. */
   issued: Map<string, string>;
 }
-interface LeaseScope { revoked: boolean; capability?: RelayCapability }
+interface LeaseScope { revoked: boolean; capability?: RelayCapability; usage: RunUsage }
 const leaseContext = new AsyncLocalStorage<LeaseScope>();
 let active: ActiveRelay | null = null;
 
@@ -169,12 +176,15 @@ export interface AskModelRelayLease {
   run<T>(operation: () => T): T;
   /** Final and synchronous: the token is refused from now on and its exchanges abort. */
   revoke(): void;
+  /** The Modelvia requests made since the last take; counting starts again. */
+  takeUsage(): RunUsage;
 }
 
 /** One execution's relay authority. Nothing is granted until a checked
- * launch inside `run` applies its environment. */
-export function createAskModelRelayLease(options: { signal?: AbortSignal } = {}): AskModelRelayLease {
-  const scope: LeaseScope = { revoked: false };
+ * launch inside `run` applies its environment. `usage`, when given, is the
+ * counter its exchanges record into. */
+export function createAskModelRelayLease(options: { signal?: AbortSignal; usage?: RunUsage } = {}): AskModelRelayLease {
+  const scope: LeaseScope = { revoked: false, usage: options.usage ?? emptyRunUsage() };
   const revoke = () => {
     scope.revoked = true;
     options.signal?.removeEventListener("abort", revoke);
@@ -186,11 +196,12 @@ export function createAskModelRelayLease(options: { signal?: AbortSignal } = {})
   };
   if (options.signal?.aborted) revoke();
   else options.signal?.addEventListener("abort", revoke, { once: true });
-  return { run: operation => leaseContext.run(scope, operation), revoke };
+  const takeUsage = () => { const taken = scope.usage; scope.usage = emptyRunUsage(); return taken; };
+  return { run: operation => leaseContext.run(scope, operation), revoke, takeUsage };
 }
 
 /** A one-shot launch holds relay authority only until its operation settles. */
-export async function withAskModelRelayLease<T>(operation: () => Promise<T>, options: { signal?: AbortSignal } = {}): Promise<T> {
+export async function withAskModelRelayLease<T>(operation: () => Promise<T>, options: { signal?: AbortSignal; usage?: RunUsage } = {}): Promise<T> {
   const lease = createAskModelRelayLease(options);
   try { return await lease.run(operation); }
   finally { lease.revoke(); }
@@ -490,6 +501,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         redirect: "error",
         signal: forwarding.signal,
       });
+      noteModelviaRequest(capability.scope.usage, upstream.headers.get("x-request-id"));
       // A refused image call says nothing about the office key: the plan may
       // just not include the image model. Bud gets one plain sentence for that.
       if (!vision || upstream.ok) noteKeyAnswer(grant.keyId, upstream.status);
@@ -510,15 +522,26 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       if (!upstream.body) { response.end(); return; }
       // Chunk by chunk, in order, SSE events unchanged; the next upstream read
       // waits for the worker's socket to drain, so backpressure carries back.
+      // ponytail: only a non-streamed JSON answer is read for token `usage` and a
+      // 409's original receipt id; streams pass untouched (no `stream_options`
+      // added), so a streamed exchange records its header id only. Ask takes
+      // its turn's tokens from ACP instead. Parse SSE usage if per-call tokens matter.
+      const readUsage = !streaming && /^application\/json\b/i.test(upstreamType);
+      const kept: Uint8Array[] = [];
       let relayed = 0;
       stillArriving();
       for await (const chunk of upstream.body) {
         stillArriving();
         relayed += chunk.length;
         if (relayed > maxResponseBytes) throw new Error("response too large");
+        if (readUsage && relayed <= MAX_USAGE_BODY_BYTES) kept.push(chunk);
         if (!response.write(chunk)) await once(response, "drain", { signal: forwarding.signal });
       }
       response.end();
+      if (readUsage && relayed <= MAX_USAGE_BODY_BYTES) {
+        try { noteModelviaReply(capability.scope.usage, JSON.parse(Buffer.concat(kept).toString("utf8"))); }
+        catch { /* an unreadable answer still counted as a request */ }
+      }
     } catch (error) {
       if (error instanceof RelayRefusal) { request.resume(); refuse(response, error.status, error.message); }
       else if (forwarding.signal.reason === GRANT_ENDED && !response.headersSent) {

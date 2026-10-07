@@ -9,8 +9,9 @@ import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
 import { managedMailBindingRevision, managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
 import { createOfficeLink, installationWorkerVersion } from "./office-link.ts";
-import { createWorkerModelAccess } from "./worker-model-access.ts";
-import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { createWorkerModelAccess, workerModelGrant } from "./worker-model-access.ts";
+import { normalizedGatewayUrl, setWorkerModelAccessSnapshot, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { runCost } from "./run-cost.ts";
 import { startAskModelRelay } from "./ask-model-relay.ts";
 import { recordRemoteEvidence } from './website-remote-evidence.ts';
 import { createRemoteDisclosureReview } from './website-remote-disclosure.ts';
@@ -199,7 +200,7 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, propertyProfileDir } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
@@ -1594,6 +1595,7 @@ bus.subscribe((raw: RuntimeEvent) => {
             threadId: event.threadId,
             turnId: event.turnId,
             ...(durationMs !== undefined ? { durationMs } : {}),
+            ...(event.usage ? { usage: event.usage } : {}),
           });
         } catch {
           /* history must not take the desk down */
@@ -3630,6 +3632,16 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
         jobId: url.searchParams.get('jobId') ?? undefined,
       }));
+    }
+    // One run's AI cost, read from Modelvia receipts with the office key on
+    // demand (server/run-cost.ts). The key never leaves this process.
+    const jobRunCost = path.match(/^\/api\/job-runs\/([\w-]+)\/cost$/);
+    if (jobRunCost && method === "GET") {
+      const run = jobRuns.get(jobRunCost[1]!);
+      if (!run) return json(res, 404, { error: "That job run is not on this computer." });
+      const grant = workerModelGrant(), key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
+      res.setHeader("cache-control", "no-store");
+      return json(res, 200, { cost: await runCost(run.usage, grant.state === "active" && key ? { baseUrl: normalizedGatewayUrl(grant.baseUrl), key } : null) });
     }
     if (path === "/api/job-runs" && method === "GET") {
       const jobId = url.searchParams.get("jobId")?.trim() || undefined;

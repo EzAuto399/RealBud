@@ -7,7 +7,7 @@ paths:
 # server/ and shared/ conventions
 
 Authority
-- Routes are one flat `if (path === … && method === …)` chain in `server/index.ts` (no router); place a new route after the gates it depends on. Add every new `/api/*` prefix to `needsSession` in `server/session-auth.ts`, otherwise it is reachable without the per-boot session token.
+- Routes are one flat `if (path === … && method === …)` chain in `server/index.ts` (no router); place a new route after the gates it depends on. Every `/api/*` route needs the per-boot session token by default (`needsSession` in `server/session-auth.ts`); only add an exemption there for a route with its own independent authority, and add a `sessionOk` test for the new route.
 - Non-GET `/api/*` must be `application/json`; `/api/company/*` responses are `no-store`. `productDenied` in `server/product-mode.ts` is a hard route denylist.
 - Company reads/writes go through `authenticated()` and `authorizedScope()` in `server/company/index.ts`: advisory locks in fixed order (lifecycle → member → session → scope), the session re-checked after locking, RLS context set. Department permission is the SQL `scope_allowed()`; do not reimplement it in TypeScript. Member sessions (`x-realbud-member-session`) and execution grants (`x-realbud-execution-grant`) are different credentials and never convert into each other.
 - Re-verify identity and permission after every `await` that crosses a lock or host boundary (pattern: `server/company-execution-client.ts`). A UI filter or an enqueue-time check alone is not access control. Never hand a `pg` Pool or its credentials to a worker.

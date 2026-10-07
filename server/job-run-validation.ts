@@ -1,6 +1,7 @@
 import { JOB_CAPABILITIES, type JobCapability, type JobRun, type JobRunEvidence, type JobRunMode, type JobRunStatus, type JobRunTrigger, type JobRunSpecSnapshot } from '../shared/contracts.ts';
 import { redactSecretsInText } from './redact.ts';
 import { JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS, JOB_OUTPUT_TOO_LARGE } from '../shared/job-output.ts';
+import { cleanRunUsage } from './run-cost.ts';
 const MAX_DETAIL = 2_000, MAX_NOTE = 500, MAX_EVIDENCE = 50, MAX_APPROVALS = 20;
 function isStatus(value: unknown): value is JobRunStatus {
   return (
@@ -119,6 +120,8 @@ export function parseJobRun(value: unknown): JobRun | null {
   }
   const evidence = cleanEvidence(row.evidence as JobRunEvidence[], row.createdAt);
   const approvalRequests = cleanApprovals(row.approvalRequests.filter((item) => typeof item === "string") as string[]);
+  // Optional: a run saved before usage was recorded loads without it.
+  const usage = cleanRunUsage(row.usage);
   return {
     id: row.id,
     jobId: row.jobId,
@@ -141,6 +144,7 @@ export function parseJobRun(value: unknown): JobRun | null {
     ...(finite(row.seenAt) ? { seenAt: row.seenAt } : {}),
     ...(typeof row.legacySessionId === "string" ? { legacySessionId: row.legacySessionId } : {}),
     ...(typeof row.threadId === "string" && row.threadId ? { threadId: row.threadId } : {}),
+    ...(usage ? { usage } : {}),
   };
 }
 

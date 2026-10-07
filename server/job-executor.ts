@@ -1,8 +1,8 @@
 import { PM_EVIDENCE_RULES } from "../shared/pm-evidence-rules.ts";
 // One bounded job attempt. RealBud supplies the immutable spec, trigger, and
 // idempotency key; Hermes may prepare work but cannot grant itself authority.
-import type { DeskSnapshot, JobCapability, JobRun, JobRunEvidence, JobRunMode, JobRunTrigger, PortalSession, Recipe } from "../shared/contracts.ts";
-import { jobRuns, type JobRunStore } from "./job-runs.ts";
+import type { DeskSnapshot, JobCapability, JobRun, JobRunEvidence, JobRunMode, JobRunTrigger, PortalSession, Recipe, RunUsage } from "../shared/contracts.ts";
+import { jobRuns, type JobRunStore, type SettleJobRunInput } from "./job-runs.ts";
 import { startShadowRun } from "./portal-sessions.ts";
 import { askWorker, lastJsonObject, type WorkerChatOpts, type WorkerToolset } from "./recipe-draft.ts";
 import { JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS } from "../shared/job-output.ts";
@@ -187,6 +187,9 @@ export async function executeRecipeJob(
   if (!enqueued.created) return { run: enqueued.run, reused: true };
   const running = store.start(enqueued.run.id);
   const executionRecipe = recipeForRun(recipe, enqueued.run);
+  // Every settle after the worker answered carries the Modelvia requests it made.
+  let usage: RunUsage | undefined;
+  const settle = (input: SettleJobRunInput) => store.settle(running.id, usage ? { ...input, usage } : input);
 
   try {
     const instructions = await dependencies.instructionContext?.(executionRecipe.id);
@@ -257,17 +260,18 @@ export async function executeRecipeJob(
       maxTurns: worker.maxTurns ?? executionRecipe.limits.maxTurns,
       toolsets: worker.toolsets ?? jobWorkerToolsets(executionRecipe.capabilities),
     });
+    usage = result.usage;
     await department?.check();
     if (!result.ok) {
       return {
-        run: store.settle(running.id, { status: "failed", detail: result.detail }),
+        run: settle({ status: "failed", detail: result.detail }),
         reused: false,
       };
     }
     let prepared = parsePrepareResult(result.stdout);
     if (!prepared) {
       return {
-        run: store.settle(running.id, {
+        run: settle({
           status: "failed",
           detail: "Bud answered without a complete, usable job receipt. The result may be incomplete or too large; split the job into smaller results and try again. Nothing consequential was performed.",
           evidence: [{ at: Date.now(), kind: "observation", note: `Receipt validation failed: outer-json-or-bounds; characters=${result.stdout.length}; sha256=${createHash("sha256").update(result.stdout).digest("hex")}. Raw model text was not persisted. Retry requires a new run request; replay retains this failure.` }],
@@ -286,7 +290,7 @@ export async function executeRecipeJob(
     const waiting = prepared.needsApproval.length > 0;
     if (!prepared.outputs.length && !waiting) {
       return {
-        run: store.settle(running.id, {
+        run: settle({
           status: "failed",
           detail: "Bud returned a summary without a usable result or a request for missing information. Check the job's inputs and try again.",
           evidence: evidenceRows(prepared, at),
@@ -295,7 +299,7 @@ export async function executeRecipeJob(
       };
     }
     return {
-      run: store.settle(running.id, {
+      run: settle({
         status: waiting ? "awaiting-approval" : "completed",
         detail: prepared.summary,
         evidence: evidenceRows(prepared, at),
@@ -305,7 +309,7 @@ export async function executeRecipeJob(
     };
   } catch (error) {
     return {
-      run: store.settle(running.id, {
+      run: settle({
         status: "failed",
         detail: error instanceof Error ? error.message : String(error),
       }),

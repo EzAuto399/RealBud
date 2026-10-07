@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { cleanRunUsage } from "./run-cost.ts";
+import type { RunUsage } from "../shared/contracts.ts";
 
 const MAX_ENTRIES = 200;
 const MAX_DETAIL = 160;
@@ -24,6 +26,8 @@ export interface HistoryEntry {
   threadId?: string;
   turnId?: string;
   durationMs?: number;
+  /** An Ask turn's Modelvia requests and, when ACP reported them, its tokens. */
+  usage?: RunUsage;
 }
 
 export type HistoryInput = {
@@ -34,6 +38,7 @@ export type HistoryInput = {
   threadId?: string;
   turnId?: string;
   durationMs?: number;
+  usage?: RunUsage;
   at?: number;
 };
 
@@ -64,6 +69,7 @@ function asEntry(value: unknown): HistoryEntry | null {
     typeof row.durationMs === "number" && Number.isFinite(row.durationMs) && row.durationMs >= 0
       ? row.durationMs
       : undefined;
+  const usage = cleanRunUsage(row.usage);
   return {
     id: row.id,
     at: row.at,
@@ -74,6 +80,7 @@ function asEntry(value: unknown): HistoryEntry | null {
     ...(threadId ? { threadId } : {}),
     ...(turnId ? { turnId } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(usage ? { usage } : {}),
   };
 }
 
@@ -118,6 +125,8 @@ export function appendHistory(input: HistoryInput): HistoryEntry[] {
   if (typeof input.durationMs === "number" && Number.isFinite(input.durationMs) && input.durationMs >= 0) {
     entry.durationMs = input.durationMs;
   }
+  const usage = cleanRunUsage(input.usage);
+  if (usage) entry.usage = usage;
   const next = [...loadHistory(), entry].slice(-MAX_ENTRIES);
   persist(next);
   return next;

@@ -553,6 +553,17 @@ export interface JobRun {
   legacySessionId?: string;
   /** Product Bud thread for an attended run. */
   threadId?: string;
+  /** The Modelvia requests this run made. Its price is read from Modelvia on demand. */
+  usage?: RunUsage;
+}
+
+/** Modelvia requests one run or Ask turn made: their ids (capped), the call
+ * count, and tokens only where an answer reported them. Never a price. */
+export interface RunUsage {
+  requestIds: string[];
+  calls: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export type PortalSessionState = "prepared" | "running" | "awaiting-review" | "done" | "unknown" | "failed";
