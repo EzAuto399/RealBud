@@ -18,6 +18,7 @@ import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/priv
 import { DATA_DIR } from "./config.ts";
 import { createLearnedRecipeStore, LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { runPortalRecipes } from "./portal-recipe-runner.ts";
+import { decide, jevReady } from "./jev-client.ts";
 import type { BrowserJson } from "./browser-runtime.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { LearnedRecipe } from "../shared/learned-recipes.ts";
@@ -28,6 +29,9 @@ vi.mock("./portal-recipe-runner.ts", async importOriginal => {
   const real = await importOriginal<typeof import("./portal-recipe-runner.ts")>();
   return { ...real, runPortalRecipes: vi.fn(real.runPortalRecipes) };
 });
+
+// Jev, watched: an Ask task hands the runner `decide` only when the office has Jev ready.
+vi.mock("./jev-client.ts", () => ({ decide: vi.fn(async () => ({ ok: false, reason: "refused" })), jevReady: vi.fn(() => false) }));
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -170,6 +174,25 @@ describe("running a started recipe task", () => {
       expect(text).not.toContain("Nothing was saved");
       expect(text).toContain("RealBud cannot confirm what changed in the portal");
     }
+  });
+
+  it("hands the runner Jev's decide as the drifted-control chooser only when the office has Jev ready", async () => {
+    const f = await fixture();
+    const handed = async (ready: boolean, threadId: string) => {
+      vi.mocked(jevReady).mockReturnValue(ready);
+      const card = await f.store.propose(await portalRecipeTaskProposal({ threadId, messageId: "m1", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT }, fictional), NOW);
+      const started = await f.store.start(card.id, { threadId, browserId: "work" }, NOW);
+      vi.mocked(runPortalRecipes).mockClear();
+      const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: fictional, ...f.stores });
+      expect(result.outcome, result.detail).toBe("completed");
+      return vi.mocked(runPortalRecipes).mock.calls[0][0];
+    };
+    try {
+      expect((await handed(true, "thread-ask-jev")).chooser).toBe(decide);
+      expect(await handed(false, "thread-ask-no-jev")).not.toHaveProperty("chooser");
+    } finally { vi.mocked(jevReady).mockReturnValue(false); }
+    // Every control was found by its own name: Jev was never asked.
+    expect(decide).not.toHaveBeenCalled();
   });
 
   it("reads the default arrears grid and keeps the rows at or above min_days, saying how many REI showed", async () => {

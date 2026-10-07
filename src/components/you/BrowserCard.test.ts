@@ -71,12 +71,12 @@ describe("work browser connection state", () => {
   it("does not present a retained ready result as current while RealBud is offline", async () => {
     vi.mocked(api).mockResolvedValue(ready);
     mount(); await Promise.resolve();
-    expect(render()).toContain("Tell Bud what you want to do in Ask");
+    expect(render()).toContain("Tell Bud what you want to do in Work");
     observed.connected = false;
     const html = render();
     expect(html).toContain("RealBud is offline");
     expect(html).not.toContain("Fictional ready connection detail");
-    expect(html).not.toContain("Tell Bud what you want to do in Ask");
+    expect(html).not.toContain("Tell Bud what you want to do in Work");
     expect(buttons(html).length).toBeGreaterThan(0);
     expect(buttons(html).every(button => button.includes('disabled=""'))).toBe(true);
     expect(html).toMatch(/datetime="2026-10-01T06:00:00.000Z"/i);
@@ -89,7 +89,7 @@ describe("work browser connection state", () => {
     const html = render();
     expect(html).toContain('role="alert"');
     expect(html).not.toContain("Fictional ready connection detail");
-    expect(html).not.toContain("Tell Bud what you want to do in Ask");
+    expect(html).not.toContain("Tell Bud what you want to do in Work");
     const stop = html.match(/<button\b[^>]*>Stop browser work and take over<\/button>/)?.[0];
     expect(stop).toBeDefined();
     expect(stop).not.toContain('disabled=""');

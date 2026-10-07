@@ -28,7 +28,9 @@ const memoryScript = (extra: Record<string, unknown> = {}) => ({
 // These are the actual bootstrap, registry, Hermes ACP adapter, event bus,
 // durable cards and HTTP approval routes. Only the subprocess speaking ACP is
 // fictional. The fixture never supplies provider credentials or intercepts HTTP.
-describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)', mode => {
+// `stale-flags` boots the same product server over a bots.json that still
+// carries an old install's autoApprove/alwaysAllow: they must stay inert.
+describe.each(['product', 'stale-flags'] as const)('Hermes memory approval HTTP (%s)', mode => {
   let scratch = '', data = '', script = '', dump = '', base = '', token = '', logs = '';
   let child: ChildProcess | undefined, closed: Promise<unknown> | undefined;
   const botId = 'bud', threadId = 'memory-http-thread';
@@ -112,7 +114,7 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
     writeFileSync(join(data, 'bots.json'), JSON.stringify([{
       id: botId, threadId, name: 'Bud', title: '', description: '', notifications: false, color: 'green', unread: false,
       modelSelection: { instanceId: 'hermes', model: 'default' }, resumeCursors: {}, createdAt: 1,
-      ...(mode === 'legacy' ? { autoApprove: true, alwaysAllow: [memoryTool, 'shell:git'] } : {}),
+      ...(mode === 'stale-flags' ? { autoApprove: true, alwaysAllow: [memoryTool, 'shell:git'] } : {}),
     }]), { mode: 0o600 });
     const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
     const port = (listener.address() as { port: number }).port;
@@ -122,7 +124,7 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
       cwd: root, env: {
         ...serviceSmokeEnv({ executable: process.execPath, home: scratch, data, scratch, port }),
         REALBUD_MANAGED_SERVICE: '0', REALBUD_SERVICE_ENTITLEMENT_REQUIRED: '0',
-        ...(mode === 'legacy' ? { OMB_TEST_FLEET: '1' } : {}), VITEST: 'true',
+        VITEST: 'true',
       }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     closed = new Promise((resolve, reject) => { child!.once('close', resolve); child!.once('error', reject); });
@@ -154,7 +156,7 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
     expect(card).not.toHaveProperty('fence');
     expect((await bot()).busy).toBe(true);
     expect((await api('/api/rules')).body.rules.some((rule: { key: string }) => rule.key === memoryTool)).toBe(true);
-    if (mode === 'legacy') expect(await bot()).toMatchObject({ autoApprove: true, alwaysAllow: expect.arrayContaining([memoryTool]) });
+    if (mode === 'stale-flags') expect(await bot()).toMatchObject({ autoApprove: true, alwaysAllow: expect.arrayContaining([memoryTool]) });
     const result = await respond(route, card);
     expect(result.status, JSON.stringify(result.body)).toBe(200);
     await settled(); expect(chosen()).toBe('allow-once');
@@ -173,9 +175,8 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
     for (const key of [memoryTool, `${memoryTool}:anything`, memoryTool.toUpperCase()]) {
       expect((await api('/api/rules', 'POST', { key, decision: 'allow' })).status).toBe(400);
     }
-    if (mode === 'legacy') {
-      expect((await api(`/api/bots/${botId}`, 'PATCH', { alwaysAllow: [memoryTool] })).status).toBe(400);
-    }
+    // The product route never accepts unattended approval flags at all.
+    expect((await api(`/api/bots/${botId}`, 'PATCH', { alwaysAllow: [memoryTool] })).status).toBe(403);
     const { card } = await waiting(await start());
     for (const route of ['bots', 'threads'] as const) {
       expect((await respond(route, card, { rule: { surface: 'portal-read', origin: 'fictional.example.invalid' } })).status).toBe(400);
@@ -203,7 +204,7 @@ describe.each(['product', 'legacy'] as const)('Hermes memory approval HTTP (%s)'
   });
 
   it('retains the identified terminal session flow separately from memory', async () => {
-    if (mode === 'legacy') expect((await api(`/api/bots/${botId}`, 'PATCH', { autoApprove: false, alwaysAllow: [] })).status).toBe(200);
+    // With stale autoApprove still stored, the terminal request must still reach a card.
     const { card } = await waiting(await start({ permission: true, tool: 'execute', rawInput: { name: 'terminal', command: 'echo fictional' }, title: 'echo fictional' }));
     expect(card.tool).toBe('terminal'); expect(card).not.toHaveProperty('approvalPolicy');
     expect((await respond('threads', card)).status).toBe(200);

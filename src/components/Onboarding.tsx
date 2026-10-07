@@ -12,6 +12,7 @@ import {
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
 import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import { SETUP_STEP_COUNT } from "@/lib/setup-sequence";
 import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
@@ -209,12 +210,13 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
             <header>
               <div className="flex items-center justify-between gap-4 text-[11.5px] text-ink-muted">
                 <span>Set up this computer</span>
-                <span>Step {step + 1} of 3</span>
+                {/* Connecting is step 1 of Get started's own numbered path on Desk; the name comes before it. */}
+                <span>{step === 0 ? "Before you start" : `Step 1 of ${SETUP_STEP_COUNT}`}</span>
               </div>
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-line/60" aria-hidden="true">
                 <div
                   className="h-full origin-left rounded-full bg-agency transition-transform duration-300 motion-reduce:transition-none"
-                  style={{ transform: `scaleX(${(step + 1) / 3})` }}
+                  style={{ transform: `scaleX(${step / SETUP_STEP_COUNT})` }}
                 />
               </div>
             </header>

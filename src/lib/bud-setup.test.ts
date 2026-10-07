@@ -143,9 +143,19 @@ describe("automatic Bud setup status", () => {
   });
 
   it("uses fixed hold copy even if the status carries an unsafe error", () => {
-    const view = budAutoSetupView({ ...status, autoSetup: { state: "held", code: "held_failed", step: 1, total: 4, detail: "fatal: secret-token from /private/path" } });
+    const view = budAutoSetupView({ ...status, autoSetup: { state: "held", code: "held_failed", step: 0, total: 4, detail: "fatal: secret-token from /private/path" } });
     expect(view?.detail).toBe("Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
     expect(view?.detail).not.toMatch(/secret-token|private\/path/);
+  });
+
+  it("names the setup step a stop happened at, in plain words", () => {
+    const held = (code: "held_failed" | "held_exhausted", step: number) => budAutoSetupView({ ...status, autoSetup: { state: "held", code, step, total: 4, detail: "fatal: /private/path" } })?.detail;
+    expect(held("held_failed", 1)).toBe("Bud’s setup stopped while installing Bud. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
+    expect(held("held_failed", 3)).toMatch(/^Bud’s setup stopped while connecting your office’s AI\./);
+    expect(held("held_exhausted", 4)).toBe("Bud couldn’t finish setting up on this computer. It stopped while testing Bud. RealBud support has the details; try again later.");
+    expect(held("held_exhausted", 2)).toMatch(/It stopped while turning on approvals\./);
+    // An unknown step keeps the plain hold copy.
+    expect(held("held_exhausted", 0)).toBe("Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.");
   });
 });
 

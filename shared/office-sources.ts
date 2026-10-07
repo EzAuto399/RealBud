@@ -45,7 +45,7 @@ export function officeSourceState(access: ConnectedAppsStatus | null, slug: stri
 }
 export const OFFICE_SOURCE_LABELS: Record<OfficeSourceState, string> = {
   setup: "Add key", unchecked: "Checking access", "signing-in": "Signing in…", connect: "Not connected",
-  "choose-account": "Choose account", degraded: "Needs attention", ready: "Ready", excluded: "Off in Ask",
+  "choose-account": "Choose account", degraded: "Needs attention", ready: "Ready", excluded: "Off in Work",
 };
 export function readyOfficeApps(access: ConnectedAppsStatus | null, now = Date.now()): string[] {
   return Object.keys(access?.services ?? {}).filter(slug => officeSourceState(access, slug, now) === "ready");

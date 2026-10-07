@@ -454,7 +454,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       if (!label || label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) throw Object.assign(new Error("Name this computer in 80 characters or fewer."), { status: 400 });
       const saved = await read();
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
-      if (saved?.code && !saved.revoked) throw Object.assign(new Error("This computer is still finishing a link code. Paste that same code under “Use a link code instead” to finish. If it has expired, you can then connect here."), { status: 409 });
+      if (saved?.code && !saved.revoked) throw Object.assign(new Error("This computer is still finishing a link code. Paste that same code in the Link code box to finish. If it has expired, you can then connect here."), { status: 409 });
       if (saved?.revoked) await options.provisioning?.withdraw();
       if (saved?.browser && !saved.revoked) {
         // One pending request at a time: an unexpired one is resumed, never duplicated.

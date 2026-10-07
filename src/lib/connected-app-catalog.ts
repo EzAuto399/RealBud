@@ -72,7 +72,7 @@ export function connectedAppCatalog(snapshot: ConnectedAppsStatus | null, option
     const gmailUnchecked = app.slug === 'gmail' && options.managed && (!service || Boolean(snapshot?.error));
     const excluded = snapshot?.excludedApps?.includes(app.slug) === true;
     const state = officeSourceState(snapshot, app.slug);
-    const status = !options.configured ? 'Setup needed' : excluded ? 'Off in Ask' : sharedGmail && !connected ? 'Office setup needed'
+    const status = !options.configured ? 'Setup needed' : excluded ? 'Off in Work' : sharedGmail && !connected ? 'Office setup needed'
       : gmailUnchecked ? 'Check access first' : !service ? 'Availability not checked' : OFFICE_SOURCE_LABELS[state];
     return { ...app, ...(ownGmail ? { label: 'Your Gmail', purpose: 'Your own work mail on this computer' } : {}), origin: service ? 'reported' : 'suggested', connected, status,
       detail: ownGmail ? 'Only you use this mailbox. Bud uses it unless you ask for the office mailbox.' : sharedGmail ? connected ? 'Office shared account' : 'Ask the office owner to connect it, then check access again.'

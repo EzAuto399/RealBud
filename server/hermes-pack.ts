@@ -13,7 +13,7 @@ import { HERMES_PIN } from "./hermes-pin.ts";
 import { HERMES_RELEASES } from "./hermes-releases.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
-import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, managedModelChoiceFor, managedModelChoiceKeepingModel, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
+import { DEFAULT_MANAGED_MODEL_CHOICE, MANAGED_VISION_CHOICE, managedModelChoice, managedModelChoiceFor, managedModelChoiceKeepingModel, type ManagedModelChoice, type ManagedModelChoiceId, type ManagedReasoningEffort } from "../shared/managed-model-choices.ts";
 export { hermesHome } from "./hermes-paths.ts";
 
 export const PACK_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "pack", "property");
@@ -349,6 +349,7 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
   }
   for (const key of ["skills", "memory"]) result.setIn([key, "write_approval"], true);
+  result.setIn(["skills", "guard_agent_created"], true);
   // Memory size floor: an office's larger limit stays, a smaller or unreadable one rises to the pack's.
   for (const key of ["memory_char_limit", "user_char_limit"]) {
     const floor = policy.getIn(["memory", key]), saved = result.getIn(["memory", key]);
@@ -370,10 +371,10 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   // CLI plus Chromium on PATH still satisfies it there, which the host's
   // native-browser refusal covers. Other browser settings stay the office's.
   for (const [key, value] of Object.entries(WORKER_BROWSER_POLICY)) result.setIn(["browser", key], value);
-  // Own only the listed compression, curator, login-policy and ACP-selection
-  // keys and the tool-search deferral list; every other setting in those
-  // sections (other platforms' toolsets included) stays the office's.
-  for (const key of ["compression", "curator", "tools", "auth", "platform_toolsets", "vault"]) {
+  // Own only the listed compression, curator, login-policy, ACP-selection and
+  // keyless-web keys and the tool-search deferral list; every other setting in
+  // those sections (other platforms' toolsets included) stays the office's.
+  for (const key of ["compression", "curator", "tools", "auth", "platform_toolsets", "vault", "web"]) {
     if (result.has(key) && !isMap(result.get(key))) throw new Error(UNREADABLE_PROFILE);
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
   }
@@ -409,6 +410,7 @@ const OWNED_SUBKEYS = {
   curator: ["enabled"],
   auth: ["adopt_external_logins"],
   platform_toolsets: ["acp"],
+  web: ["keyless_fallback"],
 } as const;
 
 /** Owned `platform_toolsets.acp`: Ask's explicit selection, which Hermes 0.21.5
@@ -418,7 +420,7 @@ const OWNED_SUBKEYS = {
  * keeps configured MCP servers out, while RealBud's per-turn ACP mounts still
  * join (acp_adapter/server.py `_register_session_mcp_servers`). */
 export const WORKER_ACP_TOOLSETS = [
-  "web", "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution", "no_mcp",
+  "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution", "no_mcp",
 ] as const;
 
 /** Owned `agent.disabled_toolsets` (inside the owned `agent` block): removed at
@@ -428,8 +430,14 @@ export const WORKER_ACP_TOOLSETS = [
  * `setup` (`manage_catalog`) is not listed: 0.21.3 has no such toolset, and
  * 0.21.5 strips it from every profile without `role: setup`, which the pack's
  * profile.yaml never declares. 0.21.3 ACP ignores this list; there the host
- * refuses a native browser call (drivers/acp/core.ts `hermesNativeBrowserTool`). */
-export const WORKER_DISABLED_TOOLSETS = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts"] as const;
+ * refuses a native browser call (drivers/acp/core.ts `hermesNativeBrowserTool`).
+ * `web` (web_search, web_extract, and web_search in `search`): on macOS the
+ * worker sandbox allows no outbound connection, so both always failed; where
+ * there is no sandbox, Hermes' keyless tier would send office queries to free
+ * third-party services (`web.keyless_fallback`, also owned off). Bud reads
+ * public pages through RealBud's `read_page` (server/web-research-broker.ts).
+ * A search provider needs a billed account and is a separate decision. */
+export const WORKER_DISABLED_TOOLSETS = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts", "web"] as const;
 
 /** Tools Bud uses on most jobs that upstream defers behind `tool_search` by
  * default (tools/tool_search.py `_DEFAULT_DEFERRED_TOOLS`, 0.21.3 and 0.21.5). */
@@ -597,6 +605,9 @@ export function workerLimitsReady(root?: string): boolean {
       // Upstream reads `bool(value)`, so only a real YAML false refuses borrowing.
       strictBool(doc, ["auth", "adopt_external_logins"], false) &&
       strictBool(doc, ["tools", "connectors", "enabled"], false) &&
+      // Upstream reads `bool(value)`, so only a real YAML false turns the keyless tier off.
+      strictBool(doc, ["web", "keyless_fallback"], false) &&
+      strictBool(doc, ["skills", "guard_agent_created"], true) &&
       includesAll(doc.getIn(["approvals", "deny"]), WORKER_DENIED_COMMANDS) &&
       sameList(doc.getIn(["platform_toolsets", "acp"]), WORKER_ACP_TOOLSETS) &&
       includesAll(doc.getIn(["agent", "disabled_toolsets"]), WORKER_DISABLED_TOOLSETS) &&
@@ -724,6 +735,17 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
 //                   the custom profile to OPENAI_COMPAT_WIRE_EFFORTS (which
 //                   includes `xhigh`). `mergePropertyPolicy` carries it through
 //                   a policy rewrite while it still pairs with the saved model.
+//   auxiliary.vision
+//                   0.21.5 (f97608f1) agent/auxiliary_client.py
+//                   `_resolve_task_provider_model("vision")` reads provider and
+//                   model here; `custom:realbud` resolves through the same
+//                   `providers.realbud` entry (`_resolve_named_custom_branch`:
+//                   its base_url, which Ask's overlay points at the relay, and
+//                   its key_env), so the key custody is unchanged.
+//                   `check_vision_requirements` (tools/vision_tools.py) resolves
+//                   the same client, so `vision_analyze` shows for Flash.
+//                   Resolution was probed in the 0.21.5 source tree; the wire
+//                   proof above has not been run for it.
 //
 // Nothing here edits Hermes source: this is a profile-file write through the
 // same admitted helpers the pack install uses.
@@ -751,6 +773,8 @@ export interface ManagedModelProfile {
   choice: ManagedModelChoiceId | null;
   /** True while a `.env` line could still shadow the granted key. */
   envKeyPresent: boolean;
+  /** `auxiliary.vision` is exactly what the saved choice needs (`managedVisionRoute`). */
+  visionReady: boolean;
 }
 
 function scalarText(value: unknown): string | null {
@@ -777,6 +801,8 @@ export function managedModelProfile(root?: string): ManagedModelProfile {
   const model = section(parsed.model), agent = section(parsed.agent);
   const entry = section(section(parsed.providers)[MANAGED_MODEL_PROVIDER_ENTRY]);
   const modelId = scalarText(model.default), effort = scalarText(agent.reasoning_effort);
+  const choice = managedModelChoiceFor(modelId, effort);
+  const vision = section(parsed.auxiliary).vision;
   return {
     provider: scalarText(model.provider),
     model: modelId,
@@ -784,9 +810,20 @@ export function managedModelProfile(root?: string): ManagedModelProfile {
     apiMode: scalarText(entry.api_mode),
     keyEnv: scalarText(entry.key_env),
     reasoningEffort: effort,
-    choice: managedModelChoiceFor(modelId, effort),
+    choice,
     envKeyPresent: readIf(join(dir, ".env")).replace(/\r\n/g, "\n").split("\n").some(line => envKeyPattern().test(line.trim())),
+    visionReady: choice !== null && JSON.stringify(vision ?? null) === JSON.stringify(managedVisionRoute(managedModelChoice(choice))),
   };
+}
+
+/** Owned `auxiliary.vision`: a text-only choice reads images with
+ * `MANAGED_VISION_CHOICE`'s model through the same managed provider (Ask: the
+ * relay, which admits that model only for an image request; CLI jobs: the
+ * granted gateway). None for a choice that takes images itself: any explicit
+ * `auxiliary.vision` makes 0.21.5 describe attached images as text even for a
+ * vision model (agent/image_routing.py `decide_image_input_mode`). */
+function managedVisionRoute(choice: ManagedModelChoice): { provider: string; model: string } | null {
+  return choice.supportsVision ? null : { provider: MANAGED_MODEL_PROVIDER, model: managedModelChoice(MANAGED_VISION_CHOICE).model };
 }
 
 export interface ManagedModelApply {
@@ -803,8 +840,9 @@ export interface ManagedModelApply {
 }
 
 /** The profile config with the managed selection written in. Other settings,
- * including comments, are kept; the `model` and `providers` sections are
- * owned whole, so no leftover provider can be selected beside the grant. */
+ * including comments, are kept; the `model` and `providers` sections and
+ * `auxiliary.vision` are owned whole, so no leftover provider can be selected
+ * beside the grant. */
 export function managedModelConfig(raw: string, baseUrl: string, choiceId: ManagedModelChoiceId): string {
   const choice = managedModelChoice(choiceId);
   const doc: Document = raw.trim() ? policyDocument(raw) : new Document({}, { version: "1.1" });
@@ -823,6 +861,13 @@ export function managedModelConfig(raw: string, baseUrl: string, choiceId: Manag
   }));
   if (!doc.has("agent")) doc.set("agent", new YAMLMap(doc.schema));
   doc.setIn(["agent", "reasoning_effort"], choice.effort);
+  // `auxiliary.vision` is owned whole with the choice; the rest of `auxiliary` stays.
+  if (doc.has("auxiliary") && !isMap(doc.get("auxiliary"))) throw new Error(UNREADABLE_PROFILE);
+  const vision = managedVisionRoute(choice);
+  if (vision) {
+    if (!doc.has("auxiliary")) doc.set("auxiliary", new YAMLMap(doc.schema));
+    doc.setIn(["auxiliary", "vision"], doc.createNode(vision));
+  } else if (doc.has("auxiliary")) doc.deleteIn(["auxiliary", "vision"]);
   return doc.toString();
 }
 
@@ -898,7 +943,7 @@ export function propertyWorkroomReady(root?: string): boolean {
     const passthrough = doc.getIn(["terminal", "env_passthrough"]);
     const toolsetsNode = doc.get("toolsets");
     const toolsets: unknown[] = isSeq(toolsetsNode) ? toolsetsNode.toJSON() : [];
-    const requiredToolsets = ["web", "terminal", "file", "vision", "todo", "session_search", "delegation"];
+    const requiredToolsets = ["terminal", "file", "vision", "todo", "session_search", "delegation"];
     return (
       doc.getIn(["terminal", "backend"]) === "local" &&
       doc.getIn(["terminal", "home_mode"]) === "profile" &&
@@ -906,7 +951,7 @@ export function propertyWorkroomReady(root?: string): boolean {
       doc.getIn(["security", "redact_secrets"]) === true &&
       toolsets.every((name) => typeof name === "string") &&
       requiredToolsets.every((name) => toolsets.includes(name)) &&
-      !["code_execution", "computer_use", "cronjob", "skills"].some((name) => toolsets.includes(name)) &&
+      !["code_execution", "computer_use", "cronjob", "skills", "web"].some((name) => toolsets.includes(name)) &&
       Number.isInteger(maxTurns) && (maxTurns as number) >= 60 &&
       learningPolicyReady(root) && workerLimitsReady(root) && skillScopeReady(root)
     );

@@ -29,6 +29,8 @@ describe("website installation link", () => {
     await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow(/could not be reached/);
     expect((await app.status()).state).toBe("pending");
     await expect(app.link({ code: `rb1_${"c".repeat(64)}`, label: "Other" })).rejects.toThrow(/still finishing the first code you pasted/);
+    // Names the box both connect screens show ("Link code"), not a label that no longer exists.
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toThrow("This computer is still finishing a link code. Paste that same code in the Link code box to finish.");
     expect(bodies).toHaveLength(1);
     const restarted = create(); await restarted.link({ code, label: "Reception Mac" });
     expect(bodies[0]).toEqual(bodies[1]);

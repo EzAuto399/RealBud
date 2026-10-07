@@ -129,6 +129,13 @@ describe("complete worker JSON", () => {
     } finally { await relay.close(); }
   });
 
+  it("refuses a one-shot job that asks for native web, before launching anything", async () => {
+    const worker = sequencedWorker(["unused"]);
+    expect(await askWorker("Read a fictional page", { ...worker.opts, toolsets: ["web" as never] })).toEqual({ ok: false, detail: "the worker tool boundary is not usable." });
+    expect(await askWorker("Read a fictional page", { ...worker.opts, toolsets: ["file", "web" as never] })).toEqual({ ok: false, detail: "the worker tool boundary is not usable." });
+    expect(existsSync(join(worker.opts.root, "calls.json"))).toBe(false);
+  });
+
   it("does not start cancelled preparation", async () => {
     const controller = new AbortController(); controller.abort();
     expect(await askWorker("unused", { signal: controller.signal })).toEqual({ ok: false, detail: "Preparation cancelled." });
@@ -194,7 +201,7 @@ describe("draftRecipeFromText", () => {
     const corrected = { ...fictionalCard, description: "Model tried to replace the job" };
     const worker = sequencedWorker([JSON.stringify(invalid), JSON.stringify(corrected)]);
     const description = "Review the selected fictional invoices.\nKeep  both spaces; never submit or pay.";
-    const result = await shapeRecipeDraft(description, { ...worker.opts, toolsets: ["file", "web"] });
+    const result = await shapeRecipeDraft(description, { ...worker.opts, toolsets: ["file"] });
     expect(result.draft).toMatchObject({
       ...fictionalCard, description, status: "shadow", revision: 1,
       planApprovedAt: null, approvedRevision: null, attachment: null, submitAcknowledgedAt: null,

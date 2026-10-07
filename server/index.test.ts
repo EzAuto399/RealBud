@@ -749,9 +749,11 @@ describe("harness HTTP API", () => {
     expect(on.body).toEqual({ scheduled: true });
     expect((await api("GET", "/api/law-watch")).body.scheduled).toBe(true);
 
+    // No search provider and no page reader for a one-shot job: refuse plainly, record nothing as checked.
     const check = await api("POST", "/api/law-watch/check");
     expect(check.status).toBe(503);
-    expect(String(check.body.error)).toMatch(/shop reference/);
+    expect(check.body.error).toBe("Search provider not configured: Bud can't re-read the legislation sites yet, so the shop reference was not checked. Nothing was changed.");
+    expect((await api("GET", "/api/law-watch")).body).toMatchObject({ lastCheckedAt: 0, drift: [], checkedSources: [] });
 
     const apply = await api("POST", "/api/law-watch/apply", { index: 0 });
     expect(apply.status).toBe(400);

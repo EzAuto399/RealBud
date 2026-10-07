@@ -9,6 +9,7 @@ import {
   readWebsiteLinkState,
   setupSequence,
   setupSequenceComplete,
+  sharedGmailNotAllowed,
   type AgencySetupFacts,
   type AgencySetupWorkflowFacts,
   WORKFLOW_LOOP_IDS,
@@ -185,6 +186,22 @@ describe("step 4: the office Gmail", () => {
     const connected = { ...offered, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } };
     expect(officeAppsToConnect(connected, true)).toEqual([]);
   });
+
+  it("sends a computer the office hasn't allowed on its shared Gmail to the owner, not to a sign-in", () => {
+    const shared = { configured: true, checkedAt: new Date().toISOString(), sourceKind: "office_shared" as const, tools: { available: false, names: [] }, services: {
+      gmail: { connected: false, status: "NOT_CONNECTED", accountSelectionRequired: false, accounts: [] },
+    } };
+    expect(sharedGmailNotAllowed(shared, true)).toBe(true);
+    expect(sharedGmailNotAllowed(shared, false)).toBe(false);
+    expect(sharedGmailNotAllowed({ ...shared, sourceKind: "personal" }, true)).toBe(false);
+    expect(sharedGmailNotAllowed({ ...shared, error: "unreachable" }, true)).toBe(false);
+    expect(sharedGmailNotAllowed({ ...shared, checkedAt: "2020-01-01T00:00:00.000Z" }, true)).toBe(false);
+    expect(sharedGmailNotAllowed({ ...shared, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } }, true)).toBe(false);
+    const ask = { state: "current", status: "Ask the office owner to allow this computer on realbud.app.", actionLabel: "Open connected apps", target: "you-connected-apps" };
+    expect(step({ ...linked, austinPack: pack(), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
+    expect(step({ ...linked, austinPack: pack({}, false), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
+    expect(step({ ...linked, austinPack: pack({ gmail: true }), sharedGmailBlocked: true }, "gmail").state).toBe("done");
+  });
 });
 
 describe("step 5: review and switch on the workflows", () => {
@@ -195,6 +212,53 @@ describe("step 5: review and switch on the workflows", () => {
     expect(item).toMatchObject({ state: "current", actionLabel: "Review Morning priorities", target: "job-inbound-triage" });
     expect(item.status).toBe("1 of 3 on. Open each workflow, read what it does, then switch it on.");
     expect(step({ ...ahead, schedule: loopsOn(["bank-references", "inbound-triage"]) }, "workflows").status).toMatch(/^2 of 3 on\./);
+  });
+
+  describe("names what the next workflow still needs before it can switch on", () => {
+    const kevin = (done: Partial<Record<AustinChecklistItem["id"], boolean>> = {}): AustinPackView => ({
+      ...pack({ gmail: true }),
+      loops: [["bank-references", ["redbark", "tenants", "rei"]], ["weekly-bills", ["gmail"]], ["inbound-triage", ["gmail"]]].map(([loopId, needs]) =>
+        ({ loopId: loopId as string, owner: "Accounts", plan, needs: needs as AustinChecklistItem["id"][] })),
+      checklist: [
+        { id: "gmail", label: "Gmail", done: done.gmail ?? true, detail: "Connect the office Gmail in Connected apps." },
+        { id: "redbark", label: "Redbark", done: Boolean(done.redbark), detail: "Connect Redbark in Connected apps, or add the ANZ CSV in the bank review each time." },
+        { id: "rei", label: "REI", done: Boolean(done.rei), detail: "In Bank reference review, choose Refresh from REI and sign in on REI’s own page." },
+        { id: "tenants", label: "Tenants", done: Boolean(done.tenants), detail: "In Bank reference review, choose Refresh from REI to save the tenant list." },
+        { id: "workflows", label: "Workflows", done: false, detail: "0 of 3 on." },
+      ],
+    });
+    const loops = (on: readonly string[]) => ({ read: "ready" as const, loops: [
+      loop({ id: "bank-references", name: "Bank reference review", enabled: on.includes("bank-references") }),
+      loop({ id: "weekly-bills", name: "Weekly bills review", enabled: on.includes("weekly-bills") }),
+      loop({ id: "inbound-triage", name: "Morning priorities", enabled: on.includes("inbound-triage") }),
+    ] });
+    const agency = (ready: boolean) => facts({ workflows: [
+      bank({ id: "bills-calendar", title: "Bills", readyForRun: ready, reviewed: ready }),
+      bank({ id: "morning-priorities", title: "Morning priorities", readyForRun: true, reviewed: true }),
+    ] });
+
+    it("shows the first unmet need in checklist order, keeping the job as the action", () => {
+      const item = step({ ...ahead, austinPack: kevin(), schedule: loops([]) }, "workflows");
+      expect(item).toMatchObject({ state: "current", actionLabel: "Review Bank reference review", target: "job-bank-references" });
+      expect(item.status).toBe("0 of 3 on. Before Bank reference review: Connect Redbark in Connected apps, or add the ANZ CSV in the bank review each time.");
+      // REI sign-in comes before the tenant list it saves.
+      expect(step({ ...ahead, austinPack: kevin({ redbark: true }), schedule: loops([]) }, "workflows").status).toMatch(/Before Bank reference review: In Bank reference review, choose Refresh from REI and sign in/);
+      expect(step({ ...ahead, austinPack: kevin({ redbark: true, rei: true, tenants: true }), schedule: loops([]) }, "workflows").status).toBe("0 of 3 on. Open each workflow, read what it does, then switch it on.");
+    });
+
+    it("points weekly bills and morning priorities at Agency workflow setup until the host reports them ready", () => {
+      const done = { redbark: true, rei: true, tenants: true };
+      const held = step({ ...ahead, agencySetup: agency(false), austinPack: kevin(done), schedule: loops(["bank-references"]) }, "workflows");
+      expect(held).toMatchObject({ state: "current", actionLabel: "Open Agency workflow setup", target: "schedule-agency" });
+      expect(held.status).toBe("1 of 3 on. Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.");
+      // Ready: the job itself is the next action. Gmail stays step 4's, never named here.
+      expect(step({ ...ahead, agencySetup: agency(true), austinPack: kevin(done), schedule: loops(["bank-references"]) }, "workflows")).toMatchObject({ actionLabel: "Review Weekly bills review", target: "job-weekly-bills" });
+      expect(step({ ...ahead, agencySetup: agency(true), austinPack: kevin({ ...done, gmail: false }), schedule: loops(["bank-references"]) }, "workflows").status).toBe("1 of 3 on. Open each workflow, read what it does, then switch it on.");
+      // An unread or unreported agency workflow is not a reason to hold.
+      for (const agencySetup of [undefined, "unavailable" as const, facts()]) {
+        expect(step({ ...ahead, agencySetup, austinPack: kevin(done), schedule: loops(["bank-references"]) }, "workflows").target).toBe("job-weekly-bills");
+      }
+    });
   });
 
   it("uses the pack's own checklist while the loops are unread", () => {
