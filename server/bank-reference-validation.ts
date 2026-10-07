@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { bankBatchSource, bankDigest, createBankReferenceBatch, parseBankCsv, reviewBankReferences, type BankReferenceDecision } from './bank-reference.ts';
-import type { SavedBankBatch } from './bank-reference-store.ts';
+import type { BankTenantSource, SavedBankBatch } from './bank-reference-store.ts';
 import { bankReviewId, bankReviewVersion } from '../shared/bank-review.ts';
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -102,4 +102,18 @@ export function validateBankReviewLinks(record: BankRecord, get: (id:string)=>Ba
   };
   if (value.amends) { const parent = get(value.amends.id); if (!parent) return hold(); pair(parent,record); }
   if (value.supersededBy) { const child = get(value.supersededBy.id); if (!child) return hold(); pair(record,child); }
+}
+
+/** Where a batch's REI tenants came from (BankReferenceStore.tenantSource), one record per first-version batch. */
+export const BANK_TENANT_SOURCE_KIND = 'bank-tenant-source';
+/** Exact shape only: W1 gates on this record, so a backup that drops or bends it could send a batch built from an older list. */
+export function validateBankTenantSource(id: string, value: unknown): BankTenantSource {
+  if (!/^bank-tenant-source:bank:[a-f0-9]{64}$/.test(id) || !object(value)) return hold(); // first versions only, as BankReferenceStore.save writes
+  const keys = Object.keys(value).sort().join(',');
+  if (value.source === 'bank-rules' && keys === 'source') return { source: 'bank-rules' };
+  const ids = value.propertyIds;
+  if (value.source !== 'rei-directory' || !['propertyIds,savedAt,source', 'hash,propertyIds,savedAt,source'].includes(keys) || !Number.isSafeInteger(value.savedAt) ||
+      (value.hash !== undefined && (typeof value.hash !== 'string' || !/^[a-f0-9]{64}$/.test(value.hash))) || !Array.isArray(ids) || ids.length > 2000 ||
+      !ids.every(item => typeof item === 'string' && item.trim() !== '' && item.length <= 100 && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(item)) /* as bank rule propertyIds */ || new Set(ids).size !== ids.length) return hold();
+  return structuredClone(value) as BankTenantSource;
 }

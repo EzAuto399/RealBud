@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AUSTIN_CHECKLIST_IDS, type AustinChecklistId, type AustinChecklistItem, type AustinPackLoop, type AustinPackView } from '../shared/austin-pack.ts';
+import { AUSTIN_CHECKLIST_IDS, AUSTIN_LOOP_IDS as LOOP_IDS, type AustinChecklistId, type AustinChecklistItem, type AustinPackLoop, type AustinPackView } from '../shared/austin-pack.ts';
 import type { Loop, LoopId, LoopSchedule } from '../shared/contracts.ts';
 import { validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 import { DATA_DIR } from './config.ts';
@@ -18,7 +18,6 @@ import { containsCredential } from './redact.ts';
 import { parseClockTime, parseWeekdays } from './routines.ts';
 
 const PACK_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows', 'austin-office', 'austin-schedule-v1.json');
-const LOOP_IDS = ['bank-references', 'weekly-bills', 'inbound-triage', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'] as const;
 const MAX_BYTES = 500_000;
 type Schedule = { time: string; weekdays: number[] } & CalendarCadence;
 export interface AustinLoopPack {
@@ -178,4 +177,3 @@ export function createAustinPack(deps: AustinPackDeps) {
     }),
   };
 }
-export type AustinPack = ReturnType<typeof createAustinPack>;

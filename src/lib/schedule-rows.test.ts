@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JobRun, Recipe } from "./desk";
 import type { Loop, LoopRun } from "./routines";
-import { buildScheduleRows, nextRunText, SCHEDULE_NOT_CONFIRMED, stableOrder, type ScheduleRowInput } from "./schedule-rows";
+import { buildScheduleRows, listedScheduleRows, nextRunText, SCHEDULE_NOT_CONFIRMED, scheduleRowForJob, stableOrder, type ScheduleRowInput } from "./schedule-rows";
 
 const TZ = "Australia/Brisbane";
 // Thursday 1 Oct 2026, 9:00 am in Brisbane (UTC+10, no daylight saving).
@@ -30,6 +30,17 @@ const jobRun = (patch: Partial<JobRun> = {}): JobRun => ({
 const rows = (patch: Partial<ScheduleRowInput>) => buildScheduleRows({ loops: [], recipes: [], loopRuns: [], jobRuns: [], nowMs: NOW, timeZone: TZ, ...patch });
 const only = (patch: Partial<ScheduleRowInput>) => { const list = rows(patch); expect(list).toHaveLength(1); return list[0]!; };
 const shape = (patch: Partial<ScheduleRowInput>) => { const row = only(patch); return [row.next, row.attention, row.actionLabel]; };
+
+describe("hidden loops (an Auston loop before its role pack)", () => {
+  it("stay out of the list only: a deep link (#job-<id>, the sidebar) still opens them", () => {
+    const all = rows({ loops: [loop(), loop({ id: "bank-references", name: "Bank reference review", enabled: false, nextRunAt: null })] });
+    const hidden = new Set(["bank-references"]);
+    expect(listedScheduleRows(all, hidden).map(row => row.key)).toEqual(["loop:owner-letter"]);
+    expect(scheduleRowForJob(all, "bank-references")).toMatchObject({ key: "loop:bank-references", name: "Bank reference review" });
+    expect(scheduleRowForJob(all, "owner-letter")?.key).toBe("loop:owner-letter");
+    expect(scheduleRowForJob(all, "nope")).toBeUndefined();
+  });
+});
 
 describe("schedule row copy (proposal section 5)", () => {
   it("scheduled with no issue shows plain timing, no status, and View result or Run now", () => {

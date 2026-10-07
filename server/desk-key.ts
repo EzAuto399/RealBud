@@ -40,7 +40,3 @@ export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
   writeFilePrivateSync(path, key, 0o600);
   return { key, source: "generated", production: false };
 }
-
-export function isNonProductionKey(info: DeskKey): boolean {
-  return !info.production;
-}

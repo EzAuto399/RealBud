@@ -36,10 +36,8 @@ pnpm test:watch    # same, in watch mode
 pnpm check:electron # syntax-check the plain JS Electron entrypoints
 
 pnpm package:mac   # DMG + ZIP; requires Swift/Xcode tools
-pnpm package:linux # Ubuntu x64 .deb + AppImage; no Swift required
+pnpm package:win   # NSIS installer; native Windows x64 only
 ```
-
-For Ubuntu installation and real desktop checks, see [`docs/linux-desktop.md`](docs/linux-desktop.md).
 
 ## Repo map
 
@@ -119,7 +117,6 @@ responses or events, no baking them into argv where another local process could 
 
 - [ ] `pnpm typecheck` and `pnpm test` pass
 - [ ] `pnpm check:electron` passes for desktop-shell changes
-- [ ] Ubuntu packaging changes pass `pnpm package:linux` and `node scripts/verify-linux-package.mjs`
 - [ ] New server behavior has a test; driver changes keep the contract tests green
 - [ ] No `dist-server/` churn, no lockfile churn beyond your actual dependency change
 - [ ] macOS-only code is platform-gated; nothing breaks the packaged app

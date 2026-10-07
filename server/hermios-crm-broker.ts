@@ -34,8 +34,6 @@ export const HERMIOS_MCP_URL = "https://api.hermios.app/mcp";
 const MAX_CHARS = 40_000;
 const PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOLS = new Set([PROTOCOL_VERSION, "2025-03-26"]);
-/** The only tools `execute_tool` may name: two creates and their two link steps. */
-export const HERMIOS_CREATE_TOOLS = ["create_one_note", "create_one_task", "create_one_note_target", "create_one_task_target"] as const;
 export const CRM_RECORD_CHANGED = "This record changed — review it again. Nothing was changed.";
 export const CRM_UNCERTAIN = "Uncertain, check Hermios";
 const NOTE_MAX = 4000, TITLE_MAX = 200, LEASE_WAIT_MS = 15_000;

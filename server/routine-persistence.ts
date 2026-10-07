@@ -1,4 +1,3 @@
-import { readFileSync, statSync } from "node:fs";
 import type { LoopRun } from "../shared/contracts.ts";
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 import { validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
@@ -22,13 +21,7 @@ const identifier = (value: unknown): value is string => typeof value === "string
 const statuses = new Set(["queued", "running", "completed", "partial", "awaiting-approval", "failed", "missed", "interrupted", "resumed"]);
 function invalid(): never { throw new Error("Invalid saved schedule"); }
 
-/** Existing files are never treated as first-run data unless absent. Version
- * 1 is the historical timezone-less format; versions 2/3 require a real zone. */
-export function readLoopsFile(file: string, fallbackTimezone: string): LoopsFile {
-  if (statSync(file).size > 8 * 1024 * 1024) invalid();
-  return parseLoopsFile(JSON.parse(readFileSync(file, "utf8")), fallbackTimezone);
-}
-
+/** Version 1 is the historical timezone-less format; versions 2/3 require a real zone. */
 export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFile {
   if (!record(raw) || ![1, 2, 3].includes(Number(raw.version)) || typeof raw.version !== "number" || !record(raw.state) || !Array.isArray(raw.runs)) invalid();
   const timezone = raw.version === 1 && raw.timezone === undefined ? fallbackTimezone : raw.timezone;

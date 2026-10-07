@@ -239,6 +239,11 @@ export function buildScheduleRows(input: ScheduleRowInput): ScheduleRow[] {
   return rows.sort(compareScheduleRows);
 }
 
+/** Rows the Schedule list shows: a hidden loop (an Auston loop before its role pack) stays out of the list only. */
+export const listedScheduleRows = (rows: readonly ScheduleRow[], hiddenLoops: ReadonlySet<string>) => rows.filter((row) => !row.loop || !hiddenLoops.has(row.loop.id));
+/** `#job-<id>`: a saved job or a loop, looked up in ALL rows so a deep link (the sidebar, the status bar) opens a hidden loop too. */
+export const scheduleRowForJob = (rows: readonly ScheduleRow[], id: string) => rows.find((row) => row.key === `job:${id}`) ?? rows.find((row) => row.loop?.id === id);
+
 /** Keep the order a person is looking at while they interact: existing rows
  * stay put, removed rows drop out and new rows join the end. */
 export function stableOrder(previous: readonly string[], next: readonly string[]): string[] {

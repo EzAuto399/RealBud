@@ -232,5 +232,3 @@ export function createRemindersService(options: RemindersServiceOptions) {
   };
   return service;
 }
-
-export type RemindersService = ReturnType<typeof createRemindersService>;

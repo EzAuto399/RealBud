@@ -2405,11 +2405,12 @@ async function bankServices() {
 }
 function w1Host() {
   return w1HostPromise ??= (async () => {
-    const [{ createW1Host }, { localDate }, { connectedBankProvider }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts")]);
+    const [{ createW1Host }, { localDate }, { connectedBankProvider }, { createTenantDirectoryStore }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts"), import("./tenant-directory.ts")]);
     const services = await bankServices();
     const lab = w1Lab ? await w1Lab : null;
     return createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
       today: async () => localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined),
+      tenantDirectory: () => createTenantDirectoryStore(workflowDatabase()).freshness(),
       runtime: lab?.runtime ?? browserRuntime, lab, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       // Self-serve REI sign-in: opens REI's own sign-in page and resumes when signed in.
@@ -5843,11 +5844,8 @@ const customerPacks = createCustomerPackService({ directory: DATA_DIR,
     loops!.setEnabled('weekly-bills', false);
   },
   activeRecipeIds: () => jobRuns.list().filter(run => run.status === 'queued' || run.status === 'running').map(run => run.jobId),
-  // Per-client export reads the REI business code and loop clocks; the export keeps allowlisted fields only and turns every loop off.
-  officeSettings: async () => {
-    const w1 = await (await import('./w1-host.ts')).readW1Settings(DATA_DIR);
-    return { businessCode: w1?.rei.marker, loops: (loops?.listLoops() ?? []).map(loop => ({ id: loop.id, schedule: loop.schedule })) };
-  },
+  // Per-client export reads loop clocks only; the export turns every loop off. The REI business code never leaves: import cannot apply it.
+  officeSettings: async () => ({ loops: (loops?.listLoops() ?? []).map(loop => ({ id: loop.id, schedule: loop.schedule })) }),
   profileDirectory: () => propertyProfileDir(), workroomDirectory: () => join(DATA_DIR, 'vault'),
   readiness: async () => {
     const worker = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));

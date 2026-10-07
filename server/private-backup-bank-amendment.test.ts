@@ -132,7 +132,7 @@ describe('bank amendment graph backup boundaries', () => {
     expect(source.key.equals(target.key)).toBe(false);
     try {
       const expected = populate(database), { backup, receipt } = await source.service.exportBackup(phrase);
-      expect(receipt.recordCount).toBe(3);
+      expect(receipt.recordCount).toBe(4); // + the first version's tenant source
       expect((await target.service.stageRestore({ backup, passphrase: phrase, expectedDigest: receipt.digest })).needsRestart).toBe(true);
       expect((await applyStagedPrivateRestore({ directory: target.directory, key: target.key })).restored).toBe(true);
       verifyRestored(target.directory, target.key, expected);

@@ -12,9 +12,12 @@ import { readBankTransactions } from "./bank-provider.ts";
 import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
+import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash, type TenantEntry } from "./tenant-directory.ts";
+import { tenantDirectoryRules } from "./bank-reference.ts";
 import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
+import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
@@ -35,7 +38,7 @@ vi.mock("./portal-recipe-task.ts", async importOriginal => {
     loadPortalRecipePackWithPaths: vi.fn(real.loadPortalRecipePackWithPaths) };
 });
 
-type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load">>;
+type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load" | "tenantDirectory">>;
 async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeof createW1Lab>>) => HostExtras) = {}) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-w1-host-")); dirs.push(dir);
   const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 9) }); dbs.push(db);
@@ -56,8 +59,10 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
   store.create({ csv: "Date,Amount,Narrative,Reference\n2026-09-01,1.00,FICTIONAL SEED,\n", columns: { date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" }, dateFormat: "YYYY-MM-DD", rules });
   const hold = { signIn: false };
   const extras = typeof extrasOrLab === "function" ? extrasOrLab(lab) : extrasOrLab;
+  // The saved REI tenant directory's stamp: fresh unless a test moves it.
+  const tenants = { directory: { savedAt: Date.now() } as { checkedAt?: number; savedAt?: number; hash?: string } | null };
   const host = createW1Host({ dataDir: dir, provider: () => lab.provider, coverage: new RedbarkCoverage(dir), store: () => store, today: async () => TODAY,
-    runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
+    tenantDirectory: () => tenants.directory, runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
   const call = async (path: string, method = "POST", body?: unknown) => {
     const result = await host.handle(path, method, new URL(`http://x${path}`).searchParams, async () => body);
     if (result.status !== 200) throw Object.assign(new Error(JSON.stringify(result.body)), { status: result.status });
@@ -94,7 +99,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
     }));
   };
   const configure = () => call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
-  return { dir, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure };
+  return { dir, db, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants };
 }
 
 describe("W1 host", () => {
@@ -370,6 +375,197 @@ describe("W1 host", () => {
     expect((await f.lab.handle({ action: "status" })).uploads).toBe(1);
   });
 
+  describe("REI tenant freshness gates only batches whose tenants came from the saved REI tenant list", () => {
+    const tenant = (reference: string, property: string): TenantEntry => ({ reference, property, surname: "Fictional", firstname: "Tenant", rent: "", bpay: "" });
+    /** A pulled and reviewed batch; `list` is the REI tenant list saved before the pull (null: none, so only the office's rules). */
+    async function reviewed(list: TenantEntry[] | null, savedAt: () => number = Date.now) {
+      const f = await fixture();
+      if (list) createTenantDirectoryStore(f.db, savedAt).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: "a".repeat(64), rows: list.length }, expectedRevision: 0 });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+      await f.configure();
+      await f.lab.handle({ action: "sign-in" });
+      await f.call("/api/w1/runs/start");
+      const now = await f.settle();
+      await f.review(now.run!.fetch!.batchId);
+      return f;
+    }
+    const STALE = { savedAt: Date.now() - REI_FRESH_MS - 60_000 };
+    const refused = async (f: Awaited<ReturnType<typeof reviewed>>, sentence = "Refresh REI tenants first.") => {
+      // A refusal is an unknown outcome with its own sentence, never "REI shows nothing", never a re-upload.
+      const now = await f.act("advance");
+      expect(now.note).toBe(sentence);
+      expect(now.run).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
+      expect(now.ask).toBeNull();
+      await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
+      expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+    };
+
+    it("a batch from the office's rules alone goes to REI with no saved tenant list", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed(null);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toEqual({ source: "bank-rules" });
+      await f.act("advance");
+      const now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
+    });
+
+    it("a directory batch is refused while the list is stale or unstamped, and goes to REI once it is fresh", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toMatchObject({ source: "rei-directory", propertyIds: ["FP-02", "FP-03"] });
+      for (const stale of [null, {}, STALE]) { f.tenants.directory = stale; await refused(f); }
+      // Refreshed: the check reads REI's complete register, which shows nothing, and only then is a second upload offered.
+      f.tenants.directory = { ...createTenantDirectoryStore(f.db).freshness()!, checkedAt: Date.now() - REI_FRESH_MS + 60_000 };
+      await f.act("advance");
+      let now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
+      await f.act("retry-upload");
+      now = await f.answer();
+      expect(now.tools).toContain("browser_upload");
+      expect(now.note).not.toBe("Refresh REI tenants first.");
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("an unchanged REI refresh 25 hours after the save renews the list: the batch goes to REI", windowsAdmissionTimeout(255), async () => {
+      const list = [tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")];
+      const f = await reviewed(list, () => Date.now() - 25 * 60 * 60_000);
+      await refused(f);
+      // Refresh from REI reads the same list (nothing to save) and records the check.
+      expect(createTenantDirectoryStore(f.db).markChecked(list)).toBe(true);
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+      await f.act("advance");
+      let now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
+      await f.act("retry-upload");
+      now = await f.answer();
+      expect(now.tools).toContain("browser_upload");
+    });
+
+    it("a batch built from an older tenant list is refused before sending: prepare it again, never a re-upload", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      createTenantDirectoryStore(f.db).save({ tenants: [tenant("FT-BRAVO", "FP-02")], source: { name: "fictional-tenants.csv", sha256: "b".repeat(64), rows: 1 }, expectedRevision: 1 });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+      await refused(f, "The REI tenant list changed since this batch was prepared. Prepare it again.");
+      // Checking again changes nothing: still unknown with the same sentence, and nothing was sent.
+      let now = await f.act("advance");
+      expect(now.note).toBe("The REI tenant list changed since this batch was prepared. Prepare it again.");
+      expect(now.run).toMatchObject({ attention: { reason: "outcome_unknown" } });
+      expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+      // RealBud refused before the upload stage started, and its saved evidence says so: "Close and prepare again" directly.
+      expect(now.closable).toBe(true);
+      now = await f.act("abandon");
+      expect(now.run).toMatchObject({ step: "done", outcome: "abandoned" });
+    });
+
+    const OLDER = "This review was made with an older REI tenant list. Correct the mapping before preparing it again.";
+    const saveList = (f: { db: WorkflowDatabase; tenants: { directory: unknown } }, list: TenantEntry[], expectedRevision: number) => {
+      createTenantDirectoryStore(f.db).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: String(expectedRevision).repeat(64), rows: list.length }, expectedRevision });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+    };
+
+    it("a batch no one reviewed is rebuilt from the changed list once its import is closed, and goes to REI", windowsAdmissionTimeout(255), async () => {
+      const f = await fixture();
+      saveList(f, [tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")], 0);
+      await f.configure();
+      await f.lab.handle({ action: "sign-in" });
+      await f.call("/api/w1/runs/start");
+      const batchId = (await f.settle()).run!.fetch!.batchId;
+      saveList(f, [tenant("FT-BRAVO", "FP-02")], 1);
+      const hints = vi.spyOn(f.store, "addJevHints");
+      // A pull while the open import still holds the batch: never rebuilt under it.
+      await expect(f.call("/api/w1/pull", "POST", { account: ACCOUNT })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(OLDER) });
+      expect(f.store.get(batchId).revision).toBe(1);
+      await f.act("abandon");
+      // Prepared again: the same record, rebuilt from the current list as a new revision; Jev is not asked again.
+      await f.call("/api/w1/runs/start");
+      let now = await f.settle();
+      expect(now.run).toMatchObject({ step: "review", fetch: { batchId } });
+      expect(f.store.get(batchId).revision).toBe(2);
+      expect(f.store.tenantSource(batchId)).toMatchObject({ source: "rei-directory", hash: tenantListHash([tenant("FT-BRAVO", "FP-02")]) });
+      expect(hints).not.toHaveBeenCalled();
+      await f.review(batchId);
+      await f.act("advance");
+      const sent = await f.answer();
+      expect(sent.tools).toContain("browser_upload");
+      // Past the gate and sent (the fictional REI names directory tenants differently, so its preview is not compared here).
+      expect(sent.run).toMatchObject({ step: "handoff", upload: { batchId } });
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("a reviewed batch from an older list is never rebuilt: closed, prepared again, it asks for a corrected mapping, which then goes to REI", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      const batchId = (await f.host.status()).run!.fetch!.batchId, source = f.store.tenantSource(batchId);
+      saveList(f, [tenant("FT-BRAVO", "FP-02")], 1);
+      await refused(f, "The REI tenant list changed since this batch was prepared. Prepare it again.");
+      await f.act("abandon");
+      await f.call("/api/w1/runs/start");
+      let now = await f.settle();
+      expect(now.note).toBe(OLDER);
+      expect(now.run).toMatchObject({ step: "fetch", attention: { reason: "fetch_failed" } });
+      // Left as the person reviewed it, with the list it was built from.
+      const saved = f.store.get(batchId);
+      expect(saved).toMatchObject({ revision: 2, value: { result: expect.any(Object), decisions: expect.any(Array) } });
+      expect(f.store.tenantSource(batchId)).toEqual(source);
+      // Correct mapping or decisions: a new review built on the current list, reviewed, then the run is prepared again.
+      const { columns, dateFormat, rules } = saved.value.batch.input;
+      const next = f.store.amend(batchId, { mapping: { columns, dateFormat, rules: tenantDirectoryRules(tenantDirectoryCsv([tenant("FT-BRAVO", "FP-02")]), rules) }, reason: "Fictional: current REI tenant list", revision: saved.revision });
+      // FT-CHARLIE is no longer on REI's list: the person holds that payment.
+      await f.review(next.id, reference => reference === "FT-CHARLIE" ? "hold" : null);
+      await f.act("advance");
+      const sent = await f.answer();
+      expect(sent.tools).toContain("browser_upload");
+      expect(sent.run).toMatchObject({ step: "handoff", upload: { batchId: next.id } });
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("an upload whose reply was lost can't be closed until REI's register shows nothing", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed(null);
+      await f.lab.handle({ action: "lost-reply" });
+      await f.act("advance");
+      // Allow the baseline read and the upload, decline the register download after it: the outcome stays unknown.
+      let now = await f.settle(), uploaded = false;
+      while (now.ask) {
+        const allowed = !uploaded;
+        uploaded ||= now.ask.tool === "browser_upload";
+        await f.call(`/api/w1/runs/${now.run!.id}/answer`, "POST", { requestId: now.ask.requestId, allowed });
+        now = await f.settle();
+      }
+      expect(uploaded).toBe(true);
+      expect(now.run).toMatchObject({ step: "check_outcome", uncertain: { kind: "upload", inspection: "unknown" } });
+      expect(now.closable).toBe(false);
+      await expect(f.act("abandon")).rejects.toMatchObject({ status: 409 });
+      // Once REI's complete register shows nothing, it may be closed.
+      await f.act("advance");
+      now = await f.answer();
+      expect(now.run).toMatchObject({ attention: { reason: "nothing_found" } });
+      expect((await f.act("abandon")).run).toMatchObject({ step: "done", outcome: "abandoned" });
+    });
+
+    it("a batch mixing the saved list and the office's rules is refused while the list is stale", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02")]);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toMatchObject({ source: "rei-directory", propertyIds: ["FP-02"] });
+      f.tenants.directory = STALE;
+      await refused(f);
+    });
+  });
+
+  it("an incomplete Receipt Register is never proof that nothing reached REI: no upload is offered", windowsAdmissionTimeout(255), async () => {
+    // The register is exported for a period that ends before the batch: REI's file does not cover the window.
+    const f = await fixture(lab => ({ load: async () => {
+      const pack = await lab.load(), recipe = pack.recipes["receipt-register"];
+      return { ...pack, recipes: { ...pack.recipes, "receipt-register": { ...recipe, steps: recipe.steps.map(step => "type" in step && (step.type as { field?: string }).field === "To Date" ? { type: { field: "To Date", value: "2026-09-01" } } : step) } } };
+    } }));
+    await f.configure();
+    await f.lab.handle({ action: "sign-in" });
+    await f.call("/api/w1/runs/start");
+    let now = await f.settle();
+    await f.review(now.run!.fetch!.batchId);
+    await f.act("advance");
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
+    expect(String(now.note)).toMatch(/does not show that it covers the whole date range/);
+    await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
+    expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+  });
+
   it("a different business in REI's top bar stops the run before anything is uploaded", windowsAdmissionTimeout(255), async () => {
     const f = await fixture();
     await f.configure();
@@ -408,7 +604,7 @@ describe("W1 host", () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-w1-host-")); dirs.push(dir);
     const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 9) }); dbs.push(db);
     const lab = await createW1Lab(dir);
-    const host = createW1Host({ dataDir: dir, provider: () => null, coverage: new RedbarkCoverage(dir), store: () => new BankReferenceStore(db), today: async () => TODAY,
+    const host = createW1Host({ dataDir: dir, provider: () => null, coverage: new RedbarkCoverage(dir), store: () => new BankReferenceStore(db), today: async () => TODAY, tenantDirectory: () => null,
       runtime: lab.runtime, browserId: lab.browserId, load: lab.load, pollMs: 0 });
     await expect(host.handle("/api/w1/accounts", "GET", new URLSearchParams(), async () => undefined)).rejects.toMatchObject({ status: 409, code: "bank_not_connected" });
     expect(() => labRedbarkFetch("http://evil.example:4555")).toThrow(/loopback/);

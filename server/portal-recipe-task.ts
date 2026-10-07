@@ -13,7 +13,7 @@
 // that exact file, and the upload itself is still asked once of the person.
 // The pack file comes from a fixed list, never from a request. A terminal
 // (scripts/portal-run.mjs) never reaches a live site: only this path does.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ import type { BrowserApprovalProjection } from "./browser-broker.ts";
 import type { BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { validBrowserTaskRecipe, type BrowserTaskProposal, type BrowserTaskRecipe, type BrowserTaskRecord } from "./browser-grants.ts";
-import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
+import { filterPortalRunRows, parsePortalRecipePack, type FilteredPortalResult, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
@@ -37,10 +37,22 @@ export const PORTAL_RECIPE_PACKS: Readonly<Record<string, string>> = {
 };
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 
-/** The pack as shipped in the repo, without learned paths or recipes: what watch-and-learn review compares click labels against. */
-export async function loadShippedPortalRecipePack(portal: string): Promise<PortalRecipePack> {
+/** The shipped recipes text (LF-normalised), refused unless its sha256 equals provenance.json's reviewed `recipesSha256`.
+ * Checked before any learned path or override is applied. `readText` is for tests only. */
+export async function verifiedShippedRecipesText(portal: string, readText: (path: string) => Promise<string> = path => readFile(path, "utf8")): Promise<string> {
   if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no recipes for that portal.");
-  const pack = parsePortalRecipePack(JSON.parse(await readFile(join(ROOT, PORTAL_RECIPE_PACKS[portal]), "utf8")));
+  const file = join(ROOT, PORTAL_RECIPE_PACKS[portal]);
+  const [text, provenance] = await Promise.all([readText(file).then(value => value.replace(/\r\n/g, "\n")), readText(join(dirname(file), "provenance.json"))]);
+  let pinned: unknown;
+  try { pinned = (JSON.parse(provenance) as { recipesSha256?: unknown }).recipesSha256; } catch { pinned = undefined; }
+  if (typeof pinned !== "string" || createHash("sha256").update(text).digest("hex") !== pinned) throw fail(409, "These REI recipes were changed after review. Reinstall RealBud.");
+  return text;
+}
+
+/** The pack as shipped in the repo, without learned paths or recipes: what watch-and-learn review compares click labels
+ * against. Every loader builds on this one, so the reviewed-digest check above always runs first. */
+export async function loadShippedPortalRecipePack(portal: string): Promise<PortalRecipePack> {
+  const pack = parsePortalRecipePack(JSON.parse(await verifiedShippedRecipesText(portal)));
   if (pack.portal !== portal) throw fail(409, "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.");
   return pack;
 }
@@ -96,8 +108,10 @@ export async function portalRecipeTaskProposal(input: { threadId: string; messag
     return [name, ...pack.recipes[name].steps.flatMap(step => "run" in step ? reachable(String(step.run), seen) : [])];
   };
   // Read recipes only from Ask, apart from an upload-and-preview recipe bound to one reviewed file:
-  // other prepare recipes change records and belong to a reviewed job.
-  const prepare = [...new Set(names.flatMap(name => reachable(name)))].filter(name => pack.recipes[name].kind !== "read");
+  // other prepare recipes change records and belong to a reviewed job. A read recipe a learned path gave a
+  // file step (server/portal-path-overrides.ts) is not a read any more.
+  const prepare = [...new Set(names.flatMap(name => reachable(name)))].filter(name => pack.recipes[name].kind !== "read" ||
+    pack.recipes[name].steps.some(step => "upload" in step || "download" in step));
   const upload = prepare.length ? uploadBinding(input.upload, prepare, inputs) : null;
   const recipe = { portal: input.portal, account: input.account,
     runs: names.map(name => ({ recipe: name, inputs: Object.fromEntries([...reachable(name).flatMap(inner => pack.recipes[inner].inputs).map(field => [field, inputs[field]]),
@@ -176,8 +190,9 @@ export const portalRecipeTaskRunning = (grantId: string | undefined): boolean =>
 export function holdPortalRecipeGrant(grantId: string): void { running.add(grantId); }
 export function releasePortalRecipeGrant(grantId: string): void { running.delete(grantId); }
 
-/** The labels reviewers confirmed on the learned recipes these runs reach (and the recipes those run): read-safe for
- * this task only. A task that runs no learned recipe gets none; one learned recipe never rides on another's. */
+/** The labels reviewers confirmed on the learned recipes these runs reach (and the recipes those run): the runner's
+ * learnedReadSafe for this task only, never the pack's readSafe, so each is still re-checked (learnedPressable) before
+ * a press. A task that runs no learned recipe gets none; one learned recipe never rides on another's. */
 export function learnedReadSafe(pack: PortalRecipePack, runs: ReadonlyArray<{ recipe: string }>): string[] {
   const seen = new Set<string>(); const out = new Set<string>();
   const visit = (name: string) => {
@@ -189,14 +204,6 @@ export function learnedReadSafe(pack: PortalRecipePack, runs: ReadonlyArray<{ re
   for (const run of runs) visit(run.recipe);
   return [...out];
 }
-/** The pack a task runs with: the loaded pack's read-safe list plus learnedReadSafe for these runs, nothing more.
- * ponytail: the runner and broker take one read-safe list today, so the learned labels join it for this task only. Once
- * BrowserPortalControls carries them apart (learnedReadSafe, re-checked by pressControl), hand them over separately. */
-export function portalTaskPack(pack: PortalRecipePack, runs: ReadonlyArray<{ recipe: string }>): PortalRecipePack {
-  const learned = learnedReadSafe(pack, runs).filter(label => !pack.labels.readSafe.includes(label));
-  return learned.length ? { ...pack, labels: { ...pack.labels, readSafe: [...pack.labels.readSafe, ...learned] } } : pack;
-}
-
 /** Runs a started recipe task with its saved grant. The record, not the caller, says what runs. */
 export async function runPortalRecipeTask(input: {
   record: BrowserTaskRecord; grant: BrowserTaskGrant; runtime: BrowserSessionRuntime; approve: PersonApprove;
@@ -212,15 +219,15 @@ export async function runPortalRecipeTask(input: {
   const own = !running.has(grant.id);
   dispatching.add(grant.id); running.add(grant.id);
   try {
-    const loaded = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
-    const result = await runPortalRecipes({
-      pack: portalTaskPack(loaded, record.recipe.runs), runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
-      approve: input.approve, signal: input.signal, isActive: input.isActive,
+    const pack = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
+    const result = withRowFilters(pack, record.recipe.runs, await runPortalRecipes({
+      pack, runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
+      approve: input.approve, signal: input.signal, isActive: input.isActive, learnedReadSafe: learnedReadSafe(pack, record.recipe.runs),
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
-    });
-    const notice = learnedNotices.get(loaded);
+    }));
+    const notice = learnedNotices.get(pack);
     return notice ? { ...result, detail: [result.detail, notice].filter(Boolean).join(" ") } : result;
   } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
 }
@@ -300,17 +307,28 @@ export async function runPortalReadLoop(input: {
     // No `approve`: the runner refuses anything a person would have to answer.
     // Only the site map's read pages may have their grid scrolled to load every row.
     const readRoutes = input.map.routes.filter(route => route.class === "read").map(route => route.path.split("?")[0]);
-    return await runPortalRecipes({
+    return withRowFilters(input.pack, input.runs, await runPortalRecipes({
       pack: input.pack, runs: input.runs, account: input.account, grant, threadId: input.threadId, runtime: input.runtime, signal: input.signal, readRoutes,
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
-    });
+    }));
   } finally { dispatching.delete(grant.id); running.delete(grant.id); }
 }
 
+/** Recipes read the portal's default grid only; their declared row filters (min_days, a date range) apply here, after
+ * the read, for Ask and loops alike. Each filtered result keeps how many rows the portal showed (`filtered.read`). */
+/** A filter that could not be applied kept every row: the receipt says so (`row-filter-unapplied <recipe> <column>`), so loop records show it. */
+function withRowFilters(pack: PortalRecipePack, runs: PortalRunOptions["runs"], result: PortalRunResult): PortalRunResult & { results: FilteredPortalResult[] } {
+  const results = filterPortalRunRows(pack, runs, result.results);
+  const unapplied = (item: FilteredPortalResult): string[] => [...(item.filtered?.unapplied ?? []).map(column => `row-filter-unapplied: ${item.recipe} ${column}`),
+    ...Object.values(item.sub ?? {}).flatMap(sub => unapplied(sub as FilteredPortalResult))];
+  const flags = [...new Set(results.flatMap(unapplied))].filter(flag => !result.receipt.flags.includes(flag));
+  return { ...result, results, receipt: { ...result.receipt, flags: [...result.receipt.flags, ...flags] } };
+}
+
 /** What the person reads in Ask afterwards: outcome, rows read, and where it stopped. */
-export function portalRecipeTaskReply(result: PortalRunResult): string {
+export function portalRecipeTaskReply(result: PortalRunResult & { results: FilteredPortalResult[] }): string {
   // Only a finished run that nobody was asked about is known to have only read.
   const readOnly = result.outcome === "completed" && result.receipt.approvals.person === 0;
   const lines = [result.outcome === "completed" ? "The portal read finished." : `The portal read ended early (${result.reason ?? result.outcome}).`,
@@ -318,7 +336,8 @@ export function portalRecipeTaskReply(result: PortalRunResult): string {
   if (result.detail) lines.push(result.detail);
   for (const item of result.results) {
     if (item.outcome === "not-run" || item.recipe === "open-session") continue;
-    lines.push(`\n**${item.recipe}**: ${item.table === "unread" ? "not read" : `${item.rows.length} row${item.rows.length === 1 ? "" : "s"} over ${item.pages} page${item.pages === 1 ? "" : "s"}`}${item.stopBefore.length ? `; stopped before ${item.stopBefore.join(", ")}` : ""}.`);
+    const kept = item.filtered ? `, kept from ${item.filtered.read} read${item.filtered.unapplied.length ? ` (not filtered by ${item.filtered.unapplied.join(", ")}: the column or input was missing)` : ""}` : "";
+    lines.push(`\n**${item.recipe}**: ${item.table === "unread" ? "not read" : `${item.rows.length} row${item.rows.length === 1 ? "" : "s"} over ${item.pages} page${item.pages === 1 ? "" : "s"}${kept}`}${item.stopBefore.length ? `; stopped before ${item.stopBefore.join(", ")}` : ""}.`);
     for (const row of item.rows.slice(0, 20)) lines.push(`- ${Object.values(row).join(" | ")}`);
     if (item.rows.length > 20) lines.push(`- …and ${item.rows.length - 20} more.`);
   }

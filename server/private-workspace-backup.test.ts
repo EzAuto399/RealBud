@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, writeFile, symlink, readdir } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, scryptSync } from 'node:crypto';
@@ -12,6 +12,7 @@ import { WorkflowDatabase } from './workflow-database.ts';
 import { defaultAgencySettings } from './agency-setup.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { BankReferenceStore } from './bank-reference-store.ts';
+import { createTenantDirectoryStore } from './tenant-directory.ts';
 import { DeskStore, emptyV2 } from './desk-store.ts';
 import { fixtureBook } from './desk-evaluate.ts';
 import { migrateV2ToV3 } from './desk-v3-migrate.ts';
@@ -182,7 +183,7 @@ describe('portable private business backup', () => {
   });
   it('encrypts the source key, includes complete recognized workflow records and excludes provider/company credentials', async () => {
     const f = await populated(), { backup, receipt } = await f.service.exportBackup(passphrase);
-    expect(receipt.recordCount).toBe(9); expect(receipt.workspaceId).toBe(f.workspaceId);
+    expect(receipt.recordCount).toBe(10); expect(receipt.workspaceId).toBe(f.workspaceId);
     const { value, key } = openBackup(backup); key.fill(0);
     expect(value.keyHex).toBe(f.key.toString('hex')); expect(value.records.some(entry => entry.kind === 'mail-source' && entry.id === `mail-source:${f.receiptId}`)).toBe(true);
     expect(value.files.some(f => /config|enrollment/.test(f.path))).toBe(false);
@@ -217,6 +218,44 @@ describe('portable private business backup', () => {
     const reopenedBackup = createPrivateWorkspaceBackup(target.options);
     expect((await reopenedBackup.status()).completed).toEqual((await target.service.status()).completed);
     expect(JSON.parse(await readFile(join(target.directory, PRIVATE_RESTORE_RECEIPT_FILE), 'utf8'))).toMatchObject({ rekeyed: true, reviewRequired: true });
+  });
+  it('round-trips each batch tenant source and the REI tenant list with its last check, leaves W1 evidence out and refuses bent shapes', async () => {
+    const tenant = { reference: 'A114', surname: 'Fictional', firstname: 'Tenant', property: 'P1', rent: '500.00', bpay: '' };
+    for (const checked of [true, false]) {
+      const source = await fixture(), target = await fixture(), db = new WorkflowDatabase({ dir: source.directory, key: source.key });
+      let clock = 1_000;
+      const tenants = createTenantDirectoryStore(db, () => clock), bank = new BankReferenceStore(db);
+      tenants.save({ tenants: [tenant], source: { name: 'tenants.csv', sha256: 'a'.repeat(64), rows: 1 }, expectedRevision: 0 });
+      clock = 2_000; if (checked) expect(tenants.markChecked([tenant])).toBe(true);
+      const batch = bank.create({ source: { filename: 'fictional.csv', bytesBase64: Buffer.from('Date,Amount,Description,Reference\r\n2026-01-01,10.00,Fictional rent,A114\r\n').toString('base64') }, columns: { date: 'Date', amount: 'Amount', narrative: 'Description', reference: 'Reference' }, dateFormat: 'YYYY-MM-DD', rules: [] });
+      const recorded = bank.tenantSource(batch.id), freshness = tenants.freshness(); db.close();
+      expect(recorded).toEqual({ source: 'rei-directory', savedAt: 1_000, propertyIds: ['P1'], hash: freshness!.hash });
+      expect(freshness!.checkedAt).toBe(checked ? 2_000 : 1_000);
+      await writeJson(source.directory, 'w1/evidence.json', { version: 1, kind: 'w1-evidence', baselines: {}, proofs: {}, notSent: { 'attempt-1': { at: '2026-01-01T00:00:00.000Z', reason: 'Refresh REI tenants first.' } } });
+      const { backup, receipt } = await source.service.exportBackup(passphrase);
+      await target.service.stageRestore({ backup, passphrase, expectedDigest: receipt.digest });
+      await applyStagedPrivateRestore({ directory: target.directory, key: target.key });
+      const restored = new WorkflowDatabase({ dir: target.directory, key: target.key });
+      try {
+        expect(new BankReferenceStore(restored).tenantSource(batch.id)).toEqual(recorded);
+        // Never re-stamped: a stale list stays stale, and a list restored without a check counts from its save.
+        expect(createTenantDirectoryStore(restored).freshness()).toEqual(freshness);
+      } finally { restored.close(); }
+      expect(existsSync(join(target.directory, 'w1/evidence.json'))).toBe(false);
+    }
+    const bankId = `bank:${'b'.repeat(64)}`;
+    for (const [kind, id, value] of [
+      ['bank-tenant-source', `bank-tenant-source:${bankId}`, { source: 'bank-rules', extra: true }],
+      ['bank-tenant-source', `bank-tenant-source:${bankId}`, { source: 'rei-directory', savedAt: 1, propertyIds: ['P1'], hash: 'not-a-hash' }],
+      ['bank-tenant-source', `bank-tenant-source:${bankId}`, { source: 'rei-directory', savedAt: 1, propertyIds: ['P1', 'P1'] }],
+      ['bank-tenant-source', `bank-tenant-source:${bankId}:r2`, { source: 'bank-rules' }],
+      ['tenant-directory-check', 'tenant-directory-check:office', { hash: 'c'.repeat(64), checkedAt: 1, extra: 1 }],
+      ['tenant-directory-check', 'tenant-directory-check:other', { hash: 'c'.repeat(64), checkedAt: 1 }],
+      ['tenant-directory', 'tenant-directory:office', { version: 1, purpose: 'tenant-directory', savedAt: 1, source: { name: 'x', sha256: 'a'.repeat(64), rows: 1 }, tenants: [tenant], history: [], checkedAt: 1 }],
+    ] as const) {
+      const f = await fixture(), db = new WorkflowDatabase({ dir: f.directory, key: f.key }); db.create(kind, id, value); db.close();
+      await expect(f.service.exportBackup(passphrase)).rejects.toMatchObject({ status: 503 });
+    }
   });
   it('does not invent completion for a fresh workspace and preserves malformed completion receipts', async () => {
     const f = await fixture();

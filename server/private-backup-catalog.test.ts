@@ -189,7 +189,9 @@ describe('target-key encrypted private backup catalog', () => {
     });
     for (const row of source.records) f.catalog.addRecord(row);
     f.catalog.validate();
-    expect([...f.catalog.iterateRecords('bank')]).toEqual(source.records);
+    expect([...f.catalog.iterateRecords('bank')]).toEqual(source.records.filter(row => row.kind === 'bank'));
+    expect(source.records.map(row => row.kind)).toEqual(['bank', 'bank-tenant-source']);
+    expect([...f.catalog.iterateRecords('bank-tenant-source')]).toEqual(source.records.filter(row => row.kind === 'bank-tenant-source'));
     expect(Buffer.from(JSON.stringify(source.records)).includes(Buffer.from(original.toString('base64')))).toBe(true);
   });
   it('requires the owned identity and unchanged installation key on reopen', async () => {

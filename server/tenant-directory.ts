@@ -7,6 +7,7 @@
 // `expectedRevision`, an unchanged list writes nothing, the last 10 replaced
 // versions are kept, and a damaged record holds every change. Only the columns
 // the bank match uses are kept; arrears and owner columns are never stored.
+import { createHash } from 'node:crypto';
 import { tenantDirectoryRules } from './bank-reference.ts';
 import { parseCsvTable } from './csv-ledger.ts';
 import type { WorkflowDatabase } from './workflow-database.ts';
@@ -22,6 +23,11 @@ export interface TenantDirectory {
 export const MAX_TENANTS = 2000; // createBankReferenceBatch takes at most 2,000 rules.
 export const MAX_TENANT_HISTORY = 10;
 const KIND = 'tenant-directory', ID = 'tenant-directory:office';
+// When a complete REI read last showed the saved list (even unchanged). A sibling record, so a check adds no revision to the
+// list (a preview's expectedRevision stays valid) and records saved before it existed load as they are.
+const CHECK_KIND = 'tenant-directory-check', CHECK_ID = 'tenant-directory-check:office';
+/** The content hash of a tenant list: what a bank batch records it was built from. */
+export const tenantListHash = (tenants: readonly TenantEntry[]) => createHash('sha256').update(JSON.stringify(tenants)).digest('hex');
 const FIELDS = ['reference', 'surname', 'firstname', 'property', 'rent', 'bpay'] as const;
 const LIMIT: Record<keyof TenantEntry, number> = { reference: 100, surname: 100, firstname: 100, property: 100, rent: 50, bpay: 50 };
 const fail = (message: string, status: number): never => { throw Object.assign(new Error(message), { status }); };
@@ -92,6 +98,17 @@ export function readTenantDirectory(v: unknown): TenantDirectory {
   return structuredClone(v) as unknown as TenantDirectory;
 }
 
+/** The records a private backup carries: the saved list and its last complete REI check. Restored as saved: a list restored
+ * without its check (an older backup) counts as checked when it was saved, so a restore never makes a list look fresher. */
+export const TENANT_DIRECTORY_RECORD_KINDS = [KIND, CHECK_KIND] as const;
+/** Backup boundary: each kind at its one id, in its exact shape. */
+export function validateTenantDirectoryRecord(kind: string, id: string, value: unknown): void {
+  if (kind === KIND && id === ID) { readTenantDirectory(value); return; }
+  if (kind === CHECK_KIND && id === CHECK_ID && object(value) && exact(value, 'checkedAt,hash') && typeof value.hash === 'string' && /^[a-f0-9]{64}$/.test(value.hash) &&
+      Number.isSafeInteger(value.checkedAt) && Number(value.checkedAt) >= 0) return;
+  recovery();
+}
+
 export function createTenantDirectoryStore(db: WorkflowDatabase, now: () => number = Date.now) {
   const load = () => {
     const record = db.get<unknown>(KIND, ID);
@@ -100,6 +117,26 @@ export function createTenantDirectoryStore(db: WorkflowDatabase, now: () => numb
   return {
     /** The saved list (null before the first save) and its revision (0 before the first save). */
     read: (): { revision: number; directory: TenantDirectory | null } => load(),
+    /** The saved list's hash and when REI last showed it complete: the later of its save and a check of this exact list.
+     * A list never checked (or saved before checks were recorded) was last checked when it was saved. Null when none is saved. */
+    freshness(): { checkedAt: number; hash: string } | null {
+      const { directory } = load();
+      if (!directory) return null;
+      const hash = tenantListHash(directory.tenants), check = db.get<{ hash?: unknown; checkedAt?: unknown }>(CHECK_KIND, CHECK_ID)?.value;
+      const checkedAt = check?.hash === hash && Number.isSafeInteger(check.checkedAt) ? Math.max(Number(check.checkedAt), directory.savedAt) : directory.savedAt;
+      return { checkedAt, hash };
+    },
+    /** A complete REI read showed exactly these tenants: if they are the saved list, it was checked now. Returns whether it was. */
+    markChecked(tenants: readonly TenantEntry[]): boolean {
+      return db.transaction(() => {
+        const { directory } = load();
+        if (!directory || tenantListHash(directory.tenants) !== tenantListHash(tenants)) return false;
+        const value = { hash: tenantListHash(tenants), checkedAt: Math.max(0, now()) };
+        const existing = db.get<unknown>(CHECK_KIND, CHECK_ID);
+        if (existing) db.update<unknown>(CHECK_KIND, CHECK_ID, existing.revision, () => value); else db.create<unknown>(CHECK_KIND, CHECK_ID, value, null);
+        return true;
+      });
+    },
     /** Replaces the list. An identical list writes nothing and keeps its revision. */
     save(input: { tenants: TenantEntry[]; source: TenantSource; expectedRevision: unknown }): { revision: number; directory: TenantDirectory; saved: boolean } {
       if (!Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 0) fail('Reload the tenant list before saving it.', 400);
