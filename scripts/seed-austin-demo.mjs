@@ -266,6 +266,9 @@ async function seedOffice(demo, log) {
   // W5: Sherry's inspection rules; history only if the inspections import exists.
   const ruleState = await request('/api/inspection-rules');
   await request('/api/inspection-rules', 'PUT', { rules: seed.sherryRules.inspectionRules, expectedRevision: ruleState.revision });
+  // Her role pack set the pack's month rule while none was chosen; the office's own rule (invoice date) is chosen after it.
+  const review = await request('/api/maintenance-review');
+  await request('/api/maintenance-review/rule', 'PUT', { rule: seed.sherryRules.maintenanceRule, expectedRevision: review.ruleRevision });
   const probe = (await demo.fetch(demo.base + '/api/inspections', { headers: { 'x-realbud-session': demo.token } })).status;
   if (probe === 200) {
     const state = await request('/api/inspections');

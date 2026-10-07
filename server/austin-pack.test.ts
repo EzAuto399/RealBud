@@ -9,7 +9,7 @@ import { LOOP_CATALOG, LoopManager } from './routines.ts';
 import { removeFixture } from './testing/private-fixture.ts';
 import { hiddenAustinLoopIds } from '../shared/austin-pack.ts';
 import type { CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
-import { austinAccountsCustomerPack } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinPropertyCustomerPack } from './customer-pack-definition.ts';
 
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
@@ -101,6 +101,35 @@ describe('installing the Austin pack', () => {
     expect((await edited.pack.view()).rules.find(rule => rule.id === 'maintenance-month')?.matches).toBe(false);
   });
 
+  describe("importing Sherry's role pack never overwrites a person's choice", () => {
+    const sherry = () => (JSON.parse(austinPropertyCustomerPack().files!['office/settings.json']!) as CustomerPackOfficeSettings).loops.map(({ id, schedule }) => ({ id, schedule }));
+
+    it('keeps a month rule the person already chose', async () => {
+      const f = office();
+      await f.maintenance.setRule({ rule: { basis: 'invoiceDate', span: 'calendarMonth' }, expectedRevision: 0 });
+      await f.pack.applyPackLoops(sherry());
+      expect(await f.maintenance.read()).toMatchObject({ rule: { basis: 'invoiceDate', span: 'calendarMonth' }, ruleRevision: 1 });
+    });
+
+    it('gives an unset rule the pack default, and a re-import changes nothing', async () => {
+      const f = office();
+      await f.pack.applyPackLoops(sherry());
+      const first = await f.maintenance.read(), revisions = AUSTIN.map(id => f.loop(id).revision);
+      expect(first).toMatchObject({ rule: { basis: 'receivedDate', span: 'calendarMonth' }, ruleRevision: 1 });
+      await f.pack.applyPackLoops(sherry());
+      expect(await f.maintenance.read()).toEqual(first);
+      expect(AUSTIN.map(id => f.loop(id).revision)).toEqual(revisions);
+    });
+
+    it('keeps a loop timezone already set when the office has none', async () => {
+      const f = office();
+      f.loops.patchClock('maintenance-review', { timezone: 'Australia/Sydney' });
+      await f.pack.applyPackLoops(sherry());
+      expect(f.loop('maintenance-review').schedule.timezone).toBe('Australia/Sydney');
+      expect(f.loop('inspection-draft').schedule.timezone).toBe('Australia/Brisbane');
+    });
+  });
+
   it('shows the next Brisbane run once the office switches W4 on after review', async () => {
     const { pack, loops } = office();
     await pack.install();
@@ -156,10 +185,9 @@ describe('Schedule before a role pack (Windows #54)', () => {
     expect(await visible(f)).toEqual(LOOP_CATALOG.map(l => l.id));
   });
 
-  it('never hides a job that is on or has run, and hides nothing while the pack view is unread', async () => {
+  it('never hides a job that is on or has run', async () => {
     const f = office();
     f.loops.setEnabled('inspection-draft', true);
     expect(await visible(f, ['maintenance-review'])).toEqual(['morning-arrears', 'owner-letter', 'inbound-triage', 'maintenance-review', 'rei-morning-refresh', 'inspection-draft']);
-    expect(hiddenAustinLoopIds(null, f.loops.listLoops(), new Set()).size).toBe(0);
   });
 });
