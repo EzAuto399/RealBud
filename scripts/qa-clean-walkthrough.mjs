@@ -257,7 +257,8 @@ try {
     await pressByKeyboard('Continue to Bud setup');
     const dialog = page.getByRole('dialog', { name: 'Bud status', exact: true });
     await dialog.waitFor();
-    assert.equal(new URL(page.url()).hash, '#/ask', 'setup opens over Work');
+    // First run lands on Desk, where Get started lives; setup opens over it.
+    assert.ok(['', '#/desk'].includes(new URL(page.url()).hash), `setup opens over Desk, not ${new URL(page.url()).hash}`);
     await wait(1500);
     await shot('bud-status-first');
     // A linked office sees the staff status view (Check again / Try setup again).

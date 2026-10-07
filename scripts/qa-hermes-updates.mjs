@@ -114,7 +114,7 @@ try {
   await setup.getByRole('button', { name: 'Install recommended agent', exact: true }).click();
   updateState = { ...updateState, selected: updateState.recommended, restartRequired: true, canRestorePrevious: true };
   job = { state: 'done', error: null };
-  await setup.getByText('Agent prepared and verified. Quit and reopen RealBud to use it, then run the readiness check.', { exact: true }).waitFor({ timeout: 10000 });
+  await setup.getByText("Bud's update is ready. Restart RealBud's service (Settings & help, RealBud service) to use it, then test Bud.", { exact: true }).waitFor({ timeout: 10000 });
   await setup.getByRole('button', { name: 'Use previous agent', exact: true }).click();
   await setup.getByText(/Previous agent selected/).waitFor();
   for (const width of [390, 320]) {

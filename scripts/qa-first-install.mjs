@@ -60,8 +60,8 @@ try {
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Continue to Bud setup', exact: true }).click();
   let setup = page.getByRole('dialog', { name: 'Bud status', exact: true }); await setup.waitFor();
-  assert.equal(new URL(page.url()).hash, '#/ask', 'first-run setup remains on Ask');
-  await page.locator('.ask-composer textarea').first().waitFor({ state: 'attached' });
+  // First run lands on Desk, where Get started lives; setup opens over it.
+  assert.ok(['', '#/desk'].includes(new URL(page.url()).hash), 'first-run setup opens over Desk');
   const install = setup.getByRole('button', { name: 'Install Bud', exact: true });
   await until(() => install.isEnabled(), 'Windows install available without shell command');
   await install.click();
@@ -74,6 +74,7 @@ try {
   await setup.getByRole('button', { name: 'Stop setup', exact: true }).click();
   await setup.getByText(/Setup stopped before it finished/).waitFor(); assert.equal(cancels, 1);
   await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
+  await page.evaluate(() => { location.hash = '#/ask'; });
   const composer = page.locator('.ask-composer textarea').first(); await composer.fill('Prepare a repair follow-up for my first property.');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
   setup = page.getByRole('dialog', { name: 'Bud status', exact: true });
