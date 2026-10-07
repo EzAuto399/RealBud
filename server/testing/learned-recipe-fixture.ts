@@ -11,6 +11,12 @@ import { loadShippedPortalRecipePack } from "../portal-recipe-task.ts";
 
 const testHome = (file: string) => { if (!process.env.HOME || !file.startsWith(process.env.HOME)) throw new Error("DATA_DIR is not the test home; refusing to write."); };
 
+// Create the data folder at import, as the app does at launch, so on Windows it
+// carries its own protected descriptor. Left to the first store that needs it
+// (connected-app operations is a plain mkdir), it inherits the temp folder's
+// ACL and every private store below is refused (windows-acl:inheritance-not-protected).
+testHome(DATA_DIR); ensureDirs();
+
 export const LEARNED_LEAK_RECIPE = "learned-loop-leak-check";
 export const LEARNED_LEAK_LABEL = "Show fictional detail";
 
@@ -28,7 +34,7 @@ export async function publishLearnedInDataDir(): Promise<() => void> {
 
 /** An approved tenant-list path (Reports › export) on REI's own origin; returns a cleanup that restores the shipped path. */
 export async function saveApprovedPathInDataDir(): Promise<() => Promise<void>> {
-  testHome(DATA_DIR); ensureDirs();
+  testHome(DATA_DIR);
   const report = "Tenant Contact Export (fictional)";
   const steps = [{ verb: "nav", label: "Reports" }, { verb: "click", label: report }, { verb: "select", label: "Output", option: "Export Only" }, { verb: "download", label: "Export" }];
   const seen = [
