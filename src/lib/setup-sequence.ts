@@ -24,9 +24,11 @@ export type SetupStepId = "link" | "bud" | "pack" | "gmail" | "workflows";
  * `done` is a host-confirmed fact. `current` is the one step to act on now.
  * `working` is Bud setting itself up: nothing to do, and it blocks nothing.
  * `later` is a readable step that is not this step's turn. `unknown` is a step
- * whose fact could not be read; it is never treated as done.
+ * whose fact could not be read; it is never treated as done. `skipped` is a
+ * step the person put aside for now on this computer: never done, and the next
+ * open step becomes current.
  */
-export type SetupStepState = "done" | "current" | "working" | "later" | "unknown";
+export type SetupStepState = "done" | "current" | "working" | "later" | "unknown" | "skipped";
 
 /**
  * Where this step's single action goes: the link-code entry in Workspace, Bud's
@@ -128,6 +130,8 @@ export interface SetupSequenceInput {
   appsToConnect?: readonly string[];
   /** The office shared Gmail is this computer's mailbox, but the owner hasn't allowed this computer (`sharedGmailNotAllowed`). */
   sharedGmailBlocked?: boolean;
+  /** Steps the person skipped for now on this computer. Bud's own step can't be skipped. */
+  skipped?: readonly SetupStepId[];
 }
 
 /**
@@ -474,6 +478,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
     const { fact, status, actionLabel, target } = facts[step.id];
     let state: SetupStepState;
     if (fact === "done") state = "done";
+    else if (input.skipped?.includes(step.id)) state = "skipped";
     else if (!currentTaken) {
       state = "current";
       currentTaken = true;

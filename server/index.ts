@@ -34,7 +34,8 @@ import { createConnectorRegistry } from './mcp-connector-registry.ts';
 import { REDBARK_CONNECTOR } from './redbark-connection.ts';
 import { REDBARK_LABEL, REDBARK_MCP_URL } from '../shared/redbark-connection.ts';
 import { setBankProvider } from './bank-provider.ts';
-import { browserSignInRoute, onSignInSettled, openForSignIn } from "./browser-sign-in.ts";
+import { browserSignInRoute, onSignInSettled, openForSignIn, siteSignInState } from "./browser-sign-in.ts";
+import { noteReiRefresh, REI_SITE, reiLoopsToResume, reiSignInView, resumeReiWhenFree, startReiSignIn } from "./rei-sign-in.ts";
 import { recoveryRoute } from "./recovery-holds.ts";
 import { hermiosCrmScope } from './hermios-crm-broker.ts';
 import { personUrls } from './web-research-broker.ts';
@@ -2391,7 +2392,7 @@ loops = new LoopManager({
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
     'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail)),
     // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
-    'rei-morning-refresh': async () => { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); return result; },
+    'rei-morning-refresh': async () => { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); noteReiRefresh(result); return result; },
     // W4: reads saved reviewed bills only; no mail, model or browser call.
     // W5: refreshes the saved inspection draft monthly; nothing is booked.
     'inspection-draft': async () => runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
@@ -4706,6 +4707,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     { const signIn = browserSignInRoute(path, method, url.searchParams); if (signIn) return json(res, signIn.status, signIn.body); }
+    // Desk's REI sign-in line and its one action (server/rei-sign-in.ts). The lab's own handover stands in for the work browser.
+    if (path === "/api/rei/sign-in" && (method === "GET" || method === "POST")) {
+      if (method === "POST") await startReiSignIn(w1Lab ? (await w1Lab).openForSignIn : openForSignIn);
+      return json(res, 200, reiSignInView(siteSignInState(REI_SITE), loops?.listLoops() ?? [], loops?.listRuns() ?? [], Date.now()));
+    }
     { const held = await recoveryRoute(path, method, req.headers["content-type"], () => readBody(req)); if (held) return json(res, held.status, held.body); }
     if (path === "/api/browser" && method === "GET") return json(res, 200, await browserRuntime.status());
     if (path.startsWith("/api/browser/") && method === "POST") {
@@ -5959,7 +5965,19 @@ const austinPack = createAustinPack({ loops: { listLoops: () => loops!.listLoops
     try { suppliers = (await supplierDirectory.read()).suppliers.length; } catch { /* its recovery shows in Maintenance checks */ }
     return { gmail: Boolean(gmail?.connected) || Boolean(gmailReadOnlyMode(cfg) && gmailReadOnlyBinding(cfg)?.accountId), redbark: w1Lab ? true : (await redbark.connector.state().catch(() => null))?.status === 'connected', tenants, suppliers };
   } });
-onSignInSettled(event => { if (event.outcome === 'signed_in' && event.site === 'REI Cloud') void austinPack.noteReiSignedIn().catch(() => {}); });
+// A REI sign-in (any handover: W1, the supplier check, Desk, Ask) also reruns a REI morning refresh that missed for it
+// today, once the work browser is free (server/rei-sign-in.ts). The lab checks every half second.
+onSignInSettled(event => {
+  if (event.outcome !== 'signed_in' || event.site !== REI_SITE) return;
+  void austinPack.noteReiSignedIn().catch(() => {});
+  if (!loops) return;
+  resumeReiWhenFree({
+    due: () => reiLoopsToResume(loops!.listLoops(), loops!.listRuns(), Date.now()),
+    busy: async () => (await (w1Lab ? (await w1Lab).runtime : browserRuntime).status()).active || (['bank-references', 'rei-supplier-check'] as const).some(id => loops!.activeRun(id)),
+    run: id => { loops!.runNow(id as LoopId); },
+    ...(w1Lab ? { firstMs: 2_000, everyMs: 500 } : {}),
+  });
+});
 /** A changed agency setup clears its workflow reviews, so its mail work stops until they are reviewed again. */
 function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); loops!.setEnabled('weekly-bills', false); }
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),

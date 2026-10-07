@@ -29,6 +29,8 @@ import { useWorkspacePreferences, portfolioLayout } from "@/lib/workspace-prefer
 import { WorkspaceLayout } from "./desk/WorkspaceLayout";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
+import { ReiSignInCard } from "./desk/ReiSignInCard";
+import { useReiSignIn } from "@/lib/rei-sign-in";
 import { JobRunFeed } from "./desk/JobRunFeed";
 import { SharedWorkPanel } from "./desk/SharedWorkPanel";
 import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
@@ -37,7 +39,7 @@ import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskSections, DeskWorkArea, LicenseeBadge, OTHER_WORK_LABELS } from "./desk/DeskSections";
 import type { DeskOtherWork } from "@/lib/desk-view-state";
 import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
-import { DeskCardMenu } from "./shell/DeskArrangement";
+import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { deskSectionsOrDefault } from "@shared/workspace-tabs";
@@ -84,6 +86,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const { preferences } = useWorkspacePreferences();
   // Saved Desk sections; an absent or invalid layout renders today's order.
   const deskLayout = useWorkspaceTabs().data?.state?.desk.sections;
+  // The day's REI sign-in: while REI needs it, it is Desk's one primary action.
+  const rei = useReiSignIn();
+  const reiNeeded = rei.view?.state === "needed";
   const activityShown = deskLayout?.find(section => section.id === "activity")?.visible !== false;
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
@@ -471,7 +476,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   };
   // Empty book already shows the primary check in MorningEmpty — keep the
   // toolbar control secondary so the page has one agency CTA.
-  const headerCheckPrimary = snap.lastRunAt != null;
+  const headerCheckPrimary = snap.lastRunAt != null && !reiNeeded;
   // A live, empty office book has nothing to check and no sample to run.
   const liveEmpty = isEmptyOfficeBook(snap);
   const bookChip = deskHandsStatus(snap.hands, snap.handsDetail, liveEmpty);
@@ -509,8 +514,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     <>
       {/* The one setup checklist. It sits above the brief so a fresh, empty
           office still sees it, and it hides itself once every step is done. */}
+      <ReiSignInCard rei={rei} inert={drawerOpen} menu={<CardMenu label="REI sign-in" locked shown />} />
       {sectionShown("go-live") ? (
-        <GoLiveCard agencyName={snap.book?.agency.name ?? ""} compact inert={drawerOpen} menu={<DeskCardMenu id="go-live" />} />
+        <GoLiveCard agencyName={snap.book?.agency.name ?? ""} compact quiet={reiNeeded} inert={drawerOpen} menu={<DeskCardMenu id="go-live" />} />
       ) : null}
       {statusShown ? (
         <div className="desk-status-row flex items-start gap-2" inert={drawerOpen}>

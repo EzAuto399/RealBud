@@ -259,6 +259,13 @@ export class WorkBrowserHost {
     await this.verify(this.connection);
     await this.deps.cdp(this.connection.endpoint, "Page.navigate", { url }, targetId);
   }
+  /** Brings this already-open tab forward (Desk's "Sign in to REI" while a sign-in waits); false when it has closed
+   * or the browser is not ready. Nothing is loaded or read from the page. */
+  async showTab(targetId: string): Promise<boolean> {
+    if (await this.tabUrl(targetId) === null) return false;
+    await this.deps.cdp(this.connection!.endpoint, "Target.activateTarget", { targetId });
+    return true;
+  }
   /** The tab's current address, or null when it closed or the browser is not ready. Read-only. */
   async tabUrl(targetId: string): Promise<string | null> {
     if (this.phase !== "ready" || !this.connection) return null;

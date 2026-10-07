@@ -102,6 +102,19 @@ describe("Get started: five steps in Kevin's order", () => {
   });
 });
 
+describe("skipping a step for now", () => {
+  it("never counts a skipped step as done, makes the next open step current, and leaves done steps and Bud alone", () => {
+    const input: SetupSequenceInput = { ...base, websiteLink: "not-linked", bud: installing, austinPack: pack(), schedule: loopsOn([]) };
+    expect(currentSetupStep(onlyOneCurrent(input))?.id).toBe("link");
+    const skipped = onlyOneCurrent({ ...input, skipped: ["link", "bud", "pack"] });
+    expect(skipped.map((item) => [item.id, item.state])).toEqual([["link", "skipped"], ["bud", "working"], ["pack", "done"], ["gmail", "current"], ["workflows", "later"]]);
+    // Every open step skipped: nothing is current and setup is still not complete.
+    const all = onlyOneCurrent({ ...input, skipped: ["link", "gmail", "workflows"] });
+    expect(currentSetupStep(all)).toBeNull();
+    expect(setupSequenceComplete(all)).toBe(false);
+  });
+});
+
 describe("step 2: Bud sets itself up and blocks nothing", () => {
   const linked: SetupSequenceInput = { agencySetup: facts(), websiteLink: "linked", austinPack: pack() };
 

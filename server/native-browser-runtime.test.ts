@@ -254,6 +254,10 @@ describe("native browser task lifecycle", () => {
     const navigateTab = vi.fn(async () => {}); Object.assign(f.host, { navigateTab });
     await f.runtime.reloadSignInTab("FICTIONALTARGET", "https://portal.fictional.example/");
     expect(navigateTab).toHaveBeenCalledWith("FICTIONALTARGET", "https://portal.fictional.example/");
+    // Bringing a waiting sign-in page forward: the host's own tab, no new tab and no task lease.
+    const showTab = vi.fn(async (id: string) => id === "FICTIONALTARGET"); Object.assign(f.host, { showTab });
+    expect(await f.runtime.showSignInTab("FICTIONALTARGET")).toBe(true);
+    expect(await f.runtime.showSignInTab("FICTIONALCLOSED")).toBe(false);
     expect(opened).toHaveLength(2);
     expect(f.makeControllerCalls()).toBe(0);
   });

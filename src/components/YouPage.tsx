@@ -66,6 +66,8 @@ import { UnattendedWorkCard } from "./you/UnattendedWorkCard";
 import { SupportCard } from "./you/SupportCard";
 import { PrivateWorkspaceBackup } from "./PrivateWorkspaceBackup";
 import { WorkspaceNextStep } from "./you/WorkspaceNextStep";
+import { resetGetStartedLocal } from "@/lib/first-day";
+import { useDeskArrangement } from "./shell/DeskArrangement";
 
 function YouLoadLines({ label }: { label: string }) {
   return (
@@ -482,6 +484,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
                     {profileSection}
                     {phoneSection}
                     <SettingsGroup label="Help" hint="Support file and service administration" open>
+                      <GetStartedResetCard />
                       <SupportCard />
                       <ServiceAdministration>
                         <ChannelsCard administration channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
@@ -507,6 +510,27 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         </div>
       </div>
     </main>
+  );
+}
+
+/** Brings Get started back on Desk: its card shown again, skipped steps back in line, the first-day guide restored. */
+function GetStartedResetCard() {
+  const { dispatch } = useStore();
+  const arrangement = useDeskArrangement();
+  return (
+    <Card title="Get started guide" subtitle="Show Get started and the first-day guide on Desk again, with any skipped steps back in line.">
+      <button
+        type="button"
+        className="pm-control rounded-lg border border-line px-3 text-[13px] text-ink hover:bg-raised"
+        onClick={() => {
+          resetGetStartedLocal();
+          if (arrangement.ready && arrangement.sections.find((section) => section.id === "go-live")?.visible === false) void arrangement.setSection("go-live", true);
+          dispatch({ type: "showDesk" });
+        }}
+      >
+        Show Get started on Desk again
+      </button>
+    </Card>
   );
 }
 

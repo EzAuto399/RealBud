@@ -153,6 +153,11 @@ describe("dedicated work browser host", () => {
     await expect(host.navigateTab("FICTIONALTARGET1", "http://portal.fictional.example/")).rejects.toThrow(/HTTPS/);
     await host.navigateTab("FICTIONALTARGET1", "https://portal.fictional.example/");
     expect(sent.filter(row => row.method !== "Target.getTargets").slice(2)).toEqual([{ endpoint, method: "Page.navigate", params: { url: "https://portal.fictional.example/" }, targetId: "FICTIONALTARGET1" }]);
+    // Desk's "Sign in to REI" while a sign-in waits: the same open tab comes forward; a closed one reports false.
+    expect(await host.showTab("FICTIONALTARGET1")).toBe(true);
+    expect(await host.showTab("FICTIONALOTHER")).toBe(false);
+    expect(sent.filter(row => row.method === "Target.activateTarget").map(row => row.params)).toEqual([{ targetId: "FICTIONALTARGET1" }, { targetId: "FICTIONALTARGET1" }]);
     await host.disconnect();
+    expect(await host.showTab("FICTIONALTARGET1")).toBe(false);
   });
 });
