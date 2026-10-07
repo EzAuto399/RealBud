@@ -46,6 +46,7 @@ import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
+import type { ApprovalResolution } from "../../approval-answer.ts";
 import { CONNECTED_APP_APPROVAL, OFFICE_MAIL_SERVER, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
 import { startWebResearchBroker, WEB_RESEARCH_SERVER, type LoopbackToolServer } from "../../web-research-broker.ts";
@@ -964,20 +965,21 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * and Hermios CRM writes): one explicit allow, never a session grant.
          * `card` is the broker's plain-line additions (exact request, phone
          * class, read offer, review id); the card also carries its deadline. A timeout or
-         * a stop is never reported as the person's answer. */
-        const reviewOnce = (summary: string, signal: AbortSignal, card: ApprovalCardDetails = {}) => new Promise<boolean>((resolve) => {
+         * a stop is never reported as the person's answer: `reviewAnswer` carries how
+         * the card ended to the brokers that tell Bud; `reviewOnce` is its yes/no. */
+        const reviewAnswer = (summary: string, signal: AbortSignal, card: ApprovalCardDetails = {}) => new Promise<{ allowed: boolean; resolution: ApprovalResolution }>((resolve) => {
           const run = current;
-          if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+          if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve({ allowed: false, resolution: "stopped" }); return; }
           const requestId = newId();
           const finish = (decision: { behavior: string; scope?: "once" | "session" }, resolution: "user" | "timeout" | "stopped" = "user") => {
             if (!run.asks.delete(requestId)) return;
             clearTimeout(timer);
             signal.removeEventListener("abort", aborted);
             // Broad/session grants cannot authorize an external action.
-            const allowed = resolution === "user" && decision.behavior === "allow" && decision.scope !== "session" &&
-              !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
+            const ended = run.settled || run.cancellationRequested || signal.aborted || closed;
+            const allowed = resolution === "user" && decision.behavior === "allow" && decision.scope !== "session" && !ended;
             emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: resolution === "user" ? "user" : "system", resolution });
-            resolve(allowed);
+            resolve({ allowed, resolution: resolution === "user" && ended ? "stopped" : resolution });
           };
           const aborted = () => finish({ behavior: "deny" }, "stopped");
           const timer = setTimeout(() => finish({ behavior: "deny" }, "timeout"), WORKER_APPROVAL_CARD_MS); timer.unref();
@@ -987,6 +989,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(card.remote ? { remote: card.remote } : {}), ...(card.detail ? { detail: card.detail } : {}), ...(card.readOffer ? { readOffer: { ...card.readOffer } } : {}),
             ...(card.reviewId ? { reviewId: card.reviewId } : {}) });
         });
+        const reviewOnce = (summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => reviewAnswer(summary, signal, card).then(answer => answer.allowed);
         const ready = (async () => {
           if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {
             memoryBroker = await startMemoryProposalBroker({
@@ -1069,7 +1072,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }) } : {}),
               threadId,
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
-              approve: reviewOnce,
+              approve: reviewAnswer,
             });
             if (closed) { appBroker.close(); throw new Error("Bud's app session stopped."); }
             mcpServers = mcpServers.map(server => server.name === "connected-apps" ? appBroker!.descriptor : server);
@@ -1080,7 +1083,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             officeMailBroker = await startConnectedAppsBroker({
               key, url, headers, allowedApps: ["gmail"], managed: true, mailbox: "office", ...(address ? { officeAddress: address } : {}), threadId,
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
-              approve: reviewOnce,
+              approve: reviewAnswer,
             });
             if (closed) { officeMailBroker.close(); throw new Error("Bud's app session stopped."); }
             mcpServers = mcpServers.map(server => server.name === OFFICE_MAIL_SERVER ? officeMailBroker!.descriptor : server);
@@ -1145,7 +1148,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             settingsBroker = await startWorkflowSettingsBroker({
               turnId: () => actingTurn()?.turnId ?? null,
               settings: () => actingTurn()?.turn.integrations?.workflowSettings,
-              approve: reviewOnce,
+              approve: reviewAnswer,
               receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { workflowSettings: receipt } }),
             });
             if (closed) { settingsBroker.close(); throw new Error("Bud’s working rules session stopped."); }
@@ -1167,7 +1170,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               tools: firstTurn.integrations.mcpConnectors.tools,
               turnId: () => actingTurn()?.turnId ?? null,
               connectors: () => actingTurn()?.turn.integrations?.mcpConnectors,
-              approve: reviewOnce,
+              approve: reviewAnswer,
               receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { officeConnectors: receipt } }),
             });
             if (closed) { connectorsBroker.close(); throw new Error("Bud’s office connectors session stopped."); }

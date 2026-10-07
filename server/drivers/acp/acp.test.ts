@@ -417,7 +417,7 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.respondToRequest("t-app-boundary", opened.requestId!, { behavior: "allow", scope: "session" });
     const body: any = await (await response).json();
     expect(body.result.isError).toBe(true);
-    expect(body.result.content[0].text).toContain("did not approve");
+    expect(body.result.content[0].text).toContain("Nothing changed");
     await instance.adapter.interruptTurn("t-app-boundary");
   });
 

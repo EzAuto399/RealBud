@@ -15,6 +15,7 @@
 import { CONSEQUENTIAL_WARNING, stripSchemaProse } from "../shared/mcp-connector.ts";
 import { approvalGroupKey, decide, OFFICE_UNCHECKED, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, approvalAnswer, type ApprovalAnswer } from "./approval-answer.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import type { Approval, ToolClass } from "./mcp-connector-core.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -67,7 +68,7 @@ export async function startMcpConnectorBroker(options: {
   tools: readonly BudConnectorTool[];
   turnId(): string | null;
   connectors(): BudMcpConnectors | undefined;
-  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<boolean>;
+  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<ApprovalAnswer>;
   receipt?: (receipt: ConnectorCallReceipt) => void;
   /** The approval settings that govern this desktop (default: the host's registered store). */
   approvalSettings?: () => Promise<ApprovalSettings[]>;
@@ -118,7 +119,11 @@ export async function startMcpConnectorBroker(options: {
           : `${label(binding.label)} · ${binding.tool}\n${exact}`) + (settings.some(item => item.unchecked) ? `\n${OFFICE_UNCHECKED}` : "");
         // An office connector's write can do anything its service allows, so only its reads go to the phone.
         const remote = toolClass === "read" ? "read" as const : "desktop-only" as const;
-        if (!await options.approve(summary, signal, { remote })) { receipt("declined"); return toolError("The person did not allow this. Nothing was sent."); }
+        const answer = approvalAnswer(await options.approve(summary, signal, { remote }));
+        if (!answer.allowed) {
+          receipt("declined");
+          return answer.resolution === "stopped" ? stopped() : toolError(answer.resolution === "timeout" ? APPROVAL_TIMED_OUT : `${APPROVAL_DENIED} Do not retry without a new request.`);
+        }
         if (!live()) { receipt("refused"); return stopped(); }
         // A Don't use saved while the card waited still refuses it.
         let now: ApprovalSettings[];

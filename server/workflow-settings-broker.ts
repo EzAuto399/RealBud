@@ -12,6 +12,7 @@
 // loopback MCP server.
 import type { IncomingMessage } from "node:http";
 import { defaultAgencySettings, validateAgencySettings } from "./agency-setup.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, approvalAnswer, type ApprovalAnswer } from "./approval-answer.ts";
 import { validateInspectionRules, type InspectionRulesStore } from "./inspection-rules.ts";
 import { isMaintenanceWindowRule, MAINTENANCE_RULE_MESSAGE, type MaintenanceReviewStore } from "./maintenance-review.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -124,6 +125,16 @@ export function scheduleWords(clock: LoopClock): string {
 const clockOf = (schedule: LoopSchedule | LoopClock): LoopClock => ({ time: schedule.time, weekdays: [...schedule.weekdays],
   ...(schedule.intervalDays !== undefined ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate !== undefined ? { anchorDate: schedule.anchorDate } : {}),
   ...(schedule.monthly ? { monthly: schedule.monthly } : {}) });
+/** How a workflow repeats, as Schedule's own editor offers it (JobDrawer): chosen weekdays (all seven
+ * is every day), every N days from a first date where the cadence is editable, and the first weekday
+ * of each month only for a workflow that already repeats that way. */
+const REPEATS = { "weekdays": "on chosen weekdays or every day", "every-n-days": "every N days from a first date",
+  "first-weekday-of-month": "on the first weekday of each month" } as const;
+type Repeat = keyof typeof REPEATS;
+const repeatOf = (clock: LoopClock): Repeat => clock.monthly ? "first-weekday-of-month" : clock.intervalDays !== undefined ? "every-n-days" : "weekdays";
+const repeatsFor = (loopId: string, clock: LoopClock): Repeat[] =>
+  clock.monthly ? ["first-weekday-of-month"] : evaluatorForLoop(loopId)?.cadenceEditable ? ["weekdays", "every-n-days"] : ["weekdays"];
+const repeatsWords = (repeats: Repeat[]) => repeats.map(repeat => `${REPEATS[repeat]} (${repeat})`).join(" or ");
 const loopSnapshot = (loop: Loop): LoopScheduleSnapshot => ({ loopId: loop.id, name: loop.name, enabled: loop.enabled, revision: loop.revision,
   schedule: clockOf(loop.schedule), waitingForPlan: loop.waitingForPlan === true, agencyTimed: evaluatorForLoop(loop.id)?.agencyTimed === true });
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -132,7 +143,7 @@ const REASON = { type: "string", minLength: 1, maxLength: 300, description: "One
 const TOOLS = [
   { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions, (loop_schedule) each workflow's loopId, revision, on/off and clock, and (approval_policy) how often Bud asks before using each app, website and office connector. target is optional (all when omitted). Read only, no card.",
     inputSchema: { type: "object", additionalProperties: false, properties: { target: TARGET } } },
-  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {time (HH:MM), weekdays (0=Sun..6=Sat), and for workflows that repeat every N days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
+  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {repeat (optional, only one the workflow's read line lists: weekdays|every-n-days|first-weekday-of-month), time (HH:MM), weekdays (0=Sun..6=Sat), and for every-n-days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
@@ -156,7 +167,7 @@ export function bindWorkflowSettings(host: {
   inspection: InspectionRulesStore;
   agency: { read(): Promise<{ revision: number; settings: AgencySetupSettings }>; save(body: { expectedRevision: number; settings: AgencySetupSettings }): Promise<unknown> };
   /** The clock's one door (LoopManager.patchClock) with the checks PATCH /api/loops/:id adds. */
-  loops: { listLoops(): Loop[]; patchClock(id: LoopId, patch: { time: string; weekdays: number[]; intervalDays?: number; anchorDate?: string; expectedRevision: number }): unknown };
+  loops: { listLoops(): Loop[]; patchClock(id: LoopId, patch: { time: string; weekdays: number[]; intervalDays?: number | null; anchorDate?: string; expectedRevision: number }): unknown };
   writable(): string | null;
   /** Approval settings (`bindApprovalPolicy`); without it Bud cannot change them. */
   approvals?: ApprovalPolicyBinding;
@@ -204,12 +215,22 @@ export function bindWorkflowSettings(host: {
       if (!loop || !spec) throw new Error("Choose a workflow by its loopId from workflow_settings_read.");
       // Its clock comes from the reviewed agency setup, as PATCH /api/loops/inbound-triage says.
       if (spec.agencyTimed) throw new Error(`${loop.name} runs at the time saved in agency setup; propose a morning_priorities change instead.`);
-      const fields = spec.cadenceEditable ? ["time", "weekdays", "intervalDays", "anchorDate"] : ["time", "weekdays"];
-      if (!object(schedule) || !Object.keys(schedule).length || Object.keys(schedule).some(key => !fields.includes(key))) throw new Error(`For ${loop.name}, schedule takes ${fields.join(", ")}.`);
-      const merged = { ...clockOf(loop.schedule), ...schedule } as LoopClock, time = parseClockTime(merged.time), weekdays = parseWeekdays(merged.weekdays);
+      const current = clockOf(loop.schedule), repeats = repeatsFor(loop.id, current);
+      const fields = ["repeat", "time", ...(current.monthly ? [] : ["weekdays"]), ...(spec.cadenceEditable ? ["intervalDays", "anchorDate"] : [])];
+      // Without a repeat, the pattern follows what Bud sent (an interval means every N days), as before.
+      const repeat = !object(schedule) ? repeatOf(current) : schedule.repeat !== undefined ? schedule.repeat : repeatOf({ ...current, ...schedule } as LoopClock);
+      if (!repeats.includes(repeat as Repeat)) throw new Error(`${loop.name} can only repeat ${repeatsWords(repeats)}, as in Schedule.`);
+      if (!object(schedule) || !Object.keys(schedule).length || Object.keys(schedule).some(key => !fields.includes(key))) {
+        throw new Error(`For ${loop.name}, schedule takes ${fields.join(", ")}. It can repeat ${repeatsWords(repeats)}.`);
+      }
+      const { repeat: _repeat, ...change } = schedule;
+      // A new repeat starts from the time alone, so nothing of the old pattern carries over.
+      const base: LoopClock = repeat === repeatOf(current) ? current : repeat === "every-n-days" ? { time: current.time, weekdays: [0, 1, 2, 3, 4, 5, 6] } : { time: current.time, weekdays: current.weekdays };
+      const merged = { ...base, ...change } as LoopClock, time = parseClockTime(merged.time), weekdays = parseWeekdays(merged.weekdays);
       if (!time) throw new Error("time must be HH:MM (00:00–23:59).");
       if (!weekdays) throw new Error("weekdays must be a non-empty list of numbers 0–6.");
       const next = clockOf({ ...merged, time, weekdays });
+      if (repeatOf(next) !== repeat) throw new Error(repeat === "weekdays" ? "To repeat on chosen weekdays, leave out intervalDays and anchorDate." : "To repeat every N days, give intervalDays (1–31) and anchorDate.");
       if (!validCalendarCadence(next)) throw new Error("Choose an interval of 1–31 calendar days and a valid first date.");
       return { loop: loopSnapshot(loop), next };
     },
@@ -218,7 +239,8 @@ export function bindWorkflowSettings(host: {
       if (evaluatorForLoop(loopId)?.agencyTimed) throw Object.assign(new Error("This workflow runs at the time saved in agency setup. Nothing was changed."), { status: 409 });
       try {
         // The clock only, never `enabled`: an off, opt-in or waiting workflow stays as it was.
-        await host.loops.patchClock(loopId as LoopId, { time: next.time, weekdays: next.weekdays, intervalDays: next.intervalDays, anchorDate: next.anchorDate, expectedRevision });
+        // intervalDays null drops an every-N-days cadence; a monthly workflow keeps its own (patchClock keeps `monthly`).
+        await host.loops.patchClock(loopId as LoopId, { time: next.time, weekdays: next.weekdays, intervalDays: next.monthly ? undefined : next.intervalDays ?? null, anchorDate: next.anchorDate, expectedRevision });
       } catch (error) {
         if ((error as { code?: unknown }).code === "schedule_changed") throw Object.assign(new Error(LOOP_SCHEDULE_CONFLICT), { code: "settings_changed" });
         throw error;
@@ -319,8 +341,8 @@ export async function startWorkflowSettingsBroker(options: {
   turnId(): string | null;
   /** The current turn's settings binding, else undefined. */
   settings(): BudWorkflowSettings | undefined;
-  /** RealBud's one-time review card; true only for an explicit allow. */
-  approve(summary: string, signal: AbortSignal): Promise<boolean>;
+  /** RealBud's one-time review card; allowed only for an explicit allow, with how the card ended. */
+  approve(summary: string, signal: AbortSignal): Promise<ApprovalAnswer>;
   receipt?: (receipt: WorkflowSettingsReceipt) => void;
 }): Promise<LoopbackToolServer> {
   const note = (receipt: WorkflowSettingsReceipt) => { try { options.receipt?.(receipt); } catch { /* receipts never change the outcome */ } };
@@ -353,7 +375,7 @@ export async function startWorkflowSettingsBroker(options: {
           if (target === "loop_schedule") {
             try { loops = settings.loops(); } catch (error) { return toolError(message(error, "The workflow schedules could not be read.")); }
             lines.push(...loops.map(loop => `- loop_schedule ${loop.loopId} ${JSON.stringify(loop.name)} (revision ${loop.revision}, ${loop.enabled ? "on" : "off"}` +
-              `${loop.waitingForPlan ? ", waiting for plan approval" : ""}${loop.agencyTimed ? ", time set by agency setup" : ""}): ${scheduleWords(loop.schedule)} ${JSON.stringify(loop.schedule)}`));
+              `${loop.waitingForPlan ? ", waiting for plan approval" : ""}${loop.agencyTimed ? ", time set by agency setup" : `, can repeat ${repeatsFor(loop.loopId, loop.schedule).join("|")}`}): ${scheduleWords(loop.schedule)} ${JSON.stringify(loop.schedule)}`));
             continue;
           }
           let row: WorkflowSettingsSnapshot;
@@ -368,9 +390,11 @@ export async function startWorkflowSettingsBroker(options: {
       if (!reason) return toolError("Give one plain sentence saying why. Nothing was changed.");
       /** RealBud's one-time card, then the compare-and-set save on the revision read before it was shown. */
       const review = async (card: string, save: () => Promise<void>, saved: string, result: Record<string, unknown>, label: string) => {
-        if (!await options.approve(card, signal)) {
+        const answer = approvalAnswer(await options.approve(card, signal));
+        if (!answer.allowed) {
           note({ tool: name, target, outcome: "declined" });
-          return toolError("The person did not approve this change. Nothing was changed. Do not retry without a new request.");
+          return toolError(answer.resolution === "timeout" ? APPROVAL_TIMED_OUT : answer.resolution === "stopped" ? "Bud is no longer working on this request. Nothing was changed."
+            : `${APPROVAL_DENIED} Do not retry without a new request.`);
         }
         if (signal.aborted || options.turnId() !== turn || options.settings() !== settings) return toolError("Bud is no longer working on this request. Nothing was changed.");
         try {

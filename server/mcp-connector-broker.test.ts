@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONSEQUENTIAL_WARNING } from "../shared/mcp-connector.ts";
 import { CONSEQUENTIAL_LABEL, MAX_CONNECTOR_RESULT, startMcpConnectorBroker, type BudConnectorTool, type BudMcpConnectors } from "./mcp-connector-broker.ts";
 import type { LoopbackToolServer } from "./web-research-broker.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, type ApprovalAnswer } from "./approval-answer.ts";
 import { OFFICE_UNCHECKED, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { createApprovalSettings, governApprovals, governingApprovals, OFFICE_NOT_CHECKED } from "./approval-settings.ts";
 import { mkdtempSync } from "node:fs";
@@ -18,7 +19,7 @@ const tools = [tool("list_books", "read"), tool("create_book", "write"), tool("s
 describe("office connector broker", () => {
   let broker: LoopbackToolServer | undefined;
   afterEach(() => { broker?.close(); broker = undefined; });
-  const start = async (binding: Partial<BudMcpConnectors> = {}, approve = vi.fn(async (_summary: string, _signal: AbortSignal, _card?: unknown) => true), list = tools,
+  const start = async (binding: Partial<BudMcpConnectors> = {}, approve = vi.fn(async (_summary: string, _signal: AbortSignal, _card?: unknown): Promise<ApprovalAnswer> => true), list = tools,
     approvalSettings: () => Promise<ApprovalSettings[]> = async () => []) => {
     const receipts: unknown[] = [];
     const connectors: BudMcpConnectors = { tools: list, attended: true, toolClass: async (_c, name) => list.find(row => row.tool === name)?.toolClass ?? null,
@@ -59,6 +60,16 @@ describe("office connector broker", () => {
     approve.mockResolvedValueOnce(true);
     await call("fictional-books__create_book", { title: "Fictional Title" });
     expect(connectors.invoke).toHaveBeenCalledWith("fictional-books", "create_book", { title: "Fictional Title" }, "write", expect.any(AbortSignal));
+  });
+
+  it("tells Bud a card nobody answered apart from Don't allow, and sends nothing either way", async () => {
+    const approve = vi.fn(async (): Promise<ApprovalAnswer> => ({ allowed: false, resolution: "timeout" }));
+    const { connectors, receipts } = await start({}, approve);
+    expect(await call("fictional-books__create_book", { title: "Fictional Title" })).toMatchObject({ isError: true, content: [{ text: APPROVAL_TIMED_OUT }] });
+    approve.mockResolvedValueOnce({ allowed: false, resolution: "user" });
+    expect(await call("fictional-books__create_book", { title: "Fictional Title" })).toMatchObject({ isError: true, content: [{ text: `${APPROVAL_DENIED} Do not retry without a new request.` }] });
+    expect(connectors.invoke).not.toHaveBeenCalled();
+    expect(receipts).toEqual([{ connector: "fictional-books", tool: "create_book", outcome: "declined" }, { connector: "fictional-books", tool: "create_book", outcome: "declined" }]);
   });
 
   it("shows a distinct consequential card with the full arguments and the warning", async () => {
