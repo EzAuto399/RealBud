@@ -1,6 +1,6 @@
-// Repair re-runs the pinned installer and re-applies the property pack.
+// Repair re-applies the property pack to an existing compatible worker.
 // Automatic removal is held until all worker descendants can be proved stopped.
-import { installInFlight, reconcileManagedModelProfile, startInstall, type InstallJob } from "./hermes-bridge.ts";
+import { installInFlight, reconcileManagedModelProfile } from "./hermes-bridge.ts";
 import {
   applyPropertyPack,
   hermesAgentDir,
@@ -10,18 +10,6 @@ import {
 import { clearHermesVersionCache, hermesStatus, type HermesStatus } from "./hermes-status.ts";
 import { repairDocumentDeps } from "./hermes-document-deps.ts";
 import { workerLaunchesHeld, WORKERS_HELD } from "./worker-network-sandbox.ts";
-
-export function startRepair(command: string, opts?: { timeoutMs?: number }): InstallJob {
-  if (installInFlight()) {
-    throw Object.assign(new Error("an install is already running"), { status: 409 });
-  }
-  return startInstall(command, {
-    timeoutMs: opts?.timeoutMs,
-    onSuccess: () => {
-      applyPropertyPack();
-    },
-  });
-}
 
 /** Repair the owned profile without downgrading/reinstalling a shared CLI.
  * Null means no CLI exists and the normal first-install flow may continue. */

@@ -3,17 +3,13 @@
 // and never runs the hermes CLI. Model access is managed-only: the paired
 // grant supplies provider, endpoint and key; the office picks one of three
 // models (`shared/managed-model-choices.ts`).
-// Install runs the pinned installer as a spawned child with streamed
-// output — same command the terminal used to run, no terminal.
-import { isolateGithubLogin, serviceSafeChildEnv } from "./service-child-env.ts";
-import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { normalizeManagedModelChoiceRequest, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
 import { verifyProfileDirectory } from "./hermes-profile-storage.ts";
-import { augmentedPath, resetPathCache } from "./env-path.ts";
-import { HERMES_PIN, hermesCli, hermesMatchesPin } from "./hermes-pin.ts";
+import { resetPathCache } from "./env-path.ts";
+import { hermesCli } from "./hermes-pin.ts";
 import { applyManagedModelProfile, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir } from "./hermes-pack.ts";
 import { recordManagedModelReceipt, workerModelGrant } from "./worker-model-access.ts";
 import { normalizedGatewayUrl } from "./hermes-runtime-env.ts";
@@ -36,7 +32,6 @@ export interface InstallJob {
 }
 
 const installJob: InstallJob = { state: "idle", lines: [], startedAt: null, finishedAt: null, error: null };
-let installProc: ChildProcess | null = null;
 let bootstrapAbort: AbortController | null = null;
 let bootstrapCompletion: Promise<void> = Promise.resolve();
 export function waitForBootstrapStop() { return bootstrapCompletion; }
@@ -106,89 +101,6 @@ export function installStatus(): InstallJob {
 
 export function installInFlight(): boolean {
   return installJob.state === "running" || installJob.state === "verifying" || installJob.state === "preflight";
-}
-
-export function startInstall(command: string, opts?: { timeoutMs?: number; onSuccess?: () => void | Promise<void> }): InstallJob {
-  if (installInFlight()) {
-    return installStatus();
-  }
-  installJob.state = "running";
-  installJob.lines = [];
-  installJob.startedAt = Date.now();
-  installJob.finishedAt = null;
-  installJob.error = null;
-
-  const push = (line: string) => {
-    for (const part of String(line).split(/\r?\n/)) {
-      const trimmed = part.trim();
-      if (trimmed) installJob.lines.push(trimmed.slice(0, 200));
-    }
-    if (installJob.lines.length > 400) installJob.lines.splice(0, installJob.lines.length - 400);
-  };
-
-  // The installer runs Hermes too: the same GitHub-login isolation as a turn.
-  const installEnv = serviceSafeChildEnv({ PATH: augmentedPath() });
-  isolateGithubLogin(installEnv);
-  const child = spawn("/bin/bash", ["-c", command], {
-    env: installEnv,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  installProc = child;
-  child.stdout?.on("data", (c) => push(String(c)));
-  child.stderr?.on("data", (c) => push(String(c)));
-  const timeout = setTimeout(() => {
-    if (installProc === child) child.kill("SIGKILL");
-  }, opts?.timeoutMs ?? 10 * 60_000);
-
-  child.on("close", async (code) => {
-    clearTimeout(timeout);
-    if (installProc !== child) return;
-    installProc = null;
-    if (code !== 0) {
-      installJob.state = "failed";
-      installJob.error = `installer exited ${code}`;
-      installJob.finishedAt = Date.now();
-      return;
-    }
-    installJob.state = "verifying";
-    clearHermesVersionCache();
-    let version: string | null = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      version = await probeHermesVersion("hermes");
-      if (version && hermesMatchesPin(version)) break;
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-      clearHermesVersionCache();
-    }
-    if (version && hermesMatchesPin(version)) {
-      if (opts?.onSuccess) {
-        try {
-          await opts.onSuccess();
-        } catch (err) {
-          installJob.state = "failed";
-          installJob.error = err instanceof Error ? err.message : String(err);
-          installJob.finishedAt = Date.now();
-          return;
-        }
-      }
-      installJob.state = "done";
-      installJob.lines.push(`verified ${version.trim().slice(0, 60)}`);
-    } else {
-      installJob.state = "failed";
-      installJob.error = version
-        ? `installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag})`
-        : "worker not found on PATH after install";
-    }
-    installJob.finishedAt = Date.now();
-  });
-  child.on("error", (err) => {
-    clearTimeout(timeout);
-    if (installProc !== child) return;
-    installProc = null;
-    installJob.state = "failed";
-    installJob.error = err.message;
-    installJob.finishedAt = Date.now();
-  });
-  return installStatus();
 }
 
 // ── managed model choice ─────────────────────────────────────────────────
