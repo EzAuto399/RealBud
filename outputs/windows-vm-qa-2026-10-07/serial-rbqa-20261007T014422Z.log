@@ -1,0 +1,275 @@
+RBQA-START rbqa-20261007T014422Z ref=claude/windows-vm-qa steps=all worker=2660
+RBQA-BEAT corepack started pid=4224
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"setup","status":"PASS","os":"Microsoft Windows Server 2025 Datacenter 10.0.26100","user":"NT AUTHORITY\\SYSTEM","node":"v24.21.0","nodePreinstalled":true,"git":"2.56.0.2","gitPreinstalled":true,"edge":"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe","vmUsedBefore":true,"seconds":10}
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"smoke","status":"PASS","installer":"RealBud-0.1.35-54392dd-setup.exe","sha256":"4ef0ade8684731f2b2c61fcc6667f4ddc86a0080f8044c338a6beb98a4d7ac70","signature":"NotSigned","installExit":0,"installSeconds":78,"installedExe":"C:\\Windows\\SysWOW64\\config\\systemprofile\\AppData\\Local\\Programs\\realbud\\RealBud.exe","version":"0.1.35.0","launchedBy":"harness","healthSeconds":24,"healthPort":8799,"healthApp":"realbud","processesRunning":5,"sessionFile":"C:\\Windows\\system32\\config\\systemprofile\\.realbud\\local-auth\\session.json","sessionMatchesHealth":true,"sessionAcl":["Allow S-1-5-18 FullControl inherited=False"],"sessionAclProtected":true,"sessionOwnerOnly":true,"uninstallSeconds":18,"appRemoved":true,"leftoverProcesses":[],"healthAfterUninstall":false,"dataDirKept":true,"seconds":139,"failures":[]}
+RBQA-BEAT fetch started pid=1340
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"fetch","status":"PASS","ref":"claude/windows-vm-qa","sha":"245f7b9ed404603adfd5daa6fe90985bc1fac114","subject":"Add a repeatable Windows clean-environment QA run on the GCE VM","seconds":28}
+RBQA-BEAT install started pid=5560
+RBQA-BEAT install 60s log=2392B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"pnpm-install","status":"PASS","seconds":118}
+RBQA-BEAT win-helpers started pid=4588
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"win-helpers","status":"PASS","exit":0,"seconds":4}
+RBQA-BEAT typecheck started pid=5188
+RBQA-BEAT typecheck 60s log=100B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"typecheck","status":"PASS","exit":0,"errors":0,"first":[],"seconds":85}
+RBQA-BEAT vitest started pid=3660
+RBQA-BEAT vitest 60s log=2974B
+RBQA-BEAT vitest 120s log=11281B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"vitest","status":"FAIL","exit":1,"files":21,"tests":528,"passed":515,"failed":1,"skipped":12,"todo":0,"failedSuites":2,"seconds":140}
+RBQA-LOG vitest | FAIL server/windows-file-privacy.test.ts > native Windows privacy admission rejects inherit-only ACL without repairing an existing directory: Error: promise resolved "undefined" instead of rejecting
+RBQA-BEAT dayone started pid=6028
+RBQA-BEAT dayone 60s log=0B
+RBQA-BEAT dayone 120s log=0B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"dayone","status":"FAIL","exit":1,"counts":{"FAIL":1,"NOT RUN":8},"notPassed":["1. Office: mock grant, onboarding, agency setup, Austin pack [FAIL]: Fictional model grant setup failed: file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281??  return new WindowsFilePrivacyError(??         ^????WindowsFilePrivacyError: Windows file privacy could not be verified. Use a private directory owned by the trusted installer account. [wi...","2. Desk: office book, 6 seed properties, REI ledger CSV import [NOT RUN]: Step 1 failed first.","3. Gmail: fixture connector reports the inbox connected; history complete [NOT RUN]: Step 1 failed first.","4. W3 morning priorities: run, items for seed mail, rerun makes no worker call [NOT RUN]: Step 1 failed first.","5. W2 weekly bills: run, accept one bill, bill on the calendar [NOT RUN]: Step 1 failed first.","6. W1 bank: lab Redbark rows, review, fictional REI, approve upload once, read back N/N [NOT RUN]: Step 1 failed first.","7. Arrears and owner letters: cards for seed tenants and owners; Allow one; send stays 403 [NOT RUN]: Step 1 failed first.","8. Restart: everything kept, nothing reruns [NOT RUN]: Step 1 failed first.","9. Receipt [NOT RUN]: Step 1 failed first."],"seconds":123}
+RBQA-LOG dayone |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG dayone |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG dayone |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG dayone |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG dayone |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG dayone |     at ensureProfileDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:3)
+RBQA-LOG dayone |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG dayone |   category: 'process-terminated',
+RBQA-LOG dayone |   nativeExitCode: null,
+RBQA-LOG dayone |   operationIndex: null,
+RBQA-LOG dayone |   detail: null
+RBQA-LOG dayone | }
+RBQA-LOG dayone | 
+RBQA-LOG dayone | Node.js v24.21.0
+RBQA-LOG dayone | 
+RBQA-LOG dayone | 
+RBQA-LOG dayone | 1 !== 0
+RBQA-LOG dayone | 
+RBQA-LOG dayone |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG dayone |     at file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-austin-day-one.mjs:194:5
+RBQA-LOG dayone |     at step (file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-austin-day-one.mjs:171:30)
+RBQA-LOG dayone |     at file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-austin-day-one.mjs:192:9
+RBQA-LOG dayone |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-LOG dayone | NOT RUN 2. Desk: office book, 6 seed properties, REI ledger CSV import
+RBQA-LOG dayone | NOT RUN 3. Gmail: fixture connector reports the inbox connected; history complete
+RBQA-LOG dayone | NOT RUN 4. W3 morning priorities: run, items for seed mail, rerun makes no worker call
+RBQA-LOG dayone | NOT RUN 5. W2 weekly bills: run, accept one bill, bill on the calendar
+RBQA-LOG dayone | NOT RUN 6. W1 bank: lab Redbark rows, review, fictional REI, approve upload once, read back N/N
+RBQA-LOG dayone | NOT RUN 7. Arrears and owner letters: cards for seed tenants and owners; Allow one; send stays 403
+RBQA-LOG dayone | NOT RUN 8. Restart: everything kept, nothing reruns
+RBQA-LOG dayone | NOT RUN 9. Receipt
+RBQA-LOG dayone | FAIL    1. Office: mock grant, onboarding, agency setup, Austin pack
+RBQA-LOG dayone | NOT RUN 2. Desk: office book, 6 seed properties, REI ledger CSV import
+RBQA-LOG dayone | NOT RUN 3. Gmail: fixture connector reports the inbox connected; history complete
+RBQA-LOG dayone | NOT RUN 4. W3 morning priorities: run, items for seed mail, rerun makes no worker call
+RBQA-LOG dayone | NOT RUN 5. W2 weekly bills: run, accept one bill, bill on the calendar
+RBQA-LOG dayone | NOT RUN 6. W1 bank: lab Redbark rows, review, fictional REI, approve upload once, read back N/N
+RBQA-LOG dayone | NOT RUN 7. Arrears and owner letters: cards for seed tenants and owners; Allow one; send stays 403
+RBQA-LOG dayone | NOT RUN 8. Restart: everything kept, nothing reruns
+RBQA-LOG dayone | NOT RUN 9. Receipt
+RBQA-BEAT kevin-prep started pid=2224
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin-prep","status":"PASS","exit":0,"seconds":41}
+RBQA-BEAT qa-kevin-day started pid=4700
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-kevin-day","status":"PASS","exit":0,"timedOut":false,"seconds":13,"passed":34,"checks":34}
+RBQA-BEAT qa-w1-simulated started pid=5396
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-w1-simulated","status":"FAIL","exit":1,"timedOut":false,"seconds":17}
+RBQA-LOG qa-w1-simulated |     at buildOrContextImpl (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1139:5)
+RBQA-LOG qa-w1-simulated |     at Object.buildOrContext (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:963:5)
+RBQA-LOG qa-w1-simulated |     at C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:2329:68
+RBQA-LOG qa-w1-simulated |     at new Promise (<anonymous>)
+RBQA-LOG qa-w1-simulated |     at Object.context (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:2329:27)
+RBQA-LOG qa-w1-simulated |     at Object.context (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:2171:58)
+RBQA-LOG qa-w1-simulated |     at prepareEsbuildScanner (file:///C:/q/rbqa-20261007T014422Z/src/node_modules/.pnpm/vite@7.3.6_@types+node@26.2_6bf86fb46ea831e1af60de5de6b198c7/node_modules/vite/dist/node/chunks/config.js:31534:23)
+RBQA-LOG qa-w1-simulated | 
+RBQA-LOG qa-w1-simulated |   The plugin "vite:dep-scan" was triggered by this import
+RBQA-LOG qa-w1-simulated | 
+RBQA-LOG qa-w1-simulated |     index.html:1:7:
+RBQA-LOG qa-w1-simulated | ?[37m      1 ??? import ?[32m"/src/main.tsx"?[37m
+RBQA-LOG qa-w1-simulated |         ???        ?[32m~~~~~~~~~~~~~~~?[0m
+RBQA-LOG qa-w1-simulated | 
+RBQA-LOG qa-w1-simulated | 
+RBQA-LOG qa-w1-simulated |     at failureErrorWithLog (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1752:15)
+RBQA-LOG qa-w1-simulated |     at C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1211:25
+RBQA-LOG qa-w1-simulated |     at runOnEndCallbacks (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1592:45)
+RBQA-LOG qa-w1-simulated |     at buildResponseToResult (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1209:7)
+RBQA-LOG qa-w1-simulated |     at C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1221:9
+RBQA-LOG qa-w1-simulated |     at new Promise (<anonymous>)
+RBQA-LOG qa-w1-simulated |     at requestCallbacks.on-end (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:1220:54)
+RBQA-LOG qa-w1-simulated |     at handleRequest (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:911:17)
+RBQA-LOG qa-w1-simulated |     at handleIncomingPacket (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:936:7)
+RBQA-LOG qa-w1-simulated |     at Socket.readFromStdout (C:\q\rbqa-20261007T014422Z\src\node_modules\.pnpm\esbuild@0.28.2\node_modules\esbuild\lib\main.js:864:7)?[39m
+RBQA-BEAT qa-weekly-bills started pid=668
+RBQA-BEAT qa-weekly-bills 60s log=0B
+RBQA-BEAT qa-weekly-bills 120s log=0B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-weekly-bills","status":"FAIL","exit":1,"timedOut":false,"seconds":122}
+RBQA-LOG qa-weekly-bills | WindowsFilePrivacyError: Windows file privacy could not be verified. Use a private directory owned by the trusted installer account. [windows-acl:process-terminated; exit=unavailable]
+RBQA-LOG qa-weekly-bills |     at nativeFailure (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281:10)
+RBQA-LOG qa-weekly-bills |     at endSyncHost (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:542:10)
+RBQA-LOG qa-weekly-bills |     at syncHostBatch (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:551:121)
+RBQA-LOG qa-weekly-bills |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG qa-weekly-bills |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG qa-weekly-bills |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG qa-weekly-bills |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG qa-weekly-bills |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG qa-weekly-bills |     at ensureProfileDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:3)
+RBQA-LOG qa-weekly-bills |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG qa-weekly-bills |   category: 'process-terminated',
+RBQA-LOG qa-weekly-bills |   nativeExitCode: null,
+RBQA-LOG qa-weekly-bills |   operationIndex: null,
+RBQA-LOG qa-weekly-bills |   detail: null
+RBQA-LOG qa-weekly-bills | }
+RBQA-LOG qa-weekly-bills | 
+RBQA-LOG qa-weekly-bills | Node.js v24.21.0
+RBQA-LOG qa-weekly-bills | 
+RBQA-LOG qa-weekly-bills | 
+RBQA-LOG qa-weekly-bills | 1 !== 0
+RBQA-LOG qa-weekly-bills | 
+RBQA-LOG qa-weekly-bills |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG qa-weekly-bills |     at file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-weekly-bills.mjs:65:3
+RBQA-LOG qa-weekly-bills |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-BEAT qa-source-bills started pid=4840
+RBQA-BEAT qa-source-bills 60s log=0B
+RBQA-BEAT qa-source-bills 120s log=0B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-source-bills","status":"FAIL","exit":1,"timedOut":false,"seconds":122}
+RBQA-LOG qa-source-bills | WindowsFilePrivacyError: Windows file privacy could not be verified. Use a private directory owned by the trusted installer account. [windows-acl:process-terminated; exit=unavailable]
+RBQA-LOG qa-source-bills |     at nativeFailure (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281:10)
+RBQA-LOG qa-source-bills |     at endSyncHost (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:542:10)
+RBQA-LOG qa-source-bills |     at syncHostBatch (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:551:121)
+RBQA-LOG qa-source-bills |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG qa-source-bills |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG qa-source-bills |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG qa-source-bills |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG qa-source-bills |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG qa-source-bills |     at ensureProfileDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:3)
+RBQA-LOG qa-source-bills |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG qa-source-bills |   category: 'process-terminated',
+RBQA-LOG qa-source-bills |   nativeExitCode: null,
+RBQA-LOG qa-source-bills |   operationIndex: null,
+RBQA-LOG qa-source-bills |   detail: null
+RBQA-LOG qa-source-bills | }
+RBQA-LOG qa-source-bills | 
+RBQA-LOG qa-source-bills | Node.js v24.21.0
+RBQA-LOG qa-source-bills | 
+RBQA-LOG qa-source-bills | 
+RBQA-LOG qa-source-bills | 1 !== 0
+RBQA-LOG qa-source-bills | 
+RBQA-LOG qa-source-bills |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG qa-source-bills |     at file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-source-bills.mjs:65:3
+RBQA-LOG qa-source-bills |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-BEAT qa-w2-calendar started pid=5228
+RBQA-BEAT qa-w2-calendar 60s log=0B
+RBQA-BEAT qa-w2-calendar 120s log=0B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-w2-calendar","status":"FAIL","exit":1,"timedOut":false,"seconds":122}
+RBQA-LOG qa-w2-calendar | WindowsFilePrivacyError: Windows file privacy could not be verified. Use a private directory owned by the trusted installer account. [windows-acl:process-terminated; exit=unavailable]
+RBQA-LOG qa-w2-calendar |     at nativeFailure (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281:10)
+RBQA-LOG qa-w2-calendar |     at endSyncHost (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:542:10)
+RBQA-LOG qa-w2-calendar |     at syncHostBatch (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:551:121)
+RBQA-LOG qa-w2-calendar |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG qa-w2-calendar |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG qa-w2-calendar |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG qa-w2-calendar |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG qa-w2-calendar |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG qa-w2-calendar |     at ensureProfileDir
+RBQA-LOG qa-w2-calendar |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG qa-w2-calendar |   category: 'process-terminated',
+RBQA-LOG qa-w2-calendar |   nativeExitCode: null,
+RBQA-LOG qa-w2-calendar |   operationIndex: null,
+RBQA-LOG qa-w2-calendar |   detail: null
+RBQA-LOG qa-w2-calendar | }
+RBQA-LOG qa-w2-calendar | 
+RBQA-LOG qa-w2-calendar | Node.js v24.21.0
+RBQA-LOG qa-w2-calendar | 
+RBQA-LOG qa-w2-calendar | 
+RBQA-LOG qa-w2-calendar | 1 !== 0
+RBQA-LOG qa-w2-calendar | 
+RBQA-LOG qa-w2-calendar |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG qa-w2-calendar |     at file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-w2-calendar.mjs:69:3
+RBQA-LOG qa-w2-calendar |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-BEAT qa-rei-login-wait started pid=728
+RBQA-BEAT qa-rei-login-wait 60s log=0B
+RBQA-BEAT qa-rei-login-wait 120s log=0B
+RBQA-BEAT qa-rei-login-wait 180s log=1908B
+RBQA-BEAT qa-rei-login-wait 240s log=1908B
+RBQA-BEAT qa-rei-login-wait 300s log=1908B
+RBQA-BEAT qa-rei-login-wait 360s log=1908B
+RBQA-BEAT qa-rei-login-wait 420s log=1908B
+RBQA-BEAT qa-rei-login-wait 480s log=1908B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-rei-login-wait","status":"FAIL","exit":124,"timedOut":true,"seconds":481}
+RBQA-LOG qa-rei-login-wait |     at nativeFailure (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281:10)
+RBQA-LOG qa-rei-login-wait |     at endSyncHost (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:542:10)
+RBQA-LOG qa-rei-login-wait |     at syncHostBatch (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:551:121)
+RBQA-LOG qa-rei-login-wait |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG qa-rei-login-wait |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG qa-rei-login-wait |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG qa-rei-login-wait |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG qa-rei-login-wait |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG qa-rei-login-wait |     at ensureProfileDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:3)
+RBQA-LOG qa-rei-login-wait |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG qa-rei-login-wait |   category: 'process-terminated',
+RBQA-LOG qa-rei-login-wait |   nativeExitCode: null,
+RBQA-LOG qa-rei-login-wait |   operationIndex: null,
+RBQA-LOG qa-rei-login-wait |   detail: null
+RBQA-LOG qa-rei-login-wait | }
+RBQA-LOG qa-rei-login-wait | 
+RBQA-LOG qa-rei-login-wait | Node.js v24.21.0
+RBQA-LOG qa-rei-login-wait | 
+RBQA-LOG qa-rei-login-wait | 
+RBQA-LOG qa-rei-login-wait | 1 !== 0
+RBQA-LOG qa-rei-login-wait | 
+RBQA-LOG qa-rei-login-wait |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG qa-rei-login-wait |     at startAustinDemo (file:///C:/q/rbqa-20261007T014422Z/src/scripts/seed-austin-demo.mjs:158:14)
+RBQA-LOG qa-rei-login-wait |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-LOG qa-rei-login-wait |     at async file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-rei-login-wait.mjs:81:10
+RBQA-BEAT qa-rei-signin-wait started pid=1240
+RBQA-BEAT qa-rei-signin-wait 60s log=0B
+RBQA-BEAT qa-rei-signin-wait 120s log=0B
+RBQA-BEAT qa-rei-signin-wait 180s log=1909B
+RBQA-BEAT qa-rei-signin-wait 240s log=1909B
+RBQA-BEAT qa-rei-signin-wait 300s log=1909B
+RBQA-BEAT qa-rei-signin-wait 360s log=1909B
+RBQA-BEAT qa-rei-signin-wait 420s log=1909B
+RBQA-BEAT qa-rei-signin-wait 480s log=1909B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-rei-signin-wait","status":"FAIL","exit":124,"timedOut":true,"seconds":481}
+RBQA-LOG qa-rei-signin-wait |     at nativeFailure (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:281:10)
+RBQA-LOG qa-rei-signin-wait |     at endSyncHost (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:542:10)
+RBQA-LOG qa-rei-signin-wait |     at syncHostBatch (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:551:121)
+RBQA-LOG qa-rei-signin-wait |     at windowsFilePrivacyBatchSync (file:///C:/q/rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:485:5)
+RBQA-LOG qa-rei-signin-wait |     at admit (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:134:5)
+RBQA-LOG qa-rei-signin-wait |     at ensureDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:120:7)
+RBQA-LOG qa-rei-signin-wait |     at file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:17
+RBQA-LOG qa-rei-signin-wait |     at checked (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:25:16)
+RBQA-LOG qa-rei-signin-wait |     at ensureProfileDirectories (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-profile-storage.ts:84:3)
+RBQA-LOG qa-rei-signin-wait |     at prepareProfile (file:///C:/q/rbqa-20261007T014422Z/src/server/hermes-pack.ts:185:3) {
+RBQA-LOG qa-rei-signin-wait |   category: 'process-terminated',
+RBQA-LOG qa-rei-signin-wait |   nativeExitCode: null,
+RBQA-LOG qa-rei-signin-wait |   operationIndex: null,
+RBQA-LOG qa-rei-signin-wait |   detail: null
+RBQA-LOG qa-rei-signin-wait | }
+RBQA-LOG qa-rei-signin-wait | 
+RBQA-LOG qa-rei-signin-wait | Node.js v24.21.0
+RBQA-LOG qa-rei-signin-wait | 
+RBQA-LOG qa-rei-signin-wait | 
+RBQA-LOG qa-rei-signin-wait | 1 !== 0
+RBQA-LOG qa-rei-signin-wait | 
+RBQA-LOG qa-rei-signin-wait |     at provisionMockWorkerGrant (file:///C:/q/rbqa-20261007T014422Z/src/scripts/testing/mock-worker-grant.mjs:72:10)
+RBQA-LOG qa-rei-signin-wait |     at startAustinDemo (file:///C:/q/rbqa-20261007T014422Z/src/scripts/seed-austin-demo.mjs:158:14)
+RBQA-LOG qa-rei-signin-wait |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+RBQA-LOG qa-rei-signin-wait |     at async file:///C:/q/rbqa-20261007T014422Z/src/scripts/qa-rei-signin-wait.mjs:73:10
+RBQA-BEAT qa-bank-amendments started pid=4772
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"kevin:qa-bank-amendments","status":"FAIL","exit":1,"timedOut":false,"seconds":7}
+RBQA-LOG qa-bank-amendments | browserType.launch: Target page, context or browser has been closed
+RBQA-LOG qa-bank-amendments | Browser logs:
+RBQA-LOG qa-bank-amendments | 
+RBQA-LOG qa-bank-amendments | <launching> C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detectio...
+RBQA-LOG qa-bank-amendments | <launched> pid=3372
+RBQA-LOG qa-bank-amendments | Call log:
+RBQA-LOG qa-bank-amendments | ?[2m  - <launching> C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-...
+RBQA-LOG qa-bank-amendments | ?[2m  - <launched> pid=3372?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] <gracefully close start>?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] <kill>?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] <will force kill>?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] taskkill stderr: ERROR: The process "3372" not found.?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] <process did exit: exitCode=1002, signal=null>?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] starting temporary directories cleanup?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] finished temporary directories cleanup?[22m
+RBQA-LOG qa-bank-amendments | ?[2m  - [pid=3372] <gracefully close end>?[22m
+RBQA-LOG qa-bank-amendments | 
+RBQA-BEAT chaos started pid=5840
+RBQA-BEAT chaos 60s log=1497B
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"chaos","status":"FAIL","exit":0,"pass":["1","2","5","6"],"fail":["4","7a","7b","7c","7d"],"na":["3"],"notPassed":["3 Disk full (128 MiB APFS image) then freed [N/A]: No hdiutil on Windows; a VHD stand-in needs diskpart and admin rights, so disk-full is not covered here.","4 Network severed through a socket-dropping proxy, then restored [FAIL]: Error: relay child exited: /rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:563? |   throw new WindowsFilePrivacyError(category                  , nativeExitCode, false, operationIndex, planned.length, detail);? |         ^?","7a Fake Modelvia 429 with Retry-After [FAIL]: Error: relay child exited: /rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:563? |   throw new WindowsFilePrivacyError(category                  , nativeExitCode, false, operationIndex, planned.length, detail);? |         ^?","7b Fake Modelvia 401 rejected key [FAIL]: Error: relay child exited: /rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:563? |   throw new WindowsFilePrivacyError(category                  , nativeExitCode, false, operationIndex, planned.length, detail);? |         ^?","7c Fake Modelvia 5xx outage [FAIL]: Error: relay child exited: /rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:563? |   throw new WindowsFilePrivacyError(category                  , nativeExitCode, false, operationIndex, planned.length, detail);? |         ^?","7d Fake Modelvia slow stream, then stalled stream [FAIL]: Error: relay child exited: /rbqa-20261007T014422Z/src/server/windows-file-privacy.ts:563? |   throw new WindowsFilePrivacyError(category                  , nativeExitCode, false, operationIndex, planned.length, detail);? |         ^?"],"cleanup":{"imagesAttachedAtEnd":0,"imagesForceDetached":0,"processesMentioningRootAtEnd":0,"rootRemoved":true,"nonLoopbackAttempts":[]},"seconds":89}
+RBQA-RESULT {"run":"rbqa-20261007T014422Z","step":"run","status":"DONE","seconds":2144}
+RBQA-DONE rbqa-20261007T014422Z
