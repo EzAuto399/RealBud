@@ -2,7 +2,7 @@
 import { ALLOWED_TOOLS, FORBIDDEN_TOOLS } from "./cua-bounded.ts";
 import type { JobCapability } from "../shared/contracts.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
-import { consequentialKind, SIGN_IN_CONTROL, SUBMIT_CONTROL, SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU } from "./browser-authority.ts";
+import { consequentialKind, siteApproval, SIGN_IN_CONTROL, SUBMIT_CONTROL, SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU, type BrowserApprovals } from "./browser-authority.ts";
 
 export { SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU, submitPressSummary } from "./browser-authority.ts";
 
@@ -11,7 +11,9 @@ export type PortalFenceSurface = "portal-read" | "portal-prefill" | "portal-subm
 export interface FenceContext {
   allowedOrigins: string[];
   capabilities: JobCapability[];
-  rules?: Array<{ key: string; decision: "allow" | "deny" }>;
+  rules?: ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
+  /** The approval settings that govern this desktop (`effectiveRules`). Absent: nothing saved; null refuses. */
+  approvals?: BrowserApprovals;
 }
 
 export type FenceDecision = {
@@ -254,6 +256,15 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
 
   const origin = resolveOrigin(ctx, hosts);
   const surface = surfaceForTool(tool);
+  // The site's approval setting: Don't use refuses; Ask every time keeps every rule from allowing;
+  // Read without asking allows reading and a same-site open, like a reading rule.
+  const params = request.params && typeof request.params === "object" && !Array.isArray(request.params) ? request.params as Record<string, unknown> : {};
+  const clickLabel = tool === "click_semantic" ? `${clickBlob(request.params)} ${request.summary ?? ""}` : "";
+  const setting = siteApproval(ctx.approvals, [...(origin ? [origin] : []), ...hosts], {
+    tool: `browser_${tool}`, args: tool === "navigate" ? { url: params.url } : {},
+    cls: tool === "read" || tool === "navigate" ? "read" : tool === "click_semantic" && SUBMIT_CONTROL.test(clickLabel) ? "submit" : "write",
+  });
+  if (setting.kind === "refuse") return { kind: "deny", reason: setting.reason, surface, origin };
 
   if (tool === "navigate" || tool === "fill" || tool === "click_semantic") {
     const parsedObject = request.params != null && typeof request.params === "object";
@@ -280,7 +291,7 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
         origin,
       };
     }
-    if (ruleAllows(ctx, "portal-prefill", origin, hosts)) {
+    if (setting.kind !== "ask" && ruleAllows(ctx, "portal-prefill", origin, hosts)) {
       return { kind: "allow", surface: "portal-prefill", origin };
     }
     return { kind: "ask", surface: "portal-prefill", origin };
@@ -303,7 +314,7 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
     return { kind: "ask", surface: "portal-read", origin };
   }
 
-  if ((tool === "read" || tool === "navigate") && ruleAllows(ctx, "portal-read", origin, hosts)) {
+  if ((tool === "read" || tool === "navigate") && setting.kind !== "ask" && (setting.kind === "reads" || ruleAllows(ctx, "portal-read", origin, hosts))) {
     return { kind: "allow", surface: "portal-read", origin };
   }
 

@@ -9,6 +9,21 @@ import type { ApprovalPolicy, MemoryApprovalReview } from '../shared/approval-po
 import type { MemoryProposalInput, MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
 import type { BrowserApprovalCard } from '../shared/browser-approval-card.ts';
 import type { RunUsage } from '../shared/contracts.ts';
+import type { ApprovalCardMeta } from '../shared/approval-settings.ts';
+
+/** An app read on the exact read-only allowlist that a this-task grant may
+ * cover: "Allow for this task", and "Always allow reading <app>" where
+ * `always` (the person may change approval settings here). `group` is the
+ * app group the grant names; the server checks it again on answer. */
+export interface ApprovalReadOffer { appLabel: string; always: boolean; group: string }
+/** What a broker adds to its approval card. `summary` stays plain lines. */
+export interface ApprovalCardDetails {
+  /** What a phone may do with this card; absent means desktop only. */
+  remote?: ApprovalCardMeta['remote'];
+  /** The exact request, shown under an "Exact request" disclosure. */
+  detail?: string;
+  readOffer?: ApprovalReadOffer;
+}
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -83,6 +98,11 @@ export type RuntimeEvent = RuntimeEventBase &
         params?: unknown;
         approvalPolicy?: ApprovalPolicy;
         memoryReview?: MemoryApprovalReview;
+        /** ISO time the request stops waiting. */
+        deadline?: string;
+        remote?: ApprovalCardDetails['remote'];
+        detail?: string;
+        readOffer?: ApprovalReadOffer;
         /** A consequential browser step: the broker's verified facts and expiry. */
         browserApproval?: BrowserApprovalCard;
         fence?: {
@@ -95,7 +115,7 @@ export type RuntimeEvent = RuntimeEventBase &
           } | null;
         };
       }
-    | { type: "request.resolved"; behavior: string; source: string }
+    | { type: "request.resolved"; behavior: string; source: string; resolution?: ApprovalCardMeta['resolution'] }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedRead?: number; thought?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.

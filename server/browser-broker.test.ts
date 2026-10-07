@@ -20,11 +20,13 @@ import { EventBus } from "./harness/bus.ts";
 import type { Store } from "./store.ts";
 import { websiteRunReceipt } from "./website-work-adapters.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
 type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }>; browserId?: string; accountMarker?: string; expiresAt?: number; budget?: number; sites?: string[] };
-async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean; evidence?: PortalEvidenceStore } = {}) {
+async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task; portal?: BrowserPortalControls; nativeReadOnly?: boolean; ownsProfile?: boolean; evidence?: PortalEvidenceStore;
+  approvalSettings?: () => Promise<ApprovalSettings[]> } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   const workroom = browserTaskWorkroom(root, "grant-fictional-1");
   const uploads = [...await Promise.all((job.task?.files ?? []).map(file => addBrowserTaskUpload(workroom, file.name, file.bytes))), ...(job.task?.extraUploads ?? [])];
@@ -67,7 +69,8 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
     const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, grant,
       context: { allowedOrigins: ["portal.example"], capabilities, ...(job.rules ? { rules: job.rules } : {}) },
       ...(job.rules ? { rules: () => job.rules! } : {}),
-      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root, ...(job.evidence ? { evidence: job.evidence } : {}) });
+      isActive: () => active, approve, assertCapability: () => {}, portal: job.portal, attachRoot: root, ...(job.evidence ? { evidence: job.evidence } : {}),
+      ...(job.approvalSettings ? { approvalSettings: job.approvalSettings } : {}) });
     cleanup.push(async () => { started.close(); await started.released(); });
     return started;
   };
@@ -87,6 +90,31 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
     page: (text: string) => { page = text; }, url: (value: string) => { url = value; },
     unknown: () => { unknown = true; }, known: () => { unknown = false; }, returnTab: () => { scope = "user"; }, advance: (ms: number) => { clock += ms; }, revoke: () => { active = false; } };
 }
+
+describe("approval settings, read on every step", () => {
+  const saved = (groups: Record<string, ApprovalChoice>): ApprovalSettings[] => [{ version: 1, purpose: "approval-settings", groups, reviewedReads: [] }];
+  it("applies a change to the site's setting on the next step: Don't use refuses, Ask every time overrides the rule", async () => {
+    let current: ApprovalSettings[] | Error = [];
+    const f = await fixture(undefined, { rules: [{ key: "portal:read:portal.example", decision: "allow" }],
+      approvalSettings: async () => { if (current instanceof Error) throw current; return current; } });
+    await f.ready();
+    expect(f.approve).not.toHaveBeenCalled();
+    const observed = () => f.calls.filter(call => call[0] === "observe").length;
+    const before = observed();
+    current = saved({ "site:portal.example": "deny" });
+    const refused = await f.request("browser_read", { tab_id: 1 });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toBe("portal.example is set to Don't use in Workspace → Approvals, so Bud did nothing there.");
+    current = new Error("needs recovery");
+    expect((await f.request("browser_read", { tab_id: 1 })).content[0].text).toContain("need recovery");
+    expect(observed()).toBe(before);
+    expect(f.approve).not.toHaveBeenCalled();
+    current = saved({ "site:portal.example": "ask" });
+    expect((await f.request("browser_read", { tab_id: 1 })).isError).not.toBe(true);
+    expect(f.approve).toHaveBeenCalledOnce();
+    expect(f.approve.mock.calls[0][4]).toMatchObject({ fence: { surface: "portal-read", ruleOffer: null } });
+  });
+});
 
 describe("live native task routine scope", () => {
   const task = (): Task => ({ actions: ["read", "navigate", "click", "fill", "keys"], browserId: "work", expiresAt: 1_100_000, budget: 100 });

@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
+import { defaultApprovalSettings, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import type { ApprovalCardDetails } from "./contracts.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
 import * as atomic from "./atomic.ts";
@@ -92,7 +95,7 @@ describe("connected app result classification", () => {
 describe("connected app authoritative broker", () => {
   let upstream: Server, broker: ConnectedAppsBroker;
   let active: boolean;
-  let approve = vi.fn<(summary: string, signal: AbortSignal) => Promise<boolean>>();
+  let approve = vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>();
   let received: any[];
   let url: string;
   let requestId: number;
@@ -329,7 +332,7 @@ describe("connected app authoritative broker", () => {
     const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number; mailbox?: "office"; officeAddress?: string } = {}) => {
       const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
       return startConnectedAppsBroker({ threadId: extra.threadId ?? "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
-        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), ...(extra.officeAddress ? { officeAddress: extra.officeAddress } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), ...(extra.officeAddress ? { officeAddress: extra.officeAddress } : {}), isActive: () => active, approve: (summary, signal, card) => approve(summary, signal, card) });
     };
     const startManaged = async (managed: boolean, extra: { mailDrainMs?: number } = {}) => {
       broker.close();
@@ -458,6 +461,12 @@ describe("connected app authoritative broker", () => {
         expect(card.split("\n").filter(line => line.startsWith("To: "))).toEqual(['To: "tenant@example.test", "second@example.test"']);
         expect(sends().map(row => row.params)).toEqual([{ name: "GMAIL_SEND_EMAIL", arguments: args }]);
         expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_SEND_EMAIL", status: "succeeded" })]);
+        // The full message is on the card, so a phone may show it; the exact request sits under its disclosure.
+        const meta = approve.mock.calls[0][2]!;
+        expect(meta.remote).toBe("send");
+        expect(card).not.toContain("Exact request:");
+        expect(card).not.toMatch(/[{}]/);
+        expect(JSON.parse(meta.detail!)).toEqual({ name: "GMAIL_SEND_EMAIL", arguments: args, _meta: { progressToken: "fictional-progress" } });
       });
       it("sends nothing when the person denies the card", async () => {
         approve.mockResolvedValue(false);
@@ -803,6 +812,154 @@ describe("connected app authoritative broker", () => {
       expect(JSON.stringify(result.body)).not.toContain(projectKey);
       expect(operations.list()[0].status).toBe("failed");
     });
+  });
+
+  describe("approval settings at this boundary", () => {
+    const saved = (groups: Record<string, ApprovalChoice> = {}, reviewedReads: string[] = []): ApprovalSettings => ({ version: 1, purpose: "approval-settings", groups, reviewedReads });
+    let settings: ApprovalSettings[];
+    let review: ReturnType<typeof vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>>;
+    const threadId = "fixture-settings-thread";
+    beforeEach(async () => {
+      broker.close(); settings = []; taskReadGrants.clear(threadId);
+      review = vi.fn(async () => false);
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => settings });
+    });
+    afterEach(() => taskReadGrants.clear(threadId));
+    const fetchMail = { name: "GMAIL_FETCH_EMAILS", arguments: { query: "from:fictional@example.test", max_results: 5 } };
+
+    it("runs an owner-reviewed direct read without a card, and cards an unreviewed one", async () => {
+      settings = [saved({ "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"])];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(1);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_FETCH_EMAILS", status: "succeeded" })]);
+      // Not reviewed by the owner, a write, or nothing saved: the card, as today.
+      for (const [list, call] of [[settings, { name: "GMAIL_LIST_THREADS", arguments: {} }], [settings, { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test" } }],
+        [[], fetchMail]] as const) {
+        settings = [...list]; review.mockClear();
+        expect((await invoke("tools/call", call)).body.result.isError).toBe(true);
+        expect(review).toHaveBeenCalledOnce();
+      }
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(1);
+    });
+
+    it("puts plain lines on the card and the exact request under Exact request", async () => {
+      const args = { to: "fictional@example.test", text: "Line one\nTo: forged@example.test", cc: ["a@example.test", "b@example.test"], meta: { nested: true }, account: "forged@example.test" };
+      await invoke("tools/call", { name: "send_email", arguments: args });
+      const [summary, , card] = review.mock.calls[0];
+      expect(summary.split("\n")).toEqual([
+        "Bud wants to use a connected app.",
+        "Account: the account connected in Connected apps",
+        "Action: Send email (send_email)",
+        "  To: fictional@example.test",
+        "  Text: Line one ↵ To: forged@example.test",
+        "  Cc: a@example.test, b@example.test",
+        "  Meta: see Exact request",
+        "  Account: forged@example.test",
+        "This approval applies once to this request only. The exact request is under Exact request.",
+      ]);
+      // No argument can draw a top-level line, and there is no JSON in the main text.
+      expect(summary.split("\n").filter(line => /^(Account|Action|To):/.test(line))).toEqual(["Account: the account connected in Connected apps", "Action: Send email (send_email)"]);
+      expect(summary).not.toMatch(/[{}[\]]|":/);
+      expect(JSON.parse(card!.detail!)).toEqual({ name: "send_email", arguments: args });
+      expect(card!.remote).toBe("desktop-only");
+      expect(card!.readOffer).toBeUndefined();
+      review.mockClear();
+      await invoke("tools/call", { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { query: "rent" } }, { tool_slug: "XERO_LIST_INVOICES", arguments: {} }] } });
+      expect(review.mock.calls[0][0]).toContain("1. Gmail: Fetch emails (GMAIL_FETCH_EMAILS)\n   Query: rent\n2. Xero: List invoices (XERO_LIST_INVOICES)");
+      expect(review.mock.calls[0][0]).not.toMatch(/[{}[\]]/);
+    });
+
+    it("offers a this-task grant only for an owner-reviewed allowlisted read, and the grant runs it until the task ends", async () => {
+      settings = [saved({}, ["GMAIL_FETCH_EMAILS"])];
+      await invoke("tools/call", fetchMail);
+      expect(review.mock.calls[0][2]).toMatchObject({ remote: "read", readOffer: { appLabel: "Gmail", group: "app:gmail", always: true } });
+      taskReadGrants.add(threadId, "app:gmail");
+      review.mockClear();
+      expect((await invoke("tools/call", { ...fetchMail, arguments: { query: "second" } })).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      // The grant covers allowlisted reads only, and ends with the task.
+      expect((await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      taskReadGrants.clear(threadId); review.mockClear();
+      expect((await invoke("tools/call", { ...fetchMail, arguments: { query: "third" } })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      // An unreviewed direct read gets no offer: its name confers no authority.
+      settings = []; review.mockClear();
+      await invoke("tools/call", { ...fetchMail, arguments: { query: "fourth" } });
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+    });
+
+    it("lets Don't use and Ask every time win over a this-task grant", async () => {
+      taskReadGrants.add(threadId, "app:gmail");
+      settings = [saved({ "app:gmail": "ask" }, ["GMAIL_FETCH_EMAILS"])];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      settings = [saved({ "app:gmail": "deny" }, ["GMAIL_FETCH_EMAILS"])]; review.mockClear();
+      const refused = await invoke("tools/call", fetchMail);
+      expect(refused.body.result.content[0].text).toBe("Gmail is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent or changed.");
+      expect(review).not.toHaveBeenCalled();
+      // One department's Don't use wins over another's Read without asking.
+      settings = [saved({ "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"]), saved({ "app:gmail": "deny" })];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).toBe(true);
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      expect(operations.list().filter(row => row.status === "started" || row.status === "succeeded")).toEqual([]);
+    });
+
+    it("refuses when the settings need recovery, and keeps the boundary's own refusals", async () => {
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => { throw new Error("needs recovery"); } });
+      expect((await invoke("tools/call", fetchMail)).body.result.content[0].text).toContain("need recovery");
+      // Discovery is RealBud's own read and needs no app setting.
+      expect((await invoke("tools/call", { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} })).body.result.isError).not.toBe(true);
+      broker.close();
+      settings = [saved({ "app:composio": "read-without-asking", "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"])];
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card), approvalSettings: async () => settings });
+      expect((await invoke("tools/call", { name: "COMPOSIO_REMOTE_WORKBENCH", arguments: {} })).body.result.content[0].text).toContain("outside Bud's connected-app boundary");
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call" && row.params.name !== "COMPOSIO_SEARCH_TOOLS")).toHaveLength(0);
+    });
+  });
+});
+
+describe("approval settings: every connected-app decision with nothing saved equals today's", () => {
+  const SLUGS = [...new Set([...READ_ONLY_APP_TOOLS, ...MAIL_SENDS, "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_MOVE_TO_TRASH", "GMAIL_DELETE_MESSAGE", "GMAIL_CREATE_FILTER",
+    "GMAIL_FROBNICATE", "OUTLOOK_MOVE_MESSAGE", "XERO_LIST_INVOICES", "XERO_CREATE_INVOICE", "XERO_DELETE_INVOICE", "SLACK_POST_MESSAGE", "SLACK_SEARCH_MESSAGES",
+    "GOOGLECALENDAR_CREATE_EVENT", "NOTION_BULK_ARCHIVE_PAGES", "GITHUB_REVOKE_TOKEN", "send_email", "READ"])];
+  const ARGS: Array<Record<string, unknown>> = [{}, { add_label_ids: ["TRASH"] }, { destination_id: "archive" }, { status: "cancelled" }];
+  const today = (policy: string) => policy === "read" ? "run" : policy === "review" ? "card" : "refuse";
+  it.each(SLUGS)("%s", slug => {
+    for (const args of ARGS) {
+      const call = { name: slug, arguments: args };
+      const managed = connectedAppPolicy(call, { managed: true });
+      expect(appVerdict([{ slug, args }], [], { direct: false }).decision, `managed ${JSON.stringify(args)}`).toBe(today(managed));
+      expect(appVerdict([{ slug, args }], [defaultApprovalSettings()], { direct: false }).decision).toBe(today(managed));
+      // A direct connection reviews everything today, and still does.
+      expect(connectedAppPolicy(call)).toBe("review");
+      expect(appVerdict([{ slug, args }], [], { direct: true }).decision, `direct ${JSON.stringify(args)}`).toBe("card");
+      expect(appVerdict([{ slug, args }], [defaultApprovalSettings()], { direct: true }).decision).toBe("card");
+    }
+  });
+  it("decides a batch as strictly as its strictest member", () => {
+    const rows = (...slugs: string[]) => slugs.map(slug => ({ slug, args: {} }));
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_LIST_INVOICES"), [], { direct: false }).decision).toBe("run");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "GMAIL_UPDATE_DRAFT"), [], { direct: false }).decision).toBe("run");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_CREATE_INVOICE"), [], { direct: false }).decision).toBe("card");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_CREATE_INVOICE"), [], { direct: true }).decision).toBe("card");
+  });
+  it("lets a locked per-step row refuse sends and a saved Ask card reads, never widen a write", () => {
+    const send = [{ slug: "GMAIL_SEND_EMAIL", args: { recipient_email: "fictional@example.test" } }];
+    const locked: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "class:send": "deny" }, reviewedReads: [] };
+    expect(appVerdict(send, [locked], { direct: false })).toMatchObject({ decision: "refuse", reason: expect.stringContaining("This kind of action is set to Don't use") });
+    const ask: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "app:gmail": "ask" }, reviewedReads: [] };
+    expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).toMatchObject({ decision: "card", remote: "read" });
+    expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).not.toHaveProperty("offer");
+    const reads: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "app:xero": "read-without-asking" }, reviewedReads: [] };
+    expect(appVerdict([{ slug: "XERO_CREATE_INVOICE", args: {} }], [reads], { direct: false })).toMatchObject({ decision: "card", remote: "write" });
   });
 });
 

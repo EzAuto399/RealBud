@@ -752,6 +752,31 @@ describe("harness HTTP API", () => {
     expect(history.body.entries[0]).toMatchObject({ by: "This computer", department: null, after: next });
   });
 
+  it("answers every card through one live-request helper on both respond routes", async () => {
+    // Source contract: both routes hand their parsed answer to answerLiveRequest, which keeps the
+    // live-card check, guardPermissionDecision, the site-rule checks and the read grants in one place.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const route = (pattern: string) => source.slice(source.indexOf(pattern), source.indexOf("return json(res, reply.status, reply.body);", source.indexOf(pattern)));
+    for (const pattern of ["m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond$/);", "m = path.match(/^\\/api\\/threads\\/([\\w-]+)\\/respond$/);"]) {
+      expect(source).toContain(pattern);
+      expect(route(pattern)).toContain("await answerLiveRequest(");
+      expect(route(pattern)).not.toMatch(/respondToRequest|addPortalRule|guardPermissionDecision/);
+    }
+    const helper = source.slice(source.indexOf("async function answerLiveRequest("), source.indexOf("let localSessionPublished"));
+    for (const check of ["askMessageByRequest.has(live)", "guardPermissionDecision(card, parsed.decision, parsed.rule)", "portalRespondRuleError(", "approvals.editor(req)",
+      "readGrantError(card, parsed.readGrant)", "saveAlwaysReads(approvals, req, card.readOffer.group)", "taskReadGrants.add(threadId, card.readOffer.group)", "instance.adapter.respondToRequest("]) {
+      expect(helper, check).toContain(check);
+    }
+    // Over HTTP: nothing is waiting, so both routes refuse before saving any grant.
+    const bot = (await api("GET", "/api/bots")).body.bots[0];
+    for (const path of [`/api/bots/${bot.id}/respond`, `/api/threads/${bot.threadId}/respond`]) {
+      expect(await api("POST", path, { requestId: "fictional-request", behavior: "allow", scope: "always-reads" }))
+        .toEqual({ status: 409, body: { error: "This request is no longer waiting. Refresh the conversation to see its result." } });
+      expect((await api("POST", path, { requestId: "fictional-request", behavior: "deny", scope: "task" })).status).toBe(400);
+    }
+    expect((await api("GET", "/api/approvals/history")).body.entries).toHaveLength(1);
+  });
+
   it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
     const empty = await api("GET", "/api/law-watch");
     expect(empty.status).toBe(200);
