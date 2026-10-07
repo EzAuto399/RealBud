@@ -256,7 +256,7 @@ describe("Slack channel", () => {
       { ...d, startTurn },
     );
     expect(decided).toEqual([]);
-    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide here.");
+    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.");
     await slack.handleSlackInbound(
       [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: `allow ${code}`, ts: "2.0" }],
       { ...d, startTurn },
@@ -279,7 +279,7 @@ describe("Slack channel", () => {
     expect(remote.pendingDecisionId("slack")).toBeNull();
     await slack.handleSlackInbound([{ channelId, userId: "U_SAM", name: "Sam", text: "allow abcdef123456", ts: "2.0" }], d);
     expect(decided).toEqual([]);
-    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide here.");
+    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.");
   });
 
   it("never echoes the bot token in the public status", async () => {

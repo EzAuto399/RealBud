@@ -581,7 +581,7 @@ describe("decisions only from the paired person in a private chat", () => {
     expect(pendingDecisionId("telegram")).toBeNull();
     await notifyDeskSnapshot(desk.snapshot());
     expect(sendDigest).toHaveBeenCalledTimes(1);
-    expect(await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam", "user-1")).toEqual({ ok: false, message: "Only the person who paired this Bud can decide here." });
+    expect(await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam", "user-1")).toEqual({ ok: false, message: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat." });
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
   });
 
@@ -590,7 +590,7 @@ describe("decisions only from the paired person in a private chat", () => {
     bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])], now: () => Date.UTC(2026, 7, 31, 0) });
     await notifyDeskSnapshot(desk.snapshot());
     const id = pendingDecisionId("telegram")!;
-    const refusal = { ok: false, message: "Only the person who paired this Bud can decide here." };
+    const refusal = { ok: false, message: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat." };
     expect(await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Other", "user-2")).toEqual(refusal);
     expect(await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Other", null)).toEqual(refusal);
     expect(await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Other", "user-2")).toEqual(refusal);

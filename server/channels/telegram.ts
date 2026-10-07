@@ -66,7 +66,7 @@ export type TelegramDeps = {
 
 const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
-const ONLY_PAIRED = "Only the person who paired this Bud can decide here.";
+const ONLY_PAIRED = "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.";
 const BAD_TOKEN = "that token did not answer — check it against BotFather";
 const CLIP_AT = 3900;
 const POLL_TIMEOUT_SEC = 25;

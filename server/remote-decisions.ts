@@ -54,7 +54,7 @@ const ELSEWHERE = "This Bud is paired elsewhere.";
 const FLUSH_MS = 60_000;
 const PUSH_MAX = 500;
 const REVIEW_MAX = 1800;
-const ONLY_PAIRED = "Only the person who paired this Bud can decide here.";
+const ONLY_PAIRED = "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.";
 const VIEW_ONLY = "Open Desk to review and decide. To approve from your phone, re-pair from a private chat.";
 const STALE_CARD = "This review card is no longer current. Use the latest card, or review the wording on Desk. Nothing was changed by this reply.";
 

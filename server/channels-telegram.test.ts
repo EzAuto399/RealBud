@@ -598,7 +598,7 @@ describe("remote decisions", () => {
       [callbackUpdate(31, chatId, `d:${id}:allow`, "Other", { fromId, type })],
       deps(store, async () => {}, fetchFn),
     );
-    expect(answered).toEqual([{ id: "cb-31", text: "Only the person who paired this Bud can decide here." }]);
+    expect(answered).toEqual([{ id: "cb-31", text: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat." }]);
     expect(decided).toEqual([]);
     expect(edited).toEqual([]);
     expect(remote.pendingDecisionId("telegram")).toBe(id);
@@ -662,7 +662,7 @@ describe("remote decisions", () => {
     expect(remote.pendingDecisionId("telegram")).toBeNull();
     expect(telegram.telegramStatus().telegram).toMatchObject({ paired: true, decisions: false });
     await telegram.handleTelegramUpdates([callbackUpdate(5, chatId, "d:abcdef123456:allow", "Sam", { fromId: 111, type })], deps(store, async () => {}, fetchFn));
-    expect(answered).toEqual(["Only the person who paired this Bud can decide here."]);
+    expect(answered).toEqual(["Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat."]);
     expect(decided).toEqual([]);
   });
 });

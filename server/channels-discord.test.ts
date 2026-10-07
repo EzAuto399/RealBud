@@ -517,7 +517,7 @@ describe("remote decisions", () => {
     const store = await bindPairedDesk(decided, fetchFn);
     const id = remote.pendingDecisionId("discord")!;
     await discord.handleInteraction(interaction(`d:${id}:deny`, channelId, "Other", userId), deps(store, async () => {}, fetchFn));
-    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide here.", flags: 64 } }]);
+    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.", flags: 64 } }]);
     expect(decided).toEqual([]);
     expect(patches).toEqual([]);
     expect(remote.pendingDecisionId("discord")).toBe(id);
@@ -533,7 +533,7 @@ describe("remote decisions", () => {
     expect(remote.pendingDecisionId("discord")).toBeNull();
     expect(discord.discordStatus().discord).toMatchObject({ paired: true, decisions: false });
     await discord.handleInteraction(interaction("d:abcdef123456:allow"), deps(store, async () => {}, fetchFn));
-    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide here.", flags: 64 } }]);
+    expect(callbacks).toEqual([{ type: 4, data: { content: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.", flags: 64 } }]);
     expect(decided).toEqual([]);
   });
 
