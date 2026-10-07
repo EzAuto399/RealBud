@@ -208,19 +208,22 @@ export function admitPack(value: unknown, keys: readonly PackPublisherKey[], req
   return pack;
 }
 /** Per-client export: the validated installed pack (validation is itself a field
- * allowlist), the bundled REI recipes and site map, and loop clocks copied field
- * by field. No records, accounts, sessions, ledgers, approvals, local plan edits
- * or tokens; loops always leave switched off. The REI business code and CSV
- * column mapping stay behind: import never applies them, and the business code is
- * the account marker the portal fence trusts. Unsigned until
+ * allowlist), the bundled REI recipes and site map, and the clocks of this pack's
+ * own loops copied field by field: the loops its office/settings.json declares and
+ * its own plans' loops. Another pack's loops (Sherry's in Kevin's export) and core
+ * loops it never declared stay behind. No records, accounts, sessions, ledgers,
+ * approvals, local plan edits or tokens; loops always leave switched off. The REI
+ * business code and CSV column mapping stay behind: import never applies them, and
+ * the business code is the account marker the portal fence trusts. Unsigned until
  * `scripts/sign-pack.mjs` signs it. */
 export function clientExportPack(installed: CustomerPack, office: Awaited<ReturnType<NonNullable<CustomerPackServiceOptions['officeSettings']>>> | undefined): CustomerPack {
   const { signature: _signature, files: installedFiles, ...pack } = installed;
   const rei = installedFiles?.['rei/recipes.json'] && installedFiles['rei/site-map.json'] ? { 'rei/recipes.json': installedFiles['rei/recipes.json'], 'rei/site-map.json': installedFiles['rei/site-map.json'] }
     : pack.skills.some(skill => skill.id === 'rei-cloud-navigation') ? austinReiFiles() : {};
-  const recipeLoops = new Set(pack.recipes.map(recipe => `recipe-${recipe.id}`));
+  const declared = installedFiles?.['office/settings.json'] ? (JSON.parse(installedFiles['office/settings.json']) as CustomerPackOfficeSettings).loops.map(loop => loop.id) : [];
+  const own = new Set([...declared, ...pack.recipes.map(recipe => `recipe-${recipe.id}`)]);
   const settings: CustomerPackOfficeSettings = { version: 1, kind: 'office-settings',
-    loops: (office?.loops ?? []).filter(loop => !loop.id.startsWith('recipe-') || recipeLoops.has(loop.id)).map(({ id, schedule }) => ({ id, enabled: false, schedule: { type: 'daily', time: schedule.time, weekdays: [...schedule.weekdays],
+    loops: (office?.loops ?? []).filter(loop => own.has(loop.id)).map(({ id, schedule }) => ({ id, enabled: false, schedule: { type: 'daily', time: schedule.time, weekdays: [...schedule.weekdays],
       ...(schedule.timezone ? { timezone: schedule.timezone } : {}), ...(schedule.intervalDays ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate ? { anchorDate: schedule.anchorDate } : {}), ...(schedule.monthly ? { monthly: schedule.monthly } : {}) } })) };
   return validateCustomerPack({ ...pack, files: { ...rei, 'office/settings.json': JSON.stringify(settings) } });
 }

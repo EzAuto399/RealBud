@@ -38,7 +38,8 @@ function office(options: { officePacks?: () => Promise<OfficePacksSource> } = {}
   let recipes: Recipe[] = [];
   const packs = createCustomerPackService({ directory: dir, profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'), trustedKeys: FICTIONAL_PACK_KEYS,
     listRecipes: () => recipes, saveRecipes: ((inputs: unknown[]) => { recipes.push(...inputs.map(raw => ({ ...(raw as object), revision: 1 } as Recipe))); return recipes; }) as never,
-    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply), ...options });
+    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply),
+    officeSettings: async () => ({ loops: loops.listLoops().map(loop => ({ id: loop.id, schedule: loop.schedule })) }), ...options });
   const install = async (pack: unknown) => packs.install(pack, (await packs.preview(pack)).digest);
   return { loops, maintenance, austin, packs, install, loop: (id: string) => loops.listLoops().find(item => item.id === id)! };
 }
@@ -120,6 +121,24 @@ describe('installing a pack applies its loops', () => {
     const pack = austinPropertyCustomerPack();
     await expect(packs.install(pack, (await packs.preview(pack)).digest)).rejects.toThrow(/installed, but its workflow times could not be set/);
     expect((await packs.list()).installations.map(i => i.id)).toEqual(['austin-property']);
+  });
+});
+
+describe('exporting a role pack for a client', () => {
+  it("carries only that pack's own loops, and round-trips byte for byte", async () => {
+    const f = office();
+    await f.install(austinAccountsCustomerPack());
+    await f.install(austinPropertyCustomerPack());
+    const all = f.loops.listLoops().map(loop => loop.id);
+    for (const id of ['owner-letter', 'morning-arrears', 'maintenance-review', 'bank-references']) expect(all).toContain(id);
+    const kevin = await f.packs.clientExport('austin-accounts'), sherry = await f.packs.clientExport('austin-property');
+    expect(settingsOf(kevin).loops.map(l => l.id).sort()).toEqual(['bank-references', 'inbound-triage', 'weekly-bills']);
+    expect(settingsOf(sherry).loops.map(l => l.id).sort()).toEqual(['inspection-draft', 'maintenance-review', 'rei-supplier-check']);
+    for (const loop of [...settingsOf(kevin).loops, ...settingsOf(sherry).loops]) expect(loop).toMatchObject({ enabled: false, schedule: { timezone: 'Australia/Brisbane' } });
+    // Export -> import on a second PC -> re-export is unchanged.
+    const b = office();
+    await b.install(signFictionalPack(kevin));
+    expect(JSON.stringify(await b.packs.clientExport('austin-accounts'))).toBe(JSON.stringify(kevin));
   });
 });
 
