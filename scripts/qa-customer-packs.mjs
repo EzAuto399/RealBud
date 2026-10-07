@@ -76,7 +76,8 @@ try {
   let plans = JSON.parse(readFileSync(join(data, 'recipes.json'), 'utf8'));
   if (!Array.isArray(plans)) plans = plans.recipes;
   assert.ok(plans.every(plan => plan.status === 'shadow' && plan.schedule === null && plan.approvedRevision === null));
-  checks.push('Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance');
+  const chosen = (await request('/api/agency-setup')).state; assert.equal(chosen.settings.workflowPackId, 'austin-office');
+  checks.push('Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance; the first agency pack imported becomes the chosen agency pack');
   const skill = join(profile, 'skills/realbud-austin-office-email-inbox-triage/SKILL.md');
   const baseline = readFileSync(skill, 'utf8'), improved = baseline + '\nFor this fictional review, list incomplete source coverage before recommendations.\n';
   const pending = join(profile, 'pending/skills'); mkdirSync(pending, { recursive: true, mode: 0o700 });
@@ -118,8 +119,8 @@ try {
   assert.ok(both.installations.every(pack => pack.localReady));
   assert.ok(readFileSync(join(profile, 'skills/realbud-office-core-email-inbox-triage/SKILL.md'), 'utf8').includes('name: realbud-office-core-email-inbox-triage'));
   assert.equal(readFileSync(skill, 'utf8'), baseline);
-  assert.equal((await request('/api/agency-setup')).state.settings.workflowPackId, null);
-  checks.push('Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes');
+  const kept = (await request('/api/agency-setup')).state; assert.equal(kept.settings.workflowPackId, 'austin-office'); assert.equal(kept.revision, chosen.revision);
+  checks.push('Generic office pack preview/import installs independent owned instructions alongside Austin without replacing the chosen agency pack or changing Austin bytes');
   const exported = await request('/api/customer-packs/austin-office/client-export');
   assert.deepEqual(Object.keys(exported.files).sort(), ['office/settings.json', 'rei/recipes.json', 'rei/site-map.json']);
   assert.equal(exported.signature, undefined);

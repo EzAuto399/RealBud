@@ -4,8 +4,9 @@
 // office/settings.json loops when that pack is imported (applyPackLoops), so a
 // role pack sets its own workflows. Applying never switches a loop on and never
 // overwrites an office edit: a loop whose time, days or cadence differ from the
-// pack keeps them; a loop that matches only gets the office timezone. The
-// maintenance month rule is set only while the office has never changed it.
+// pack keeps them; a loop that matches only gets the office timezone (the pack's
+// only while it has none). The maintenance month rule is set only while nobody
+// has ever chosen one (ruleRevision 0); the inspection rules are never written.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,14 +114,15 @@ export function createAustinPack(deps: AustinPackDeps) {
   const zone = async (p: AustinLoopPack) => { const office = await deps.officeTimeZone(); return { timeZone: office || p.timeZone, timeZoneFromOffice: Boolean(office) }; };
 
   /** One door for pack loops. A loop whose clock differs from the pack keeps the
-   * office's clock; a matching one gets the office timezone, else the pack's. */
+   * office's clock; a matching one gets the office timezone, else the pack's
+   * only while it has none. */
   async function applyLoops(items: Array<{ loopId: string; schedule: Schedule; timezone?: string }>): Promise<AustinInstallResult[]> {
     const office = await deps.officeTimeZone(), results: AustinInstallResult[] = [];
     for (const item of items) {
       const loop = deps.loops.listLoops().find(candidate => candidate.id === item.loopId);
       // ponytail: "edited" means differs from this pack revision; a later revision that changes a time also keeps the older pack time.
       if (!loop || !sameClock(loop.schedule, item.schedule)) { results.push({ loopId: item.loopId, outcome: 'kept' }); continue; }
-      const timezone = office || item.timezone;
+      const timezone = office || (loop.schedule.timezone ? undefined : item.timezone);
       if (timezone && loop.schedule.timezone !== timezone) deps.loops.patchClock(item.loopId as LoopId, { timezone });
       results.push({ loopId: item.loopId, outcome: 'applied' });
     }

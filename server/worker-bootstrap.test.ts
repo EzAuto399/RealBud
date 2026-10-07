@@ -486,12 +486,44 @@ if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
 
   it("kills a stalled owned process on cancellation", async () => {
     const root = home(); const abort = controller();
-    const result = runBootstrapStage({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] }, root, abort.signal);
-    const record = JSON.parse(readFileSync(join(root, ".realbud-bootstrap.json"), "utf8"));
-    expect(record.childPid).toBeGreaterThan(0);
-    abort.abort();
-    await expect(result).rejects.toThrow(/Setup stopped/);
-    expect(() => process.kill(record.childPid, 0)).toThrow();
+    // Settled before afterEach removes the folder, even if an expectation fails first.
+    const settled = runBootstrapStage({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] }, root, abort.signal).then(() => null, error => error);
+    try {
+      // On Windows the record follows the async Git-file lock (PowerShell can start cold), so wait for it.
+      const record = await vi.waitFor(() => {
+        const saved = JSON.parse(readFileSync(join(root, ".realbud-bootstrap.json"), "utf8"));
+        expect(saved.childPid).toBeGreaterThan(0);
+        return saved;
+      }, { timeout: 45_000 });
+      abort.abort();
+      expect((await settled)?.message).toMatch(/Setup stopped/);
+      expect(() => process.kill(record.childPid, 0)).toThrow();
+    } finally { abort.abort(); await settled; }
+  });
+  it("a cancel during the Windows Git-file lock waits for it, then records and starts nothing", async () => {
+    const root = home(), abort = controller(), platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, root);
+    let unlock!: () => void;
+    const locking = new Promise<void>(resolve => { unlock = resolve; });
+    vi.mocked(privacy.windowsFilePrivacy).mockClear().mockImplementation(async (_path, kind) => { if (kind === "file") await locking; });
+    // The stage takes its Windows branch synchronously; restore the platform before anything else runs.
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    let done = false, started: Promise<void>;
+    try { started = runBootstrapStage({ command: process.execPath, args: ["-e", "process.exit(0)"] }, root, abort.signal); }
+    finally { Object.defineProperty(process, "platform", platform); }
+    const settled = started.then(() => null, error => error).finally(() => { done = true; });
+    try {
+      await vi.waitFor(() => expect(privacy.windowsFilePrivacy).toHaveBeenCalledWith(expect.any(String), "file", true));
+      abort.abort();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(done).toBe(false); // the in-flight lock is awaited, never left behind
+      unlock();
+      expect((await settled)?.name).toBe("AbortError");
+      expect(readdirSync(root)).toEqual([]); // no record, no Git folder, no temp file
+    } finally {
+      unlock(); abort.abort(); await settled;
+      vi.mocked(privacy.windowsFilePrivacy).mockReset();
+    }
   });
   it("logs only the failed stage and a masked reason from the installer's status line", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

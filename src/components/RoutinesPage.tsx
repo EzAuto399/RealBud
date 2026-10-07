@@ -48,7 +48,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
   const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [austin, setAustin] = useState<AustinPackView | null>(null);
+  // "unread" until the first /api/austin-pack answer; null when it could not be read.
+  const [austin, setAustin] = useState<AustinPackView | null | "unread">("unread");
   const [busy, setBusy] = useState<LoopId | null>(null);
   const [error, setError] = useState("");
   const [pauseNotice, setPauseNotice] = useState("");
@@ -90,6 +91,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
         () => { if (mounted.current && request === refreshFlight.current) setAustin(null); });
     } catch (cause) {
       if (!mounted.current || request !== refreshFlight.current) return;
+      setAustin((current) => current === "unread" ? null : current); // nothing more is loading: show every job
       setJobsError(cause instanceof Error ? cause.message : "Saved jobs could not load. Try again.");
       throw cause;
     } finally {
@@ -567,7 +569,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           onOpenSetup={() => changeDrawer({ mode: "packs" })}
           onOpenDesk={openDesk}
           registerCloseGuard={registerCloseGuard}
-          about={<AustinPlanDetail view={austin} loopId={loop.id} />}
+          about={<AustinPlanDetail view={austin === "unread" ? null : austin} loopId={loop.id} />}
         />
         </>
       );
@@ -656,6 +658,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
               <button type="button" className="pm-control mt-2 rounded border border-line bg-sheet px-3 text-ink hover:bg-selected" onClick={() => { setSearch(""); setFilter("all"); requestAnimationFrame(() => searchRef.current?.focus()); }}>Show all jobs</button>
             </div>
           )}
+          {/* Role-pack jobs join the list once /api/austin-pack answers; nothing shown drops out. */}
+          {austin === "unread" && hiddenLoops.size ? <p role="status" className="py-3 text-[14px] text-ink-muted">Loading jobs…</p> : null}
           </>
         ) : null}
       </div>
