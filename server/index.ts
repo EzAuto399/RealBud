@@ -3815,7 +3815,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const banks = bankReferenceStore();
       if (path === "/api/bank-reference/settings" && method === "GET") return json(res, 200, { settings: banks.settings() });
       if (path === "/api/bank-reference" && method === "GET") return json(res, 200, banks.page(bankQuery));
-      if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 2_000_000)));
+      if (path === "/api/bank-reference" && method === "POST") {
+        const { review: batch, created } = banks.upload(await readBody(req, 2_000_000));
+        // Jev payer hints (suggestions only) are asked only for a record this upload made, and never fail
+        // or hold up the upload; reply with the revision after them. A re-upload reuses the record as it is.
+        return json(res, 200, created ? await banks.addJevHints(batch.id).catch(() => batch) : batch);
+      }
       const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64}(?::r(?:[2-9]|[1-9][0-9]{1,5}))?)(?:\/(review|export|original|amend))?$/);
       if (!match) return json(res, 404, { error: "Unknown bank review." });
       const [, id, action] = match;
