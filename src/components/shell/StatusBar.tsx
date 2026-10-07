@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useStore } from "@/state/store";
+import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import type { UsageBudget } from "@shared/usage-budget";
 import { openDeskTasks } from "@/lib/desk-view-state";
@@ -21,6 +21,17 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
   const { link, officeInactive } = useOfficeLinkStatus(state.connected);
+  // The running service's version, so staff and support can tell which build is installed.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    if (!state.connected) return;
+    let alive = true;
+    void api("/api/health").then((body: unknown) => {
+      const value = (body as { version?: unknown } | null)?.version;
+      if (alive && typeof value === "string" && value !== "unreported") setVersion(value);
+    }, () => {});
+    return () => { alive = false; };
+  }, [state.connected]);
   // "Connected" means this computer is joined to its office. The local service
   // being down is its own fact and wins over any link wording.
   const connection = !state.connected ? { tone: dot.hold, label: "Offline — reconnecting" }
@@ -63,6 +74,7 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
           {budget.state === "ready" ? `Spend ${budget.label} of budget` : "Spend budget not enabled"}
         </button>
       ) : null}
+      {version ? <span className="rb-status-item rb-status-version" title="Installed RealBud version">RealBud {version}</span> : null}
     </footer>
   );
 }

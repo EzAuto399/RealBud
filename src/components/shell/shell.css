@@ -112,7 +112,8 @@
 }
 .rb-status-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .rb-status-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; }
-.rb-status-spend { margin-left: auto; }
+.rb-status-spend, .rb-status-version { margin-left: auto; }
+.rb-status-spend ~ .rb-status-version { margin-left: 0; }
 /* Facts that open their screen: full bar height (30px, above the 24px minimum target), quiet until hovered. */
 .rb-status-link { min-height: 30px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .rb-status-link:hover { background: var(--color-raised); color: var(--color-ink); }
