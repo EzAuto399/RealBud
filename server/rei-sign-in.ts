@@ -76,10 +76,10 @@ export function reiLoopsToResume(loops: readonly { id: string; enabled: boolean;
 export function resumeReiWhenFree(deps: { due(): string[]; busy(): Promise<boolean>; run(id: string): void; firstMs?: number; everyMs?: number; tries?: number }): void {
   let left = deps.tries ?? 240;
   const check = async () => {
-    const ids = deps.due();
-    if (!ids.length || left-- <= 0) return;
+    if (!deps.due().length || left-- <= 0) return;
     if (await deps.busy().catch(() => true)) { setTimeout(() => void check(), deps.everyMs ?? 60_000).unref?.(); return; }
-    for (const id of ids) { try { deps.run(id); } catch { /* already running */ } }
+    // Read again after the await, in the same turn as the dispatch: a loop switched off or already rerun meanwhile is not run.
+    for (const id of deps.due()) { try { deps.run(id); } catch { /* already running */ } }
   };
   // A moment first, so the work that waited at the sign-in takes the browser before this looks.
   setTimeout(() => void check(), deps.firstMs ?? 15_000).unref?.();

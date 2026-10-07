@@ -46,6 +46,8 @@ export interface SignInRuntime {
   reloadSignInTab?(targetId: string, url: string): Promise<void>;
   /** Brings the open sign-in tab forward; false once it has closed. Absent: an open tab is left where it is. */
   showSignInTab?(targetId: string): Promise<boolean>;
+  /** The work browser's open tabs, by address only. Absent: every handover opens its own tab. */
+  signInTabs?(): Promise<Array<{ targetId: string; url: string }>>;
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -205,14 +207,24 @@ async function begin(site: SignInSite, url: string, input: { reason: string; acc
   if (open) return open;
   const runtime = deps.runtime ?? browserRuntime;
   const now = deps.now ?? Date.now;
-  let targetId = await runtime.openSignInTab(url);
+  // A tab already on the site or its sign-in page (yesterday's, with no handover left) is loaded at the sign-in address and
+  // brought forward instead: a second site tab would leave two portal tabs, which a portal run refuses to choose between.
+  const openTab = async () => {
+    const tabs = runtime.signInTabs && runtime.reloadSignInTab ? await runtime.signInTabs().catch(() => []) : [];
+    const reuse = tabs.find(tab => onSignInPage(site, tab.url) || URL.canParse(tab.url) && new URL(tab.url).origin === site.origin);
+    if (!reuse) return runtime.openSignInTab(url);
+    await runtime.reloadSignInTab!(reuse.targetId, url);
+    await runtime.showSignInTab?.(reuse.targetId).catch(() => false);
+    return reuse.targetId;
+  };
+  let targetId = await openTab();
   const long = input.until !== undefined;
   const item: Handover = { id: randomUUID(), threadId, site, reason: input.reason.slice(0, 300), account: input.account ?? null, state: "waiting", done: false, stopped: false, inTurn: true, stop: () => {}, settled: Promise.resolve("stopped"),
     until: input.until ?? null, nudge: () => {},
     // The same tab brought forward while it is open (a second sign-in tab would leave two REI tabs); a closed one opens again and is watched instead.
     show: async () => {
       const open = runtime.showSignInTab ? await runtime.showSignInTab(targetId).catch(() => false) : await runtime.signInTabUrl(targetId).then(value => value !== null, () => false);
-      if (!open) targetId = await runtime.openSignInTab(url);
+      if (!open) targetId = await openTab();
     } };
   handovers.set(item.id, item);
   const started = now(); const limit = long ? input.until! - started : deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS; const signal = input.signal;

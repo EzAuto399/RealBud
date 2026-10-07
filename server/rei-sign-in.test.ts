@@ -64,6 +64,17 @@ describe("Desk's REI sign-in line", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("does not rerun a refresh that stopped being due while it checked whether the browser was free", async () => {
+    vi.useFakeTimers();
+    try {
+      const ran: string[] = []; let due = ["rei-morning-refresh"];
+      // Switched off (or run by hand) while the busy check was in flight.
+      resumeReiWhenFree({ due: () => due, busy: async () => { due = []; return false; }, run: id => ran.push(id), firstMs: 1_000, everyMs: 1_000, tries: 3 });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(ran).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("learns REI's sign-in from the morning refresh: read whole is signed in, a sign-in miss (whole or part-way) is not", () => {
     noteReiRefresh({ status: "completed", detail: "Read REI." }, NOW);
     expect(siteSignInState(REI_SITE)).toEqual({ state: "signed_in", at: NOW, waiting: null });
@@ -111,6 +122,26 @@ describe("Desk's Sign in to REI", () => {
     expect(browserSignInRoute(`/api/browser/sign-in/${view.id}/stop`, "POST", new URLSearchParams())?.status).toBe(200);
     await until(() => siteSignInState(REI_SITE).waiting === null);
     expect(siteSignInState(REI_SITE).state).toBe("needed");
+  });
+
+  it("uses yesterday's REI tab again when no handover remains: loaded at REI's sign-in page and brought forward, never a second REI tab", async () => {
+    const opened: string[] = [], navigated: string[] = [], shown: string[] = [];
+    const runtime = { openSignInTab: async (url: string) => { opened.push(url); return "FICTIONALNEW"; }, signInTabUrl: async () => "https://signin.rei.fictional.test/authorize",
+      signInTabs: async () => [{ targetId: "FICTIONALMAIL", url: "https://mail.fictional.test/inbox" }, { targetId: "FICTIONALOLDREI", url: "https://rei.fictional.test/customers/dashboard" }],
+      reloadSignInTab: async (id: string, url: string) => { navigated.push(`${id} ${url}`); }, showSignInTab: async (id: string) => { shown.push(id); return true; } };
+    expect(await startReiSignIn(input => openForSignIn(input, { runtime, sites: [rei], pollMs: 1 }))).toEqual({ opened: "new" });
+    expect([opened, navigated, shown]).toEqual([[], ["FICTIONALOLDREI https://rei.fictional.test/"], ["FICTIONALOLDREI"]]);
+    const stop = async () => {
+      const [view] = signInHandovers(REI_DESK_THREAD).filter(item => item.state === "waiting");
+      browserSignInRoute(`/api/browser/sign-in/${view.id}/stop`, "POST", new URLSearchParams());
+      await until(() => siteSignInState(REI_SITE).waiting === null);
+    };
+    await stop();
+    // A tab left on REI's sign-in host counts too.
+    runtime.signInTabs = async () => [{ targetId: "FICTIONALSIGNIN", url: "https://signin.rei.fictional.test/authorize?p=b2c" }];
+    await startReiSignIn(input => openForSignIn(input, { runtime, sites: [rei], pollMs: 1 }));
+    expect([opened, shown.at(-1)]).toEqual([[], "FICTIONALSIGNIN"]);
+    await stop();
   });
 
   it("says plainly when the work browser can't open REI, and when this computer has no REI sign-in", async () => {

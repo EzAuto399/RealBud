@@ -21,6 +21,7 @@ export interface NativeWorkBrowserHost {
   tabUrl?(targetId: string): Promise<string | null>;
   navigateTab?(targetId: string, url: string): Promise<void>;
   showTab?(targetId: string): Promise<boolean>;
+  pageTabs?(): Promise<Array<{ targetId: string; url: string }>>;
 }
 type Controller = Pick<HermesBrowserTransport, "session" | "state" | "start" | "step" | "stop">;
 type Lease = { owner: string; sessionId: string; phase: "starting" | "active" | "stopping" | "unknown" };
@@ -236,6 +237,11 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
   async showSignInTab(targetId: string): Promise<boolean> {
     const host = await this.browserHost();
     return host.showTab ? host.showTab(targetId) : false;
+  }
+  /** The work browser's open tabs by address (none while it is not running), so a sign-in reuses a site's tab. No task lease and no page read. */
+  async signInTabs(): Promise<Array<{ targetId: string; url: string }>> {
+    const host = await this.browserHost();
+    return host.pageTabs ? host.pageTabs() : [];
   }
   /** Watch and learn (server/learn-recorder.ts): opens the portal in a new
    * work-browser tab and hands the recorder the owned endpoint and that tab.

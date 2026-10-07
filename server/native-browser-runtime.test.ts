@@ -258,6 +258,9 @@ describe("native browser task lifecycle", () => {
     const showTab = vi.fn(async (id: string) => id === "FICTIONALTARGET"); Object.assign(f.host, { showTab });
     expect(await f.runtime.showSignInTab("FICTIONALTARGET")).toBe(true);
     expect(await f.runtime.showSignInTab("FICTIONALCLOSED")).toBe(false);
+    // The open tabs by address, for a sign-in to reuse a site's tab: no new tab and no task lease.
+    Object.assign(f.host, { pageTabs: vi.fn(async () => [{ targetId: "FICTIONALTARGET", url: "https://portal.fictional.example/home" }]) });
+    expect(await f.runtime.signInTabs()).toEqual([{ targetId: "FICTIONALTARGET", url: "https://portal.fictional.example/home" }]);
     expect(opened).toHaveLength(2);
     expect(f.makeControllerCalls()).toBe(0);
   });

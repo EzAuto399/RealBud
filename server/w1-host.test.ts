@@ -17,6 +17,7 @@ import { tenantDirectoryRules } from "./bank-reference.ts";
 import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
+import { readReiAccount, REI_ACCOUNT_CONFLICT, saveReiAccount } from "./rei-account.ts";
 import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
@@ -132,9 +133,9 @@ describe("W1 host", () => {
     // The proof names the REI account by its business code alone; it is handed over only while that account is the saved one.
     const batchId = now.run!.fetch!.batchId;
     expect((await f.host.importProof(batchId))!.destination).toEqual({ portal: "rei-cloud", marker: FICTIONAL_BUSINESS });
-    await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICTOTHER", expectedRevision: 1 });
+    await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICTOTHER", expectedRevision: 1, reiRevision: 1 });
     expect(await f.host.importProof(batchId)).toBeNull();
-    await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 2 });
+    await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 2, reiRevision: 2 });
     // The clock pulls the overlap again: nothing new, nothing duplicated.
     expect(await f.host.runLoop()).toMatchObject({ ok: true, status: "completed", detail: expect.stringMatching(/No new bank transactions/) });
     // A late posting inside the overlap arrives in the next pull, alone.
@@ -344,6 +345,17 @@ describe("W1 host", () => {
     // A business code REI could not show is refused as input; nothing is saved.
     await expect(f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICT 1", expectedRevision: 1 })).rejects.toMatchObject({ status: 400 });
     expect((await f.call("/api/w1/status", "GET") as unknown as { settings: { revision: number; rei: unknown } }).settings).toMatchObject({ revision: 1, rei: { marker: FICTIONAL_BUSINESS } });
+    // A bank setup form opened before another business code was saved through /api/rei/account never overwrites it.
+    const stale = await fixture();
+    await saveReiAccount(stale.dir, { marker: "FICTOTHER" }, 0);
+    await expect(stale.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 })).rejects.toMatchObject({ status: 409, message: expect.stringContaining(REI_ACCOUNT_CONFLICT) });
+    await expect(stale.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0, reiRevision: 0 })).rejects.toMatchObject({ status: 409 });
+    expect(await readReiAccount(stale.dir)).toMatchObject({ marker: "FICTOTHER", revision: 1 });
+    expect((await stale.call("/api/w1/status", "GET")).settings).toBeNull();
+    // The same business code needs no change; the revision the person saw saves a new one.
+    expect((await stale.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICTOTHER", expectedRevision: 0 })).settings).toMatchObject({ rei: { marker: "FICTOTHER" } });
+    await stale.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 1, reiRevision: 1 });
+    expect(await readReiAccount(stale.dir)).toMatchObject({ marker: FICTIONAL_BUSINESS, revision: 2 });
     // An office that saved a reicid keeps it: the run's destination stays that reicid, and it signs in and uploads with no reicid in REI's addresses.
     const legacy = await fixture();
     await legacy.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiAccount: FICTIONAL_REICID, reiBusiness: FICTIONAL_BUSINESS, bankFormat: "ANZ(csv file)", expectedRevision: 0 });

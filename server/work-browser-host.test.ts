@@ -137,10 +137,11 @@ describe("dedicated work browser host", () => {
     const cdp = async (at: string, method: string, params: Record<string, unknown>, targetId?: string) => {
       sent.push({ endpoint: at, method, params, ...(targetId ? { targetId } : {}) });
       return method === "Target.createTarget" ? { targetId: "FICTIONALTARGET1" }
-        : method === "Target.getTargets" ? { targetInfos: [{ targetId: "FICTIONALTARGET1", url: "https://portal.fictional.example/home" }] } : {};
+        : method === "Target.getTargets" ? { targetInfos: [{ targetId: "FICTIONALTARGET1", type: "page", url: "https://portal.fictional.example/home" }, { targetId: "FICTIONALWORKER", type: "service_worker", url: "https://portal.fictional.example/sw.js" }] } : {};
     };
     const host = new WorkBrowserHost({ root: f.root, bundleRoot: "/synthetic/bundle" }, { ...f.dependencies, cdp });
     expect(await host.tabUrl("FICTIONALTARGET1")).toBeNull();
+    expect(await host.pageTabs()).toEqual([]);
     await expect(host.navigateTab("FICTIONALTARGET1", "https://portal.fictional.example/")).rejects.toThrow(/closed/);
     await expect(host.openTab("http://portal.fictional.example/")).rejects.toThrow(/HTTPS/);
     expect(f.launches()).toBe(0);
@@ -149,6 +150,8 @@ describe("dedicated work browser host", () => {
     expect(sent.map(row => [row.endpoint, row.method])).toEqual([[endpoint, "Target.createTarget"], [endpoint, "Target.activateTarget"]]);
     expect(await host.tabUrl("FICTIONALTARGET1")).toBe("https://portal.fictional.example/home");
     expect(await host.tabUrl("FICTIONALOTHER")).toBeNull();
+    // The open pages by address only, so a new sign-in reuses a site's tab.
+    expect(await host.pageTabs()).toEqual([{ targetId: "FICTIONALTARGET1", url: "https://portal.fictional.example/home" }]);
     // A long sign-in wait's refresh: the same tab loads the address again, in place, without coming forward.
     await expect(host.navigateTab("FICTIONALTARGET1", "http://portal.fictional.example/")).rejects.toThrow(/HTTPS/);
     await host.navigateTab("FICTIONALTARGET1", "https://portal.fictional.example/");

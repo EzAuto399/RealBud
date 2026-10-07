@@ -496,8 +496,9 @@ export function createW1Host(deps: W1HostDeps) {
       const body = await readBody();
       // The REI account is its top-bar business code; a reicid and the file format are optional (default ANZ(csv file)).
       const shape = object(body) && ["account", "reiBusiness", "expectedRevision"].every(key => key in body) &&
-        Object.keys(body).every(key => ["account", "reiAccount", "reiBusiness", "bankFormat", "expectedRevision"].includes(key)) &&
-        (body.reiAccount === undefined || typeof body.reiAccount === "string") && (body.bankFormat === undefined || typeof body.bankFormat === "string");
+        Object.keys(body).every(key => ["account", "reiAccount", "reiBusiness", "bankFormat", "expectedRevision", "reiRevision"].includes(key)) &&
+        (body.reiAccount === undefined || typeof body.reiAccount === "string") && (body.bankFormat === undefined || typeof body.bankFormat === "string") &&
+        (body.reiRevision === undefined || Number.isSafeInteger(body.reiRevision));
       if (!shape) return { status: 400, body: { error: "Choose the bank account and the business shown in REI's top bar." } };
       const current = await readW1Settings(deps.dataDir);
       if (body.expectedRevision !== (current?.revision ?? 0)) return { status: 409, body: { error: "The bank import settings changed. Reload them and try again." } };
@@ -506,9 +507,10 @@ export function createW1Host(deps: W1HostDeps) {
       const next = validSettings({ version: 1, kind: "w1-settings", account: body.account,
         bankFormat: typeof body.bankFormat === "string" && body.bankFormat.trim() ? body.bankFormat.trim() : W1_DEFAULT_BANK_FORMAT,
         revision: (current?.revision ?? 0) + 1, savedAt: new Date().toISOString() });
-      // The REI account is the office's one REI account (server/rei-account.ts): saved there when it is new or changed.
+      // The REI account is the office's one REI account (server/rei-account.ts): saved there when it is new or changed, against
+      // the revision the person saw (`reiRevision`, 0 when the form saw none), so a code saved meanwhile is never overwritten (409).
       const rei = await readReiAccount(deps.dataDir);
-      if (!rei || rei.revision === 0 || rei.marker !== body.reiBusiness || rei.urlValue !== reicid) await saveReiAccount(deps.dataDir, { marker: body.reiBusiness, urlValue: reicid }, rei?.revision ?? 0);
+      if (!rei || rei.revision === 0 || rei.marker !== body.reiBusiness || rei.urlValue !== reicid) await saveReiAccount(deps.dataDir, { marker: body.reiBusiness, urlValue: reicid }, Number(body.reiRevision ?? 0));
       await writePrivateJson(settingsPath(deps.dataDir), next);
       deps.onSettings?.(next);
       return { status: 200, body: { settings: await readW1Office(deps.dataDir) } };
