@@ -107,6 +107,17 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(await other.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } })).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
     expect(other.dispatched()).toEqual([]);
   });
+  it("finds a field whose accessible name ends in a colon (live REI's DataTables box reads \"Search:\") and still checks the search applied", async () => {
+    const f = await fixture({ searchLabel: "Search:" });
+    const run = await f.start(withOpen("find-record", { list: "Owners", query: "Two" }));
+    expect(run.outcome, run.detail).toBe("completed");
+    expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Owner Two"]);
+    // The recipe's own "Search" step covers the "Search:" box: nobody was asked.
+    expect(run.receipt.approvals.person).toBe(0);
+    expect(f.mock.calls.some(args => args[0] === "fill" && args.includes("Two"))).toBe(true);
+    expect(f.mock.effects).toEqual([]);
+    expect(((await f.mock.command(["observe"])) as { text: string }).text).toContain('textbox "Search:" value="Two"');
+  });
   it("waits for the tenants grid to fill: \"No records to display\" before its record count is not an empty result", async () => {
     const f = await fixture();
     const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Fictional" }));

@@ -230,7 +230,8 @@ const TABLES: Record<string, { cols: string[]; rows: string[][] }> = {
   pendingPayments: { cols: ["Owner/Business", "Description", "Amount", "Sufficient Funds"], rows: [["Fictional Owner One", "Fictional levy", "120.00", "Yes"], ["Fictional Owner Two", "Fictional invoice", "80.00", "No"]] },
   empty: { cols: ["Name"], rows: [] },
 };
-type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[] };
+/** `label`: the accessible name shown, when it differs from the field's own name. */
+type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[]; label?: string };
 type Control = { role: string; name: string; action: string; disabled?: boolean; options?: string[]; value?: string };
 
 export interface FictionalReiOptions {
@@ -284,6 +285,8 @@ export interface FictionalReiOptions {
   dialogOn?: string;
   /** The person has a second REI tab open. */
   secondReiTab?: boolean;
+  /** The Search box's accessible name (live REI's DataTables boxes read "Search:"). */
+  searchLabel?: string;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -333,7 +336,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   };
   const initialFields = (path: string): Field[] => {
     const status = (value: string): Field => ({ kind: "combobox", name: "Status", value, options: ["Active", "Inactive", "Open", "Closed", "All"] });
-    const search: Field = { kind: "textbox", name: "Search", value: "" };
+    const search: Field = { kind: "textbox", name: "Search", value: "", ...(options.searchLabel ? { label: options.searchLabel } : {}) };
     if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
     if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
@@ -404,7 +407,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       // The page's fields sit in their own region, apart from its record-changing buttons (FICTIONAL layout).
       if (fields.length) lines.push('      region "Filters"');
       for (const item of fields) {
-        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.name)} value=${q(item.value)}`);
+        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.label ?? item.name)} value=${q(item.value)}`);
         else if (item.kind === "combobox") {
           lines.push(`        ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
           for (const option of item.options ?? []) lines.push(`          option ${q(option)}`);

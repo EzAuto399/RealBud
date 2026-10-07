@@ -175,6 +175,8 @@ const all = (node: Node, test: (n: Node) => boolean, out: Node[] = []): Node[] =
 const first = (node: Node, test: (n: Node) => boolean) => all(node, test)[0];
 const texts = (node: Node): string => [node.name ?? "", ...node.children.map(texts)].join(" ");
 const controlName = (label: unknown) => typeof label === "string" ? unquote(label.match(/^\S+\s+"((?:[^"\\]|\\.)*)"/)?.[1] ?? "") : "";
+/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's DataTables names its box "Search:"). */
+const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
 
@@ -228,7 +230,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const step = inflight;
     // A read recipe never answers for a submit: that ask always goes to the person.
     const covered = step?.recipe && projection?.approvalPolicy !== "once" && tool === step.tool &&
-      (step.name === undefined || controlName(params.label) === step.name) &&
+      (step.name === undefined || accessibleName(controlName(params.label)) === accessibleName(step.name)) &&
       projection?.fence.surface !== "portal-submit";
     if (covered) { receipt.approvals.recipe += 1; return true; }
     receipt.approvals.person += 1;
@@ -318,7 +320,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   /** The content a recipe acts in: an open dialog, else the main region; never the menu or header. */
   const scope = (page: PageView) => first(page.root, node => node.role === "dialog" || node.role === "alertdialog") ?? first(page.root, node => node.role === "main") ?? page.root;
   const control = (page: PageView, roles: string[], name: string): Node | null => {
-    const found = all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name === name);
+    const found = all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name !== null && accessibleName(node.name) === accessibleName(name));
     if (found.length > 1) throw blocked("ambiguous-control", `More than one ${name} control is on the page.`);
     return found[0] ?? null;
   };
@@ -437,7 +439,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           const again = control(await current(), ["textbox", "searchbox", "textarea"], field);
           if (!again) throw blocked("field-missing", `The ${field} field went away after typing.`);
           await act("browser_press", { ref: again.ref!, key: "Tab" }, { name: field });
-          if (field === "Search") {
+          if (accessibleName(field) === "Search") {
             const table = await waitTable();
             if (table.records.length && !table.records.some(row => Object.values(row).join(" ").toLowerCase().includes(value.toLowerCase()))) throw blocked("search-not-applied");
           }
