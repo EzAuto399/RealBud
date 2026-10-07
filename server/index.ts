@@ -4727,7 +4727,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       writeHandsPing(DATA_DIR, {
         at: Date.now(),
         ok: false,
-        detail: "Property safeguards changed. Run the private readiness check again.",
+        detail: "Bud’s safeguards changed. Test Bud again.",
         kind: "ping",
       });
       return json(res, 200, {

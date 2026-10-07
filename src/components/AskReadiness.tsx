@@ -147,7 +147,7 @@ export function AskReadiness({ onSetup, officeLink }: { onSetup: () => void; off
           </button>
         ) : availability.canVerify && canAdminister && !activeCheck ? (
           <button type="button" onClick={() => void check()} className="ask-button ask-button-primary">
-            {failure ? "Try check again" : "Run readiness check"}<ArrowRight size={14} aria-hidden />
+            {failure ? "Try check again" : "Test Bud"}<ArrowRight size={14} aria-hidden />
           </button>
         ) : availability.action && !activeCheck ? (
           <button type="button" onClick={onSetup} className="ask-button ask-button-primary">

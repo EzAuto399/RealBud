@@ -43,3 +43,51 @@ Modelvia (separate repo): Jev `/v1/decisions` route, rate card r5 (cost + 30%, p
 - Pack r3: rules + REI files carried by the role packs, Sherry's "Mock" workflow renamed.
 - Unreachable peer-agent comms code (agents-proxy, chief-of-staff) and Electron `cua-control` env left after #129.
 - 4 private-backup process-kill tests on GitHub's Windows runner.
+
+## One list: what's left (evening hand-over)
+
+The two working sessions were consolidated into one ("Enterprise onboarding optimization") on the evening of 7 Oct.
+
+**State of the code**
+- RealBud `main` is the only branch, and no RealBud PRs are open.
+- Website: [RealBud-website#26](https://github.com/EzAuto399/RealBud-website/pull/26) is open. It is waiting on the owner because merging deploys realbud.app.
+- Leftover worktrees whose work was already on main were removed.
+
+**Uncommitted work preserved, nothing reset.** Copies are kept as local branches only; they are not pushed, because the RealBud repo is public:
+- `backup/shared-checkout-2026-10-07`: the shared `/Users/yo-da/projects/RealBud` checkout. It sits on old local `main` 8bfb143a with 461 changed paths, mostly earlier drafts of work merged since (for example the watch-and-learn port, #113).
+- `backup/codex-plugin-core-2026-10-07` and `backup/codex-gmail-read-approval-2026-10-07`: two Codex worktrees, each 7 days old.
+- `backup/website-checkout-2026-10-07`: the website checkout, 22 commits behind, with 30 changed files from the 4 Oct computer-cap work.
+
+**Owner actions** (only the owner can do these)
+1. Sign in to the Windows VM (`realbud QA`). This unblocks the installed Windows run.
+2. Re-sign and upload the role packs on realbud.app → Offices → Workflow packs.
+3. Website: apply migration `202610070001`, then merge #26.
+4. Code signing (SmartScreen) and Mac notarisation.
+5. Confirm Jev's price, and leave one bank import unprocessed so W1's pending view can be mapped.
+6. Decide:
+   - whether the shared checkout may be reset to `origin/main` (its backup is above);
+   - whether to hide Hermios for offices without it (Windows issues #27, #52);
+   - whether to re-enable GitHub CI (#25).
+
+**Tests still to run** (each waits on an owner action above)
+- Windows VM installed run:
+  - Kevin onboarding with a link code
+  - time to the first window (98.5 s before #137)
+  - automatic resume after an update (#28)
+  - the 14 s stall (#43)
+  - W1–W3
+- Live REI read of the merged recipes.
+- Packaged macOS: a Dock click while "Getting your office ready" is showing.
+- A notarised build smoke test.
+
+**Engineering follow-ups** (small, not blocking Friday)
+- Search provider for Bud.
+- Tenant emails from REI for Jev mail screening.
+- Pack r3.
+- Remove the dead peer-agent comms code.
+- The four Windows-runner backup tests.
+- A live Jev check on a release build.
+- Bud's install competes with onboarding for CPU (#11).
+- Copy for a busy service versus a down service (#13).
+- Measure `startCuaControl()` before the first window.
+- The invite page needs one Try again after the owner confirms the first month.

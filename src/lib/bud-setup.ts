@@ -235,7 +235,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
       ? unavailable("Model choice needed", status.modelAccess.detail, "Choose a model", "attach-model")
       : unavailable("Not connected yet", "Connect this computer to your office on realbud.app to give Bud its AI access. Your request stays here while you finish setup.", "Connect to your office", "attach-model");
   }
-  if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
+  if (stage === "verify") return { ...unavailable("Check needed", "Test Bud to confirm it can answer with this connection.", "Test Bud"), canVerify: true };
   if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");
   return { ready: true, label: "Bud ready", detail: "Bud can prepare work using the book, files and permitted tools.", action: null, target: "you-worker", canVerify: false };
 }
@@ -273,7 +273,7 @@ export function budReadinessFailure(status: HermesStatus | null): string | null 
   const lastCheck = status.lastPing ?? (status.lastTest?.kind === "ping" ? status.lastTest : null);
   if (lastCheck && !lastCheck.ok && READINESS_DETAILS[lastCheck.detail]) return READINESS_DETAILS[lastCheck.detail]!;
   return lastCheck && !lastCheck.ok
-    ? budFacingCopy(lastCheck.detail, "The private readiness check did not finish. A service administrator needs to check the connection.")
+    ? budFacingCopy(lastCheck.detail, "Bud’s last test did not finish. A service administrator needs to check the connection.")
     : null;
 }
 

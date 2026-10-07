@@ -58,7 +58,7 @@ describe("Bud availability across Ask and Schedule", () => {
   });
 
   it("requires a readiness receipt after attaching a model", () => {
-    expect(budAvailability({ ...ready, ready: false }, true).action).toBe("Run readiness check");
+    expect(budAvailability({ ...ready, ready: false }, true).action).toBe("Test Bud");
     expect(budAvailability({ ...ready, ready: false }, true).canVerify).toBe(true);
   });
 
