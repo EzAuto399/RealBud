@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstallJob } from "./hermes-bridge.ts";
 import type { HermesStatus } from "./hermes-status.ts";
 import type { WorkerInstallOutcome } from "./hermes-update.ts";
-import { AUTO_SETUP_BACKOFF_MS, AUTO_SETUP_COPY, AUTO_SETUP_FILE, AUTO_SETUP_MAX_ATTEMPTS, createWorkerAutoSetup, type WorkerAutoSetupDeps } from "./worker-auto-setup.ts";
+import { AUTO_SETUP_BACKOFF_MS, AUTO_SETUP_COPY, AUTO_SETUP_FILE, AUTO_SETUP_MAX_ATTEMPTS, autoSetupDetail, createWorkerAutoSetup, type WorkerAutoSetupDeps } from "./worker-auto-setup.ts";
 import * as privateJson from "./private-json.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
@@ -154,7 +154,8 @@ describe("automatic Bud setup after an approved office link", () => {
       await installCalled(h.deps, attempt); h.finishInstall(); await run;
       h.advance(60 * 60_000);
     }
-    expect(setup.status()).toMatchObject({ state: "held", code: "held_exhausted", detail: AUTO_SETUP_COPY.held_exhausted });
+    expect(setup.status()).toMatchObject({ state: "held", code: "held_exhausted", step: 1,
+      detail: "Bud couldn’t finish setting up on this computer. It stopped while installing Bud. RealBud support has the details; try again later." });
     await setup.ensure("retry");
     expect(h.deps.installOrRepair).toHaveBeenCalledTimes(AUTO_SETUP_MAX_ATTEMPTS);
     h.setJob({ state: "done", failureKind: undefined, error: null });
@@ -180,13 +181,27 @@ describe("automatic Bud setup after an approved office link", () => {
     const setup = createWorkerAutoSetup(h.deps);
     const run = setup.ensure("boot");
     await installCalled(h.deps); h.finishInstall(); await run;
-    expect(setup.status()).toMatchObject({ state: "held", code: "held_failed", detail: AUTO_SETUP_COPY.held_failed });
+    const stopped = { state: "held", code: "held_failed", step: 1, detail: "Bud’s setup stopped while installing Bud. Your files are kept. Try again, or contact RealBud support." };
+    expect(setup.status()).toMatchObject(stopped);
     expect(JSON.stringify(h.record())).not.toContain("synthetic");
+    // The step is saved with the hold, so a restart still names it.
+    expect(h.record()).toMatchObject({ held: "held_failed", step: 1 });
+    const restarted = createWorkerAutoSetup(h.deps);
+    await restarted.ensure("boot");
+    expect(restarted.status()).toMatchObject(stopped);
     await setup.ensure("periodic");
     expect(h.deps.installOrRepair).toHaveBeenCalledTimes(1);
     const fresh = setup.ensure("provisioned");
     await installCalled(h.deps, 2); h.finishInstall(); await fresh;
     expect(h.deps.installOrRepair).toHaveBeenCalledTimes(2);
+  });
+
+  it("names only a known setup step and keeps the plain copy otherwise", () => {
+    expect(autoSetupDetail("held_failed", 3)).toBe("Bud’s setup stopped while connecting Bud’s model. Your files are kept. Try again, or contact RealBud support.");
+    expect(autoSetupDetail("held_exhausted", 4)).toMatch(/It stopped while running the private readiness check\./);
+    expect(autoSetupDetail("held_failed", 0)).toBe(AUTO_SETUP_COPY.held_failed);
+    expect(autoSetupDetail("held_restart", 1)).toBe(AUTO_SETUP_COPY.held_restart);
+    expect(autoSetupDetail("installing", 1)).toBe(AUTO_SETUP_COPY.installing);
   });
 
   it("parks a restart hold instead of re-probing it every tick", async () => {
