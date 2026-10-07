@@ -22,7 +22,8 @@ import { validateCoverage } from './bank-reference-store.ts';
 import { JOB_CAPABILITIES } from '../shared/contracts.ts';
 import { SOURCE_BILL_RECORD_KINDS, validateSourceBillRecord, validateSourceBillRecords } from './source-bill-graph.ts';
 import { BILL_STATUSES } from './expected-bills.ts';
-import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
+import { validateSavedBankBatch, validateBankReviewLinks, validateBankTenantSource, BANK_TENANT_SOURCE_KIND } from './bank-reference-validation.ts';
+import { TENANT_DIRECTORY_RECORD_KINDS, validateTenantDirectoryRecord } from './tenant-directory.ts';
 import { validateSavedBillProposal } from './bill-proposal-validation.ts';
 import { validateSavedBillReviewDraft, validateBillReviewDraftProposalLink } from './bill-review-drafts.ts';
 import { ROUTINE_RESULT_KIND, validateRoutineResultRecord } from './routine-results.ts';
@@ -45,7 +46,9 @@ const MAX_FILE = 8 * 1024 * 1024, MAX_PLAIN = PRIVATE_BACKUP_MAX_CONTENT_BYTES, 
 const WORKSPACE = 'company-installation/workspace.json';
 const DATABASE = 'workflow-state.sqlite';
 const STATIC = new Set(['desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'work-batches.json', 'loops.json', 'expected-bills.json', 'bill-followups.json', 'bank-source/redbark-coverage.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
-const KINDS = new Set(['bank', 'handoff', 'bill-proposal', 'bill-review-draft', ROUTINE_RESULT_KIND, DEPARTMENT_WORK_KIND, WEBSITE_REQUEST_KIND, WEBSITE_REMOTE_WORK_KIND, REMOTE_TEMPLATE_KIND, REMOTE_EVIDENCE_KIND, ...SOURCE_BILL_RECORD_KINDS, ...MAIL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
+// W1 bank-import state (w1/: runs, settings, evidence and its "not sent" marks) is outside the backup paths: a restore carries
+// no W1 import, so no restored mark can close one without a readback.
+const KINDS = new Set(['bank', BANK_TENANT_SOURCE_KIND, ...TENANT_DIRECTORY_RECORD_KINDS, 'handoff', 'bill-proposal', 'bill-review-draft', ROUTINE_RESULT_KIND, DEPARTMENT_WORK_KIND, WEBSITE_REQUEST_KIND, WEBSITE_REMOTE_WORK_KIND, REMOTE_TEMPLATE_KIND, REMOTE_EVIDENCE_KIND, ...SOURCE_BILL_RECORD_KINDS, ...MAIL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
 const BILL_KINDS: ReadonlySet<string> = new Set(SOURCE_BILL_RECORD_KINDS);
 const GUARDED = ['config.json', 'company-installation/host.json', 'company-installation/peer.json', 'company-installation/seat.json', 'company-installation/enrollment.json'];
 const COMPANY_DIRECTORY_GUARD = '$company-directory';
@@ -264,6 +267,8 @@ export function validatePrivateLogicalRecord(value: unknown): { id: string; kind
   if (r.kind.startsWith('execution-')) validateExecutionRecord(r.kind, plain);
   if (BILL_KINDS.has(r.kind)) validateSourceBillRecord(r.kind, r.id, Number(r.revision), plain);
   if (r.kind === 'bank') validateSavedBankBatch(r.id, plain);
+  if (r.kind === BANK_TENANT_SOURCE_KIND) validateBankTenantSource(r.id, plain);
+  if ((TENANT_DIRECTORY_RECORD_KINDS as readonly string[]).includes(r.kind)) validateTenantDirectoryRecord(r.kind, r.id, plain);
   if (r.kind === 'bill-proposal') validateSavedBillProposal(r.id, plain);
   if (r.kind === ROUTINE_RESULT_KIND) validateRoutineResultRecord(r.id, plain);
   if (r.kind === REMOTE_EVIDENCE_KIND) validateRemoteEvidence(r.id, plain);

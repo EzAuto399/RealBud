@@ -96,7 +96,7 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # the dictation helper is a signed background app — Windows and Linux never see it
+  # the dictation helper is a signed background app — Windows never sees it
   extraResources:
     - from: electron/resources/RealBud Speech.app
       to: RealBud Speech.app
@@ -182,33 +182,3 @@ nsis:
   # Versioned, like the .dmg. A stable RealBud-setup.exe can sit beside
   # RealBud-${version}-setup.exe on a release.
   artifactName: RealBud-${version}-setup.${ext}
-
-linux:
-  target:
-    - target: AppImage
-      arch: x64
-    - target: deb
-      arch: x64
-  # Keep the vector source in the freedesktop scalable icon hierarchy. A
-  # lone 1024px PNG is not indexed by GNOME's hicolor theme on Ubuntu 24.04.
-  icon: build/icon.svg
-  category: Utility
-  executableName: realbud
-  synopsis: A desk for Australian residential property managers
-  description: RealBud — a local-first property-management desk for rent, owners, and the building portal.
-  maintainer: EzAuto399 <75935138+EzAuto399@users.noreply.github.com>
-  vendor: RealBud
-  syncDesktopName: true
-  desktop:
-    entry:
-      Name: RealBud
-      Comment: A desk for Australian residential property managers
-      Keywords: AI;PropertyManagement;Chat;Productivity;
-
-deb:
-  packageCategory: utils
-  priority: optional
-
-# Static AppImage runtime: Ubuntu 24.04 can launch it without legacy FUSE 2.
-toolsets:
-  appimage: "1.0.3"

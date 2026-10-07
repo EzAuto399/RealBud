@@ -106,10 +106,6 @@ export function loadLawWatch(): LawWatchState {
   }
 }
 
-export function saveLawWatch(state: LawWatchState): void {
-  persist(state);
-}
-
 export function lawWatchView(): LawWatchView {
   return { ...loadLawWatch(), scheduled: Boolean(getRecipe(LAW_WATCH_ID)) };
 }

@@ -286,19 +286,19 @@ export function createW1Workflow(deps: W1WorkflowDeps) {
         return moveTo(run, "sign_in", { upload: null, handoff: null, posting: null, uncertain: null }, "Person chose to upload again after REI showed nothing.");
       });
     },
-    /** Abandon only while nothing can be in REI's hands. */
-    abandon(id: string, expectedRevision: number) {
+    /** Abandon only while nothing can be in REI's hands. `notSent` answers from the host's durable evidence whether an
+     * upload attempt was refused before its upload stage started; only then may an unknown upload outcome be closed directly. */
+    abandon(id: string, expectedRevision: number, notSent: (attemptId: string) => Promise<boolean> = async () => false) {
       return exclusive(id, async () => {
         const run = await store.get(id);
         if (run.revision !== expectedRevision) return conflict("This bank import changed. Reload it and try again.");
         const safe = run.step === "fetch" || run.step === "review" || run.step === "sign_in" || (run.step === "upload" && !run.upload) ||
           (run.step === "handoff" && !run.handoff && run.attention?.reason === "preview_mismatch") ||
-          (run.step === "check_outcome" && run.uncertain?.inspection === "nothing");
+          (run.step === "check_outcome" && run.uncertain?.inspection === "nothing") ||
+          (run.step === "check_outcome" && run.uncertain?.kind === "upload" && !!run.upload && !run.upload.preview && await notSent(run.upload.attemptId));
         if (!safe) return conflict("This import may already be in REI. Check its outcome before closing it.");
         return save(run, () => ({ step: "done", outcome: "abandoned", attention: null }), "Abandoned by the person.");
       });
     },
   };
 }
-
-export type W1Workflow = ReturnType<typeof createW1Workflow>;

@@ -162,9 +162,11 @@ const db = new WorkflowDatabase({ dir: data, key: Buffer.alloc(32, 7) }); dbs.pu
 const store = new BankReferenceStore(db);
 const coverage = new RedbarkCoverage(data);
 const load = interlock.loader(async () => fictionalReiPack());
+/** A fictional tenant list saved just now: the W1 host refuses a batch while the saved list is stale. */
+const FRESH_TENANTS = () => ({ savedAt: Date.now() });
 async function startHost(name) {
   const runtime = await portalRuntime(`portal-browser-${name}`);
-  const host = createW1Host({ dataDir: data, provider: () => provider, coverage, store: () => store, today: async () => TODAY, runtime,
+  const host = createW1Host({ dataDir: data, provider: () => provider, coverage, store: () => store, today: async () => TODAY, runtime, tenantDirectory: FRESH_TENANTS,
     browserId: productionBrowserId, load, lab: null, pollMs: 0, signInHolding: () => false, openForSignIn: fictionalOpenForSignIn });
   await host.status();
   return host;
@@ -248,7 +250,7 @@ try {
     const negRuntime = new BrowserRuntime({ root: join(negDir, 'portal'), command: neg.command(portal.command), executable: async () => '/synthetic/bsk', startDaemon: async () => {} });
     await negRuntime.connect(); await negRuntime.select('work');
     const callsBefore = portal.calls.length;
-    const negHost = createW1Host({ dataDir: negDir, provider: () => provider, coverage: new RedbarkCoverage(negDir), store: () => negStore, today: async () => TODAY, runtime: negRuntime,
+    const negHost = createW1Host({ dataDir: negDir, provider: () => provider, coverage: new RedbarkCoverage(negDir), store: () => negStore, today: async () => TODAY, runtime: negRuntime, tenantDirectory: FRESH_TENANTS,
       browserId: async () => 'work', load: neg.loader(loadPortalRecipePack), lab: null, pollMs: 0, signInHolding: () => false });
     const h = (path, method = 'POST', body) => negHost.handle(path, method, new URL(`http://x${path}`).searchParams, async () => body);
     await h('/api/w1/settings', 'PUT', SETTINGS);
@@ -456,7 +458,7 @@ try {
     const warmStore = new BankReferenceStore(warmDb), warmPortal = fictionalReiPortal({ signedOut: true });
     const warmRuntime = new BrowserRuntime({ root: join(warmDir, 'portal'), command: interlock.command(warmPortal.command), executable: async () => '/synthetic/bsk', startDaemon: async () => {} });
     await warmRuntime.connect(); await warmRuntime.select('work');
-    const warm = createW1Host({ dataDir: warmDir, provider: () => provider, coverage: new RedbarkCoverage(warmDir), store: () => warmStore, today: async () => TODAY, runtime: warmRuntime,
+    const warm = createW1Host({ dataDir: warmDir, provider: () => provider, coverage: new RedbarkCoverage(warmDir), store: () => warmStore, today: async () => TODAY, runtime: warmRuntime, tenantDirectory: FRESH_TENANTS,
       browserId: productionBrowserId, load, lab: null, pollMs: 0, signInHolding: () => false, openForSignIn: fictionalOpenForSignIn });
     await ok('/api/w1/settings', 'PUT', SETTINGS, warm);
     ledger.push(txn('txn_fk_dry-0301', '2026-09-08', 72500, 'FICTIONAL PAYMENT FT-HOTEL', 'FT-HOTEL'));

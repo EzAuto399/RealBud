@@ -208,6 +208,8 @@ function cell(rec: Record<string, string>, key: string | null): string {
   return rec[key] ?? rec[key.toLowerCase()] ?? "";
 }
 
+/** The one address key for CSV import, Desk and Ask: case, punctuation and
+ * street-type spellings (Street/St, Road/Rd …) fold together. */
 export function normalizeAddress(value: string): string {
   const words = value
     .toLowerCase()

@@ -95,7 +95,7 @@ describe('retained bank history through private backup', () => {
       const original = bank.export(oldest.id, true), prepared = bank.export(oldest.id);
       expect(Buffer.from(prepared.bytesBase64, 'base64')).toEqual(Buffer.from(Buffer.from(upload(0).source.bytesBase64, 'base64').toString('utf8').replace('"old"', '"00012"')));
       const { backup, receipt } = await from.service.exportBackup(phrase);
-      expect(receipt.recordCount).toBe(501);
+      expect(receipt.recordCount).toBe(1002); // each batch and its tenant source
       await to.service.stageRestore({ backup, passphrase: phrase, expectedDigest: receipt.digest });
       await applyStagedPrivateRestore({ directory: to.directory, key: to.key });
       const restoredDatabase = new WorkflowDatabase({ dir: to.directory, key: to.key });

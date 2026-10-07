@@ -1,4 +1,4 @@
-// Versioned portal recipes. Candidates may auto-save; they never auto-publish.
+// Versioned portal recipes.
 import type { PortalRecipe } from "../shared/contracts.ts";
 import type { PortalRecipeResult, PortalRunRequest } from "./portal-recipe-runner.ts";
 import { GRID_SCROLL } from "./hermes-browser-transport.ts";
@@ -14,27 +14,6 @@ export const FAKE_PORTAL_RECIPE: PortalRecipe = {
 
 export function recipeAllows(recipe: PortalRecipe, step: string): boolean {
   return recipe.steps.includes(step) && step !== "submit" && step !== "pay" && step !== "send";
-}
-
-export function isFinalControl(recipe: PortalRecipe, fingerprint: string): boolean {
-  return fingerprint === recipe.finalControlFingerprint;
-}
-
-export function saveCandidate(base: PortalRecipe, _reason: string): PortalRecipe {
-  return {
-    ...base,
-    version: base.version + 1,
-    published: false,
-    steps: [...base.steps],
-    id: base.id,
-    origin: base.origin,
-    finalControlFingerprint: base.finalControlFingerprint,
-  };
-}
-
-export function publishRecipe(recipe: PortalRecipe): PortalRecipe {
-  if (recipe.published) return recipe;
-  return { ...recipe, published: true };
 }
 
 // ── Pack recipe documents (realbud.portal-recipes.v1) ─────────────────────

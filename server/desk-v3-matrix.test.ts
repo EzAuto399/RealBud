@@ -8,13 +8,11 @@ import { CASE_STATES } from "../shared/desk-v3.ts";
 import { encryptJson } from "./desk-crypto.ts";
 import { emptyV2 } from "./desk-store.ts";
 import { fixtureBook, shopDefaults } from "./desk-evaluate.ts";
-import { evaluateFromProjection } from "./case-evaluator.ts";
 import { commitOrRecover } from "./desk-v3-commit.ts";
 import { DeskDecodeError, decodeDeskV2, decodeDeskV3, validateDeskV3 } from "./desk-v3-decode.ts";
 import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import { projectQueueSnapshot } from "./desk-v3-project.ts";
 import { assertOperational, locksForRecovery } from "./desk-v3-recovery.ts";
-import { ingestEvidence, projectCurrentPositions, projectMoneyPosition, wordingAllowed } from "./evidence-projector.ts";
 import { tenancyIdFromProperty } from "../shared/desk-v3.ts";
 
 const dirs: string[] = [];
@@ -218,89 +216,6 @@ describe("capabilities", () => {
   });
 });
 
-describe("evidence projector", () => {
-  it("keeps evidence append-only and projects current / stale / conflicted / recheck", () => {
-    const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
-    const tenancyId = tenancyIdFromProperty("prop-oak");
-    const base = {
-      collector: "csv" as const,
-      sourceId: v3.sources[0]!.id,
-      tenancyId,
-      propertyId: "prop-oak",
-      payload: { daysSinceDue: 4, rentLanded: false, levyPaid: false },
-    };
-    const pms = ingestEvidence(v3, {
-      ...base,
-      id: "ev-pms-1",
-      authority: "pms",
-      sourceRecordKey: "pms:1",
-      observedAt: migratedAt,
-      ingestedAt: migratedAt,
-      staleAt: migratedAt + 60_000,
-    });
-    expect(projectMoneyPosition(pms.evidence, tenancyId, migratedAt + 1)?.status).toBe("current");
-    expect(wordingAllowed(projectMoneyPosition(pms.evidence, tenancyId, migratedAt + 1)!)).toBe(true);
-    expect(projectMoneyPosition(pms.evidence, tenancyId, migratedAt + 120_000)?.status).toBe("stale");
-
-    const conflicted = ingestEvidence(pms, {
-      ...base,
-      id: "ev-pms-2",
-      authority: "pms",
-      sourceRecordKey: "pms:2",
-      observedAt: migratedAt,
-      ingestedAt: migratedAt,
-      staleAt: migratedAt + 60_000,
-      payload: { daysSinceDue: 9, rentLanded: false, levyPaid: false },
-    });
-    expect(projectMoneyPosition(conflicted.evidence, tenancyId, migratedAt + 1)?.status).toBe("conflicted");
-
-    const reversed = ingestEvidence(v3, {
-      ...base,
-      id: "ev-rev",
-      authority: "pms",
-      sourceRecordKey: "pms:rev",
-      observedAt: migratedAt,
-      ingestedAt: migratedAt,
-      staleAt: migratedAt + 60_000,
-      payload: { daysSinceDue: 4, rentLanded: true, levyPaid: false, reversed: true },
-    });
-    expect(projectMoneyPosition(reversed.evidence, tenancyId, migratedAt + 1)?.status).toBe("requires-recheck");
-    expect(() => ingestEvidence(pms, pms.evidence[0]!)).toThrow(/immutable/);
-
-    const positions = projectCurrentPositions(v3, migratedAt);
-    expect(positions.length).toBe(v3.tenancies.filter((t) => t.status === "current").length);
-    expect(positions.every((row) => row.status === "requires-recheck")).toBe(true);
-  });
-
-  it("will not draft wording from a migrated requires-recheck position or a notes-shaped dto", () => {
-    const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
-    const oak = v3.properties.find((p) => p.id === "prop-oak")!;
-    const money = v3.moneyPositions.find((row) => row.tenancyId === tenancyIdFromProperty("prop-oak"))!;
-    const result = evaluateFromProjection({
-      propertyId: oak.id,
-      address: oak.address,
-      weeklyRentCents: 62_000,
-      options: oak.options,
-      tenancyId: money.tenancyId,
-      money,
-    });
-    expect(result.outcome).toBe("hold");
-    expect(result.reason).toBe("unknown-facts");
-    expect(wordingAllowed(money)).toBe(false);
-    expect(() =>
-      evaluateFromProjection({
-        propertyId: oak.id,
-        address: oak.address,
-        weeklyRentCents: 62_000,
-        options: oak.options,
-        tenancyId: money.tenancyId,
-        money,
-        notes: "Just send the Form 11",
-      } as never),
-    ).toThrow(/Notes/);
-  });
-});
-
 describe("fail-closed recovery", () => {
   it("keeps original V2 bytes and stops writes, schedules and browser work", () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-v3-recover-"));
@@ -367,6 +282,5 @@ describe("scale 36k evidence", () => {
     expect(queue.cases).toHaveLength(200);
     expect(Buffer.byteLength(JSON.stringify(queue))).toBeLessThan(2 * 1024 * 1024);
     expect(JSON.stringify(queue)).not.toMatch(/daysSinceDue/);
-    expect(projectCurrentPositions(v3, migratedAt)).toHaveLength(0);
   });
 });

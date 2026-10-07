@@ -61,7 +61,7 @@ pnpm qa:e2e           # five HTTP suites from source: no build, no worker, no ne
 
 `pnpm qa:full` adds the company, second-office, seat-isolation, scale and live-worker runs; several
 of those start a disposable local PostgreSQL. Packaging is `pnpm package:mac` (DMG and ZIP, needs
-Swift/Xcode tools), `pnpm package:win`, `pnpm package:linux` and `pnpm package:mac:release` for the
+Swift/Xcode tools), `pnpm package:win` and `pnpm package:mac:release` for the
 notarized path. `pnpm package` is `package:mac`.
 
 Contribution rules, the test layers and the platform constraints are in
