@@ -12,7 +12,7 @@ Setup distinguishes installed local artifacts, selected-account observations, re
 
 Native complete-text skill suggestions for the owned skill can be reviewed under the pack card. Applying or reverting text retains the immutable published baseline and revision history, invalidates dependent plan approvals and clears schedules before switching instructions. Core skills, scripts, deletion, arbitrary files and memory proposals cannot be approved here. Interrupted changes hold work for explicit recovery. This review mechanism does not create an OS sandbox for the worker.
 
-The JSON export is generated from `server/customer-pack-definition.ts` and `austin-accounts` first-party sources. Regenerate it with `node --experimental-strip-types scripts/export-austin-office-pack.ts`; `server/customer-pack-definition.test.ts` fails when the file drifts. No customer records, credentials, installation paths, browser profiles, schedules or local approvals are exported. Changes to the published pack require a new reviewed pack revision; approved local instruction overrides are separate and are preserved by repair.
+The JSON files are the published source: the app loads them verbatim. `server/customer-pack-definition.test.ts` pins their digests and fails when the embedded skill text drifts from the `austin-accounts` support files. No customer records, credentials, installation paths, browser profiles, schedules or local approvals are exported. Changes to the published pack require a new reviewed pack revision; approved local instruction overrides are separate and are preserved by repair.
 
 ## Austin schedule pack (`austin-schedule-v1.json`)
 

@@ -302,5 +302,3 @@ export function createW1Workflow(deps: W1WorkflowDeps) {
     },
   };
 }
-
-export type W1Workflow = ReturnType<typeof createW1Workflow>;

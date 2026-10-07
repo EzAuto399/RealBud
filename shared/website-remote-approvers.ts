@@ -1,6 +1,5 @@
 /** Remote enrollment is a separate protocol. It never authorizes a v1 claim. */
 import { canonicalWebsiteCommand, commandUuid, commandDigest, commandLabel, isWebsiteCommandDescriptor, type WebsiteCommandDescriptor } from './website-commands.ts';
-export const REMOTE_APPROVER_PROTOCOL = 2 as const;
 export const REMOTE_CHALLENGE_MS = 10 * 60_000;
 export const REMOTE_FRESH_AUTH_MS = 10 * 60_000;
 export const REMOTE_APPROVER_MS = 30 * 86_400_000;

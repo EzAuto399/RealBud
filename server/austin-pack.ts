@@ -177,4 +177,3 @@ export function createAustinPack(deps: AustinPackDeps) {
     }),
   };
 }
-export type AustinPack = ReturnType<typeof createAustinPack>;

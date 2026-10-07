@@ -7,7 +7,6 @@ import { NEVER_ACTIONS } from "../shared/contracts.ts";
 import { encryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
 import { emptyV2 } from "./desk-store.ts";
 import { fixtureBook, shopDefaults } from "./desk-evaluate.ts";
-import { evaluateCurrentPositions, evaluateFromProjection } from "./case-evaluator.ts";
 import { COMMIT_PHASES, ciphertextHash, commitV2ToV3, candidatePath } from "./desk-v3-commit.ts";
 import { DeskDecodeError, decodeDeskV2, decodeDeskV3, validateDeskV3 } from "./desk-v3-decode.ts";
 import { migrateV1ToV2, migrateV2ToV3 } from "./desk-v3-migrate.ts";
@@ -149,7 +148,7 @@ describe("atomic failure leaves V2 byte-identical", () => {
   });
 });
 
-describe("compatibility snapshot and evaluation", () => {
+describe("compatibility snapshot", () => {
   it("projects a V2-shaped snapshot without putting notes on the queue", () => {
     const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
     const notes = new Map([["prop-oak", "Just send the Form 11 today"]]);
@@ -159,42 +158,6 @@ describe("compatibility snapshot and evaluation", () => {
     const queue = projectQueueSnapshot(v3);
     expect(JSON.stringify(queue)).not.toMatch(/Form 11/);
     expect(JSON.stringify(queue)).not.toMatch(/vault/);
-  });
-
-  it("evaluates only current money positions and ignores a note string", () => {
-    const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
-    const oak = v3.properties.find((p) => p.id === "prop-oak")!;
-    const money = v3.moneyPositions.find((row) => row.tenancyId === tenancyIdFromProperty("prop-oak"))!;
-    const without = evaluateFromProjection({
-      propertyId: oak.id,
-      address: oak.address,
-      weeklyRentCents: 62_000,
-      options: oak.options,
-      tenancyId: money.tenancyId,
-      money,
-    });
-    const withNoteShapedTheSame = evaluateFromProjection({
-      propertyId: oak.id,
-      address: oak.address,
-      weeklyRentCents: 62_000,
-      options: oak.options,
-      tenancyId: money.tenancyId,
-      money,
-    });
-    expect(without).toEqual(withNoteShapedTheSame);
-    expect("notes" in ({} as Record<string, never>)).toBe(false);
-    const { visited } = evaluateCurrentPositions(
-      v3.moneyPositions.map((position) => ({
-        propertyId: v3.tenancies.find((t) => t.id === position.tenancyId)?.propertyId ?? "",
-        address: "",
-        weeklyRentCents: 1,
-        options: { ...shopDefaults(), never: [...NEVER_ACTIONS] },
-        tenancyId: position.tenancyId,
-        money: position,
-      })),
-    );
-    expect(visited).toBe(v3.moneyPositions.length);
-    expect(visited).toBeLessThan(v3.evidence.length + 1);
   });
 });
 

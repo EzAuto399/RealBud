@@ -104,6 +104,13 @@ describe("PMS export address/code match", () => {
     expect(normalizeAddress("12 Oak St, Dickson ACT")).toBe(normalizeAddress("12 Oak Street, Dickson ACT"));
   });
 
+  it("matches 12 Smith St to 12 Smith Street, as Ask names a property", () => {
+    const smith = [{ id: "prop-smith", address: "12 Smith Street, Dickson ACT" }];
+    expect(matchExportRow(smith, { identity: { kind: "address", value: "12 Smith St, Dickson ACT" } })).toEqual({ ok: true, propertyId: "prop-smith" });
+    const short = [{ id: "prop-smith", address: "12 Smith St, Dickson ACT" }];
+    expect(matchExportRow(short, { identity: { kind: "address", value: "12 Smith Street, Dickson ACT" } })).toEqual({ ok: true, propertyId: "prop-smith" });
+  });
+
   it("parses an address-keyed quoted CSV", () => {
     const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak St, Dickson ACT",3,false,false\n`;
     const batch = parsePmsExport(csv, 50);

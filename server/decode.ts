@@ -33,7 +33,3 @@ export function asNullableNumber(value: unknown, field: string): number | null {
   if (value == null) return null;
   return asFiniteNumber(value, field);
 }
-
-export function decodeFailed(error: unknown): error is Error & { status?: number } {
-  return error instanceof Error;
-}

@@ -3,7 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { austinCustomerPack } from './customer-pack-definition.ts';
+import type { CustomerPack } from '../shared/customer-packs.ts';
+import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { validateCustomerPack } from './customer-packs.ts';
 
@@ -11,9 +12,26 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const support = join(root, 'pack', 'workflows', 'austin-accounts', 'support', 'rei-cloud-navigation');
 
 describe('Austin office pack definition', () => {
-  it('matches the published JSON byte for byte (regenerate with scripts/export-austin-office-pack.ts)', () => {
+  it('loads the published JSON, already validated and canonical, at its pinned digest', () => {
     const published = readFileSync(join(root, 'pack', 'workflows', 'austin-office', 'realbud-austin-office-v1.json'), 'utf8');
     expect(published).toBe(`${JSON.stringify(validateCustomerPack(austinCustomerPack()), null, 2)}\n`);
+    // Digests the in-code builder produced before the JSON became the source; a change needs a new reviewed revision.
+    const digest = (pack: unknown) => createHash('sha256').update(JSON.stringify(validateCustomerPack(pack))).digest('hex');
+    expect(digest(austinCustomerPack())).toBe('8b129048e293eac9b6957aa0bbe578a0852520f368cd8fc530f2b96b045c6767');
+    expect(digest(austinAccountsCustomerPack())).toBe('9e0a04903a43183a1fe6ba6932acd4cb8d2845e4564acee26fbc6f64dcfc1af7');
+    expect(digest(austinPropertyCustomerPack())).toBe('f41e00c5365e91f83fc4f836da3503f07ec8b1b5952c8b2f68b802464deaa001');
+  });
+
+  it('embeds the support SKILL and LICENSE files verbatim, and the role packs stay copies of their reviewed sources', () => {
+    const file = (path: string) => readFileSync(join(root, 'pack/workflows/austin-accounts/support', path), 'utf8');
+    const support = [{ instructions: file('email-inbox-triage/SKILL.md'), license: file('LICENSE.upstream') }, { instructions: file('rei-cloud-navigation/SKILL.md'), license: file('rei-cloud-navigation/LICENSE') }];
+    const office = austinCustomerPack(), accounts = austinAccountsCustomerPack(), property = austinPropertyCustomerPack();
+    for (const pack of [office, accounts]) expect(pack.skills.map(({ instructions, license }) => ({ instructions, license }))).toEqual(support);
+    const rename = (pack: CustomerPack) => ({ ...pack, recipes: pack.recipes.map(recipe => ({ ...recipe, steps: recipe.steps.map(step => step.replace('realbud-austin-office-', 'realbud-austin-accounts-')) })) });
+    const body = ({ id: _id, revision: _revision, title: _title, files: _files, ...rest }: CustomerPack) => rest;
+    expect(body(accounts)).toEqual(body(rename(office)));
+    const rehearsal = JSON.parse(readFileSync(join(root, 'pack/workflows/austin-maintenance-rehearsal/realbud-austin-maintenance-rehearsal-v1.json'), 'utf8')) as CustomerPack;
+    expect(body(property)).toEqual(body(rehearsal));
   });
 
   it('carries REI Cloud navigation in the Austin add-on pack only, never in office core', () => {
@@ -82,22 +100,24 @@ describe('Austin office pack definition', () => {
     expect(JSON.stringify(austinCustomerPack())).not.toMatch(/task-recipes|website-map/);
   });
 
-  it('reads shipped skill text with LF endings, so a CRLF checkout keeps the built-in digest (Windows #20)', async () => {
+  it('reads shipped text with LF endings, so a CRLF checkout keeps the built-in digest and REI files (Windows #20)', async () => {
     const digest = (pack: unknown) => createHash('sha256').update(JSON.stringify(validateCustomerPack(pack))).digest('hex');
-    const expected = digest(austinCustomerPack());
+    const expected = digest(austinCustomerPack()), rei = austinReiFiles();
     vi.resetModules();
     vi.doMock('node:fs', async original => {
       const fs = await original<typeof import('node:fs')>();
       const readFileSync = ((path: string, options?: unknown) => {
         const value = fs.readFileSync(path, options as BufferEncoding);
-        return /SKILL\.md$|LICENSE/.test(String(path)) && typeof value === 'string' ? value.replace(/\n/g, '\r\n') : value;
+        return /\.json$|SKILL\.md$|LICENSE/.test(String(path)) && typeof value === 'string' ? value.replace(/\n/g, '\r\n') : value;
       }) as typeof fs.readFileSync;
       return { ...fs, readFileSync, default: { ...fs, readFileSync } };
     });
     try {
-      const crlf = (await import('./customer-pack-definition.ts')).austinCustomerPack();
+      const definition = await import('./customer-pack-definition.ts');
+      const crlf = definition.austinCustomerPack();
       expect(crlf.skills.every(skill => skill.instructions.includes('\n') && !skill.instructions.includes('\r'))).toBe(true);
       expect(digest(crlf)).toBe(expected);
+      expect(definition.austinReiFiles()).toEqual(rei);
     } finally { vi.doUnmock('node:fs'); vi.resetModules(); }
   });
 

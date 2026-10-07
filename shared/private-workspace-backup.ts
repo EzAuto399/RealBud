@@ -49,7 +49,3 @@ export function parsePrivateRestoreReceipt(value: unknown): PrivateRestoreReceip
   const receipt = parsePrivateBackupReceipt(value.receipt);
   return receipt ? { version: 1, restoredAt: value.restoredAt, receipt, rekeyed: true, reviewRequired: true } : null;
 }
-export interface PrivateBackupStatus extends PrivateRestoreStatus {
-  canRestore: boolean;
-  detail: string;
-}

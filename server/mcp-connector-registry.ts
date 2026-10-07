@@ -392,5 +392,3 @@ export function createConnectorRegistry(options: McpConnectorOptions & {
   };
   return registry;
 }
-
-export type ConnectorRegistry = ReturnType<typeof createConnectorRegistry>;

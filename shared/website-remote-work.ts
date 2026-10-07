@@ -5,7 +5,6 @@ import { isRemoteDisclosureTemplate, type RemoteDisclosureTemplate } from './web
 export const REMOTE_WORK_PAGE_SIZE=32;
 export const REMOTE_WORK_BODY_BYTES=128_000;
 export const REMOTE_WORK_MAX_MS=86_400_000;
-export const REMOTE_WORK_RETAIN_MS=7*86_400_000;
 export type RemoteWorkAudience={enrollmentId:string;generation:1;person:RemoteApproverPerson};
 export type RemoteWorkEnvelope={protocol:2;id:string;companyId:string;installationId:string;workspaceId:string;workerBinding:string;grantId:string;generation:number;descriptor:WebsiteCommandDescriptor;requester:RemoteApproverPerson;requesterEnrollmentId:string;createdAt:string;expiresAt:string};
 export type RemoteWorkSubmit={protocol:2;requestId:string;grantId:string;generation:number;descriptorId:string;descriptorRevision:string;enrollmentId:string};

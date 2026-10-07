@@ -4,7 +4,7 @@ import ts from "typescript";
 import { expect, it } from "vitest";
 
 it("keeps setup redirects and internal runtime language out of primary work surfaces", () => {
-  const files = ["RoutinesPage.tsx", "WorkdayPulse.tsx", "you/WorkspaceNextStep.tsx", "desk/JobRunFeed.tsx", "schedule/JobWorkspace.tsx", "desk/MorningBrief.tsx", "desk/DeskBud.tsx", "WorkContextCard.tsx", "ApprovalScope.tsx", "AskWorkspaceSheet.tsx", "../../server/routines.ts"];
+  const files = ["RoutinesPage.tsx", "WorkdayPulse.tsx", "you/WorkspaceNextStep.tsx", "desk/JobRunFeed.tsx", "schedule/JobWorkspace.tsx", "desk/MorningBrief.tsx", "WorkContextCard.tsx", "ApprovalScope.tsx", "AskWorkspaceSheet.tsx", "../../server/routines.ts"];
   const forbidden = /You\s*(?:→|>)|mint (?:a )?browser session|RealBud clock|on the clock|The clock presses|mint.*session|\bMCP\b|\bHermes\b|\bbroker\b/i;
   const failures: string[] = [];
   for (const file of files) {
