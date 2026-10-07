@@ -6,7 +6,11 @@
 
 export const BROWSER_TASK_GRANT_VERSION = 1 as const;
 export const BROWSER_TASK_GRANT_PURPOSE = "browser-task-grant" as const;
-export const BROWSER_TASK_ROUTES = ["ask", "job", "schedule", "recovery"] as const;
+/** `loop-read`: a scheduled loop's unattended read (server/rei-morning-refresh.ts). Nobody is at the screen,
+ * so its grant only reads: no upload, download or submit, no files, and every other step is refused, never asked. */
+export const BROWSER_TASK_ROUTES = ["ask", "job", "schedule", "recovery", "loop-read"] as const;
+/** Every action class a `loop-read` grant may carry. */
+export const LOOP_READ_ACTIONS = ["read", "navigate", "click", "fill", "keys"] as const;
 export const BROWSER_ACTION_CLASSES = ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"] as const;
 export const BROWSER_CONSEQUENTIAL_KINDS = ["pay", "sign", "send", "notice", "delete", "account-change"] as const;
 /** Not configurable: every consequential action is approved once, per instance. */
@@ -136,6 +140,7 @@ export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
   });
   // The name is the file's id; two files with one name would be ambiguous.
   if (new Set(uploads.map(upload => upload.name.toLowerCase())).size !== uploads.length) invalid();
+  if (row.route === "loop-read" && (uploads.length || actions.some(action => !(LOOP_READ_ACTIONS as readonly string[]).includes(action)))) invalid();
   if (row.expiresAt !== null && !timestamp(row.expiresAt)) invalid();
   if (row.budget !== null && !(Number.isSafeInteger(row.budget) && Number(row.budget) >= 1 && Number(row.budget) <= 10_000)) invalid();
   return {

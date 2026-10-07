@@ -146,6 +146,8 @@ export interface BrowserBroker {
   close(): void;
   cancelPending(): void;
   released(): Promise<void>;
+  /** True once the global Stop (releaseBrowserBrokers) closed it, not when its own run closed it. */
+  readonly stopped: boolean;
 }
 export interface BrowserDecisionEvent { threadId: string; runId: string; entry: JobRunEvidence; action?: BrowserActionRecord }
 const decisionListeners = new Set<(event: BrowserDecisionEvent) => void>();
@@ -187,8 +189,10 @@ const SIGN_IN_NEEDED = "This page contains sign-in or security fields. Stop brow
 const SIGN_IN_HANDOVER = "The person is signing in on this site. Bud takes no action there until they finish; wait for open_for_sign_in to return.";
 const ACCOUNT_SELECTION_NEEDED = "Choose and verify the intended account using the sign-in card before Bud reads this portal. Being signed in alone does not identify the account for this task.";
 const live = new Set<BrowserBroker>();
+/** Brokers the global Stop closed: a run that sees this stops rather than reporting what it was doing. */
+const stoppedAll = new WeakSet<BrowserBroker>();
 export async function releaseBrowserBrokers(): Promise<void> {
-  const brokers = [...live]; for (const b of brokers) b.close();
+  const brokers = [...live]; for (const b of brokers) { stoppedAll.add(b); b.close(); }
   await Promise.all(brokers.map(b => b.released()));
 }
 
@@ -674,6 +678,7 @@ export async function startBrowserBroker(options: {
     },
     cancelPending() { this.close(); },
     released() { return release ?? Promise.resolve(); },
+    get stopped() { return stoppedAll.has(broker); },
   };
   live.add(broker); return broker;
 }

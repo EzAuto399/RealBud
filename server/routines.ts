@@ -1,8 +1,10 @@
 // Named product loops on the RealBud clock. The injected executor resolves
 // a code-owned evaluator and writes proposals through Desk. A loop never
-// launches Cua or approves anything itself. The Supplier list check is the one
-// loop that reads a portal: through the work browser's read-only grant, waiting
-// for the person at sign-in and at every per-run ask (server/rei-directory-sync.ts).
+// launches Cua or approves anything itself. Two loops read a portal: the Supplier
+// list check, through the work browser's read-only grant, waiting for the person
+// at sign-in and at every per-run ask (server/rei-directory-sync.ts); and the REI
+// morning refresh, through a loop-read grant in an already signed-in session that
+// asks nobody and records a miss when REI is signed out (server/rei-morning-refresh.ts).
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -105,7 +107,7 @@ const WEEKDAYS = [1, 2, 3, 4, 5];
 /** A run a restart interrupted whose REI sign-in wait a new run carried on (markResumed). */
 export const RESUMED_DETAIL = "Resumed after restart: Bud carried on with this in a new run.";
 /** Off until an office turns them on, and runnable from Schedule while off. */
-const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'];
+const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
 /** Ceiling on one run. Generous next to the worker's own 20s timeout — this
@@ -208,6 +210,14 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     // Fortnightly, Mondays 08:15, from the first Monday after the owner's 6 October design.
     schedule: { type: 'daily', time: '08:15', weekdays: [0,1,2,3,4,5,6], intervalDays: 14, anchorDate: '2026-10-12' },
     evaluatorId: 'rei-supplier-check', evaluatorVersion: 1,
+  },
+  {
+    // Off until an office enables it. Reads REI in the person's signed-in session with a read-only loop grant and
+    // applies the rows to Desk (server/rei-morning-refresh.ts). Signed out: "Missed: sign in to REI"; it never signs in.
+    id: 'rei-morning-refresh', name: 'REI morning refresh', available: true,
+    description: "Reads REI's tenants, arrears, owners and tasks due in your signed-in REI session and updates Desk. Read only: nothing in REI changes. If REI isn't signed in it records a miss and Desk stays marked not fresh.",
+    schedule: { type: 'daily', time: '07:00', weekdays: WEEKDAYS },
+    evaluatorId: 'rei-morning-refresh', evaluatorVersion: 1,
   },
   {
     // Off until an office enables it. Refreshes the saved draft only; nothing is booked (server/inspection-bookings.ts).

@@ -55,6 +55,8 @@ export interface PortalRecipeResult {
   filters: Record<string, string>;
   table: "rows" | "empty" | "unread";
   pages: number;
+  /** The page the table was read from came back cut short (the helper's size cap): its rows may be incomplete. */
+  truncated?: true;
   /** The grid footer's "N records" count when the table was read, if the page shows one. */
   footer?: number;
   controls?: string[];
@@ -106,6 +108,8 @@ export interface PortalRunOptions {
   workroom?: string;
   /** Menu clicks instead of direct routes (for a screen whose route is unknown this happens anyway). */
   menuOnly?: boolean;
+  /** Paths the pack's site map calls read-class (a loop's read): the only pages whose grid a loop may scroll. */
+  readRoutes?: readonly string[];
   pollMs?: number;
   maxWaitReads?: number;
 }
@@ -136,7 +140,7 @@ export function portalRecipeGrantNeeds(pack: PortalRecipePack, runs: PortalRunRe
 /** The pack's declared controls, bound to its origin, for the broker's classifier
  * (server/browser-authority.ts). Menu names come from the pack's screens, never a
  * forbidden area; sign-in hosts are for waiting only. */
-export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalControls {
+export function portalRecipeControls(pack: PortalRecipePack, readRoutes?: readonly string[]): BrowserPortalControls {
   const forbidden = new Set(pack.labels.forbiddenAreas);
   const menu = new Set(pack.screens.flatMap(screen => screen.menu.filter((_, index) => !forbidden.has(screen.menu.slice(0, index + 1).join(" › ")))));
   // The pager's buttons are read-safe only in a pager beside a table (server/browser-authority.ts).
@@ -144,7 +148,8 @@ export function portalRecipeControls(pack: PortalRecipePack): BrowserPortalContr
   return { origin: new URL(pack.origin).origin, readSafe: [...pack.labels.readSafe], menu: [...menu], pagination,
     ...(pack.pagination.landmark ? { pager: { ...pack.pagination.landmark } } : {}), consequential: [...pack.labels.consequential],
     signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker },
-    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}) };
+    ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}),
+    ...(readRoutes ? { readRoutes: [...readRoutes] } : {}) };
 }
 
 // ── page model (the helper's VOM text) ───────────────────────────────────
@@ -214,7 +219,9 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   if (missing.length) return finish("blocked", "grant-too-narrow", `This task's permission does not include: ${missing.join(", ")}.`);
   if (!jobBrowserUrl(`${pack.origin}/`, grant.sites)) return finish("blocked", "grant-site-missing", "This task's permission does not include the portal's site.");
 
-  const stopped = () => Boolean(options.signal?.aborted) || (options.isActive ? !options.isActive() : false);
+  // Stop reaches a run three ways: its signal, its owner going inactive, or the global Stop closing every broker.
+  let live: BrowserBroker | null = null;
+  const stopped = () => Boolean(options.signal?.aborted) || (options.isActive ? !options.isActive() : false) || Boolean(live?.stopped);
   const tap = tappedRuntime(options.runtime, grant.sites);
   let inflight: { tool: string; name?: string; recipe: boolean } | null = null;
   const approve: PersonApprove = async (tool, params, summary, signal, projection) => {
@@ -232,12 +239,13 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     broker = await startBrowserBroker({
       threadId: options.threadId, runId: grant.runId, grant, runtime: tap.runtime,
       context: { allowedOrigins: grant.sites, capabilities: [] },
-      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack),
+      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack, options.readRoutes),
       ...(options.operations ? { operations: options.operations } : {}), ...(options.approvals ? { approvals: options.approvals } : {}),
       ...(options.rules ? { rules: options.rules } : {}), ...(options.assertCapability ? { assertCapability: options.assertCapability } : {}),
       ...(options.now ? { now: options.now } : {}), ...(options.workroom ? { workroom: options.workroom } : {}),
     });
   } catch (error) { return finish("blocked", "broker-refused", error instanceof Error ? error.message : ""); }
+  live = broker;
   const workroom = options.workroom ?? browserTaskWorkroom(options.runtime.root, grant.id);
   const onStop = () => broker.close();
   options.signal?.addEventListener("abort", onStop, { once: true });
@@ -273,7 +281,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   };
 
   // ── page state ──
-  let tabId = 0; let view: PageView | null = null; let stale = true; let drift = false; let uploads = 0;
+  let tabId = 0; let view: PageView | null = null; let stale = true; let drift = false; let uploads = 0; let cut = false;
   const signInOrigins = pack.signIn.hosts.map(host => `https://${host}`);
   const assertAccount = (page: PageView) => {
     if (!page.url) throw handover("account-url-unavailable");
@@ -297,7 +305,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
       const parsed = JSON.parse(raw) as { text?: unknown; truncated?: unknown };
       if (typeof parsed.text === "string") text = parsed.text;
       // A cut-off page cannot prove a complete table; the caller sees the flag.
-      if (parsed.truncated === true && !receipt.flags.includes("page-truncated")) receipt.flags.push("page-truncated");
+      cut = parsed.truncated === true;
+      if (cut && !receipt.flags.includes("page-truncated")) receipt.flags.push("page-truncated");
     } catch { /* plain text */ }
     const page: PageView = { text, root: parsePage(text), url: tap.url(tabId) };
     const at = page.url ? new URL(page.url).origin : null;
@@ -390,6 +399,15 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
               await act("browser_click_semantic", { ref: links[0].ref! }, { name: label });
             }
           }
+          // A loop's unattended read acts only on the page it meant to open: a redirect elsewhere (a record's edit
+          // form) or a dialog open there ends the run before any field is touched.
+          if (grant.route === "loop-read") {
+            const page = await current();
+            const at = page.url ? new URL(page.url).pathname : null;
+            if (!route || at !== new URL(route, pack.origin).pathname || first(page.root, node => node.role === "dialog" || node.role === "alertdialog")) {
+              throw blocked("unexpected-page", `${path.join(" › ")} did not open its mapped page, or a dialog is open on it.`);
+            }
+          }
           break;
         }
         case "wait": {
@@ -450,6 +468,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           else {
             const table = await waitTable(true);
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
+            if (cut) result.truncated = true;
             if (table.count !== null) result.footer = table.count;
           }
           break;
@@ -466,6 +485,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
             // A page identical to the last one means the click raced a re-render; counting it would double rows.
             if (signature === previous) throw blocked("pagination-stalled");
             previous = signature; result.rows.push(...table.records); result.pages += 1;
+            if (cut) result.truncated = true;
           }
           break;
         }

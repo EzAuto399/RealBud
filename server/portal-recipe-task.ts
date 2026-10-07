@@ -26,7 +26,7 @@ import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type Port
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { browserTaskUploadName, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Portal name → the workflow pack's recipes document. The only packs a task can name. */
@@ -172,6 +172,90 @@ export async function runPortalRecipeTask(input: {
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
     });
   } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
+}
+
+// ── a loop's unattended read (route loop-read) ──────────────────────────────
+/** The pack's site map: each route's risk class (read, local-ui, export, upload, money, send, record-change, never). */
+export interface PortalSiteMap { routes: Array<{ path: string; class: string }> }
+/** The site map beside the pack's recipes document, from the same fixed list. */
+export async function loadPortalSiteMap(portal: string): Promise<PortalSiteMap> {
+  if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no site map for that portal.");
+  const map = JSON.parse(await readFile(join(ROOT, dirname(PORTAL_RECIPE_PACKS[portal]), "site-map.json"), "utf8")) as { portal?: unknown; routes?: unknown };
+  if (map.portal !== portal || !Array.isArray(map.routes) || !map.routes.every(route => typeof route?.path === "string" && typeof route?.class === "string")) {
+    throw fail(409, "This portal's site map is damaged or from another version.");
+  }
+  return { routes: map.routes.map(({ path, class: risk }) => ({ path, class: risk })) };
+}
+
+/** Why these runs cannot go under a loop's read-only grant, or null. Every recipe they reach must be a read recipe
+ * whose every step is read-class: menu paths to routes the site map calls `read`, filters and declared read-safe
+ * controls only on such a page, and never an upload, download, a learned step that asks, or a non-read recipe. */
+export function loopReadRefusal(pack: PortalRecipePack, map: PortalSiteMap, runs: ReadonlyArray<{ recipe: string; inputs?: Record<string, string> }>): string | null {
+  const classOf = (route: string) => map.routes.find(row => row.path.split("?")[0] === route)?.class ?? "unmapped";
+  const readSafe = new Set(pack.labels.readSafe), consequential = new Set(pack.labels.consequential);
+  const check = (name: string, inputs: Record<string, string>, seen: Set<string>): string | null => {
+    const recipe = pack.recipes[name];
+    if (!recipe) return `There is no recipe named ${name}.`;
+    if (seen.has(name)) return null; seen.add(name);
+    if (recipe.kind !== "read" || recipe.grantNeeds.length) return `${name} is not a read recipe.`;
+    const fill = (value: unknown) => String(value).replace(/\{(\w+)\}/g, (_, key: string) => inputs[key] ?? `{${key}}`);
+    let page: string | null = null;
+    for (const step of recipe.steps) {
+      const [verb, raw] = Object.entries(step)[0];
+      if (verb === "check" || verb === "wait" || verb === "read" || verb === "paginate") continue;
+      if (verb === "run") { const inner = check(String(raw), inputs, seen); if (inner) return inner; continue; }
+      if (verb === "nav") {
+        const path = (raw as unknown[]).map(fill).join(" › ");
+        const route = pack.routes[path];
+        page = route ? classOf(route) : "unmapped";
+        if (page !== "read" || pack.labels.forbiddenAreas.some(area => path === area || path.startsWith(`${area} › `))) return `${name} opens ${path}, which the site map does not call a read page.`;
+        continue;
+      }
+      if (page !== "read") return `${name} acts before it opens a read page.`;
+      if (verb === "type" || verb === "select") {
+        const field = fill((raw as Record<string, unknown>).field);
+        if (consequential.has(field)) return `${name} fills ${field}, which can change records.`;
+        continue;
+      }
+      if (verb === "click" || verb === "radio") {
+        const label = typeof raw === "string" ? fill(raw) : null;
+        if (label === null || !readSafe.has(label) || consequential.has(label)) return `${name} presses a control the site map does not call read-safe.`;
+        continue;
+      }
+      return `${name} has a ${verb} step, which is not a read.`;
+    }
+    return null;
+  };
+  for (const run of runs) { const refused = check(run.recipe, run.inputs ?? {}, new Set()); if (refused) return refused; }
+  return null;
+}
+
+/** Runs read recipes under a loop's read-only grant: nobody is asked, so anything beyond reading ends the run. The
+ * recipes are checked against the site map before the browser is touched; the broker then refuses every step that
+ * is not plainly read-only (server/browser-authority.ts), whatever a recipe tries. */
+export async function runPortalReadLoop(input: {
+  pack: PortalRecipePack; map: PortalSiteMap; runs: PortalRunOptions["runs"]; account: PortalRunOptions["account"];
+  grant: BrowserTaskGrant; runtime: BrowserSessionRuntime; threadId: string; signal: AbortSignal;
+} & Pick<PortalRunOptions, "operations" | "approvals" | "rules" | "assertCapability" | "now" | "workroom" | "pollMs">): Promise<PortalRunResult> {
+  const { grant } = input;
+  if (grant.route !== "loop-read" || grant.uploads.length || grant.actions.some(action => !(LOOP_READ_ACTIONS as readonly string[]).includes(action))) {
+    throw fail(409, "This scheduled read's permission is not read-only. Nothing was opened.");
+  }
+  const refused = loopReadRefusal(input.pack, input.map, input.runs);
+  if (refused) throw fail(409, `${refused} A scheduled refresh only reads, so nothing was opened.`);
+  if (dispatching.has(grant.id)) throw fail(409, "This portal read is already running.");
+  dispatching.add(grant.id); running.add(grant.id);
+  try {
+    // No `approve`: the runner refuses anything a person would have to answer.
+    // Only the site map's read pages may have their grid scrolled to load every row.
+    const readRoutes = input.map.routes.filter(route => route.class === "read").map(route => route.path.split("?")[0]);
+    return await runPortalRecipes({
+      pack: input.pack, runs: input.runs, account: input.account, grant, threadId: input.threadId, runtime: input.runtime, signal: input.signal, readRoutes,
+      ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
+      ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
+      ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
+    });
+  } finally { dispatching.delete(grant.id); running.delete(grant.id); }
 }
 
 /** What the person reads in Ask afterwards: outcome, rows read, and where it stopped. */
