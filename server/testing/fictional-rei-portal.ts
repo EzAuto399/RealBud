@@ -45,6 +45,10 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
 const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
+/** The pack's recipes still drive the old Arrears/Tasks filters ("From day", "Hide vacated tenants", Tasks' From/To).
+ * ponytail: compatibility default while main's recipes and the recipes rewrite overlap; once no recipe names
+ * "From day", the live shape is the default with no test edits. Delete this and `legacyFilters` after that PR lands. */
+const RECIPES_USE_OLD_FILTERS = readFileSync(RECIPES_FILE, "utf8").includes('"From day"');
 /** FICTIONAL tenant and supplier export reports on the Reports page, for Ask tasks that explore it. The pack's
  * directory recipes read the lists' own grids and never open them. */
 const TENANT_DEFAULT = "Tenant list export (fictional)", SUPPLIER_DEFAULT = "Supplier list export (fictional)";
@@ -221,10 +225,10 @@ const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(
 
 const TABLES: Record<string, { cols: string[]; rows: string[][] }> = {
   /** The arrears page (filters on Status and Days). */
-  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: TENANTS },
+  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days Arrears", "Amount owing"], rows: TENANTS },
   owners: { cols: ["Name", "Status", "Properties"], rows: [["Fictional Owner One", "Active", "2"], ["Fictional Owner Two", "Active", "1"]] },
   rentals: { cols: ["Property", "Status", "Lease expiry", "Smoke due"], rows: Array.from({ length: 7 }, (_, i) => [`${i + 1} Fictional St`, "Active", `2026-1${i % 3}-0${i + 1}`, `2026-10-1${i}`]) },
-  tasks: { cols: ["Task", "Status", "Due date", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
+  tasks: { cols: ["Task", "Status", "Date Due", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
   reconciliation: { cols: ["Date", "Description", "Debit", "Credit", "Reconciled"], rows: [["2026-09-24", "Fictional deposit", "", "1200.00", "No"], ["2026-09-24", "Fictional fee", "15.00", "", "No"]] },
   /** Pending payments/levies/invoices: not bank imports. */
   pendingPayments: { cols: ["Owner/Business", "Description", "Amount", "Sufficient Funds"], rows: [["Fictional Owner One", "Fictional levy", "120.00", "Yes"], ["Fictional Owner Two", "Fictional invoice", "80.00", "No"]] },
@@ -294,6 +298,9 @@ export interface FictionalReiOptions {
   bankReconciliationForm?: boolean;
   /** Path → the addresses the page moves itself to, one during each read after loading (rehearses a page that settles its address late). */
   addressSettles?: Record<string, string[]>;
+  /** Arrears and Tasks with their old named filters (From day, Hide vacated tenants; Status, From, To) instead of live
+   * REI's "Show entries" and "Search:" only. Defaults to whatever the pack's recipes still drive. */
+  legacyFilters?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -313,6 +320,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   /** Addresses this page's own script still moves to, one per read (addressSettles). */
   let settle: string[] = [];
   const block = options.gridBlock ?? 4;
+  const legacy = options.legacyFilters ?? RECIPES_USE_OLD_FILTERS;
   /** Rows the Tenants grid has rendered: one block until its content scrolls. */
   let rendered = block;
   /** The report whose parameters popup is open. */
@@ -349,8 +357,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     const search: Field = { kind: "textbox", name: "Search", value: "", ...(options.searchLabel ? { label: options.searchLabel } : {}) };
     if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
-    if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
-    if (path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
+    if (legacy && path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
+    if (legacy && path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
+    // Live DataTables pages (7 Oct 2026): only "Show entries" and the "Search:" box are named; the day, status and date
+    // filters have no accessible name, so the fictional page shows none. FICTIONAL: rows per page stay `pageSize`, so paging stays exercised.
+    const entries = (value: string, choices: string[]): Field => ({ kind: "combobox", name: "Show entries", value, options: choices });
+    if (path === "/customers/task") return [entries("15", ["15", "30", "45", "100"]), { ...search, label: "Search:" }];
+    if (path === "/customers/arrears/") return [entries("10", ["10", "15", "All"]), { ...search, label: "Search:" }];
     // Live REI (7 Oct 2026): an editable form (a one-option business select, statement balance, reconciled date) above an unnamed DataTables search.
     if (path === "/customers/reconciliation/bankreconciliation") return options.bankReconciliationForm
       ? [{ kind: "combobox", name: "Business", value: AGENCY, options: [AGENCY] }, { kind: "textbox", name: "Statement Balance", value: "1185.00" },

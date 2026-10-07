@@ -32,6 +32,26 @@ describe("fictional portal shaped like live REI", () => {
     for (const option of FICTIONAL_FILE_FORMATS) expect(page).toContain(`option ${JSON.stringify(option)}`);
     expect(page).toContain('button "Load File"');
   });
+  it("Arrears and Tasks show live REI's controls (Show entries, Search:) and renamed columns; the old filters stay behind legacyFilters", async () => {
+    const mock = fictionalReiPortal({ legacyFilters: false });
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/arrears/`]); await observe(mock);
+    const arrears = await observe(mock);
+    expect(arrears).toContain('combobox "Show entries" value="10"');
+    for (const option of ["10", "15", "All"]) expect(arrears).toContain(`option "${option}"`);
+    expect(arrears).toContain('textbox "Search:" value=""');
+    expect(arrears).toContain('columnheader "Days Arrears"');
+    expect(arrears).not.toMatch(/"From day"|"Hide vacated tenants"|columnheader "Days"/);
+    await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/task`]); await observe(mock);
+    const tasks = await observe(mock);
+    expect(tasks).toContain('combobox "Show entries" value="15"');
+    for (const option of ["15", "30", "45", "100"]) expect(tasks).toContain(`option "${option}"`);
+    expect(tasks).toContain('textbox "Search:" value=""');
+    expect(tasks).toContain('columnheader "Date Due"');
+    expect(tasks).not.toMatch(/combobox "Status"|textbox "From"|textbox "To"/);
+    const legacy = fictionalReiPortal({ legacyFilters: true });
+    await legacy.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/arrears/`]);
+    expect(await observe(legacy)).toMatch(/textbox "From day"[\s\S]*combobox "Hide vacated tenants"/);
+  });
   it("the tenants grid shows \"No records to display\" first, then every row and a records footer with no pages", async () => {
     const mock = fictionalReiPortal();
     await mock.command(["navigate", `${FICTIONAL_REI_ORIGIN}/customers/tenant`]);
