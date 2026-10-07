@@ -2083,6 +2083,8 @@ async function startSeatTurn(
             const previous = (await agencySetup.getConfiguration()).revision;
             try { await agencySetup.save(body); } finally { if ((await agencySetup.getConfiguration()).revision !== previous) stopWorkAfterAgencySetupChange(); }
           } },
+          // Workflow clocks through the same door as PATCH /api/loops/:id, which pins weekly bills to its reviewed setup.
+          loops: { listLoops: () => loops!.listLoops(), patchClock: async (id, patch) => loops!.patchClock(id, id === 'weekly-bills' ? { ...patch, timezone: (await authorizeBillWorkflow()).settings.timeZone } : patch) },
           writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
             : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.

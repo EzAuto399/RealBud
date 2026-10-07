@@ -16,22 +16,27 @@ import { createInspectionRulesStore } from "./inspection-rules.ts";
 import { createMaintenanceReviewStore } from "./maintenance-review.ts";
 import { recordEvents, type EventRecorder } from "./testing/events.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
+import { LoopManager, type LoopManagerOptions } from "./routines.ts";
 import type { LoopbackToolServer } from "./web-research-broker.ts";
-import { bindWorkflowSettings, clockLabel, dateRanges, friendly, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
+import { bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } }));
 
-const directories: string[] = [];
-async function stores() {
+const directories: string[] = [], managers: LoopManager[] = [];
+const cleanUp = async () => { managers.splice(0).forEach(manager => manager.close()); await Promise.all(directories.splice(0).map(path => removeFixture(path))); };
+async function stores(listRecipes?: LoopManagerOptions["listRecipes"]) {
   const directory = privateTempRoot(join(tmpdir(), "realbud-bud-settings-")); directories.push(directory);
   const maintenance = createMaintenanceReviewStore({ file: join(directory, "maintenance-review.json"), now: () => 5_000 });
   const inspection = createInspectionRulesStore({ file: join(directory, "inspection-rules.json"), now: () => 5_000 });
   const agencyService = createAgencySetupService({ directory, workspaceId: randomUUID(), actorId: () => "fictional-actor", now: () => 5_000 });
   const agencySaves = vi.fn(async (body: Parameters<typeof agencyService.save>[0]) => { await agencyService.save(body); });
+  const loops = new LoopManager({ file: join(directory, "loops.json"), hostTimezone: "UTC", now: () => Date.parse("2026-10-06T09:00:00Z"), listRecipes,
+    execute: async () => ({ ok: true, detail: "Fictional run." }) });
+  managers.push(loops);
   let refusal: string | null = null;
-  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, writable: () => refusal });
-  return { maintenance, inspection, agencyService, agencySaves, settings, refuse: (value: string | null) => { refusal = value; } };
+  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, loops, writable: () => refusal });
+  return { maintenance, inspection, agencyService, agencySaves, loops, settings, loop: (id: string) => loops.listLoops().find(row => row.id === id)!, refuse: (value: string | null) => { refusal = value; } };
 }
 
 describe("review card wording", () => {
@@ -48,11 +53,21 @@ describe("review card wording", () => {
     expect(friendly("workingDays", [1, 2, 3])).toBe("Mon, Tue, Wed");
     expect(friendly("dailyCapacity", 5)).toBe("5");
   });
+
+  it("reads a workflow clock in plain words", () => {
+    expect(scheduleWords({ time: "08:00", weekdays: [1] })).toBe("Mondays 8:00 am");
+    expect(scheduleWords({ time: "08:00", weekdays: [1, 4] })).toBe("Mondays and Thursdays 8:00 am");
+    expect(scheduleWords({ time: "16:00", weekdays: [1, 3, 5] })).toBe("Mondays, Wednesdays and Fridays 4:00 pm");
+    expect(scheduleWords({ time: "07:30", weekdays: [1, 2, 3, 4, 5] })).toBe("Weekdays 7:30 am");
+    expect(scheduleWords({ time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe("Every day 8:00 am");
+    expect(scheduleWords({ time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], intervalDays: 2, anchorDate: "2026-10-02" })).toBe("Every 2 days from 2 Oct 2026, 8:00 am");
+    expect(scheduleWords({ time: "09:00", weekdays: [1, 2, 3, 4, 5], monthly: "first-weekday" })).toBe("First weekday of each month, 9:00 am");
+  });
 });
 
 describe("working rules broker", () => {
   let broker: LoopbackToolServer | undefined;
-  afterEach(async () => { broker?.close(); broker = undefined; await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
+  afterEach(async () => { broker?.close(); broker = undefined; await cleanUp(); });
   const call = async (name: string, args: unknown, id = 1) => ((await (await fetch(broker!.descriptor.url, { method: "POST",
     headers: { "content-type": "application/json", ...Object.fromEntries(broker!.descriptor.headers.map(row => [row.name, row.value])) },
     body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }) })).json()) as any).result;
@@ -161,6 +176,79 @@ describe("working rules broker", () => {
     expect(await call("workflow_settings_propose", { target: "inspection_rules", values: { cycleMonths: 3 }, reason: "x" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Recover the private book") }] });
     expect((await inspection.read()).revision).toBe(0);
   });
+
+  describe("workflow schedules (loop_schedule)", () => {
+    it("reads every workflow's clock with no card", async () => {
+      const { settings } = await stores();
+      const approve = vi.fn(async () => true);
+      await start(settings, approve);
+      const result = await call("workflow_settings_read", { target: "loop_schedule" });
+      expect(result.content[0].text).toContain('- loop_schedule weekly-bills "Weekly bills review" (revision 1, off): Mondays 8:00 am {"time":"08:00","weekdays":[1]}');
+      expect(result.content[0].text).toContain('- loop_schedule inbound-triage "Morning priorities" (revision 1, off, time set by agency setup)');
+      expect(result.structuredContent.loops.find((row: any) => row.loopId === "morning-arrears")).toEqual({ loopId: "morning-arrears", name: "Morning money check",
+        enabled: true, revision: 1, schedule: { time: "07:30", weekdays: [1, 2, 3, 4, 5] }, waitingForPlan: false, agencyTimed: false });
+      expect(approve).not.toHaveBeenCalled();
+    });
+
+    it("shows before → after in plain words and saves only on Allow, leaving an off workflow off", async () => {
+      const { settings, loop } = await stores();
+      let allow = false;
+      const cards = await start(settings, async () => allow);
+      const propose = () => call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "weekly-bills", schedule: { weekdays: [4, 1] } }, reason: "Bills land on Thursdays too." });
+      expect(await propose()).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+      expect(cards[0]).toBe("Change workflow schedule\nWeekly bills review: Mondays 8:00 am → Mondays and Thursdays 8:00 am\nIt stays off until someone switches it on in Schedule.\nWhy: Bills land on Thursdays too.");
+      expect(loop("weekly-bills")).toMatchObject({ revision: 1, enabled: false, schedule: { time: "08:00", weekdays: [1] } });
+      allow = true;
+      const saved = await propose();
+      expect(saved.isError).toBeUndefined();
+      expect(saved.content[0].text).toContain("it was: Mondays 8:00 am");
+      expect(loop("weekly-bills")).toMatchObject({ revision: 2, enabled: false, nextRunAt: null, schedule: { time: "08:00", weekdays: [1, 4] } });
+      // An on workflow stays on, and its card has no off line.
+      expect((await call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "morning-arrears", schedule: { time: "08:15" } }, reason: "Later start." })).isError).toBeUndefined();
+      expect(cards.at(-1)).toBe("Change workflow schedule\nMorning money check: Weekdays 7:30 am → Weekdays 8:15 am\nWhy: Later start.");
+      expect(loop("morning-arrears")).toMatchObject({ enabled: true, schedule: { time: "08:15" } });
+    });
+
+    it("refuses a stale revision when the schedule changed while the card was open", async () => {
+      const { settings, loops, loop } = await stores();
+      await start(settings, async () => { loops.patchClock("weekly-bills", { time: "09:15" }); return true; });
+      expect(await call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "weekly-bills", schedule: { weekdays: [1, 4] } }, reason: "x" }))
+        .toMatchObject({ isError: true, content: [{ text: LOOP_SCHEDULE_CONFLICT }] });
+      expect(loop("weekly-bills")).toMatchObject({ revision: 2, schedule: { time: "09:15", weekdays: [1] } });
+    });
+
+    it("cannot switch a workflow on, enable an opt-in one, or move Morning priorities' agency clock", async () => {
+      const { settings, loop } = await stores();
+      const cards = await start(settings, async () => true);
+      const propose = (values: unknown) => call("workflow_settings_propose", { target: "loop_schedule", values, reason: "x" });
+      expect(await propose({ loopId: "maintenance-review", schedule: { enabled: true } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes time, weekdays") }] });
+      expect(await propose({ loopId: "maintenance-review", schedule: { time: "09:00" }, enabled: true })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("loopId and schedule") }] });
+      expect(await propose({ loopId: "inbound-triage", schedule: { time: "06:00" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("agency setup") }] });
+      expect(await propose({ loopId: "morning-arrears", schedule: { intervalDays: 2, anchorDate: "2026-10-07" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes time, weekdays.") }] });
+      expect(await propose({ loopId: "weekly-bills", schedule: { time: "8am" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("HH:MM") }] });
+      expect(await propose({ loopId: "weekly-bills", schedule: { intervalDays: 40, anchorDate: "2026-10-05" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("1–31") }] });
+      expect(await propose({ loopId: "no-such-workflow", schedule: { time: "09:00" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("loopId") }] });
+      expect(await call("workflow_settings_restore", { target: "loop_schedule", reason: "x" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("not kept") }] });
+      expect(cards).toEqual([]);
+      expect(loop("inbound-triage")).toMatchObject({ revision: 1, enabled: false, schedule: { time: "07:30" } });
+      // An opt-in workflow's time changes; it stays off and opt-in.
+      expect((await propose({ loopId: "maintenance-review", schedule: { time: "09:00" } })).isError).toBeUndefined();
+      expect(loop("maintenance-review")).toMatchObject({ revision: 2, enabled: false, nextRunAt: null, schedule: { time: "09:00" } });
+      // Where Schedule lets the every-N-days cadence change, Bud can propose it too.
+      expect((await propose({ loopId: "bank-references", schedule: { intervalDays: 3 } })).isError).toBeUndefined();
+      expect(cards.at(-1)).toContain("Bank reference review: Every 2 days from 2 Oct 2026, 8:00 am → Every 3 days from 2 Oct 2026, 8:00 am");
+      expect(loop("bank-references")).toMatchObject({ enabled: false, schedule: { intervalDays: 3, anchorDate: "2026-10-02" } });
+    });
+
+    it("keeps a job waiting for plan approval waiting", async () => {
+      const job = { id: "fictional-job", title: "Fictional Friday check", status: "shadow" as const, schedule: { time: "16:00", weekdays: [5] }, planApprovedAt: null, revision: 1, approvedRevision: null };
+      const { settings, loop } = await stores(() => [job]);
+      const cards = await start(settings, async () => true);
+      expect((await call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "recipe-fictional-job", schedule: { time: "15:00" } }, reason: "Earlier." })).isError).toBeUndefined();
+      expect(cards[0]).toBe("Change workflow schedule\nFictional Friday check: Fridays 4:00 pm → Fridays 3:00 pm\nIt still waits for its plan to be approved, and approving the plan uses the plan's own time.\nWhy: Earlier.");
+      expect(loop("recipe-fictional-job")).toMatchObject({ waitingForPlan: true, enabled: false, nextRunAt: null, schedule: { time: "15:00", weekdays: [5] } });
+    });
+  });
 });
 
 describe("working rules mount in an ACP turn", () => {
@@ -170,7 +258,7 @@ describe("working rules mount in an ACP turn", () => {
     delete process.env.FAKE_ACP_MODE; delete process.env.FAKE_ACP_DUMP;
     recorder?.stop(); await instance?.dispose();
     if (scratch) await removeFixture(scratch);
-    await Promise.all(directories.splice(0).map(path => removeFixture(path)));
+    await cleanUp();
   });
 
   it("mounts the tools for the current turn and shows RealBud's card before a change", async () => {

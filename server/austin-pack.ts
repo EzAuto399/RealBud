@@ -104,7 +104,8 @@ export interface AustinPackDeps {
   signals: () => Promise<AustinSignals>;
   file?: string; now?: () => number; pack?: () => AustinLoopPack;
 }
-export type AustinInstallResult = { loopId: string; outcome: 'applied' | 'kept' };
+/** 'unknown': no loop with that id on this PC (a newer built-in, or a job not saved here); nothing was set. */
+export type AustinInstallResult = { loopId: string; outcome: 'applied' | 'kept' | 'unknown' };
 
 export function createAustinPack(deps: AustinPackDeps) {
   const file = deps.file ?? join(DATA_DIR, 'austin-pack.json'), now = deps.now ?? Date.now, pack = deps.pack ?? loadAustinPack;
@@ -115,13 +116,14 @@ export function createAustinPack(deps: AustinPackDeps) {
 
   /** One door for pack loops. A loop whose clock differs from the pack keeps the
    * office's clock; a matching one gets the office timezone, else the pack's
-   * only while it has none. */
+   * only while it has none. An id with no loop here is reported unknown. */
   async function applyLoops(items: Array<{ loopId: string; schedule: Schedule; timezone?: string }>): Promise<AustinInstallResult[]> {
     const office = await deps.officeTimeZone(), results: AustinInstallResult[] = [];
     for (const item of items) {
       const loop = deps.loops.listLoops().find(candidate => candidate.id === item.loopId);
       // ponytail: "edited" means differs from this pack revision; a later revision that changes a time also keeps the older pack time.
-      if (!loop || !sameClock(loop.schedule, item.schedule)) { results.push({ loopId: item.loopId, outcome: 'kept' }); continue; }
+      if (!loop) { results.push({ loopId: item.loopId, outcome: 'unknown' }); continue; }
+      if (!sameClock(loop.schedule, item.schedule)) { results.push({ loopId: item.loopId, outcome: 'kept' }); continue; }
       const timezone = office || (loop.schedule.timezone ? undefined : item.timezone);
       if (timezone && loop.schedule.timezone !== timezone) deps.loops.patchClock(item.loopId as LoopId, { timezone });
       results.push({ loopId: item.loopId, outcome: 'applied' });
