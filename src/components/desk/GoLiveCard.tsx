@@ -10,6 +10,7 @@ import {
   readWebsiteLinkState,
   setupSequence,
   setupSequenceComplete,
+  sharedGmailNotAllowed,
   type AgencySetupRead,
   type AustinPackRead,
   type ScheduleRead,
@@ -124,6 +125,7 @@ export function GoLiveCard({
     bud: hermes ? { ready: hermes.ready, working: Boolean(auto?.working), detail: auto && !auto.working ? auto.detail : null } : undefined,
     schedule,
     appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
+    sharedGmailBlocked: sharedGmailNotAllowed(officeSnapshot, state?.config?.composio?.managed === true),
   });
 
   const openStep = (step: SetupStep) => {
