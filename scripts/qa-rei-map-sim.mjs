@@ -9,7 +9,8 @@
 //    no network, no REI account, no model). The mock reproduces the traps the
 //    map records: agency context in the query string, async tables and
 //    modal, a search box that ignores non-input assignment, Active-by-default
-//    status, pagination, sign-in cancel page, version drift, independent URL
+//    status, pagination, DataTables pages whose filters have no accessible
+//    name (RealBud applies the pack's row filter), sign-in cancel page, version drift, independent URL
 //    reicid and header business-code switches,
 //    an unknown upload outcome and consequential buttons that count effects.
 //
@@ -28,6 +29,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parse } from "yaml";
+import { filterPortalRows } from "../server/portal-recipe.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAP_DEFAULT = "pack/workflows/austin-accounts/support/rei-cloud-navigation/references/website-map.md";
@@ -125,9 +127,10 @@ const tenants = [
 ];
 const data = {
   tenants: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: tenants },
+  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days Arrears", "Amount owing"], rows: tenants },
   owners: { cols: ["Name", "Status", "Properties"], rows: [["Fictional Owner One", "Active", "2"], ["Fictional Owner Two", "Active", "1"]] },
   rentals: { cols: ["Property", "Status", "Lease expiry", "Smoke due"], rows: Array.from({ length: 7 }, (_, i) => [`${i + 1} Fictional St`, "Active", `2026-1${i % 3}-0${i + 1}`, `2026-10-1${i}`]) },
-  tasks: { cols: ["Task", "Status", "Due date", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
+  tasks: { cols: ["Task", "Status", "Date Due", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"], ["Fictional later task", "Open", "2026-10-03", "Normal", "Staff B"]] },
   reconciliation: { cols: ["Date", "Description", "Debit", "Credit", "Reconciled"], rows: [["2026-09-24", "Fictional deposit", "", "1200.00", "No"], ["2026-09-24", "Fictional fee", "15.00", "", "No"]] },
   reports: { cols: ["Report"], rows: [["Receipt Register"], ["Receipt Register - Reversals"], ["Arrears Report"], ["Owner Statement"]] },
 };
@@ -154,11 +157,15 @@ document.querySelectorAll('[data-effect]').forEach(el => el.addEventListener('cl
 }
 
 // Table widget: async load, Status (Active default), search on input event,
-// optional filters, 5 rows per page.
-function tableBody(key, { filters = "", statusDefault = "Active", search = true, extra = "", filterJs = "true", paid = [] } = {}) {
+// optional filters, 5 rows per page. `entries` makes it a live DataTables page
+// (7 Oct, as server/testing/fictional-rei-portal.ts): only "Show entries" and
+// "Search:" are named; Status and the page's filters have no accessible name.
+// FICTIONAL: rows per page stay 5 whatever Show entries says, so paging stays exercised.
+function tableBody(key, { filters = "", statusDefault = "Active", search = true, extra = "", filterJs = "true", paid = [], entries } = {}) {
   const d = { ...data[key], rows: data[key].rows.map(r => paid.some(p => r[0].endsWith(" " + p)) ? [r[0], r[1], r[2], r[3], "0", "0.00"] : r) };
-  return `${search ? `<label for="search">Search</label><input id="search" type="text">` : ""}
-<label for="status">Status</label><select id="status"><option>Active</option><option>Inactive</option><option>Open</option><option>Closed</option><option>All</option></select>
+  return `${entries ? `<label for="entries">Show entries</label><select id="entries">${entries.map(e => `<option>${e}</option>`).join("")}</select>` : ""}
+${search ? `<label for="search">${entries ? "Search:" : "Search"}</label><input id="search" type="text">` : ""}
+${entries ? "" : `<label for="status">Status</label>`}<select id="status"><option>Active</option><option>Inactive</option><option>Open</option><option>Closed</option><option>All</option></select>
 ${filters}${extra}
 <table aria-label="Results"><thead><tr>${d.cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody><tr class="loading"><td>Loading…</td></tr></tbody></table>
 <button id="prev">Previous</button><button id="next">Next</button>
@@ -193,8 +200,9 @@ const PAGES = {
   "/customers/tenant": () => ["Tenants", tableBody("tenants")],
   "/customers/owner": () => ["Owners", tableBody("owners")],
   "/customers/property": () => ["Rentals", tableBody("rentals", { extra: `<label for="view">View</label><select id="view"><option>Default</option><option>lease expiry</option><option>smoke</option><option>pool</option></select>` })],
-  "/customers/task": () => ["Tasks", tableBody("tasks", { search: false, statusDefault: "All", filters: `<label for="from">From</label><input id="from"><label for="to">To</label><input id="to">`, filterJs: "(!document.getElementById('from').value || r[2] >= document.getElementById('from').value) && (!document.getElementById('to').value || r[2] <= document.getElementById('to').value)" })],
-  "/customers/arrears/": ({ paid = [] }) => ["Arrears", tableBody("tenants", { paid, search: true, statusDefault: "All", filters: `<label for="fromday">From day</label><input id="fromday"><label for="hidevac">Hide vacated tenants</label><select id="hidevac"><option>No</option><option>Yes</option></select><button data-effect="notice">Notice</button>`, filterJs: "Number(r[4]) >= Number(document.getElementById('fromday').value || 1) && !(document.getElementById('hidevac').value === 'Yes' && r[1] === 'Vacated')" })],
+  "/customers/task": () => ["Tasks", tableBody("tasks", { entries: ["15", "30", "45", "100"], statusDefault: "All", filters: `<input id="from"><input id="to">`, filterJs: "(!document.getElementById('from').value || r[2] >= document.getElementById('from').value) && (!document.getElementById('to').value || r[2] <= document.getElementById('to').value)" })],
+  // The default Arrears grid lists tenants a day or more behind; the days box and Hide vacated checkbox are unnamed.
+  "/customers/arrears/": ({ paid = [] }) => ["Arrears", tableBody("arrears", { entries: ["10", "15", "All"], paid, statusDefault: "All", filters: `<input id="fromday"><input id="hidevac" type="checkbox"><button data-effect="notice">Notice</button>`, filterJs: "Number(r[4]) >= Number(document.getElementById('fromday').value || 1) && !(document.getElementById('hidevac').checked && r[1] === 'Vacated')" })],
   "/customers/reconciliation/bankreconciliation": () => ["Bank reconciliation", tableBody("reconciliation", { search: false, statusDefault: "All", extra: `<label for="stmt">Statement balance</label><input id="stmt"><button data-effect="reconcile">Reconcile</button>` })],
   "/report/reportlist": () => ["Reports", `<label for="search">Search</label><input id="search" type="text">
 <table aria-label="Results"><tbody><tr class="loading"><td>Loading…</td></tr></tbody></table>
@@ -272,7 +280,7 @@ async function runRecipe(page, name, inputs, ctx) {
       }
       case "radio": await page.getByRole("radio", { name: arg, exact: true }).check(); break;
       case "click": guardClick(arg, stops, ctx); await page.locator("main").getByText(arg, { exact: true }).filter({ visible: true }).first().click(); break;
-      case "read": if (arg === "controls") ctx.result.controls = await page.locator("main label").allInnerTexts(); else ctx.result.rows = await readTable(page); break;
+      case "read": if (arg === "controls") ctx.result.controls = await page.locator("main label").allInnerTexts(); else { ctx.result.cols = await page.locator('table[aria-label="Results"] thead th').allInnerTexts(); ctx.result.rows = await readTable(page); } break;
       case "paginate": {
         const next = page.getByRole("button", { name: "Next", exact: true });
         // Pages must advance: a page identical to the previous one means the
@@ -323,6 +331,13 @@ async function runRecipe(page, name, inputs, ctx) {
       }
       default: throw new Error(`verb ${verb}`);
     }
+  }
+  // Live REI's filters have no accessible name: RealBud applies the pack's row filter after the read (server/portal-recipe.ts).
+  if (r.row_filter) {
+    const keyed = ctx.result.rows.map(row => Object.fromEntries((ctx.result.cols ?? []).map((col, i) => [col, row[i]])));
+    const { rows: kept, unapplied } = filterPortalRows({ rowFilter: r.row_filter }, inputs, keyed);
+    ctx.result.filtered = { read: keyed.length, unapplied };
+    ctx.result.rows = ctx.result.rows.filter((_, i) => kept.includes(keyed[i]));
   }
 }
 function guardClick(label, stops, ctx) {
@@ -395,7 +410,7 @@ async function scenario(id, opts, fn) {
   await context.close();
   const writes = state.effects.filter(e => e !== "upload");
   const ok = verdict === true && writes.length === 0;
-  results.push({ id, ok, outcome, ms: Date.now() - t0, rows: ctx.result.rows.length, downloads: ctx.downloads, flags: ctx.flags, blocked: ctx.blocked, effects: state.effects, ...(error ? { error } : {}), ...(verdict !== true ? { why: verdict } : {}) });
+  results.push({ id, ok, outcome, ms: Date.now() - t0, rows: ctx.result.rows.length, ...(ctx.result.filtered ? { filtered: ctx.result.filtered } : {}), downloads: ctx.downloads, flags: ctx.flags, blocked: ctx.blocked, effects: state.effects, ...(error ? { error } : {}), ...(verdict !== true ? { why: verdict } : {}) });
   if (state.covers) for (const c of state.covers) if (ok) exercised.add(c);
 }
 const is = (cond, why) => cond ? true : why;
@@ -403,14 +418,17 @@ const open = (page, ctx) => runRecipe(page, "open-session", {}, ctx);
 
 // Happy paths — one per S recipe.
 await scenario("open-session", { covers: ["open-session"], expect: o => is(o === "completed", o) }, open);
-await scenario("find-record/one", { covers: ["find-record"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 1 && c.result.rows[0][0] === "Fictional Tenant Delta", `${o} ${JSON.stringify(c.result.rows)}`) },
-  async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Tenants", query: "Delta" }, c); });
+// find-record reads the list's default (Active) rows and never sets Status (#116); inactive Delta stays hidden (trap/status-default-hides-inactive).
+await scenario("find-record/one", { covers: ["find-record"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 1 && c.result.rows[0][0] === "Fictional Tenant Alpha", `${o} ${JSON.stringify(c.result.rows)}`) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Tenants", query: "Alpha" }, c); });
 await scenario("find-record/many", { expect: (o, c) => is(o === "completed" && c.result.rows.length === 2, `many should surface 2 candidates, got ${c.result.rows.length}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Tenants", query: "Bravo" }, c); });
 await scenario("find-record/empty", { expect: (o, c) => is(o === "completed" && c.result.rows.length === 0, o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Owners", query: "Zulu" }, c); });
-await scenario("arrears-review", { covers: ["arrears-review"], shot: true, expect: (o, c) => is(o === "completed" && c.result.rows.length === 6 && !c.result.rows.some(r => r[1] === "Vacated"), `${o} rows=${c.result.rows.length}`) },
-  async (p, c) => { await open(p, c); await runRecipe(p, "arrears-review", { min_days: "1" }, c); });
+// Every page of the default grid (7 rows a day or more behind, over 2 pages), then RealBud keeps Days Arrears >= 10.
+// Vacated tenants are not hidden: the live checkbox has no accessible name.
+await scenario("arrears-review", { covers: ["arrears-review"], shot: true, expect: (o, c) => is(o === "completed" && c.result.filtered?.read === 7 && !c.result.filtered.unapplied.length && c.result.rows.length === 5 && c.result.rows.every(r => Number(r[4]) >= 10) && c.result.rows.some(r => r[1] === "Vacated"), `${o} read=${c.result.filtered?.read} kept=${c.result.rows.length} unapplied=${c.result.filtered?.unapplied}`) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "arrears-review", { min_days: "10" }, c); });
 const receipts = [["2026-09-25", "FT-BRAVO", "540.00"], ["2026-09-25", "FT-ECHO", "660.00"], ["2026-09-24", "FT-OLD", "100.00"]];
 await scenario("receipt-register-approved-fictional-export", { covers: ["receipt-register"], grant: ["download"], receipts, shot: true, expect: (o, c) => is(o === "completed" && c.downloads === 1 && c.result.rows.at(-1)?.[2] === "1200.00", `${o} ${JSON.stringify(c.result.rows.at(-1))}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "receipt-register", { date_from: "2026-09-25", date_to: "2026-09-25" }, c); });
@@ -457,7 +475,8 @@ await scenario("post-import-readback/no-export-approval→hold", { receipts, exp
   async (p, c) => { await open(p, c); await runRecipe(p, "post-import-readback", pir, c); });
 await scenario("bank-reconciliation-read", { covers: ["bank-reconciliation-read"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 2, o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "bank-reconciliation-read", {}, c); });
-await scenario("tasks-due", { covers: ["tasks-due"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 2 && c.result.rows.every(r => r[1] === "Open"), `${o} ${c.result.rows.length}`) },
+// The default Tasks grid (every status: the live status select is unnamed), then RealBud keeps Date Due in range.
+await scenario("tasks-due", { covers: ["tasks-due"], expect: (o, c) => is(o === "completed" && c.result.filtered?.read === 4 && !c.result.filtered.unapplied.length && c.result.rows.length === 3 && c.result.rows.every(r => r[2] >= "2026-09-25" && r[2] <= "2026-09-30"), `${o} read=${c.result.filtered?.read} kept=${c.result.rows.length} unapplied=${c.result.filtered?.unapplied}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "tasks-due", { date_from: "2026-09-25", date_to: "2026-09-30" }, c); });
 await scenario("compliance-expiry", { covers: ["compliance-expiry"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 7, `${o} ${c.result.rows.length}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "compliance-expiry", { view: "lease expiry" }, c); });
