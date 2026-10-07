@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { LEARN_MAX_EVENTS, LEARN_MAX_TEXT, type LearnEvent, type LearnLandmark, type LearnSessionView } from "../shared/learned-recipes.ts";
 import { ownedBrowserEndpoint } from "./hermes-browser-transport.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { learnLabel } from "./learned-recipes.ts";
 
 const fail = (message: string, status = 409) => Object.assign(new Error(message), { status });
 type Json = Record<string, unknown>;
@@ -88,12 +89,10 @@ const TABLE_PROBE = `Boolean(document.querySelector("table,[role=table],[role=gr
 const LANDMARKS: readonly string[] = ["navigation", "main", "dialog", "other"];
 const CLICK_ROLES: readonly string[] = ["button", "link", "tab", "menuitem", "option"];
 const CONTROL = /^[a-z][a-z-]{0,23}$/;
-/** Control characters and C1 become spaces; zero-width and bidi marks are removed, so a hidden "Sa​ve" still reads "Save". */
+/** learnLabel's one spelling (server/learned-recipes.ts), so a hidden "Sa\u200bve" reads "Save"; redacted and capped. */
 function clean(value: unknown, allowEmpty = false): string | null {
   if (typeof value !== "string" || value.length > 4096) return null;
-  // eslint-disable-next-line no-control-regex
-  const text = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/[​-‏‪-‮⁠-⁩﻿]/g, "").replace(/\s+/g, " ").trim();
-  const out = redactSecretsInText(text).slice(0, LEARN_MAX_TEXT).trim();
+  const out = learnLabel(redactSecretsInText(learnLabel(value)).slice(0, LEARN_MAX_TEXT));
   return out || allowEmpty ? out : null;
 }
 type Payload = LearnEvent | { kind: "tables"; present: boolean };

@@ -25,9 +25,10 @@ import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
-import { createLearnedRecipeStore, mergeLearnedRecipes } from "./learned-recipes.ts";
+import { createLearnedRecipeStore, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { LEARN_NAME } from "../shared/learned-recipes.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Portal name → the workflow pack's recipes document. The only packs a task can name. */
@@ -175,6 +176,27 @@ export const portalRecipeTaskRunning = (grantId: string | undefined): boolean =>
 export function holdPortalRecipeGrant(grantId: string): void { running.add(grantId); }
 export function releasePortalRecipeGrant(grantId: string): void { running.delete(grantId); }
 
+/** The labels reviewers confirmed on the learned recipes these runs reach (and the recipes those run): read-safe for
+ * this task only. A task that runs no learned recipe gets none; one learned recipe never rides on another's. */
+export function learnedReadSafe(pack: PortalRecipePack, runs: ReadonlyArray<{ recipe: string }>): string[] {
+  const seen = new Set<string>(); const out = new Set<string>();
+  const visit = (name: string) => {
+    if (seen.has(name) || !Object.hasOwn(pack.recipes, name)) return; seen.add(name);
+    const recipe = pack.recipes[name] as PortalRecipePack["recipes"][string] & Partial<Pick<LearnedPackRecipe, "confirmed">>;
+    if (LEARN_NAME.test(name) && Array.isArray(recipe.confirmed)) for (const label of recipe.confirmed) if (typeof label === "string") out.add(label);
+    for (const step of recipe.steps) if ("run" in step) visit(String(step.run));
+  };
+  for (const run of runs) visit(run.recipe);
+  return [...out];
+}
+/** The pack a task runs with: the loaded pack's read-safe list plus learnedReadSafe for these runs, nothing more.
+ * ponytail: the runner and broker take one read-safe list today, so the learned labels join it for this task only. Once
+ * BrowserPortalControls carries them apart (learnedReadSafe, re-checked by pressControl), hand them over separately. */
+export function portalTaskPack(pack: PortalRecipePack, runs: ReadonlyArray<{ recipe: string }>): PortalRecipePack {
+  const learned = learnedReadSafe(pack, runs).filter(label => !pack.labels.readSafe.includes(label));
+  return learned.length ? { ...pack, labels: { ...pack.labels, readSafe: [...pack.labels.readSafe, ...learned] } } : pack;
+}
+
 /** Runs a started recipe task with its saved grant. The record, not the caller, says what runs. */
 export async function runPortalRecipeTask(input: {
   record: BrowserTaskRecord; grant: BrowserTaskGrant; runtime: BrowserSessionRuntime; approve: PersonApprove;
@@ -190,15 +212,15 @@ export async function runPortalRecipeTask(input: {
   const own = !running.has(grant.id);
   dispatching.add(grant.id); running.add(grant.id);
   try {
-    const pack = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
+    const loaded = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
     const result = await runPortalRecipes({
-      pack, runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
+      pack: portalTaskPack(loaded, record.recipe.runs), runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
       approve: input.approve, signal: input.signal, isActive: input.isActive,
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
     });
-    const notice = learnedNotices.get(pack);
+    const notice = learnedNotices.get(loaded);
     return notice ? { ...result, detail: [result.detail, notice].filter(Boolean).join(" ") } : result;
   } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
 }
