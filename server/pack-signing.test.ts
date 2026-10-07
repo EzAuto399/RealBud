@@ -115,9 +115,9 @@ describe('per-client export', () => {
     expect(exported.recipes.map(recipe => recipe.id)).toEqual(austinCustomerPack().recipes.map(recipe => recipe.id));
     expect(exported.recipes.every(recipe => recipe.schedule === null)).toBe(true);
     const settings = JSON.parse(exported.files!['office/settings.json']!) as CustomerPackOfficeSettings;
+    // Only this pack's own plan loop leaves: morning-arrears is an office loop the pack never declared.
     expect(settings).toEqual({ version: 1, kind: 'office-settings',
-      loops: [{ id: 'morning-arrears', enabled: false, schedule: { type: 'daily', time: '07:30', weekdays: [1, 2, 3, 4, 5], timezone: 'Australia/Brisbane' } },
-        { id: 'recipe-wf-austin-accounts-inbox-triage', enabled: false, schedule: { type: 'daily', time: '08:00', weekdays: [1] } }] });
+      loops: [{ id: 'recipe-wf-austin-accounts-inbox-triage', enabled: false, schedule: { type: 'daily', time: '08:00', weekdays: [1] } }] });
     // The unsigned export is not installable anywhere until the publisher signs it.
     const b = office('b-unsigned');
     await expect(install(b.service, exported)).rejects.toThrow(BUILT_IN_MISMATCH_MESSAGE);

@@ -40,7 +40,8 @@ function office({ observe, ...options }: { officePacks?: () => Promise<OfficePac
   const agency = createAgencySetupService({ directory: dir, workspaceId: 'workspace-fictional', actorId: () => 'fictional-owner', now: () => NOW, observe });
   const packs = createCustomerPackService({ directory: dir, profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'), trustedKeys: FICTIONAL_PACK_KEYS,
     listRecipes: () => recipes, saveRecipes: ((inputs: unknown[]) => { recipes.push(...inputs.map(raw => ({ ...(raw as object), revision: 1 } as Recipe))); return recipes; }) as never,
-    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply), selectWorkflowPack: id => agency.selectInstalledPack(id), ...options });
+    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply), selectWorkflowPack: id => agency.selectInstalledPack(id),
+    officeSettings: async () => ({ loops: loops.listLoops().map(loop => ({ id: loop.id, schedule: loop.schedule })) }), ...options });
   const install = async (pack: unknown) => packs.install(pack, (await packs.preview(pack)).digest);
   return { loops, maintenance, austin, agency, packs, install, loop: (id: string) => loops.listLoops().find(item => item.id === id)! };
 }
@@ -157,6 +158,24 @@ describe('installing a pack applies its loops', () => {
     const choosing = createCustomerPackService({ directory: join(dir, 'choosing'), profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'),
       listRecipes: () => [], saveRecipes: (() => []) as never, selectWorkflowPack: async () => { throw new Error('Fictional agency recovery'); } });
     await expect(choosing.install(pack, (await choosing.preview(pack)).digest)).rejects.toThrow('The pack was installed, but it could not be chosen for this agency. Choose it in Agency workflow setup.');
+  });
+});
+
+describe('exporting a role pack for a client', () => {
+  it("carries only that pack's own loops, and round-trips byte for byte", async () => {
+    const f = office();
+    await f.install(austinAccountsCustomerPack());
+    await f.install(austinPropertyCustomerPack());
+    const all = f.loops.listLoops().map(loop => loop.id);
+    for (const id of ['owner-letter', 'morning-arrears', 'maintenance-review', 'bank-references']) expect(all).toContain(id);
+    const kevin = await f.packs.clientExport('austin-accounts'), sherry = await f.packs.clientExport('austin-property');
+    expect(settingsOf(kevin).loops.map(l => l.id).sort()).toEqual(['bank-references', 'inbound-triage', 'weekly-bills']);
+    expect(settingsOf(sherry).loops.map(l => l.id).sort()).toEqual(['inspection-draft', 'maintenance-review', 'rei-supplier-check']);
+    for (const loop of [...settingsOf(kevin).loops, ...settingsOf(sherry).loops]) expect(loop).toMatchObject({ enabled: false, schedule: { timezone: 'Australia/Brisbane' } });
+    // Export -> import on a second PC -> re-export is unchanged.
+    const b = office();
+    await b.install(signFictionalPack(kevin));
+    expect(JSON.stringify(await b.packs.clientExport('austin-accounts'))).toBe(JSON.stringify(kevin));
   });
 });
 

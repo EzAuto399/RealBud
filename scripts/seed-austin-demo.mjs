@@ -10,7 +10,9 @@
 // address, so nothing can be sent, paid or imported to a real system.
 // Seed: pack/workflows/austin-showcase/fixtures/ (every record is synthetic).
 //
-//   node scripts/seed-austin-demo.mjs [--root <dir under the temp folder>] [--port 8899] [--no-browser]
+//   node scripts/seed-austin-demo.mjs [--root <dir under the temp folder>] [--port 8899] [--no-browser] [--role kevin|sherry]
+// --role picks the machine: kevin installs the austin-accounts role pack, sherry
+// the austin-property one; without it both are installed, as on a shared PC.
 // Node 24+. Needs a built UI: REALBUD_UI_DIR=<dir from `pnpm exec vite build --outDir <dir>`>
 // (defaults to dist/). With PLAYWRIGHT_MODULE (+ CHROME_EXECUTABLE) it opens a
 // connected browser window for the presenter; Ctrl+C stops everything.
@@ -39,6 +41,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const money = cents => (cents / 100).toFixed(2);
 const property = code => seed.properties.find(p => p.code === code);
 const within = (parent, child) => { const part = relative(parent, child); return Boolean(part) && part !== '..' && !part.startsWith(`..${sep}`) && !part.startsWith(sep); };
+/** The role packs each demo machine installs (Kevin: accounts; Sherry: property management). */
+export const ROLE_PACKS = { kevin: ['austin-accounts'], sherry: ['austin-property'], both: ['austin-accounts', 'austin-property'] };
 
 /** Bill facts relative to the run day, so the demo always looks current. */
 export function billFacts(bill, today = localDate()) {
@@ -124,7 +128,8 @@ const freePort = async () => { const s = createServer(); s.listen(0, '127.0.0.1'
  * driver; `stop()` ends the service and the fakes. The root must be inside the
  * system temp folder (the mock office grant refuses anything else).
  */
-export async function startAustinDemo({ demoRoot, port, uiDir = process.env.REALBUD_UI_DIR || join(root, 'dist'), log = () => {} } = {}) {
+export async function startAustinDemo({ demoRoot, port, uiDir = process.env.REALBUD_UI_DIR || join(root, 'dist'), role = 'both', log = () => {} } = {}) {
+  assert.ok(Object.hasOwn(ROLE_PACKS, role), `--role must be kevin or sherry (or omitted for both), not "${role}".`);
   demoRoot = demoRoot ? resolve(demoRoot) : mkdtempSync(join(realpathSync(tmpdir()), 'realbud-austin-demo-'));
   mkdirSync(demoRoot, { recursive: true, mode: 0o700 });
   demoRoot = realpathSync(demoRoot);
@@ -181,9 +186,13 @@ export async function startAustinDemo({ demoRoot, port, uiDir = process.env.REAL
       const res = await fetch(base + path, { method, signal: AbortSignal.timeout(60_000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       const value = await res.json().catch(() => null); assert.equal(res.status, expected, `${method} ${path}: ${JSON.stringify(value)}`); return value;
     };
-    const demo = { base, data, home, demoRoot, today, request, fetch, token, stop, logs: () => logs, gmailCalls, redbarkCalls, ledger: redbark.ledger, threads, seeded: [], skipped: [] };
-    if (fresh) { await seedOffice(demo, log); writeFileSync(marker, JSON.stringify({ synthetic: true, seededAt: new Date().toISOString(), today, seeded: demo.seeded, skipped: demo.skipped }), { mode: 0o600 }); }
-    else { const saved = JSON.parse(readFileSync(marker, 'utf8')); demo.seeded = saved.seeded; demo.skipped = saved.skipped; demo.today = saved.today; }
+    const demo = { base, data, home, demoRoot, today, role, request, fetch, token, stop, logs: () => logs, gmailCalls, redbarkCalls, ledger: redbark.ledger, threads, seeded: [], skipped: [] };
+    if (fresh) { await seedOffice(demo, log); writeFileSync(marker, JSON.stringify({ synthetic: true, seededAt: new Date().toISOString(), today, role, seeded: demo.seeded, skipped: demo.skipped }), { mode: 0o600 }); }
+    else {
+      const saved = JSON.parse(readFileSync(marker, 'utf8'));
+      assert.equal(saved.role, role, `This demo folder was seeded for role "${saved.role ?? 'austin-office'}". Use that role, or a new --root.`);
+      demo.seeded = saved.seeded; demo.skipped = saved.skipped; demo.today = saved.today;
+    }
     return demo;
   } catch (error) { await stop(); throw error; }
 }
@@ -193,18 +202,22 @@ async function seedOffice(demo, log) {
   const note = text => { demo.seeded.push(text); log(`seeded: ${text}`); };
   await completeFictionalOnboarding(request);
   await request('/api/hermes/apply-pack', 'POST', {});
-  const pack = await request(`/api/customer-packs/${seed.office.workflowPackId}/export`), preview = await request('/api/customer-packs/preview', 'POST', { pack });
-  await request('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
+  // The role packs ship in the app; each sets only its own workflows, all off.
+  const packs = ROLE_PACKS[demo.role], kevin = packs.includes('austin-accounts');
+  for (const id of packs) {
+    const pack = await request(`/api/customer-packs/${id}/export`), preview = await request('/api/customer-packs/preview', 'POST', { pack });
+    await request('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
+  }
   const recipes = (await request('/api/recipes')).recipes;
-  for (const id of ['wf-austin-accounts-inbox-triage', 'wf-austin-accounts-invoice-review', 'wf-austin-accounts-bill-exceptions']) {
+  for (const id of kevin ? ['wf-austin-accounts-inbox-triage', 'wf-austin-accounts-invoice-review', 'wf-austin-accounts-bill-exceptions'] : []) {
     const recipe = recipes.find(r => r.id === id); assert.ok(recipe, `pack recipe ${id}`);
     await request(`/api/recipes/${id}`, 'PATCH', { expectedRevision: recipe.revision, planApproved: true, status: 'active' });
   }
   const status = await request('/api/hermes'); assert.ok(status.workerFingerprint, 'worker fingerprint');
   writeFileSync(join(data, 'hands-ping.json'), JSON.stringify({ at: Date.now(), ok: true, detail: 'Fictional demo worker readiness; not a live model test', kind: 'ping', workerFingerprint: status.workerFingerprint }), { mode: 0o600 });
   let setup = await request('/api/agency-setup');
-  setup = await request('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, agencyName: seed.office.agencyName, workflowPackId: seed.office.workflowPackId, timeZone: ZONE } });
-  note(`office "${seed.office.agencyName}", ${ZONE}, austin-office pack installed, 3 plans approved (mock office grant, demo worker)`);
+  setup = await request('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, agencyName: seed.office.agencyName, workflowPackId: kevin ? 'austin-accounts' : null, timeZone: ZONE } });
+  note(`office "${seed.office.agencyName}", ${ZONE}, ${packs.join(' + ')} installed${kevin ? ', 3 plans approved' : ''} (mock office grant, demo worker)`);
 
   // Desk book: add the six properties, then the REI ledger stub as CSV.
   const ids = {};
@@ -225,9 +238,11 @@ async function seedOffice(demo, log) {
   await request('/api/connected-apps/check', 'POST', {});
   setup = await request('/api/agency-setup');
   const propertyReferences = seed.properties.map(p => ({ propertyId: ids[p.code], reference: p.code, aliases: [p.address] }));
-  setup = await request('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, gmailAccountId: seed.office.gmail.accountId, selectedWorkflows: ['bills-calendar', 'morning-priorities'], propertyReferences } });
+  // Bills and morning priorities are Kevin's workflows; Sherry's machine only connects the inbox.
+  const mailWorkflows = kevin ? ['bills-calendar', 'morning-priorities'] : [];
+  setup = await request('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, gmailAccountId: seed.office.gmail.accountId, selectedWorkflows: mailWorkflows, propertyReferences } });
   setup = await request('/api/agency-setup/check-gmail', 'POST', { expectedRevision: setup.state.revision });
-  for (const id of ['morning-priorities', 'bills-calendar']) {
+  for (const id of kevin ? ['morning-priorities', 'bills-calendar'] : []) {
     const workflow = setup.workflows.find(w => w.id === id); assert.ok(workflow?.canReview, JSON.stringify(workflow));
     await request(`/api/agency-setup/workflows/${id}/review`, 'POST', { expectedRevision: setup.state.revision, expectedEvidenceDigest: workflow.evidenceDigest });
     setup = await request('/api/agency-setup');
@@ -296,7 +311,7 @@ async function seedMaintenanceHistory(data, ids, today) {
 // ── CLI: the presenter's demo host ──────────────────────────────────────────
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const arg = name => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
-  const demo = await startAustinDemo({ demoRoot: arg('--root'), port: arg('--port') ? Number(arg('--port')) : undefined, log: line => console.log(line) });
+  const demo = await startAustinDemo({ demoRoot: arg('--root'), port: arg('--port') ? Number(arg('--port')) : undefined, role: arg('--role') ?? 'both', log: line => console.log(line) });
   console.log(`\nAustin demo (FICTIONAL sample office) is running at ${demo.base}\nDemo folder: ${demo.demoRoot}  (delete it after the demo)\n${demo.skipped.map(s => `Skipped: ${s}`).join('\n')}`);
   let browser;
   if (process.env.PLAYWRIGHT_MODULE && !process.argv.includes('--no-browser')) {
