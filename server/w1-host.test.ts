@@ -12,8 +12,8 @@ import { readBankTransactions } from "./bank-provider.ts";
 import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
-import { loadPortalRecipePack, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
-import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir } from "./testing/learned-recipe-fixture.ts";
+import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
+import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
@@ -31,7 +31,8 @@ const txn = (id: string, date: string, cents: number, reference: string) => ({ i
 // The real loaders, wrapped so a test can see which one W1 used and what it got.
 vi.mock("./portal-recipe-task.ts", async importOriginal => {
   const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
-  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack) };
+  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack),
+    loadPortalRecipePackWithPaths: vi.fn(real.loadPortalRecipePackWithPaths) };
 });
 
 type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load">>;
@@ -417,14 +418,15 @@ describe("W1 host", () => {
 });
 
 describe("W1 and watch-and-learn recipes", () => {
-  it("uploads and prepares on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
-    const cleanup = await publishLearnedInDataDir();
+  it("keeps a person-approved path but never a learned recipe or a label a reviewer confirmed", async () => {
+    const forget = await publishLearnedInDataDir();
+    const restore = await saveApprovedPathInDataDir();
     const shipped = await loadShippedPortalRecipePack("rei-cloud");
     try {
       const merged = await loadPortalRecipePack("rei-cloud");
       expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
       expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
-      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
+      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadPortalRecipePackWithPaths).mockClear();
 
       // No injected `load`: the host picks its own loader on the way to REI.
       const f = await fixture({ load: undefined });
@@ -434,12 +436,13 @@ describe("W1 and watch-and-learn recipes", () => {
       await f.review(now.run!.fetch!.batchId);
       await f.act("advance");
       expect(loadPortalRecipePack).not.toHaveBeenCalled();
-      expect(loadShippedPortalRecipePack).toHaveBeenCalledWith("rei-cloud");
-      for (const { value } of vi.mocked(loadShippedPortalRecipePack).mock.results) {
+      expect(loadPortalRecipePackWithPaths).toHaveBeenCalledWith("rei-cloud");
+      for (const { value } of vi.mocked(loadPortalRecipePackWithPaths).mock.results) {
         const used = await value;
+        expect(used.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } }); // the approved path
         expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
         expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
       }
-    } finally { cleanup(); }
+    } finally { forget(); await restore(); }
   });
 });

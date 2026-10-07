@@ -1,5 +1,5 @@
 // Refresh from REI end to end in one process: the FICTIONAL REI-style portal
-import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir } from "./testing/learned-recipe-fixture.ts";
+import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { privateTempRoot } from "./testing/private-fixture.ts";
 // behind the real BrowserRuntime, broker and recipe runner (w1-lab.ts), the
 // real tenant and supplier directory stores. No network, no REI account: a
@@ -245,6 +245,7 @@ describe("scheduled Supplier list check (fictional portal)", () => {
 describe("refresh from REI and watch-and-learn recipes", () => {
   it("runs on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
     const cleanup = await publishLearnedInDataDir();
+    const restore = await saveApprovedPathInDataDir();
     const shipped = await loadShippedPortalRecipePack("rei-cloud");
     try {
       const merged = await loadPortalRecipePack("rei-cloud");
@@ -261,6 +262,9 @@ describe("refresh from REI and watch-and-learn recipes", () => {
       expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
       expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
       expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
-    } finally { cleanup(); }
+      // Nor a path approved in Ask: an unattended read never downloads.
+      expect(used.recipes["tenant-list"].steps).toEqual(shipped.recipes["tenant-list"].steps);
+      expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
+    } finally { cleanup(); await restore(); }
   });
 });

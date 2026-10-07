@@ -47,10 +47,16 @@ export async function loadShippedPortalRecipePack(portal: string): Promise<Porta
 /** Why a loaded pack has no learned recipes (the store's own sentence), shown in the Ask run's reply. */
 const learnedNotices = new WeakMap<PortalRecipePack, string>();
 
-/** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them,
- * plus published watch-and-learn recipes. For person-started tasks only: an unattended loop uses loadShippedPortalRecipePack. */
+/** The shipped pack with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over it, and no
+ * watch-and-learn recipes or confirmed labels: for reviewed jobs that upload or prepare (W1), so a REI menu move doesn't stop them. */
+export async function loadPortalRecipePackWithPaths(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+  return paths.apply(await loadShippedPortalRecipePack(portal));
+}
+
+/** The pack with approved paths (loadPortalRecipePackWithPaths) plus published watch-and-learn recipes. For the
+ * person-started Ask recipe path only: W1 uses loadPortalRecipePackWithPaths, unattended loops loadShippedPortalRecipePack. */
 export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
-  const pack = await paths.apply(await loadShippedPortalRecipePack(portal));
+  const pack = await loadPortalRecipePackWithPaths(portal, paths);
   // Published watch-and-learn recipes join as read recipes; a damaged learned file never breaks the shipped ones.
   try {
     const { DATA_DIR } = await import("./config.ts");
