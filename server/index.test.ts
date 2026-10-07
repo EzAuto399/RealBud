@@ -739,6 +739,19 @@ describe("harness HTTP API", () => {
     expect(miss.status).toBe(404);
   });
 
+  it("lets a single desktop's owner save approval settings, with receipts", async () => {
+    expect((await fetch(`${BASE}/api/approvals`)).status).toBe(401);
+    expect(await api("GET", "/api/approvals")).toMatchObject({ status: 200, body: { scope: "computer", local: { revision: 0, canEdit: true }, departments: [] } });
+    const next = { version: 1, purpose: "approval-settings", groups: { "app:gmail": "ask", "class:send": "deny" }, reviewedReads: [] };
+    expect(await api("PUT", "/api/approvals", { expectedRevision: 0, settings: next })).toEqual({ status: 200, body: { revision: 1, settings: next } });
+    expect((await api("PUT", "/api/approvals", { expectedRevision: 0, settings: next })).status).toBe(409);
+    expect((await api("PUT", "/api/approvals", { expectedRevision: 1, settings: { ...next, groups: { "class:send": "read-without-asking" } } })).status).toBe(400);
+    const history = await api("GET", "/api/approvals/history");
+    expect(history.status).toBe(200);
+    expect(history.body.entries).toHaveLength(1);
+    expect(history.body.entries[0]).toMatchObject({ by: "This computer", department: null, after: next });
+  });
+
   it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
     const empty = await api("GET", "/api/law-watch");
     expect(empty.status).toBe(200);

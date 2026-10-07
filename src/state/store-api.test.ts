@@ -30,6 +30,21 @@ describe("api() local session recovery", () => {
     expect(events).not.toContain("realbud-local-session-required");
   });
 
+  it("sends the tab's office member session only on approval changes and answers", async () => {
+    const member = "fictional_member_session_000000000000000000";
+    vi.stubGlobal("window", {
+      ogb: { getLocalSession: async () => BEFORE },
+      sessionStorage: { getItem: (key: string) => key === "realbud.company-member-session" ? member : null, setItem: () => {}, removeItem: () => {} },
+      dispatchEvent: () => true,
+    });
+    const { api } = await import("./store");
+    fetchMock.mockImplementation(async () => json({ ok: true }));
+    const paths = ["/api/rules", "/api/rules/fictional-rule", "/api/approvals", "/api/approvals/history?departmentId=x", "/api/threads/t-1/respond", "/api/bots/bud/respond", "/api/desk", "/api/company/me", "/api/rulesets"];
+    for (const path of paths) await api(path, { method: "POST", body: "{}" });
+    const sent = fetchMock.mock.calls.map(([path, init]) => [path, new Headers(init?.headers).get("x-realbud-member-session")]);
+    expect(sent).toEqual(paths.map((path, index) => [path, index < 6 ? member : null]));
+  });
+
   it("asks the owner to reconnect after a second refusal instead of retrying again", async () => {
     stubWindow(async () => BEFORE);
     const { api } = await import("./store");

@@ -41,6 +41,7 @@ import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
 import type { AskWorkContext } from "@/lib/work-continuation";
 import type { ApprovalPolicy, MemoryApprovalReview } from "@shared/approval-policy";
 import type { BrowserApprovalCard } from "@shared/browser-approval-card";
+import type { ApprovalCardMeta } from "@shared/approval-settings";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -54,7 +55,8 @@ export type RequestFence = {
   ruleOffer: { surface: PortalRuleOfferSurface; origin: string; label: string } | null;
 };
 
-export interface OptionCardData {
+/** `ApprovalCardMeta` adds deadline, resolution, answeredBy and remote (types only so far). */
+export interface OptionCardData extends ApprovalCardMeta {
   /** Bud's loop-result card: "Open" goes to Desk instead of replying in chat. */
   opens?: "desk";
   title: string;
@@ -895,6 +897,13 @@ const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
+/** Approval changes on an office member's computer are checked against that
+ * member's department rights, so these calls carry the tab's member session
+ * exactly as company calls do (`companyApi`, loaded on demand). */
+const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond)(?:\?|$)/;
+const memberSessionHeaders = async (): Promise<Record<string, string>> =>
+  import("@/lib/company-api").then(module => module.companyApi.memberSessionHeaders(), () => ({}));
+
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;
   let sentSession = "";
@@ -909,6 +918,7 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     if (/^\/api\//.test(path)) for (const [name, value] of Object.entries(serviceAdminHeaders())) headers.set(name, value);
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     if (token) headers.set("x-realbud-session", token);
+    if (MEMBER_SESSION_PATHS.test(path)) for (const [name, value] of Object.entries(await memberSessionHeaders())) headers.set(name, value);
     // A hung service must surface as a failure the PM can retry, never as a
     // permanent "Saving…". Callers with a known budget pass it; worker calls
     // (Recheck can take a minute) keep the default of no client-side limit.
