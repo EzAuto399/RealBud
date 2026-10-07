@@ -8,12 +8,13 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BrowserApprovalStore } from "./browser-authority.ts";
+import { authorizeBrowserAction, BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
+import { reiReadIntent } from "./portal-job-intent.ts";
 import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, verifiedShippedRecipesText, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
-import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
+import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
 import { createLearnedRecipeStore, LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
@@ -413,5 +414,42 @@ describe("the recipe task's approval channel", () => {
     // A card that cannot be shown is a refusal.
     const failing = portalRecipeApprovalChannel("thread-ask", () => { throw new Error("no card"); }, () => {});
     expect(await failing("browser_click_semantic", {}, "x", new AbortController().signal, projection)).toBe(false);
+  });
+});
+
+describe("an REI read asked in Ask (reiReadIntent → the pack's read recipe)", () => {
+  it("reads the arrears grid read-only, cites the page and REI's count, and says partial when the count is not met", async () => {
+    const f = await fixture();
+    const intent = reiReadIntent("check REI Cloud and tell me which tenants are more than 14 days in arrears. Read only.")!;
+    expect(intent).toMatchObject({ target: "arrears-review", inputs: { min_days: "15" } });
+    const proposal = await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: intent.target, inputs: intent.inputs, account: { marker: FICTIONAL_BUSINESS } }, fictional);
+    // Read classes only: nothing to type, upload, download or submit.
+    expect([...proposal.actions].sort()).toEqual(["click", "fill", "navigate", "read"]);
+    expect(proposal.request).toContain("Read only");
+    const started = await f.store.start((await f.store.propose(proposal, NOW)).id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: fictional, ...f.stores });
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(f.mock.effects).toEqual([]);
+    const arrears = result.results[1];
+    expect(arrears.rows.length).toBeGreaterThan(0);
+    expect(arrears.rows.every(row => Number(row["Days Arrears"]) >= 15)).toBe(true);
+    const reply = portalRecipeTaskReply(result);
+    expect(reply).toContain(`**arrears-review**: ${arrears.rows.length} row`);
+    expect(reply).toContain(`Source: page Process › Arrears, all ${arrears.footer} of the ${arrears.footer} records it lists.`);
+    for (const row of arrears.rows) expect(reply).toContain(Object.values(row).join(" | "));
+    // A grid read short of REI's own count, or with no count, is called partial.
+    const short = { ...result, results: result.results.map((item, index) => index === 1 ? { ...item, footer: (item.footer ?? 0) + 3 } : item) };
+    expect(portalRecipeTaskReply(short)).toContain(`Partial read: page Process › Arrears lists ${arrears.footer! + 3} records and ${arrears.footer} were read.`);
+    const uncounted = { ...result, results: result.results.map((item, index) => index === 1 ? { ...item, footer: undefined } : item) };
+    expect(portalRecipeTaskReply(uncounted)).toContain("Partial read: page Process › Arrears showed no record count");
+
+    // A write in the same task is refused: no upload, download or submit class, and the arrears page's Notice never runs on the read grant alone.
+    const page = { url: `${FICTIONAL_REI_ORIGIN}/customers/arrears/`, text: '@e1 button "Notice"\n@e2 button "Choose file"\n@e3 button "Export"' };
+    expect(authorizeBrowserAction(started.grant, page, "browser_upload", { tab_id: 1, ref: "@e2", file: "fictional.csv" }, { now: NOW + 1 }).decision).toBe("deny");
+    expect(authorizeBrowserAction(started.grant, page, "browser_download", { tab_id: 1, ref: "@e3" }, { now: NOW + 1 }).decision).toBe("deny");
+    expect(authorizeBrowserAction(started.grant, page, "browser_click_semantic", { tab_id: 1, ref: "@e1" }, { now: NOW + 1 }).decision).not.toBe("allow");
+    // And Ask never starts a recipe that changes REI.
+    await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "supplier-list", account: { marker: FICTIONAL_BUSINESS } }, fictional))
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Only read recipes/) });
   });
 });

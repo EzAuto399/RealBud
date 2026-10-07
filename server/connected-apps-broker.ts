@@ -10,6 +10,7 @@ import { connectedAppOperations, validAppToolName, validAppToolSlug, type Connec
 import { appToolOperations, classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { approvalGroupKey, decide, defaultApprovalSettings, lockedOff, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { approvalsEditableHere, governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, APPROVAL_TIMED_OUT_RECEIPT, approvalAnswer, type ApprovalAnswer } from "./approval-answer.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import { managedMailboxAccess } from "./managed-connectors.ts";
 
@@ -111,7 +112,7 @@ export async function startConnectedAppsBroker(options: {
   headers?: Record<string, string>;
   isActive(): boolean;
   /** Shows the one-time card: `summary` is plain lines, `card` its exact request, phone class and read offer. */
-  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<boolean>;
+  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<ApprovalAnswer>;
   /** The approval settings that govern this desktop (default: the host's registered store). */
   approvalSettings?: () => Promise<ApprovalSettings[]>;
   operations?: ConnectedAppOperationStore;
@@ -326,11 +327,14 @@ export async function startConnectedAppsBroker(options: {
               // The review id rides on the card and is read back after the answer so the receipt names a phone answer.
               const reviewId = randomBytes(6).toString("hex");
               openReviews.set(reviewId, { threadId: options.threadId });
-              let approved: boolean;
-              try { approved = await options.approve(summary, controller.signal, { ...card, detail, reviewId }); }
+              let answer: ReturnType<typeof approvalAnswer>;
+              try { answer = approvalAnswer(await options.approve(summary, controller.signal, { ...card, detail, reviewId })); }
               finally { approval = openReviews.get(reviewId)?.approval; openReviews.delete(reviewId); }
+              // A card nobody answered, or a stop, is named on the receipt; it is never the person's answer.
+              if (!answer.allowed && !approval && answer.resolution !== "user") approval = answer.resolution === "timeout" ? APPROVAL_TIMED_OUT_RECEIPT : "Stopped before anyone answered";
               const refused = (text: string) => { operations.deny({ ...receipt, ...(approval ? { approval } : {}) }); return errorResult(text); };
-              if (!approved) return refused("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
+              if (!answer.allowed) return refused(answer.resolution === "timeout" ? APPROVAL_TIMED_OUT : answer.resolution === "stopped" ? "Bud stopped this action before it started."
+                : `${APPROVAL_DENIED} Do not retry without a new user request.`);
               // A Don't use saved while the card waited still refuses it.
               if (rows.length) {
                 let now: ApprovalSettings[];

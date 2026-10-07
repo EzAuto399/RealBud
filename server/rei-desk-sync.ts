@@ -12,7 +12,7 @@ import type { Property, ReiField, ReiFieldValue, ReiRefs } from "../shared/contr
 import { matchExportRow } from "./csv-ledger.ts";
 import type { Desk, ReiDeskApplied, ReiDeskRead } from "./desk.ts";
 import type { PortalRunRequest } from "./portal-recipe-runner.ts";
-import type { FilteredPortalResult } from "./portal-recipe.ts";
+import { wholePortalRead as complete, type FilteredPortalResult } from "./portal-recipe.ts";
 import { reiPartsFreshness } from "./source-gate.ts";
 
 export const REI_PARTS = ["tenants", "arrears", "owners"] as const;
@@ -20,17 +20,13 @@ export type ReiPart = (typeof REI_PARTS)[number];
 
 /** The Desk part a recipe run reads, or null. A search (find-record with a query) reads some rows of a part, never all of it. */
 export function reiPartOf(run: PortalRunRequest): { part: ReiPart; whole: boolean } | null {
-  if (run.recipe === "arrears-review") return { part: "arrears", whole: true };
+  // A day threshold above 1 (an Ask question such as "more than 14 days") keeps only some arrears rows: not the whole part.
+  if (run.recipe === "arrears-review") return { part: "arrears", whole: Number(run.inputs?.min_days ?? "1") <= 1 };
   const whole = !run.inputs?.query?.trim();
   if (run.recipe === "find-record" && run.inputs?.list === "Tenants") return { part: "tenants", whole };
   if (run.recipe === "find-record" && run.inputs?.list === "Owners") return { part: "owners", whole };
   return null;
 }
-
-/** Every page was read: the run finished the recipe, no page came back cut short, and the grid showed its own record count and every one was read
- * (counted before RealBud's row filter, server/portal-recipe.ts). Without that count nothing proves the read whole. */
-const complete = (result: FilteredPortalResult) =>
-  result.outcome === "completed" && result.table !== "unread" && !result.truncated && result.footer !== undefined && (result.filtered?.read ?? result.rows.length) >= result.footer;
 
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function cell(row: Record<string, string>, ...names: string[]): string {

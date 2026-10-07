@@ -8,7 +8,7 @@ import type { AgencySetupView } from "../../../shared/agency-setup";
 import { bankReviewVersion, type BankReviewAmendment as Amendment, type BankReviewSuccessor } from '../../../shared/bank-review';
 import { BankReviewAmendment } from './BankReviewAmendment';
 import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
-import { ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
+import { parseReiAccount, ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
 import { useRunPoll } from "@/lib/run-poll";
 
@@ -445,8 +445,15 @@ export function W1RunStrip({ status, reviewReady, busy, onAction }: { status: W1
 
 /** Saves which bank account feeds which REI account, before the first import. */
 export function W1Setup({ accounts, error, onLoad, onSaved }: { accounts: BankAccount[] | null; error: string; onLoad: () => void; onSaved: (status: W1Status) => void }) {
-  useEffect(() => { onLoad(); }, []);
   const [form, setForm] = useState({ account: "", reiAccount: "", reiBusiness: "", bankFormat: "ANZ(csv file)" }), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
+  // The office's saved REI business code: shown here, and its revision sent with the save, so a code saved elsewhere meanwhile is never overwritten.
+  const [reiRevision, setReiRevision] = useState(0);
+  useEffect(() => {
+    onLoad();
+    void request<unknown>("GET", "/api/rei/account").then(parseReiAccount).then(saved => {
+      if (saved) { setReiRevision(saved.revision); setForm(current => current.reiBusiness ? current : { ...current, reiBusiness: saved.marker }); }
+    }).catch(() => {});
+  }, []);
   const account = form.account || accounts?.[0]?.id || "";
   const field = (key: keyof typeof form, label: string, hint: string) => <label className="block text-sm">{label}<input aria-label={label} className={`mt-1 block w-full ${control}`} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} /><span className="text-xs text-ink-muted">{hint}</span></label>;
   return <section aria-label="Set up bank imports" className="space-y-2 rounded-lg border border-line p-3">
@@ -458,7 +465,7 @@ export function W1Setup({ accounts, error, onLoad, onSaved }: { accounts: BankAc
     {field("bankFormat", "REI file format", "The File Format option you choose in REI's Bulk receipting.")}
     <button className={`${control} border-agency font-medium`} disabled={busy || !account || !form.reiBusiness.trim() || !form.bankFormat.trim()} onClick={() => {
       setBusy(true); setFailure("");
-      void request<unknown>("PUT", "/api/w1/settings", { account, ...(form.reiAccount.trim() ? { reiAccount: form.reiAccount.trim() } : {}), reiBusiness: form.reiBusiness.trim(), bankFormat: form.bankFormat.trim(), expectedRevision: 0 })
+      void request<unknown>("PUT", "/api/w1/settings", { account, ...(form.reiAccount.trim() ? { reiAccount: form.reiAccount.trim() } : {}), reiBusiness: form.reiBusiness.trim(), bankFormat: form.bankFormat.trim(), expectedRevision: 0, reiRevision })
         .then(() => request<unknown>("GET", "/api/w1/status")).then(value => onSaved(parseW1Status(value)))
         .catch(cause => setFailure(cause instanceof Error ? cause.message : "The settings could not be saved.")).finally(() => setBusy(false));
     }}>Save bank import settings</button>

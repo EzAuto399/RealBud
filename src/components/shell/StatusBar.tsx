@@ -6,6 +6,8 @@ import { openDeskTasks } from "@/lib/desk-view-state";
 import { deskRunStatus, nextLoop, nextLoopLine, openScheduleLoop } from "./shell-layout";
 import type { ShellBrowser } from "./shell-status";
 import { useOfficeLinkStatus } from "@/lib/use-office-link";
+import { startReiSignIn, useReiSignIn } from "@/lib/rei-sign-in";
+import { fmtDateTime } from "@/lib/au";
 
 const dot = { agency: "bg-agency", hold: "bg-hold", muted: "bg-ink-muted", danger: "bg-danger" } as const;
 
@@ -33,12 +35,19 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
   const openSchedule = () => (loop ? openScheduleLoop(loop.id, () => dispatch({ type: "showRoutines" })) : dispatch({ type: "showRoutines" }));
   const openSpend = () => { location.hash = "you-settings"; dispatch({ type: "showYou" }); };
   const openWebsite = () => { location.hash = "you-website"; dispatch({ type: "showYou" }); };
+  // REI Cloud in plain words, only where this office uses REI. Signing in (or checking) is one click.
+  const { view: rei, opening: reiOpening } = useReiSignIn();
   return (
     <footer className="rb-status-bar" aria-label="Status bar">
       {/* Not linked, or an inactive office: the Website account card explains and fixes it. */}
       {state.connected && (link === "not-linked" || (link === "linked" && officeInactive)) ? (
         <button type="button" className="rb-status-item rb-status-link" title={officeInactive ? "Open Website account" : "Reconnect this computer in Workspace"} onClick={openWebsite}><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</button>
       ) : <span className="rb-status-item"><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</span>}
+      {rei?.used ? (rei.state === "signed_in"
+        ? <span className="rb-status-item" title={rei.at ? `Seen signed in ${fmtDateTime(rei.at)}` : undefined}><span className={cn("rb-status-dot", dot.agency)} aria-hidden />REI: signed in</span>
+        : <button type="button" className="rb-status-item rb-status-link" title="Open REI’s sign-in page in the work browser" onClick={() => void startReiSignIn()}>
+          <span className={cn("rb-status-dot", rei.state === "needed" ? dot.hold : dot.muted)} aria-hidden />{reiOpening ? "REI: opening sign-in…" : rei.state === "needed" ? "REI: sign in needed" : "REI: not checked yet"}
+        </button>) : null}
       <button type="button" className="rb-status-item rb-status-link" title="Open Desk tasks" onClick={openDesk}><span className={cn("rb-status-dot", dot[run.tone])} aria-hidden />{run.label}</button>
       <button type="button" className="rb-status-item rb-status-link" title={loop ? `Open ${loop.name} in Schedule` : "Open Schedule"} onClick={openSchedule}>{nextLoopLine(state.loops, now)}</button>
       {browser?.active ? (
