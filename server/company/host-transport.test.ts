@@ -94,6 +94,18 @@ describe('company host transport', () => {
     });
   });
 
+  it('carries approval settings over the pinned member channel as POST only', async () => {
+    const handle: Handle = async (pathName, method, request) => ({ status: 200, body: { pathName, method, member: request.headers['x-realbud-member-session'] } });
+    await withTransport(handle, async port => {
+      for (const name of ['mine', 'history', 'save']) {
+        const response = await hostCall(port, `/api/company/approvals/${name}`, 'POST', { memberToken: 'synthetic-member-token', body: {} });
+        expect(response).toMatchObject({ status: 200, body: { pathName: `/api/company/approvals/${name}`, member: 'synthetic-member-token' } });
+        await expect(hostCall(port, `/api/company/approvals/${name}`, 'GET')).rejects.toThrow('invalid company path');
+      }
+      await expect(hostCall(port, '/api/company/approvals', 'POST', { body: {} })).rejects.toThrow('invalid company path');
+    });
+  });
+
   it('bounds large collaboration responses independently from request limits', async () => {
     let size = 40 * 1024;
     await withTransport(async () => ({ status: 200, body: { summary: 'x'.repeat(size) } }), async port => {

@@ -10,6 +10,7 @@ import { insertCaseRecord } from './case-records.ts';
 import { prepareInitialCredential } from './initial-credential.ts';
 import { normalizeCompanyWorkflowTemplate } from './workflow-template.ts';
 import { CompanyError, type CaseClaim, type CompanyActor, type CompanyScope, type KnowledgeRevision, type ScopeKind, type ScopePermission } from './types.ts';
+import { APPROVAL_SETTINGS_KEY, defaultApprovalSettings, normalizeApprovalSettings, type ApprovalSettings } from '../../shared/approval-settings.ts';
 
 export { migrateCompanySchema } from './schema.ts';
 export * from './types.ts';
@@ -181,6 +182,19 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
   }
 
   const memberCredentials = createMemberCredentialApi({ transaction, authenticated, newSession, context, bearer });
+
+  // Approval settings are append-only department records; the SQL decides who
+  // may read (scope_allowed read) and write (scope_allowed write, owners pass).
+  function storedApprovals(content: unknown): ApprovalSettings {
+    try { return normalizeApprovalSettings(JSON.parse(String(content))); } catch { throw new CompanyError('recovery_required'); }
+  }
+  async function departmentApprovals(client: PoolClient, actor: CompanyActor, departmentId: string, permission: ScopePermission) {
+    await authorizedScope(client, actor, departmentId, permission);
+    const department = await client.query(`SELECT name FROM ${S}.scopes WHERE company_id=$1 AND id=$2 AND purpose='department'`, [actor.companyId, departmentId]);
+    if (!department.rows[0]) throw new CompanyError('not_found');
+    const head = await client.query(`SELECT revision,content FROM ${S}.knowledge_revisions WHERE company_id=$1 AND scope_id=$2 AND key=$3 ORDER BY revision DESC LIMIT 1`, [actor.companyId, departmentId, APPROVAL_SETTINGS_KEY]);
+    return { name: String(department.rows[0].name), revision: String(head.rows[0]?.revision ?? '0'), settings: head.rows[0] ? storedApprovals(head.rows[0].content) : defaultApprovalSettings() };
+  }
 
   async function initialCredential(client: PoolClient, companyId: string, memberId: string, prepared: Awaited<ReturnType<typeof prepareInitialCredential>> | undefined) {
     if (!prepared) return {};
@@ -401,7 +415,8 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
       sourceRefs.forEach(ref => text(ref, 2048));
       return authenticated(sessionToken, async (client, actor) => {
         await authorizedScope(client, actor, input.scopeId, 'write');
-        if (key === 'realbud-work-item:v1') throw new CompanyError('forbidden');
+        // Typed records have their own validated mutations.
+        if (key === 'realbud-work-item:v1' || key === APPROVAL_SETTINGS_KEY) throw new CompanyError('forbidden');
         const head = await client.query(`SELECT * FROM ${S}.knowledge_revisions WHERE company_id=$1 AND scope_id=$2 AND key=$3 ORDER BY revision DESC LIMIT 1`, [actor.companyId, input.scopeId, key]);
         const current = head.rows[0];
         if (String(current?.revision ?? '0') !== input.expectedRevision) throw new CompanyError('conflict');
@@ -421,6 +436,60 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
         await authorizedScope(client, actor, input.scopeId, 'read');
         const result = await client.query(`SELECT * FROM ${S}.knowledge_revisions WHERE company_id=$1 AND scope_id=$2 AND key=$3 ORDER BY revision DESC LIMIT $4`, [actor.companyId, input.scopeId, key, limit]);
         return result.rows.map(knowledge);
+      });
+    },
+
+    /** Every department this actor can see (members: granted; owner: all), with
+     * whether it governs the actor's own desktop (an explicit grant) and whether
+     * the actor may edit it. Retired departments neither govern nor change. */
+    approvalSettingsOverview(sessionToken: string) {
+      return authenticated(sessionToken, async (client, actor) => {
+        const result = await client.query(`SELECT s.id,s.name,${S}.scope_allowed(s.id,'write') AS can_edit,
+          EXISTS(SELECT 1 FROM ${S}.scope_grants g WHERE g.company_id=s.company_id AND g.scope_id=s.id AND g.member_id=$2) AS governs,k.revision,k.content
+          FROM ${S}.scopes s LEFT JOIN LATERAL (SELECT revision,content FROM ${S}.knowledge_revisions
+            WHERE company_id=s.company_id AND scope_id=s.id AND key=$3 ORDER BY revision DESC LIMIT 1) k ON true
+          WHERE s.company_id=$1 AND s.purpose='department' AND s.retired_at IS NULL ORDER BY lower(s.name),s.id LIMIT 201`, [actor.companyId, actor.memberId, APPROVAL_SETTINGS_KEY]);
+        // ponytail: one page of 200 departments, and a remote reply over the transport's
+        // 512 KiB fails closed (no edits); page it if offices outgrow that.
+        if (result.rows.length > 200) throw new CompanyError('conflict');
+        return { member: { id: actor.memberId, displayName: actor.displayName, role: actor.role },
+          departments: result.rows.map(row => ({ id: String(row.id), name: String(row.name), canEdit: row.can_edit === true, governs: row.governs === true,
+            revision: String(row.revision ?? '0'), settings: row.content === null ? defaultApprovalSettings() : storedApprovals(row.content) })) };
+      });
+    },
+
+    /** Owners may save (and reset) any department; reviewedReads stays owner-only. */
+    async saveApprovalSettings(sessionToken: string, input: { departmentId: string; expectedRevision: string; settings: unknown }) {
+      if (typeof input.departmentId !== 'string' || typeof input.expectedRevision !== 'string') throw new CompanyError('invalid_input');
+      uuid(input.departmentId); revision(input.expectedRevision);
+      let settings: ApprovalSettings;
+      try { settings = normalizeApprovalSettings(input.settings); } catch { throw new CompanyError('invalid_input'); }
+      return authenticated(sessionToken, async (client, actor) => {
+        const current = await departmentApprovals(client, actor, input.departmentId, 'write');
+        if (current.revision !== input.expectedRevision) throw new CompanyError('conflict');
+        if (actor.role !== 'owner' && current.settings.reviewedReads.join('\n') !== settings.reviewedReads.join('\n')) throw new CompanyError('forbidden');
+        const next = (BigInt(input.expectedRevision) + 1n).toString();
+        const saved = await client.query(`INSERT INTO ${S}.knowledge_revisions(company_id,scope_id,key,revision,content,source_refs,author_member_id)
+          VALUES($1,$2,$3,$4,$5,'[]',$6) RETURNING created_at`, [actor.companyId, input.departmentId, APPROVAL_SETTINGS_KEY, next, JSON.stringify(settings), actor.memberId]);
+        return { department: { id: input.departmentId, name: current.name }, revision: next, settings,
+          savedAt: (saved.rows[0].created_at as Date).toISOString(), savedBy: { id: actor.memberId, displayName: actor.displayName } };
+      });
+    },
+
+    /** Newest first; each entry carries the settings before and after it. */
+    async approvalSettingsHistory(sessionToken: string, input: { departmentId: string; limit: number }) {
+      if (typeof input.departmentId !== 'string') throw new CompanyError('invalid_input');
+      uuid(input.departmentId);
+      // Ten entries of two 16 KiB settings stay inside the host transport's 512 KiB reply.
+      if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 10) throw new CompanyError('invalid_input');
+      return authenticated(sessionToken, async (client, actor) => {
+        const current = await departmentApprovals(client, actor, input.departmentId, 'read');
+        const rows = (await client.query(`SELECT k.revision,k.content,k.created_at,m.id AS author_id,m.display_name FROM ${S}.knowledge_revisions k
+          JOIN ${S}.members m ON m.company_id=k.company_id AND m.id=k.author_member_id
+          WHERE k.company_id=$1 AND k.scope_id=$2 AND k.key=$3 ORDER BY k.revision DESC LIMIT $4`, [actor.companyId, input.departmentId, APPROVAL_SETTINGS_KEY, input.limit + 1])).rows;
+        return { department: { id: input.departmentId, name: current.name }, entries: rows.slice(0, input.limit).map((row, index) => ({
+          revision: String(row.revision), at: (row.created_at as Date).toISOString(), by: { id: String(row.author_id), displayName: String(row.display_name) },
+          before: rows[index + 1] ? storedApprovals(rows[index + 1].content) : defaultApprovalSettings(), after: storedApprovals(row.content) })) };
       });
     },
 

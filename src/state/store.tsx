@@ -41,6 +41,7 @@ import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
 import type { AskWorkContext } from "@/lib/work-continuation";
 import type { ApprovalPolicy, MemoryApprovalReview } from "@shared/approval-policy";
 import type { BrowserApprovalCard } from "@shared/browser-approval-card";
+import type { ApprovalCardMeta } from "@shared/approval-settings";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -54,7 +55,8 @@ export type RequestFence = {
   ruleOffer: { surface: PortalRuleOfferSurface; origin: string; label: string } | null;
 };
 
-export interface OptionCardData {
+/** `ApprovalCardMeta` adds deadline, resolution, answeredBy and remote (types only so far). */
+export interface OptionCardData extends ApprovalCardMeta {
   /** Bud's loop-result card: "Open" goes to Desk instead of replying in chat. */
   opens?: "desk";
   title: string;

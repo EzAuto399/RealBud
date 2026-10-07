@@ -87,6 +87,7 @@ import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } fro
 import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRules } from './permission-policy.ts';
 import { applyLawDrift, LAW_WATCH_UNAVAILABLE, lawWatchView, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
+import { createApprovalSettings } from './approval-settings.ts';
 import { appendHistory, listHistory } from "./computer-history.ts";
 import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
 import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
@@ -2865,6 +2866,9 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
     oplog("seat", `adopted member identity ${memberId.slice(0, 8)}…`);
   },
   authorizeAdmin: req => serviceAdmin.authorize(req), hasAdminSession: req => serviceAdmin.status(req).authenticated });
+// Approval settings: this computer's own, or the office departments that govern its member.
+const approvals = createApprovalSettings({ dataDir: DATA_DIR, seatIdentity: () => companyHost.seatIdentity(),
+  company: (path, req, body) => companyHost.handle(path, 'POST', req, body) });
 
 // Vendor provisioning arrives with the pairing redeem: the connector credential
 // goes to config, the model key to the private vault, and the worker sees it
@@ -3362,6 +3366,15 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
     }
 
+    // ── approval settings (Workspace → Approvals) ──────────
+    if (path === "/api/approvals" || path === "/api/approvals/history") {
+      if (method !== "GET" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const reply = await approvals.handle(path, method, req, url.searchParams, method === "PUT" ? await readBody(req, 32_768) : undefined);
+      return json(res, reply.status, reply.body);
+    }
+
     // ── standing rules (Ask Always-allow; You → Bud's rules) ──────────
     if (path === "/api/rules" && method === "GET") {
       return json(res, 200, { rules: loadRules() });
@@ -3370,6 +3383,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
+      // A saved rule changes approvals on this computer: editors only.
+      const editor = await approvals.editor(req);
+      if (!editor.ok) return json(res, editor.status, { error: editor.error });
       const body = await readBody(req);
       if (body.surface !== undefined || parsePortalRuleKey(typeof body.key === "string" ? body.key : "")) {
         const surface = isPortalRuleSurface(body.surface)
@@ -3400,6 +3416,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     const ruleMatch = path.match(/^\/api\/rules\/([\w-]+)$/);
     if (ruleMatch && method === "DELETE") {
+      const editor = await approvals.editor(req);
+      if (!editor.ok) return json(res, editor.status, { error: editor.error });
       try {
         return json(res, 200, { rules: removeRule(ruleMatch[1]) });
       } catch (e) {
@@ -5234,6 +5252,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
           allowedOrigins: fence?.allowedOrigins,
         });
         if (ruleError) return json(res, 400, { error: ruleError });
+        // Refused before answering: the card stays live, so Allow once still works.
+        const editor = await approvals.editor(req);
+        if (!editor.ok) return json(res, editor.status, { error: editor.error });
+        if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
+          return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
+        }
         addPortalRule(parsed.rule.surface, parsed.rule.origin);
       }
       // A running portal recipe task's ask is answered by its runner's channel, never a provider.
