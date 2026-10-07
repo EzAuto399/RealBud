@@ -196,6 +196,14 @@ describe("Redbark pull, review and coverage", () => {
       .toThrow(/cannot be uploaded/);
   });
 
+  it("still returns the created batch when the Jev hint pass throws", async () => {
+    const f = fixture(), { fetch } = source([fictionalTxn("txn_fk_fictional-1")]);
+    f.store.addJevHints = async () => { throw new Error("fictional hint failure"); };
+    const summary = await pullRedbarkReview({ client: createRedbarkClient({ key: KEY, fetch, sleep: noSleep }), store: f.store, coverage: f.coverage, account: ACCOUNT, today: "2026-10-02", rules });
+    expect(summary.batch).toMatchObject({ revision: 1, rows: 1, originalBytesCaptured: false });
+    expect(f.store.get(summary.batch!.id).revision).toBe(1);
+  });
+
   it("advances coverage only on confirm-import, widens after a missed run and de-duplicates the overlap", async () => {
     const f = fixture();
     const first = source([fictionalTxn("txn_fk_fictional-1")]);

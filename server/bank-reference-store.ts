@@ -30,7 +30,7 @@ export interface SavedBankBatch {
 }
 export interface BankJevHint { rowId: string; propertyId: string; suggestion: string }
 type JevDecide = (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>;
-/** The whole hint pass, every row included; a slower Jev leaves the batch unhinted. */
+/** The whole hint pass, every row included; rows Jev has not answered by then stay unhinted. */
 const JEV_HINTS_MS = 15_000;
 export class BankReferenceStore {
   private db: WorkflowDatabase;
@@ -105,18 +105,23 @@ export class BankReferenceStore {
   }
   /** Ask Jev once for payer hints on a freshly imported, unreviewed batch and
    * save them with it; returns the batch as shown. Call before the batch is
-   * handed to anyone (the saved revision moves). Never throws for Jev: without
-   * `decide` or readiness, after an earlier ask, on no answer, an error or the
-   * time budget, the batch stays unhinted. A batch changed meanwhile keeps no hints. */
+   * handed to anyone (the saved revision moves). Only a record still at its
+   * first revision with no hints, decisions or review is asked, so re-uploading
+   * the same file never moves a revision a reviewer holds. Never throws for Jev:
+   * without `decide` or readiness, on no answer or an error, the batch stays
+   * unhinted; when the time budget runs out, the answers already given (and
+   * billed) are kept. A batch changed meanwhile keeps no hints. */
   async addJevHints(id: string, options: { timeoutMs?: number } = {}) {
-    const record = this.load(id), decide = this.decide;
+    const decide = this.decide;
     try {
-      const pass = decide && this.jevReady() && !record.value.jevHints && !record.value.result && !record.value.supersededBy ? bankFirstPass(record.value.batch) : null;
+      const record = this.load(id), { value } = record;
+      const fresh = record.revision === 1 && !value.jevHints && !value.decisions && !value.result && !value.reviewedAt && !value.supersededBy && !value.amends;
+      const pass = decide && fresh && this.jevReady() ? bankFirstPass(value.batch) : null;
       if (!decide || !pass) return this.view(record);
       const signal = AbortSignal.timeout(options.timeoutMs ?? JEV_HINTS_MS);
       let answered = 0;
-      await jevPayerHints(record.value.batch, pass, async (request, asked) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }, { signal });
-      if (!answered || signal.aborted) return this.view(record);
+      await jevPayerHints(value.batch, pass, async (request, asked) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }, { signal });
+      if (!answered) return this.view(record);
       const jevHints = pass.rows.flatMap((row): BankJevHint[] => row.hintSource === "jev" ? [{ rowId: row.rowId, propertyId: row.propertyId!, suggestion: row.suggestion! }] : []);
       return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, record.revision, value => ({ ...value, jevHints }))));
     } catch {

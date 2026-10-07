@@ -311,6 +311,7 @@ export async function pullRedbarkReview(deps: {
   if (!built.source) return { batch: null, ...summary };
   const created = deps.store.createFromRedbark({ source: built.source, columns: { ...REDBARK_CSV_COLUMNS }, dateFormat: "YYYY-MM-DD", rules: deps.rules });
   // Jev payer hints are asked once here, before anyone has the batch's revision.
-  const saved = await deps.store.addJevHints(created.id);
+  // A failed hint pass never fails the pull: the batch as created.
+  const saved = await deps.store.addJevHints(created.id).catch(() => created);
   return { batch: { id: saved.id, revision: saved.revision, rows: saved.value.batch.rows.length, originalDigest: saved.value.batch.originalDigest, originalBytesCaptured: false }, ...summary };
 }

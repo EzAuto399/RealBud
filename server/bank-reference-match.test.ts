@@ -436,6 +436,64 @@ describe("Jev payer hint (data, never a match)", () => {
       expect(hinted.firstPass!.summary).toEqual(created.firstPass!.summary);
     } finally { db?.close(); await removeFixture(dir); }
   });
+  it("never sends a payer that holds digits or is blank", async () => {
+    const ask = async (line: string) => {
+      const batch = createBankReferenceBatch(upload(Buffer.from(`${line}\n`), named)), pass = bankFirstPass(batch)!;
+      const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      await jevPayerHints(batch, pass, decide);
+      return { asked, row: pass.rows[0] };
+    };
+    // Account digits and reference text the narrative ran on with stay home.
+    expect((await ask('03/09/2026,"410.00",TRANSFER FROM JOHN DOE 012345 678901234 RENT,,,,,')).asked).toHaveLength(0);
+    // Eligible rows (no reference, no hint) whose payer holds digits or is blank: still no call.
+    for (const line of ['03/09/2026,"410.00",TRANSFER FROM JOHN DOE 012345    RENT,,,,,', '03/09/2026,"410.00",DEPOSIT,,,,,']) {
+      const { asked, row } = await ask(line);
+      expect(row.reason).toBe("No reference found.");
+      expect(asked).toHaveLength(0);
+      expect(row.hintSource).toBeUndefined();
+    }
+    // The same row with a plain name is asked.
+    expect((await ask('03/09/2026,"410.00",TRANSFER FROM JOHN DOE    RENT,,,,,')).asked).toHaveLength(1);
+  });
+  it("keeps the hints already answered when the time budget runs out", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const two = Buffer.from('03/09/2026,"410.00",TRANSFER FROM JOHN DOE    RENT,,,,,\n04/09/2026,"410.00",TRANSFER FROM ALEX FICTIONAL    RENT,,,,,\n');
+      const { asked, decide: answer } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      // The first question is answered (and billed); the second runs past the budget.
+      const decide = (request: JevRequest, options?: { signal?: AbortSignal }) => asked.length ? new Promise<JevResult>(resolve => {
+        asked.push(request); options?.signal?.addEventListener("abort", () => resolve({ ok: false, reason: "timeout" }));
+      }) : answer(request);
+      const store = new BankReferenceStore(db, { decide });
+      const created = store.create(upload(two, named));
+      const hinted = await store.addJevHints(created.id, { timeoutMs: 100 });
+      expect(asked).toHaveLength(2);
+      expect(hinted.revision).toBe(created.revision + 1);
+      expect(hinted.value.jevHints).toEqual([{ rowId: created.value.batch.rows[0].id, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) }]);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("never asks again on a re-upload of a hinted or reviewed batch, so the revision a reviewer holds stays", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      const store = new BankReferenceStore(db, { decide });
+      const created = store.create(upload(bytes, named));
+      const hinted = await store.addJevHints(created.id);
+      expect(asked).toHaveLength(1);
+      // The upload route: create (reuses the record), then the hint pass.
+      const again = await store.addJevHints(store.create(upload(bytes, named)).id);
+      expect(asked).toHaveLength(1);
+      expect(again.revision).toBe(hinted.revision);
+      const reviewed = store.review(created.id, hinted.revision, firstPassDecisions(hinted.firstPass!));
+      const afterReview = await store.addJevHints(store.create(upload(bytes, named)).id);
+      expect(asked).toHaveLength(1);
+      expect(afterReview.revision).toBe(reviewed.revision);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
   it("stays off without an injected decide (the sync pass never asks)", () => {
     expect(bankFirstPass(createBankReferenceBatch(upload(bytes, named)))!.rows[10].propertyId).toBeUndefined();
   });

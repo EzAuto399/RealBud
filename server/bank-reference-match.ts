@@ -209,7 +209,8 @@ const MAX_TENANT_OPTIONS = 63;
  * fields change (`propertyId` as a suggestion, `suggestion`, `hintSource`):
  * the row stays an exception on hold, the summary is untouched, and nothing
  * is imported on a hint. Jev sees the payer name, the amount and each
- * candidate's tenant names/aliases (no addresses), nothing else.
+ * candidate's tenant names/aliases (no addresses), nothing else; a payer
+ * that is blank or holds a digit is never sent.
  */
 export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
   decide: (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<FirstPass> {
@@ -222,13 +223,17 @@ export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
     const index = batch.rows.findIndex(item => item.id === row.rowId);
     if (index < 0) continue;
     const cells = rowCells(batch, table, index), cents = BigInt(row.amount.replace(".", ""));
+    // Only a plain name goes out, by the rule tenant names follow: blank or any digit
+    // (account numbers, reference text the narrative ran on with) means no question.
+    const payer = narrativeTail(cells[2], cells[3]).name.trim();
+    if (!payer || /\d/.test(payer)) continue;
     const candidates = rules.filter(rule => rentFits(cents, rule) && named(rule).length);
     // ponytail: more fitting tenants than options means no hint rather than a truncated, biased list.
     if (!candidates.length || candidates.length > MAX_TENANT_OPTIONS) continue;
     const criteria: Record<string, string> = Object.fromEntries(candidates.map((rule, at) => [`t${at + 1}`, named(rule).join("; ")]));
     criteria.none = "None of these tenants, or not sure.";
     const result = await decide({
-      state: { payer: narrativeTail(cells[2], cells[3]).name, amount: row.amount },
+      state: { payer, amount: row.amount },
       questions: { tenant: { type: "choice", instructions: "Which tenant most likely made this rent payment, judged by the payer name? Choose none unless one tenant clearly fits.", criteria } },
     }, { signal: options.signal });
     if (!result.ok) continue;

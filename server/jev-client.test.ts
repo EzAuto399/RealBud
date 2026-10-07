@@ -128,6 +128,13 @@ describe("jev decide", () => {
     expect(await decide(request)).toEqual({ ok: false, reason: "invalid" });
   });
 
+  it("rejects a reply body over 256 KiB as invalid", async () => {
+    fetchStub.mockResolvedValueOnce(json({ ...answer(), pad: "x".repeat(256 * 1024) }));
+    expect(await decide(request)).toEqual({ ok: false, reason: "invalid" });
+    fetchStub.mockResolvedValueOnce(json({ ...answer(), pad: "x".repeat(1024) }));
+    expect(await decide(request)).toMatchObject({ ok: true });
+  });
+
   it("returns a below-threshold answer as data for the caller to ignore", async () => {
     fetchStub.mockResolvedValueOnce(json(answer("t1", 0.4, { t1: 0.4, none: 0.6 })));
     expect(await decide(request)).toMatchObject({ ok: true, answers: { tenant: { choice: "t1", confidence: 0.4 } } });
