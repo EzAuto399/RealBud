@@ -8,7 +8,6 @@ export const EXPORT_CADENCES = ["daily", "twice-weekly", "weekly", "other"] as c
 export const EXPORT_IDENTITY_COLUMNS = ["property-id", "address", "property-code"] as const;
 export const OFFICE_OS = ["macos", "windows", "linux"] as const;
 
-export type AuJurisdiction = (typeof AU_JURISDICTIONS)[number];
 export type PmsBrand = (typeof PMS_BRANDS)[number];
 export type ExportCadence = (typeof EXPORT_CADENCES)[number];
 export type ExportIdentity = (typeof EXPORT_IDENTITY_COLUMNS)[number];

@@ -17,9 +17,6 @@ export interface BillFollowUpPage {
   version: 1; filter: BillFollowUpFilter; items: BillFollowUp[]; total: number;
   counts: { open: number; resolved: number }; nextCursor: string | null;
 }
-export type BillFollowUpChange =
-  | { id: string; expectedRevision: number; action: 'plan'; owner: string; followUpOn: string }
-  | { id: string; expectedRevision: number; action: 'resolve' | 'reopen'; note: string };
 export const BILL_FOLLOWUP_HISTORY_MAX = 20;
 
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);

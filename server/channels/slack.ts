@@ -65,8 +65,6 @@ export type SlackSocketLike = {
   close(code?: number, reason?: string): void;
 };
 
-export type SlackWebSocketFactory = (url: string) => SlackSocketLike;
-
 const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online. Review cards include the exact reply to use.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against the Slack app settings";
@@ -85,7 +83,6 @@ let unsub: (() => void) | null = null;
 let inboundQueue: QueuedAsk[] = [];
 let pendingRelay: PendingRelay | null = null;
 let flushing = false;
-let wsFactory: SlackWebSocketFactory | null = null;
 let activeSocket: SlackSocketLike | null = null;
 let refusedChannels = new Set<string>();
 
@@ -95,10 +92,6 @@ export function channelPath(): string {
 
 export function slackApiBase(): string {
   return (process.env.REALBUD_SLACK_API ?? "https://slack.com").replace(/\/$/, "");
-}
-
-export function setSlackWebSocket(factory: SlackWebSocketFactory | null): void {
-  wsFactory = factory;
 }
 
 function hideToken(text: string, token: string): string {
@@ -499,7 +492,6 @@ async function pollOnce(deps: SlackDeps, signal: AbortSignal): Promise<void> {
 }
 
 function openSocket(url: string): SlackSocketLike {
-  if (wsFactory) return wsFactory(url);
   // eslint-disable-next-line no-undef
   const WebSocketCtor = (globalThis as { WebSocket?: new (url: string) => SlackSocketLike }).WebSocket;
   if (!WebSocketCtor) throw new Error("WebSocket unavailable");
@@ -644,8 +636,8 @@ export function startSlackBridge(deps?: SlackDeps): void {
   const record = loadChannel();
   if (!record?.botToken) return;
   unsub = bound.subscribe((event) => onSlackRuntimeEvent(event));
-  if (process.env.VITEST && !wsFactory) {
-    // Tests drive poll/inbound directly unless a socket factory is installed.
+  if (process.env.VITEST) {
+    // Tests drive poll/inbound directly.
     return;
   }
   abort = new AbortController();

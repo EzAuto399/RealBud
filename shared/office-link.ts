@@ -53,13 +53,6 @@ export function isProvisioningSkipReasonText(value: unknown): value is string {
   return typeof value === "string" && SKIP_REASON.test(value);
 }
 
-export interface OfficeLinkRedeemResult {
-  installationId: string;
-  companyId: string;
-  agencyLabel: string;
-  provisioning?: InstallationProvisioning | ProvisioningSkipped;
-}
-
 /** Service ledger identifiers: opaque, not names. Same shape the entitlement
  * authority accepts, so a provisioned installation can be matched to a grant. */
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;

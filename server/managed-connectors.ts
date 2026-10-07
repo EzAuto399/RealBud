@@ -10,7 +10,6 @@ import { ConnectionAuthorizationError, managedAuthorizationFailure } from './con
  * where the installation's provisioning record lives. */
 export { managedConnectorApps };
 
-export interface ManagedConnectorConfig { endpoint: string; credential: string; profile: string }
 import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { validateSourceAttachmentBytes } from './source-attachments.ts';
 type Service = {connected: boolean; status: string; accounts: {id: string;label?:string;status:string}[];accountSelectionRequired:boolean};
