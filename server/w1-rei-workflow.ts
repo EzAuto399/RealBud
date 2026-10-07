@@ -34,7 +34,8 @@
 //   readback(batch, ctx, {from, to}, baseline) → W1ReadbackOutcome
 //       open-session + receipt-register (Export Only, the download asked once of
 //       the person), then classifyReadback: accepted / rejected / pending per
-//       row, counting only receipts new since the baseline. Only
+//       row, counting only receipts new since the baseline (the runner's account
+//       checks around the download scope an export that names no account). Only
 //       `readback.complete` may advance the import cursor.
 //   w1ImportProof(batch, readbackOutcome) → the verified outcome confirm-import
 //       requires (bound to batch, artifact sha256, destination and row ids).
@@ -58,7 +59,7 @@ import type { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunResult, type PortalRunRequest } from "./portal-recipe-runner.ts";
 import { loadPortalRecipePackWithPaths, portalRecipeTaskProposal, type PackLoader } from "./portal-recipe-task.ts";
-import { assertExpectedRows, classifyReadback, isoDate, reconcilePreview, registerBaseline, type W1DateWindow, type W1Destination, type W1ExpectedRow, type W1PreviewReconciliation, type W1Readback, type W1RegisterBaseline } from "./w1-rei-reconciliation.ts";
+import { assertExpectedRows, classifyReadback, isoDate, reconcilePreview, registerBaseline, type W1DateWindow, type W1Destination, type W1ExpectedRow, type W1PreviewReconciliation, type W1Readback, type W1RegisterBaseline, type W1RegisterEvidence } from "./w1-rei-reconciliation.ts";
 import { browserTaskUploadName, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 export const W1_REI_PORTAL = "rei-cloud" as const;
@@ -242,7 +243,17 @@ export async function awaitPosting(batch: W1ReiBatch, outcome: W1PreviewOutcome,
   };
 }
 
-type RegisterRead = { ok: true; lines: string[][]; run: PortalRunResult } | { ok: false; reason: string; detail: string; run?: PortalRunResult };
+type RegisterRead = { ok: true; lines: string[][]; evidence: W1RegisterEvidence; run: PortalRunResult } | { ok: false; reason: string; detail: string; run?: PortalRunResult };
+/** REI's export names no business code or period. The runner's receipt shows the recipe's own account checks (each one
+ * throws on another account) before and after the download. The requested range never stands in for the period: a file
+ * without its own period stays incomplete until the runner returns the period REI actually applied.
+ * ponytail: registerRows rejoins comma-split quoted cells until the runner parses the CSV itself. */
+export function w1RegisterEvidence(batch: W1ReiBatch, run: PortalRunResult): W1RegisterEvidence {
+  const steps = run.receipt.steps.filter(step => step.recipe === W1_READBACK_RECIPE);
+  const download = steps.findIndex(step => step.verb === "download" && step.ok);
+  const checked = (list: typeof steps) => list.some(step => step.verb === "check" && step.target === "account" && step.ok);
+  return { pageScope: { marker: batch.destination.marker, checkedBefore: download >= 0 && checked(steps.slice(0, download)), checkedAfter: download >= 0 && checked(steps.slice(download + 1)) } };
+}
 async function readRegister(batch: W1ReiBatch, ctx: W1ReiContext, range: W1DateWindow): Promise<RegisterRead> {
   if (isoDate(range.from) !== range.from || isoDate(range.to) !== range.to || range.from > range.to) throw fail("Choose the Receipt Register dates to read back.");
   const pack = await (ctx.load ?? loadPortalRecipePackWithPaths)(W1_REI_PORTAL);
@@ -252,7 +263,7 @@ async function readRegister(batch: W1ReiBatch, ctx: W1ReiContext, range: W1DateW
   const result = run.results.find(item => item.recipe === W1_READBACK_RECIPE);
   if (run.outcome !== "completed" || !result?.download) return { ok: false, reason: run.reason ?? (result?.download ? run.outcome : "no-register-file"), detail: run.detail ?? "", run };
   if (!result.download.rows.length) return { ok: false, reason: "register-unreadable", detail: "The Receipt Register export could not be read as text.", run };
-  return { ok: true, lines: result.download.rows, run };
+  return { ok: true, lines: result.download.rows, evidence: w1RegisterEvidence(batch, run), run };
 }
 
 /** Before the upload: the register as it stands, so a later readback counts only new receipts. */
@@ -261,7 +272,7 @@ export async function captureBaseline(batch: W1ReiBatch, ctx: W1ReiContext, rang
   const base = { kind: "w1-rei-baseline-outcome" as const, batchId: batch.batchId, version: batch.version };
   const read = await readRegister(batch, ctx, range);
   if (!read.ok) return { ...base, status: "not-read", reason: read.reason, detail: read.detail, ...(read.run ? { run: summary(read.run) } : {}) };
-  try { return { ...base, status: "read", baseline: registerBaseline(read.lines, batch.destination, range), run: summary(read.run) }; }
+  try { return { ...base, status: "read", baseline: registerBaseline(read.lines, batch.destination, range, read.evidence), run: summary(read.run) }; }
   catch (error) { return { ...base, status: "not-read", reason: "register-incomplete", detail: error instanceof Error ? error.message : "", run: summary(read.run) }; }
 }
 
@@ -270,7 +281,7 @@ export async function readback(batch: W1ReiBatch, ctx: W1ReiContext, range: W1Da
   const base = { kind: "w1-rei-readback-outcome" as const, batchId: batch.batchId, version: batch.version, artifactSha256: batch.artifact.sha256 };
   const read = await readRegister(batch, ctx, range);
   if (!read.ok) return { ...base, status: "not-read", reason: read.reason, detail: read.detail, ...(read.run ? { run: summary(read.run) } : {}) };
-  return { ...base, status: "read", readback: classifyReadback(batch.rows, read.lines, batch.destination, { window: range, ...(baseline ? { baseline } : {}) }), run: summary(read.run) };
+  return { ...base, status: "read", readback: classifyReadback(batch.rows, read.lines, batch.destination, { window: range, ...read.evidence, ...(baseline ? { baseline } : {}) }), run: summary(read.run) };
 }
 
 /** Issues the proof confirm-import requires; throws unless this readback completed this exact batch. */

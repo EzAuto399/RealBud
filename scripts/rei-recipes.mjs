@@ -2,8 +2,9 @@
 // site-map.json in the Austin pack's rei-cloud-navigation folder) from the
 // task-first website map, so the deterministic runner and the map cannot drift.
 //
-//   node scripts/rei-recipes.mjs --check   exit 1 when recipes.json differs
-//   node scripts/rei-recipes.mjs --write   regenerate recipes.json
+//   node scripts/rei-recipes.mjs --check   exit 1 when recipes.json or provenance's recipesSha256 differs
+//   node scripts/rei-recipes.mjs --write   regenerate recipes.json and pin its sha256 in provenance.json
+//                                          (the runtime loader refuses recipes whose digest differs)
 //
 // Recipes, screens and labels are copied verbatim from the map's YAML blocks;
 // origin, sign-in host and UI version come from site-map.json / the map. The
@@ -105,7 +106,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const mode = process.argv[2];
   if (mode !== "--check" && mode !== "--write") { console.error("Use --check or --write."); process.exit(2); }
   const { expected, drifted } = await reiRecipesDrift();
-  if (mode === "--write") { await writeFile(join(root, REI_RECIPES_FILE), expected); console.log(`wrote ${REI_RECIPES_FILE}`); }
-  else if (drifted) { console.error(`${REI_RECIPES_FILE} is out of date with the website map. Run node scripts/rei-recipes.mjs --write and review the diff.`); process.exit(1); }
-  else console.log(`${REI_RECIPES_FILE} matches the website map.`);
+  const provenanceFile = join(root, REI_NAVIGATION_DIR, "provenance.json");
+  const provenance = JSON.parse(await readFile(provenanceFile, "utf8"));
+  if (mode === "--write") {
+    await writeFile(join(root, REI_RECIPES_FILE), expected);
+    if (provenance.recipesSha256 !== sha256(expected)) await writeFile(provenanceFile, `${JSON.stringify({ ...provenance, recipesSha256: sha256(expected) }, null, 2)}\n`);
+    console.log(`wrote ${REI_RECIPES_FILE} and its provenance digest`);
+  } else if (drifted || provenance.recipesSha256 !== sha256(expected)) { console.error(`${REI_RECIPES_FILE} or its provenance digest is out of date with the website map. Run node scripts/rei-recipes.mjs --write and review the diff.`); process.exit(1); }
+  else console.log(`${REI_RECIPES_FILE} and its provenance digest match the website map.`);
 }

@@ -12,7 +12,7 @@ import { BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
 import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, verifiedShippedRecipesText, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
@@ -64,6 +64,18 @@ describe("portal recipe task cards", () => {
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "../secrets", target: "morning", account: ACCOUNT })).rejects.toMatchObject({ status: 404 });
     await expect(portalRecipeTaskProposal({ threadId: "t", messageId: "m", portal: "rei-cloud", target: "nope", account: ACCOUNT })).rejects.toMatchObject({ status: 404 });
     expect((await loadPortalRecipePack("rei-cloud")).portal).toBe("rei-cloud");
+  });
+
+  it("loads the shipped recipes only when their text matches the reviewed digest", async () => {
+    const real = await verifiedShippedRecipesText("rei-cloud");
+    expect(JSON.parse(real).portal).toBe("rei-cloud");
+    // A CRLF checkout of the same text passes; one changed byte, or a missing pin, is refused before anything is parsed.
+    const read = (edit: (text: string, path: string) => string) => (path: string) => Promise.resolve(edit(readFileSync(path, "utf8"), path));
+    expect(await verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("recipes.json") ? text.replace(/\n/g, "\r\n") : text))).toBe(real);
+    await expect(verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("recipes.json") ? text.replace("\"read\"", "\"prepare\"") : text)))
+      .rejects.toMatchObject({ status: 409, message: "These REI recipes were changed after review. Reinstall RealBud." });
+    await expect(verifiedShippedRecipesText("rei-cloud", read((text, path) => path.endsWith("provenance.json") ? "{}" : text))).rejects.toMatchObject({ status: 409 });
+    await expect(verifiedShippedRecipesText("../x")).rejects.toMatchObject({ status: 404 });
   });
 
   it("saves the recipe with the card, binds the account marker in the grant, and keeps older records loadable", async () => {

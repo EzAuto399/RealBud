@@ -14,7 +14,7 @@ import { austinAccountsCustomerPack, austinPropertyCustomerPack } from './custom
 import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
 import { createInspectionRulesStore } from './inspection-rules.ts';
 import { createMaintenanceReviewStore } from './maintenance-review.ts';
-import { UNSIGNED_PACK_MESSAGE } from './pack-signing.ts';
+import { CHANGED_PACK_MESSAGE, UNSIGNED_PACK_MESSAGE } from './pack-signing.ts';
 import { LoopManager } from './routines.ts';
 import { FICTIONAL_PACK_KEYS, signFictionalPack } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
@@ -139,7 +139,7 @@ describe('packs from your office', () => {
     expect(body.packs.map(p => [p.id, p.title, p.revision])).toEqual([['austin-accounts', 'Auston accounts — Kevin', 1]]);
     expect(body.packs[0].digest).toBe((await f.packs.preview(signed)).digest);
     expect(body.refused.map(r => r.id)).toEqual(['austin-property', 'austin-property-copy', 'austin-accounts', 'garbled']);
-    expect(body.refused[0].reason).toBe(UNSIGNED_PACK_MESSAGE);
+    expect(body.refused[0].reason).toBe(CHANGED_PACK_MESSAGE);
     // A pack identical to a built-in is still refused from the website without a signature.
     expect(body.refused[1].reason).toBe(UNSIGNED_PACK_MESSAGE);
     expect(body.refused[2].reason).toMatch(/does not match/);
