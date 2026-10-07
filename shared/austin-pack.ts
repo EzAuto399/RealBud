@@ -37,11 +37,12 @@ export function parseAustinPackView(body: unknown): AustinPackView {
  * Auston-only loops Schedule leaves out on this PC: off, never run, and not set
  * by a role pack here (no install yet means none; a whole-office install without
  * `loopIds` means all). Morning priorities (`inbound-triage`) is a core loop and
- * always shows. An unread pack view hides nothing: unknown is not "not installed".
+ * always shows. `'unread'` (still loading) hides them as if none were set, so rows
+ * only ever appear; `null` (the read failed) hides nothing.
  */
-export function hiddenAustinLoopIds(view: AustinPackView | null, loops: ReadonlyArray<{ id: string; enabled: boolean }>, ran: ReadonlySet<string>): Set<string> {
+export function hiddenAustinLoopIds(view: AustinPackView | null | 'unread', loops: ReadonlyArray<{ id: string; enabled: boolean }>, ran: ReadonlySet<string>): Set<string> {
   if (!view) return new Set();
-  const installed: readonly string[] = view.installed ? view.installed.loopIds ?? AUSTIN_LOOP_IDS : [];
+  const installed: readonly string[] = view !== 'unread' && view.installed ? view.installed.loopIds ?? AUSTIN_LOOP_IDS : [];
   return new Set(loops.filter(loop => loop.id !== 'inbound-triage' && (AUSTIN_LOOP_IDS as readonly string[]).includes(loop.id) &&
     !loop.enabled && !installed.includes(loop.id) && !ran.has(loop.id)).map(loop => loop.id));
 }
