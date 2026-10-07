@@ -60,7 +60,7 @@ describe('actual filesystem v2 backup and restore pipeline', () => {
     const capture = await capturePrivateWorkspace(captureOptions); await verifyPrivateWorkspaceCapture(captureOptions, capture); held = false;
     expect(readFileSync(join(source, 'work-batches.json'), 'utf8')).toBe(batchBytes);
     expect(captured.getFile('work-batches.json')?.data.toString()).toBe(batchBytes);
-    expect(capture.recordCount).toBe(5002);
+    expect(capture.recordCount).toBe(5003); // + the bank batch's tenant source
     let archiveReceipt: BackupArchiveReceipt | undefined; const buffers: Buffer[] = [];
     // Small generated fixture collection is test-only. Production transfer and
     // prepared-file paths below read/write bounded disk chunks.
@@ -95,7 +95,7 @@ describe('actual filesystem v2 backup and restore pipeline', () => {
     expect(readFileSync(join(destination, 'desk.key'))).toEqual(targetKey);
     const recaptured = await catalog(scratch, 'recaptured', targetKey, workspaceId);
     const options = { directory: destination, workspaceId, key: targetKey, catalog: recaptured, assertLease() {} };
-    const again = await capturePrivateWorkspace(options); await verifyPrivateWorkspaceCapture(options, again); expect(recaptured.seal().records).toBe(5002);
+    const again = await capturePrivateWorkspace(options); await verifyPrivateWorkspaceCapture(options, again); expect(recaptured.seal().records).toBe(5003);
     expect(existsSync(join(destination, 'private-workspace-restore-v2.json'))).toBe(false);
     await verifyRestoredBatchReader(destination, targetKey);
   // The coverage job re-runs this under v8 instrumentation on a hosted runner, about three times slower.

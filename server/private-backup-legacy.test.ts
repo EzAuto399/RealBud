@@ -52,7 +52,7 @@ describe('legacy backup conversion into the durable catalog path', () => {
     const f = await fixture(), key = randomBytes(32), result = await decode(f.bytes, { key });
     expect(result.archiveDigest).toBe(sha(f.bytes)); expect(result.archiveDigest).not.toBe(f.exported.receipt.digest);
     expect(result.receipt).toEqual({ ...f.exported.receipt, digest: sha(f.bytes) });
-    expect(result.catalog.summary()).toMatchObject({ sealed: true, records: 1 });
+    expect(result.catalog.summary()).toMatchObject({ sealed: true, records: 2 }); // the batch and its tenant source
     const { firstPass: _derived, ...storedBank } = f.bank; // firstPass is a read-time view, never stored
     expect(result.catalog.getRecord('bank', f.bank.id)).toEqual({ ...storedBank, kind: 'bank' });
     expect(result.catalog.getFile('vault/workflow-inputs/bank.csv')!.data).toEqual(f.csv);
@@ -61,7 +61,7 @@ describe('legacy backup conversion into the durable catalog path', () => {
     expect(stored.includes(f.key)).toBe(false); expect(stored.includes(Buffer.from(f.key.toString('hex')))).toBe(false);
     result.catalog.close();
     const reopened = await PrivateBackupCatalog.open({ directory: result.catalog.directory, key, workspaceId: f.workspaceId, catalogId: result.catalog.catalogId }); catalogs.push(reopened);
-    expect(reopened.validate().records).toBe(1);
+    expect(reopened.validate().records).toBe(2);
   });
   it('restores converted legacy data through the existing transform, preparation and cold-restore implementation', windowsAdmissionTimeout(106), async () => {
     const f = await fixture(), directory = await root(), key = randomBytes(32), decoded = await decode(f.bytes, { key });

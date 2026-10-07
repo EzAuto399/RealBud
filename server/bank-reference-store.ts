@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { WorkflowDatabase, workflowConflict } from "./workflow-database.ts";
 import type { BankBatchSummary, BankHistoryPage, BankHistoryQuery } from '../shared/bank-reference-history.ts';
-import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
+import { validateSavedBankBatch, validateBankReviewLinks, BANK_TENANT_SOURCE_KIND } from './bank-reference-validation.ts';
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass, jevPayerHints } from './bank-reference-match.ts';
@@ -14,7 +14,7 @@ import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash } from '
 /** Where a batch's REI tenants came from, recorded when the batch is created: the office's saved REI tenant list
  * (its savedAt, and the property ids whose rules it supplied) or only the office's own rules. */
 export type BankTenantSource = { source: 'bank-rules' } | { source: 'rei-directory'; savedAt: number; propertyIds: string[]; /** tenantListHash of the list used. */ hash?: string };
-const TENANT_SOURCE = 'bank-tenant-source';
+const TENANT_SOURCE = BANK_TENANT_SOURCE_KIND;
 const OLDER_TENANT_LIST = 'This review was made with an older REI tenant list. Correct the mapping before preparing it again.';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };

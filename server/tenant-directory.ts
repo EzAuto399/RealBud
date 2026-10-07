@@ -98,6 +98,17 @@ export function readTenantDirectory(v: unknown): TenantDirectory {
   return structuredClone(v) as unknown as TenantDirectory;
 }
 
+/** The records a private backup carries: the saved list and its last complete REI check. Restored as saved: a list restored
+ * without its check (an older backup) counts as checked when it was saved, so a restore never makes a list look fresher. */
+export const TENANT_DIRECTORY_RECORD_KINDS = [KIND, CHECK_KIND] as const;
+/** Backup boundary: each kind at its one id, in its exact shape. */
+export function validateTenantDirectoryRecord(kind: string, id: string, value: unknown): void {
+  if (kind === KIND && id === ID) { readTenantDirectory(value); return; }
+  if (kind === CHECK_KIND && id === CHECK_ID && object(value) && exact(value, 'checkedAt,hash') && typeof value.hash === 'string' && /^[a-f0-9]{64}$/.test(value.hash) &&
+      Number.isSafeInteger(value.checkedAt) && Number(value.checkedAt) >= 0) return;
+  recovery();
+}
+
 export function createTenantDirectoryStore(db: WorkflowDatabase, now: () => number = Date.now) {
   const load = () => {
     const record = db.get<unknown>(KIND, ID);
