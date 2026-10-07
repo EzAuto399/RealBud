@@ -388,6 +388,13 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       ...(entry.archiveIntent ? {pendingArchive:{previewDigest:entry.archiveIntent.previewDigest}} : {}),
       retiredRecipes:entry.retiredRecipeIds ?? [],...(entry.transition ? {pendingChange:{action:entry.transition.action,targetRevision:entry.transition.target.pack.revision,targetDigest:entry.transition.target.digest,previewDigest:entry.transition.previewDigest}} : {}) };
   }
+  /** The installed revision's office/settings.json loops, after an install or a completed version change. */
+  async function applyPackLoops(pack: CustomerPack, done: string) {
+    const settings = pack.files?.['office/settings.json'];
+    if (!settings || !options.applyLoops) return;
+    try { await options.applyLoops((JSON.parse(settings) as CustomerPackOfficeSettings).loops); }
+    catch { fail(`${done}, but its workflow times could not be set. Your saved schedule is unchanged. Recover the schedule, then import the same pack again.`, 503); }
+  }
   async function install(value: unknown, expectedDigest: string) {
     return exclusive(async () => {
       const inspection = await preview(value);
@@ -442,11 +449,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       delete entry.initialApprovalReset;
       entry.receipt = receipt;
       await persistJournals(entries);
-      const settings = entry.pack.files?.['office/settings.json'];
-      if (settings && options.applyLoops) {
-        try { await options.applyLoops((JSON.parse(settings) as CustomerPackOfficeSettings).loops); }
-        catch { return fail('The pack was installed, but its workflow times could not be set. Your saved schedule is unchanged. Recover the schedule, then import the same pack again.', 503); }
-      }
+      await applyPackLoops(entry.pack, 'The pack was installed');
       try { await options.selectWorkflowPack?.(entry.pack.id); }
       catch { return fail('The pack was installed, but it could not be chosen for this agency. Choose it in Agency workflow setup.', 503); }
       return status(entry);
@@ -645,6 +648,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     if(checkPackRecipeStage(change,listRecipes())!=='after') return fail('Plan readback is incomplete. Resume the saved pack change.',409);
     for(const artifact of change.artifacts) if(!(await state(artifact)).next) return fail('Instruction readback is incomplete. Plans remain paused.',409);
     assertCurrent(); await persistJournals(completed);
+    await applyPackLoops(completed[entry.pack.id].pack, 'The pack version changed');
     return status(completed[entry.pack.id]);
   }
   async function changePack(body:unknown, action:'upgrade'|'rollback') {
