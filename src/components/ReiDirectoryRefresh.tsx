@@ -58,6 +58,44 @@ export function SupplierChangeList({ changes, added, removed }: { changes: Suppl
   </div>;
 }
 
+/** The office's REI account as GET/PUT /api/rei/account send it; a malformed reply is an error. */
+export function parseReiAccount(value: unknown): { marker: string; revision: number } | null {
+  const account = (value as { account?: unknown } | null)?.account as { marker?: unknown; revision?: unknown } | null | undefined;
+  if (account === null) return null;
+  if (!account || typeof account.marker !== "string" || !Number.isSafeInteger(account.revision)) throw new Error("The REI business code could not be read.");
+  return { marker: account.marker, revision: account.revision as number };
+}
+
+/** The REI business code every REI read uses (server/rei-account.ts). No bank connection is needed.
+ * Open until a code is saved; afterwards it folds away behind the saved code. */
+export function ReiBusinessCode({ saved, onSaved }: { saved: string | null; onSaved: () => void }) {
+  const [account, setAccount] = useState<{ marker: string; revision: number } | null | undefined>(undefined);
+  const [code, setCode] = useState(saved ?? ""), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    void api("/api/rei/account").then(parseReiAccount).then(next => { if (mounted.current) { setAccount(next); if (next) setCode(next.marker); } })
+      .catch(() => { if (mounted.current) setError("The REI business code could not be loaded."); });
+    return () => { mounted.current = false; };
+  }, [saved]);
+  const save = () => {
+    if (account === undefined) return;
+    setBusy(true); setError("");
+    void api("/api/rei/account", { method: "PUT", body: JSON.stringify({ marker: code.trim(), expectedRevision: account?.revision ?? 0 }) }).then(parseReiAccount)
+      .then(next => { if (mounted.current) setAccount(next); onSaved(); })
+      .catch(cause => { if (mounted.current) setError(typeof (cause as { status?: unknown })?.status === "number" ? (cause as Error).message : "RealBud could not confirm this. Refresh to check before trying again."); })
+      .finally(() => { if (mounted.current) setBusy(false); });
+  };
+  const form = <form className="flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); save(); }}>
+    <label className="grid gap-1 text-[13px] text-ink-secondary">REI business code (shown at the top of REI)
+      <input className={control} value={code} maxLength={100} autoComplete="off" spellCheck={false} onChange={event => setCode(event.target.value)} />
+    </label>
+    <button type="submit" className={`${control} font-medium`} disabled={busy || account === undefined || !code.trim() || code.trim() === account?.marker}>Save</button>
+    {error && <p role="alert" className="basis-full text-hold break-words">{error}</p>}
+  </form>;
+  return saved ? <details><summary className="min-h-11 cursor-pointer text-[13px] text-ink-secondary">REI business: {saved} · Change</summary>{form}</details> : form;
+}
+
 export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDirectoryKind; onSaved?: (status: ReiDirectoryStatus) => void; refreshKey?: string }) {
   const [status, setStatus] = useState<ReiDirectoryStatus | null>(null), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
   const noun = NOUN[kind], mounted = useRef(true), saved = useRef(onSaved);
@@ -90,9 +128,10 @@ export function ReiDirectoryRefresh({ kind, onSaved, refreshKey }: { kind: ReiDi
     <div className="flex flex-wrap items-center gap-2">
       <button type="button" className={`${control} font-medium`} disabled={busy || !status || Boolean(run?.working) || Boolean(other) || !status.account}
         aria-label={`Refresh ${noun.list} from REI`} onClick={() => void post("/api/rei-directory/runs", { kind })}>Refresh from REI</button>
-      <span className="text-[13px] text-ink-secondary">{!status ? "" : !status.account ? "Set up bank imports first so Bud knows which REI business to read."
+      <span className="text-[13px] text-ink-secondary">{!status ? "" : !status.account ? "Save the REI business code below so Bud knows which REI business to read."
         : savedList?.count ? `Saved: ${count(savedList.count, noun.one, noun.many)}${savedList.savedAt ? ` · ${new Date(savedList.savedAt).toLocaleDateString()}` : ""}` : `No ${noun.list} saved from REI yet.`}</span>
     </div>
+    {status && <ReiBusinessCode saved={status.account} onSaved={() => void load().catch(() => {})} />}
     {other && <p className="text-[13px] text-ink-secondary">Bud is refreshing the other list from REI. Wait for it to finish.</p>}
     {run?.working && !run.ask && !run.signIn && <div role="status" className="flex flex-wrap items-center gap-2"><p className="flex-1">Bud is reading REI's {noun.list}… Nothing in REI changes.</p>
       <button type="button" className={control} disabled={busy} onClick={() => void post(`${at}/stop`, {})}>Stop</button></div>}

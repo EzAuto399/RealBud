@@ -138,6 +138,10 @@ export function filterPortalRows(recipe: Pick<PortalPackRecipe, "rowFilter">, in
 }
 /** A read whose rows were filtered after the run: `read` is how many rows the portal showed, so completeness is judged on those. */
 export type FilteredPortalResult = PortalRecipeResult & { filtered?: { read: number; unapplied: string[] } };
+/** Every page was read: the run finished the recipe, no page came back cut short, and the grid showed its own record count and every one was read
+ * (counted before RealBud's row filter). Without that count nothing proves the read whole. */
+export const wholePortalRead = (result: FilteredPortalResult) =>
+  result.outcome === "completed" && result.table !== "unread" && !result.truncated && result.footer !== undefined && (result.filtered?.read ?? result.rows.length) >= result.footer;
 /** Each run's results with its recipe's row filters applied (sub-recipes use the run's inputs). The runner's rows are not changed. */
 export function filterPortalRunRows(pack: PortalRecipePack, runs: readonly PortalRunRequest[], results: readonly PortalRecipeResult[]): FilteredPortalResult[] {
   const one = (result: PortalRecipeResult, inputs: Record<string, string>): FilteredPortalResult => {

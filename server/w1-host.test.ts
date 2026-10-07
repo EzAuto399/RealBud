@@ -341,7 +341,9 @@ describe("W1 host", () => {
     const saved = await f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 }) as unknown as { settings: Record<string, unknown> };
     expect(saved.settings).toMatchObject({ rei: { marker: FICTIONAL_BUSINESS }, bankFormat: "ANZ(csv file)" });
     expect(saved.settings.rei).not.toHaveProperty("urlValue");
-    await expect(f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICT 1", expectedRevision: 1 })).rejects.toMatchObject({ status: 503 });
+    // A business code REI could not show is refused as input; nothing is saved.
+    await expect(f.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: "FICT 1", expectedRevision: 1 })).rejects.toMatchObject({ status: 400 });
+    expect((await f.call("/api/w1/status", "GET") as unknown as { settings: { revision: number; rei: unknown } }).settings).toMatchObject({ revision: 1, rei: { marker: FICTIONAL_BUSINESS } });
     // An office that saved a reicid keeps it: the run's destination stays that reicid, and it signs in and uploads with no reicid in REI's addresses.
     const legacy = await fixture();
     await legacy.call("/api/w1/settings", "PUT", { account: ACCOUNT, reiAccount: FICTIONAL_REICID, reiBusiness: FICTIONAL_BUSINESS, bankFormat: "ANZ(csv file)", expectedRevision: 0 });

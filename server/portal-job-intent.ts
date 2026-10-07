@@ -287,3 +287,46 @@ export async function portalJobIntentReply(
     return { reply: DRAFT_DOWN };
   }
 }
+
+// ── REI Cloud reads from Ask ─────────────────────────────────────────────
+// "Check REI and tell me who is more than 14 days in arrears" becomes the pack's
+// read recipe as a task card (server/portal-recipe-task.ts): read only, in the
+// person's signed-in work browser, for the office's saved REI business code.
+// Pre-model, like browserTaskIntent: a plain Ask turn has no work-browser tools.
+// Anything beyond reading (pay, send, notice, change, upload…) never matches here.
+const REI_NAMED = /\bREI\b/i;
+const REI_WRITE = /\b(?:pay(?:ment)?s?|transfer|send|e-?mail|sms|notices?|notify|sign|delete|remove|submit|lodge|upload|attach|post|process|receipt(?:ing)?|reconcile|change|update|edit|add|create|enter|fill|terminate|evict|write|save|import|disburse)\b/i;
+const REI_HOW_TO = /\bhow\s+(?:do|can|could|should|would|to)\b/i;
+const MORE_THAN_DAYS = /\b(?:more\s+than|over|greater\s+than|beyond|longer\s+than)\s+(\d{1,3})\s*days?\b/i;
+const AT_LEAST_DAYS = /\b(\d{1,3})\s*(?:\+|or\s+more)?\s*days?\b/i;
+
+export interface ReiReadIntent {
+  /** A read recipe in the REI pack. */
+  target: "arrears-review" | "tasks-due" | "find-record";
+  inputs: Record<string, string>;
+  /** What the person will read on the card's message, e.g. "the arrears list (14+ days)". */
+  what: string;
+  /** tasks-due: the host fills date_from and date_to with the office's today. */
+  dated?: true;
+}
+
+/** A question or request to read one REI list: arrears, tasks due, owners, suppliers or tenants. Null for anything else. */
+export function reiReadIntent(text: string): ReiReadIntent | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 500 || !REI_NAMED.test(trimmed)) return null;
+  if (/<pasted-text\b|<attached-file\b/i.test(trimmed) || FORWARDED.test(trimmed) || quotesAnInstruction(trimmed)) return null;
+  if (REI_WRITE.test(trimmed) || REI_HOW_TO.test(trimmed)) return null;
+  if (/\barrears?\b|\bbehind\s+(?:on|in|with)\s+(?:the\s+)?rent\b|\boverdue\s+rent\b/i.test(trimmed)) {
+    const more = MORE_THAN_DAYS.exec(trimmed), least = more ? null : AT_LEAST_DAYS.exec(trimmed);
+    const days = more ? Number(more[1]) + 1 : least ? Math.max(1, Number(least[1])) : 1;
+    return { target: "arrears-review", inputs: { min_days: String(days) }, what: days > 1 ? `the arrears list (${days}+ days)` : "the arrears list" };
+  }
+  if (/\btasks?\b/i.test(trimmed)) return { target: "tasks-due", inputs: {}, what: "today's tasks due", dated: true };
+  const list = /\b(?:owners?|landlords?)\b/i.test(trimmed) ? "Owners" : /\b(?:suppliers?|contractors?|tradies|trades(?:people|men)?)\b/i.test(trimmed) ? "Suppliers"
+    : /\b(?:tenants?|tenancies)\b/i.test(trimmed) ? "Tenants" : null;
+  return list ? { target: "find-record", inputs: { list, query: "" }, what: `the ${list.toLowerCase()} list` } : null;
+}
+
+/** The message above an REI read card. */
+export const reiReadOffer = (what: string, marker: string) =>
+  `I can read ${what} from REI Cloud now for ${marker}, read only, in your signed-in work browser. Check what it covers, then press **Start this task** in Work on this computer. Nothing in REI is changed, sent or paid.`;

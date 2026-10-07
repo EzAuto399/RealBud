@@ -74,7 +74,7 @@ export function createReiMorningRefresh(deps: ReiMorningRefreshDeps) {
 
   async function refresh(): Promise<LoopExecuteResult> {
     const account = await deps.account();
-    if (!account) return { ok: false, status: "failed", detail: `Save the REI business code (Schedule → Bank reference review → Set up bank imports) before the REI morning refresh can read REI. ${notFresh(staleNow())}`.trim() };
+    if (!account) return { ok: false, status: "failed", detail: `Save the REI business code (Schedule → Bank reference review → Refresh from REI) before the REI morning refresh can read REI. No bank connection is needed. ${notFresh(staleNow())}`.trim() };
     const browserId = await deps.browserId();
     if (!browserId) return missed(`The work browser isn't open and ready (open it and sign in to REI, or release an earlier browser task that needs recovery), so REI wasn't read. ${SIGN_IN_HOW}`);
     // The pack's shipped recipes only: a path learned in Ask or a watch-and-learn recipe never joins an unattended loop.

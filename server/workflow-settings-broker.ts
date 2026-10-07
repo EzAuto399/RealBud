@@ -8,14 +8,16 @@
 // clock's own compare-and-set; it never switches a workflow on or off, and
 // earlier clocks are not kept. Approval settings (approval_policy) go through
 // server/approval-settings.ts: Bud may propose anything stricter, but may only
-// stop asking for tools it names that only read. Mounted per ACP session as a
-// loopback MCP server.
+// stop asking for tools it names that only read. The office's REI business code
+// (rei_account) saves through server/rei-account.ts; no earlier versions are
+// kept. Mounted per ACP session as a loopback MCP server.
 import type { IncomingMessage } from "node:http";
 import { defaultAgencySettings, validateAgencySettings } from "./agency-setup.ts";
 import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, approvalAnswer, type ApprovalAnswer } from "./approval-answer.ts";
 import { validateInspectionRules, type InspectionRulesStore } from "./inspection-rules.ts";
 import { isMaintenanceWindowRule, MAINTENANCE_RULE_MESSAGE, type MaintenanceReviewStore } from "./maintenance-review.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { validReiRef } from "./rei-account.ts";
 import { parseClockTime, parseWeekdays } from "./routines.ts";
 import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
 import type { AgencySetupSettings } from "../shared/agency-setup.ts";
@@ -29,7 +31,14 @@ export const WORKFLOW_SETTINGS_SERVER = "workflow-settings";
 export const SETTINGS_CONFLICT = "These settings changed since Bud read them — ask again";
 export const LOOP_SCHEDULE_CONFLICT = "This schedule changed. Ask Bud again.";
 export const APPROVAL_POLICY_CONFLICT = "Approval settings changed since Bud read them. Ask Bud again.";
-export const WORKFLOW_SETTINGS_TARGETS = ["maintenance_month_rule", "inspection_rules", "morning_priorities", "loop_schedule", "approval_policy"] as const;
+export const WORKFLOW_SETTINGS_TARGETS = ["maintenance_month_rule", "inspection_rules", "morning_priorities", "loop_schedule", "approval_policy", "rei_account"] as const;
+/** The office's REI account (server/rei-account.ts): its compare-and-set save. */
+export interface ReiAccountBinding {
+  read(): Promise<{ marker: string; urlValue?: string; revision: number } | null>;
+  /** Throws `code: "settings_changed"` when stale. */
+  save(account: { marker: string; urlValue?: string }, expectedRevision: number): Promise<unknown>;
+}
+const REI_ACCOUNT_UNBOUND = "The REI business code can't be changed from this conversation. Change it in Schedule → Bank reference review → Refresh from REI. Nothing was changed.";
 export type WorkflowSettingsTarget = typeof WORKFLOW_SETTINGS_TARGETS[number];
 type RuleTarget = Exclude<WorkflowSettingsTarget, "loop_schedule" | "approval_policy">;
 /** One set of approval settings Bud may change: this computer's (departmentId null) or a department's. */
@@ -74,6 +83,8 @@ const TARGETS: Record<RuleTarget, { label: string; fields: Record<string, string
     travelMinutes: "Travel time (minutes)", dailyCapacity: "Visits per day" } },
   morning_priorities: { label: "Morning priorities preferences", fields: { localTime: "Time", weekdays: "Days", followUpAfterDays: "Follow up after (days)" },
     notice: "Saving changes the agency setup, so Morning priorities and Weekly bills turn off until their setup is reviewed again." },
+  rei_account: { label: "REI business code", fields: { marker: "REI business code (shown at the top of REI)", urlValue: "REI address value (reicid)" },
+    notice: "Bud reads REI, and bank imports go to REI, only for this business." },
 };
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -81,6 +92,7 @@ const WORDS: Record<string, string> = { invoiceDate: "invoice date", receivedDat
 /** Compact values for Bud's read: raw dates and times so a proposal can build on them. */
 const show = (field: string, value: unknown): string => {
   if (Array.isArray(value)) return value.length ? value.map(item => field === "weekdays" || field === "workingDays" ? DAYS[item as number] ?? String(item) : String(item)).join(" ") : "none";
+  if (value === "") return "none";
   return typeof value === "string" ? WORDS[value] ?? value : String(value);
 };
 const DAY_MS = 86_400_000;
@@ -143,7 +155,7 @@ const REASON = { type: "string", minLength: 1, maxLength: 300, description: "One
 const TOOLS = [
   { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions, (loop_schedule) each workflow's loopId, revision, on/off and clock, and (approval_policy) how often Bud asks before using each app, website and office connector. target is optional (all when omitted). Read only, no card.",
     inputSchema: { type: "object", additionalProperties: false, properties: { target: TARGET } } },
-  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {repeat (optional, only one the workflow's read line lists: weekdays|every-n-days|first-weekday-of-month), time (HH:MM), weekdays (0=Sun..6=Sat), and for every-n-days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
+  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; rei_account {marker: the business code shown at the top of REI, urlValue: the reicid only when the person gives one, an empty string for none} (no earlier versions kept); loop_schedule {loopId, schedule: {repeat (optional, only one the workflow's read line lists: weekdays|every-n-days|first-weekday-of-month), time (HH:MM), weekdays (0=Sun..6=Sat), and for every-n-days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
@@ -171,13 +183,20 @@ export function bindWorkflowSettings(host: {
   writable(): string | null;
   /** Approval settings (`bindApprovalPolicy`); without it Bud cannot change them. */
   approvals?: ApprovalPolicyBinding;
+  /** The office's REI account (server/rei-account.ts); without it Bud cannot change it. */
+  reiAccount?: ReiAccountBinding;
 }): BudWorkflowSettings {
   const changed = () => Object.assign(new Error(SETTINGS_CONFLICT), { code: "settings_changed" });
   const guard = () => { const refusal = host.writable(); if (refusal) throw Object.assign(new Error(refusal), { status: 503 }); };
   const approvals = host.approvals;
+  const rei = () => host.reiAccount ?? (() => { throw Object.assign(new Error(REI_ACCOUNT_UNBOUND), { unbound: true }); })();
   return {
     ...(approvals ? { approvals: { read: () => approvals.read(), save: async (view: ApprovalPolicyView, next: ApprovalSettings) => { guard(); await approvals.save(view, next); } } } : {}),
     async read(target) {
+      if (target === "rei_account") {
+        const account = await rei().read();
+        return { revision: account?.revision ?? 0, values: { marker: account?.marker ?? "", urlValue: account?.urlValue ?? "" }, previous: null };
+      }
       if (target === "maintenance_month_rule") {
         const state = await host.maintenance.read();
         return { revision: state.ruleRevision ?? 0, values: { ...state.rule }, previous: (state.ruleHistory ?? []).map(h => ({ values: { ...h.rule }, replacedAt: h.replacedAt })) };
@@ -193,6 +212,13 @@ export function bindWorkflowSettings(host: {
     check(target, values) {
       if (target === "maintenance_month_rule") { if (!isMaintenanceWindowRule(values)) throw new Error(MAINTENANCE_RULE_MESSAGE); return { span: values.span, basis: values.basis }; }
       if (target === "inspection_rules") return validateInspectionRules(values) as unknown as Values;
+      if (target === "rei_account") {
+        const urlValue = values.urlValue ?? "";
+        if (typeof urlValue !== "string" || !validReiRef({ marker: values.marker, ...(urlValue ? { urlValue } : {}) })) {
+          throw new Error("marker must be the business code shown at the top of REI, and urlValue a reicid or \"\" (letters, numbers, dots, dashes or underscores).");
+        }
+        return { marker: values.marker, urlValue };
+      }
       return validateAgencySettings({ ...defaultAgencySettings(), morningReview: values }).morningReview as unknown as Values;
     },
     async save(target, values, expectedRevision) {
@@ -200,6 +226,7 @@ export function bindWorkflowSettings(host: {
       try {
         if (target === "maintenance_month_rule") { await host.maintenance.setRule({ rule: values, expectedRevision }); return; }
         if (target === "inspection_rules") { await host.inspection.save({ rules: values, expectedRevision }); return; }
+        if (target === "rei_account") { await rei().save({ marker: String(values.marker), ...(values.urlValue ? { urlValue: String(values.urlValue) } : {}) }, expectedRevision); return; }
         const state = await host.agency.read();
         if (state.revision !== expectedRevision) throw changed();
         await host.agency.save({ expectedRevision, settings: { ...state.settings, morningReview: values as unknown as AgencySetupSettings["morningReview"] } });
@@ -379,7 +406,10 @@ export async function startWorkflowSettingsBroker(options: {
             continue;
           }
           let row: WorkflowSettingsSnapshot;
-          try { row = rows[target] = await settings.read(target); } catch (error) { return toolError(message(error, `The ${TARGETS[target].label} could not be read.`)); }
+          try { row = rows[target] = await settings.read(target); } catch (error) {
+            if (!args.target && (error as { unbound?: unknown }).unbound) { lines.push(`- ${target}: not available in this conversation.`); continue; }
+            return toolError(message(error, `The ${TARGETS[target].label} could not be read.`));
+          }
           lines.push(`- ${target} (revision ${row.revision}): ${Object.keys(TARGETS[target].fields).map(field => `${field} ${show(field, row.values[field])}`).join("; ")}. ` +
             (row.previous === null ? "Earlier versions are not kept." : `${row.previous.length} earlier version(s) kept.`));
         }

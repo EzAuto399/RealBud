@@ -2,7 +2,35 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
 
-import { browserTaskActions, browserTaskIntent, parsePortalJobIntent, portalJobIntentReply } from "./portal-job-intent.ts";
+import { browserTaskActions, browserTaskIntent, parsePortalJobIntent, portalJobIntentReply, reiReadIntent } from "./portal-job-intent.ts";
+
+describe("REI read questions in Ask", () => {
+  it("maps a read question that names REI to one read recipe", () => {
+    expect(reiReadIntent("check REI Cloud and tell me which tenants are more than 14 days in arrears. Read only.")).toEqual({ target: "arrears-review", inputs: { min_days: "15" }, what: "the arrears list (15+ days)" });
+    expect(reiReadIntent("Who is at least 30 days in arrears in REI?")).toMatchObject({ inputs: { min_days: "30" } });
+    expect(reiReadIntent("Which tenants are behind on rent in REI?")).toMatchObject({ target: "arrears-review", inputs: { min_days: "1" } });
+    expect(reiReadIntent("What tasks are due today in REI?")).toMatchObject({ target: "tasks-due", dated: true });
+    expect(reiReadIntent("List the owners from REI Cloud")).toMatchObject({ target: "find-record", inputs: { list: "Owners", query: "" } });
+    expect(reiReadIntent("Show me REI's suppliers")).toMatchObject({ target: "find-record", inputs: { list: "Suppliers", query: "" } });
+    expect(reiReadIntent("How many tenants are in REI?")).toMatchObject({ target: "find-record", inputs: { list: "Tenants", query: "" } });
+  });
+
+  it("never matches a write, a how-to, quoted or forwarded text, or a question that doesn't name REI", () => {
+    for (const text of [
+      "Send notices from REI to tenants more than 14 days in arrears",
+      "Pay the suppliers in REI",
+      "Update the tenant's phone number in REI",
+      "Upload the bank file to REI and check arrears",
+      "Delete the old owners in REI",
+      "How do I export the arrears list from REI?",
+      "Fwd: check REI arrears",
+      'Kevin wrote "check REI arrears" yesterday',
+      "Which tenants are in arrears?",
+      "Is REI down?",
+      "The reign of arrears",
+    ]) expect(reiReadIntent(text), text).toBeNull();
+  });
+});
 
 const LIVE_DISCOVERY_REQUEST = "Use the connected-apps MCP to discover the actual Gmail tools and their input schemas for reading at most 10 recent email threads from one selected account. Only call Composio tool search/schema discovery. Do not read mailbox messages, start sign-in, execute app actions, send, create drafts, or change anything. Report the exact discovered read tool names, how they choose an account and limit results, and any missing connection requirement. This is a live tool-discovery check, not a mailbox review.";
 const CONNECTED_TOOL_REQUESTS = [
