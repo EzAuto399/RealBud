@@ -117,6 +117,11 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.mock.calls.some(args => args[0] === "fill" && args.includes("Two"))).toBe(true);
     expect(f.mock.effects).toEqual([]);
     expect(((await f.mock.command(["observe"])) as { text: string }).text).toContain('textbox "Search:" value="Two"');
+    // Tenants carries a money word (its BPay column): the pack's "Search" still covers "Search:" there.
+    const tenants = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }));
+    expect(tenants.outcome, `${tenants.reason} ${tenants.detail}`).toBe("completed");
+    expect(tenants.results[1].rows.map(row => row.Reference)).toEqual(["FT-DELTA"]);
+    expect(tenants.receipt.approvals.person).toBe(0);
   });
   it("reads live REI's Syncfusion grid: rows inside rowgroups, a hidden empty-named first column, template cell names", async () => {
     const f = await fixture({ syncfusionGrid: true });

@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
-import { jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
+import { accessibleName, jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
 import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -175,11 +175,9 @@ const all = (node: Node, test: (n: Node) => boolean, out: Node[] = []): Node[] =
 const first = (node: Node, test: (n: Node) => boolean) => all(node, test)[0];
 const texts = (node: Node): string => [node.name ?? "", ...node.children.map(texts)].join(" ");
 const controlName = (label: unknown) => typeof label === "string" ? unquote(label.match(/^\S+\s+"((?:[^"\\]|\\.)*)"/)?.[1] ?? "") : "";
-/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's DataTables names its box "Search:"). */
 const FOOTER_RECORDS = /^\d[\d,]* records?\b/i;
 const FOOTER_ENTRIES = /^Showing [\d,]+ to [\d,]+ of ([\d,]+) entries(?: \(filtered from ([\d,]+) total entries\))?/i;
-const TEMPLATE_CELL =/(?:^|\s+)is template cell column header (.*)$/s;
-const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
+const TEMPLATE_CELL = /(?:^|\s+)is template cell column header (.*)$/s;
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
 
