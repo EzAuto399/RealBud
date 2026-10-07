@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
-import { accessibleName, jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
+import { accessibleName, jobBrowserUrl, learnedPressable, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
 import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -110,6 +110,9 @@ export interface PortalRunOptions {
   menuOnly?: boolean;
   /** Paths the pack's site map calls read-class (a loop's read): the only pages whose grid a loop may scroll. */
   readRoutes?: readonly string[];
+  /** Labels the person confirmed while teaching Bud, for the learned recipes this task runs (server/portal-recipe-task.ts).
+   * Kept apart from the pack's readSafe: each is clicked only when learnedPressable, and a loop's read never uses them. */
+  learnedReadSafe?: readonly string[];
   pollMs?: number;
   maxWaitReads?: number;
 }
@@ -140,7 +143,7 @@ export function portalRecipeGrantNeeds(pack: PortalRecipePack, runs: PortalRunRe
 /** The pack's declared controls, bound to its origin, for the broker's classifier
  * (server/browser-authority.ts). Menu names come from the pack's screens, never a
  * forbidden area; sign-in hosts are for waiting only. */
-export function portalRecipeControls(pack: PortalRecipePack, readRoutes?: readonly string[]): BrowserPortalControls {
+export function portalRecipeControls(pack: PortalRecipePack, readRoutes?: readonly string[], learnedReadSafe?: readonly string[]): BrowserPortalControls {
   const forbidden = new Set(pack.labels.forbiddenAreas);
   const menu = new Set(pack.screens.flatMap(screen => screen.menu.filter((_, index) => !forbidden.has(screen.menu.slice(0, index + 1).join(" › ")))));
   // The pager's buttons are read-safe only in a pager beside a table (server/browser-authority.ts).
@@ -149,7 +152,7 @@ export function portalRecipeControls(pack: PortalRecipePack, readRoutes?: readon
     ...(pack.pagination.landmark ? { pager: { ...pack.pagination.landmark } } : {}), consequential: [...pack.labels.consequential],
     signInHosts: [...pack.signIn.hosts], accountMarker: { ...pack.account.pageMarker },
     ...(pack.financialRoutes ? { financialRoutes: [...pack.financialRoutes] } : {}), ...(pack.grid ? { gridScroll: pack.grid.scrollContainer } : {}),
-    ...(readRoutes ? { readRoutes: [...readRoutes] } : {}) };
+    ...(readRoutes ? { readRoutes: [...readRoutes] } : {}), ...(learnedReadSafe?.length ? { learnedReadSafe: [...learnedReadSafe] } : {}) };
 }
 
 // ── page model (the helper's VOM text) ───────────────────────────────────
@@ -237,12 +240,14 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     receipt.approvals.person += 1;
     return options.approve ? options.approve(tool, params, summary, signal, projection) : false;
   };
+  // A loop's unattended read never sees labels confirmed while teaching Bud.
+  const learned = grant.route === "loop-read" ? [] : [...options.learnedReadSafe ?? []];
   let broker: BrowserBroker;
   try {
     broker = await startBrowserBroker({
       threadId: options.threadId, runId: grant.runId, grant, runtime: tap.runtime,
       context: { allowedOrigins: grant.sites, capabilities: [] },
-      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack, options.readRoutes),
+      isActive: () => !stopped(), approve, portal: portalRecipeControls(pack, options.readRoutes, learned),
       ...(options.operations ? { operations: options.operations } : {}), ...(options.approvals ? { approvals: options.approvals } : {}),
       ...(options.rules ? { rules: options.rules } : {}), ...(options.assertCapability ? { assertCapability: options.assertCapability } : {}),
       ...(options.now ? { now: options.now } : {}), ...(options.workroom ? { workroom: options.workroom } : {}),
@@ -470,7 +475,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           const eachRun = typeof raw === "object" && raw !== null && (raw as Record<string, unknown>).ask === "each-run";
           const label = fill(eachRun ? (raw as Record<string, unknown>).label : raw); entry.target = label;
           if (stops.has(label)) throw new RunEnd("stopped-before", "consequential-label", label);
-          if (!eachRun && !readSafe.has(label)) throw blocked("not-read-safe", label);
+          if (!eachRun && !readSafe.has(label) && !(learned.includes(label) && learnedPressable(label))) throw blocked("not-read-safe", label);
           const target = control(await current(), ["button", "link", "tab", "menuitem"], label);
           if (!target) throw blocked("control-missing", `No ${label} control on the page.`);
           await act("browser_click_semantic", { ref: target.ref! }, { name: label, ...(eachRun ? { recipe: false } : {}) });
