@@ -50,7 +50,8 @@ import type { PrivateBackupBusyReason } from '../shared/private-backup-transfers
 import { createAgencySetupService } from './agency-setup.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
-import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
+import { knownMailSenders, runMorningMailWorkflow, screenMailNoise } from './morning-mail-workflow.ts';
+import { decide as jevDecide, jevReady } from './jev-client.ts';
 import { runWeeklyBillsWorkflow } from './weekly-bills-workflow.ts';
 import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanceReview } from './maintenance-review.ts';
 import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
@@ -2321,14 +2322,19 @@ loops = new LoopManager({
       weekly: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
       timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() });
     if (loop.id === 'inbound-triage') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
-      const started = Date.now(); let modelCalls = 0;
+      const started = Date.now(); let modelCalls = 0, screen: { screened: number; model: string } | null = null;
       const outcome = await runMorningMailWorkflow(run, {
-      collect: async () => { await checkWebsiteExecution(); return mailWorkspace.collect(); }, prepareInput: async scan => { await checkWebsiteExecution(); return mailWorkspace.prepareInput(scan); }, applyReview: async result => { await checkWebsiteExecution(); return mailWorkspace.applyReview(result); },
+      collect: async () => { await checkWebsiteExecution(); return mailWorkspace.collect(); },
+      // Jev pre-screen. Senders on the supplier list or Desk owner contacts are never screened; a list that cannot be read screens nothing.
+      screen: async scan => { await checkWebsiteExecution(); if (!jevReady()) return;
+        const known = knownMailSenders(await supplierDirectory.read(), desk.snapshot().properties);
+        screen = await mailWorkspace.screenNoise(scan, threads => screenMailNoise(threads, { decide: jevDecide, known })); },
+      prepareInput: async scan => { await checkWebsiteExecution(); return mailWorkspace.prepareInput(scan); }, applyReview: async result => { await checkWebsiteExecution(); return mailWorkspace.applyReview(result); },
       recipe: async () => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; const id = workflowRecipeId(selected,'inbox-triage'); return id ? getRecipe(id) : undefined; },
       admitPack: async id => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; if (!selected) throw new Error('Choose the agency workflow pack.'); await customerPacks.packRecipeBinding(selected,id); },
       execute: (recipe, input) => { modelCalls++; return executeRecipeJob(recipe, input, { readBookSnapshot: () => desk.snapshot(), instructionContext: async id => { const instructions = await customerPacks.instructionContext(id); await checkWebsiteExecution(); return instructions; } }); },
       });
-      return recordMorningResult(workflowDatabase(), run, outcome, await mailWorkspace.reviewSummary(), { elapsedMs: Date.now() - started, modelCalls });
+      return recordMorningResult(workflowDatabase(), run, outcome, await mailWorkspace.reviewSummary(), { elapsedMs: Date.now() - started, modelCalls, screen });
     }));
     if (loop.id.startsWith("recipe-")) {
       try { await customerPacks.assertReadyForRecipe(loop.id.slice('recipe-'.length)); }

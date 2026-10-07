@@ -49,6 +49,9 @@ export interface MailWorkItem {
   /** Source digest Bud last prepared for a reply that arrived after a person's
    * review. Absent on older records; it only stops repeat preparation. */
   preparedDigest?: string;
+  /** Set only while Jev's pre-screen is the reason this item is noise. Data,
+   * never authority: a staff edit or a later Bud review replacing it clears it. */
+  screenedBy?: 'jev';
   firstSeenAt: number; updatedAt: number; lastMessageAt: number;
 }
 export interface MailWorkspaceSnapshot {

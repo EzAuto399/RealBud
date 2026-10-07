@@ -26,6 +26,7 @@ export function validMailWorkItem(i: unknown, workspaceId: string): i is MailWor
       typeof i.reviewed === 'boolean' && typeof i.newEvidence === 'boolean' &&
       (!Object.hasOwn(i, 'followUpReviewedKey') || typeof i.followUpReviewedKey === 'string' && HEX.test(i.followUpReviewedKey)) &&
       (!Object.hasOwn(i, 'preparedDigest') || typeof i.preparedDigest === 'string' && HEX.test(i.preparedDigest)) &&
+      (!Object.hasOwn(i, 'screenedBy') || i.screenedBy === 'jev' && i.disposition === 'noise') &&
       at(i.firstSeenAt) && at(i.updatedAt) && at(i.lastMessageAt);
   }
 export function validMailWorkspace(value: unknown, workspaceId: string): value is StoredMailWorkspace {
