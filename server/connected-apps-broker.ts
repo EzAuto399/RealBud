@@ -315,11 +315,11 @@ export async function startConnectedAppsBroker(options: {
                 summary = review.card; detail = review.exact;
                 if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
-              // The review id is read back after the answer so the receipt names a phone answer.
+              // The review id rides on the card and is read back after the answer so the receipt names a phone answer.
               const reviewId = randomBytes(6).toString("hex");
-              openReviews.set(reviewId, { threadId: options.threadId, detail: redactSecretsInText(detail) });
+              openReviews.set(reviewId, { threadId: options.threadId });
               let approved: boolean;
-              try { approved = await options.approve(summary, controller.signal, { ...card, detail }); }
+              try { approved = await options.approve(summary, controller.signal, { ...card, detail, reviewId }); }
               finally { approval = openReviews.get(reviewId)?.approval; openReviews.delete(reviewId); }
               if (!approved) {
                 operations.deny({ ...receipt, ...(approval ? { approval } : {}) });
@@ -469,16 +469,12 @@ export const taskReadGrants = {
   has: (threadId: string, group: string): boolean => taskReads.get(threadId)?.has(group) === true,
   clear(threadId: string): void { taskReads.delete(threadId); },
 };
-/** Cards waiting for a person, by review id. The card itself carries only the
- * exact request (`detail`), so a phone answer is matched on thread and detail. */
-const openReviews = new Map<string, { threadId: string; detail: string; approval?: string }>();
-/** Records who answered a waiting card away from this computer, for its receipt.
- * ponytail: byte-identical cards waiting on one thread are matched oldest first;
- * carry the review id on the card if that ever needs to be exact. */
-export function recordConnectedAppApproval(threadId: string, detail: string, line: string): void {
-  for (const review of openReviews.values()) {
-    if (review.threadId === threadId && review.detail === detail && review.approval === undefined) { review.approval = line; return; }
-  }
+/** Cards waiting for a person, by the review id each card carries. */
+const openReviews = new Map<string, { threadId: string; approval?: string }>();
+/** Records who answered a waiting card away from this computer, for its receipt. */
+export function recordConnectedAppApproval(threadId: string, reviewId: string, line: string): void {
+  const review = openReviews.get(reviewId);
+  if (review?.threadId === threadId && review.approval === undefined) review.approval = line;
 }
 type AppRow = { slug: string; args: Record<string, unknown> };
 /** The app tools a call dispatches, batch members included; RealBud's own discovery tools have none. */

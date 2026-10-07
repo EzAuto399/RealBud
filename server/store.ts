@@ -67,6 +67,10 @@ export interface OptionCardData extends ApprovalCardMeta {
   detail?: string;
   /** A read-only allowlisted app read: "Allow for this task" (and "Always allow reading" where `always`). */
   readOffer?: ApprovalReadOffer;
+  /** The connected-app broker's id for this card, so a phone answer lands on its receipt. */
+  reviewId?: string;
+  /** Where the card is out besides this computer ("Also on Telegram"), or why not; a quiet line, never a hold. */
+  phoneNote?: string;
 }
 
 export interface Message {

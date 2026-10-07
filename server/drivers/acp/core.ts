@@ -963,7 +963,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** RealBud's one-time review card for an external action (connected apps
          * and Hermios CRM writes): one explicit allow, never a session grant.
          * `card` is the broker's plain-line additions (exact request, phone
-         * class, read offer); the card also carries its deadline. A timeout or
+         * class, read offer, review id); the card also carries its deadline. A timeout or
          * a stop is never reported as the person's answer. */
         const reviewOnce = (summary: string, signal: AbortSignal, card: ApprovalCardDetails = {}) => new Promise<boolean>((resolve) => {
           const run = current;
@@ -984,7 +984,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           run.asks.set(requestId, finish);
           signal.addEventListener("abort", aborted, { once: true });
           emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary, deadline: approvalDeadline(),
-            ...(card.remote ? { remote: card.remote } : {}), ...(card.detail ? { detail: card.detail } : {}), ...(card.readOffer ? { readOffer: { ...card.readOffer } } : {}) });
+            ...(card.remote ? { remote: card.remote } : {}), ...(card.detail ? { detail: card.detail } : {}), ...(card.readOffer ? { readOffer: { ...card.readOffer } } : {}),
+            ...(card.reviewId ? { reviewId: card.reviewId } : {}) });
         });
         const ready = (async () => {
           if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {

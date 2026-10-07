@@ -1538,6 +1538,7 @@ bus.subscribe((raw: RuntimeEvent) => {
           ...(event.remote ? { remote: event.remote } : {}),
           ...(event.detail ? { detail: redactSecretsInText(event.detail) } : {}),
           ...(permission && event.readOffer ? { readOffer: { ...event.readOffer } } : {}),
+          ...(permission && event.reviewId ? { reviewId: event.reviewId } : {}),
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -1550,7 +1551,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       const phone = event.requestId ? phoneAnswers.get(`${event.threadId}:${event.requestId}`) : undefined;
       if (event.requestId) phoneAnswers.delete(`${event.threadId}:${event.requestId}`);
       const byPhone = phone && event.source === "user" ? phone : undefined;
-      const phoneNote = event.requestId ? remoteToolCardResolved(event.threadId, event.requestId, { behavior: event.behavior, resolution: event.resolution }) : null;
+      if (event.requestId) remoteToolCardResolved(event.threadId, event.requestId, { behavior: event.behavior, resolution: event.resolution });
       if (event.behavior === "allow" && fenceContextFor(event.threadId)) {
         const resolvedCard = messageId
           ? store.messagesFor(event.threadId).find((m) => m.id === messageId)?.card
@@ -1568,7 +1569,7 @@ bus.subscribe((raw: RuntimeEvent) => {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
           const patched = store.patchMessage(event.threadId, messageId, {
-            card: { ...existing.card, ...(phoneNote ?? {}), answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}),
+            card: { ...existing.card, phoneNote: undefined, answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}),
               ...(byPhone ? { answeredBy: byPhone.by, resolution: "phone" as const } : {}) },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
@@ -2294,11 +2295,11 @@ void bindRemoteToolCards({
   quiet: () => isQuietHours(Date.now(), desk.snapshot().timezone || "Australia/Sydney"),
   timeZone: () => desk.snapshot().timezone || "Australia/Sydney",
   liveCard: liveRequestCard,
-  noteCard: (threadId, requestId, held) => {
+  noteCard: (threadId, requestId, phoneNote) => {
     const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
     const card = liveRequestCard(threadId, requestId);
     if (!messageId || !card) return;
-    const patched = store.patchMessage(threadId, messageId, { card: { ...card, held } });
+    const patched = store.patchMessage(threadId, messageId, { card: { ...card, phoneNote } });
     if (patched) broadcast({ kind: "message.patch", threadId, message: patched });
   },
   answer: async (threadId, requestId, choice, by, line) => {
@@ -3139,7 +3140,7 @@ async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision
   if (phone) {
     // Read back when the request resolves (the card's answeredBy) and by the app broker (its receipt).
     phoneAnswers.set(live, phone);
-    if (card?.tool === CONNECTED_APP_APPROVAL && card.detail) recordConnectedAppApproval(threadId, card.detail, phone.line);
+    if (card?.tool === CONNECTED_APP_APPROVAL && card.reviewId) recordConnectedAppApproval(threadId, card.reviewId, phone.line);
   }
   try { await instance.adapter.respondToRequest(threadId, parsed.requestId, decision); }
   catch (error) { phoneAnswers.delete(live); throw error; }

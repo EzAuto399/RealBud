@@ -26,8 +26,8 @@ export type RemoteToolCardsBind = {
   now?(): number;
   /** The stored card while its request is still waiting in this process, else null. */
   liveCard(threadId: string, requestId: string): OptionCardData | null;
-  /** Shows a note on the waiting desktop card ("Also on Telegram"); the card's own `held` text is passed back in front. */
-  noteCard(threadId: string, requestId: string, held: string | undefined): void;
+  /** Sets the waiting desktop card's quiet phone line ("Also on Telegram"); never its `held` text. */
+  noteCard(threadId: string, requestId: string, note: string): void;
   /** The desktop's own answer path (answerLiveRequest). */
   answer(threadId: string, requestId: string, choice: ToolCardChoice, by: ToolCardAnswerer, line: string): Promise<{ status: number }>;
 };
@@ -56,8 +56,8 @@ let ready: Promise<void> = Promise.resolve();
 let held = false;
 let saving: Promise<void> = Promise.resolve();
 const pushes: Push[] = [];
-/** Waiting cards this module noted, with the card's own `held` text and where it is out. */
-const live = new Map<string, { base?: string; on: string[] }>();
+/** Waiting cards this module noted, and where each is out. */
+const live = new Map<string, { on: string[] }>();
 
 export function bindRemoteToolCards(opts: RemoteToolCardsBind): Promise<void> {
   resetRemoteToolCards();
@@ -139,9 +139,9 @@ export async function remoteToolCardOpened(threadId: string, requestId: string):
   const targets = owner.channels.filter(channel => pushKey(channel));
   if (!card || !targets.length) return;
   const key = keyOf(threadId, requestId);
-  const entry: { base?: string; on: string[] } = { ...(card.held ? { base: card.held } : {}), on: [] };
+  const entry: { on: string[] } = { on: [] };
   live.set(key, entry);
-  if (owner.quiet()) { owner.noteCard(threadId, requestId, [entry.base, QUIET].filter(Boolean).join(" · ")); return; }
+  if (owner.quiet()) { owner.noteCard(threadId, requestId, QUIET); return; }
   const fingerprint = toolCardFingerprint(card);
   const deadline = card.deadline && Number.isFinite(Date.parse(card.deadline)) ? card.deadline : undefined;
   await Promise.all(targets.map(async channel => {
@@ -162,16 +162,13 @@ export async function remoteToolCardOpened(threadId: string, requestId: string):
     }
     if (!message.buttons || bound !== owner || live.get(key) !== entry || push.outcome) return;
     entry.on.push(channel.label);
-    owner.noteCard(threadId, requestId, [entry.base, `Also on ${entry.on.join(" and ")}`].filter(Boolean).join(" · "));
+    owner.noteCard(threadId, requestId, `Also on ${entry.on.join(" and ")}`);
   }));
 }
 
-/** The card closed on the desktop (any answer, a timeout or a stop). Returns the
- * card's own `held` text to restore when a phone note was shown, else null. */
-export function remoteToolCardResolved(threadId: string, requestId: string, resolved: { behavior: string; resolution?: string }): { held: string | undefined } | null {
-  const key = keyOf(threadId, requestId);
-  const entry = live.get(key);
-  live.delete(key);
+/** The card closed on the desktop (any answer, a timeout or a stop). */
+export function remoteToolCardResolved(threadId: string, requestId: string, resolved: { behavior: string; resolution?: string }): void {
+  live.delete(keyOf(threadId, requestId));
   const kind: Outcome["kind"] = resolved.resolution === "timeout" ? "timeout" : resolved.resolution === "stopped" ? "stopped" : "desktop";
   let changed = false;
   for (const push of pushes) {
@@ -180,7 +177,6 @@ export function remoteToolCardResolved(threadId: string, requestId: string, reso
     changed = true;
   }
   if (changed) void save();
-  return entry ? { held: entry.base } : null;
 }
 
 export function knowsToolCardPush(id: string): boolean {

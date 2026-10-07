@@ -94,6 +94,8 @@ export interface Pending {
   deadline?: string;
   /** Answered on the phone or another desktop: the card collapses to one line. */
   answeredBy?: AnsweredBy | null;
+  /** "Also on Telegram" or "Not sent to your phone: quiet hours": one muted line under the buttons. */
+  phoneNote?: string;
 }
 
 const optional = <K extends string, V>(key: K, value: V | null) => (value === null ? {} : { [key]: value }) as Partial<Record<K, V>>;
@@ -118,6 +120,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       ...optional("exactRequest", typeof m.card!.detail === "string" && m.card!.detail ? m.card!.detail : null),
       ...optional("deadline", typeof m.card!.deadline === "string" ? m.card!.deadline : null),
       ...optional("answeredBy", readAnsweredBy(m.card!.answeredBy)),
+      ...optional("phoneNote", typeof m.card!.phoneNote === "string" && m.card!.phoneNote ? m.card!.phoneNote : null),
     }));
 }
 
@@ -274,6 +277,7 @@ export function PendingApprovalActions({
   const base = "pm-control rounded-full px-3.5 text-[13.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50";
   // Answered on the phone or another desktop: the line above says who, and nothing is left to decide here.
   if (pending.answeredBy) return null;
+  const phoneNote = pending.phoneNote ? <p className="text-[12px] text-ink-muted">{pending.phoneNote}</p> : null;
   if (readOffer) {
     return (
       <div className="flex flex-col items-end gap-2 px-2 py-2">
@@ -287,6 +291,7 @@ export function PendingApprovalActions({
           <button type="button" onClick={onCancelTurn} className={cn(base, "text-ink-muted hover:bg-raised hover:text-ink")}>Stop this turn</button>
         </div>
         <p className="text-[12px] text-ink-muted">Change future approvals in Workspace → Approvals.</p>
+        {phoneNote}
       </div>
     );
   }
@@ -363,6 +368,7 @@ export function PendingApprovalActions({
           <p className="text-[12px] text-ink-muted">Change future approvals in Workspace → Approvals.</p>
         </div>
       ) : null}
+      {phoneNote}
     </div>
   );
 }

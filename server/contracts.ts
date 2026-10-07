@@ -23,6 +23,8 @@ export interface ApprovalCardDetails {
   /** The exact request, shown under an "Exact request" disclosure. */
   detail?: string;
   readOffer?: ApprovalReadOffer;
+  /** The broker's own id for this card, so a phone answer lands on its receipt. */
+  reviewId?: string;
 }
 
 export type DriverKind = string;
@@ -103,6 +105,7 @@ export type RuntimeEvent = RuntimeEventBase &
         remote?: ApprovalCardDetails['remote'];
         detail?: string;
         readOffer?: ApprovalReadOffer;
+        reviewId?: string;
         /** A consequential browser step: the broker's verified facts and expiry. */
         browserApproval?: BrowserApprovalCard;
         fence?: {

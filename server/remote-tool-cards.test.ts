@@ -14,7 +14,7 @@ type Sent = { kind: "decision" | "notice"; text: string; id?: string; buttons?: 
 
 let dir: string, file: string, now: number, quiet: boolean;
 let cards: Map<string, OptionCardData>;
-let notes: Array<{ requestId: string; held: string | undefined }>;
+let notes: Array<{ requestId: string; note: string }>;
 let sent: Sent[];
 let answer: ReturnType<typeof vi.fn<RemoteToolCardsBind["answer"]>>;
 
@@ -35,7 +35,7 @@ function bind(channels = [channel()]) {
   return bindRemoteToolCards({
     channels, file, quiet: () => quiet, timeZone: () => "Australia/Sydney", now: () => now,
     liveCard: (_threadId, requestId) => cards.get(requestId) ?? null,
-    noteCard: (_threadId, requestId, held) => { notes.push({ requestId, held }); },
+    noteCard: (_threadId, requestId, note) => { notes.push({ requestId, note }); },
     answer,
   });
 }
@@ -89,13 +89,11 @@ describe("live action cards on a paired phone", () => {
     expect(push.text).toContain("Query: from:fictional-owner@example.test");
     expect(push.text).toContain("Waiting until 12:04 pm.");
     expect(push.text).toContain(`task ${push.id}`);
-    expect(notes).toEqual([{ requestId: "req-1", held: "Also on Telegram" }]);
+    expect(notes).toEqual([{ requestId: "req-1", note: "Also on Telegram" }]);
 
     const result = await tap(push.id!, "task");
     expect(result).toEqual({ ok: true, stamp: "Allowed for this task by Fictional Sam via Telegram · 12:00 pm" });
     expect(answer).toHaveBeenCalledExactlyOnceWith("thread-1", "req-1", "task", { name: "Fictional Sam", via: "telegram" }, "Allowed for this task by Fictional Sam via Telegram · 12:00 pm");
-    // The resolve hook hands back the card's own text, without the phone note.
-    expect(remoteToolCardResolved("thread-1", "req-1", { behavior: "allow", resolution: "user" })).toEqual({ held: undefined });
   });
 
   it("accepts the text grammar for channels without buttons", async () => {
@@ -168,14 +166,14 @@ describe("live action cards on a paired phone", () => {
     expect(sent[1]).toEqual({ kind: "notice", text: "Bud is waiting in RealBud: Gmail · Send email. Open RealBud to decide." });
   });
 
-  it("pushes nothing during quiet hours and says so on the desktop card", async () => {
+  it("pushes nothing during quiet hours and says so in the card's phone line, leaving a real hold alone", async () => {
     quiet = true;
     await bind();
-    appCard("req-1", { held: "This request needs your approval once. Saved rules do not apply." });
+    const card = appCard("req-1", { held: "This request needs your approval once. Saved rules do not apply." });
     await remoteToolCardOpened("thread-1", "req-1");
     expect(sent).toEqual([]);
-    expect(notes).toEqual([{ requestId: "req-1", held: "This request needs your approval once. Saved rules do not apply. · Not sent to your phone: quiet hours" }]);
-    expect(remoteToolCardResolved("thread-1", "req-1", { behavior: "deny", resolution: "timeout" })).toEqual({ held: "This request needs your approval once. Saved rules do not apply." });
+    expect(notes).toEqual([{ requestId: "req-1", note: "Not sent to your phone: quiet hours" }]);
+    expect(card.held).toBe("This request needs your approval once. Saved rules do not apply.");
   });
 
   it("pushes nothing to a pairing that is not a private chat with a recorded sender", async () => {

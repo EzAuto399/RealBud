@@ -86,6 +86,8 @@ export interface OptionCardData extends ApprovalCardMeta {
    * `scope: "task"`) and, when `always`, "Always allow reading {appLabel}"
    * (`scope: "always-reads"`). */
   readOffer?: { appLabel: string; always: boolean };
+  /** Where the card is out besides this computer ("Also on Telegram"), or why not; a quiet line, never a hold. */
+  phoneNote?: string;
 }
 
 export interface Message {

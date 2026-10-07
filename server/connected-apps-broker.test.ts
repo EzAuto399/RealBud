@@ -135,7 +135,7 @@ describe("connected app authoritative broker", () => {
     await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
     const address = upstream.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
     url = `http://127.0.0.1:${address.port}/mcp`;
-    broker = await startConnectedAppsBroker({ threadId: "fixture-thread", key, url, operations, isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+    broker = await startConnectedAppsBroker({ threadId: "fixture-thread", key, url, operations, isActive: () => active, approve: (summary, signal, card) => approve(summary, signal, card) });
   });
   afterEach(async () => { broker?.close(); upstream?.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); vi.restoreAllMocks(); rmSync(scratch, { recursive: true, force: true }); });
 
@@ -176,9 +176,9 @@ describe("connected app authoritative broker", () => {
   });
   it("records who answered from a paired phone on the operation receipt", async () => {
     const params = { name: "send_email", arguments: { to: "fictional@example.test", text: "Draft" } };
-    approve.mockImplementation(async () => {
-      recordConnectedAppApproval("other-thread", JSON.stringify(params, null, 2), "Allowed once by Someone Else via Discord · 2:15 pm");
-      recordConnectedAppApproval("fixture-thread", JSON.stringify(params, null, 2), "Allowed once by Fictional Sam via Telegram · 2:16 pm");
+    approve.mockImplementation(async (_summary, _signal, card) => {
+      recordConnectedAppApproval("other-thread", card!.reviewId!, "Allowed once by Someone Else via Discord · 2:15 pm");
+      recordConnectedAppApproval("fixture-thread", card!.reviewId!, "Allowed once by Fictional Sam via Telegram · 2:16 pm");
       return true;
     });
     await invoke("tools/call", params);
@@ -187,6 +187,23 @@ describe("connected app authoritative broker", () => {
     const rows = operations.list();
     expect(rows).toHaveLength(2);
     expect(rows.map(row => row.approval)).toEqual(expect.arrayContaining([undefined, "Allowed once by Fictional Sam via Telegram · 2:16 pm"]));
+  });
+  it("lands each phone answer on its own receipt when identical cards on one thread are answered newest first", async () => {
+    const params = { name: "send_email", arguments: { to: "fictional@example.test", text: "Draft" } };
+    const waiting: Array<{ reviewId: string; answer: (allowed: boolean) => void }> = [];
+    approve.mockImplementation((_summary, _signal, card) => new Promise<boolean>(answer => { waiting.push({ reviewId: card!.reviewId!, answer }); }));
+    const calls = [invoke("tools/call", params, 31), invoke("tools/call", params, 32)];
+    await vi.waitFor(() => expect(waiting).toHaveLength(2));
+    expect(waiting[0].reviewId).not.toBe(waiting[1].reviewId);
+    recordConnectedAppApproval("fixture-thread", waiting[1].reviewId, "Allowed once by Fictional Sam via Telegram · 2:16 pm");
+    waiting[1].answer(true);
+    recordConnectedAppApproval("fixture-thread", waiting[0].reviewId, "Denied by Fictional Alex via Slack · 2:17 pm");
+    waiting[0].answer(false);
+    await Promise.all(calls);
+    const rows = operations.list();
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => [row.status, row.approval])).toEqual(expect.arrayContaining([
+      ["succeeded", "Allowed once by Fictional Sam via Telegram · 2:16 pm"], ["denied", "Denied by Fictional Alex via Slack · 2:17 pm"]]));
   });
   it("reuses a denial on duplicate delivery", async () => {
     await invoke("tools/call", { name: "write" }, 5);

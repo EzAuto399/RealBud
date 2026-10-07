@@ -167,6 +167,20 @@ describe('approval settings on the card', () => {
     expect(renderActions(value)).toBe('');
     expect(pendingApprovals([appCard({ answeredBy: { name: 'Fictional Sam', via: 'pager' } })])[0]!.answeredBy).toBeUndefined();
   });
+  it('shows the phone note as one muted line under the buttons, never as a hold', () => {
+    for (const card of [{ readOffer: { appLabel: 'Gmail', always: false, group: 'app:gmail' } }, {}]) {
+      const value = pendingApprovals([appCard({ ...card, phoneNote: 'Also on Telegram' })])[0]!;
+      expect(value.phoneNote).toBe('Also on Telegram');
+      const html = renderActions(value);
+      expect(html).toMatch(/<\/button><\/div>(<p[^>]*>Change future approvals in Workspace → Approvals\.<\/p>)?<p class="text-\[12px\] text-ink-muted">Also on Telegram<\/p><\/div>$/);
+      expect(renderPanel(value)).not.toContain('Also on Telegram');
+    }
+    // A real hold still shows in the card's hold style; no note, no line.
+    const held = pendingApprovals([appCard({ held: 'This request needs your approval once. Saved rules do not apply.' })])[0]!;
+    expect(renderPanel(held)).toContain('<div class="mt-2 text-[12px] text-hold">This request needs your approval once. Saved rules do not apply.</div>');
+    expect(renderActions(held)).not.toContain('Also on');
+    expect(pendingApprovals([appCard({ phoneNote: 42 })])[0]!.phoneNote).toBeUndefined();
+  });
   it('shows plain lines first and the exact request collapsed under "Exact request"', () => {
     const value = pendingApprovals([appCard({})])[0]!;
     expect(value.exactRequest).toBe(exact);

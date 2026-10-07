@@ -799,8 +799,11 @@ describe("harness HTTP API", () => {
     expect(binding).toContain("parseRequestDecision(");
     expect(binding).not.toMatch(/respondToRequest|guardPermissionDecision|taskReadGrants|addPortalRule/);
     const helper = source.slice(source.indexOf("async function answerLiveRequest("), source.indexOf("let localSessionPublished"));
-    for (const check of ["if (!req) return { status: 403", "phoneAnswers.set(live, phone)", "recordConnectedAppApproval(threadId, card.detail, phone.line)"]) expect(helper, check).toContain(check);
+    for (const check of ["if (!req) return { status: 403", "phoneAnswers.set(live, phone)", "recordConnectedAppApproval(threadId, card.reviewId, phone.line)"]) expect(helper, check).toContain(check);
     expect(source).toContain("void remoteToolCardOpened(event.threadId, event.requestId)");
+    // The phone line is its own quiet field; a real hold keeps the card's `held`.
+    expect(binding).toContain("store.patchMessage(threadId, messageId, { card: { ...card, phoneNote } })");
+    expect(source).toContain("...(permission && event.reviewId ? { reviewId: event.reviewId } : {})");
     expect(source).toContain("answeredBy: byPhone.by, resolution: \"phone\" as const");
   });
 
