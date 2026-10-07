@@ -228,11 +228,15 @@ export function createW1Host(deps: W1HostDeps) {
   async function batchFor(batchId: string, artifactDigest: string, destination: string): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
     const office = await settings();
     if (destinationOf(office) !== destination) fail(409, "The saved REI account changed since this import started. Close it and start again.");
-    // Each row's tenant comes from the saved REI tenant directory: a stale list can name the wrong ledger. No stamp is stale.
-    // (Desk's src-rei-tenants is stamped by a different read, so it is not the list W1 uses.)
-    const savedAt = deps.tenantDirectory()?.savedAt;
-    if (typeof savedAt !== "number" || !isFresh(savedAt, REI_FRESH_MS, now())) fail(409, "Refresh REI tenants first.");
     const bank = deps.store(), file = bank.importArtifact(batchId);
+    // Gate on the list W1 actually reads (recorded when the batch was made): any import row whose tenant came from the saved
+    // REI tenant list (alone or mixed with the office's rules), or an unrecorded source, needs that list under a day old.
+    // A batch whose tenants all come from the office's own rules is not gated on REI. No stamp is stale. The current list's
+    // stamp is checked, so a refresh unblocks a run. (Desk's src-rei-tenants is stamped by a different read.)
+    const source = bank.tenantSource(batchId);
+    const fromDirectory = !source || (source.source === "rei-directory" && file.rows.some(row => row.disposition === "import" && row.propertyId !== undefined && source.propertyIds.includes(row.propertyId)));
+    const savedAt = deps.tenantDirectory()?.savedAt;
+    if (fromDirectory && (typeof savedAt !== "number" || !isFresh(savedAt, REI_FRESH_MS, now()))) fail(409, "Refresh REI tenants first.");
     if (!file.artifact || file.artifact.digest !== artifactDigest) fail(409, "The reviewed import file changed. Nothing was uploaded.");
     const problems: string[] = [];
     const rows = file.rows.flatMap(row => {

@@ -8,7 +8,12 @@ import { validateSavedBankBatch, validateBankReviewLinks } from './bank-referenc
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass } from './bank-reference-match.ts';
-import { savedTenantDirectoryCsv } from './tenant-directory.ts';
+import { createTenantDirectoryStore, tenantDirectoryCsv } from './tenant-directory.ts';
+
+/** Where a batch's REI tenants came from, recorded when the batch is created: the office's saved REI tenant list
+ * (its savedAt, and the property ids whose rules it supplied) or only the office's own rules. */
+export type BankTenantSource = { source: 'bank-rules' } | { source: 'rei-directory'; savedAt: number; propertyIds: string[] };
+const TENANT_SOURCE = 'bank-tenant-source';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
 type Cursor = { version: 1; kind: 'bank-history'; high: number; before: number };
@@ -89,21 +94,30 @@ export class BankReferenceStore {
     if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
       throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
     }
-    return this.view(this.save(this.withSavedTenants(input)));
+    return this.view(this.save(...this.withSavedTenants(input)));
   }
   /** Without a tenant list in the request, the office's saved REI tenant list (server/tenant-directory.ts)
    * is the batch's directory, with the given rules as the fallback, exactly as an uploaded list would be. */
-  private withSavedTenants<T extends { rules: BankReferenceInput['rules'] }>(input: T & { tenantList?: unknown }): T {
+  private withSavedTenants<T extends { rules: BankReferenceInput['rules'] }>(input: T & { tenantList?: unknown }): [T, BankTenantSource | null] {
     if (input && typeof input === 'object' && !('tenantList' in input) && Array.isArray(input.rules)) {
-      const saved = savedTenantDirectoryCsv(this.db);
-      if (saved) return withTenantDirectory({ ...input, tenantList: saved });
+      const saved = createTenantDirectoryStore(this.db).read().directory;
+      if (saved) {
+        const merged = withTenantDirectory({ ...input, tenantList: tenantDirectoryCsv(saved.tenants) }), references = new Set(saved.tenants.map(tenant => tenant.reference));
+        return [merged, { source: 'rei-directory', savedAt: saved.savedAt, propertyIds: merged.rules.filter(rule => references.has(rule.reference)).map(rule => rule.propertyId) }];
+      }
+      return [input, { source: 'bank-rules' }];
     }
-    return withTenantDirectory(input);
+    // A tenant list sent with the request has no saved date: recorded as unknown, which W1 gates like a stale list.
+    return [withTenantDirectory(input), null];
+  }
+  /** The tenant source recorded when this batch was created; null for a batch created before sources were recorded. */
+  tenantSource(id: string): BankTenantSource | null {
+    return this.db.get<BankTenantSource>(TENANT_SOURCE, `${TENANT_SOURCE}:${id}`)?.value ?? null;
   }
   /** Internal: a batch generated from validated Redbark rows. */
   createFromRedbark(input: BankReferenceUpload) {
     if (!input?.source?.provenance) throw Object.assign(new Error("The bank source record failed its integrity check."), { status: 400 });
-    return this.save(this.withSavedTenants(input));
+    return this.save(...this.withSavedTenants(input));
   }
   /** The REI import file of a reviewed batch: only its import rows, with every source row's disposition. */
   importArtifact(id: string) {
@@ -143,7 +157,7 @@ export class BankReferenceStore {
     value.batch.rows.forEach((row, index) => { if (file.rows[index].disposition === "hold") held[provenance.transactionIds[index]] = { date: row.date, amount: row.amount, narrative: row.narrative, reference: row.reference, heldSince: provenance.runDate }; });
     return coverage.confirm({ ...provenance, transactionIds: settled.map(index => provenance.transactionIds[index]) }, id, settled.map(index => value.batch.rows[index].date), expectedRevision, held);
   }
-  private save(input: BankReferenceInput | BankReferenceUpload) {
+  private save(input: BankReferenceInput | BankReferenceUpload, tenantSource: BankTenantSource | null = null) {
     const batch = createBankReferenceBatch(input);
     // Repeated downloads of the exact same file reuse the existing review.
     const id = `bank:${batch.originalDigest}`;
@@ -152,6 +166,8 @@ export class BankReferenceStore {
       // Compare the winning record after the database's atomic create-or-read;
       // another process can create this digest with different rules concurrently.
       if (bankDigest(JSON.stringify(saved.value.batch.input)) !== bankDigest(JSON.stringify(batch.input))) throw Object.assign(new Error("This file already has a saved review with a different mapping. Open that review and choose Correct mapping or decisions."), { status: 409 });
+      // First write wins, like the batch itself: a repeat download keeps the source its review was built from.
+      if (tenantSource) this.db.create<BankTenantSource>(TENANT_SOURCE, `${TENANT_SOURCE}:${id}`, tenantSource, null);
       return saved;
     });
   }

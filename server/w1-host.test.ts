@@ -12,6 +12,7 @@ import { readBankTransactions } from "./bank-provider.ts";
 import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
+import { createTenantDirectoryStore, type TenantEntry } from "./tenant-directory.ts";
 import { createW1Host } from "./w1-host.ts";
 import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
@@ -88,7 +89,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
     }));
   };
   const configure = () => call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
-  return { dir, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants };
+  return { dir, db, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants };
 }
 
 describe("W1 host", () => {
@@ -364,32 +365,61 @@ describe("W1 host", () => {
     expect((await f.lab.handle({ action: "status" })).uploads).toBe(1);
   });
 
-  it("refuses to send a batch to REI until the saved REI tenant list is under a day old; no stamp is stale", windowsAdmissionTimeout(255), async () => {
-    const f = await fixture();
-    await f.configure();
-    await f.lab.handle({ action: "sign-in" });
-    await f.call("/api/w1/runs/start");
-    let now = await f.settle();
-    await f.review(now.run!.fetch!.batchId);
-    // No list, a list without a stamp, a list over a day old: refused before anything is uploaded, and the check that follows
-    // is refused the same way. A refusal is an unknown outcome with its own sentence, never "REI shows nothing", never a re-upload.
-    for (const stale of [null, {}, { savedAt: Date.now() - REI_FRESH_MS - 60_000 }]) {
-      f.tenants.directory = stale;
-      now = await f.act("advance");
+  describe("REI tenant freshness gates only batches whose tenants came from the saved REI tenant list", () => {
+    const tenant = (reference: string, property: string): TenantEntry => ({ reference, property, surname: "Fictional", firstname: "Tenant", rent: "", bpay: "" });
+    /** A pulled and reviewed batch; `list` is the REI tenant list saved before the pull (null: none, so only the office's rules). */
+    async function reviewed(list: TenantEntry[] | null) {
+      const f = await fixture();
+      if (list) createTenantDirectoryStore(f.db).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: "a".repeat(64), rows: list.length }, expectedRevision: 0 });
+      f.tenants.directory = list ? createTenantDirectoryStore(f.db).read().directory : null;
+      await f.configure();
+      await f.lab.handle({ action: "sign-in" });
+      await f.call("/api/w1/runs/start");
+      const now = await f.settle();
+      await f.review(now.run!.fetch!.batchId);
+      return f;
+    }
+    const STALE = { savedAt: Date.now() - REI_FRESH_MS - 60_000 };
+    const refused = async (f: Awaited<ReturnType<typeof reviewed>>) => {
+      // A refusal is an unknown outcome with its own sentence, never "REI shows nothing", never a re-upload.
+      const now = await f.act("advance");
       expect(now.note).toBe("Refresh REI tenants first.");
       expect(now.run).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
       expect(now.ask).toBeNull();
       await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
       expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
-    }
-    // Refreshed: the check reads REI's complete register, which shows nothing, and only then is a second upload offered.
-    f.tenants.directory = { savedAt: Date.now() - REI_FRESH_MS + 60_000 };
-    await f.act("advance");
-    now = await f.answer();
-    expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
-    await f.act("retry-upload");
-    now = await f.answer();
-    expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
+    };
+
+    it("a batch from the office's rules alone goes to REI with no saved tenant list", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed(null);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toEqual({ source: "bank-rules" });
+      await f.act("advance");
+      const now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
+    });
+
+    it("a directory batch is refused while the list is stale or unstamped, and goes to REI once it is fresh", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toMatchObject({ source: "rei-directory", propertyIds: ["FP-02", "FP-03"] });
+      for (const stale of [null, {}, STALE]) { f.tenants.directory = stale; await refused(f); }
+      // Refreshed: the check reads REI's complete register, which shows nothing, and only then is a second upload offered.
+      f.tenants.directory = { savedAt: Date.now() - REI_FRESH_MS + 60_000 };
+      await f.act("advance");
+      let now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
+      await f.act("retry-upload");
+      now = await f.answer();
+      expect(now.tools).toContain("browser_upload");
+      expect(now.note).not.toBe("Refresh REI tenants first.");
+      expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("a batch mixing the saved list and the office's rules is refused while the list is stale", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02")]);
+      expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toMatchObject({ source: "rei-directory", propertyIds: ["FP-02"] });
+      f.tenants.directory = STALE;
+      await refused(f);
+    });
   });
 
   it("an incomplete Receipt Register is never proof that nothing reached REI: no upload is offered", windowsAdmissionTimeout(255), async () => {
