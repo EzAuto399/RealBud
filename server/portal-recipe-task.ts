@@ -27,6 +27,7 @@ import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { createLearnedRecipeStore, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { decide, jevReady } from "./jev-client.ts";
 import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { LEARN_NAME } from "../shared/learned-recipes.ts";
 
@@ -209,6 +210,8 @@ export async function runPortalRecipeTask(input: {
     const result = await runPortalRecipes({
       pack, runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
       approve: input.approve, signal: input.signal, isActive: input.isActive, learnedReadSafe: learnedReadSafe(pack, record.recipe.runs),
+      // Ask only: a drifted control's fallback chooser (TypeSafe Jev) when the office has one. Loops and W1 never get it.
+      ...(jevReady() ? { chooser: decide } : {}),
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
