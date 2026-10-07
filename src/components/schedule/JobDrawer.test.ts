@@ -6,7 +6,7 @@ import { buildScheduleRows } from "@/lib/schedule-rows";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 
-import { FlaggedReceipt, JobDrawer, LoopDetail } from "./JobDrawer";
+import { FlaggedReceipt, JobDrawer, LoopDetail, NewMailSwitch, readNewMailState } from "./JobDrawer";
 import { JobList } from "./JobList";
 
 const NOW = Date.UTC(2026, 9, 0, 23, 0);
@@ -167,5 +167,47 @@ describe("job drawer", () => {
     expect(html).not.toContain("Run now");
     expect(html).not.toContain("Timing · ");
     expect(html).not.toContain("Resume");
+  });
+});
+
+describe("new mail switch", () => {
+  const html = (initial?: Parameters<typeof NewMailSwitch>[0]["initial"]) => renderToStaticMarkup(createElement(NewMailSwitch, { loopId: "inbound-triage", initial }));
+  const switchTag = (markup: string) => /<button[^>]*role="switch"[^>]*>/.exec(markup)![0];
+
+  it("shows only on Morning priorities, with its hint", () => {
+    const triage = detail({ loop: loop({ id: "inbound-triage", name: "Morning priorities" }) });
+    expect(triage).toContain('aria-label="New mail"');
+    expect(triage).toContain("Also check when new mail arrives");
+    expect(triage).toContain("Usually within 15 minutes. The morning run still happens.");
+    // Before the saved setting loads, the switch cannot be pressed.
+    expect(switchTag(triage)).toContain('disabled=""');
+    expect(detail()).not.toContain("Also check when new mail arrives");
+  });
+
+  it("is available and off", () => {
+    const tag = switchTag(html({ enabled: false, available: true }));
+    expect(tag).toContain('aria-checked="false"');
+    expect(tag).not.toContain('disabled=""');
+    expect(tag).toContain('aria-labelledby="inbound-triage-new-mail-label"');
+  });
+
+  it("is unavailable with the plain reason", () => {
+    const markup = html({ enabled: false, available: false, reason: "Connect Gmail in Connected apps first." });
+    expect(switchTag(markup)).toContain('disabled=""');
+    expect(markup).toContain("Connect Gmail in Connected apps first.");
+  });
+
+  it("is on, and stays pressable to turn off when it needs attention", () => {
+    expect(switchTag(html({ enabled: true, available: true }))).toContain('aria-checked="true"');
+    const markup = html({ enabled: true, available: false, reason: "Reconnect Gmail in Connected apps. The morning run still happens." });
+    expect(switchTag(markup)).toContain('aria-checked="true"');
+    expect(switchTag(markup)).not.toContain('disabled=""');
+    expect(markup).toContain("Reconnect Gmail in Connected apps.");
+  });
+
+  it("treats a malformed answer as unreadable", () => {
+    expect(readNewMailState({ enabled: "yes", available: true })).toBeNull();
+    expect(readNewMailState({ enabled: true, available: true, reason: 7 })).toBeNull();
+    expect(readNewMailState({ loopId: "inbound-triage", enabled: true, available: false, reason: "Fictional reason" })).toEqual({ enabled: true, available: false, reason: "Fictional reason" });
   });
 });

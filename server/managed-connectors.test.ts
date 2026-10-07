@@ -1,7 +1,7 @@
 import { fictionalPdf } from './testing/pdf-fixture.ts';
 import { attachmentHash } from './source-attachments.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { managedMailBindingRevision, readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, managedMailboxAccess, scanManagedMail } from './managed-connectors.ts';
+import { managedMailBindingRevision, readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, managedMailboxAccess, scanManagedMail, pullConnectorEvents, setConnectorTrigger, managedConnectorTriggers } from './managed-connectors.ts';
 import { join } from 'node:path';
 import { withWorkerProfile } from './hermes-profile.ts';
 import { connectedAppsConfigured } from './connected-app-access.ts';
@@ -291,5 +291,36 @@ describe('office shared mailbox authority', () => {
     const scope = { windowStartAt: 1_790_000_000_000, windowEndAt: 1_790_086_400_000, maxMessages: 10, includeSent: true, carryThreadIds: [] };
     await expect(scanManagedMail(cfg, 'account-one', scope, new AbortController().signal, 4)).rejects.toThrow(/changed/);
     expect(fetcher.mock.calls[0][1].headers['x-realbud-policy-revision']).toBe('4');
+  });
+});
+
+describe('managed connector event triggers', () => {
+  it('pulls event ids only, after the cursor, and refuses a malformed page', async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ events: [{ seq: 4, kind: 'message', source: 'personal', app: 'gmail', event: 'new-message', messageId: 'fictional-message', receivedAt: '2026-10-07T00:00:00.000Z', subject: 'fictional subject' }], cursor: 6, gap: false, more: false }));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await pullConnectorEvents(cfg as never, 2)).toEqual({ events: [{ seq: 4, kind: 'message', app: 'gmail', event: 'new-message' }], cursor: 6, gap: false, more: false });
+    expect(new URL(fetcher.mock.calls[0][0]).pathname).toBe('/v1/connectors/events');
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ after: 2 });
+    expect(fetcher.mock.calls[0][1].headers.authorization).toBe(`Bearer ${cfg.composio.managed.credential}`);
+    for (const page of [{ events: [{ seq: 'x', kind: 'message' }], cursor: 1, gap: false, more: false }, { events: [], cursor: -1, gap: false, more: false }, { events: [], cursor: 1, gap: 'no', more: false }]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(page)));
+      await expect(pullConnectorEvents(cfg as never, 0)).rejects.toThrow('The managed connection response needs review.');
+    }
+    await expect(pullConnectorEvents(cfg as never, -1)).rejects.toThrow();
+  });
+  it('switches the one trigger with the policy revision and keeps trigger states out of the status projection', async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ app: 'gmail', event: 'new-message', source: 'personal', enabled: true, state: 'enabled' }));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await setConnectorTrigger(cfg as never, 'gmail', 'new-message', true, 3)).toEqual({ enabled: true, state: 'enabled' });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ app: 'gmail', event: 'new-message', enabled: true });
+    expect(fetcher.mock.calls[0][1].headers['x-realbud-policy-revision']).toBe('3');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ app: 'gmail', event: 'new-message', source: 'personal', enabled: false, state: 'disabled' })));
+    await expect(setConnectorTrigger(cfg as never, 'gmail', 'new-message', true)).rejects.toThrow('The managed connection response needs review.');
+    const triggers = [{ app: 'gmail', event: 'new-message', source: 'office', state: 'expired' }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...access(), triggers })));
+    expect(await managedConnectorAccess(cfg)).toEqual(access());
+    expect(managedConnectorTriggers(cfg as never)).toEqual(triggers);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...access(), triggers: [{ ...triggers[0], state: 'Expired!' }] })));
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
   });
 });
