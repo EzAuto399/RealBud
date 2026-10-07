@@ -474,6 +474,11 @@ describe("Jev payer hint (data, never a match)", () => {
       expect(hinted.value.jevHints).toEqual([{ rowId: created.value.batch.rows[0].id, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) }]);
     } finally { db?.close(); await removeFixture(dir); }
   });
+  // As the upload route runs it: the hint pass only for a record this upload created.
+  const uploadRoute = async (store: BankReferenceStore) => {
+    const { review, created } = store.upload(upload(bytes, named));
+    return created ? store.addJevHints(review.id) : review;
+  };
   it("never asks again on a re-upload of a hinted or reviewed batch, so the revision a reviewer holds stays", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
     let db: WorkflowDatabase | undefined;
@@ -481,17 +486,31 @@ describe("Jev payer hint (data, never a match)", () => {
       db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
       const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
       const store = new BankReferenceStore(db, { decide });
-      const created = store.create(upload(bytes, named));
-      const hinted = await store.addJevHints(created.id);
+      const hinted = await uploadRoute(store);
       expect(asked).toHaveLength(1);
-      // The upload route: create (reuses the record), then the hint pass.
-      const again = await store.addJevHints(store.create(upload(bytes, named)).id);
+      expect(hinted.revision).toBe(2);
+      expect((await uploadRoute(store)).revision).toBe(hinted.revision);
       expect(asked).toHaveLength(1);
-      expect(again.revision).toBe(hinted.revision);
-      const reviewed = store.review(created.id, hinted.revision, firstPassDecisions(hinted.firstPass!));
-      const afterReview = await store.addJevHints(store.create(upload(bytes, named)).id);
+      const reviewed = store.review(hinted.id, hinted.revision, firstPassDecisions(hinted.firstPass!));
+      expect((await uploadRoute(store)).revision).toBe(reviewed.revision);
       expect(asked).toHaveLength(1);
-      expect(afterReview.revision).toBe(reviewed.revision);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("never asks on a re-upload even when the first pass got no answer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      let calls = 0;
+      const first = await uploadRoute(new BankReferenceStore(db, { decide: async () => { calls++; return { ok: false, reason: "unavailable" }; } }));
+      expect(calls).toBe(1);
+      expect(first.revision).toBe(1);
+      // Jev answers now, but the re-upload reuses the record: no question, no revision change.
+      const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      const again = await uploadRoute(new BankReferenceStore(db, { decide }));
+      expect(asked).toHaveLength(0);
+      expect(again.revision).toBe(1);
+      expect(again.value.jevHints).toBeUndefined();
     } finally { db?.close(); await removeFixture(dir); }
   });
   it("stays off without an injected decide (the sync pass never asks)", () => {

@@ -105,7 +105,9 @@ export class BankReferenceStore {
   }
   /** Ask Jev once for payer hints on a freshly imported, unreviewed batch and
    * save them with it; returns the batch as shown. Call before the batch is
-   * handed to anyone (the saved revision moves). Only a record still at its
+   * handed to anyone (the saved revision moves), and only when `upload` or
+   * `createFromRedbark` reported `created` (a re-upload reuses the record and is
+   * never asked again). Only a record still at its
    * first revision with no hints, decisions or review is asked, so re-uploading
    * the same file never moves a revision a reviewer holds. Never throws for Jev:
    * without `decide` or readiness, on no answer or an error, the batch stays
@@ -133,11 +135,17 @@ export class BankReferenceStore {
    * given rules as fallback. The merged rules are saved in the batch, so preparing the
    * same file again with a different list meets the existing-review conflict below. */
   create(input: (BankReferenceInput | BankReferenceUpload) & { tenantList?: unknown }) {
+    return this.upload(input).review;
+  }
+  /** `create`, also saying whether this call made the record (`created`) or reused
+   * the saved review of the same file. Only a created record gets the Jev hint pass. */
+  upload(input: (BankReferenceInput | BankReferenceUpload) & { tenantList?: unknown }) {
     // Source provenance is set only by the server's own Redbark pull.
     if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
       throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
     }
-    return this.view(this.save(this.withSavedTenants(input)));
+    const { record, created } = this.save(this.withSavedTenants(input));
+    return { review: this.view(record), created };
   }
   /** Without a tenant list in the request, the office's saved REI tenant list (server/tenant-directory.ts)
    * is the batch's directory, with the given rules as the fallback, exactly as an uploaded list would be. */
@@ -148,10 +156,11 @@ export class BankReferenceStore {
     }
     return withTenantDirectory(input);
   }
-  /** Internal: a batch generated from validated Redbark rows. */
+  /** Internal: a batch generated from validated Redbark rows; `created` as in `upload`. */
   createFromRedbark(input: BankReferenceUpload) {
     if (!input?.source?.provenance) throw Object.assign(new Error("The bank source record failed its integrity check."), { status: 400 });
-    return this.save(this.withSavedTenants(input));
+    const { record, created } = this.save(this.withSavedTenants(input));
+    return { ...record, created };
   }
   /** The REI import file of a reviewed batch: only its import rows, with every source row's disposition. */
   importArtifact(id: string) {
@@ -196,11 +205,13 @@ export class BankReferenceStore {
     // Repeated downloads of the exact same file reuse the existing review.
     const id = `bank:${batch.originalDigest}`;
     return this.db.transaction(() => {
+      // `created`: this call made the record (only then may the caller run the Jev hint pass).
+      const created = !this.db.get("bank", id);
       const saved = this.validated(this.db.create<SavedBankBatch>("bank", id, { version: 2, createdAt: Date.now(), batch }, null));
       // Compare the winning record after the database's atomic create-or-read;
       // another process can create this digest with different rules concurrently.
       if (bankDigest(JSON.stringify(saved.value.batch.input)) !== bankDigest(JSON.stringify(batch.input))) throw Object.assign(new Error("This file already has a saved review with a different mapping. Open that review and choose Correct mapping or decisions."), { status: 409 });
-      return saved;
+      return { record: saved, created };
     });
   }
   review(id: string, revision: number, decisions: BankReferenceDecision[]) {
