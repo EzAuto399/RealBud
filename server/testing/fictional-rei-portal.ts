@@ -290,6 +290,10 @@ export interface FictionalReiOptions {
   /** The Tenants and Suppliers grids in live REI's Syncfusion shape (7 Oct 2026): rows in rowgroups, a hidden empty-named
    * first column, and template cells whose names end " is template cell column header <Col>". */
   syncfusionGrid?: boolean;
+  /** Bank Reconciliation as live REI shows it: an editable form above the grid. */
+  bankReconciliationForm?: boolean;
+  /** Path → the addresses the page moves itself to, one during each read after loading (rehearses a page that settles its address late). */
+  addressSettles?: Record<string, string[]>;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -306,6 +310,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   if (!signedIn) url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`;
   // Per-page state, reset on each load.
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
+  /** Addresses this page's own script still moves to, one per read (addressSettles). */
+  let settle: string[] = [];
   const block = options.gridBlock ?? 4;
   /** Rows the Tenants grid has rendered: one block until its content scrolls. */
   let rendered = block;
@@ -335,6 +341,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
     page = 0; loading = 1; modal = options.dialogOn === new URL(url).pathname; reportsListed = false; uploadError = null; report = ""; rendered = block;
+    settle = [...(options.addressSettles?.[new URL(url).pathname] ?? [])];
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
@@ -344,7 +351,11 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
     if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
     if (path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
-    if (path === "/customers/reconciliation/bankreconciliation") return [{ kind: "textbox", name: "Statement balance", value: "" }];
+    // Live REI (7 Oct 2026): an editable form (a one-option business select, statement balance, reconciled date) above an unnamed DataTables search.
+    if (path === "/customers/reconciliation/bankreconciliation") return options.bankReconciliationForm
+      ? [{ kind: "combobox", name: "Business", value: AGENCY, options: [AGENCY] }, { kind: "textbox", name: "Statement Balance", value: "1185.00" },
+        { kind: "textbox", name: "Reconciled", value: "30/09/2026" }, { kind: "textbox", name: "Search", value: "", label: "" }]
+      : [{ kind: "textbox", name: "Statement balance", value: "" }];
     if (path === "/report/reportlist") return [search];
     if (path === "/customers/importbanklink/index") return [{ kind: "combobox", name: "File Format", value: FICTIONAL_DEFAULT_FILE_FORMAT, options: [...FICTIONAL_FILE_FORMATS] }];
     return [search];
@@ -508,6 +519,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
     if (args[0] === "observe") {
       const text = render(); if (loading > 0) loading -= 1;
+      // The page's own script moves its address while the read is under way (a redirect or history.replaceState).
+      const moved = settle.shift(); if (moved) url = new URL(moved, FICTIONAL_REI_ORIGIN).href;
       // The live helper caps an observation (--max-tokens): a long page comes back cut, and says so.
       const cut = options.observeChars !== undefined && text.length > options.observeChars;
       return { text: cut ? text.slice(0, options.observeChars) : text, tab_id: 1, truncated: cut };

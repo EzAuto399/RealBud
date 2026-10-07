@@ -131,6 +131,25 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(whole.results[1].footer).toBe(FICTIONAL_TENANT_LIST.length);
     expect(f.mock.effects).toEqual([]);
   });
+  it("reads Bank Reconciliation's editable form page, also when the page moves its own address while loading, and touches no field", async () => {
+    const settles = "/customers/reconciliation/bankreconciliation?BusinessId=fictional-1";
+    for (const portal of [{ bankReconciliationForm: true }, { bankReconciliationForm: true, addressSettles: { "/customers/reconciliation/bankreconciliation": [settles] } }]) {
+      const f = await fixture(portal);
+      const run = await f.start(withOpen("bank-reconciliation-read"));
+      expect(run.outcome, `${run.reason} ${run.detail}`).toBe("completed");
+      expect(run.results[1].rows.map(row => row.Description)).toEqual(["Fictional deposit", "Fictional fee"]);
+      expect(run.results[1].filters).toMatchObject({ "Statement Balance": "1185.00", Reconciled: "30/09/2026" });
+      // A read never types, chooses or presses anything on the form: only the routes were opened.
+      expect(f.dispatched().map(args => args[0])).toEqual(["navigate", "navigate"]);
+      expect(f.mock.effects).toEqual([]);
+      if (portal.addressSettles) expect(f.mock.url()).toBe(`https://rei-mock.fictional.test${settles}`);
+    }
+    // An address that moves again on the second read is still refused, and nothing was done on the page.
+    const moving = await fixture({ bankReconciliationForm: true, addressSettles: { "/customers/reconciliation/bankreconciliation": [settles, `${settles}&again=1`] } });
+    expect(await moving.start(withOpen("bank-reconciliation-read"))).toMatchObject({ outcome: "blocked", reason: "broker-refused", detail: "The page changed during the read. Read it again before acting." });
+    expect(moving.dispatched().map(args => args[0])).toEqual(["navigate", "navigate"]);
+    expect(moving.mock.effects).toEqual([]);
+  });
   it("waits for the tenants grid to fill: \"No records to display\" before its record count is not an empty result", async () => {
     const f = await fixture();
     const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Fictional" }));
