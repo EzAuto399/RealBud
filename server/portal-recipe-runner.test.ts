@@ -251,6 +251,28 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.mock.calls.filter(args => args[0] === "click")).toEqual([]);
     expect(f.mock.effects).toEqual([]); expect(f.person).not.toHaveBeenCalled();
   });
+  it("a learned label reaches the page only when harmless, and never in a loop's read", async () => {
+    const f = await fixture();
+    const base = f.pack.recipes["arrears-review"];
+    const clicking = (label: string) => ({ ...base, steps: [...base.steps.slice(0, 3), { click: label }] });
+    const labels = ["Load", "Continue", "Ｓａｖｅ", "Pay now"];
+    const pack = { ...f.pack, recipes: { ...f.pack.recipes, ...Object.fromEntries(labels.map(label => [`arrears-${label}`, clicking(label)])) } };
+    expect(portalRecipeControls(pack)).not.toHaveProperty("learnedReadSafe");
+    expect(portalRecipeControls(pack, undefined, labels).learnedReadSafe).toEqual(labels);
+    // "Load" passes the runner's read-safe check (and then is not on the page); a confirming or paying name never does.
+    expect(await f.start(withOpen("arrears-Load", { min_days: "1" }), { pack, learnedReadSafe: labels })).toMatchObject({ outcome: "blocked", reason: "control-missing" });
+    for (const label of ["Continue", "Ｓａｖｅ", "Pay now"]) {
+      expect(await f.start(withOpen(`arrears-${label}`, { min_days: "1" }), { pack, learnedReadSafe: labels }), label).toMatchObject({ outcome: "blocked", reason: "not-read-safe", detail: label });
+    }
+    // A loop's read never sees learned labels, harmless or not.
+    const runs = withOpen("arrears-Load", { min_days: "1" }); const needs = portalRecipeGrantNeeds(pack, runs);
+    const loop = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: `grant-${randomUUID()}`, runId: `run-${randomUUID()}`, route: "loop-read",
+      request: { text: "Fictional loop read", sha256: sha256("Fictional loop read") }, sites: needs.sites, browser: { id: null, accountMarker: FICTIONAL_BUSINESS },
+      actions: needs.actions, consequential: "ask-each", uploads: [], expiresAt: null, budget: null });
+    expect(await f.start(runs, { pack, grant: loop, learnedReadSafe: labels })).toMatchObject({ outcome: "blocked", reason: "not-read-safe", detail: "Load" });
+    expect(f.mock.calls.filter(args => args[0] === "click")).toEqual([]);
+    expect(f.mock.effects).toEqual([]); expect(f.person).not.toHaveBeenCalled();
+  });
   it("runs the morning batch under one grant, one borrow and one browser session", async () => {
     const f = await fixture();
     const run = await f.start(MORNING(f.pack));

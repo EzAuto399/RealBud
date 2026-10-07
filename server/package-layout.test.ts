@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
@@ -18,6 +18,52 @@ describe("mac package resource graph", () => {
     expect(config).toMatch(/from: dist-server\/shared\s+to: shared/);
     expect(config).toMatch(/from: dist-server\/src\s+to: src/);
     expect(config).toMatch(/from: pack\/property\s+to: pack\/property/);
+  });
+
+  // The workflow pack files the server reads at runtime, relative to the compiled server's parent.
+  const RUNTIME_PACK_FILES = [
+    "pack/workflows/austin-accounts/workflows.json",
+    "pack/workflows/austin-accounts/support/LICENSE.upstream",
+    "pack/workflows/austin-accounts/support/email-inbox-triage/SKILL.md",
+    "pack/workflows/austin-accounts/support/rei-cloud-navigation/SKILL.md",
+    "pack/workflows/austin-accounts/support/rei-cloud-navigation/LICENSE",
+    "pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json",
+    "pack/workflows/austin-accounts/support/rei-cloud-navigation/site-map.json",
+    "pack/workflows/austin-office/austin-schedule-v1.json",
+    "pack/workflows/office-core/realbud-office-core-v1.json",
+    "pack/workflows/department-starters/realbud-department-starters-v1.json",
+    "pack/workflows/austin-maintenance-rehearsal/realbud-austin-maintenance-rehearsal-v1.json",
+  ];
+
+  it("ships every workflow pack the app loads at runtime, in the installer and the Mac test kit", () => {
+    // Every pack folder the (non-test) server names must be in the list above.
+    const named = new Set<string>();
+    for (const file of readdirSync(join(ROOT, "server")).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))) {
+      const text = readFileSync(join(ROOT, "server", file), "utf8");
+      for (const match of text.matchAll(/pack\/workflows\/([\w-]+)|'pack', 'workflows', '([\w-]+)'|join\(workflows, '([\w-]+)'/g)) named.add(match[1] ?? match[2] ?? match[3]!);
+    }
+    const listed = new Set(RUNTIME_PACK_FILES.map((file) => file.split("/")[2]!));
+    expect([...named].sort()).toEqual([...listed].sort());
+
+    // electron-builder: each file is under an extraResources folder copied to the same path, and passes its filter.
+    const config = readFileSync(join(ROOT, "electron-builder.yml"), "utf8");
+    const entries = [...config.matchAll(/- from: (\S+)\n\s+to: (\S+)(?:\n\s+filter:\n((?:\s+- .+\n?)+))?/g)]
+      .map(([, from, to, filter]) => ({ from: from!, to: to!, filter: filter?.split("\n").map((line) => line.replace(/^\s*- /, "").trim()).filter(Boolean) }));
+    for (const file of RUNTIME_PACK_FILES) {
+      expect(existsSync(join(ROOT, file)), file).toBe(true);
+      const entry = entries.find((row) => file.startsWith(`${row.from}/`));
+      expect(entry, `${file} is not in electron-builder.yml extraResources`).toBeDefined();
+      expect(entry!.to, file).toBe(entry!.from);
+      if (entry!.filter) expect(entry!.filter, file).toContain(file.slice(entry!.from.length + 1));
+    }
+
+    // The Mac test kit copies the same packs into its resources.
+    const kit = readFileSync(join(ROOT, "scripts", "build-mac-test-kit.mjs"), "utf8");
+    const kitFolders = /for \(const name of \[([^\]]+)\]\) await cp\(join\(root, 'pack\/workflows', name\)/.exec(kit)?.[1]?.match(/'[\w-]+'/g)?.map((name) => name.slice(1, -1)) ?? [];
+    for (const file of RUNTIME_PACK_FILES) {
+      const folder = file.split("/")[2]!;
+      expect(kitFolders.includes(folder) || kit.includes(`'${file}'`), `${file} is not in the Mac test kit`).toBe(true);
+    }
   });
 
   it("uses the RealBud product identity and property-agent mark in source and Electron", () => {

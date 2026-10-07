@@ -40,8 +40,16 @@ export const CONSEQUENTIAL_ACTIONS: ReadonlyArray<{ kind: BrowserConsequentialKi
   { kind: "delete", pattern: /\b(delete|remove)\b/i },
   { kind: "account-change", pattern: /\b(close account|beneficiary|payee|cancel|unsubscribe|log.?out|sign.?out|sign.?up)\b/i },
 ];
+/** The one canonical form every name is compared and classified in: compatibility-folded (fullwidth "Ｐａｙ" is "Pay",
+ * the "ﬁ" ligature is "fi"), format characters (zero-width spaces, soft hyphens) dropped, every run of spaces or control
+ * characters one space. accessibleName adds the trim and the trailing-":" drop for list matching. */
+export const canonicalText = (text: string) => text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/[\p{Cc}\s]+/gu, " ");
+/** A refusing pattern (one that adds an ask or a refusal) matches the text as shown OR its canonical form, so a
+ * disguised "Pa\u200by" is still pay and folding can never remove a match the raw text had ("Save\u200bAll"). Patterns
+ * that grant (a read affordance, a pager word) keep testing the raw text only. */
+const matches = (pattern: RegExp, text: string) => pattern.test(text) || pattern.test(canonicalText(text));
 export function consequentialKind(text: string): BrowserConsequentialKind | null {
-  return CONSEQUENTIAL_ACTIONS.find(row => row.pattern.test(text))?.kind ?? null;
+  return CONSEQUENTIAL_ACTIONS.find(row => matches(row.pattern, text))?.kind ?? null;
 }
 /** Credential and payment-instrument fields, and sign-in controls, stay with the person. */
 export const CREDENTIAL_FIELD = /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b|card number|\bcvv\b|\bbsb\b|account number/i;
@@ -75,7 +83,7 @@ const PAGE_KINDS: ReadonlyArray<{ kind: BrowserConsequentialKind; test: (text: s
   { kind: "delete", test: text => /\b(are you sure you want to (?:delete|remove)|permanently (?:delete|remove))\b/i.test(text) },
   { kind: "account-change", test: text => /\b(close (?:your|this) account|change (?:your )?password|update (?:your )?(?:bank|payment) details|add (?:a )?(?:new )?payee)\b/i.test(text) },
 ];
-export const pageConsequentialKind = (text: string): BrowserConsequentialKind | null => PAGE_KINDS.find(row => row.test(text))?.kind ?? null;
+export const pageConsequentialKind = (text: string): BrowserConsequentialKind | null => PAGE_KINDS.find(row => row.test(text) || row.test(canonicalText(text)))?.kind ?? null;
 
 export const SUBMIT_STAYS_WITH_YOU = "Submit, Pay and Send stay with you.";
 export const SUBMIT_JOB_DENY = "This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.";
@@ -277,6 +285,10 @@ export function browserStep(tool: string): BrowserStep | null {
 export interface BrowserPortalControls {
   origin: string;
   readSafe: readonly string[];
+  /** Labels a person confirmed while teaching Bud, for the tasks that run that learned recipe only (never a loop's read).
+   * One that is not also in readSafe reads only when its name neither submits, confirms nor names a consequential
+   * action (learnedPressable), and never gets readSafe's routine pass or its read on a financial page. */
+  learnedReadSafe?: readonly string[];
   /** Menu link names, read-safe only inside the page's navigation landmark. */
   menu: readonly string[];
   /** Pager names (Next, Previous): read-safe only in a pager group beside a table or grid. */
@@ -296,6 +308,7 @@ export interface BrowserPortalControls {
   readRoutes?: readonly string[];
 }
 const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
+const LEARNED_ASKS = "This control was confirmed while teaching Bud, but its name submits, confirms or pays, so Bud asks each time.";
 const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";
 function portalControlsFor(grant: BrowserTaskGrant, portal: BrowserPortalControls | undefined, current: URL): BrowserPortalControls | null {
   if (!portal) return null;
@@ -364,15 +377,27 @@ const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.
  *   account-change form;
  * - with no form or dialog around it (Chromium shows an unnamed form as a plain
  *   generic node), the whole page shows none of those either. */
-/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's
- * DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
-export const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
+/** One spelling for an accessible name: compatibility-folded (fullwidth "Ｓａｖｅ" is "Save"), format characters such as
+ * zero-width spaces dropped, every run of spaces or control characters one space, trimmed, and a single trailing ":"
+ * dropped (live REI's DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
+export const accessibleName = (name: string | null) => canonicalText(name ?? "").trim().replace(/\s*:$/, "");
 const sameName = (names: readonly string[], name: string) => names.some(item => accessibleName(item) === accessibleName(name));
+/** A label confirmed only while teaching Bud: in the task's learnedReadSafe and not in the pack's own readSafe. */
+const learnedOnly = (portal: BrowserPortalControls | null, name: string) =>
+  portal !== null && sameName(portal.learnedReadSafe ?? [], name) && !sameName(portal.readSafe, name);
+/** A learned label can be pressed only when its name neither submits, confirms nor names a consequential action
+ * (defence in depth over learn-compile's own check): a learned "Save", "Sa\u200bve", "Submit:" or "Pay now" never is. */
+export function learnedPressable(label: string): boolean {
+  const name = controlName(label);
+  return !matches(SUBMIT_CONTROL, name) && !matches(AFFIRMATIVE, name) && consequentialKind(name) === null;
+}
 function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
   const name = controlName(label);
   if (sameName(portal.consequential, name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
   const { nodes } = parseVom(text);
   const targets = nodes.filter(node => node.ref === ref);
+  // The node is the one whose name was checked, character for character: an exact match is stricter than (and implies)
+  // equal canonical forms, so a disguised duplicate can never stand in for the checked node.
   if (targets.length !== 1 || targets[0].name !== name) return false;
   const target = targets[0]; const ancestors = ancestorsOf(target);
   if (hiddenNode(target) || ancestors.some(hiddenNode)) return false;
@@ -400,7 +425,8 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
   // the pack's own list, and the record-changing verbs a same-site address is refused for ("Process", "Approve").
   // A menu name above is a destination in the navigation landmark, as before.
   // "Search:" is the pack's "Search"; a pager name with a colon is still a pager name, never read-safe outside the pager.
-  } else allowed = sameName(portal.readSafe, name) && !sameName(portal.pagination, name) && !WRITE_ROUTE.test(name);
+  // A learned-only label must also pass learnedPressable.
+  } else allowed = (sameName(portal.readSafe, name) || learnedOnly(portal, name) && learnedPressable(label)) && !sameName(portal.pagination, name) && !matches(WRITE_ROUTE, name);
   if (!allowed) return false;
   // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
   // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
@@ -431,12 +457,13 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
   const current = jobBrowserUrl(observation.url, grant.sites); if (!current) return false;
   const declared = portalControlsFor(grant, portal, current);
   const label = controlName(classified.label);
+  if (learnedOnly(declared, label) && !learnedPressable(label)) return false;
   // A plain link opens another page of the granted site, so it reads on the same
   // proof as a reviewed read-safe control (nothing in its form, group, landmark or
   // page changes records). Never a button, a confirming name ("Continue", "Next")
   // or a name the pack or the global table calls consequential, and only where the
   // page shows where it goes and that address would also be opened read-only (plainLink).
-  const link = classified.step === "click" && roleOf(classified.label) === "link" && !SUBMIT_CONTROL.test(label) && !AFFIRMATIVE.test(label) &&
+  const link = classified.step === "click" && roleOf(classified.label) === "link" && !matches(SUBMIT_CONTROL, label) && !matches(AFFIRMATIVE, label) &&
     plainLink(observation.url, observation.text, args.ref, grant.sites);
   if (declared) return readSafeControl(declared, observation.text, args.ref, classified.label) ||
     link && readSafeControl({ ...declared, readSafe: [label], pagination: [] }, observation.text, args.ref, classified.label);
@@ -473,7 +500,7 @@ function decodedRoute(target: URL): string | null {
  * as a same-site GET (?action=delete, /process) and nothing the global table calls consequential (/logout). */
 function readOnlyAddress(target: URL | null, current: URL | null): boolean {
   const route = target && current && target.origin === current.origin && !target.href.includes("#") ? decodedRoute(target) : null;
-  return route !== null && !WRITE_ROUTE.test(route) && consequentialKind(route) === null;
+  return route !== null && !matches(WRITE_ROUTE, route) && consequentialKind(route) === null;
 }
 /** A link Bud may open without asking: exactly one visible `link` node (never a button), in no form or
  * dialog, whose observed destination, resolved with WHATWG URL against the tab's address, readOnlyAddress passes.
@@ -491,7 +518,7 @@ function plainLink(pageUrl: string, text: string, ref: string, sites: readonly s
 /** A pack or global consequential label, as a whole phrase anywhere in the name ("Finalise period?"). */
 function consequentialName(portal: BrowserPortalControls, name: string): boolean {
   return consequentialKind(name) !== null || portal.consequential.some(label =>
-    new RegExp(`(?:^|[^\\p{L}\\p{N}])${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\p{N}])`, "iu").test(name));
+    matches(new RegExp(`(?:^|[^\\p{L}\\p{N}])${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\p{N}])`, "iu"), name));
 }
 const PAGER_WORDS = /^(?:first|last|next|previous|prev|«|»|‹|›|<|>|<<|>>|\.\.\.|…|\d{1,5}|page \d{1,5}|go to page \d{1,5})$/i;
 const PAGE_NUMBER = /^(?:\d{1,5}|page \d{1,5}|go to page \d{1,5})$/i;
@@ -528,7 +555,7 @@ function classifyNamed(grant: BrowserTaskGrant, observation: BrowserObservation 
   if (portal?.signInHosts.some(host => host.toLowerCase() === current.hostname.toLowerCase())) return { class: "credential", step, reason: SIGN_IN_WAIT };
   const declared = portalControlsFor(grant, portal, current);
   const classification = classifyStep(grant, observation!, current, step, args, declared);
-  if (declared && classification.class === "routine" && classification.label && declared.consequential.includes(controlName(classification.label))) {
+  if (declared && classification.class === "routine" && classification.label && sameName(declared.consequential, controlName(classification.label))) {
     return { class: "unknown", step, label: classification.label, reason: PACK_CONSEQUENTIAL };
   }
   // A read-safe dropdown is read-safe for its reading choices only: an option the pack calls consequential ("Email Only") asks once.
@@ -558,10 +585,12 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   if (grant.browser.accountMarker && !markerShown(grant.browser.accountMarker)) {
     return { class: "out-of-scope", step, reason: "The verified account label is no longer visible. Check the account and page before continuing." };
   }
-  if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
-  // A declared read-safe control reads on its portal, even on a page that mentions a bank.
-  const readSafe = portal !== null && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
-  const financial = !readSafe && (FINANCIAL_PAGE.test(`${withoutMenuLinks(text, portal)} ${observation.url}`) || financialRoute(String(observation.url ?? ""), portal));
+  if (matches(CREDENTIAL_FIELD, label) || matches(SIGN_IN_CONTROL, label)) return { class: "credential", step, reason: CREDENTIAL };
+  // A declared read-safe control reads on its portal, even on a page that mentions a bank. A learned-only label never
+  // does: it is classified like any other control, and pressControl refuses one whose name submits, confirms or pays.
+  const learned = learnedOnly(portal, controlName(label));
+  const readSafe = portal !== null && !learned && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
+  const financial = !readSafe && (matches(FINANCIAL_PAGE, `${withoutMenuLinks(text, portal)} ${observation.url}`) || financialRoute(String(observation.url ?? ""), portal));
   const kind = consequentialKind(label);
   if (step === "fill") {
     if (typeof args.value !== "string" || args.value.length > 2000 || /[\x00-\x1f]/.test(args.value)) return { class: "out-of-scope", step, reason: "Use one ordinary field value without key presses." };
@@ -569,7 +598,7 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
     if (financial) return { class: "consequential", step, kind: "pay", label, reason: FINANCIAL_FILL };
     return { class: "routine", step, action: "fill", label };
   }
-  const control: Control = { step, label, text, financial, kind, readSafe };
+  const control: Control = { step, label, text, financial, kind, readSafe, learned };
   if (step === "press") {
     const key = browserKey(args.key);
     return key ? pressKey(control, key) : { class: "out-of-scope", step, reason: KEY_SPEC };
@@ -589,14 +618,16 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   return pressControl(control);
 }
 
-type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null; readSafe?: boolean };
+type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null; readSafe?: boolean; learned?: boolean };
 const roleOf = (label: string) => label.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
 /** A control being pressed: a click, or Enter or Space on a button or link. */
-function pressControl({ step, label, text, financial, kind, readSafe }: Control): BrowserClassification {
+function pressControl({ step, label, text, financial, kind, readSafe, learned }: Control): BrowserClassification {
   if (kind) return { class: "consequential", step, kind, label, reason: ASK_ONCE };
+  // A label confirmed while teaching Bud never makes a submitting, confirming or paying control pressable: it asks each time.
+  if (learned && !learnedPressable(label)) return { class: "unknown", step, label, reason: LEARNED_ASKS };
   // A portal's declared read-safe control (Next, Search) reads: it is not a confirming step.
   if (readSafe) return { class: "routine", step, action: "click", label };
-  const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
+  const affirmative = matches(SUBMIT_CONTROL, label) || matches(AFFIRMATIVE, label);
   if (financial) {
     // On a bank page, a confirming step may move money; reading stays routine.
     if (affirmative) return { class: "consequential", step, kind: "pay", label, reason: ASK_ONCE };
@@ -605,7 +636,7 @@ function pressControl({ step, label, text, financial, kind, readSafe }: Control)
   }
   const pageKind = affirmative ? pageConsequentialKind(text) : null;
   if (pageKind) return { class: "consequential", step, kind: pageKind, label, reason: ASK_ONCE };
-  if (SUBMIT_CONTROL.test(label)) return { class: "routine", step, action: "submit", label };
+  if (matches(SUBMIT_CONTROL, label)) return { class: "routine", step, action: "submit", label };
   return { class: "routine", step, action: "click", label };
 }
 /** A form submitted without its button (Enter in a field, a save shortcut): exactly like its submit. */
@@ -652,7 +683,7 @@ function pressKey(control: Control, key: BrowserKey): BrowserClassification {
 }
 /** Downloading is reading, unless the control would also act. */
 function download({ step, label, text, financial, kind }: Control): BrowserClassification {
-  const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
+  const affirmative = matches(SUBMIT_CONTROL, label) || matches(AFFIRMATIVE, label);
   const effect = kind ?? (affirmative ? (financial ? "pay" : pageConsequentialKind(text)) : null);
   if (!effect) return { class: "routine", step, action: "download", label };
   if (DOWNLOAD_AFFORDANCE.test(label)) return { class: "unknown", step, label, reason: "Bud could not tell whether this control only downloads a file." };
@@ -1085,6 +1116,11 @@ function ruleAllows(rules: BrowserAuthorityOptions["rules"], surface: PortalRule
   const keys = new Set([portalRuleKey(surface, site), portalRuleKey(surface, hostOf(url))]);
   return (rules ?? []).some(rule => rule.decision === "allow" && keys.has(rule.key));
 }
+/** A loop's unattended read never uses labels confirmed while teaching Bud: only the pack's own read-safe list. */
+function shippedOnly(portal: BrowserPortalControls): BrowserPortalControls {
+  const { learnedReadSafe: _learned, ...shipped } = portal;
+  return shipped;
+}
 const LEGACY_JOB_TOOL = "This browser tool or its arguments are not available.";
 const missingAction = (action: BrowserActionClass) =>
   action === "fill" ? READ_ONLY : action === "submit" ? SUBMIT_JOB_DENY : "This task does not include that browser step. Ask again with the step you need.";
@@ -1114,7 +1150,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" && (!scrollsGrid || !!options.portal?.readRoutes?.includes(url.pathname)) ||
       routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
       (routine.step === "click" || routine.step === "fill" || routine.step === "select" || routine.step === "press") && tab && !!options.portal &&
-        browserReadOnlyAction(grant, observation!, tool, args, options.portal));
+        browserReadOnlyAction(grant, observation!, tool, args, shippedOnly(options.portal)));
     return readOnly ? { decision: "allow", classification, fence: { surface: "portal-read", origin: site, ruleOffer: null }, note: "read-only loop" } : deny(LOOP_READ_ONLY);
   }
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.

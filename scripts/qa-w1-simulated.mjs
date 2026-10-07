@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // TODO(W1 live): the read-only live mode needs the Redbark MCP connection
 // (OAuth; another packet). Once `listBankAccounts`/`listBankTransactions` are
@@ -33,9 +33,9 @@ if (process.argv.includes('--live-redbark')) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { serviceSmokeEnv } = await import(join(root, 'scripts/service-smoke-env.mjs'));
-const { completeFictionalOnboarding } = await import(join(root, 'scripts/qa-onboarding.mjs'));
-const { readSessionToken, primeBrowserSession } = await import(join(root, 'scripts/local-session.mjs'));
+const { serviceSmokeEnv } = await import(pathToFileURL(join(root, 'scripts/service-smoke-env.mjs')).href);
+const { completeFictionalOnboarding } = await import(pathToFileURL(join(root, 'scripts/qa-onboarding.mjs')).href);
+const { readSessionToken, primeBrowserSession } = await import(pathToFileURL(join(root, 'scripts/local-session.mjs')).href);
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const { createServer: createViteServer } = await import('vite');

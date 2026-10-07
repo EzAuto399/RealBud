@@ -18,6 +18,7 @@ import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictio
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 
 // The real loaders, wrapped so a test can see which one an unattended loop used and what it got.
 vi.mock("./portal-recipe-task.ts", async importOriginal => {
@@ -238,6 +239,34 @@ describe("the REI morning refresh", () => {
     }
   });
 
+  it("REI's page changed under one part: one Needs-you item for that part, updated in place, cleared when it next reads whole", async () => {
+    const f = await fixture({ redirects: { "/customers/owner": "/customers/owner/details" } });
+    const needsYou = () => buildDeskQueue(f.desk.snapshot()).filter(row => row.bucket === "now" && row.address.startsWith("REI Cloud"));
+    const first = await f.refresh.run();
+    expect(first.detail).toMatch(/unexpected-page/);
+    expect(needsYou()).toEqual([expect.objectContaining({ address: "REI Cloud owners", kind: "import-issue",
+      meta: "REI's page changed, so Bud couldn't read owners. Desk stays marked not fresh. RealBud needs a recipe update; nothing in REI was changed." })]);
+    expect(recoveryPlanFor(needsYou()[0]!)).toMatchObject({ headline: "REI's page changed", action: "none" });
+    expect(reiStamps(f.desk).map(([id]) => id)).not.toContain("src-rei-owners");
+    // The next morning fails the same way: still one item, updated in place.
+    const seen = needsYou()[0]!.updatedAt;
+    f.tick(24 * 3_600_000);
+    await f.refresh.run();
+    expect(needsYou()).toHaveLength(1);
+    expect(needsYou()[0]!.updatedAt).toBeGreaterThan(seen);
+    expect(f.desk.snapshot().workItems.filter(item => item.occurrenceKey.startsWith("rei-page-changed:"))).toHaveLength(1);
+    // Signed out stays its own "Missed: sign in to REI" path and adds no page-changed item.
+    f.tick(1000);
+    const signedOut = await createReiMorningRefresh({ ...f.deps, runtime: await runtimeFor(f.root, { signedOut: true }) }).run();
+    expect(signedOut.detail.startsWith(REI_SIGN_IN_MISSED)).toBe(true);
+    expect(needsYou()).toHaveLength(1);
+    // Owners read whole again: the item clears.
+    f.tick(1000);
+    const fixed = await createReiMorningRefresh({ ...f.deps, runtime: await runtimeFor(f.root, {}) }).run();
+    expect(fixed.status, fixed.detail).toBe("completed");
+    expect(needsYou()).toEqual([]);
+  });
+
   it("a page the browser helper cut short is never fresh, even when the cut hides the grid's record count", async () => {
     const f = await fixture({ ...fictionalBook(120), observeChars: 12_000 });
     const result = await f.refresh.run();
@@ -338,7 +367,9 @@ describe("an unattended refresh and watch-and-learn recipes", () => {
       // The Ask loader merges it.
       const merged = await loadPortalRecipePack("rei-cloud");
       expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
-      expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
+      // The confirmation stays with its recipe; the Ask pack's read-safe list is the shipped one.
+      expect(merged.recipes[LEARNED_LEAK_RECIPE]).toMatchObject({ confirmed: [LEARNED_LEAK_LABEL] });
+      expect(merged.labels.readSafe).toEqual(shipped.labels.readSafe);
       vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
 
       // No injected `load`: the loop picks its own loader.
@@ -351,6 +382,7 @@ describe("an unattended refresh and watch-and-learn recipes", () => {
       expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
       expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
       expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
+      expect(JSON.stringify(used)).not.toContain(LEARNED_LEAK_LABEL); // not read-safe, not a learned set, not a recipe's `confirmed`
       // Nor a path approved in Ask: an unattended read never downloads.
       expect(used.recipes["tenant-list"].steps).toEqual(shipped.recipes["tenant-list"].steps);
       expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });

@@ -232,7 +232,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { hostTimezone, morningCheckResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -2622,8 +2622,7 @@ loops = new LoopManager({
         const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
         const snapshot = desk.draftOwnerLetters();
         commitDesk(snapshot);
-        const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
-        return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
+        return ownerLetterResult(snapshot, before);
       });
     }
     if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
