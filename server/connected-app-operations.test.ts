@@ -30,6 +30,15 @@ describe("connected-app durable operation receipts", () => {
     expect(store.list()[0].toolSlugs).toEqual(input.toolSlugs);
   });
 
+  it("keeps who answered a phone card, and refuses a multi-line approval", () => {
+    const file = tempFile();
+    const store = new ConnectedAppOperationStore({ file, now: () => 10 });
+    const denied = store.deny({ ...input, approval: "Denied by Fictional Sam via Telegram · 2:16 pm" });
+    expect(new ConnectedAppOperationStore({ file }).list()).toEqual([denied]);
+    expect(denied.approval).toBe("Denied by Fictional Sam via Telegram · 2:16 pm");
+    expect(() => store.start({ ...input, approval: "Allowed\nby someone" })).toThrow(/Invalid app operation/);
+  });
+
   it("turns unfinished dispatches into unknown on restart without replay", () => {
     const file = tempFile();
     const store = new ConnectedAppOperationStore({ file, now: () => 10 });

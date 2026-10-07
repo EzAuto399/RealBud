@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, recordConnectedAppApproval, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
 import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { defaultApprovalSettings, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
@@ -173,6 +173,20 @@ describe("connected app authoritative broker", () => {
     const changed = await invoke("tools/call", { ...params, arguments: { to: "changed@example.test" } }, 7);
     expect(changed.body.result.isError).toBe(true);
     expect(received).toHaveLength(1);
+  });
+  it("records who answered from a paired phone on the operation receipt", async () => {
+    const params = { name: "send_email", arguments: { to: "fictional@example.test", text: "Draft" } };
+    approve.mockImplementation(async () => {
+      recordConnectedAppApproval("other-thread", JSON.stringify(params, null, 2), "Allowed once by Someone Else via Discord · 2:15 pm");
+      recordConnectedAppApproval("fixture-thread", JSON.stringify(params, null, 2), "Allowed once by Fictional Sam via Telegram · 2:16 pm");
+      return true;
+    });
+    await invoke("tools/call", params);
+    approve.mockResolvedValue(true);
+    await invoke("tools/call", { ...params, arguments: { ...params.arguments, text: "Desktop" } });
+    const rows = operations.list();
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.approval)).toEqual(expect.arrayContaining([undefined, "Allowed once by Fictional Sam via Telegram · 2:16 pm"]));
   });
   it("reuses a denial on duplicate delivery", async () => {
     await invoke("tools/call", { name: "write" }, 5);

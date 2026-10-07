@@ -288,6 +288,7 @@ export async function startConnectedAppsBroker(options: {
             // checks: Ask and Don't use only tighten, and only an owner-reviewed
             // direct read or a this-task grant on an allowlisted read is widened.
             let review = policy === "review";
+            let approval: string | undefined;
             let card: ApprovalCardDetails = {};
             const rows = appRows(call);
             if (rows.length) {
@@ -314,8 +315,14 @@ export async function startConnectedAppsBroker(options: {
                 summary = review.card; detail = review.exact;
                 if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
-              if (!await options.approve(summary, controller.signal, { ...card, detail })) {
-                operations.deny(receipt);
+              // The review id is read back after the answer so the receipt names a phone answer.
+              const reviewId = randomBytes(6).toString("hex");
+              openReviews.set(reviewId, { threadId: options.threadId, detail: redactSecretsInText(detail) });
+              let approved: boolean;
+              try { approved = await options.approve(summary, controller.signal, { ...card, detail }); }
+              finally { approval = openReviews.get(reviewId)?.approval; openReviews.delete(reviewId); }
+              if (!approved) {
+                operations.deny({ ...receipt, ...(approval ? { approval } : {}) });
                 return errorResult("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
               }
             }
@@ -344,7 +351,7 @@ export async function startConnectedAppsBroker(options: {
             // person approving the action cannot extend service authority.
             managedService.assertCapability("connected-tools");
             // The durable receipt must exist before any tool is dispatched.
-            operationId = operations.start(receipt).id;
+            operationId = operations.start({ ...receipt, ...(approval ? { approval } : {}) }).id;
           }
           // Recheck after waiting for a person: a cancelled/stale turn cannot act.
           if (controller.signal.aborted || closed || !options.isActive()) return errorResult("Bud stopped this action before it started.");
@@ -462,6 +469,17 @@ export const taskReadGrants = {
   has: (threadId: string, group: string): boolean => taskReads.get(threadId)?.has(group) === true,
   clear(threadId: string): void { taskReads.delete(threadId); },
 };
+/** Cards waiting for a person, by review id. The card itself carries only the
+ * exact request (`detail`), so a phone answer is matched on thread and detail. */
+const openReviews = new Map<string, { threadId: string; detail: string; approval?: string }>();
+/** Records who answered a waiting card away from this computer, for its receipt.
+ * ponytail: byte-identical cards waiting on one thread are matched oldest first;
+ * carry the review id on the card if that ever needs to be exact. */
+export function recordConnectedAppApproval(threadId: string, detail: string, line: string): void {
+  for (const review of openReviews.values()) {
+    if (review.threadId === threadId && review.detail === detail && review.approval === undefined) { review.approval = line; return; }
+  }
+}
 type AppRow = { slug: string; args: Record<string, unknown> };
 /** The app tools a call dispatches, batch members included; RealBud's own discovery tools have none. */
 function appRows(call: Call): AppRow[] {

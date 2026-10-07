@@ -168,7 +168,7 @@ import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
 import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { asksForOfficeMailbox, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, CONNECTED_APP_APPROVAL, recordConnectedAppApproval, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
 import {
   containerComputerAction,
   containerComputerScreenshot,
@@ -277,10 +277,12 @@ import type { ChannelsPayload } from "./channels/types.ts";
 import { pulseLoopSettled } from "./pulses.ts";
 import {
   bindRemoteDecisions,
+  isQuietHours,
   notifyDeskSnapshot,
   startRemoteDecisionFlush,
   stopRemoteDecisionFlush,
 } from "./remote-decisions.ts";
+import { bindRemoteToolCards, remoteToolCardOpened, remoteToolCardResolved, type ToolCardAnswerer } from "./remote-tool-cards.ts";
 import { buildSupportBundle, supportBundleRequest } from "./support-bundle.ts";
 import { createLearnedRecipeStore, parseLearnTitle, type LearnedRecipeStore } from "./learned-recipes.ts";
 import { compileLearnedSteps } from "./learn-compile.ts";
@@ -1106,6 +1108,9 @@ const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messa
 const toolNameByItem = new Map<string, string>(); // threadId:itemId -> tool title (history)
 const turnStartedAt = new Map<string, number>(); // threadId:turnId -> started ms
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+/** A paired phone's answer: who and where, and the line its receipts show. */
+type PhoneAnswer = { by: ToolCardAnswerer; line: string };
+const phoneAnswers = new Map<string, PhoneAnswer>(); // threadId:requestId, answered by phone until resolved
 
 async function denyPendingRequests(threadId: string, instance: ProviderInstance | null | undefined): Promise<void> {
   const prefix = `${threadId}:`;
@@ -1536,10 +1541,16 @@ bus.subscribe((raw: RuntimeEvent) => {
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
+      if (permission && event.requestId) void remoteToolCardOpened(event.threadId, event.requestId).catch(() => {});
       break;
     }
     case "request.resolved": {
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
+      // Answered from a paired phone through answerLiveRequest; a timeout or stop is never the person's answer.
+      const phone = event.requestId ? phoneAnswers.get(`${event.threadId}:${event.requestId}`) : undefined;
+      if (event.requestId) phoneAnswers.delete(`${event.threadId}:${event.requestId}`);
+      const byPhone = phone && event.source === "user" ? phone : undefined;
+      const phoneNote = event.requestId ? remoteToolCardResolved(event.threadId, event.requestId, { behavior: event.behavior, resolution: event.resolution }) : null;
       if (event.behavior === "allow" && fenceContextFor(event.threadId)) {
         const resolvedCard = messageId
           ? store.messagesFor(event.threadId).find((m) => m.id === messageId)?.card
@@ -1550,14 +1561,15 @@ bus.subscribe((raw: RuntimeEvent) => {
           note:
             resolvedCard?.fence?.surface === "portal-submit"
               ? `Submit pressed with your approval on ${resolvedCard.fence.origin}.`
-              : "Allowed once by you.",
+              : byPhone ? `${byPhone.line}.` : "Allowed once by you.",
         });
       }
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
           const patched = store.patchMessage(event.threadId, messageId, {
-            card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}) },
+            card: { ...existing.card, ...(phoneNote ?? {}), answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}),
+              ...(byPhone ? { answeredBy: byPhone.by, resolution: "phone" as const } : {}) },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
@@ -2256,6 +2268,40 @@ bindRemoteDecisions({
   commit: commitDesk,
   channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
   storeDir: DATA_DIR,
+});
+
+/** The stored card while its request still waits in this process. */
+function liveRequestCard(threadId: string, requestId: string) {
+  const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
+  const card = messageId ? store.messagesFor(threadId).find((message) => message.id === messageId)?.card : undefined;
+  return card && !card.answered && !card.dismissed ? card : null;
+}
+// Live action cards on a paired phone. A tap answers through answerLiveRequest,
+// exactly like the desktop; quiet hours follow the book's timezone.
+void bindRemoteToolCards({
+  channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
+  file: join(DATA_DIR, "remote-tool-decisions.json"),
+  quiet: () => isQuietHours(Date.now(), desk.snapshot().timezone || "Australia/Sydney"),
+  timeZone: () => desk.snapshot().timezone || "Australia/Sydney",
+  liveCard: liveRequestCard,
+  noteCard: (threadId, requestId, held) => {
+    const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
+    const card = liveRequestCard(threadId, requestId);
+    if (!messageId || !card) return;
+    const patched = store.patchMessage(threadId, messageId, { card: { ...card, held } });
+    if (patched) broadcast({ kind: "message.patch", threadId, message: patched });
+  },
+  answer: async (threadId, requestId, choice, by, line) => {
+    try {
+      const parsed = parseRequestDecision({ requestId, behavior: choice === "deny" ? "deny" : "allow", ...(choice === "task" ? { scope: "task" } : {}) });
+      return await answerLiveRequest(threadId, parsed, null, () => {
+        const group = store.groupByThread(threadId);
+        return group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+      }, { by, line });
+    } catch (error) {
+      return { status: (error as { status?: number } | null)?.status ?? 500 };
+    }
+  },
 });
 
 // Desk, Schedule, and a fast double-click all reach the same Recheck door.
@@ -3037,8 +3083,8 @@ function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceAct
  * never broaden a once-only request (guardPermissionDecision); a refusal
  * before answering leaves the card live, so Allow once still works. `owner`
  * names the bot whose provider holds the request. */
-async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision, req: IncomingMessage,
-  owner: () => ReturnType<typeof store.bot> | undefined): Promise<{ status: number; body: unknown }> {
+async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision, req: IncomingMessage | null,
+  owner: () => ReturnType<typeof store.bot> | undefined, phone?: PhoneAnswer): Promise<{ status: number; body: unknown }> {
   const live = `${threadId}:${parsed.requestId}`;
   const gone = { status: 409, body: { error: "This request is no longer waiting. Refresh the conversation to see its result." } };
   // Check the live request before saving a rule or grant, or calling the provider.
@@ -3056,6 +3102,7 @@ async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision
   if (parsed.rule) {
     const ruleError = portalRespondRuleError(parsed.rule, { behavior: decision.behavior, tool: card?.tool, allowedOrigins: fence?.allowedOrigins });
     if (ruleError) return { status: 400, body: { error: ruleError } };
+    if (!req) return { status: 403, body: { error: "Saved rules are changed on this computer." } };
     const editor = await approvals.editor(req);
     if (!editor.ok) return { status: editor.status, body: { error: editor.error } };
     if (!askMessageByRequest.has(live)) return gone;
@@ -3066,6 +3113,7 @@ async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision
     const refused = readGrantError(card, parsed.readGrant);
     if (refused || !card?.readOffer) return { status: 400, body: { error: refused } };
     if (parsed.readGrant === "always-reads") {
+      if (!req) return { status: 403, body: { error: "Approval settings are changed on this computer." } };
       const saved = await saveAlwaysReads(approvals, req, card.readOffer.group);
       if (saved) return saved;
       void governingApprovals().catch(() => {});
@@ -3078,7 +3126,13 @@ async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision
   if (!bot) return { status: 404, body: { error: "nothing is waiting on an answer in this conversation" } };
   const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) return { status: 409, body: { error: "provider unavailable" } };
-  await instance.adapter.respondToRequest(threadId, parsed.requestId, decision);
+  if (phone) {
+    // Read back when the request resolves (the card's answeredBy) and by the app broker (its receipt).
+    phoneAnswers.set(live, phone);
+    if (card?.tool === CONNECTED_APP_APPROVAL && card.detail) recordConnectedAppApproval(threadId, card.detail, phone.line);
+  }
+  try { await instance.adapter.respondToRequest(threadId, parsed.requestId, decision); }
+  catch (error) { phoneAnswers.delete(live); throw error; }
   return { status: 200, body: { ok: true } };
 }
 let localSessionPublished = false;
