@@ -231,7 +231,7 @@ import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin }
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
 import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
-import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
 import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
@@ -2272,7 +2272,7 @@ function emitLoopAndPulse(payload: unknown) {
   void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'].includes(rec.run.loopId)) return;
+  if (evaluatorForLoop(rec.run.loopId)?.pulse === false) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2301,29 +2301,33 @@ loops = new LoopManager({
     if (privateRestoreLocked) return {ok:false,detail:'Private restore is staged; restart the service before running work.'};
     jobRuns.sweepQueuedAttended();
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
-    if (loop.id === 'bank-references') return (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)); // W1 host (see BEGIN W1 host)
-    if (loop.id === 'weekly-bills') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
+    const origin = { kind: "routine" as const, runId: run.id, loopId: loop.id };
+    // One handler per evaluator (server/workflow-catalog.ts). The spec is checked before a handler runs;
+    // a loop without a registered evaluator is refused with a reason.
+    return dispatchLoop<LoopExecuteResult>(loop.id, {
+    'bank-references': async () => (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)), // W1 host (see BEGIN W1 host)
+    'weekly-bills': async () => websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
       database: workflowDatabase, workspaceId: workspaceIdentity.id, drafts: billDraftStore,
       authorize: async () => { await checkWebsiteExecution(); await authorizeBillWorkflow(); },
       collect: async () => { const state = await mailWorkspace.collect('bills-calendar'); if (!state.latestScan) throw new Error('No bill collection receipt is available.'); return mailWorkspace.collectedSource(state.latestScan, 'bills-calendar'); },
       proposal: billProposals,
       readProposal: requestId => readBillProposal({ database: workflowDatabase, runs: () => jobRuns.list(), findRunByKey: key => jobRuns.getByIdempotencyKey(key) }, requestId),
       bills: range => sourceBills().snapshot(range),
-    })));
+    }))),
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
-    if (loop.id === 'rei-supplier-check') return (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail));
+    'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail)),
     // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
-    if (loop.id === 'rei-morning-refresh') { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); return result; }
+    'rei-morning-refresh': async () => { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); return result; },
     // W4: reads saved reviewed bills only; no mail, model or browser call.
     // W5: refreshes the saved inspection draft monthly; nothing is booked.
-    if (loop.id === 'inspection-draft') return runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
+    'inspection-draft': async () => runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
       properties: () => desk.snapshot().properties.map(p => ({ id: p.id, address: p.address })),
-      today: async () => (await import('./redbark-source.ts')).localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined) });
-    if (loop.id === 'maintenance-review') return runMaintenanceReview(run, { store: maintenanceReview, directory: supplierDirectory,
+      today: async () => (await import('./redbark-source.ts')).localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined) }),
+    'maintenance-review': async () => runMaintenanceReview(run, { store: maintenanceReview, directory: supplierDirectory,
       bills: () => { const today = new Date().toISOString().slice(0, 10); return sourceBills().snapshot({ from: today, to: today }).occurrences; },
       weekly: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
-      timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() });
-    if (loop.id === 'inbound-triage') return websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
+      timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() }),
+    'inbound-triage': async () => websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
       const started = Date.now(); let modelCalls = 0, screen: { screened: number; model: string } | null = null;
       const outcome = await runMorningMailWorkflow(run, {
       collect: async () => { await checkWebsiteExecution(); return mailWorkspace.collect(); },
@@ -2337,8 +2341,8 @@ loops = new LoopManager({
       execute: (recipe, input) => { modelCalls++; return executeRecipeJob(recipe, input, { readBookSnapshot: () => desk.snapshot(), instructionContext: async id => { const instructions = await customerPacks.instructionContext(id); await checkWebsiteExecution(); return instructions; } }); },
       });
       return recordMorningResult(workflowDatabase(), run, outcome, await mailWorkspace.reviewSummary(), { elapsedMs: Date.now() - started, modelCalls, screen });
-    }));
-    if (loop.id.startsWith("recipe-")) {
+    })),
+    recipe: async () => {
       try { await customerPacks.assertReadyForRecipe(loop.id.slice('recipe-'.length)); }
       catch { return { ok: false, detail: 'This workflow pack needs recovery. Open customer pack setup.' }; }
       const recipe = getRecipe(loop.id.slice("recipe-".length));
@@ -2371,23 +2375,18 @@ loops = new LoopManager({
       const status = executed.run.status === "awaiting-approval" ? "awaiting-approval"
         : executed.run.status === "partial" ? "partial" : ok ? "completed" : "failed";
       return { ok, status, detail: executed.run.detail, jobRunId: executed.run.id };
-    }
-    const spec = evaluatorForLoop(loop.id);
-    if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
-    const origin = { kind: "routine" as const, runId: run.id, loopId: loop.id };
-    if (loop.id === "owner-letter") {
-      return desk.withRoutineOrigin(origin, async () => {
-        const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
-        const snapshot = desk.draftOwnerLetters();
-        commitDesk(snapshot);
-        return ownerLetterResult(snapshot, before);
-      });
-    }
-    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
+    },
+    'owner-letter': async () => desk.withRoutineOrigin(origin, async () => {
+      const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
+      const snapshot = desk.draftOwnerLetters();
+      commitDesk(snapshot);
+      return ownerLetterResult(snapshot, before);
+    }),
     // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
     // the shared worker clock. The fixture path never silently skips the worker.
     // An empty book skips the worker inside Desk and settles calmly here.
-    return morningCheckResult(await runDeskCheck(origin));
+    'morning-money': async () => morningCheckResult(await runDeskCheck(origin)),
+    });
   }),
 });
 
@@ -3311,7 +3310,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','rei-morning-refresh','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(evaluatorForLoop(loopMatch[1])?.requestId && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {

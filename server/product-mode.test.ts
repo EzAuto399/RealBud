@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CANONICAL_BUD_ID, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { hostAllowed, originAllowed, needsSession } from "./session-auth.ts";
 import { sourceReady } from "./source-gate.ts";
-import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
 
 describe("product mode denials", () => {
   it("denies extra bots, rooms, connectors, and raw computer routes", () => {

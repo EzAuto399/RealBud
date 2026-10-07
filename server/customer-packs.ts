@@ -7,7 +7,7 @@ import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings, type OfficePacksS
 import { BUILT_IN_MISMATCH_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
 import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
-import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
+import { loadRecipes, parseRecipeSchedule, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
@@ -107,7 +107,9 @@ export function validateCustomerPack(value: unknown): CustomerPack {
     const id = safeId(r.id);
     if (!id.startsWith('wf-') || recipeIds.has(id)) return fail('Duplicate or invalid workflow recipe identifier.');
     recipeIds.add(id);
-    if (r.schedule !== null || !Array.isArray(r.allowedOrigins) || r.allowedOrigins.length || !Array.isArray(r.capabilities) || r.capabilities.some(capability => !['read-files', 'analyse', 'draft'].includes(String(capability)))) return fail('Imported recipes must be on-demand file preparation without website or external-action access.');
+    if (!Array.isArray(r.allowedOrigins) || r.allowedOrigins.length || !Array.isArray(r.capabilities) || r.capabilities.some(capability => !['read-files', 'analyse', 'draft'].includes(String(capability)))) return fail('Imported recipes must be file preparation without website or external-action access.');
+    // A plan may carry its clock. It installs paused for plan review (recipeClockRunnable); a pack change clears it.
+    if (r.schedule !== null && !parseRecipeSchedule(fields(r.schedule, ['time', 'weekdays']))) return fail('A plan schedule in this pack is not valid. Use a time like 08:00 and weekdays 0–6.');
     return { id, ...validateRecipe(r) };
   });
   const skills = row.skills.map(raw => {
@@ -428,7 +430,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
           if (unchanged) resetApprovals(entry.initialApprovalReset);
           else if (!alreadyReset) return fail('Existing plans changed during import. Their instruction binding needs service review.', 409);
         }
-        saveRecipes(entry.pack.recipes.filter(recipe => inspection.additions.includes(recipe.id)).map(recipe => ({ ...recipe, status: 'shadow', schedule: null, expectedRevision: 0 })));
+        // New plans arrive as shadows with any published clock; the clock waits for plan approval.
+        saveRecipes(entry.pack.recipes.filter(recipe => inspection.additions.includes(recipe.id)).map(recipe => ({ ...recipe, status: 'shadow', expectedRevision: 0 })));
       } catch (error) {
         // Only new instruction files from this failed attempt are rolled back.
         // A power loss instead leaves a durable journal for explicit repair.

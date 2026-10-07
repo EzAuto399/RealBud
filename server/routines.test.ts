@@ -804,3 +804,65 @@ describe("bank-references opt-in", () => {
   });
 });
 
+describe("saved schedules across the evaluator registry", () => {
+  it("an old loops.json loads unchanged: on/off, clocks, revisions, history and off-but-runnable loops", async () => {
+    const file = tempFile();
+    const now = Date.UTC(2026, 9, 7, 0, 0); // Wed 7 Oct 2026, 10:00 in Brisbane
+    const hour = 3_600_000;
+    const run = (id: string, loopId: string, extra: Record<string, unknown> = {}) => ({
+      id, loopId, loopName: loopId, scheduledFor: now - 30 * hour, status: "completed", manual: false,
+      createdAt: now - 30 * hour, startedAt: now - 30 * hour, finishedAt: now - 30 * hour + 5_000, detail: `Fictional ${loopId} result.`, ...extra,
+    });
+    const runs = [
+      run("run-money", "morning-arrears"),
+      run("run-letter", "owner-letter", { status: "partial" }),
+      run("run-inbox", "inbound-triage", { manual: true, requestId: "11111111-1111-4111-8111-111111111111", loopRevision: 4 }),
+      run("run-job", "recipe-job-1", { jobRunId: "job-run-1", loopRevision: 2 }),
+    ];
+    writeFileSync(file, JSON.stringify({
+      version: 3,
+      timezone: "Australia/Brisbane",
+      state: {
+        "morning-arrears": { enabled: false, handledThrough: now - hour, revision: 3 },
+        "owner-letter": { enabled: true, handledThrough: now - hour, schedule: { time: "15:30", weekdays: [5] }, revision: 2 },
+        "inbound-triage": { enabled: true, handledThrough: now - hour, schedule: { time: "07:45", weekdays: [1, 2, 3, 4, 5], timezone: "Australia/Brisbane" }, revision: 4 },
+        "weekly-bills": { enabled: false, handledThrough: now - hour },
+        "bank-references": { enabled: true, handledThrough: now - hour, schedule: { time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], intervalDays: 2, anchorDate: "2026-10-02" } },
+        "rei-supplier-check": { enabled: true, handledThrough: now - hour },
+        "recipe-job-1": { enabled: true, handledThrough: now - hour, revision: 2 },
+        "retired-loop": { enabled: true, handledThrough: 5 },
+      },
+      runs,
+    }));
+    const calls: string[] = [];
+    const manager = track(new LoopManager({
+      file, now: () => now, hostTimezone: "Australia/Brisbane",
+      listRecipes: () => [taughtJob({ schedule: { time: "16:00", weekdays: [5] } })],
+      execute: async (loop) => { calls.push(loop.id); return { ok: true, detail: "done" }; },
+    }));
+    expect(manager.recovery.active).toBe(false);
+    // One line per loop. The expected lines are the pre-registry clock reading this same file.
+    const line = (loop: Loop) => [loop.id, loop.enabled ? "on" : "off", loop.available ? "" : "unavailable", `r${loop.revision}`,
+      loop.nextRunAt == null ? "next -" : `next ${new Date(loop.nextRunAt).toISOString()}`, JSON.stringify(loop.schedule, Object.keys(loop.schedule).sort()),
+      `${loop.evaluatorId}@${loop.evaluatorVersion}`, loop.waitingForPlan ? "waiting-for-plan" : "", loop.timezonePaused ? "tz-paused" : ""].filter(Boolean).join(" ");
+    expect(manager.listLoops().map(line)).toEqual([
+      'morning-arrears off r3 next - {"time":"07:30","type":"daily","weekdays":[1,2,3,4,5]} morning-money@1',
+      'owner-letter on r2 next 2026-10-09T05:30:00.000Z {"time":"15:30","type":"daily","weekdays":[5]} owner-letter@1',
+      'inbound-triage on r4 next 2026-10-07T21:45:00.000Z {"time":"07:45","timezone":"Australia/Brisbane","type":"daily","weekdays":[1,2,3,4,5]} inbound-triage@1',
+      'bank-references on r1 next 2026-10-07T22:00:00.000Z {"anchorDate":"2026-10-02","intervalDays":2,"time":"08:00","type":"daily","weekdays":[0,1,2,3,4,5,6]} bank-references@1',
+      'weekly-bills off r1 next - {"time":"08:00","type":"daily","weekdays":[1]} weekly-bills@1',
+      'maintenance-review off r1 next - {"time":"08:30","type":"daily","weekdays":[1,2,3,4,5]} maintenance-review@1',
+      'rei-supplier-check on r1 next 2026-10-11T22:15:00.000Z {"anchorDate":"2026-10-12","intervalDays":14,"time":"08:15","type":"daily","weekdays":[0,1,2,3,4,5,6]} rei-supplier-check@1',
+      'rei-morning-refresh off r1 next - {"time":"07:00","type":"daily","weekdays":[1,2,3,4,5]} rei-morning-refresh@1',
+      'inspection-draft off r1 next - {"monthly":"first-weekday","time":"09:00","type":"daily","weekdays":[1,2,3,4,5]} inspection-draft@1',
+      'recipe-job-1 off r2 next - {"time":"16:00","type":"daily","weekdays":[5]} recipe@1 waiting-for-plan',
+    ]);
+    expect(manager.listRuns()).toEqual(runs);
+    // Opt-in loops run from Schedule while off; a loop the office turned off does not.
+    expect(manager.runNow("maintenance-review")).toMatchObject({ loopId: "maintenance-review", manual: true, status: "queued" });
+    expect(manager.runNow("morning-arrears")).toBeNull();
+    await manager.tick();
+    expect(calls).toEqual(["maintenance-review"]);
+  });
+});
+
