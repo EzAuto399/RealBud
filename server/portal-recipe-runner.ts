@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
-import { jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
+import { accessibleName, jobBrowserUrl, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
 import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -57,7 +57,7 @@ export interface PortalRecipeResult {
   pages: number;
   /** The page the table was read from came back cut short (the helper's size cap): its rows may be incomplete. */
   truncated?: true;
-  /** The grid footer's "N records" count when the table was read, if the page shows one. */
+  /** The grid's own record count when the table was read, if the page shows one ("N records", or DataTables' "of N entries"; a filtered DataTable gives its unfiltered total). */
   footer?: number;
   controls?: string[];
   /** stop_before labels present on the last page: reached, never pressed. */
@@ -175,6 +175,9 @@ const all = (node: Node, test: (n: Node) => boolean, out: Node[] = []): Node[] =
 const first = (node: Node, test: (n: Node) => boolean) => all(node, test)[0];
 const texts = (node: Node): string => [node.name ?? "", ...node.children.map(texts)].join(" ");
 const controlName = (label: unknown) => typeof label === "string" ? unquote(label.match(/^\S+\s+"((?:[^"\\]|\\.)*)"/)?.[1] ?? "") : "";
+const FOOTER_RECORDS = /^\d[\d,]* records?\b/i;
+const FOOTER_ENTRIES = /^Showing [\d,]+ to [\d,]+ of ([\d,]+) entries(?: \(filtered from ([\d,]+) total entries\))?/i;
+const TEMPLATE_CELL = /(?:^|\s+)is template cell column header (.*)$/s;
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
 
@@ -228,7 +231,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const step = inflight;
     // A read recipe never answers for a submit: that ask always goes to the person.
     const covered = step?.recipe && projection?.approvalPolicy !== "once" && tool === step.tool &&
-      (step.name === undefined || controlName(params.label) === step.name) &&
+      (step.name === undefined || accessibleName(controlName(params.label)) === accessibleName(step.name)) &&
       projection?.fence.surface !== "portal-submit";
     if (covered) { receipt.approvals.recipe += 1; return true; }
     receipt.approvals.person += 1;
@@ -318,7 +321,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   /** The content a recipe acts in: an open dialog, else the main region; never the menu or header. */
   const scope = (page: PageView) => first(page.root, node => node.role === "dialog" || node.role === "alertdialog") ?? first(page.root, node => node.role === "main") ?? page.root;
   const control = (page: PageView, roles: string[], name: string): Node | null => {
-    const found = all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name === name);
+    const found = all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name !== null && accessibleName(node.name) === accessibleName(name));
     if (found.length > 1) throw blocked("ambiguous-control", `More than one ${name} control is on the page.`);
     return found[0] ?? null;
   };
@@ -328,17 +331,29 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   const tableOf = (page: PageView) => {
     const table = first(scope(page), node => node.role === "table" || node.role === "grid");
     if (!table) return null;
-    const rows = table.children.filter(node => node.role === "row");
+    // A grid's rows may sit inside rowgroups (Syncfusion's header and body; any thead/tbody), never inside another row.
+    const rowsOf = (node: Node): Node[] => node.children.flatMap(child => child.role === "row" ? [child] : rowsOf(child));
+    const rows = rowsOf(table);
     const header = rows.find(row => row.children.some(cell => cell.role === "columnheader"));
     const cols = header ? header.children.filter(cell => cell.role === "columnheader").map(cell => cell.name ?? "") : [];
-    const data = rows.filter(row => row !== header).map(row => row.children.filter(cell => cell.role === "cell" || cell.role === "gridcell" || cell.ref !== null).map(cell => (cell.name ?? texts(cell)).trim()));
-    const loading = data.length === 1 && data[0].length === 1 && /^loading/i.test(data[0][0]);
-    const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0]);
-    const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cols[index] ?? String(index), cell])));
-    // A grid footer such as "N records · 0 row(s) selected" is the load-complete marker.
-    const footer = all(table.parent ?? scope(page), node => /^\d[\d,]* records?\b/i.test(node.name ?? ""))[0];
-    const count = footer ? Number(footer.name!.match(/^[\d,]+/)![0].replaceAll(",", "")) : null;
-    return { loading, empty, records, count };
+    // A Syncfusion template cell is named "<text> is template cell column header <Col>": the text, keyed by that column.
+    const data = rows.filter(row => row !== header).map(row => row.children.filter(cell => cell.role === "cell" || cell.role === "gridcell" || cell.ref !== null).map(cell => {
+      const shown = (cell.name ?? texts(cell)).trim(); const template = TEMPLATE_CELL.exec(shown);
+      return template ? { text: shown.slice(0, template.index).trim(), col: template[1].trim() } : { text: shown, col: undefined };
+    }));
+    const loading = data.length === 1 && data[0].length === 1 && /^loading/i.test(data[0][0].text);
+    const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0].text);
+    // A column with no header name (Syncfusion's hidden first column) is not a field.
+    const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cell.col ?? cols[index] ?? String(index), cell.text]).filter(([key]) => key !== "")));
+    // A grid footer such as "N records · 0 row(s) selected", or DataTables' "Showing 1 to 10 of N entries", is the load-complete marker.
+    const footer = all(table.parent ?? scope(page), node => FOOTER_RECORDS.test(node.name ?? "") || FOOTER_ENTRIES.test(node.name ?? ""))[0];
+    const numeral = (text: string | undefined) => text === undefined ? null : Number(text.replaceAll(",", ""));
+    const entries = footer ? FOOTER_ENTRIES.exec(footer.name!) : null;
+    // `count`: rows the grid holds under its current filter (settles the wait, so an empty search settles at 0).
+    // `whole`: the completeness count. A filtered DataTable counts its unfiltered total: a filtered list is not the whole list.
+    const count = !footer ? null : entries ? numeral(entries[1]) : numeral(footer.name!.match(/^[\d,]+/)![0]);
+    const whole = entries?.[2] !== undefined ? numeral(entries[2]) : count;
+    return { loading, empty, records, count, whole };
   };
   const waitTable = async (allRows = false) => {
     if (allRows) stale = true;
@@ -437,7 +452,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           const again = control(await current(), ["textbox", "searchbox", "textarea"], field);
           if (!again) throw blocked("field-missing", `The ${field} field went away after typing.`);
           await act("browser_press", { ref: again.ref!, key: "Tab" }, { name: field });
-          if (field === "Search") {
+          if (accessibleName(field) === "Search") {
             const table = await waitTable();
             if (table.records.length && !table.records.some(row => Object.values(row).join(" ").toLowerCase().includes(value.toLowerCase()))) throw blocked("search-not-applied");
           }
@@ -469,7 +484,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
             const table = await waitTable(true);
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
             if (cut) result.truncated = true;
-            if (table.count !== null) result.footer = table.count;
+            if (table.whole !== null) result.footer = table.whole;
           }
           break;
         }

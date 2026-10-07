@@ -909,6 +909,22 @@ describe("a loop's read-only grant (route loop-read)", () => {
     }
   });
 
+  it("matches a read-safe name with one trailing colon (\"Search:\"), on a money-word page too, and nothing that only resembles one", () => {
+    const COLON = page([
+      "@vom 1", "L1 page", '  RootWebArea "Arrears"', '    navigation "Main"', '      @e1 link "Tenants"', "    main",
+      '      region "Filters"', '        @e2 textbox "Search:" value=""',
+      '      region "Results"', '        table "Results"', "          row", '            cell "Fictional"', '        StaticText "Statement balance: 1,185.00"',
+      '      region "Other"', '        @e3 textbox "Search: and pay" value=""', '        @e4 textbox "Searching:" value=""', '        @e5 button "Pay:"', '        @e6 button "Next:"', '        @e7 button "Search::"',
+    ].join("\n"), "https://portal.example/customers/arrears/");
+    const allowed = decide("browser_fill", { tab_id: 1, ref: "@e2", value: "Bravo" }, loop(), COLON);
+    expect(allowed).toMatchObject({ decision: "allow", classification: { class: "routine", action: "fill" } });
+    expect(decide("browser_press", { tab_id: 1, ref: "@e2", key: "Tab" }, loop(), COLON)).toMatchObject({ decision: "allow" });
+    for (const [tool, args] of [["browser_fill", { ref: "@e3", value: "x" }], ["browser_fill", { ref: "@e4", value: "x" }],
+      ["browser_click_semantic", { ref: "@e5" }], ["browser_click_semantic", { ref: "@e6" }], ["browser_click_semantic", { ref: "@e7" }]] as const) {
+      expect(decide(tool, { tab_id: 1, ...args }, loop(), COLON).decision, `${tool} ${args.ref}`).toBe("deny");
+    }
+  });
+
   it("refuses typing, choosing and keys anywhere but a declared filter, and Enter even there", () => {
     for (const [tool, args, observation] of [
       ["browser_press", { tab_id: 1, ref: "@e1", key: "Enter" }, EDIT], // Enter in a field named like a search
