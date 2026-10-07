@@ -21,7 +21,8 @@ import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
-import { reiMoneyStaleReason } from "./source-gate.ts";
+import { reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
+import { ownerLetterWeekStart } from "./owner-letter.ts";
 import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
@@ -108,6 +109,22 @@ export function morningCheckResult(
   if (!staleRei) return { ok: live, detail };
   const why = reiMoneyStaleReason(snapshot.sources, now) ?? "REI was not fresh: run the REI morning refresh or sign in to REI.";
   return { ok: false, detail: `${detail} ${staleRei} propert${staleRei === 1 ? "y" : "ies"} held: ${why}`, covered: snapshot.results.length - staleRei, uncovered: staleRei };
+}
+
+/** What the owner-letter loop reports after Desk drafted this week's letters. A property with no letter
+ * this week was held because its REI owner or arrears facts were not fresh (server/desk.ts draftOwnerLetters). */
+export function ownerLetterResult(
+  snapshot: Pick<DeskSnapshot, "properties" | "drafts" | "sources">,
+  lettersBefore: number,
+  now = Date.now(),
+): LoopExecuteResult {
+  const letters = snapshot.drafts.filter((d) => d.kind === "owner-letter");
+  const detail = `Owner letters on Desk: ${letters.length} (${letters.length - lettersBefore} new this week).`;
+  const weekStart = ownerLetterWeekStart(now);
+  const held = snapshot.properties.filter((p) => !letters.some((d) => d.propertyId === p.id && d.periodDueAt === weekStart)).length;
+  if (!held) return { ok: true, detail };
+  const why = reiOwnerLetterStaleReason(snapshot.sources, now) ?? "REI was not fresh: run the REI morning refresh or sign in to REI.";
+  return { ok: false, detail: `${detail} ${held} propert${held === 1 ? "y" : "ies"} held: ${why}`, covered: snapshot.properties.length - held, uncovered: held };
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
