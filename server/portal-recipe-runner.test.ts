@@ -12,7 +12,7 @@ import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type Browser
 import { onBrowserSignIn } from "./browser-broker.ts";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
+import { parsePortalRecipePack, type PortalPackRecipe, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
@@ -149,6 +149,27 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(await moving.start(withOpen("bank-reconciliation-read"))).toMatchObject({ outcome: "blocked", reason: "broker-refused", detail: "The page changed during the read. Read it again before acting." });
     expect(moving.dispatched().map(args => args[0])).toEqual(["navigate", "navigate"]);
     expect(moving.mock.effects).toEqual([]);
+  });
+  it("counts a DataTables \"Showing 1 to N of N entries\" line as the record count; a filtered table counts its unfiltered total", async () => {
+    const f = await fixture({ legacyFilters: false }, { actions: ["read", "click", "navigate", "fill", "keys"] });
+    const arrears = (steps: PortalPackRecipe["steps"]) => ({ pack: { ...f.pack, recipes: { ...f.pack.recipes, "arrears-live": { ...f.pack.recipes["arrears-review"], inputs: [], steps } } } });
+    const open = [{ nav: ["Process", "Arrears"] }, { check: "account" }, { wait: "table" }];
+    const whole = await f.start(withOpen("arrears-live"), arrears([...open, { read: "table" }, { paginate: true }]));
+    expect(whole.outcome, `${whole.reason} ${whole.detail}`).toBe("completed");
+    // Seven tenants are a day or more behind, over two pages of five: "Showing 1 to 5 of 7 entries".
+    expect(whole.results[1]).toMatchObject({ footer: 7, pages: 2 });
+    expect(whole.results[1].rows.map(row => row["Days Arrears"])).toEqual(["9", "6", "11", "13", "16", "22", "10"]);
+    const searched = (query: string) => f.start(withOpen("arrears-live"), arrears([...open, { type: { field: "Search", value: query } }, { wait: "table" }, { read: "table" }]));
+    // "Showing 1 to 1 of 1 entries (filtered from 7 total entries)": one row, counted against the whole list, so never read whole.
+    const one = await searched("Tenant Bravo");
+    expect(one.outcome, `${one.reason} ${one.detail}`).toBe("completed");
+    expect(one.results[1].rows.map(row => row.Name)).toEqual(["Fictional Tenant Bravo"]);
+    expect(one.results[1].footer).toBe(7);
+    // "Showing 0 to 0 of 0 entries (filtered from 7 total entries)": settles as empty instead of waiting out.
+    const none = await searched("Nobody");
+    expect(none.outcome, `${none.reason} ${none.detail}`).toBe("completed");
+    expect(none.results[1]).toMatchObject({ rows: [], table: "empty", footer: 7 });
+    expect(f.mock.effects).toEqual([]);
   });
   it("waits for the tenants grid to fill: \"No records to display\" before its record count is not an empty result", async () => {
     const f = await fixture();

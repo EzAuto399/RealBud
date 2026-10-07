@@ -57,7 +57,7 @@ export interface PortalRecipeResult {
   pages: number;
   /** The page the table was read from came back cut short (the helper's size cap): its rows may be incomplete. */
   truncated?: true;
-  /** The grid footer's "N records" count when the table was read, if the page shows one. */
+  /** The grid's own record count when the table was read, if the page shows one ("N records", or DataTables' "of N entries"; a filtered DataTable gives its unfiltered total). */
   footer?: number;
   controls?: string[];
   /** stop_before labels present on the last page: reached, never pressed. */
@@ -176,7 +176,9 @@ const first = (node: Node, test: (n: Node) => boolean) => all(node, test)[0];
 const texts = (node: Node): string => [node.name ?? "", ...node.children.map(texts)].join(" ");
 const controlName = (label: unknown) => typeof label === "string" ? unquote(label.match(/^\S+\s+"((?:[^"\\]|\\.)*)"/)?.[1] ?? "") : "";
 /** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's DataTables names its box "Search:"). */
-const TEMPLATE_CELL = /(?:^|\s+)is template cell column header (.*)$/s;
+const FOOTER_RECORDS = /^\d[\d,]* records?\b/i;
+const FOOTER_ENTRIES = /^Showing [\d,]+ to [\d,]+ of ([\d,]+) entries(?: \(filtered from ([\d,]+) total entries\))?/i;
+const TEMPLATE_CELL =/(?:^|\s+)is template cell column header (.*)$/s;
 const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
@@ -345,10 +347,15 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0].text);
     // A column with no header name (Syncfusion's hidden first column) is not a field.
     const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cell.col ?? cols[index] ?? String(index), cell.text]).filter(([key]) => key !== "")));
-    // A grid footer such as "N records · 0 row(s) selected" is the load-complete marker.
-    const footer = all(table.parent ?? scope(page), node => /^\d[\d,]* records?\b/i.test(node.name ?? ""))[0];
-    const count = footer ? Number(footer.name!.match(/^[\d,]+/)![0].replaceAll(",", "")) : null;
-    return { loading, empty, records, count };
+    // A grid footer such as "N records · 0 row(s) selected", or DataTables' "Showing 1 to 10 of N entries", is the load-complete marker.
+    const footer = all(table.parent ?? scope(page), node => FOOTER_RECORDS.test(node.name ?? "") || FOOTER_ENTRIES.test(node.name ?? ""))[0];
+    const numeral = (text: string | undefined) => text === undefined ? null : Number(text.replaceAll(",", ""));
+    const entries = footer ? FOOTER_ENTRIES.exec(footer.name!) : null;
+    // `count`: rows the grid holds under its current filter (settles the wait, so an empty search settles at 0).
+    // `whole`: the completeness count. A filtered DataTable counts its unfiltered total: a filtered list is not the whole list.
+    const count = !footer ? null : entries ? numeral(entries[1]) : numeral(footer.name!.match(/^[\d,]+/)![0]);
+    const whole = entries?.[2] !== undefined ? numeral(entries[2]) : count;
+    return { loading, empty, records, count, whole };
   };
   const waitTable = async (allRows = false) => {
     if (allRows) stale = true;
@@ -479,7 +486,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
             const table = await waitTable(true);
             result.rows = [...table.records]; result.table = table.empty || !table.records.length ? "empty" : "rows"; result.pages = 1; result.filters = filters(await current());
             if (cut) result.truncated = true;
-            if (table.count !== null) result.footer = table.count;
+            if (table.whole !== null) result.footer = table.whole;
           }
           break;
         }

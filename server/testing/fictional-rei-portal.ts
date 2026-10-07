@@ -374,9 +374,10 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     return [search];
   };
   const field = (name: string) => fields.find(item => item.name === name)?.value ?? "";
-  const tableFor = (path: string): { cols: string[]; rows: string[][] } | null => {
+  /** `searched: false` leaves the Search box out (a DataTable's "filtered from N total entries"). */
+  const tableFor = (path: string, searched = true): { cols: string[]; rows: string[][] } | null => {
     const filter = (key: string, keep: (row: string[]) => boolean, statusDefault = true) => {
-      const base = key === "arrears" && options.arrears ? { cols: TABLES.arrears.cols, rows: options.arrears } : key === "owners" && options.owners ? { cols: TABLES.owners.cols, rows: options.owners } : TABLES[key]; const status = field("Status"); const query = field("Search").toLowerCase();
+      const base = key === "arrears" && options.arrears ? { cols: TABLES.arrears.cols, rows: options.arrears } : key === "owners" && options.owners ? { cols: TABLES.owners.cols, rows: options.owners } : TABLES[key]; const status = field("Status"); const query = searched ? field("Search").toLowerCase() : "";
       return { cols: base.cols, rows: base.rows.filter(row => (!statusDefault || !status || status === "All" || row[1] === status) && (!query || row[0].toLowerCase().includes(query)) && keep(row)) };
     };
     // Tenants and Suppliers: Status filters a field that is not a column; Search matches the name columns.
@@ -471,7 +472,11 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
           if (!shown.length) grid.push(...note(scrolls ? "No records to display" : "No records found"));
           grid.push(...body(shown));
         }
-        if (loading === 0) grid.push(`StaticText ${q(`${table.rows.length} records · 0 row(s) selected`)}`);
+        // Live Arrears and Tasks are DataTables: "Showing 1 to 10 of N entries", "(filtered from M total entries)" while searched.
+        const dataTable = !legacy && (path === "/customers/arrears/" || path === "/customers/task");
+        const n = table.rows.length, total = field("Search") ? tableFor(path, false)!.rows.length : null;
+        const info = `Showing ${n ? page * size() + 1 : 0} to ${Math.min((page + 1) * size(), n)} of ${n} entries${total !== null ? ` (filtered from ${total} total entries)` : ""}`;
+        if (loading === 0) grid.push(`StaticText ${q(dataTable ? info : `${n} records · 0 row(s) selected`)}`);
         if (!scrolls) {
           const last = (page + 1) * size() >= table.rows.length;
           const pages = Math.max(1, Math.min(20, Math.ceil(table.rows.length / size())));
