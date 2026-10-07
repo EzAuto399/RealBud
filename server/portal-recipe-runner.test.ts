@@ -13,7 +13,7 @@ import { onBrowserSignIn } from "./browser-broker.ts";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { filterPortalRunRows, parsePortalRecipePack, type PortalPackRecipe, type PortalRecipePack } from "./portal-recipe.ts";
-import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
+import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalChooser, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
@@ -427,5 +427,160 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     const run = await f.start(withOpen("arrears-review", { min_days: "1" }));
     expect(run).toMatchObject({ outcome: "blocked", reason: "grant-too-narrow" });
     expect(f.mock.calls.some(args => args[0] === "session")).toBe(false);
+  });
+});
+
+describe("a drifted control's fallback chooser (Ask only, guarded; fictional REI mock, stubbed Jev)", () => {
+  const ALL: BrowserActionClass[] = ["read", "click", "navigate", "fill", "keys", "upload", "download"];
+  const OWNER_TWO = withOpen("find-record", { list: "Owners", query: "Two" });
+  /** A stub Jev: answers the option whose criterion is `target` (role "name"), else "none"; `probabilities` overrides the clear lead. */
+  const jevPicks = (target: string, confidence = 0.99, probabilities?: (keys: string[], choice: string) => Record<string, number>) => vi.fn<PortalChooser>(async request => {
+    const criteria = (request.questions.control as { criteria: Record<string, string> }).criteria;
+    const keys = Object.keys(criteria); const choice = keys.find(key => criteria[key] === target) ?? "none";
+    return { ok: true, model: "fictional-jev-1", ms: 3, answers: { control: { type: "choice", choice, confidence,
+      probabilities: probabilities ? probabilities(keys, choice) : Object.fromEntries(keys.map(key => [key, key === choice ? 0.97 : 0.03 / (keys.length - 1)])) } } };
+  });
+  const step = (run: Awaited<ReturnType<typeof runPortalRecipes>>, verb: string) => run.receipt.steps.filter(item => item.verb === verb).at(-1)!;
+  const loopGrant = (pack: PortalRecipePack, runs: PortalRunRequest[]) => parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: `grant-${randomUUID()}`, runId: `run-${randomUUID()}`,
+    route: "loop-read", request: { text: "Fictional loop read", sha256: sha256("Fictional loop read") }, sites: portalRecipeGrantNeeds(pack, runs).sites,
+    browser: { id: null, accountMarker: FICTIONAL_BUSINESS }, actions: portalRecipeGrantNeeds(pack, runs).actions, consequential: "ask-each", uploads: [], expiresAt: null, budget: null });
+
+  it("picks a renamed Search box (\"Find\"), types through the broker with every ask sent to the person, and records the chooser and the drift", async () => {
+    // Today: the recipe's Search step finds no "Find" box and blocks.
+    const today = await fixture({ searchLabel: "Find" });
+    expect(await today.start(OWNER_TWO)).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+    const f = await fixture({ searchLabel: "Find" });
+    f.person.mockImplementation(async () => true);
+    const chooser = jevPicks('textbox "Find"');
+    const run = await f.start(OWNER_TWO, { chooser });
+    expect(run.outcome, `${run.reason} ${run.detail}`).toBe("completed");
+    expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Owner Two"]);
+    expect(((await f.mock.command(["observe"])) as { text: string }).text).toContain('textbox "Find" value="Two"');
+    // Jev saw the step, the wanted label, the page's title and path, and role + name of the same-role controls only.
+    expect(chooser).toHaveBeenCalledTimes(1);
+    const [request] = chooser.mock.calls[0];
+    expect(request.state).toEqual({ step: "type", wanted: "Search", page: { title: "Owners - REI Cloud", path: "/customers/owner" }, candidates: [{ role: "textbox", name: "Find" }] });
+    expect(Object.keys((request.questions.control as { criteria: Record<string, string> }).criteria)).toEqual(["c0", "none"]);
+    expect(step(run, "type").chooser).toEqual({ model: "fictional-jev-1", questionSha256: sha256(JSON.stringify(request)), candidates: [{ role: "textbox", name: "Find" }],
+      pick: "c0", confidence: 0.99, top3: [0.97, 0.03], outcome: "picked", ms: expect.any(Number) });
+    expect(run.receipt.flags).toContain('map-drift: "Search" → "Find"');
+    // A pick is never recipe-covered: the fill and its Tab were each the person's to allow.
+    expect(f.person.mock.calls.map(call => call[0])).toEqual(["browser_fill", "browser_press"]);
+    expect(run.receipt.approvals.person).toBe(2);
+    expect(f.mock.effects).toEqual([]);
+    expect(JSON.stringify(run.receipt)).not.toContain("Fictional Owner");
+  });
+
+  it("an ambiguous field (two \"Search\" boxes) is chosen by place, and typed and committed in that same box", async () => {
+    const f = await fixture();
+    f.person.mockImplementation(async () => true);
+    // A second, unbound Search box after the real one: Jev answers the first.
+    const runtime = new BrowserRuntime({ root: privateTempRoot(join(tmpdir(), "rb-recipe-twice-")), command: async (args: string[], signal?: AbortSignal): Promise<BrowserJson> => {
+      const out = await f.mock.command(args, signal);
+      return args[0] === "observe" && typeof out.text === "string" ? { ...out, text: out.text.replace(/^( {8}@e\d+ textbox "Search" value="[^"]*")$/m, '$1\n        @e900 textbox "Search" value=""') } : out;
+    }, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
+    cleanup.push(() => removeFixture(runtime.root));
+    await runtime.connect(); await runtime.select("work");
+    expect(await f.start(OWNER_TWO, { runtime })).toMatchObject({ outcome: "blocked", reason: "ambiguous-control" });
+    const chooser = vi.fn<PortalChooser>(async () => ({ ok: true, model: "fictional-jev-1", ms: 1, answers: { control: { type: "choice", choice: "c0", confidence: 0.99, probabilities: { c0: 0.98, c1: 0.01, none: 0.01 } } } }));
+    const run = await f.start(OWNER_TWO, { runtime, chooser });
+    expect(run.outcome, `${run.reason} ${run.detail}`).toBe("completed");
+    expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Owner Two"]);
+    expect(step(run, "type").chooser).toMatchObject({ outcome: "picked", candidates: [{ role: "textbox", name: "Search" }, { role: "textbox", name: "Search" }] });
+    expect(f.mock.calls.filter(args => args[0] === "fill" || args[0] === "press").every(args => !args.includes("@e900"))).toBe(true);
+  });
+
+  it("below the threshold, or answered none, blocks as today and touches nothing", async () => {
+    const cases: Array<[string, PortalChooser]> = [
+      ["low confidence", jevPicks('textbox "Find"', 0.9)],
+      ["narrow lead", jevPicks('textbox "Find"', 0.99, (keys, choice) => Object.fromEntries(keys.map(key => [key, key === choice ? 0.6 : 0.4])))],
+      ["no probabilities", jevPicks('textbox "Find"', 0.99, () => ({}))],
+      ["none", jevPicks('textbox "Nothing"')],
+    ];
+    for (const [name, chooser] of cases) {
+      const f = await fixture({ searchLabel: "Find" });
+      const run = await f.start(OWNER_TWO, { chooser });
+      expect(run, name).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+      expect(step(run, "type").chooser?.outcome, name).toBe("below-threshold");
+      expect(run.receipt.flags.some(flag => flag.startsWith("map-drift:")), name).toBe(false);
+      expect(f.mock.calls.some(args => args[0] === "fill"), name).toBe(false);
+      expect(f.person, name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("never picks a consequential decoy, even when Jev names it with confidence", async () => {
+    // A click step whose read-safe control is gone: Jev names the page's Notice button.
+    const f = await fixture();
+    const base = f.pack.recipes["arrears-review"];
+    const pack = { ...f.pack, recipes: { ...f.pack.recipes, "arrears-period": { ...base, steps: [...base.steps.slice(0, 3), { click: "Current Period" }] } } };
+    const chooser = jevPicks('button "Notice"');
+    const click = await f.start(withOpen("arrears-period", { min_days: "1" }), { pack, chooser });
+    expect(click).toMatchObject({ outcome: "blocked", reason: "control-missing" });
+    expect(step(click, "click").chooser).toMatchObject({ outcome: "refused-by-guard", confidence: 0.99 });
+    expect(step(click, "click").chooser!.candidates).toContainEqual({ role: "button", name: "Notice" });
+    // The pager renamed: Jev names Notice for "Next page"; paging ends as it does today, on the first page.
+    const pager = { ...f.pack, pagination: { ...f.pack.pagination, next: "Next page" } };
+    const paged = await f.start(withOpen("arrears-review", { min_days: "1" }), { pack: pager, chooser });
+    expect(paged.outcome, `${paged.reason} ${paged.detail}`).toBe("completed");
+    expect(paged.results[1].pages).toBe(1);
+    expect(step(paged, "paginate").chooser?.outcome).toBe("refused-by-guard");
+    expect(f.mock.calls.filter(args => args[0] === "click")).toEqual([]);
+    expect(f.mock.effects).toEqual([]); expect(f.person).not.toHaveBeenCalled();
+    // A label the recipe stops before is never sent to Jev at all.
+    const g = await fixture({}, { actions: ALL });
+    const stopping = { ...g.pack, recipes: { ...g.pack.recipes, "arrears-email": { ...base, steps: [...base.steps.slice(0, 3), { type: { field: "Email", value: "x" } }] } } };
+    expect(await g.start(withOpen("arrears-email", { min_days: "1" }), { pack: stopping, chooser })).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+    expect(chooser).toHaveBeenCalledTimes(2);
+  });
+
+  it("a loop's unattended read never asks the chooser: a missing control stays a block", async () => {
+    const f = await fixture({ searchLabel: "Find" });
+    const chooser = jevPicks('textbox "Find"');
+    const run = await f.start(OWNER_TWO, { chooser, grant: loopGrant(f.pack, OWNER_TWO) });
+    expect(run).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+    expect(chooser).not.toHaveBeenCalled();
+    expect(run.receipt.steps.some(item => item.chooser)).toBe(false);
+  });
+
+  it("upload, download and menu steps never ask the chooser, and a pick earlier in the run hands the upload back", async () => {
+    const bytes = Buffer.from('25/09/2026,"540.00",FICTIONAL PAYMENT,,,,,FT-BRAVO\n');
+    const f = await fixture({}, { upload: bytes, actions: ALL });
+    f.person.mockImplementation(async () => true);
+    const recipe = (steps: PortalPackRecipe["steps"]): PortalPackRecipe => ({ kind: "read", tier: [], inputs: [], grantNeeds: [], steps, stopBefore: [] });
+    const pack = { ...f.pack, recipes: { ...f.pack.recipes,
+      "drift-nav": recipe([{ nav: ["Ownerz"] }]),
+      "drift-download": recipe([{ nav: ["Process", "Arrears"] }, { check: "account" }, { wait: "table" }, { download: { label: "Export Arrears" } }]),
+      "drift-upload": recipe([{ nav: ["Receipts", "Bulk Receipting"] }, { check: "account" }, { upload: { field: "Load Bank File", file: "{approved_file}" } }]),
+      "drift-then-upload": recipe([{ nav: ["Receipts", "Bulk Receipting"] }, { check: "account" }, { select: { field: "Bank Format", option: "ANZ(csv file)" } }, { upload: { field: "Load File", file: "{approved_file}" } }]) } };
+    const inputs = { approved_file: "fictional-bank.csv", approved_sha256: sha256(bytes) };
+    const chooser = jevPicks('button "Notice"');
+    expect(await f.start([{ recipe: "drift-nav" }], { pack, chooser })).toMatchObject({ outcome: "blocked", reason: "menu-label-missing" });
+    expect(await f.start([{ recipe: "drift-download" }], { pack, chooser })).toMatchObject({ outcome: "blocked", reason: "control-missing" });
+    expect(await f.start([{ recipe: "drift-upload", inputs }], { pack, chooser })).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+    expect(chooser).not.toHaveBeenCalled();
+    // A select step picked by the chooser (File Format for "Bank Format") marks the page drifted: the upload after it goes back to the person.
+    const picks = jevPicks('combobox "File Format"');
+    const drifted = await f.start([{ recipe: "drift-then-upload", inputs }], { pack, chooser: picks });
+    expect(drifted).toMatchObject({ outcome: "handover", reason: "map-drift-blocks-upload" });
+    expect(step(drifted, "select").chooser?.outcome).toBe("picked");
+    expect(f.mock.calls.filter(args => args[0] === "upload")).toEqual([]);
+    expect(f.mock.calls.filter(args => args[0] === "download")).toEqual([]);
+    expect(f.mock.effects).toEqual([]);
+  });
+
+  it("a chooser that fails, times out or throws blocks as today", async () => {
+    const results: Array<[string, PortalChooser]> = [
+      ["timeout", async () => ({ ok: false, reason: "timeout" })],
+      ["budget", async () => ({ ok: false, reason: "budget" })],
+      ["throws", async () => { throw new Error("fictional outage"); }],
+      ["other question", async () => ({ ok: true, model: "fictional-jev-1", ms: 1, answers: {} })],
+    ];
+    for (const [name, chooser] of results) {
+      const f = await fixture({ searchLabel: "Find" });
+      const run = await f.start(OWNER_TWO, { chooser });
+      expect(run, name).toMatchObject({ outcome: "blocked", reason: "field-missing" });
+      expect(step(run, "type").chooser, name).toMatchObject({ outcome: "no-answer", model: name === "other question" ? "fictional-jev-1" : null, pick: null });
+      expect(f.mock.calls.some(args => args[0] === "fill"), name).toBe(false);
+    }
   });
 });
