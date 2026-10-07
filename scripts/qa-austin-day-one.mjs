@@ -16,10 +16,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { readSessionToken } from './local-session.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
+import { windowsFilePrivacySync } from '../server/windows-file-privacy.ts';
 import { fictionalWorkerModelKey, provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +34,9 @@ assert.ok(!existsSync(output), `Choose a fresh QA_OUTPUT; existing evidence at $
 mkdirSync(output, { recursive: true });
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'fictional-austin-day-one-'));
 const data = join(temp, 'data'); mkdirSync(data, { mode: 0o700 });
+// Mode bits are not an ACL on Windows: protect the new home and data like the
+// installed app does, or the service rightly refuses them (no-op elsewhere).
+for (const dir of [temp, data]) windowsFilePrivacySync(dir, 'directory', true);
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const steps = [];
 let child, childClosed, logs = '', base, token, failure;
@@ -72,7 +76,7 @@ const connector = createServer(async (req, res) => {
 });
 
 // ── fake Redbark (Redbark link stand-in): live REST shapes, synthetic key ──
-const { FICTIONAL_REDBARK_KEY } = await import(join(root, 'server/testing/w1-lab.ts'));
+const { FICTIONAL_REDBARK_KEY } = await import(pathToFileURL(join(root, 'server/testing/w1-lab.ts')).href);
 const ACCOUNT = seed.redbark.account;
 const redbarkAccount = { id: ACCOUNT.id, object: 'account_item', connection: ACCOUNT.connection, provider: 'fiskil', category: 'banking', name: ACCOUNT.name, type: 'transaction',
   institution: { id: 'inst_fk_anz_fictional', name: 'ANZ (fictional)', logo: null }, account_number: `xxxx${ACCOUNT.last4}`, currency: 'aud', status: 'available',
@@ -135,7 +139,7 @@ const freePort = async () => { const s = createServer(); s.listen(0, '127.0.0.1'
 let serviceEnv;
 async function startService() {
   const port = await freePort(); base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, ['--import', join(temp, 'network-guard.mjs'), join(root, 'server/bootstrap.ts')], { cwd: root, env: { ...serviceEnv, OMB_PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(process.execPath, ['--import', pathToFileURL(join(temp, 'network-guard.mjs')).href, join(root, 'server/bootstrap.ts')], { cwd: root, env: { ...serviceEnv, OMB_PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   childClosed = new Promise((r, reject) => { child.once('close', r); child.once('error', reject); });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-40_000); });
   let ready = false;
