@@ -58,7 +58,7 @@ Desktop: branch `claude/onboarding-polish`.
   - Electron: 386 tests.
   - Onboarding, Get started, setup holds, packs, office link and setup sequence.
   - New tests fail without their fixes.
-- Renderer QA: see below.
+- Renderer QA (headless Chrome, fictional data, built UI; receipts in `outputs/onboarding-e2e-2026-10-07/`): see QA below.
 
 ## Not done, and why
 
@@ -76,4 +76,22 @@ Desktop: branch `claude/onboarding-polish`.
 
 ## QA
 
-Results are added below when the renderer QA runs.
+All runs use the branch's own built UI, a fresh temp home and fictional data. No `~/.realbud`, live account or model was used.
+
+| Script | Result |
+|---|---|
+| `qa-clean-walkthrough` | **13/13 steps pass.** Covers: welcome; link code through the lab website; Bud status opening over Desk; Desk; Work; Schedule; approval and Stop; service down and recovery; Settings; restart; update banner; expired then fresh link code; no page errors. The first run failed step 3 because it still expected Work after setup, so the script was updated to expect Desk. |
+| `qa-first-install` | Pass (9 checks). Setup opens over Desk; install progress, cancel and retry work; the Work draft is kept. |
+| `qa-onboarding-setup` | Pass. Get started shows the five steps and their links. |
+| `qa-onboarding-restart` | Pass (all PASS lines). Interrupted welcome, sample exploration and a restored book all survive restarts on changed ports. |
+| `qa-bud-status` | Pass (9 checks, 18 screenshots). |
+| `qa-customer-packs` | **Fails at line 121, as it already does on main.** The script expects `workflowPackId` to stay null after a pack import. #133 changed import so that it selects the agency workflow. This was reported to the session that owns #133, and its fixture expectation was left unchanged. |
+
+Screenshots: `desk-get-started-after-link.png` shows the person landing on Desk with Get started at 2 of 5 and "Import your office's pack · Now". `bud-status-over-desk.png` shows Bud status over Desk.
+
+Not run:
+- the packaged build
+- Windows VM time to first window (98.5 s before this change)
+- macOS Dock-during-wait on a real app
+- website `next build` and its Postgres suites
+- `qa-hermes-updates`, which is already stale on main: it waits for labels that no longer exist in `src/`

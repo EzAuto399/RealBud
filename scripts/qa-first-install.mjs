@@ -93,7 +93,7 @@ try {
   await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
   assert.equal(await composer.inputValue(), 'Prepare a repair follow-up for my first property.');
   assert.deepEqual(errors, []);
-  const result = { passed: true, checks: ['fresh onboarding opens setup over Ask', 'Windows action enabled', 'progress recovers without duplicate install', 'cancel and retry', 'failure survives reopening panel', '320/390px layout and touch target', 'successful install advances to model connection', 'not ready prematurely', 'Ask draft preserved'], liveInstallation: false, liveProvider: false };
+  const result = { passed: true, checks: ['fresh onboarding opens setup over Desk', 'Windows action enabled', 'progress recovers without duplicate install', 'cancel and retry', 'failure survives reopening panel', '320/390px layout and touch target', 'successful install advances to model connection', 'not ready prematurely', 'Ask draft preserved'], liveInstallation: false, liveProvider: false };
   writeFileSync(join(out, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
 } catch (error) {
   await page?.screenshot({ path: join(out, 'failure.png') }).catch(() => {});
