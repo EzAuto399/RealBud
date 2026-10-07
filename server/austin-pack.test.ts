@@ -7,6 +7,9 @@ import { createInspectionRulesStore } from './inspection-rules.ts';
 import { createMaintenanceReviewStore } from './maintenance-review.ts';
 import { LOOP_CATALOG, LoopManager } from './routines.ts';
 import { removeFixture } from './testing/private-fixture.ts';
+import { hiddenAustinLoopIds } from '../shared/austin-pack.ts';
+import type { CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
+import { austinAccountsCustomerPack } from './customer-pack-definition.ts';
 
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
@@ -133,5 +136,30 @@ describe('Austin setup checklist', () => {
     const items = austinChecklist(pack, on, { gmail: true, redbark: true, tenants: 40, suppliers: 9, reiSignedIn: false });
     expect(items.every(i => i.done)).toBe(true);
     expect(items.find(i => i.id === 'workflows')?.next).toBeUndefined();
+  });
+});
+
+describe('Schedule before a role pack (Windows #54)', () => {
+  const visible = async (f: ReturnType<typeof office>, ran: string[] = []) => {
+    const hidden = hiddenAustinLoopIds(await f.pack.view(), f.loops.listLoops(), new Set(ran));
+    return f.loops.listLoops().map(l => l.id).filter(id => !hidden.has(id));
+  };
+
+  it('shows only the core jobs on a fresh PC, then Kevin\'s after his role pack', async () => {
+    const f = office();
+    expect(await visible(f)).toEqual(['morning-arrears', 'owner-letter', 'inbound-triage', 'rei-morning-refresh']);
+    const kevin = JSON.parse(austinAccountsCustomerPack().files!['office/settings.json']!) as CustomerPackOfficeSettings;
+    await f.pack.applyPackLoops(kevin.loops.map(({ id, schedule }) => ({ id, schedule })));
+    expect(await visible(f)).toEqual(['morning-arrears', 'owner-letter', 'inbound-triage', 'bank-references', 'weekly-bills', 'rei-morning-refresh']);
+    // REI morning refresh is a core loop, never hidden. The whole-office install sets all six Auston loops.
+    await f.pack.install();
+    expect(await visible(f)).toEqual(LOOP_CATALOG.map(l => l.id));
+  });
+
+  it('never hides a job that is on or has run, and hides nothing while the pack view is unread', async () => {
+    const f = office();
+    f.loops.setEnabled('inspection-draft', true);
+    expect(await visible(f, ['maintenance-review'])).toEqual(['morning-arrears', 'owner-letter', 'inbound-triage', 'maintenance-review', 'rei-morning-refresh', 'inspection-draft']);
+    expect(hiddenAustinLoopIds(null, f.loops.listLoops(), new Set()).size).toBe(0);
   });
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { BankReferenceStore } from "./bank-reference-store.ts";
 import { redbarkBankUpload, REDBARK_CSV_COLUMNS, type RedbarkAccount } from "./redbark-source.ts";
-import { createTenantDirectoryStore, MAX_TENANT_HISTORY, parseTenantList, savedTenantDirectoryCsv } from "./tenant-directory.ts";
+import { createTenantDirectoryStore, MAX_TENANT_HISTORY, parseTenantList, savedTenantDirectoryCsv, tenantListHash } from "./tenant-directory.ts";
 
 // FICTIONAL REI Tenants export (live REI's columns); FT-KILO has no Property, FT-BRAVO repeats.
 const EXPORT = [
@@ -61,6 +61,25 @@ describe("REI tenant list import", () => {
     expect(latest.revision).toBe(MAX_TENANT_HISTORY + 3);
     expect(latest.directory!.history).toHaveLength(MAX_TENANT_HISTORY);
     expect(() => store.save({ tenants: [{ ...tenants[0], reference: "\u0007" }], source: SOURCE, expectedRevision: latest.revision })).toThrow(/not valid/);
+  }));
+
+  it("a complete REI read of the unchanged list renews its freshness without a new revision; a record never checked was checked when saved", () => withDb(db => {
+    let now = 1_000;
+    const store = createTenantDirectoryStore(db, () => now), { tenants } = parseTenantList(EXPORT);
+    expect(store.freshness()).toBeNull();
+    expect(store.markChecked(tenants)).toBe(false);
+    store.save({ tenants, source: SOURCE, expectedRevision: 0 });
+    // An old record (saved before checks were recorded) loads as it is: last checked when it was saved.
+    expect(store.freshness()).toEqual({ checkedAt: 1_000, hash: tenantListHash(tenants) });
+    now += 25 * 60 * 60_000;
+    expect(store.markChecked(tenants)).toBe(true);
+    expect(store.freshness()).toEqual({ checkedAt: now, hash: tenantListHash(tenants) });
+    expect(store.read().revision).toBe(1);
+    // A read that differs from the saved list checks nothing; a new save of another list is its own check.
+    expect(store.markChecked([tenants[0]])).toBe(false);
+    now += 1;
+    store.save({ tenants: [tenants[0]], source: SOURCE, expectedRevision: 1 });
+    expect(store.freshness()).toEqual({ checkedAt: now, hash: tenantListHash([tenants[0]]) });
   }));
 
   it("is the default directory for new bank batches: the REI Reference goes in the ANZ file's last column", () => withDb(db => {

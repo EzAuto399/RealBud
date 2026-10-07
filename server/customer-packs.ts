@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { departmentStarterCustomerPack } from './department-starter-pack.ts';
 import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
-import type { CsvColumnMapping, LoopSchedule, Recipe } from '../shared/contracts.ts';
+import type { LoopSchedule, Recipe } from '../shared/contracts.ts';
 import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
-import { PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
+import { BUILT_IN_MISMATCH_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
 import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
@@ -189,7 +189,7 @@ export interface CustomerPackServiceOptions {
   /** Publisher keys a signed pack must verify against. Defaults to the pinned keys; tests inject fictional ones. */
   trustedKeys?: readonly PackPublisherKey[];
   /** This office's setup for a per-client export. Only allowlisted fields are copied out. */
-  officeSettings?: () => Promise<{ businessCode?: string; csvColumnMapping?: CsvColumnMapping; loops: { id: string; schedule: LoopSchedule }[] }>;
+  officeSettings?: () => Promise<{ loops: { id: string; schedule: LoopSchedule }[] }>;
   /** Applies an installed pack's office/settings.json loops (server/austin-pack.ts): never switches one on, keeps office-changed clocks. */
   applyLoops?: (loops: CustomerPackOfficeSettings['loops']) => Promise<unknown>;
   /** After an install: an agency workflow pack becomes the agency's chosen pack when none is chosen (server/agency-setup.ts). */
@@ -205,22 +205,23 @@ const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': aust
 export function admitPack(value: unknown, keys: readonly PackPublisherKey[], requireSignature = false): CustomerPack {
   const pack = validateCustomerPack(value);
   if (pack.signature) verifyPackSignature(pack, keys);
-  else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id) || hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(UNSIGNED_PACK_MESSAGE);
+  else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id)) fail(UNSIGNED_PACK_MESSAGE);
+  else if (hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(BUILT_IN_MISMATCH_MESSAGE);
   return pack;
 }
 /** Per-client export: the validated installed pack (validation is itself a field
- * allowlist), the bundled REI recipes and site map, and office settings copied
- * field by field. No records, accounts, sessions, ledgers, approvals, local plan
- * edits or tokens; loops always leave switched off. Unsigned until
+ * allowlist), the bundled REI recipes and site map, and loop clocks copied field
+ * by field. No records, accounts, sessions, ledgers, approvals, local plan edits
+ * or tokens; loops always leave switched off. The REI business code and CSV
+ * column mapping stay behind: import never applies them, and the business code is
+ * the account marker the portal fence trusts. Unsigned until
  * `scripts/sign-pack.mjs` signs it. */
 export function clientExportPack(installed: CustomerPack, office: Awaited<ReturnType<NonNullable<CustomerPackServiceOptions['officeSettings']>>> | undefined): CustomerPack {
   const { signature: _signature, files: installedFiles, ...pack } = installed;
   const rei = installedFiles?.['rei/recipes.json'] && installedFiles['rei/site-map.json'] ? { 'rei/recipes.json': installedFiles['rei/recipes.json'], 'rei/site-map.json': installedFiles['rei/site-map.json'] }
     : pack.skills.some(skill => skill.id === 'rei-cloud-navigation') ? austinReiFiles() : {};
-  const mapping = office?.csvColumnMapping, recipeLoops = new Set(pack.recipes.map(recipe => `recipe-${recipe.id}`));
+  const recipeLoops = new Set(pack.recipes.map(recipe => `recipe-${recipe.id}`));
   const settings: CustomerPackOfficeSettings = { version: 1, kind: 'office-settings',
-    ...(office?.businessCode ? { rei: { businessCode: office.businessCode } } : {}),
-    ...(mapping ? { csvColumnMapping: Object.fromEntries((['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'] as const).flatMap(key => mapping[key] ? [[key, mapping[key]]] : [])) } : {}),
     loops: (office?.loops ?? []).filter(loop => !loop.id.startsWith('recipe-') || recipeLoops.has(loop.id)).map(({ id, schedule }) => ({ id, enabled: false, schedule: { type: 'daily', time: schedule.time, weekdays: [...schedule.weekdays],
       ...(schedule.timezone ? { timezone: schedule.timezone } : {}), ...(schedule.intervalDays ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate ? { anchorDate: schedule.anchorDate } : {}), ...(schedule.monthly ? { monthly: schedule.monthly } : {}) } })) };
   return validateCustomerPack({ ...pack, files: { ...rei, 'office/settings.json': JSON.stringify(settings) } });

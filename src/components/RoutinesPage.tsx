@@ -16,13 +16,13 @@ import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
 import { buildWorkActivity, type WorkActivity } from "@/lib/work-activity";
 import { resolveProductBud } from "@/lib/product-bud";
 import { pendingManualJobRequest } from "@/lib/manual-job-request";
-import { buildScheduleRows, RECOVERY_NOTICE, stableOrder, type ScheduleRow } from "@/lib/schedule-rows";
+import { buildScheduleRows, listedScheduleRows, RECOVERY_NOTICE, scheduleRowForJob, stableOrder, type ScheduleRow } from "@/lib/schedule-rows";
 import { filterScheduleRows, scheduleRowSection, type ScheduleFilter } from "@/lib/schedule-presentation";
 import { acknowledgeActivity, JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import { LearnedRecipesCard } from "./schedule/LearnedRecipesCard";
 import { AustinPlanDetail } from "./schedule/AustinPackCard";
-import { parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
+import { hiddenAustinLoopIds, parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
 import { JobRunFeed } from "./desk/JobRunFeed";
 import { ExecutionHistory } from "./schedule/ExecutionHistory";
 import { FlaggedReceipt, JobDrawer, LoopDetail, type LoopTimingChange } from "./schedule/JobDrawer";
@@ -248,6 +248,10 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   };
 
   const deskCounts = producedByRunId([...(state.desk?.book?.cases ?? []), ...(state.desk?.workItems ?? [])]);
+  // Auston jobs this PC's role packs never set stay out of the list until they are on or have run. Only the list:
+  // rowByKey, openRow and deep links (#job-<id>, the sidebar) reach every row.
+  const hiddenLoops = useMemo(() => hiddenAustinLoopIds(austin, state.loops,
+    new Set([...state.loopRuns.map((run) => run.loopId), ...Object.keys(pendingRequests)])), [austin, state.loops, state.loopRuns, pendingRequests]);
   const rows = useMemo(() => buildScheduleRows({
     loops: state.loops,
     recipes,
@@ -261,7 +265,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   }), [state.loops, recipes, state.loopRuns, state.jobRuns, pendingRequests, pendingJobs, recovery, nowMs, timezone]);
   // Keep the order stable while someone is reading or acting on the list.
   const frozen = Boolean(drawer) || interacting;
-  const keys = frozen ? stableOrder(order.current, rows.map((row) => row.key)) : rows.map((row) => row.key);
+  const listed = useMemo(() => listedScheduleRows(rows, hiddenLoops), [rows, hiddenLoops]);
+  const keys = frozen ? stableOrder(order.current, listed.map((row) => row.key)) : listed.map((row) => row.key);
   order.current = keys;
   const rowByKey = new Map(rows.map((row) => [row.key, row]));
   const visibleRows = keys.map((key) => rowByKey.get(key)).filter((row): row is ScheduleRow => Boolean(row));
@@ -270,7 +275,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   // Filters must never hide the local Stop control for attended work.
   const runningCount = visibleRows.filter((row) => scheduleRowSection(row) === "running").length;
   const filteredRows = visibleRows.filter((row) => matchingKeys.has(row.key) || scheduleRowSection(row) === "running");
-  const attentionCount = filterScheduleRows(rows, "attention").length;
+  const attentionCount = filterScheduleRows(listed, "attention").length;
 
   /** Load a saved job into the plan editor without overwriting unsaved work. */
   const openRecipeDraft = (recipe: Recipe): boolean => {
@@ -396,7 +401,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
     if (job) {
       if (jobsLoading || jobsError) return;
       // `#job-<id>` names a saved job or a loop (the shell's loop list and status bar).
-      const row = rowByKey.get(`job:${job[1]}`) ?? rows.find((item) => item.loop?.id === job[1]);
+      const row = scheduleRowForJob(rows, job[1]);
       if (row) openRow(row);
       else setError("That job is no longer available. Choose a saved job below.");
     } else if (hash === "bud-job-builder") {

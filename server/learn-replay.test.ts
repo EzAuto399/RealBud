@@ -35,8 +35,9 @@ const RECORDING: LearnEvent[] = [
   { kind: "click", role: "link", name: "Process", landmark: "navigation" },
   { kind: "click", role: "link", name: "Arrears", landmark: "navigation" },
   { kind: "page", url: `${FICTIONAL_REI_ORIGIN}/customers/arrears/`, table: true },
-  { kind: "type", field: "From day", landmark: "main" },
-  { kind: "select", field: "Hide vacated tenants", landmark: "main" },
+  // Live Arrears (7 Oct) names only its DataTables "Search:" box and "Show entries" select.
+  { kind: "type", field: "Search", landmark: "main" },
+  { kind: "select", field: "Show entries", landmark: "main" },
   // The pager is a navigation landmark, so the recorder reports its Next there.
   { kind: "click", role: "button", name: "Next", landmark: "navigation" },
   { kind: "click", role: "button", name: "Notice", landmark: "main" },
@@ -46,9 +47,9 @@ const PORTAL = "rei-cloud";
 async function publishLearned(pack: PortalRecipePack) {
   const store = createLearnedRecipeStore(join(tempRoot("rb-learn-replay-store-"), "learned-recipes.json"));
   const compiled = compileLearnedSteps(RECORDING, pack);
-  const draft = await store.create({ portal: PORTAL, title: "Arrears from day", ...compiled });
+  const draft = await store.create({ portal: PORTAL, title: "Arrears search", ...compiled });
   // Review: nothing to acknowledge or confirm (Next became a paged read); the select is pinned to a fixed option.
-  const steps = draft.steps.map(step => "select" in step ? { select: { ...step.select, option: "Yes" } } : step);
+  const steps = draft.steps.map(step => "select" in step ? { select: { ...step.select, option: "All" } } : step);
   const reviewed = await store.update(draft.id, draft.revision, { steps, flags: [], confirmedLabels: [] }, pack.labels);
   const published = await store.publish(reviewed.id, reviewed.revision, pack);
   return { compiled, published, merged: mergeLearnedRecipes(pack, await store.list()) };
@@ -59,14 +60,14 @@ describe("learned recipe: recorded → published → replayed (fictional REI moc
     const pack = fictionalReiPack();
     const { compiled, published, merged } = await publishLearned(pack);
     expect(compiled).toEqual({
-      steps: [{ nav: ["Process", "Arrears"] }, { wait: "table" }, { type: { field: "From day", value: "{from_day}" } },
-        { select: { field: "Hide vacated tenants", option: "{hide_vacated_tenants}" } }, { wait: "table" }, { read: "table" }, { paginate: true }],
-      inputs: ["from_day", "hide_vacated_tenants"], stopBefore: ["Notice"], flags: [],
+      steps: [{ nav: ["Process", "Arrears"] }, { wait: "table" }, { type: { field: "Search", value: "{search}" } },
+        { select: { field: "Show entries", option: "{show_entries}" } }, { wait: "table" }, { read: "table" }, { paginate: true }],
+      inputs: ["search", "show_entries"], stopBefore: ["Notice"], flags: [],
     });
     // The reviewer pinned the option, so it is no longer asked each run.
-    expect(published).toMatchObject({ state: "published", name: "learned-arrears-from-day", inputs: ["from_day"], stopBefore: ["Notice"], flags: [] });
+    expect(published).toMatchObject({ state: "published", name: "learned-arrears-search", inputs: ["search"], stopBefore: ["Notice"], flags: [] });
     expect(merged.recipes[published.name]).toMatchObject({ kind: "read", steps: published.steps, stopBefore: ["Notice"] });
-    expect(published.steps).toContainEqual({ select: { field: "Hide vacated tenants", option: "Yes" } });
+    expect(published.steps).toContainEqual({ select: { field: "Show entries", option: "All" } });
 
     // The runner test's harness: real runtime, broker, grant, fence and approvals over the mock.
     const root = tempRoot("rb-learn-replay-run-");
@@ -74,7 +75,7 @@ describe("learned recipe: recorded → published → replayed (fictional REI moc
     const runtime = new BrowserRuntime({ root, command: mock.command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
     await runtime.connect(); await runtime.select("work");
     const person = vi.fn<PersonApprove>(async () => false);
-    const runs: PortalRunRequest[] = [{ recipe: "open-session" }, { recipe: published.name, inputs: { from_day: "1" } }];
+    const runs: PortalRunRequest[] = [{ recipe: "open-session" }, { recipe: published.name, inputs: { search: "Fictional Tenant" } }];
     const needs = portalRecipeGrantNeeds(merged, runs);
     expect(needs.actions).not.toContain("submit");
     const grantId = `grant-${randomUUID()}`; const text = `Fictional task: open-session, ${published.name}`;
@@ -88,15 +89,15 @@ describe("learned recipe: recorded → published → replayed (fictional REI moc
     expect(run.outcome, run.detail).toBe("completed");
     const learned = run.results[1];
     expect(learned).toMatchObject({ recipe: published.name, outcome: "completed", table: "rows", pages: 2 });
-    // Every page: the recorded Next became the pack's own paged read.
+    // Every page: the recorded Next became the pack's own paged read. The search leaves out "Fictional Juliet".
     expect(learned.rows.map(row => row.Name).slice(0, 5)).toEqual(["Fictional Tenant Bravo", "Fictional Tenant Charlie", "Fictional Tenant Echo", "Fictional Tenant Golf", "Fictional Tenant Hotel"]);
     expect(learned.rows).toHaveLength(6);
-    expect(learned.filters).toMatchObject({ "From day": "1", "Hide vacated tenants": "Yes" });
+    expect(learned.filters).toMatchObject({ "Show entries": "All" });
     // The receipt has one ok entry per learned step, in order, and holds a hash, never the typed value.
     const steps = run.receipt.steps.filter(step => step.recipe === published.name);
     expect(steps.map(step => step.verb)).toEqual(compiled.steps.map(step => Object.keys(step)[0]));
     expect(steps.every(step => step.ok)).toBe(true);
-    expect(steps.find(step => step.verb === "type")).toMatchObject({ target: "From day", valueSha256: sha256("1") });
+    expect(steps.find(step => step.verb === "type")).toMatchObject({ target: "Search", valueSha256: sha256("Fictional Tenant") });
     // Notice was reached and reported, never pressed: Process › Arrears is a mapped route, so the only click is the pager's Next, and no effect happened.
     expect(learned.stopBefore).toContain("Notice");
     expect(mock.calls.filter(args => args[0] === "click")).toHaveLength(1);
@@ -135,9 +136,9 @@ describe("learned recipe: recorded → published → replayed (fictional REI moc
     const { published, merged } = await publishLearned(fictionalReiPack());
     const load = vi.fn(async () => merged);
     const proposal = await portalRecipeTaskProposal({ threadId: "thread-fictional", messageId: "message-fictional", portal: PORTAL, target: published.name,
-      inputs: { from_day: "1" }, account: { marker: FICTIONAL_BUSINESS } }, load);
+      inputs: { search: "Fictional Tenant" }, account: { marker: FICTIONAL_BUSINESS } }, load);
     expect(load).toHaveBeenCalledWith(PORTAL);
-    expect(proposal.recipe.runs).toEqual([{ recipe: "open-session", inputs: {} }, { recipe: published.name, inputs: { from_day: "1" } }]);
+    expect(proposal.recipe.runs).toEqual([{ recipe: "open-session", inputs: {} }, { recipe: published.name, inputs: { search: "Fictional Tenant" } }]);
     expect(proposal.actions).toEqual(expect.arrayContaining(["read", "click", "navigate", "fill"]));
     for (const action of ["submit", "upload", "download", "pay", "send"]) expect(proposal.actions).not.toContain(action);
     expect(proposal.request).toMatch(/Read only: nothing is saved, sent or paid\./);

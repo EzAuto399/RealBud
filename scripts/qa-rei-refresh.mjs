@@ -96,7 +96,7 @@ try {
 
   await scenario("3", "An inactive or removed tenant", async (check, observe) => {
     const c = await child("removed");
-    await c.ask({ op: "refresh" }); await c.ask({ op: "approve-all" });
+    const first = await c.ask({ op: "refresh" }); await c.ask({ op: "approve-all" });
     const settled = await c.ask({ op: "refresh", now: T0 + 12 * H });
     const { FICTIONAL_TENANT_LIST } = await import("../server/testing/fictional-rei-portal.ts");
     await c.ask({ op: "portal", set: { tenants: FICTIONAL_TENANT_LIST.filter((row) => row.cells[0] !== "FT-ECHO") } });
@@ -105,10 +105,14 @@ try {
     const kept = prop(after.state, "FP-05");
     check("a tenant REI no longer lists: Desk keeps the property and its last values (nothing deleted)", after.state.properties.length === settled.state.properties.length &&
       ["tenantName", "weeklyRentCents", "amountOwingCents", "owner"].every((key) => JSON.stringify(kept?.[key]) === JSON.stringify(before[key])) && JSON.stringify(kept?.rei) === JSON.stringify(before.rei), JSON.stringify(kept));
-    check("the vacated tenancy sharing FP-04 with its successor is held as ambiguous, not guessed", after.state.issues.includes("ambiguous REI property FP-04"), after.state.issues.join("; "));
-    const delta = prop(after.state, "FP-08");
-    observe({ inactiveDelta: delta, gap: "Status=All lists Inactive tenancies (REI's grid has no status column), so Delta's FP-08 was proposed and approved like any other; a removed tenant is not flagged on Desk." });
-    check("the inactive tenancy is read like any other row (Status All); nothing in REI changed", after.state.portal.effects.length === 0, `FP-08 on Desk: ${Boolean(delta)}`);
+    // Tenants are read Active-only: Delta (Inactive, FP-08) and India (Vacated, FP-04) are never read, so never proposed.
+    const gone = /Tenant (Delta|India)$/;
+    check("an inactive or vacated tenancy is not read and not proposed: no Delta (FP-08) or India card, FP-04 goes to its Active tenant",
+      !first.state.proposals.some((p) => gone.test(p.tenantName ?? "")) && !after.state.properties.some((p) => p.code === "FP-08" || gone.test(p.tenantName ?? "")) &&
+      /Bravo-Two$/.test(prop(after.state, "FP-04")?.tenantName ?? "") && !after.state.issues.some((i) => /FP-0[48]|FT-(DELTA|INDIA)/.test(i)),
+      JSON.stringify({ cards: first.state.proposals.map((p) => p.tenantName), fp04: prop(after.state, "FP-04")?.tenantName, issues: after.state.issues }));
+    check("nothing in REI changed", first.state.portal.effects.length === 0 && after.state.portal.effects.length === 0, `${after.state.portal.effects.length} effects`);
+    observe({ gap: "Tenants read Active-only (live default); removed tenants are not yet flagged on Desk (known follow-up)." });
     await c.close();
   });
 
@@ -202,12 +206,17 @@ try {
 
   await scenario("9", "Duplicate tenant names and ambiguous rows are held, never guessed", async (check, observe) => {
     const c = await child("dupes");
+    // A lease-changeover overlap: REI lists two Active tenancies on FP-04 (India not yet vacated, Bravo-Two moved in).
+    const { FICTIONAL_TENANT_LIST } = await import("../server/testing/fictional-rei-portal.ts");
+    await c.ask({ op: "portal", set: { tenants: FICTIONAL_TENANT_LIST.map((row) => (row.cells[0] === "FT-INDIA" ? { ...row, status: "Active" } : row)) } });
     await c.ask({ op: "add", property: { address: "6 Fictional St", tenantName: "Fictional Tenant Golf", tenantPhone: "1", weeklyRentCents: 50_000 } });
     await c.ask({ op: "add", property: { address: "16 Fictional St", tenantName: "Fictional Tenant Golf", tenantPhone: "1", weeklyRentCents: 50_000 } });
     const before = (await c.ask({ op: "state" })).state.properties;
     const after = await c.ask({ op: "refresh" });
     check("an arrears name matching two Desk tenants is held as ambiguous", after.state.issues.includes("ambiguous REI arrears Fictional Tenant Golf"), after.state.issues.join("; "));
-    check("REI's two tenancies on FP-04 are held as ambiguous", after.state.issues.includes("ambiguous REI property FP-04"));
+    check("REI's two tenancies on one property are held as ambiguous, not guessed (two Active rows on FP-04), and neither is proposed",
+      after.state.issues.includes("ambiguous REI property FP-04") && !after.state.proposals.some((p) => /Tenant (India|Bravo-Two)$/.test(p.tenantName ?? "")),
+      JSON.stringify(after.state.proposals.map((p) => p.tenantName)));
     check("neither duplicate changed", before.every((p) => JSON.stringify(after.state.properties.find((q) => q.id === p.id)) === JSON.stringify(p)), "");
     observe({ issues: after.state.issues });
     await c.close();

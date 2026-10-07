@@ -143,7 +143,8 @@ async function capture(name, locator) {
 async function openBankJob() {
   await page.goto(`${uiBase}/#/desk`);
   await page.getByRole('button', { name: /^Schedule\b/ }).first().click();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  // A fresh office has no role pack, so Schedule's list leaves the Auston job out (#54); the sidebar's deep link opens it.
+  await page.getByRole('button', { name: /^Bank reference review\b/ }).first().click();
   await strip().or(page.getByRole('region', { name: 'Set up bank imports', exact: true })).first().waitFor();
 }
 const stripSays = text => strip().getByText(text, { exact: false }).first().waitFor({ timeout: 30_000 });
@@ -436,6 +437,8 @@ try {
     const sites = [siteFromMap('rei-cloud', { origin: FICTIONAL_REI_ORIGIN, signIn: { host: new URL(FICTIONAL_REI_SIGNIN).host }, scope: { urlParam: 'reicid' } })];
     let day = '2026-09-03';
     const host = createW1Host({ dataDir: dir, provider: () => w1lab.provider, coverage: new RedbarkCoverage(dir), store: () => store, today: async () => day,
+      // A fictional tenant list saved just now: the host refuses a batch while the saved list is stale.
+      tenantDirectory: () => ({ savedAt: Date.now() }),
       runtime: w1lab.runtime, load: w1lab.load, lab: null, pollMs: 0, signInHolding: () => false,
       // Production wiring: the selected browser only while the work browser is ready.
       browserId: async () => { const state = await native.status(); return state.state === 'ready' ? state.selectedBrowserId : null; },

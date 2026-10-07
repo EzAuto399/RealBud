@@ -58,7 +58,7 @@ describe("the loop's read-only grant refuses anything but reading", () => {
   it("refuses every upload, export, money, send or notice recipe before the browser is touched", async () => {
     const pack = fictionalReiPack(), map = await loadPortalSiteMap("rei-cloud");
     expect(loopReadRefusal(pack, map, reiMorningRuns("2026-09-25"))).toBeNull();
-    for (const recipe of ["receipt-register", "tenant-list", "supplier-list", "bulk-receipting-preview", "post-import-readback", "bill-entry-study"]) {
+    for (const recipe of ["receipt-register", "supplier-list", "bulk-receipting-preview", "post-import-readback", "bill-entry-study"]) {
       expect(loopReadRefusal(pack, map, [{ recipe, inputs: { date_from: "2026-09-25", date_to: "2026-09-25" } }]), recipe).toMatch(/not a read recipe/);
     }
     // A recipe that calls itself read but opens a money page, presses Notice or Send, exports or uploads is refused all the same.
@@ -137,7 +137,8 @@ describe("the REI morning refresh", () => {
     const f = await fixture();
     const first = await f.refresh.run();
     expect(first, first.detail).toMatchObject({ ok: true, status: "completed" });
-    expect(first.detail, first.detail).toMatch(/Every part is fresh from REI\. REI shows 1 task due today\./);
+    // Tasks are filtered by Date Due only (live REI's status select has no name): the closed task due today counts too.
+    expect(first.detail, first.detail).toMatch(/Every part is fresh from REI\. REI shows 2 tasks due today\./);
     expect(bravo(f.desk)).toMatchObject({ amountOwingCents: 54_000, owner: { name: "Fictional Owner One" }, rei: { tenancy: "FT-BRAVO" } });
     // Names now agree across REI's grids: Bravo's arrears row lands, Juliet's deliberately different spelling is held.
     const issues = f.desk.snapshot().book!.importIssues.map(issue => `${issue.kind} ${issue.rawIdentity}`);
