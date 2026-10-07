@@ -6089,6 +6089,8 @@ const customerPacks = createCustomerPackService({ directory: DATA_DIR,
     if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) throw new Error('Schedule recovery is active.');
     await austinPack.applyPackLoops(packLoops);
   },
+  // Kevin's role pack is an agency workflow pack: importing it chooses it when nothing is chosen yet.
+  selectWorkflowPack: async packId => { if (await agencySetup.selectInstalledPack(packId)) stopWorkAfterAgencySetupChange(); },
   officePacks: () => officeLink.officePacks(),
   pauseSchedules: async packId => {
     if ((await agencySetup.getConfiguration()).settings.workflowPackId !== packId) return;
