@@ -420,9 +420,8 @@ async function runPerson(who) {
       await page.getByRole('button', { name: 'Open packs from your office', exact: true }).waitFor();
       await pressByKeyboard('Open packs from your office');
       const setup = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
-      await setup.getByRole('region', { name: 'Packs from your office', exact: true }).getByText(/Until then, preview a built-in role pack under More setup options below\.$/).waitFor({ timeout: 30_000 });
+      await setup.getByRole('region', { name: 'Packs from your office', exact: true }).getByText(/Until then, preview your role pack built into RealBud below\.$/).waitFor({ timeout: 30_000 });
       c('Keyboard: Desk Get started → "Open packs from your office"; the office has shared no packs yet, so it points to the built-in role packs');
-      await setup.getByText('More setup options (office owner)', { exact: true }).click();
       await setup.getByRole('button', { name: `Preview built-in ${role.title}`, exact: true }).click();
       const review = setup.getByRole('group', { name: 'Review customer pack import', exact: true });
       await review.waitFor();

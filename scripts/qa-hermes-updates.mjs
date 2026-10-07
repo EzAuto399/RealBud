@@ -24,7 +24,7 @@ try {
   const reservation = createServer(); await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(root, 'server/index.ts')], { cwd: root, env: { PATH: process.env.PATH, HOME: scratch, USERPROFILE: scratch, REALBUD_HERMES_CLI: join(scratch, 'missing-worker'), REALBUD_DATA_DIR: data, VITEST: 'true', OMB_PORT: String(port), OMB_STATIC_DIR: join(root, 'dist') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(process.execPath, [join(root, 'server/index.ts')], { cwd: root, env: { PATH: process.env.PATH, HOME: scratch, USERPROFILE: scratch, REALBUD_HERMES_CLI: join(scratch, 'missing-worker'), REALBUD_DATA_DIR: data, VITEST: 'true', OMB_PORT: String(port), OMB_STATIC_DIR: process.env.REALBUD_UI_DIR || join(root, 'dist') }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
   await until(async () => (await fetch(`${base}/api/health`)).ok, 'server startup');
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
@@ -66,9 +66,9 @@ try {
   await page.getByRole('textbox', { name: 'Your name', exact: true }).fill('Fictional PM');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Continue to Bud setup', exact: true }).click();
-  let setup = page.getByRole('dialog', { name: 'Set up Bud', exact: true }); await setup.waitFor();
-  assert.equal(new URL(page.url()).hash, '#/ask', 'first-run setup remains on Ask');
-  await page.locator('.ask-composer textarea').first().waitFor({ state: 'attached' });
+  let setup = page.getByRole('dialog', { name: 'Bud status', exact: true }); await setup.waitFor();
+  // First run lands on Desk, where Get started lives; setup opens over it.
+  assert.ok(['', '#/desk'].includes(new URL(page.url()).hash), 'first-run setup opens over Desk');
   const install = setup.getByRole('button', { name: 'Install Bud', exact: true });
   await until(() => install.isEnabled(), 'Windows install available without shell command');
   await install.click();
@@ -80,10 +80,11 @@ try {
   assert.equal(installs, 1, 'a failed progress read never repeats installation');
   await setup.getByRole('button', { name: 'Stop setup', exact: true }).click();
   await setup.getByText(/Setup stopped before it finished/).waitFor(); assert.equal(cancels, 1);
-  await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
+  await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
+  await page.evaluate(() => { location.hash = '#/ask'; });
   const composer = page.locator('.ask-composer textarea').first(); await composer.fill('Prepare a repair follow-up for my first property.');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
-  setup = page.getByRole('dialog', { name: 'Set up Bud', exact: true });
+  setup = page.getByRole('dialog', { name: 'Bud status', exact: true });
   await setup.getByText(/Setup stopped before it finished/).waitFor();
   await setup.getByRole('button', { name: 'Install Bud', exact: true }).click(); assert.equal(installs, 2);
   for (const width of [390, 320]) {
@@ -96,34 +97,34 @@ try {
   installed = true; job = { state: 'done', error: null };
   await setup.getByText('Connected to Fictional Harbour Agency', { exact: true }).first().waitFor({ timeout: 10000 });
   assert.equal(await setup.getByText('Bud is ready', { exact: true }).count(), 0, 'installed is not ready without a model check');
-  await setup.getByRole('button', { name: 'Close Set up Bud', exact: true }).click();
+  await setup.getByRole('button', { name: 'Close Bud status', exact: true }).click();
   assert.equal(await composer.inputValue(), 'Prepare a repair follow-up for my first property.');
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
-  setup = page.getByRole('dialog', { name: 'Set up Bud', exact: true });
-  await setup.getByText('Agent updates', { exact: true }).click();
-  const checkUpdates = setup.getByRole('button', { name: 'Check agent updates', exact: true });
+  setup = page.getByRole('dialog', { name: 'Bud status', exact: true });
+  await setup.getByText('Bud updates', { exact: true }).click();
+  const checkUpdates = setup.getByRole('button', { name: 'Check Bud updates', exact: true });
   await checkUpdates.click(); await setup.getByRole('alert').filter({ hasText: 'Could not check agent releases' }).waitFor();
   checksFail = false; await checkUpdates.click();
-  await setup.getByText(/Compatibility testing is still needed/).waitFor();
-  await setup.getByRole('button', { name: 'Install recommended agent', exact: true }).click();
-  await setup.getByRole('button', { name: 'Stop agent setup', exact: true }).waitFor();
-  assert.equal(await setup.getByRole('button', { name: 'Install recommended agent', exact: true }).isEnabled(), false);
-  await setup.getByRole('button', { name: 'Stop agent setup', exact: true }).click();
+  await setup.getByText(/RealBud has not yet confirmed compatibility/).waitFor();
+  await setup.getByRole('button', { name: 'Install recommended Bud build', exact: true }).click();
+  await setup.getByRole('button', { name: 'Stop Bud setup', exact: true }).waitFor();
+  assert.equal(await setup.getByRole('button', { name: 'Install recommended Bud build', exact: true }).isEnabled(), false);
+  await setup.getByRole('button', { name: 'Stop Bud setup', exact: true }).click();
   await setup.getByRole('alert').filter({ hasText: 'Setup stopped' }).waitFor();
-  await setup.getByRole('button', { name: 'Install recommended agent', exact: true }).click();
+  await setup.getByRole('button', { name: 'Install recommended Bud build', exact: true }).click();
   updateState = { ...updateState, selected: updateState.recommended, restartRequired: true, canRestorePrevious: true };
   job = { state: 'done', error: null };
-  await setup.getByText('Agent prepared and verified. Quit and reopen RealBud to use it, then run the readiness check.', { exact: true }).waitFor({ timeout: 10000 });
-  await setup.getByRole('button', { name: 'Use previous agent', exact: true }).click();
-  await setup.getByText(/Previous agent selected/).waitFor();
+  await setup.getByText(/^Bud's update is ready\. .+ to use it/).waitFor({ timeout: 10000 });
+  await setup.getByRole('button', { name: 'Use previous Bud build', exact: true }).click();
+  await setup.getByText(/Previous Bud build selected/).waitFor();
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: join(out, `agent-updates-${width}.png`) });
   }
   assert.deepEqual(errors, []);
-  const result = { passed: true, checks: ['fresh onboarding opens setup over Ask', 'Windows action enabled', 'progress recovers without duplicate install', 'cancel and retry', 'failure survives reopening panel', '320/390px layout and touch target', 'successful install advances to model connection', 'not ready prematurely', 'Ask draft preserved', 'agent check offline and retry', 'unapproved upstream release disclosed', 'private agent update starts', 'duplicate install disabled', 'cancel agent setup', 'retry failed agent setup', 'verified update awaits restart', 'previous agent selection', 'agent updates fit 320/390px'], liveInstallation: false, liveProvider: false };
+  const result = { passed: true, checks: ['fresh onboarding opens setup over Desk', 'Windows action enabled', 'progress recovers without duplicate install', 'cancel and retry', 'failure survives reopening panel', '320/390px layout and touch target', 'successful install advances to model connection', 'not ready prematurely', 'Ask draft preserved', 'agent check offline and retry', 'unapproved upstream release disclosed', 'private agent update starts', 'duplicate install disabled', 'cancel agent setup', 'retry failed agent setup', 'verified update awaits restart', 'previous agent selection', 'agent updates fit 320/390px'], liveInstallation: false, liveProvider: false };
   writeFileSync(join(out, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
 } catch (error) {
   await page?.screenshot({ path: join(out, 'failure.png') }).catch(() => {});
