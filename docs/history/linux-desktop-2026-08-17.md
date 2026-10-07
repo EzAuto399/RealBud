@@ -1,3 +1,7 @@
+> Historical snapshot from 17 August 2026, superseded on 5 October 2026: RealBud supports macOS and Windows only.
+> The Linux packaging targets, `pnpm package:linux` and the Ubuntu package scripts it names were removed.
+> Instructions and verification claims below describe that earlier beta only.
+
 # Ubuntu Desktop
 
 RealBud has an Ubuntu 24.04 LTS x86_64 desktop beta. The Electron package embeds the harness server, so
