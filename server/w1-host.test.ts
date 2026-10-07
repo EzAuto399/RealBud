@@ -394,10 +394,8 @@ describe("W1 host", () => {
 
   it("an incomplete Receipt Register is never proof that nothing reached REI: no upload is offered", windowsAdmissionTimeout(255), async () => {
     // The register is exported for a period that ends before the batch: REI's file does not cover the window.
-    const short = { on: true };
-    const f = await fixture(lab => ({ load: async portal => {
-      const pack = await lab.load(portal), recipe = pack.recipes["receipt-register"];
-      if (!short.on) return pack;
+    const f = await fixture(lab => ({ load: async () => {
+      const pack = await lab.load(), recipe = pack.recipes["receipt-register"];
       return { ...pack, recipes: { ...pack.recipes, "receipt-register": { ...recipe, steps: recipe.steps.map(step => "type" in step && (step.type as { field?: string }).field === "To Date" ? { type: { field: "To Date", value: "2026-09-01" } } : step) } } };
     } }));
     await f.configure();

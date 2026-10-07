@@ -143,7 +143,8 @@ async function capture(name, locator) {
 async function openBankJob() {
   await page.goto(`${uiBase}/#/desk`);
   await page.getByRole('button', { name: /^Schedule\b/ }).first().click();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  // A fresh office has no role pack, so Schedule's list leaves the Auston job out (#54); the sidebar's deep link opens it.
+  await page.getByRole('button', { name: /^Bank reference review\b/ }).first().click();
   await strip().or(page.getByRole('region', { name: 'Set up bank imports', exact: true })).first().waitFor();
 }
 const stripSays = text => strip().getByText(text, { exact: false }).first().waitFor({ timeout: 30_000 });
