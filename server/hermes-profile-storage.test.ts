@@ -389,9 +389,13 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     //
     // 2026-10-05: admissions fresh 74 -> 78, reapply 55 -> 57. The portal-explore
     // skill (one directory, one file). Launch counts are unchanged.
+    //
+    // 2026-10-07: admissions fresh 78 -> 64, reapply 57 -> 50. domain-intel
+    // (2 directories, 3 files) and intake-properties (1 directory, 1 file) left
+    // core: 7 fewer paths. Launch counts are unchanged.
     expect({ fresh, reapply, startup }).toEqual({
-      fresh: { launches: 5, admissions: 78 },
-      reapply: { launches: 7, admissions: 57 },
+      fresh: { launches: 5, admissions: 64 },
+      reapply: { launches: 7, admissions: 50 },
       startup: { launches: 3, admissions: 9 },
     });
   });

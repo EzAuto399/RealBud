@@ -4,12 +4,15 @@ import { fileURLToPath } from 'node:url';
 import type { CustomerPack } from '../shared/customer-packs.ts';
 
 const workflows = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows');
+/** Shipped text read with LF line endings, so a CRLF checkout or editor save
+ * yields the same bytes on Windows as on macOS. */
+const readText = (path: string) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 
 /** The REI recipes and site map shipped with the app, read at call time so
  * reviewed changes to them need no hash pin here. */
 export function austinReiFiles(): { 'rei/recipes.json': string; 'rei/site-map.json': string } {
   const rei = join(workflows, 'austin-accounts', 'support/rei-cloud-navigation');
-  return { 'rei/recipes.json': readFileSync(join(rei, 'recipes.json'), 'utf8'), 'rei/site-map.json': readFileSync(join(rei, 'site-map.json'), 'utf8') };
+  return { 'rei/recipes.json': readText(join(rei, 'recipes.json')), 'rei/site-map.json': readText(join(rei, 'site-map.json')) };
 }
 
 /** Published bytes, read fresh on every call like office-core; never rebuilt

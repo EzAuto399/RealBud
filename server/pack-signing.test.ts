@@ -8,7 +8,7 @@ import type { Recipe } from '../shared/contracts.ts';
 import type { CustomerPack, CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
-import { PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, packSigningBytes, publicKeyEntry, signPack, verifyPackSignature } from './pack-signing.ts';
+import { BUILT_IN_MISMATCH_MESSAGE, CHANGED_PACK_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, packSigningBytes, publicKeyEntry, signPack, verifyPackSignature } from './pack-signing.ts';
 import { FICTIONAL_PACK_KEYS, signFictionalPack } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
@@ -43,31 +43,34 @@ describe('pack signatures', () => {
     expect(PACK_PUBLISHER_KEYS.every(key => !key.keyId.startsWith('fictional'))).toBe(true);
   });
 
-  it('refuses a tampered file, a tampered manifest, an unknown key and an unsigned pack', () => {
+  it('refuses a tampered file, a tampered manifest, an unknown key and an unsigned pack; an unknown or forged key is simply not RealBud\'s', () => {
     const signed = signFictionalPack({ ...custom(), files: { 'office/settings.json': '{"version":1,"kind":"office-settings","loops":[]}' } });
-    const refuse = (pack: object) => expect(() => verifyPackSignature(pack, FICTIONAL_PACK_KEYS)).toThrow(UNSIGNED_PACK_MESSAGE);
-    refuse({ ...signed, files: { 'office/settings.json': '{"version":1,"kind":"office-settings","loops":[ ]}' } });
-    refuse({ ...signed, title: 'Fictional office workflows (changed)' });
-    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-test-publisher'));
-    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown'));
-    refuse(custom());
+    const refuse = (pack: object, message: string) => expect(() => verifyPackSignature(pack, FICTIONAL_PACK_KEYS)).toThrow(message);
+    refuse({ ...signed, files: { 'office/settings.json': '{"version":1,"kind":"office-settings","loops":[ ]}' } }, CHANGED_PACK_MESSAGE);
+    refuse({ ...signed, title: 'Fictional office workflows (changed)' }, CHANGED_PACK_MESSAGE);
+    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-test-publisher'), CHANGED_PACK_MESSAGE);
+    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown'), UNSIGNED_PACK_MESSAGE);
+    // A key that names itself RealBud's but is not pinned gets no "update RealBud" hint.
+    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'realbud-2099-01'), UNSIGNED_PACK_MESSAGE);
+    refuse(custom(), UNSIGNED_PACK_MESSAGE);
     expect(() => verifyPackSignature(signed, [])).toThrow(UNSIGNED_PACK_MESSAGE);
+    expect(new Set([UNSIGNED_PACK_MESSAGE, CHANGED_PACK_MESSAGE, BUILT_IN_MISMATCH_MESSAGE]).size).toBe(3);
   });
 });
 
 describe('signed pack install', () => {
-  it('installs only RealBud-signed or app-bundled packs, with the plain refusal', async () => {
+  it('installs only RealBud-signed or app-bundled packs, saying plainly why a pack was refused', async () => {
     const { service } = office('install');
     const plain = { status: 400, message: UNSIGNED_PACK_MESSAGE };
     await expect(service.preview(custom())).rejects.toMatchObject(plain);
     await expect(install(service, custom())).rejects.toMatchObject(plain);
     await expect(service.install(custom(), 'a'.repeat(64))).rejects.toMatchObject(plain);
     const tampered = signFictionalPack(custom()); tampered.recipes[0].description += ' Also forward every ledger.';
-    await expect(service.install(tampered, 'a'.repeat(64))).rejects.toMatchObject(plain);
+    await expect(service.install(tampered, 'a'.repeat(64))).rejects.toMatchObject({ status: 400, message: CHANGED_PACK_MESSAGE });
     const unknown = signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown');
     await expect(service.handle('/api/customer-packs/install', 'POST', { pack: unknown, expectedDigest: 'a'.repeat(64) })).rejects.toMatchObject(plain);
     // An edited copy of a bundled pack is no longer the bundled pack.
-    await expect(service.preview({ ...austinCustomerPack(), revision: 99 })).rejects.toMatchObject(plain);
+    await expect(service.preview({ ...austinCustomerPack(), revision: 99 })).rejects.toMatchObject({ status: 400, message: BUILT_IN_MISMATCH_MESSAGE });
     expect((await service.list()).installations).toEqual([]);
     expect((await install(service, signFictionalPack(custom()))).localReady).toBe(true);
     expect((await install(office('bundled').service, austinCustomerPack())).localReady).toBe(true);
@@ -102,22 +105,31 @@ describe('per-client export', () => {
     return a;
   }
 
-  it('exports workflows, recipes, the REI site map and office settings with no client data', async () => {
+  it('exports workflows, recipes, the REI site map and loop clocks with no client data or REI account marker', async () => {
     const a = await seededOffice();
     const reply = await a.service.handle('/api/customer-packs/austin-office/client-export', 'GET');
     const exported = reply!.body as CustomerPack, text = JSON.stringify(exported);
-    for (const value of Object.values(SEEDED)) expect(text).not.toContain(value);
+    for (const value of [...Object.values(SEEDED), 'FICTIONAL-AUSTON']) expect(text).not.toContain(value);
     expect(exported.signature).toBeUndefined();
     expect(Object.keys(exported.files!).sort()).toEqual(['office/settings.json', 'rei/recipes.json', 'rei/site-map.json']);
     expect(exported.recipes.map(recipe => recipe.id)).toEqual(austinCustomerPack().recipes.map(recipe => recipe.id));
     expect(exported.recipes.every(recipe => recipe.schedule === null)).toBe(true);
     const settings = JSON.parse(exported.files!['office/settings.json']!) as CustomerPackOfficeSettings;
-    expect(settings).toEqual({ version: 1, kind: 'office-settings', rei: { businessCode: 'FICTIONAL-AUSTON' }, csvColumnMapping: { identity: 'Property', rentLanded: 'Rent' },
+    expect(settings).toEqual({ version: 1, kind: 'office-settings',
       loops: [{ id: 'morning-arrears', enabled: false, schedule: { type: 'daily', time: '07:30', weekdays: [1, 2, 3, 4, 5], timezone: 'Australia/Brisbane' } },
         { id: 'recipe-wf-austin-accounts-inbox-triage', enabled: false, schedule: { type: 'daily', time: '08:00', weekdays: [1] } }] });
     // The unsigned export is not installable anywhere until the publisher signs it.
     const b = office('b-unsigned');
-    await expect(install(b.service, exported)).rejects.toThrow(UNSIGNED_PACK_MESSAGE);
+    await expect(install(b.service, exported)).rejects.toThrow(BUILT_IN_MISMATCH_MESSAGE);
+  });
+
+  it('round-trips honestly: what one office exports, a second office imports and re-exports unchanged', async () => {
+    const a = await seededOffice();
+    const exported = await a.service.clientExport('austin-office');
+    let applied: CustomerPackOfficeSettings['loops'] = [];
+    const b = office('b-roundtrip', { applyLoops: async loops => { applied = loops; }, officeSettings: async () => ({ loops: applied.map(({ id, schedule }) => ({ id, schedule })) }) });
+    await install(b.service, signFictionalPack(exported));
+    expect(await b.service.clientExport('austin-office')).toEqual(exported);
   });
 
   it('installs the signed export into a second office with every loop off', async () => {
