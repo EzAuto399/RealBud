@@ -167,11 +167,14 @@ export function createW1Host(deps: W1HostDeps) {
   // attributed readback (w1ImportProof); confirm-import refuses without it.
   const saved_ = (() => {
     const path = join(deps.dataDir, "w1", "evidence.json");
-    type Evidence = { version: 1; kind: "w1-evidence"; baselines: Record<string, W1RegisterBaseline>; proofs: Record<string, W1ImportProof> };
+    /** `notSent`: attempts refused before the upload stage started (no upload grant used, no upload step run). Files written
+     * before it existed have none: those attempts keep the readback rule. */
+    type Evidence = { version: 1; kind: "w1-evidence"; baselines: Record<string, W1RegisterBaseline>; proofs: Record<string, W1ImportProof>; notSent?: Record<string, { at: string; reason: string }> };
     const read = async (): Promise<Evidence> => {
       const value = await readPrivateJson(path, 4_000_000);
-      if (value === undefined) return { version: 1, kind: "w1-evidence", baselines: {}, proofs: {} };
-      if (!keys(value, ["version", "kind", "baselines", "proofs"]) || value.version !== 1 || value.kind !== "w1-evidence" || !object(value.baselines) || !object(value.proofs))
+      if (value === undefined) return { version: 1, kind: "w1-evidence", baselines: {}, proofs: {}, notSent: {} };
+      if (!(keys(value, ["version", "kind", "baselines", "proofs"]) || keys(value, ["version", "kind", "baselines", "proofs", "notSent"])) || value.version !== 1 || value.kind !== "w1-evidence" ||
+          !object(value.baselines) || !object(value.proofs) || (value.notSent !== undefined && !object(value.notSent)))
         return fail(503, "The saved bank import evidence needs recovery. Nothing was changed.");
       return value as unknown as Evidence;
     };
@@ -181,6 +184,8 @@ export function createW1Host(deps: W1HostDeps) {
       proof: async (batchId: string) => (await read()).proofs[batchId] ?? null,
       saveBaseline: (attemptId: string, baseline: W1RegisterBaseline) => write(file => { file.baselines[attemptId] = baseline; }),
       saveProof: (proof: W1ImportProof) => write(file => { file.proofs[proof.batchId] = proof; }),
+      notSent: async (attemptId: string) => Boolean((await read()).notSent?.[attemptId]),
+      saveNotSent: (attemptId: string, reason: string) => write(file => { (file.notSent ??= {})[attemptId] = { at: new Date().toISOString(), reason: reason.slice(0, 300) }; }),
     };
   })();
   /** A batch's proof, only while it names the saved REI account (same business code and reicid or none). */
@@ -391,7 +396,14 @@ export function createW1Host(deps: W1HostDeps) {
         if (before.status !== "read") fail(409, `REI's Receipt Register could not be read before the upload, so nothing was uploaded${before.detail ? `: ${before.detail}` : "."}`);
         else await saved_.saveBaseline(attemptId, before.baseline);
         ctx = await context_("preview", prepared.batch.destination.marker, { name: prepared.batch.artifact.name, bytes: prepared.bytes });
-      } catch (error) { if (message(error) === LIST_CHANGED) listChanged.add(attemptId); note(message(error)); throw error; }
+      } catch (error) {
+        if (message(error) === LIST_CHANGED) listChanged.add(attemptId);
+        // Refused before the upload stage started: the preview grant (if issued) was never used and no upload step ran.
+        // Saved durably so the person may close this import directly. If the save fails, the readback rule stays.
+        await saved_.saveNotSent(attemptId, message(error)).catch(() => undefined);
+        note(message(error)); throw error;
+      }
+      // From here the upload stage may run: a lost reply or unknown result is never "not sent".
       const outcome = await preview(prepared.batch, ctx);
       if (outcome.status === "not-uploaded" || outcome.status === "unknown-upload") {
         note(outcome.status === "not-uploaded" ? `Nothing was uploaded${outcome.detail ? `: ${outcome.detail}` : "."}` : "The upload may have reached REI, but its preview was not confirmed.");
@@ -456,7 +468,9 @@ export function createW1Host(deps: W1HostDeps) {
     // Read "working" before the run, so a run read while work was going on is never shown as settled.
     const busy = new Set(working.keys());
     const run = await latest(), office = await readW1Settings(deps.dataDir);
-    return { settings: office, run, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
+    // "Close and prepare again" without a readback: only an upload attempt the evidence proves never started.
+    const closable = !!run && !busy.has(run.id) && run.step === "check_outcome" && run.uncertain?.kind === "upload" && !!run.upload && !run.upload.preview && await saved_.notSent(run.upload.attemptId);
+    return { settings: office, run, closable, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
       readback: run ? readbacks.get(run.id) ?? null : null, handoff: run ? handoffs.get(run.id) ?? null : null, signIn: run ? signingIn.get(run.id) ?? null : null };
   }
   const revisionOf = (body: unknown) => keys(body, ["expectedRevision"]) && Number.isSafeInteger(body.expectedRevision) ? Number(body.expectedRevision) : fail(400, "Send the bank import's current revision.");
@@ -517,7 +531,7 @@ export function createW1Host(deps: W1HostDeps) {
       kick(id);
     }
     if (action === "retry-upload") { await workflow.retryUpload(id, revisionOf(body)); kick(id); }
-    if (action === "abandon") await workflow.abandon(id, revisionOf(body));
+    if (action === "abandon") await workflow.abandon(id, revisionOf(body), saved_.notSent);
     // Stop is always allowed: it ends the browser stage in flight (and its open ask) and starts nothing.
     if (action === "stop") {
       const stop = stops.get(id);

@@ -444,10 +444,37 @@ describe("W1 host", () => {
       f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
       await refused(f, "The REI tenant list changed since this batch was prepared. Prepare it again.");
       // Checking again changes nothing: still unknown with the same sentence, and nothing was sent.
-      const now = await f.act("advance");
+      let now = await f.act("advance");
       expect(now.note).toBe("The REI tenant list changed since this batch was prepared. Prepare it again.");
       expect(now.run).toMatchObject({ attention: { reason: "outcome_unknown" } });
       expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+      // RealBud refused before the upload stage started, and its saved evidence says so: "Close and prepare again" directly.
+      expect(now.closable).toBe(true);
+      now = await f.act("abandon");
+      expect(now.run).toMatchObject({ step: "done", outcome: "abandoned" });
+    });
+
+    it("an upload whose reply was lost can't be closed until REI's register shows nothing", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed(null);
+      await f.lab.handle({ action: "lost-reply" });
+      await f.act("advance");
+      // Allow the baseline read and the upload, decline the register download after it: the outcome stays unknown.
+      let now = await f.settle(), uploaded = false;
+      while (now.ask) {
+        const allowed = !uploaded;
+        uploaded ||= now.ask.tool === "browser_upload";
+        await f.call(`/api/w1/runs/${now.run!.id}/answer`, "POST", { requestId: now.ask.requestId, allowed });
+        now = await f.settle();
+      }
+      expect(uploaded).toBe(true);
+      expect(now.run).toMatchObject({ step: "check_outcome", uncertain: { kind: "upload", inspection: "unknown" } });
+      expect(now.closable).toBe(false);
+      await expect(f.act("abandon")).rejects.toMatchObject({ status: 409 });
+      // Once REI's complete register shows nothing, it may be closed.
+      await f.act("advance");
+      now = await f.answer();
+      expect(now.run).toMatchObject({ attention: { reason: "nothing_found" } });
+      expect((await f.act("abandon")).run).toMatchObject({ step: "done", outcome: "abandoned" });
     });
 
     it("a batch mixing the saved list and the office's rules is refused while the list is stale", windowsAdmissionTimeout(255), async () => {
