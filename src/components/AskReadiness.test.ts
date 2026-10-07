@@ -66,7 +66,7 @@ describe("Ask readiness permission and status", () => {
   });
   it("keeps a manual administrator check when the automatic guard has already run", () => {
     fakes.state.serviceAdmin = { managed: false };
-    expect(render()).toContain("Run readiness check");
+    expect(render()).toContain("Test Bud");
     expect(render()).not.toContain("Checking Bud’s connection");
   });
   it("keeps an explicit status warning over a previous ready receipt", () => {
@@ -84,7 +84,7 @@ describe("Ask readiness permission and status", () => {
     expect(html).toContain("Setting up Bud");
     expect(html).toContain("Step 1 of 4: downloading. Usually about 10 minutes.");
     expect(html).toContain("Nothing to do; keep RealBud open.");
-    expect(html).not.toMatch(/Run readiness check|Try check again|Finish Bud setup/);
+    expect(html).not.toMatch(/Test Bud|Try check again|Finish Bud setup/);
     expect(fakes.run).not.toHaveBeenCalled();
     expect(fakes.readiness).not.toHaveBeenCalled();
     expect(fakes.restore).not.toHaveBeenCalled();

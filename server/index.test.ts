@@ -560,7 +560,7 @@ describe("harness HTTP API", () => {
     expect(applied.body.pin.product).toBe("0.20.3");
     expect(applied.body.lastPing).toMatchObject({
       ok: false,
-      detail: "Property safeguards changed. Run the private readiness check again.",
+      detail: "Bud’s safeguards changed. Test Bud again.",
       kind: "ping",
     });
     expect(applied.body.ready).toBe(false);

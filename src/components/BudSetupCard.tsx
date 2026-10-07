@@ -734,7 +734,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => void runAction("verify")} disabled={locked || readinessPending} className={primaryButton}>
                 {busy === "verify" || readinessPending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Cpu size={14} />}
-                {busy === "verify" || readinessPending ? "Checking…" : "Run readiness check"}
+                {busy === "verify" || readinessPending ? "Checking…" : "Test Bud"}
               </button>
               <button type="button" onClick={openModelSheet} disabled={locked} className={secondaryButton}>
                 Change model
