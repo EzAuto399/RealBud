@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-07T13:53:45.874Z",
+  "mode": "OMB_SMOKE_TEST=1",
+  "args": [
+    "--user-data-dir=<scratch>/user-data",
+    "--use-mock-keychain"
+  ],
+  "expectedVersion": "0.1.36",
+  "smoke": {
+    "ok": true,
+    "title": "RealBud",
+    "location": "http://127.0.0.1:8799/",
+    "platform": "darwin",
+    "health": {
+      "app": "realbud",
+      "static": true,
+      "version": "0.1.36",
+      "instanceIdMatches": true
+    },
+    "company": {
+      "remoteJoinAvailable": true,
+      "configured": false
+    }
+  },
+  "versionMatches": true,
+  "exitedOnItsOwn": true,
+  "exitCode": 0,
+  "serviceStopped": true,
+  "cuaConsoleLines": []
+}

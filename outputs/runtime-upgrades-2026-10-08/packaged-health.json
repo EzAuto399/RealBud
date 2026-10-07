@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-07T13:51:49.354Z",
+  "executable": "release/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "args": [
+    "--user-data-dir=<scratch>/user-data",
+    "--use-mock-keychain"
+  ],
+  "env": {
+    "HOME": "<scratch>/home",
+    "HERMES_HOME": "<scratch>/home/.hermes",
+    "REALBUD_DATA_DIR": "<scratch>/data",
+    "REALBUD_LOG_DIR": "<scratch>/logs",
+    "OMB_USER_DATA": "<scratch>/user-data"
+  },
+  "expectedVersion": "0.1.36",
+  "health": {
+    "port": 8799,
+    "app": "realbud",
+    "static": true,
+    "version": "0.1.36",
+    "busy": false,
+    "instanceIdMatches": true
+  },
+  "versionMatches": true,
+  "stopped": true,
+  "electronExited": true
+}
