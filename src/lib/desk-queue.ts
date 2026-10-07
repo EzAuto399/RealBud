@@ -2,6 +2,9 @@
 import type { DeskSnapshot, Draft, DraftStatus, WorkItem, WorkKind, WorkState } from "../../shared/contracts.ts";
 import { startOfDay } from "./au.ts";
 
+/** Same key as server/desk.ts REI_PAGE_CHANGED_KEY (server/rei-morning-refresh.test.ts builds this queue from a real Desk). */
+const REI_PAGE_CHANGED_KEY = "rei-page-changed:";
+
 export const CASE_KIND_LABELS: Record<string, string> = {
   "money-arrears": "Money",
   "owner-update": "Owner update",
@@ -131,6 +134,15 @@ export function recoveryPlanFor(item: DeskQueueItem): DeskRecoveryPlan {
     ].join("\n\n"),
   });
 
+  if (reason.startsWith("REI's page changed")) {
+    return {
+      headline: "REI's page changed",
+      missing: "A recipe that matches REI's current page",
+      source: "REI Cloud, read through the shipped recipe pack",
+      next: "RealBud needs a recipe update; Desk stays marked not fresh and nothing in REI was changed",
+      action: "none",
+    };
+  }
   if (item.kind === "import-issue" || /unmatched|ambiguous|zero-match/i.test(reason)) {
     return {
       headline: "The source row is not linked to one property",
@@ -341,6 +353,25 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
   }
 
   for (const work of snap.workItems) {
+    // REI's page changed under a part's recipe (server/desk.ts noteReiPageChanged): one office-level
+    // item per part in Needs you while it is open; a fresh read of that part clears it.
+    if (work.occurrenceKey.startsWith(REI_PAGE_CHANGED_KEY)) {
+      seenWork.add(work.id);
+      if (work.state !== "held") continue;
+      rows.push({
+        id: `work:${work.id}`,
+        kind: "import-issue",
+        bucket: "now",
+        state: work.state,
+        address: `REI Cloud ${work.occurrenceKey.slice(REI_PAGE_CHANGED_KEY.length)}`,
+        action: "Needs a recipe update",
+        meta: work.holdReason ?? "REI's page changed",
+        holdReason: work.holdReason,
+        updatedAt: work.updatedAt,
+        workItemId: work.id,
+      });
+      continue;
+    }
     // An unmatched row is not blocked on anyone else — the PM matches it.
     if (isImportHold(work.holdReason)) {
       seenImport.add(work.id);
