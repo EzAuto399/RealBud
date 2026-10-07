@@ -39,9 +39,18 @@ export interface ApprovalSettings {
   groups: Record<string, ApprovalChoice>;
   /** Owner only: exact read-only tool names a direct connection may run without a card. */
   reviewedReads: string[];
+  /** Never saved (the validator refuses it): an office desktop that could not verify its
+   * department settings. `decide` then cards every call that would run. */
+  unchecked?: true;
 }
 /** Nothing set: every group keeps its default (see `decide`). */
 export const defaultApprovalSettings = (): ApprovalSettings => ({ version: 1, purpose: 'approval-settings', groups: {}, reviewedReads: [] });
+/** The governing entry of an office desktop with no verified department settings: it fails closed. */
+export const uncheckedOfficeSettings = (): ApprovalSettings => ({ ...defaultApprovalSettings(), unchecked: true });
+export const OFFICE_UNCHECKED = 'Office approval settings could not be checked, so Bud asks first.';
+/** True when a locked "Always asks" row for any of these classes is Don't use. */
+export const lockedOff = (list: readonly ApprovalSettings[], classes: readonly string[]): boolean =>
+  classes.some(cls => list.some(settings => settings.groups[`class:${cls}`] === 'deny'));
 
 /**
  * Tools that only read and change nothing, by exact Composio slug. This is
@@ -137,6 +146,7 @@ const groupDefault = (call: ApprovalCall): ApprovalChoice =>
   call.direct || call.group.startsWith('site:') ? 'ask' : 'read-without-asking';
 /** One department's (or this computer's) answer for one call. */
 function resolve(settings: ApprovalSettings, call: ApprovalCall): ApprovalChoice {
+  if (settings.unchecked) return 'ask';
   const choice = Object.hasOwn(settings.groups, call.group) ? settings.groups[call.group] : groupDefault(call);
   return choice === 'read-without-asking' && call.direct && !settings.reviewedReads.includes(call.tool) ? 'ask' : choice;
 }
@@ -181,7 +191,7 @@ export function decide(settingsList: readonly ApprovalSettings[], call: Approval
   const choice = strictest(list.map(settings => resolve(settings, call)));
   if (choice === 'deny') return 'refuse';
   if ((PER_INSTANCE_CLASSES as readonly string[]).includes(call.cls)) {
-    return list.some(settings => settings.groups[`class:${call.cls}`] === 'deny') ? 'refuse' : 'card';
+    return lockedOff(list, [call.cls]) ? 'refuse' : 'card';
   }
   if (call.cls !== 'read' || choice !== 'read-without-asking') return 'card';
   // Past today's line (a direct connection, a website) only the exact allowlist runs.

@@ -1202,7 +1202,8 @@ function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
     { tool: event.tool, params: event.params, summary: event.summary },
   );
   const payload = fencePayload(decision);
-  return payload ? { ...event, ...(canUseReviewedPortalRules(event, decision) ? { approvalPolicy: undefined } : {}), fence: payload } : event;
+  // A site's Ask every time stays once-only: no saved site rule may answer it.
+  return payload ? { ...event, ...(!decision.siteAsks && canUseReviewedPortalRules(event, decision) ? { approvalPolicy: undefined } : {}), fence: payload } : event;
 }
 
 bus.subscribe((raw: RuntimeEvent) => {
@@ -1360,6 +1361,8 @@ bus.subscribe((raw: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      // Set when the site's Ask every time decided this request: no generic rule answers it below.
+      let siteAsks = false;
       if (permission && asker && event.requestId && !fromBroker && event.tool !== HERMES_MEMORY_APPROVAL && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
         const fence = fenceContextFor(event.threadId);
         const request = { tool: event.tool, params: event.params, summary: event.summary };
@@ -1409,6 +1412,7 @@ bus.subscribe((raw: RuntimeEvent) => {
           break;
         }
         const decision = fenceDecision({ ...fence, ...effectiveRules() }, request);
+        siteAsks = decision.siteAsks === true;
         const allowNote = decision.kind === "allow" ? ruleAllowNote(decision) : undefined;
         if (!(onceApproval && decision.kind === 'allow')) recordFenceEvidence(
           event.threadId,
@@ -1457,7 +1461,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // says. Only standing rules settle one (guards still win).
       let settled: string | null = null;
       let ruleDeny = false;
-      if (permission && !onceApproval && !fromBroker && asker && event.requestId && event.tool !== "bud_connected_app_action") {
+      if (permission && !onceApproval && !fromBroker && !siteAsks && asker && event.requestId && event.tool !== "bud_connected_app_action") {
         const verdict = evaluateRules(loadRules(), event.tool, event.summary);
         if (verdict) {
           const key = approvalKey(event.tool, event.summary);
@@ -2038,6 +2042,8 @@ async function startSeatTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+      // An office desktop with no verified department settings fetches them with this person's own session first.
+      if (opts?.memberSession) { await approvals.verifyIfMissing({ headers: { 'x-realbud-member-session': opts.memberSession } }).catch(() => {}); await governingApprovals().catch(() => {}); assertDispatch(); }
       const access = !opts?.systemExtra ? await refreshOfficeSources() : null;
       assertDispatch();
       const allowedApps = officeAppsForTurn(access, Boolean(opts?.systemExtra));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, ruleAllowNote, type FenceContext } from "./portal-fence.ts";
-import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
+import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, fencePayload, hasReadBack, isComputerTool, normalizeToolName, ruleAllowNote, type FenceContext } from "./portal-fence.ts";
+import { uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 
 const ctx: FenceContext = {
   allowedOrigins: ["vantagestrata.com.au"],
@@ -333,5 +333,30 @@ describe("approval settings on the job fence", () => {
     // The log names what allowed the step: the setting, or a saved rule when there is one.
     expect(ruleAllowNote(fenceDecision({ ...ctx, approvals }, REQUESTS[0]))).toBe("allowed by approval settings · Reading on vantagestrata.com.au");
     expect(ruleAllowNote(fenceDecision({ ...all, approvals }, REQUESTS[0]))).toBe("allowed by rule · Reading on vantagestrata.com.au");
+  });
+
+  it("never lets Read without asking open an address that may change records, and a locked submit row refuses it", () => {
+    const approvals = settings({ "site:vantagestrata.com.au": "read-without-asking" });
+    for (const url of ["https://vantagestrata.com.au/submit?record=7", "https://vantagestrata.com.au/api/tickets?operation=update", "https://portal.vantagestrata.com.au/levy/delete"]) {
+      const request = { tool: "navigate", params: { url } };
+      expect(fenceDecision({ ...ctx, approvals }, request), url).toEqual(fenceDecision(ctx, request));
+      expect(fenceDecision({ ...ctx, approvals }, request).kind, url).toBe("ask");
+      expect(fenceDecision({ ...all, approvals: settings({ "class:submit": "deny" }) }, request), url).toMatchObject({ kind: "deny" });
+    }
+    expect(fenceDecision({ ...all, approvals: settings({ "class:submit": "deny" }) }, REQUESTS[1])).toEqual(fenceDecision(all, REQUESTS[1]));
+  });
+
+  it("marks every ask that a site's Ask every time (or unchecked office settings) requires, so no rule answers it and it offers none", () => {
+    for (const approvals of [settings({ "site:vantagestrata.com.au": "ask" }), [...settings({}), uncheckedOfficeSettings()]]) {
+      for (const request of REQUESTS.slice(0, 6).filter(row => row.params.label !== "Password")) {
+        const decision = fenceDecision({ ...all, approvals }, request);
+        expect(decision, `${request.tool} ${request.params.label ?? ""}`).toMatchObject({ kind: "ask", siteAsks: true });
+        expect(fencePayload(decision)?.ruleOffer, request.tool).toBeNull();
+      }
+    }
+    // Nothing saved: no mark, and the rule offer stays.
+    const today = fenceDecision(ctx, REQUESTS[0]);
+    expect(today).toEqual({ kind: "ask", surface: "portal-read", origin: "vantagestrata.com.au" });
+    expect(fencePayload(today)?.ruleOffer).not.toBeNull();
   });
 });

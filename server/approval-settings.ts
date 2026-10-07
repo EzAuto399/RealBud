@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { readPrivateJson, trimOldestToBytes, writePrivateJson } from './private-json.ts';
-import { defaultApprovalSettings, normalizeApprovalSettings, type ApprovalSettings } from '../shared/approval-settings.ts';
+import { defaultApprovalSettings, normalizeApprovalSettings, uncheckedOfficeSettings, type ApprovalSettings } from '../shared/approval-settings.ts';
 
 type Request = Pick<IncomingMessage, 'headers'>;
 type Reply = { status: number; body: unknown };
@@ -191,16 +191,27 @@ export function createApprovalSettings(options: {
 
     /** The settings that govern this desktop for `decide`: one per department
      * that governs its member (strictest merge happens in `decide`), else this
-     * computer's own. Throws when storage needs recovery; callers refuse. */
+     * computer's own. An office desktop with no verified copy for its member
+     * fails closed: this computer's own plus the unchecked mark, so whatever
+     * would run asks first. Throws when storage needs recovery; callers refuse. */
     async effective(): Promise<ApprovalSettings[]> {
       const seat = await options.seatIdentity();
       const local = (await load()).settings;
       if (seat === null) return [local];
       const copy = await loadCopy();
-      const governing = copy?.memberId === seat ? copy.departments.filter(department => department.governs) : [];
-      if (!copy || !governing.length) return [local];
+      if (copy?.memberId !== seat) return [local, uncheckedOfficeSettings()];
+      const governing = copy.departments.filter(department => department.governs);
+      if (!governing.length) return [local];
       const age = now() - copy.refreshedAt;
       return governing.map(department => age >= 0 && age <= STALE_MS ? department.settings : lapsed(department.settings));
+    },
+
+    /** Before a turn's first governed step: an office desktop with no verified copy for its member
+     * fetches one with the person's own member session. Nothing is fetched without one; it stays closed. */
+    async verifyIfMissing(request: Request): Promise<void> {
+      const seat = await options.seatIdentity();
+      if (seat === null || (await loadCopy())?.memberId === seat) return;
+      await verify(request, seat);
     },
 
     /** `/api/approvals` (GET, PUT) and `/api/approvals/history` (GET). */

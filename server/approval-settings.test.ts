@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApprovalSettings, onlyEditors, SIGN_IN_TO_CHANGE, type DepartmentApprovals } from './approval-settings.ts';
-import { decide, defaultApprovalSettings, type ApprovalChoice, type ApprovalSettings } from '../shared/approval-settings.ts';
+import { decide, defaultApprovalSettings, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from '../shared/approval-settings.ts';
 import { connectedAppPolicy } from './connected-apps-broker.ts';
 import { MAIL_SENDS } from '../shared/app-tool-policy.ts';
 
@@ -165,12 +165,36 @@ describe('approval settings in an office', () => {
     const dataDir = directory();
     let seat = MEMBER;
     const store = createApprovalSettings({ dataDir, seatIdentity: async () => seat, company: office([dept(ACCOUNTS, 'Accounts', true, accounts), dept(LEASING, 'Leasing', true, leasing)]).company, now: () => clock });
-    expect(await store.effective()).toEqual([settings()]); // never refreshed: this computer's own
+    expect(await store.effective()).toEqual([settings(), uncheckedOfficeSettings()]); // never verified: this computer's own, and ask first
     expect(await store.editor(signedIn)).toMatchObject({ ok: true });
     expect(await store.effective()).toEqual([accounts, leasing]);
     clock += 12 * 3_600_000 + 1;
     expect(await store.effective()).toEqual([settings({ 'app:outlook': 'deny' }), leasing]);
     seat = 'fictional-member-0002';
-    expect(await store.effective()).toEqual([settings()]);
+    expect(await store.effective()).toEqual([settings(), uncheckedOfficeSettings()]);
+  });
+
+  it('fails closed on a fresh office desktop until a turn verifies the department settings with the person\'s session', async () => {
+    const accounts = settings({ 'app:gmail': 'deny' });
+    const host = office([dept(ACCOUNTS, 'Accounts', false, accounts)]);
+    const store = createApprovalSettings({ dataDir: directory(), seatIdentity: async () => MEMBER, company: host.company });
+    const read = { group: 'app:gmail', tool: 'GMAIL_FETCH_EMAILS', args: {}, cls: 'read' as const };
+    // No verified copy: a Gmail read that would run asks first; blocked stays refused.
+    expect(decide(await store.effective(), read)).toBe('card');
+    expect(decide(await store.effective(), { ...read, tool: 'GMAIL_DELETE_MESSAGE', cls: 'blocked' })).toBe('refuse');
+    // Without the person's session nothing is fetched, and it stays closed.
+    await store.verifyIfMissing(signedOut);
+    expect(decide(await store.effective(), read)).toBe('card');
+    await store.verifyIfMissing(signedIn);
+    expect(await store.effective()).toEqual([accounts]);
+    expect(decide(await store.effective(), read)).toBe('refuse');
+    // A verified copy is not fetched again.
+    const fetched = host.calls.length;
+    await store.verifyIfMissing(signedIn);
+    expect(host.calls.length).toBe(fetched);
+    // A single desktop is unaffected.
+    const single = createApprovalSettings({ dataDir: directory(), seatIdentity: async () => null, company: host.company });
+    expect(await single.effective()).toEqual([settings()]);
+    expect(decide(await single.effective(), read)).toBe('run');
   });
 });
