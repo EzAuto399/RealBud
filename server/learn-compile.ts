@@ -5,7 +5,7 @@
 // labels it returns are what staff review (learnBlockers in the contract).
 import { LEARN_ROW_VALUE, learnInputKey, type LearnEvent, type LearnFlag, type LearnStep } from "../shared/learned-recipes.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
-import { learnLabelRisky } from "./learned-recipes.ts";
+import { learnLabelRisky, learnLabelSupported } from "./learned-recipes.ts";
 
 /** The roles the runner's `click` step resolves inside main or a dialog. */
 const CLICK_ROLES = new Set(["button", "link", "tab", "menuitem"]);
@@ -81,10 +81,14 @@ export function compileLearnedSteps(events: LearnEvent[], pack: PortalRecipePack
     if (event.kind === "click" && (pager.has(event.name) || /^\d{1,4}$/.test(event.name))) { paged = true; continue; }
     // A click on a row's data adds no step and its text is never kept, not even as a flag label. Menu links, pack
     // labels and risky controls (Form 9, Pay $10) keep their own handling, so Bud still stops before them.
+    // A row value with characters Bud can't check (a name with an accent) is still row data, never kept.
     if (event.kind === "click" && ROW_VALUE(event.name) && !(event.landmark === "navigation" && MENU_ROLES.has(event.role)) &&
-      !readSafe.has(event.name) && !consequential.has(event.name) && !learnLabelRisky(pack.labels, event.name)) { flushMenu(); flag("unsupported", LEARN_ROW_VALUE); continue; }
+      !readSafe.has(event.name) && !consequential.has(event.name) && (!learnLabelSupported(event.name) || !learnLabelRisky(pack.labels, event.name))) { flushMenu(); flag("unsupported", LEARN_ROW_VALUE); continue; }
     // The runner fills {word} placeholders in labels too, so a label with braces can't replay.
     if (Object.values(event).some(value => typeof value === "string" && /[{}]/.test(value))) { flushMenu(); flag("unsupported", "name" in event ? event.name : "field" in event ? event.field : event.kind); continue; }
+    // A label Bud can't check against its risk words ("Ѕаvе" in Cyrillic) could be anything: nothing after it is compiled.
+    const named = "name" in event ? event.name : "field" in event ? event.field : "";
+    if (named && !learnLabelSupported(named)) { flushMenu(); flag("unsupported", named); return finish(); }
     if (event.kind === "click" && event.landmark === "navigation" && MENU_ROLES.has(event.role)) { menu.push(event.name); continue; }
     flushMenu();
     if (event.landmark !== "dialog") inDialog = false;

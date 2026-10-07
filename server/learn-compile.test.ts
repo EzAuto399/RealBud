@@ -136,6 +136,22 @@ describe("compileLearnedSteps", () => {
     expect(compileLearnedSteps([button("Search"), button("Open details")], pack).steps).toEqual([{ click: "Search" }, { click: "Open details" }, { read: "controls" }]);
   });
 
+  it("treats a label Bud can't check as unsupported and compiles nothing after it", () => {
+    // Cyrillic lookalikes, a hidden zero-width space, an accent: each ends the recipe, never a step or a needs-confirm.
+    for (const label of ["\u0405\u0430v\u0435", "Sa\u200bve", "Sh\u00f6w detail"]) {
+      const out = compileLearnedSteps([page("/tenants", true), button("View"), button(label), button("View")], pack);
+      expect(out.steps, label).toEqual([{ wait: "table" }, { click: "View" }, { wait: "table" }, { read: "table" }]);
+      expect(out.flags, label).toEqual([{ code: "unsupported", label }]);
+    }
+    // A field or menu label too; a row value with an accent is still row data, never kept.
+    expect(compileLearnedSteps([typed("D\u0430te from"), button("View")], pack)).toMatchObject({ steps: [{ read: "controls" }], flags: [{ code: "unsupported", label: "D\u0430te from" }] });
+    expect(compileLearnedSteps([menu("T\u0435nants"), menu("List"), button("View")], pack).steps).toEqual([{ read: "controls" }]);
+    const row = compileLearnedSteps([page("/customers/tenant", true), { kind: "click", role: "link", name: "Jos\u00e9 12", landmark: "main" }, button("View")], pack);
+    expect(row.flags).toEqual([{ code: "unsupported", label: LEARN_ROW_VALUE }]);
+    expect(JSON.stringify(row)).not.toContain("Jos");
+    expect(compileLearnedSteps([button("Show filters")], pack)).toMatchObject({ steps: [{ click: "Show filters" }, { read: "controls" }], flags: [{ code: "needs-confirm", label: "Show filters" }] });
+  });
+
   it("turns pager clicks into a paged table read, never a nav or click step", () => {
     const out = compileLearnedSteps([page("/customers/arrears/", true), { kind: "click", role: "link", name: "2", landmark: "navigation" }, button("Notice")], pack);
     expect(out.steps).toEqual([{ wait: "table" }, { read: "table" }, { paginate: true }]);

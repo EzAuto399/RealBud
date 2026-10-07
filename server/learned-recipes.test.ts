@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { createLearnedRecipeStore, learnLabelRisky, mergeLearnedRecipes } from "./learned-recipes.ts";
+import { createLearnedRecipeStore, learnLabel, learnLabelRisky, learnLabelSupported, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { fictionalReiPack } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import type { LearnedRecipe, LearnStep } from "../shared/learned-recipes.ts";
@@ -93,7 +93,9 @@ describe("learned recipe store", () => {
     await expect(s.update(r.id, 3, { title: "x" }, pack.labels)).rejects.toMatchObject({ status: 409 });
     const merged = mergeLearnedRecipes(pack, await s.list());
     expect(merged.recipes[r.name]).toMatchObject({ kind: "read", inputs: ["date_from"], grantNeeds: [], steps: STEPS });
-    expect(merged.labels.readSafe).toContain("Show fictional detail");
+    // The confirmation stays with its recipe: the pack's read-safe list never grows.
+    expect((merged.recipes[r.name] as LearnedPackRecipe).confirmed).toEqual(["Show fictional detail"]);
+    expect(merged.labels.readSafe).toEqual(pack.labels.readSafe);
     expect((await s.unpublish(r.id, 3)).state).toBe("draft");
     await s.remove(r.id, 4);
     expect(await s.list()).toEqual([]);
@@ -111,6 +113,39 @@ describe("learned recipe store", () => {
     expect((await s.update(r.id, 1, { confirmedLabels: ["Show fictional detail"] }, labels)).confirmedLabels).toEqual(["Show fictional detail"]);
     expect(learnLabelRisky(labels, "Next")).toBe(false); // shipped read-safe
     expect(learnLabelRisky(labels, "Processed list")).toBe(false); // "Process" only as a whole word
+  });
+
+  it("judges a label on its one spelling: hidden characters, split words and lookalike letters never escape", async () => {
+    const { store: s } = store();
+    const { labels } = fictionalReiPack();
+    expect(learnLabel(" Sa\u200bve\u00a0changes\u2009: ")).toBe("Save changes");
+    expect(learnLabel("Search\u00ad:")).toBe("Search");
+    const escapes = ["Sa\u200bve", "S\u2060ave changes", "S ave changes", "S.ave", "SAVE", "Save\u00a0changes", "\u0405\u0430v\u0435", "Sav\u00e9", "Ｓａｖｅ"];
+    for (const label of escapes) expect(learnLabelRisky(labels, label), JSON.stringify(label)).toBe(true);
+    expect(learnLabelRisky(labels, "Show filters")).toBe(false);
+    expect(learnLabelRisky(labels, "Search:")).toBe(false); // the shipped read-safe "Search"
+    expect(learnLabelSupported("Show filters")).toBe(true);
+    for (const label of ["\u0405\u0430v\u0435", "Sa\u200bve", "Show\u00a0filters", "Search:", " Show"]) expect(learnLabelSupported(label), JSON.stringify(label)).toBe(false);
+    // Review can't confirm a label Bud can't check, even one that would otherwise be harmless.
+    const lookalike = "\u0405h\u043ew detail";
+    const r = await s.create({ ...draft, steps: [{ click: lookalike }, { click: "Show filters" }, { read: "controls" }], flags: [] });
+    await expect(s.update(r.id, 1, { confirmedLabels: [lookalike] }, labels)).rejects.toMatchObject({ status: 400, message: `${lookalike} has characters Bud can't check, so it can't be confirmed.` });
+    expect((await s.update(r.id, 1, { confirmedLabels: ["Show filters"] }, labels)).confirmedLabels).toEqual(["Show filters"]);
+  });
+
+  it("never publishes or merges a stored label that isn't in its one spelling", async () => {
+    const { file, store: s } = store();
+    const pack = fictionalReiPack();
+    const r = await s.create({ ...draft, steps: [{ click: "Show filters" }, { read: "controls" }], flags: [] });
+    const reviewed = await s.update(r.id, 1, { confirmedLabels: ["Show filters"] }, pack.labels);
+    // Edited by hand: a zero-width space in both the click and its confirmation.
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    doc.recipes[0].steps[0].click = "Sa\u200bve"; doc.recipes[0].confirmedLabels = ["Sa\u200bve"];
+    plantPrivateFile(file, JSON.stringify(doc));
+    await expect(s.publish(r.id, reviewed.revision, pack)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/unsupported label/) });
+    doc.recipes[0].state = "published";
+    plantPrivateFile(file, JSON.stringify(doc));
+    expect(mergeLearnedRecipes(pack, await s.list()).recipes[r.name]).toBeUndefined();
   });
 
   it("refuses to confirm a download or export, which would merge with no download grant", async () => {
@@ -198,9 +233,8 @@ describe("mergeLearnedRecipes", () => {
       base({ name: "learned-last" }),
     ]);
     expect(Object.keys(merged.recipes).filter(name => name.startsWith("learned-"))).toEqual(["learned-a", "learned-last"]);
-    expect(merged.labels.readSafe).toContain("Show detail");
-    expect(merged.labels.readSafe).not.toContain("Save changes");
-    expect(merged.labels.readSafe).not.toContain("OK");
+    expect((merged.recipes["learned-a"] as LearnedPackRecipe).confirmed).toEqual(["Show detail"]);
+    expect(merged.labels.readSafe).toEqual(pack.labels.readSafe);
   });
 
   it("publish checks the whole pack with the other published recipes", async () => {

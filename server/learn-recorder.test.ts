@@ -110,16 +110,18 @@ describe("LearnRecorder", () => {
     cdp.event("Runtime.bindingCalled", { name: cdp.binding(), payload: JSON.stringify(click("View")) }, "OTHERSESSION");
     cdp.call(click("Sa​ve\n\u0007 now"));
     cdp.call(click("x".repeat(500)));
+    cdp.call(click("\uff33ave\u00a0changes\u00ad:"));
     cdp.call({ kind: "radio", name: "Use Bearer fictionalTOKENvalue000000", landmark: "dialog" });
     cdp.call({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: "main" });
     cdp.call({ kind: "select", field: "Status", landmark: "main" });
     const events = await recorder.stop();
-    expect(events.slice(1, 3)).toEqual([click("Save now"), click("x".repeat(LEARN_MAX_TEXT))]);
-    expect(events[3]).toMatchObject({ kind: "radio", landmark: "dialog" });
-    expect(JSON.stringify(events[3])).not.toContain("fictionalTOKENvalue000000");
-    expect(events[4]).toEqual({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: "main" });
-    expect(events[5]).toEqual({ kind: "select", field: "Status", landmark: "main" });
-    expect(events).toHaveLength(6);
+    // learnLabel's one spelling: NFKC (a fullwidth S), NBSP a space, soft hyphen and the trailing ":" dropped.
+    expect(events.slice(1, 4)).toEqual([click("Save now"), click("x".repeat(LEARN_MAX_TEXT)), click("Save changes")]);
+    expect(events[4]).toMatchObject({ kind: "radio", landmark: "dialog" });
+    expect(JSON.stringify(events[4])).not.toContain("fictionalTOKENvalue000000");
+    expect(events[5]).toEqual({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: "main" });
+    expect(events[6]).toEqual({ kind: "select", field: "Status", landmark: "main" });
+    expect(events).toHaveLength(7);
     expect(JSON.stringify(events)).not.toContain("Vacated");
   });
 
