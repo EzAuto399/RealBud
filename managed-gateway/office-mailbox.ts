@@ -36,8 +36,10 @@ export class OfficeMailbox {
   private readonly options: ConnectorOptions;
   /** Moves the office's devices off a Gmail config nobody could connect before a shared link is issued. */
   private readonly prepareGmail?: (company:string,authority:()=>void)=>Promise<void>;
-  constructor(options:ConnectorOptions,prepareGmail?:(company:string,authority:()=>void)=>Promise<void>) {
-    this.options=options;this.prepareGmail=prepareGmail;
+  /** After a mode change: stop event triggers on the office mailbox (retired unless kept) and on personal mailboxes (`shared` has none). A provider failure is audited, never thrown. */
+  private readonly modeChanged?: (company:string,retired:{office:boolean;personal:boolean})=>Promise<void>;
+  constructor(options:ConnectorOptions,prepareGmail?:(company:string,authority:()=>void)=>Promise<void>,modeChanged?:(company:string,retired:{office:boolean;personal:boolean})=>Promise<void>) {
+    this.options=options;this.prepareGmail=prepareGmail;this.modeChanged=modeChanged;
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS office_mailbox_policy (company TEXT PRIMARY KEY, body TEXT NOT NULL)');
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS office_mailbox_account (company TEXT PRIMARY KEY, body TEXT NOT NULL)');
   }
@@ -118,7 +120,7 @@ export class OfficeMailbox {
         const previous=this.account(company);
         if(!keep&&previous&&(previous.state==='ready'||previous.state==='review'))this.saveAccount(company,{...previous,state:'pending',emailAddress:undefined,url:undefined});
         this.save(company,keep?{...policy,mode,revision:policy.revision+1}:{mode,revision:policy.revision+1,grants:[]});
-      });return this.status(company);
+      });await this.modeChanged?.(company,{office:!keep,personal:mode==='shared'});return this.status(company);
     }
     requireThat(officeMode(policy.mode),'office_mailbox_shared_required',409);
     if(operation==='grants'){

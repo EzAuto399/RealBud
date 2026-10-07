@@ -6,6 +6,8 @@ import { fixture } from './testing.ts';
 import type { PortalPrincipal } from './contracts.ts';
 import { ManagedConnectors, newConnectorCredential, type ConnectorDevice, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer } from './http.ts';
+import { createHmac } from 'node:crypto';
+import { officeUserId } from './composio-triggers.ts';
 function setup(overrides:Partial<ConnectorOptions>={}){
   const f=fixture(),a=newConnectorCredential(),b=newConnectorCredential(),other=newConnectorCredential();
   f.ledger.provisionTenant({...f.tenant,companyId:'company-b',licenseId:'license-b'});
@@ -190,6 +192,7 @@ test('ungranted or unfinished shared desktops receive safe setup status without 
 test('shared mailbox full access: read-only by default, owner-only versioned grant with exact wording, enforced by the gateway, revocable', async () => {
   const executed: string[] = [];
   const apps = { async listAccounts() { return []; }, async authorize(): Promise<never> { throw new Error('unused'); },
+    async upsertTrigger(): Promise<never> { throw new Error('unused'); }, async setTriggerStatus(): Promise<never> { throw new Error('unused'); },
     async listTools(_b: unknown, slug: string) { return ['GMAIL_LIST_THREADS', 'GMAIL_SEND_EMAIL'].map(name => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, policy: (name.includes('SEND') ? 'review' : 'read') as 'read' | 'review' })).filter(() => slug === 'gmail'); },
     async execute(_b: unknown, _s: string, tool: string) { executed.push(tool); return { content: [{ type: 'text', text: '{}' }] }; } };
   const s = setup({ apps });
@@ -346,4 +349,35 @@ test('both mode: revoking a computer ends its office access (shared -> both -> r
     assert.equal(status.officeShared.connected,false);assert.deepEqual(status.officeShared.accounts,[]);assert.equal(status.services.gmail.accounts[0]!.id,'personal-a');
     await mcp(6);
   }finally{s.f.close();}
+});
+test('office mailbox trigger events reach granted computers only, and leaving shared mode stops the trigger', async () => {
+  const calls: unknown[][] = [];
+  const apps = { async listAccounts() { return []; }, async authorize(): Promise<never> { throw new Error('unused'); }, async listTools() { return []; }, async execute(): Promise<never> { throw new Error('unused'); },
+    async upsertTrigger(binding: { userId: string; accountId?: string }) { calls.push(['upsert', binding.userId, binding.accountId]); return 'ti_office'; },
+    async setTriggerStatus(_binding: unknown, id: string, enabled: boolean) { calls.push(['status', id, enabled]); } };
+  const s = setup({ apps });
+  try {
+    await s.shared();
+    const company = s.f.tenant.companyId, account = s.broker.officeMailbox.binding(s.base)!.accountId!;
+    // The granted computer turns the trigger on; the gateway binds the office user and account.
+    const on = await s.request(s.a.token, '/v1/connectors/triggers', { app: 'gmail', event: 'new-message', enabled: true });
+    assert.deepEqual(on.body, { app: 'gmail', event: 'new-message', source: 'office', enabled: true, state: 'enabled' });
+    assert.deepEqual(calls[0], ['upsert', officeUserId(company), account]);
+    await assert.rejects(() => s.request(s.b.token, '/v1/connectors/triggers', { app: 'gmail', event: 'new-message', enabled: true }), /office_mailbox_desktop_denied/);
+    // The office webhook secret is read from the same store (here every name reads the synthetic value).
+    const deliver = (id: string) => {
+      const raw = JSON.stringify({ type: 'composio.trigger.message', metadata: { trigger_id: 'ti_office', connected_account_id: account, user_id: officeUserId(company) }, data: { message_id: 'gm_office', subject: 'PRIVATE' } });
+      const timestamp = String(Math.floor(s.f.now() / 1000));
+      return s.broker.triggers.webhook(company, { id, timestamp, signature: `v1,${createHmac('sha256', 'ak_synthetic_office_secret').update(`${id}.${timestamp}.${raw}`).digest('base64')}` }, Buffer.from(raw));
+    };
+    assert.deepEqual(deliver('msg_office_1'), { received: true });
+    const pull = async (token: string) => ((await s.request(token, '/v1/connectors/events', { after: 0 })).body as { events: Array<{ source: string }> }).events;
+    assert.deepEqual((await pull(s.a.token)).map(event => event.source), ['office']);
+    assert.deepEqual(await pull(s.b.token), []);
+    assert.deepEqual(await pull(s.other.token), []);
+    // Back to personal: the office mailbox is retired, so is its trigger.
+    await s.call('policy', { mode: 'personal', expectedRevision: s.broker.officeMailbox.policy(company).revision });
+    assert.deepEqual(calls.at(-1), ['status', 'ti_office', false]);
+    assert.deepEqual(deliver('msg_office_2'), { received: true, ignored: true });
+  } finally { s.f.close(); }
 });

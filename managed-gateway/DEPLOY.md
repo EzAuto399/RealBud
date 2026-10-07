@@ -58,6 +58,7 @@ For the first **customer-paid** office, Modelvia refuses a new customer with `bi
 | `REALBUD_GATEWAY_CONNECTOR_REGISTRY` | fly.toml | absolute path of the connector device registry on the volume |
 | `REALBUD_GATEWAY_PUBLIC_ORIGIN` | yes | this service's HTTPS origin, put into `connector.endpoint` |
 | `REALBUD_COMPOSIO_ORG_KEY` | yes | Composio `x-org-api-key`; a vendor credential, never held by customers |
+| `REALBUD_COMPOSIO_WEBHOOK_BASE_URL` | no (opt-in) | this gateway's HTTPS origin (normally the same value as `REALBUD_GATEWAY_PUBLIC_ORIGIN`). Set, each office project gets its Composio webhook subscription ([Event triggers](#event-triggers-composio-webhooks)); unset, none is made and the trigger routes have nothing to receive. A value that is not a bare `https://` origin answers `provisioning_unconfigured:connector_webhook_base_invalid`. `deploy.sh` does not stage it: set it with `fly secrets set` |
 | `REALBUD_OAUTH_GOOGLE_CLIENT_ID`, `REALBUD_OAUTH_GOOGLE_CLIENT_SECRET` | no (both or neither) | RealBud's own Google OAuth client. With both, new Gmail and Google app auth configs use it (`realbud-<slug>-own-v1`) instead of Composio's shared client, which Google blocks for any `gmail.readonly` override; without them Gmail uses Composio's default managed scopes (`realbud-gmail-managed-v2`), read-only at the gateway. Allow redirect URI `https://backend.composio.dev/api/v3/toolkits/auth/callback`. Half a pair answers `connector_oauth_app_unconfigured:<NAME>`. See docs/MANAGED-CONNECTIONS-OPERATIONS.md |
 | `REALBUD_OAUTH_MICROSOFT_CLIENT_ID`, `REALBUD_OAUTH_MICROSOFT_CLIENT_SECRET` | no (both or neither) | Same, for Outlook, OneDrive, Teams, SharePoint, OneNote and To Do |
 | Gmail auth config | automatic | Provisioning resolves or creates a Gmail OAuth2 config inside each office's Composio project: `realbud-gmail-own-v1` (`gmail.readonly` only) with the Google client secrets, otherwise `realbud-gmail-managed-v2` (Composio's default scopes, no override; the gateway's three read tools keep it read-only). Its project-scoped ID stays on the gateway; do not supply one deploy-wide ID. |
@@ -180,7 +181,7 @@ POST /v1/operator/offices/{companyId}/connector-project
 Authorization: Bearer <operator token>   (REALBUD_GATEWAY_OPERATOR_SECRET, operator-token.ts)
 body: none, or {}
 200 { "companyId": "…", "projectName": "realbud-<companyId>", "projectId": "pr_…", "state": "ready" }
-409 { "companyId", "projectName", "state": "held",    "error": "connector_project_ambiguous" | "connector_project_key_unavailable" | "connector_project_key_orphaned" }
+409 { "companyId", "projectName", "state": "held",    "error": "connector_project_ambiguous" | "connector_project_key_unavailable" | "connector_project_key_orphaned" | "connector_webhook_ambiguous" | "connector_webhook_url_mismatch" }
 503 { "companyId", "projectName", "state": "pending", "error": "<transient code>" }   — call again
 404 { …, "state": "held", "error": "tenant_unavailable" }   — the ledger has no such office (entitlement first)
 400 { …, "state": "held", "error": "invalid_id" | "invalid_connector_secret_reference" }
@@ -192,6 +193,82 @@ provisioning makes at first link, so a project created here is the one every
 installation of the office links into. The response never carries the `ak_`
 key; it goes to the secret store under `REALBUD_COMPOSIO_PROJECT_<COMPANY>`.
 The website's admin office form is wired to this route by a separate change.
+With `REALBUD_COMPOSIO_WEBHOOK_BASE_URL` set, the same call also makes the
+office project's webhook subscription (below), so calling it once per existing
+office backfills them.
+
+## Event triggers (Composio webhooks)
+
+A desktop asks to be told when new mail arrives instead of polling Gmail.
+Composio polls (Gmail new-message, at most every 15 minutes on
+Composio-managed auth) and posts a signed event to this gateway; the desktop
+pulls the event ids from here. Code: `composio-triggers.ts`.
+
+```
+POST /v1/webhooks/composio/{companyId}      Composio only; HMAC-signed, no bearer
+POST /v1/connectors/triggers  { "app": "gmail", "event": "new-message", "enabled": true|false }   device credential
+POST /v1/connectors/events    { "after": <seq> }   device credential, answers { events, cursor, gap, more }
+```
+
+- **Subscription.** `ensureOfficeProject` (first link, or the operator route
+  above) creates the office project's one subscription under the office's own
+  project key: `POST /webhook_subscriptions` with `webhook_url`
+  `<base>/v1/webhooks/composio/<companyId>`, the four events and `version: "V3"`.
+  Its signing secret goes to the secret store as
+  `REALBUD_COMPOSIO_WEBHOOK_<COMPANY>` (one 0600 file, like the project key).
+  It is never logged, audited or returned; the audit line
+  `connector_webhook_subscribed` carries the subscription id only.
+- **Verification.** The path only selects the office's secret. The raw body
+  (at most 256 KB) must carry `webhook-signature: v1,<base64 HMAC-SHA256 of "{webhook-id}.{webhook-timestamp}.{body}">`
+  (any one of several space-separated signatures may match) and a timestamp
+  within 300 s. An office without a stored secret answers like a bad
+  signature (401), so offices cannot be enumerated.
+- **What is kept.** Ids only: sequence, office, `webhook-id` (unique, so a
+  redelivery answers `replayed`), body digest, trigger id, provider user, kind
+  and the Gmail message id. Never a subject, sender, body or any other `data`
+  field. A trigger id this office's registry does not hold, or one whose
+  account or user differ, is refused (403 `composio_trigger_unknown`, audited).
+- **Routing.** `installation-<id>` events reach only that computer;
+  `office_<sha>` events only computers holding the office mailbox grant.
+  Acknowledged rows are deleted (office rows once every granted computer has
+  acknowledged them); anything else after 7 days. A cursor behind rows that
+  aged out unread, or ahead of the ledger, answers `gap: true` and the desktop
+  rescans. The pull skips the per-device busy lock and the mailbox policy
+  revision check.
+- **State.** `composio.connected_account.expired` and
+  `composio.trigger.disabled` mark the trigger `expired` or
+  `provider_disabled`; `GET /v1/connectors/status` reports `triggers` with
+  that state. Enabling again (after a reconnect) restores `enabled`.
+- **Disable.** The device's switch, its revoke (provisioning) and a mailbox
+  mode change that retires a mailbox (`shared` retires personal mailboxes;
+  any change except shared <-> both retires the office one) turn the instances
+  off. The local state changes first, so their events are dropped; a provider
+  failure is audited as `composio_trigger_disable_unconfirmed` and never
+  blocks the revoke or the mode change. Disable such an instance in the
+  Composio dashboard.
+
+### Operator: secret storage and rotation
+
+1. Set `REALBUD_COMPOSIO_WEBHOOK_BASE_URL` (`fly secrets set`) and restart.
+2. Call `POST /v1/operator/offices/{companyId}/connector-project` once per
+   existing office to create its subscription. `held` with
+   `connector_webhook_url_mismatch` means the project's subscription points at
+   another URL, and `connector_webhook_ambiguous` means it has more than one:
+   fix them in the Composio dashboard first. `pending` (503) is safe to repeat.
+3. **Rotate** an office's secret: delete the file
+   `$REALBUD_GATEWAY_SECRETS_DIR/REALBUD_COMPOSIO_WEBHOOK_<COMPANY>`, then call
+   the route in step 2. It finds the existing subscription, rotates its secret
+   (`POST /webhook_subscriptions/{id}/rotate_secret`) and stores the new one.
+   Deliveries in between answer 401 and Composio redelivers them. The same
+   steps repair a secret lost from the store or a failed store
+   (`connector_webhook_secret_unwritable`).
+
+Unverified against a live Composio project: the subscription list and rotate
+routes and their response fields, the signing key (the secret string as given),
+the V3 payload fields, `GMAIL_NEW_GMAIL_MESSAGE` and its `{interval: 15}`
+config, the trigger-instance upsert response field and the
+`PATCH /trigger_instances/manage/{id}` `{status}` body. Every test runs against
+a stubbed fetch.
 
 ## Office AI access
 
