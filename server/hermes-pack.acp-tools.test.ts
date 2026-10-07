@@ -122,7 +122,7 @@ function probe(tree: string): Probe {
   return JSON.parse(line.slice(6)) as Probe;
 }
 
-const excluded = (tool: string) => /^(?:browser_|kanban_)/.test(tool) ||
+const excluded = (tool: string) => /^(?:browser_|kanban_|web_)/.test(tool) ||
   ["browser_exec", "cronjob_manage", "computer_use", "image_generate", "text_to_speech", "manage_connections", "manage_catalog"].includes(tool);
 /** Every broker RealBud mounts over ACP, under its real server name, with Hermes'
  * `mcp__<server>__<tool>` name (tools/mcp_tool_schema.py `mcp_prefixed_tool_name`). */
@@ -133,7 +133,7 @@ const MOUNTED: Array<[string, string]> = [
 ].map(([server, tool]) => [server, `mcp__${server.replace(/[^A-Za-z0-9_]/g, "_")}__${tool}`]);
 const brokers = MOUNTED.map(([, tool]) => tool);
 const today = ["delegate_task", "execute_code", "memory", "patch", "process_manage", "read_file", "search_files", "session_search",
-  "skill_manage", "skill_view", "skills_list", "terminal", "todo_list", "web_extract", "web_search", "write_file"];
+  "skill_manage", "skill_view", "skills_list", "terminal", "todo_list", "write_file"];
 
 // Ungated: pinned Hermes merges a server named like a built-in toolset into that
 // toolset, so a disabled name would strip the broker's every tool from Ask.
@@ -172,9 +172,9 @@ describe.runIf(Boolean(python && candidate) && process.platform !== "win32")("As
     expect(result.run_budget_seconds).toBe(840);
     expect(result.review_input_budget).toBe(120000);
   });
-  it.runIf(Boolean(current))("matches 0.21.3's Ask tools apart from the Hermes browser 0.21.3 still advertises", () => {
+  it.runIf(Boolean(current))("matches 0.21.3's Ask tools apart from the Hermes browser and web tools 0.21.3 still advertises", () => {
     const older = probe(current!);
-    expect(older.parent.filter(tool => !tool.startsWith("browser_"))).toEqual(result.parent);
+    expect(older.parent.filter(tool => !/^(?:browser_|web_)/.test(tool))).toEqual(result.parent);
     expect(older.adopt_external_logins).toBeNull();
     expect(older.vaults).toEqual(result.vaults);
     expect(older.run_budget_seconds).toBe(840);

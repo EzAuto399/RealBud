@@ -286,7 +286,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     expect(managedModelProfile(hermesRoot)).toEqual({
       provider: MANAGED_MODEL_PROVIDER, model: 'claude-sonnet-5.5',
       baseUrl: 'https://api.modelvia.dev/v1', apiMode: MANAGED_MODEL_API_MODE, keyEnv: MANAGED_MODEL_KEY_ENV,
-      reasoningEffort: 'high', choice: 'sonnet-high', envKeyPresent: false,
+      reasoningEffort: 'high', choice: 'sonnet-high', envKeyPresent: false, visionReady: true,
     });
     expect(workerModelGrant()).toEqual({ state: 'active', baseUrl: 'https://api.modelvia.dev/v1', keyId: 'rbkkey-01', spendCapLabel: 'AU$40 per month' });
   });

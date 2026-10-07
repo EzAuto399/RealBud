@@ -25,7 +25,7 @@ import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_WITHDRAWN, setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { productAskFailure } from "./ask-book.ts";
-import { ASK_MODEL_RELAY_UNAVAILABLE, applyAskModelRelayEnv, createAskModelRelayLease, startAskModelRelay, withAskModelRelayLease, type AskModelRelay, type AskModelRelayLease } from "./ask-model-relay.ts";
+import { ASK_MODEL_RELAY_UNAVAILABLE, ASK_VISION_UNAVAILABLE, applyAskModelRelayEnv, createAskModelRelayLease, startAskModelRelay, withAskModelRelayLease, type AskModelRelay, type AskModelRelayLease } from "./ask-model-relay.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { recordEvents } from "./testing/events.ts";
 import { clearManagedAccess, FICTIONAL_GRANTED_KEY, grantManagedAccess } from "./testing/managed-grant.ts";
@@ -483,6 +483,80 @@ describe("Ask model relay request shape", () => {
       expect((await send(bad)).status, JSON.stringify(bad)).toBe(400);
     }
     expect(gateway.seen).toHaveLength(4);
+  });
+});
+
+describe("Ask model relay image reading on a text-only choice", () => {
+  // Hermes' auxiliary image call (tools/vision_tools.py `_media_messages`).
+  const image = (extra: Record<string, unknown> = {}) => ({
+    model: "claude-sonnet-5.5", temperature: 0.1, reasoning_effort: "xhigh",
+    messages: [{ role: "user", content: [{ type: "text", text: "Describe this fictional receipt." }, { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } }] }],
+    ...extra,
+  });
+
+  it("sends Hermes' image call on a Flash office to Sonnet · High with the office key", async () => {
+    const root = home(), gateway = await upstream(json({ id: "fictional-vision", choices: [] }));
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "flash-high" });
+    const { relay, token } = await relayFor(root);
+    const response = await post(relay, image(), token);
+    expect(response.status).toBe(200);
+    expect(gateway.seen).toHaveLength(1);
+    expect(gateway.seen[0]!.body).toEqual({ ...image(), reasoning_effort: "high" });
+    expect(gateway.seen[0]!.headers.authorization).toBe(`Bearer ${FICTIONAL_GRANTED_KEY}`);
+  });
+
+  it("refuses Sonnet for anything that is not that image call", async () => {
+    const root = home(), gateway = await upstream(json({}));
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "flash-high" });
+    const { relay, token } = await relayFor(root);
+    const userImage = image().messages[0]!;
+    for (const body of [
+      { model: "claude-sonnet-5.5", messages },
+      image({ messages: [{ role: "user", content: [{ type: "text", text: "No picture here." }] }] }),
+      image({ tools: [{ type: "function", function: { name: "read_file", parameters: { type: "object", properties: {} } } }] }),
+      image({ tool_choice: "auto" }),
+      image({ messages: [{ role: "system", content: "Fictional office instructions." }, userImage] }),
+      image({ messages: [userImage, { role: "assistant", content: "Seen." }, userImage] }),
+      image({ messages: [{ ...userImage, role: "assistant" }] }),
+      image({ messages: [{ role: "user", content: [...userImage.content, { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAA" } }] }] }),
+    ]) {
+      const refused = await post(relay, body, token);
+      expect(refused.status, JSON.stringify(body).slice(0, 120)).toBe(400);
+      expect(JSON.stringify(await refused.json())).toContain("model other than the one chosen");
+    }
+    // The office's own model still takes an image request as it always did.
+    expect((await post(relay, image({ model: "deepseek-v4.1-flash" }), token)).status).toBe(200);
+    expect(gateway.seen.map(request => request.body.model)).toEqual(["deepseek-v4.1-flash"]);
+  });
+
+  it("tells Bud plainly when the plan has no image model, without flagging the office key", async () => {
+    let status = 403;
+    const gateway = await upstream(response => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { code: status === 403 ? "mode_not_allowed" : "model_route_unavailable", message: "fictional upstream detail" } }));
+    });
+    const root = home();
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "flash-high" });
+    const { relay, token } = await relayFor(root);
+    const answer = vi.mocked(noteModelKeyAnswer); answer.mockClear();
+    for (const next of [403, 503]) {
+      status = next;
+      const refused = await post(relay, image(), token);
+      expect(refused.status).toBe(next);
+      const text = JSON.stringify(await refused.json());
+      expect(text).toContain(ASK_VISION_UNAVAILABLE);
+      expect(text).not.toContain("fictional upstream detail");
+    }
+    expect(ASK_VISION_UNAVAILABLE).toBe("Bud can't read images on this office's AI plan right now. To read images, choose Claude Sonnet 5.5 · High in Bud setup, or ask RealBud support to add it to the plan.");
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it("leaves a Sonnet office's requests to its own choice", async () => {
+    const root = home(), gateway = await upstream(json({}));
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "sonnet-xhigh" });
+    const { relay, token } = await relayFor(root);
+    expect((await post(relay, image(), token)).status).toBe(200);
+    expect(gateway.seen[0]!.body.reasoning_effort).toBe("xhigh");
   });
 });
 

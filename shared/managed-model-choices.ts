@@ -8,7 +8,8 @@
  *
  * `supportsVision` marks a model that takes image input. The server writes it
  * into the worker profile as `model.supports_vision`, which is what lets Hermes
- * show its image tool for a custom gateway; Flash is text-only.
+ * show its image tool for a custom gateway; Flash is text-only and reads
+ * images through `MANAGED_VISION_CHOICE` instead.
  *
  * Dependency-free: the server writes the worker profile from this table and
  * the renderer draws the three radio options from it.
@@ -47,6 +48,11 @@ export type ManagedReasoningEffort = ManagedModelChoice["effort"];
 
 // Owner decision 30 Sep 2026: new and migrated offices start on Sonnet · High.
 export const DEFAULT_MANAGED_MODEL_CHOICE: ManagedModelChoiceId = "sonnet-high";
+
+// Owner decision 7 Oct 2026: an office on a text-only choice reads images with
+// this choice's model and effort, through the same managed access. Its plan
+// must include that model; otherwise Bud says it cannot read the image.
+export const MANAGED_VISION_CHOICE: ManagedModelChoiceId = "sonnet-high";
 
 export const MANAGED_MODEL_CHOICE_IDS = MANAGED_MODEL_CHOICES.map(choice => choice.id) as readonly ManagedModelChoiceId[];
 

@@ -125,8 +125,9 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       baseline.replace("  env_passthrough: []\n", "  env_passthrough: [HOME]\n"),
       baseline.replace("  max_turns: 60\n", "  max_turns: \"60\"\n"),
       baseline.replace("  - delegation\n", "  - delegation\n  - code_execution\n"),
+      baseline.replace("  - delegation\n", "  - delegation\n  - web\n"),
       baseline.replace("  - delegation\n", "  # - delegation\n"),
-      baseline.replace("toolsets:\n", "toolsets_note: |\n  - code_execution\ntoolsets:\n").replace("  - web\n", ""),
+      baseline.replace("toolsets:\n", "toolsets_note: |\n  - code_execution\ntoolsets:\n").replace("  - terminal\n", ""),
       baseline + "terminal:\n  backend: local\n",
     ]) {
       writeFileSync(path, text);
@@ -613,7 +614,7 @@ describe("product fleet", () => {
 
 describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
   const pack = () => readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
-  const EXCLUDED = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts"];
+  const EXCLUDED = ["browser", "computer_use", "connections", "cronjob", "image_gen", "kanban", "tts", "web"];
 
   it("ships an explicit ACP selection, the exclusions and the login policy", () => {
     const shipped = parse(pack(), { version: "1.1" });
@@ -623,7 +624,12 @@ describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
     for (const name of EXCLUDED) expect(WORKER_ACP_TOOLSETS).not.toContain(name as never);
     expect(WORKER_ACP_TOOLSETS).toContain("no_mcp");
     // Ask keeps today's tools: execute_code stays behind HERMES_EXEC_ASK.
-    for (const name of ["web", "terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution"]) expect(WORKER_ACP_TOOLSETS).toContain(name as never);
+    for (const name of ["terminal", "file", "vision", "todo", "memory", "session_search", "skills", "delegation", "code_execution"]) expect(WORKER_ACP_TOOLSETS).toContain(name as never);
+    // No native web search/extract anywhere, and no keyless tier behind it.
+    expect(shipped.toolsets).not.toContain("web");
+    expect(shipped.web).toEqual({ keyless_fallback: false });
+    expect(shipped.skills).toEqual({ write_approval: true, guard_agent_created: true });
+    expect(shipped.auxiliary).not.toHaveProperty("vision");
     expect(shipped.auth).toEqual({ adopt_external_logins: false });
     expect(shipped.agent.auto_recovery_cycles).toBe(1);
     expect(shipped.tools).toEqual({ connectors: { enabled: false } });
@@ -642,12 +648,14 @@ describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
   });
 
   it("owns only the ACP list and the login switch, keeping the office's other platforms and auth settings", () => {
-    const office = "platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [web]\nauth:\n  codex_login_method: browser\n  adopt_external_logins: true\ntools:\n  connectors:\n    enabled: true\n    note: kept\n";
+    const office = "platform_toolsets:\n  cli: [hermes-cli]\n  telegram: [web]\nauth:\n  codex_login_method: browser\n  adopt_external_logins: true\ntools:\n  connectors:\n    enabled: true\n    note: kept\nweb:\n  keyless_fallback: true\n  extract_char_limit: 9000\nskills:\n  guard_agent_created: false\n";
     const merged = parse(mergePropertyPolicy(office, pack()), { version: "1.1" });
     expect(merged.platform_toolsets).toEqual({ cli: ["hermes-cli"], telegram: ["web"], acp: [...WORKER_ACP_TOOLSETS] });
     expect(merged.auth).toEqual({ codex_login_method: "browser", adopt_external_logins: false });
     expect(merged.tools.connectors).toEqual({ enabled: false, note: "kept" });
-    for (const office of ["auth: off\n", "platform_toolsets: [acp]\n"]) expect(() => mergePropertyPolicy(office, pack())).toThrow(/kept/);
+    expect(merged.web).toEqual({ keyless_fallback: false, extract_char_limit: 9000 });
+    expect(merged.skills.guard_agent_created).toBe(true);
+    for (const office of ["auth: off\n", "platform_toolsets: [acp]\n", "web: off\n"]) expect(() => mergePropertyPolicy(office, pack())).toThrow(/kept/);
   });
 
   // Each change an office, a 44→45 schema migration (which appends
@@ -656,6 +664,12 @@ describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
     ["the migration appended connections to the ACP list", doc => doc.setIn(["platform_toolsets", "acp"], doc.createNode([...WORKER_ACP_TOOLSETS, "connections"]))],
     ["the ACP list was removed", doc => doc.deleteIn(["platform_toolsets", "acp"])],
     ["an exclusion was dropped", doc => doc.setIn(["agent", "disabled_toolsets"], doc.createNode(WORKER_DISABLED_TOOLSETS.filter(name => name !== "browser")))],
+    ["native web came back", doc => doc.setIn(["agent", "disabled_toolsets"], doc.createNode(WORKER_DISABLED_TOOLSETS.filter(name => name !== "web")))],
+    ["the keyless web tier is missing (upstream defaults it on)", doc => doc.delete("web")],
+    ["the keyless web tier is on", doc => doc.setIn(["web", "keyless_fallback"], true)],
+    ["the keyless web switch is the string \"false\" (upstream reads bool(\"false\") as true)", doc => doc.setIn(["web", "keyless_fallback"], "false")],
+    ["the guard on skills Bud writes is missing (upstream defaults it off)", doc => doc.deleteIn(["skills", "guard_agent_created"])],
+    ["the guard on skills Bud writes is off", doc => doc.setIn(["skills", "guard_agent_created"], false)],
     ["external logins were allowed", doc => doc.setIn(["auth", "adopt_external_logins"], true)],
     ["the login switch is the string \"false\" (upstream reads bool(\"false\") as true)", doc => doc.setIn(["auth", "adopt_external_logins"], "false")],
     ["Hermes Connectors were switched on", doc => doc.setIn(["tools", "connectors", "enabled"], true)],
@@ -817,6 +831,42 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(parse(mergePropertyPolicy(managedModelConfig(pack, GATEWAY, "sonnet-xhigh"), pack), { version: "1.1" }).model.supports_vision).toBe(true);
   });
 
+  it("reads images through Sonnet on Flash only, owning auxiliary.vision with the choice", () => {
+    const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
+    const route = { provider: MANAGED_MODEL_PROVIDER, model: "claude-sonnet-5.5" };
+    const flash = managedModelConfig(pack, GATEWAY, "flash-high");
+    expect(parse(flash, { version: "1.1" }).auxiliary).toEqual({ ...parse(pack, { version: "1.1" }).auxiliary, vision: route });
+    // Any explicit auxiliary.vision would make a vision model describe images as text.
+    for (const id of ["sonnet-high", "sonnet-xhigh"] as const) {
+      const sonnet = parse(managedModelConfig(flash, GATEWAY, id), { version: "1.1" });
+      expect(sonnet.auxiliary).not.toHaveProperty("vision");
+      expect(sonnet.auxiliary.title_generation).toEqual({ enabled: false });
+    }
+    const office = "auxiliary:\n  vision:\n    provider: fictional-vision\n    base_url: http://fictional.invalid\n  compression:\n    timeout: 99\n";
+    expect(parse(managedModelConfig(office, GATEWAY, "flash-high"), { version: "1.1" }).auxiliary).toEqual({ vision: route, compression: { timeout: 99 } });
+    expect(parse(managedModelConfig(office, GATEWAY, "sonnet-high"), { version: "1.1" }).auxiliary).toEqual({ compression: { timeout: 99 } });
+    expect(parse(managedModelConfig("", GATEWAY, "flash-high"), { version: "1.1" }).auxiliary).toEqual({ vision: route });
+    expect(managedModelConfig("", GATEWAY, "sonnet-high")).not.toContain("auxiliary");
+    expect(() => managedModelConfig("auxiliary: off\n", GATEWAY, "flash-high")).toThrow(/kept/);
+    // A pack reinstall keeps it as written.
+    expect(parse(mergePropertyPolicy(flash, pack), { version: "1.1" }).auxiliary.vision).toEqual(route);
+  });
+
+  it("reads a Flash profile without the image route, or a Sonnet one with any, as not vision-ready", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-managed-vision-")); dirs.push(home);
+    applyPropertyPack(home);
+    const path = join(propertyProfileDir(home), "config.yaml");
+    for (const choice of ["flash-high", "sonnet-high"] as const) {
+      applyManagedModelProfile(GATEWAY, { root: home, choice });
+      expect(managedModelProfile(home).visionReady).toBe(true);
+      const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+      if (choice === "flash-high") doc.deleteIn(["auxiliary", "vision"]);
+      else doc.setIn(["auxiliary", "vision"], doc.createNode({ model: "fictional-vision" }));
+      writeFileSync(path, doc.toString());
+      expect(managedModelProfile(home)).toMatchObject({ choice, visionReady: false });
+    }
+  });
+
   it("carries the choice through a policy rewrite only while it is still one of the three", () => {
     const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
     const chosen = managedModelConfig(pack, GATEWAY, "sonnet-xhigh");
@@ -840,7 +890,7 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     applyPropertyPack(home);
     expect(managedModelProfile(home)).toEqual({
       provider: MANAGED_MODEL_PROVIDER, model: "claude-sonnet-5.5", baseUrl: GATEWAY, apiMode: "chat_completions",
-      keyEnv: MANAGED_MODEL_KEY_ENV, reasoningEffort: "xhigh", choice: "sonnet-xhigh", envKeyPresent: false,
+      keyEnv: MANAGED_MODEL_KEY_ENV, reasoningEffort: "xhigh", choice: "sonnet-xhigh", envKeyPresent: false, visionReady: true,
     });
     expect(approvalsAreManual(home)).toBe(true);
     expect(() => applyManagedModelProfile("file:///fictional", { root: home })).toThrow(/needs recovery/);

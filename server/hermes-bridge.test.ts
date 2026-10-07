@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseDocument } from "yaml";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { modelStatus, reconcileManagedModelProfile, setManagedModelChoice } from "./hermes-bridge.ts";
@@ -93,6 +94,14 @@ describe("managed model choice", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     await setManagedModelChoice({ choice: "flash-high" }, { root: dir });
     writeFileSync(join(profile, ".env"), `${MANAGED_MODEL_KEY_ENV}=fictional-shadow\n`);
     expect(await reconcileManagedModelProfile(dir)).toBe(true);
-    expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", envKeyPresent: false });
+    expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", envKeyPresent: false, visionReady: true });
+    // A Flash profile from before it read images through Sonnet gets the route.
+    const doc = parseDocument(readFileSync(join(profile, "config.yaml"), "utf8"), { version: "1.1" });
+    doc.deleteIn(["auxiliary", "vision"]);
+    writeFileSync(join(profile, "config.yaml"), doc.toString());
+    expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", visionReady: false });
+    expect(await reconcileManagedModelProfile(dir)).toBe(true);
+    expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", visionReady: true });
+    expect(await reconcileManagedModelProfile(dir)).toBe(false);
   });
 });
