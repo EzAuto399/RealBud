@@ -25,7 +25,11 @@ function gateway(options: { pages?: unknown[]; status?: unknown; pullFails?: boo
       if (options.pullFails) throw new TypeError('fictional network failure');
       return Response.json(pages.shift() ?? { events: [], cursor: body.after, gap: false, more: false });
     }
-    if (path === '/v1/connectors/triggers') return Response.json({ app: body.app, event: body.event, source: 'personal', enabled: body.enabled, state: body.enabled ? 'enabled' : 'disabled' });
+    if (path === '/v1/connectors/triggers') {
+      // Like the gateway: a reviewed office policy (revision 3 here) must be named on the switch.
+      if ((init.headers as Record<string, string>)['x-realbud-policy-revision'] !== '3') return Response.json({ error: 'office_mailbox_review_required' }, { status: 409 });
+      return Response.json({ app: body.app, event: body.event, source: 'personal', enabled: body.enabled, state: body.enabled ? 'enabled' : 'disabled' });
+    }
     return new Response('{}', { status: 404 });
   });
   vi.stubGlobal('fetch', fetcher);
@@ -72,7 +76,7 @@ describe('new mail wakes a loop', () => {
     const [, request] = loops.runNow.mock.calls[0]!;
     expect(request).toEqual({ requestId: eventRequestId('fictional-workspace:inbound-triage:4:event:7'), expectedRevision: 4 });
     expect(request.requestId).toMatch(MANUAL_JOB_REQUEST_ID);
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 1, cursor: 8, newMail: { 'inbound-triage': true } });
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 1, cursor: 8, binding: expect.stringMatching(/^[a-f0-9]{32}$/), newMail: { 'inbound-triage': true } });
     // The same batch again (at-least-once, or a restart before the cursor was saved): same request id, no second run.
     gateway({ pages: [{ events: [mail(7)], cursor: 8, gap: false, more: false }] });
     const again = await events(loops);
@@ -126,6 +130,25 @@ describe('new mail wakes a loop', () => {
     expect(loops.runNow).not.toHaveBeenCalled();
   });
 
+  it('starts from 0 when the service endpoint or the computer credential changes, and never saves the credential', async () => {
+    const net = gateway({ pages: [{ events: [mail(5)], cursor: 50, gap: false, more: false }, { events: [], cursor: 70, gap: false, more: false }] });
+    const loops = loopManager(), file = tmp();
+    let cfg: typeof managed = managed;
+    const service = new ConnectorEvents({ cfg: () => cfg as never, company: () => 'fictional-workspace', loops, file });
+    created.push(service);
+    await service.setNewMail('inbound-triage', true);
+    service.start();
+    await service.tick();
+    // A re-provisioned computer: cursor 50 belongs to the old credential and would acknowledge the new one's unread events.
+    cfg = { composio: { managed: { ...managed.composio.managed, credential: `rbc_${'d'.repeat(64)}` } } };
+    await service.tick(); await service.tick();
+    cfg = { composio: { managed: { ...cfg.composio.managed, endpoint: 'https://other-service.example/' } } };
+    await service.tick();
+    expect(net.pulls()).toEqual([0, 0, 70, 0]);
+    const saved = readFileSync(file, 'utf8');
+    for (const secret of ['c'.repeat(64), 'd'.repeat(64)]) expect(saved).not.toContain(secret);
+  });
+
   it('backs off after a failed pull without throwing into the timer', async () => {
     const net = gateway({ pullFails: true });
     const loops = loopManager();
@@ -170,6 +193,18 @@ describe('the new-mail switch', () => {
     expect(await service.status('inbound-triage')).toEqual({ loopId: 'inbound-triage', enabled: true, available: false, reason: 'Reconnect Gmail in Connected apps. The morning run still happens.' });
     gateway({ status: statusBody({ triggers: [{ app: 'gmail', event: 'new-message', source: 'personal', state: 'provider_disabled' }] }) });
     expect((await service.status('inbound-triage')).reason).toBe('New-mail checks stopped. Turn this off and on again. The morning run still happens.');
+  });
+
+  it('turns off for an expired Gmail under the reviewed policy revision', async () => {
+    const file = tmp();
+    gateway();
+    await new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file }).setNewMail('inbound-triage', true);
+    const net = gateway({ status: statusBody({ services: { gmail: { connected: false, status: 'EXPIRED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] },
+      triggers: [{ app: 'gmail', event: 'new-message', source: 'personal', state: 'expired' }] }) });
+    const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file });
+    expect(await service.setNewMail('inbound-triage', false)).toEqual({ loopId: 'inbound-triage', enabled: false, available: false, reason: 'Reconnect Gmail in Connected apps. The morning run still happens.' });
+    expect(net.calls.find(call => call.path === '/v1/connectors/triggers')!.headers['x-realbud-policy-revision']).toBe('3');
+    expect(JSON.parse(readFileSync(file, 'utf8')).newMail).toEqual({ 'inbound-triage': false });
   });
 
   it('refuses every other loop id', async () => {

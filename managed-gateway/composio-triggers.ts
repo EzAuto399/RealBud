@@ -20,6 +20,7 @@ import type { ConnectorDevice } from './connectors.ts';
 import type { OfficeMailbox } from './office-mailbox.ts';
 import { composioProjectRest, TRIGGER_ID, type AppBinding, type ComposioAppAdapter } from './composio-apps.ts';
 import type { HttpTransport } from './composio-org.ts';
+import { serialized } from './serialized.ts';
 
 /** The four events the office subscription asks for (V3 payloads). */
 export const WEBHOOK_EVENTS = ['composio.trigger.message', 'composio.connected_account.expired', 'composio.connected_account.activated', 'composio.trigger.disabled'] as const;
@@ -31,8 +32,15 @@ export const GMAIL_NEW_MESSAGE_CONFIG: Record<string, unknown> = { interval: 15 
 const TRIGGERS = new Map([['gmail:new-message', { app: 'gmail', event: 'new-message', slug: 'GMAIL_NEW_GMAIL_MESSAGE', config: GMAIL_NEW_MESSAGE_CONFIG }]]);
 export type TriggerSpec = NonNullable<ReturnType<typeof TRIGGERS.get>>;
 export const EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/** How long a stored delivery's webhook id is remembered, acknowledged or not.
+ * A provider retry is signed afresh, so the 300 s window alone never stops it;
+ * this outlives any unread event and a day-long retry schedule. */
+export const SEEN_RETENTION_MS = EVENT_RETENTION_MS;
 const SIGNATURE_TOLERANCE_S = 300, PAGE = 100;
 const REF = /^[A-Za-z0-9._:@+-]{1,256}$/, MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** An office id as the webhook URL carries it: provisioning builds the URL with
+ * it (provisioning.ts `ensureWebhook`) and the route admits the same shape. */
+export const WEBHOOK_COMPANY_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 
 export function triggerSpec(app: unknown, event: unknown): TriggerSpec {
   const spec = typeof app === 'string' && typeof event === 'string' ? TRIGGERS.get(`${app}:${event}`) : undefined;
@@ -77,6 +85,12 @@ function tables(db: Db) {
   db.run('CREATE TABLE IF NOT EXISTS composio_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, company TEXT NOT NULL, webhook_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, trigger_id TEXT, user_id TEXT NOT NULL, kind TEXT NOT NULL, provider_msg_id TEXT, received INTEGER NOT NULL)');
   db.run('CREATE INDEX IF NOT EXISTS composio_events_company ON composio_events(company, seq)');
   db.run('CREATE TABLE IF NOT EXISTS composio_event_cursors (device TEXT PRIMARY KEY, company TEXT NOT NULL, acked INTEGER NOT NULL)');
+  // The highest cursor each device was answered with: it can never acknowledge past it.
+  db.run('CREATE TABLE IF NOT EXISTS composio_event_served (device TEXT PRIMARY KEY, served INTEGER NOT NULL)');
+  // Every stored delivery's id and digest, kept after acknowledgement deletes its event (SEEN_RETENTION_MS).
+  db.run('CREATE TABLE IF NOT EXISTS composio_webhooks_seen (webhook_id TEXT PRIMARY KEY, company TEXT NOT NULL, digest TEXT NOT NULL, received INTEGER NOT NULL)');
+  // Which computers turned each trigger on. A shared (office mailbox) trigger stays on while one still wants it.
+  db.run('CREATE TABLE IF NOT EXISTS composio_trigger_wants (company TEXT NOT NULL, user_id TEXT NOT NULL, slug TEXT NOT NULL, device TEXT NOT NULL, PRIMARY KEY(company, user_id, slug, device))');
   // Highest seq per provider user deleted unread by age: a cursor behind it has a gap.
   db.run('CREATE TABLE IF NOT EXISTS composio_event_retention (company TEXT NOT NULL, user_id TEXT NOT NULL, pruned_through INTEGER NOT NULL, PRIMARY KEY(company, user_id))');
   // Highest seq ever stored per office. A device's cursor is compared with its own
@@ -107,12 +121,30 @@ export async function disableTriggers(deps: TriggerDeps, company: string, match:
   }
 }
 
+/**
+ * A revoked computer's triggers stop: its own provider user's, and any shared
+ * one it wanted that no other computer still wants.
+ * ponytail: a remaining want counts here even if that computer has since lost
+ * its mailbox grant; its own switch-off (`set`) checks the grant exactly.
+ */
+export async function disableDeviceTriggers(deps: TriggerDeps, company: string, device: { id: string; userId: string }, reason: string): Promise<void> {
+  const db = deps.ledger.db; tables(db);
+  const wanted = db.all<{ user_id: string; slug: string }>('SELECT user_id, slug FROM composio_trigger_wants WHERE company=? AND device=?', company, device.id);
+  db.run('DELETE FROM composio_trigger_wants WHERE company=? AND device=?', company, device.id);
+  const orphaned = wanted.filter(want => !db.get('SELECT device FROM composio_trigger_wants WHERE company=? AND user_id=? AND slug=? LIMIT 1', company, want.user_id, want.slug));
+  await disableTriggers(deps, company, row => row.user_id === device.userId || orphaned.some(want => want.user_id === row.user_id && want.slug === row.slug), reason);
+}
+
 export interface TriggerServiceDeps extends TriggerDeps {
   devices: () => ConnectorDevice[]; mailbox: Pick<OfficeMailbox, 'readyForDevice'>; apps: Pick<ComposioAppAdapter, 'upsertTrigger' | 'setTriggerStatus'>;
 }
 export class ComposioTriggers {
   private readonly deps: TriggerServiceDeps;
-  constructor(deps: TriggerServiceDeps) { this.deps = deps; tables(deps.ledger.db); }
+  constructor(deps: TriggerServiceDeps) {
+    this.deps = deps; tables(deps.ledger.db);
+    // Events stored before the seen record existed are remembered too.
+    deps.ledger.db.run('INSERT OR IGNORE INTO composio_webhooks_seen(webhook_id,company,digest,received) SELECT webhook_id,company,digest,received FROM composio_events');
+  }
   private get db() { return this.deps.ledger.db; }
   private current(company: string, userId: string, slug: string) {
     return this.db.get<TriggerRow>("SELECT * FROM composio_triggers WHERE company=? AND user_id=? AND slug=? AND state<>'replaced' ORDER BY updated DESC LIMIT 1", company, userId, slug);
@@ -126,19 +158,28 @@ export class ComposioTriggers {
   disable(company: string, match: (row: TriggerRow) => boolean, reason: string) { return disableTriggers(this.deps, company, match, reason); }
 
   /** Enable (upsert, then explicitly enable) or disable the one allowlisted
-   * trigger for `binding`, which the connector broker resolved itself. */
-  async set(company: string, projectKeyEnv: string, binding: AppBinding, spec: TriggerSpec, enabled: boolean, signal: AbortSignal) {
-    const row = this.current(company, binding.userId, spec.slug), now = () => this.deps.ledger.now();
+   * trigger for `binding`, which the connector broker resolved itself. One
+   * change per trigger at a time, so a switch-off never races another
+   * computer's switch-on of the same shared trigger. */
+  set(device: ConnectorDevice, binding: AppBinding, spec: TriggerSpec, enabled: boolean, signal: AbortSignal) {
+    return serialized(`composio-trigger:${device.companyId}:${binding.userId}:${spec.slug}`, () => this.change(device, binding, spec, enabled, signal));
+  }
+  private async change(device: ConnectorDevice, binding: AppBinding, spec: TriggerSpec, enabled: boolean, signal: AbortSignal) {
+    const company = device.companyId, row = this.current(company, binding.userId, spec.slug), now = () => this.deps.ledger.now();
     const result = (state: string) => ({ app: spec.app, event: spec.event, source: this.source(company, binding.userId), enabled: state === 'enabled', state });
+    const wants = 'FROM composio_trigger_wants WHERE company=? AND user_id=? AND slug=?';
     if (!enabled) {
-      if (!row) return result('disabled');
-      if (row.state !== 'disabled') {
+      // A shared trigger stays on while another active computer that can read it still wants it.
+      const others = new Set(this.db.all<{ device: string }>(`SELECT device ${wants} AND device<>?`, company, binding.userId, spec.slug, device.id).map(want => want.device));
+      const kept = this.deps.devices().some(other => others.has(other.id) && other.companyId === company && other.active && this.users(other).includes(binding.userId));
+      if (row && row.state !== 'disabled' && !kept) {
         await this.deps.apps.setTriggerStatus(binding, row.trigger_id, false, signal);
         this.db.transaction(() => {
           this.db.run('UPDATE composio_triggers SET state=?, updated=? WHERE trigger_id=?', 'disabled', now(), row.trigger_id);
           this.db.append(company, 'composio_trigger_disabled', null, now(), { triggerId: row.trigger_id, userId: row.user_id, reason: 'device_request' });
+          this.db.run(`DELETE ${wants} AND device=?`, company, binding.userId, spec.slug, device.id);
         });
-      }
+      } else this.db.run(`DELETE ${wants} AND device=?`, company, binding.userId, spec.slug, device.id);
       return result('disabled');
     }
     // UNVERIFIED: whether upsert re-enables a disabled instance, so it is enabled explicitly.
@@ -148,7 +189,8 @@ export class ComposioTriggers {
     this.db.transaction(() => {
       this.db.run("UPDATE composio_triggers SET state='replaced', updated=? WHERE company=? AND user_id=? AND slug=? AND trigger_id<>? AND state<>'replaced'", now(), company, binding.userId, spec.slug, triggerId);
       this.db.run('INSERT INTO composio_triggers(trigger_id,company,user_id,slug,connected_account,project_key_env,state,updated) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET state=excluded.state, connected_account=excluded.connected_account, updated=excluded.updated',
-        triggerId, company, binding.userId, spec.slug, binding.accountId!, projectKeyEnv, 'enabled', now());
+        triggerId, company, binding.userId, spec.slug, binding.accountId!, device.projectKeyEnv, 'enabled', now());
+      this.db.run('INSERT OR IGNORE INTO composio_trigger_wants(company,user_id,slug,device) VALUES(?,?,?,?)', company, binding.userId, spec.slug, device.id);
       this.db.append(company, 'composio_trigger_enabled', null, now(), { triggerId, userId: binding.userId, slug: spec.slug });
     });
     // An older instance (another connected account) stops polling too; best effort.
@@ -183,7 +225,7 @@ export class ComposioTriggers {
    * already knows. At-least-once: a duplicate `webhook-id` answers `replayed`.
    */
   webhook(company: string, headers: { id?: unknown; timestamp?: unknown; signature?: unknown }, raw: Uint8Array): { received: true; replayed?: true; ignored?: true } {
-    const secret = typeof company === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(company) ? this.deps.secret(webhookSecretName(company)) : undefined;
+    const secret = typeof company === 'string' && WEBHOOK_COMPANY_ID.test(company) ? this.deps.secret(webhookSecretName(company)) : undefined;
     // An office without a subscription answers like a bad signature: no office enumeration.
     requireThat(secret, 'invalid_composio_signature', 401);
     const webhookId = verifyComposioSignature(secret!, headers, raw, this.deps.ledger.now());
@@ -193,8 +235,9 @@ export class ComposioTriggers {
     const kind = typeof event.type === 'string' ? KINDS.get(event.type) : undefined;
     if (!kind) return { received: true, ignored: true };
     const digest = createHash('sha256').update(raw).digest('hex');
+    // Checked against the seen record, which outlives acknowledgement: a re-sent delivery is never a second event.
     const replay = () => {
-      const prior = this.db.get<{ digest: string }>('SELECT digest FROM composio_events WHERE webhook_id=?', webhookId);
+      const prior = this.db.get<{ digest: string }>('SELECT digest FROM composio_webhooks_seen WHERE webhook_id=?', webhookId);
       if (prior) requireThat(prior.digest === digest, 'composio_event_conflict', 409);
       return Boolean(prior);
     };
@@ -223,6 +266,8 @@ export class ComposioTriggers {
     this.prune(company);
     return this.db.transaction(() => {
       if (replay()) return { received: true as const, replayed: true as const };
+      this.db.run('DELETE FROM composio_webhooks_seen WHERE received<?', now - SEEN_RETENTION_MS);
+      this.db.run('INSERT INTO composio_webhooks_seen(webhook_id,company,digest,received) VALUES(?,?,?,?)', webhookId, company, digest, now);
       const seq = Number(this.db.run('INSERT INTO composio_events(company,webhook_id,digest,trigger_id,user_id,kind,provider_msg_id,received) VALUES(?,?,?,?,?,?,?,?)',
         company, webhookId, digest, kind === 'message' || kind === 'trigger_disabled' ? rows[0]!.trigger_id : null, meta.user_id as string, kind, messageId ?? null, now).lastInsertRowid);
       this.db.run('INSERT INTO composio_event_tops(company,top) VALUES(?,?) ON CONFLICT(company) DO UPDATE SET top=max(top,excluded.top)', company, seq);
@@ -237,7 +282,8 @@ export class ComposioTriggers {
    * everything up to it. A device's own rows go once it acks them; office
    * mailbox rows once every granted computer has; anything else after 7 days.
    * `gap` says rows this device could have read were dropped unread (or the
-   * cursor is ahead of anything stored): the desktop should rescan.
+   * cursor is ahead of anything stored, or of anything this device was ever
+   * answered with): the desktop should rescan.
    */
   pull(device: ConnectorDevice, value: unknown) {
     object(value); exact(value, ['after']); integer(value.after, Number.MAX_SAFE_INTEGER);
@@ -246,8 +292,10 @@ export class ComposioTriggers {
     const top = db.get<{ top: number }>('SELECT top FROM composio_event_tops WHERE company=?', company)?.top ?? 0;
     const users = this.users(device), office = officeUserId(company);
     const pruned = Math.max(0, ...users.map(user => db.get<{ pruned_through: number }>('SELECT pruned_through FROM composio_event_retention WHERE company=? AND user_id=?', company, user)?.pruned_through ?? 0));
-    // A cursor ahead of anything stored is from another ledger: acknowledge nothing, start over.
-    const from = after > top ? 0 : after, gap = after > top || after < pruned;
+    // A cursor ahead of anything stored is from another ledger, and one past what this device was
+    // ever answered with is from another credential or device: acknowledge nothing, start over.
+    const served = db.get<{ served: number }>('SELECT served FROM composio_event_served WHERE device=?', device.id)?.served ?? 0;
+    const foreign = after > top || after > served, from = foreign ? 0 : after, gap = foreign || after < pruned;
     db.transaction(() => {
       db.run('INSERT INTO composio_event_cursors(device,company,acked) VALUES(?,?,?) ON CONFLICT(device) DO UPDATE SET acked=max(acked,excluded.acked)', device.id, company, from);
       db.run('DELETE FROM composio_events WHERE company=? AND user_id=? AND seq<=?', company, device.userId, from);
@@ -259,13 +307,14 @@ export class ComposioTriggers {
     });
     const rows = db.all<EventRow>(`SELECT seq, kind, trigger_id, user_id, provider_msg_id, received FROM composio_events WHERE company=? AND seq>? AND user_id IN (${users.map(() => '?').join(',')}) ORDER BY seq LIMIT ?`,
       company, from, ...users, PAGE + 1);
-    const more = rows.length > PAGE, page = rows.slice(0, PAGE);
+    const more = rows.length > PAGE, page = rows.slice(0, PAGE), cursor = more ? page[page.length - 1]!.seq : top;
+    db.run('INSERT INTO composio_event_served(device,served) VALUES(?,?) ON CONFLICT(device) DO UPDATE SET served=max(served,excluded.served)', device.id, cursor);
     const slugs = new Map(db.all<{ trigger_id: string; slug: string }>('SELECT trigger_id, slug FROM composio_triggers WHERE company=?', company).map(row => [row.trigger_id, row.slug]));
     return { events: page.map(row => {
       const spec = row.trigger_id ? [...TRIGGERS.values()].find(item => item.slug === slugs.get(row.trigger_id!)) : undefined;
       return { seq: row.seq, kind: row.kind, source: row.user_id === office ? 'office' : 'personal', ...(spec ? { app: spec.app, event: spec.event } : {}),
         ...(row.provider_msg_id ? { messageId: row.provider_msg_id } : {}), receivedAt: new Date(row.received).toISOString() };
-    }), cursor: more ? page[page.length - 1]!.seq : top, gap, more };
+    }), cursor, gap, more };
   }
 }
 

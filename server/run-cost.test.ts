@@ -33,7 +33,16 @@ describe("recording a run's Modelvia requests", () => {
     noteModelviaRequest(usage, null);
     noteModelviaRequest(usage, "not an id/../x");
     noteModelviaReply(usage, { usage: { prompt_tokens: -1, completion_tokens: "9" } });
-    expect(usage).toEqual({ requestIds: ["req-fictional-1"], calls: 4, inputTokens: 12, outputTokens: 5 });
+    expect(usage).toEqual({ requestIds: ["req-fictional-1"], calls: 4, unidentified: 2, inputTokens: 12, outputTokens: 5 });
+  });
+
+  it("counts a call with no usable id apart from a repeated id", () => {
+    const usage = emptyRunUsage();
+    noteModelviaRequest(usage, "req-fictional-1");
+    noteModelviaRequest(usage, "req-fictional-1");
+    expect(usage).toEqual({ requestIds: ["req-fictional-1"], calls: 2 });
+    noteModelviaRequest(usage, null);
+    expect(usage).toEqual({ requestIds: ["req-fictional-1"], calls: 3, unidentified: 1 });
   });
 
   it("takes the original id from a 409 request_already_processed receipt", () => {
@@ -56,6 +65,9 @@ describe("recording a run's Modelvia requests", () => {
     expect(cleanRunUsage(undefined)).toBeUndefined();
     expect(cleanRunUsage({ requestIds: "req-fictional-1", calls: 1 })).toBeUndefined();
     expect(cleanRunUsage({ requestIds: [], calls: -1 })).toBeUndefined();
+    expect(cleanRunUsage({ requestIds: ["req-fictional-1"], calls: 2, unidentified: 1 })).toEqual({ requestIds: ["req-fictional-1"], calls: 2, unidentified: 1 });
+    // An unreadable count of id-less calls never reads as zero.
+    expect(cleanRunUsage({ requestIds: ["req-fictional-1"], calls: 2, unidentified: "1" })).toBeUndefined();
   });
 });
 
@@ -73,6 +85,17 @@ describe("pricing a run from Modelvia receipts", () => {
       "https://gateway.fictional.test/v1/requests/req-fictional-1", "https://gateway.fictional.test/v1/requests/req-fictional-2"]);
     expect(stub.asked.every(request => request.authorization === `Bearer ${KEY}`)).toBe(true);
     expect(JSON.stringify(cost)).not.toContain(KEY);
+  });
+
+  it("is incomplete when any call carried no usable id: a partial sum never reads as the price", async () => {
+    const stub = receipts({ "req-fictional-1": receipt("req-fictional-1", { chargedNanoAud: "25000000" }) });
+    const partial = emptyRunUsage();
+    noteModelviaRequest(partial, "req-fictional-1");
+    noteModelviaRequest(partial, null);
+    expect(await runCost(partial, access, { fetch: stub.fetcher })).toEqual({ state: "incomplete", requests: 2 });
+    expect(stub.asked).toEqual([]);
+    // A repeated id is one receipt, so that run is still priced.
+    expect(await runCost({ requestIds: ["req-fictional-1"], calls: 2 }, access, { fetch: stub.fetcher })).toEqual({ state: "priced", requests: 2, chargedNanoAud: "25000000" });
   });
 
   it("reads withheld as not priced, never A$0", async () => {

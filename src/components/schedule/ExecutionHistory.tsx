@@ -10,7 +10,7 @@ type Page = { runs: Run[]; nextCursor: string | null };
 const isJob = (run: Run): run is JobRun => 'jobId' in run;
 
 /** `GET /api/job-runs/:id/cost`: Modelvia's own charge, summed on the server. */
-export type RunCost = { state: 'none' } | { state: 'priced'; requests: number; chargedNanoAud: string } | { state: 'pending' | 'not-priced' | 'unavailable'; requests: number };
+export type RunCost = { state: 'none' } | { state: 'priced'; requests: number; chargedNanoAud: string } | { state: 'pending' | 'not-priced' | 'incomplete' | 'unavailable'; requests: number };
 
 export function readRunCost(value: unknown): RunCost | null {
   if (!value || typeof value !== 'object') return null;
@@ -19,7 +19,7 @@ export function readRunCost(value: unknown): RunCost | null {
   if (!Number.isSafeInteger(cost.requests) || (cost.requests as number) < 0) return null;
   const requests = cost.requests as number;
   if (cost.state === 'priced') return typeof cost.chargedNanoAud === 'string' && /^(0|[1-9][0-9]{0,20})$/.test(cost.chargedNanoAud) ? { state: 'priced', requests, chargedNanoAud: cost.chargedNanoAud } : null;
-  return cost.state === 'pending' || cost.state === 'not-priced' || cost.state === 'unavailable' ? { state: cost.state, requests } : null;
+  return cost.state === 'pending' || cost.state === 'not-priced' || cost.state === 'incomplete' || cost.state === 'unavailable' ? { state: cost.state, requests } : null;
 }
 
 /** nanoAUD to whole cents; a charge below one cent never reads as free. */
@@ -38,6 +38,7 @@ export function aiCostText(cost: RunCost | null): string | null {
   if (cost.state === 'priced') return `${requests} · ${audFromNano(cost.chargedNanoAud)}`;
   if (cost.state === 'pending') return `${requests} · cost pending`;
   if (cost.state === 'not-priced') return `${requests} · not priced for this office`;
+  // `incomplete` (some requests carried no receipt id) reads the same: a partial sum is never shown as the total.
   return `${requests} · cost unavailable`;
 }
 

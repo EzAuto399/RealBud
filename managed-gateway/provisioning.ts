@@ -36,7 +36,7 @@ import type { UsageLedger } from './ledger.ts';
 import { carryMailboxGrant } from './office-mailbox.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
 import { composioAppAdapter, type ComposioAppAdapter } from './composio-apps.ts';
-import { composioWebhookClient, disableTriggers, webhookSecretName, type ComposioWebhookClient } from './composio-triggers.ts';
+import { composioWebhookClient, disableDeviceTriggers, webhookSecretName, WEBHOOK_COMPANY_ID, type ComposioWebhookClient } from './composio-triggers.ts';
 import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaRotatedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
@@ -645,7 +645,7 @@ export class InstallationProvisioning {
   private async ensureWebhook(companyId: string, projectKeyEnv: string): Promise<void> {
     const name = webhookSecretName(companyId);
     // The company id is a path segment of the webhook URL (http.ts).
-    requireThat(SECRET_NAME.test(name) && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(companyId), 'invalid_id');
+    requireThat(SECRET_NAME.test(name) && WEBHOOK_COMPANY_ID.test(companyId), 'invalid_id');
     const client = this.options.webhooks!.client, url = `${this.webhookBase}/v1/webhooks/composio/${companyId}`;
     await serialized(`composio-webhook:${companyId}`, async () => {
       if (this.options.secrets.read(name)) return;
@@ -1085,10 +1085,11 @@ export class InstallationProvisioning {
         userId = devices.find(entry => entry.id === deviceId && entry.companyId === companyId)?.userId;
         return { devices: devices.map(entry => entry.id === deviceId && entry.companyId === companyId ? { ...entry, active: false } : entry) };
       });
-      // The computer's own event triggers stop with it. A provider failure is
-      // audited by disableTriggers and never holds the revoke.
+      // The computer's own event triggers stop with it, and its want of a shared
+      // one (which stops too when no other computer wants it). A provider
+      // failure is audited by disableTriggers and never holds the revoke.
       if (userId && this.options.triggerApps) {
-        await disableTriggers({ ledger: this.options.ledger, secret: name => this.options.secrets.read(name), apps: this.options.triggerApps }, companyId, row => row.user_id === userId, 'installation_revoked');
+        await disableDeviceTriggers({ ledger: this.options.ledger, secret: name => this.options.secrets.read(name), apps: this.options.triggerApps }, companyId, { id: deviceId, userId }, 'installation_revoked');
       }
       for (;;) {
         const current = currentWork(), work = current.revocationWork!;

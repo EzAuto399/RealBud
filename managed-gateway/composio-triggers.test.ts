@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fixture } from './testing.ts';
 import { ManagedConnectors, newConnectorCredential, type ConnectorDevice } from './connectors.ts';
-import { composioWebhookClient, EVENT_RETENTION_MS, webhookSecretName, WEBHOOK_EVENTS } from './composio-triggers.ts';
+import { composioWebhookClient, disableDeviceTriggers, EVENT_RETENTION_MS, SEEN_RETENTION_MS, webhookSecretName, WEBHOOK_EVENTS } from './composio-triggers.ts';
 import { composioAppAdapter, composioProjectRest, type AppBinding } from './composio-apps.ts';
 import type { HttpTransport } from './composio-org.ts';
 import { createGatewayServer } from './http.ts';
@@ -43,7 +43,10 @@ function setup() {
     if (hold) await hold;
     return { checkedAt: new Date(f.now()).toISOString(), services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: binding.accountId!, status: 'ACTIVE' }], accountSelectionRequired: false } }, tools: { available: true, names: [] } };
   };
-  const broker = new ManagedConnectors({ ledger: f.ledger, devices: () => devices, secret: name => secrets[name], access: access as never, apps });
+  // The office mailbox's sign-in and identity read, for the shared-mailbox trigger tests.
+  const authorize = async () => ({ url: 'https://connect.example.invalid/oauth', accountId: 'ca_office', expiresAt: new Date(f.now() + 60_000).toISOString() });
+  const transport = (binding: { accountId?: string }) => ({ async request() { return { content: [{ type: 'text', text: JSON.stringify({ accountId: binding.accountId, emailAddress: 'office@example.invalid' }) }] }; } });
+  const broker = new ManagedConnectors({ ledger: f.ledger, devices: () => devices, secret: name => secrets[name], access: access as never, apps, authorize: authorize as never, transport: transport as never });
   const request = (id: string, path: string, body?: unknown, policyRevision?: number) => broker.handle({ token: tokens.get(id)!, profile: 'property', method: body === undefined ? 'GET' : 'POST',
     path, body, ...(policyRevision === undefined ? {} : { policyRevision }), signal: new AbortController().signal });
   const sign = (raw: string, { id = 'msg_1', at = f.now(), secret = SECRET } = {}) => {
@@ -57,7 +60,16 @@ function setup() {
     const raw = JSON.stringify(payload); return broker.triggers.webhook(company, sign(raw, options), Buffer.from(raw));
   };
   const enable = (id: string) => request(id, '/v1/connectors/triggers', { ...SWITCH, enabled: true });
-  return { f, broker, devices, request, sign, message, deliver, enable, calls, secrets,
+  /** Office A's shared mailbox, confirmed and granted to `granted`; returns the policy revision. */
+  const sharedMailbox = async (granted: string[]) => {
+    const call = (op: string, body?: unknown) => broker.officeMailbox.handle(f.owner, op, body, async () => {});
+    await call('policy', { mode: 'shared', expectedRevision: 0 }); await call('authorize', { expectedRevision: 1 }); await call('verify', { expectedRevision: 1 });
+    const status = await call('status') as { candidate: { accountId: string; emailAddress: string } };
+    await call('confirm', { expectedRevision: 2, ...status.candidate });
+    for (const [index, id] of granted.entries()) await call('grants', { expectedRevision: 3 + index, installationId: id, allowed: true });
+    return broker.officeMailbox.policy('company-a').revision;
+  };
+  return { f, broker, devices, request, sign, message, deliver, enable, calls, secrets, sharedMailbox, apps,
     hold: (value?: Promise<void>) => { hold = value; }, failStatus: (value: boolean) => { failStatus = value; } };
 }
 
@@ -338,4 +350,88 @@ test('webhook secret names are one per office: ids that differ only by case or p
   const names = ['company-a', 'company_a', 'COMPANY-A', 'company.a'].map(webhookSecretName);
   assert.equal(new Set(names).size, names.length);
   for (const name of names) assert.match(name, /^REALBUD_COMPOSIO_WEBHOOK_[A-F0-9]{64}$/);
+});
+
+test('a delivery re-sent after its event was acknowledged still answers replayed, never a second event, until the seen record ages out', async () => {
+  const s = setup(); try {
+    await s.enable('dev-a1');
+    const delivery = s.message('dev-a1');
+    assert.deepEqual(s.deliver('company-a', delivery), { received: true });
+    const pull = async (after: number) => (await s.request('dev-a1', '/v1/connectors/events', { after })).body as { events: Array<{ seq: number }>; cursor: number };
+    const first = await pull(0);
+    assert.deepEqual(first.events.map(event => event.seq), [1]);
+    await pull(first.cursor);
+    assert.equal(s.f.ledger.db.get<{ count: number }>('SELECT count(*) AS count FROM composio_events')!.count, 0);
+    // Inside the 300 s signature window the same signed delivery comes again.
+    assert.deepEqual(s.deliver('company-a', delivery), { received: true, replayed: true });
+    assert.throws(() => s.deliver('company-a', { ...delivery, data: { message_id: 'gm_other' } }), /composio_event_conflict/);
+    assert.deepEqual((await pull(first.cursor)).events, []);
+    // The seen record outlives acknowledgement (a fresh-signed retry is still a replay), then is pruned by age.
+    s.f.setTime(s.f.now() + 24 * 60 * 60_000);
+    assert.deepEqual(s.deliver('company-a', delivery), { received: true, replayed: true });
+    s.f.setTime(s.f.now() + SEEN_RETENTION_MS);
+    s.deliver('company-a', s.message('dev-a1'), { id: 'msg_later' });
+    assert.deepEqual(s.f.ledger.db.all<{ webhook_id: string }>('SELECT webhook_id FROM composio_webhooks_seen').map(row => row.webhook_id), ['msg_later']);
+  } finally { s.f.close(); }
+});
+
+test('a cursor this computer was never served acknowledges nothing: its unread events stay and the pull says gap', async () => {
+  const s = setup(); try {
+    await s.enable('dev-a2');
+    for (const id of ['msg_1', 'msg_2', 'msg_3']) s.deliver('company-a', s.message('dev-a2'), { id });
+    const pull = async (after: number) => (await s.request('dev-a2', '/v1/connectors/events', { after })).body as { events: Array<{ seq: number }>; cursor: number; gap: boolean };
+    // A cursor saved under another credential: inside this office's range, but nothing was ever sent to dev-a2.
+    const stale = await pull(2);
+    assert.deepEqual(stale.events.map(event => event.seq), [1, 2, 3]);
+    assert.equal(stale.gap, true); assert.equal(stale.cursor, 3);
+    assert.equal(s.f.ledger.db.get<{ count: number }>('SELECT count(*) AS count FROM composio_events')!.count, 3);
+    // Once served, its own cursor acknowledges as before.
+    assert.deepEqual((await pull(stale.cursor)).events, []);
+    assert.equal(s.f.ledger.db.get<{ count: number }>('SELECT count(*) AS count FROM composio_events')!.count, 0);
+  } finally { s.f.close(); }
+});
+
+test('the shared mailbox trigger stays on while another granted computer still wants it', async () => {
+  const s = setup(); try {
+    const revision = await s.sharedMailbox(['dev-a1', 'dev-a2']);
+    const toggle = (id: string, enabled: boolean) => s.request(id, '/v1/connectors/triggers', { ...SWITCH, enabled }, revision);
+    assert.equal(((await toggle('dev-a1', true)).body as { source: string }).source, 'office');
+    await toggle('dev-a2', true);
+    const office = s.f.ledger.db.get<{ trigger_id: string }>('SELECT trigger_id FROM composio_triggers')!.trigger_id;
+    const providerOff = () => s.calls.filter(call => call[0] === 'status' && call[1] === office && call[2] === false).length;
+    // dev-a1 turns its switch off: dev-a2 still wants the office trigger, so the provider keeps it.
+    assert.deepEqual((await toggle('dev-a1', false)).body, { app: 'gmail', event: 'new-message', source: 'office', enabled: false, state: 'disabled' });
+    assert.equal(providerOff(), 0);
+    assert.deepEqual(((await s.request('dev-a2', '/v1/connectors/status')).body as { triggers: unknown }).triggers, [{ app: 'gmail', event: 'new-message', source: 'office', state: 'enabled' }]);
+    // The last computer that wants it turns it off for real.
+    await toggle('dev-a2', false);
+    assert.equal(providerOff(), 1);
+    assert.equal(s.f.ledger.db.get<{ state: string }>('SELECT state FROM composio_triggers WHERE trigger_id=?', office)!.state, 'disabled');
+    // Revoking one computer drops only its want; revoking the last one that wants it stops the trigger.
+    await toggle('dev-a1', true); await toggle('dev-a2', true);
+    const deps = { ledger: s.f.ledger, secret: (name: string) => s.secrets[name], apps: s.apps };
+    await disableDeviceTriggers(deps, 'company-a', { id: 'dev-a2', userId: 'installation-dev-a2' }, 'installation_revoked');
+    assert.equal(providerOff(), 1);
+    await disableDeviceTriggers(deps, 'company-a', { id: 'dev-a1', userId: 'installation-dev-a1' }, 'installation_revoked');
+    assert.equal(providerOff(), 2);
+    // An inactive computer's want does not hold the trigger on.
+    await toggle('dev-a1', true); await toggle('dev-a2', true);
+    s.devices[0] = { ...s.devices[0]!, active: false };
+    await toggle('dev-a2', false);
+    assert.equal(providerOff(), 3);
+  } finally { s.f.close(); }
+});
+
+test('the webhook route accepts every office id provisioning accepts: dots, colons and 160 characters', async () => {
+  const s = setup(); try {
+    for (const company of ['office.a', 'office:a', `o${'a'.repeat(159)}`]) {
+      s.secrets[webhookSecretName(company)] = SECRET;
+      assert.deepEqual(s.deliver(company, { type: 'composio.something.new', metadata: {} }, { id: `msg_${company.length}` }), { received: true, ignored: true }, company);
+    }
+    // Outside provisioning's id shape it answers exactly like a bad signature.
+    for (const company of ['.office', `o${'a'.repeat(160)}`, 'office/a']) {
+      s.secrets[webhookSecretName(company)] = SECRET;
+      assert.throws(() => s.deliver(company, { type: 'composio.something.new', metadata: {} }), /invalid_composio_signature/, company);
+    }
+  } finally { s.f.close(); }
 });
