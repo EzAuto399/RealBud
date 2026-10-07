@@ -13,6 +13,8 @@
  * Attempts persist in private storage so a restart continues the backoff
  * rather than hammering a busy download server. Retries are capped; a final
  * failure holds until the office approves again or someone presses Try again.
+ * A service start (an app update can kill a running install) resumes a
+ * stopped setup once, counted against the same cap.
  * Status text is fixed product copy chosen by code, never raw error text.
  */
 import { join } from "node:path";
@@ -78,17 +80,17 @@ export const AUTO_SETUP_COPY: Record<WorkerAutoSetupCode, string> = {
   installing: "Installing Bud",
   safeguards: "Applying Bud’s safeguards",
   model: "Connecting Bud’s model",
-  readiness: "Running the private readiness check",
+  readiness: "Testing Bud on this computer",
   ready: "Bud is ready.",
   retry: "Bud’s setup will try again shortly.",
   held_exhausted: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.",
   held_failed: "Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.",
-  held_recovery: "Bud’s setup record needs recovery. Your files are kept; contact RealBud support.",
-  held_restart: "Bud’s update is installed. Restart RealBud to use it.",
-  held_unavailable: "Automatic Bud setup is not available on this computer yet.",
+  held_recovery: "Bud’s setup record needs recovery. Your files are kept. Save a support file and send it to RealBud support.",
+  held_restart: "Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.",
+  held_unavailable: "Bud can’t be set up automatically on this kind of computer. Use RealBud on a Mac or Windows computer for Bud’s work; your files are kept.",
 };
 /** Plain words for the four setup steps, so a hold says where it stopped. */
-const STAGE_WORDS: Record<number, string> = { 1: "installing Bud", 2: "applying Bud’s safeguards", 3: "connecting Bud’s model", 4: "running the private readiness check" };
+const STAGE_WORDS: Record<number, string> = { 1: "installing Bud", 2: "applying Bud’s safeguards", 3: "connecting Bud’s model", 4: "testing Bud on this computer" };
 /** A stopped setup names the step it stopped at, when that step is known. */
 export function autoSetupDetail(code: WorkerAutoSetupCode, step: number): string {
   const stage = STAGE_WORDS[step];
@@ -214,13 +216,24 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     if (current.state === "idle" || current.state === "ready") set("verifying", 0, "checking");
     let saved: Attempts;
     try { saved = await read(); }
-    catch { if (await stillActive(runEpoch)) { cancelRetry(); set("held", 0, "held_recovery"); } return; }
+    catch (error) {
+      if (await stillActive(runEpoch)) { cancelRetry(); set("held", 0, "held_recovery"); note(`automatic Bud setup is held (held_recovery): ${error instanceof Error ? error.message : "unreadable record"}`); }
+      return;
+    }
     if (!(await stillActive(runEpoch))) return;
     // A fresh approval or an explicit Try again starts from the top.
     if ((reason === "provisioned" || reason === "manual") && (saved.held || saved.attempts || saved.stageRetried)) {
       await save({ ...FRESH }, saved);
       if (!(await stillActive(runEpoch))) return;
       saved = { ...FRESH };
+    }
+    // A service start resumes a stopped setup once: an app update can kill a
+    // running install. Counted, so a lasting failure still settles on a hold.
+    if (reason === "boot" && saved.held === "held_failed" && saved.attempts + 1 < AUTO_SETUP_MAX_ATTEMPTS) {
+      const resumed = { ...saved, attempts: saved.attempts + 1, held: null };
+      await save(resumed, saved);
+      if (!(await stillActive(runEpoch))) return;
+      saved = resumed;
     }
     if (saved.held) {
       // Held until someone repairs it; a repaired, ready worker clears the hold.

@@ -186,19 +186,48 @@ describe("automatic Bud setup after an approved office link", () => {
     expect(JSON.stringify(h.record())).not.toContain("synthetic");
     // The step is saved with the hold, so a restart still names it.
     expect(h.record()).toMatchObject({ held: "held_failed", step: 1 });
-    const restarted = createWorkerAutoSetup(h.deps);
-    await restarted.ensure("boot");
-    expect(restarted.status()).toMatchObject(stopped);
     await setup.ensure("periodic");
     expect(h.deps.installOrRepair).toHaveBeenCalledTimes(1);
+    // A service start resumes once; the same final failure holds again.
+    const restarted = createWorkerAutoSetup(h.deps);
+    const resumed = restarted.ensure("boot");
+    await installCalled(h.deps, 2); h.finishInstall(); await resumed;
+    expect(restarted.status()).toMatchObject(stopped);
+    expect(h.record()).toMatchObject({ held: "held_failed", step: 1, attempts: 1 });
     const fresh = setup.ensure("provisioned");
-    await installCalled(h.deps, 2); h.finishInstall(); await fresh;
-    expect(h.deps.installOrRepair).toHaveBeenCalledTimes(2);
+    await installCalled(h.deps, 3); h.finishInstall(); await fresh;
+    expect(h.deps.installOrRepair).toHaveBeenCalledTimes(3);
+  });
+
+  it("resumes a setup an app update interrupted on the next service start, within the attempt cap", async () => {
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: 0, nextRetryAt: null, held: "held_failed", stageRetried: false, step: 1 }));
+    const h = harness();
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure("periodic");
+    expect(setup.status()).toMatchObject({ state: "held", code: "held_failed" });
+    expect(h.deps.installOrRepair).not.toHaveBeenCalled();
+    const boot = setup.ensure("boot");
+    await installCalled(h.deps); h.finishInstall(); await boot;
+    expect(setup.status()).toMatchObject({ state: "ready" });
+    expect(h.record()).toMatchObject({ attempts: 0, held: null });
+
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: AUTO_SETUP_MAX_ATTEMPTS - 1, nextRetryAt: null, held: "held_failed", stageRetried: false, step: 1 }));
+    const capped = harness();
+    const last = createWorkerAutoSetup(capped.deps);
+    await last.ensure("boot");
+    expect(last.status()).toMatchObject({ state: "held", code: "held_failed" });
+    expect(capped.deps.installOrRepair).not.toHaveBeenCalled();
   });
 
   it("names only a known setup step and keeps the plain copy otherwise", () => {
     expect(autoSetupDetail("held_failed", 3)).toBe("Bud’s setup stopped while connecting Bud’s model. Your files are kept. Try again, or contact RealBud support.");
-    expect(autoSetupDetail("held_exhausted", 4)).toMatch(/It stopped while running the private readiness check\./);
+    expect(autoSetupDetail("held_exhausted", 4)).toMatch(/It stopped while testing Bud on this computer\./);
+    // Plain words, and each stage reads the same as its progress line.
+    expect(JSON.stringify(AUTO_SETUP_COPY)).not.toMatch(/private readiness|readiness check/);
+    for (const [step, code] of [[1, "installing"], [2, "safeguards"], [3, "model"], [4, "readiness"]] as const) {
+      const words = AUTO_SETUP_COPY[code];
+      expect(autoSetupDetail("held_failed", step)).toContain(`stopped while ${words[0]!.toLowerCase()}${words.slice(1)}.`);
+    }
     expect(autoSetupDetail("held_failed", 0)).toBe(AUTO_SETUP_COPY.held_failed);
     expect(autoSetupDetail("held_restart", 1)).toBe(AUTO_SETUP_COPY.held_restart);
     expect(autoSetupDetail("installing", 1)).toBe(AUTO_SETUP_COPY.installing);
@@ -231,6 +260,20 @@ describe("automatic Bud setup after an approved office link", () => {
     expect(setup.status()).toMatchObject({ state: "held", code: "held_recovery" });
     expect(h.deps.installOrRepair).not.toHaveBeenCalled();
     expect(readFileSync(join(dir, AUTO_SETUP_FILE), "utf8")).toBe("{not json");
+    // A Try again never clears it; the support file carries the reason.
+    await setup.retry();
+    expect(setup.status()).toMatchObject({ state: "held", code: "held_recovery" });
+    expect(readFileSync(join(dir, AUTO_SETUP_FILE), "utf8")).toBe("{not json");
+  });
+
+  it("logs why the attempt record needs recovery, so a support file names it", async () => {
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), JSON.stringify({ version: 1, attempts: 0, nextRetryAt: null, held: null, stageRetried: false, extra: true }));
+    const h = harness();
+    const log = vi.fn();
+    const setup = createWorkerAutoSetup({ ...h.deps, log });
+    await setup.ensure("boot");
+    expect(setup.status()).toMatchObject({ state: "held", code: "held_recovery" });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/held \(held_recovery\): damaged auto-setup record/));
   });
 });
 

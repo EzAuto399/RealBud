@@ -159,6 +159,25 @@ describe("automatic Bud setup status", () => {
   });
 });
 
+describe("holds staff can clear themselves", () => {
+  const held = (code: "held_restart" | "held_recovery" | "held_unavailable") => budAutoSetupView({
+    pin: { product: "fixture", tag: "fixture", commit: "fixture", profile: "property" },
+    cli: { installed: true, versionText: null, matchesPin: false, compatible: false, probeState: "ok" },
+    pack: { installed: true, approvalsManual: true, workroomReady: true },
+    ready: false, detail: "", homeDir: "/synthetic", profileDir: "/synthetic", installCommand: null, signInCommand: "",
+    autoSetup: { state: "held", code, step: 1, total: 4, detail: "fatal: /private/path" },
+  } as HermesStatus)?.detail;
+
+  it("names one next step for each hold, never only 'contact support' or a reopen that cannot restart the service", () => {
+    expect(held("held_restart")).toBe("Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.");
+    expect(held("held_recovery")).toBe("Bud’s setup record needs recovery. Your files are kept. Save a support file and send it to RealBud support.");
+    expect(held("held_unavailable")).toBe("Bud can’t be set up automatically on this kind of computer. Use RealBud on a Mac or Windows computer for Bud’s work; your files are kept.");
+    for (const code of ["held_restart", "held_recovery", "held_unavailable"] as const) {
+      expect(held(code)).not.toMatch(/Restart RealBud to|Quit and reopen|; contact RealBud support\.$|not available on this computer yet|private\/path/);
+    }
+  });
+});
+
 describe("last readiness check copy", () => {
   it("shows the setup-changed receipt in plain words and keeps other failures bounded", () => {
     const failed = (detail: string) => budReadinessFailure({ ready: false, lastPing: { at: 1, ok: false, kind: "ping", detail } } as HermesStatus);

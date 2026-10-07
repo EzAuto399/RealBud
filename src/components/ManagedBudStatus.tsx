@@ -4,6 +4,8 @@ import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
+import { restartBackupService, type BackupServiceBridge } from "@/lib/private-backup";
+import { SUPPORT_SAVED, supportSaveOutcome } from "./you/SupportCard";
 import { Card } from "./SettingsPrimitives";
 import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
 import { modelAccessState, WEBSITE_LINK_CHANGED } from "./you/browser-link";
@@ -21,6 +23,32 @@ type ManagedBudStatusProps = {
   backLabel?: string;
 };
 
+export const RESTART_HELP = "RealBud stops and starts its service on this computer. Your work is kept.";
+export const RESTART_FAILED = "RealBud couldn’t confirm its service restarted. Your work is kept. Start it from RealBud service under Settings & help, or contact RealBud support.";
+type ServiceNote = { ok: boolean; text: string } | null;
+type ServiceBridge = Partial<BackupServiceBridge> & { saveSupportFile?: () => Promise<unknown> };
+let serviceActionFlight: Promise<ServiceNote> | null = null;
+
+/** Restart the office service (a Bud update waits for it) or save a support
+ * file, through the desktop bridge's existing, owner-checked controls. One at
+ * a time across every Bud status view: a second press joins the first. The
+ * note is fixed copy, never bridge error text. */
+export function budServiceAction(kind: "restart" | "support", bridge: ServiceBridge | undefined): Promise<ServiceNote> {
+  serviceActionFlight ??= (async (): Promise<ServiceNote> => {
+    if (kind === "restart") {
+      try {
+        await restartBackupService({ serviceStatus: () => bridge!.serviceStatus!(), serviceStop: () => bridge!.serviceStop!(), serviceStart: () => bridge!.serviceStart!() });
+        return { ok: true, text: "RealBud’s service restarted." };
+      } catch { return { ok: false, text: RESTART_FAILED }; }
+    }
+    let outcome;
+    try { outcome = supportSaveOutcome(await bridge!.saveSupportFile!()); }
+    catch { outcome = supportSaveOutcome(null); }
+    return outcome.kind === "saved" ? { ok: true, text: SUPPORT_SAVED } : outcome.kind === "failed" ? { ok: false, text: outcome.message } : null;
+  })().finally(() => { serviceActionFlight = null; });
+  return serviceActionFlight;
+}
+
 const secondaryButton = "pm-control rounded border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50";
 
 export function ManagedBudStatus({ id, status, connected, recovering = false, active = true, onRefresh, onServiceAdministration, onShowAsk, backLabel = "Back to Work" }: ManagedBudStatusProps) {
@@ -30,6 +58,8 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
   const retryInFlight = useRef(false);
+  const [serviceWorking, setServiceWorking] = useState<"restart" | "support" | null>(null);
+  const [serviceNote, setServiceNote] = useState<ServiceNote>(null);
   const mounted = useRef(true);
   const refreshOffice = useRef(office.refresh);
   refreshOffice.current = office.refresh;
@@ -104,6 +134,15 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const awaitingLink = showOfficeAccess && !officeLinked && !lastFailure && !status?.restartRequired
     && !(status?.cli.installed && !(status.cli.compatible ?? status.cli.matchesPin));
   const canRetrySetup = connected && !recovering && !withdrawn && !status?.modelAccess?.withdrawn && budAutoSetupRetryable(status);
+  // Holds staff clear themselves: a Bud update waiting for the office service
+  // to restart (the service outlives the window, so reopening never does it),
+  // and a damaged setup record only support can read.
+  const bridge = typeof window === "undefined" ? undefined : window.ogb;
+  const holdActionable = connected && !error && !recovering && !withdrawn && !ready;
+  const needsRestart = holdActionable && Boolean(displayStatus?.restartRequired || displayStatus?.autoSetup?.code === "held_restart");
+  const needsSupportFile = holdActionable && displayStatus?.autoSetup?.state === "held" && displayStatus.autoSetup.code === "held_recovery";
+  const canRestart = Boolean(bridge?.serviceStatus && bridge.serviceStop && bridge.serviceStart);
+  const canSaveSupport = typeof bridge?.saveSupportFile === "function";
   useEffect(() => {
     // A later authoritative status can settle an uncertain response without
     // another click. Do not leave the earlier request warning beside Ready.
@@ -124,6 +163,15 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       retryInFlight.current = false;
       if (mounted.current) setRetrying(false);
     }
+  }
+
+  async function serviceAction(kind: "restart" | "support") {
+    if (serviceWorking) return;
+    setServiceWorking(kind);
+    setServiceNote(null);
+    const note = await budServiceAction(kind, window.ogb);
+    if (kind === "restart" && note?.ok) await refresh();
+    if (mounted.current) { setServiceNote(note); setServiceWorking(null); }
   }
 
   function openYou(target: string) {
@@ -169,9 +217,18 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
         <div className="max-w-[32rem]"><ConnectOfficeView {...office.view} /></div>
       </div>}
       {retryError && <p role="alert" className="mt-3 text-sm text-danger">{retryError}</p>}
+      {needsRestart && <p className="mt-3 text-sm text-ink-secondary">{canRestart ? RESTART_HELP : "Open the RealBud desktop app to restart its service."}</p>}
+      {needsSupportFile && !canSaveSupport && <p className="mt-3 text-sm text-ink-secondary">Open the RealBud desktop app to save a support file.</p>}
+      {serviceNote && <p role={serviceNote.ok ? "status" : "alert"} className={`mt-3 text-sm ${serviceNote.ok ? "text-ink-secondary" : "text-danger"}`}>{serviceNote.text}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
         {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{backLabel}</button>}
+        {needsRestart && canRestart && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover disabled:opacity-50"
+          disabled={serviceWorking !== null} aria-busy={serviceWorking === "restart"} onClick={() => { void serviceAction("restart"); }}>
+          {serviceWorking === "restart" ? "Restarting RealBud’s service…" : "Restart RealBud’s service"}</button>}
+        {needsSupportFile && canSaveSupport && <button type="button" className={secondaryButton}
+          disabled={serviceWorking !== null} aria-busy={serviceWorking === "support"} onClick={() => { void serviceAction("support"); }}>
+          {serviceWorking === "support" ? "Saving…" : "Save a support file"}</button>}
         {canRetrySetup && <button type="button" className={secondaryButton} disabled={pending || retrying} aria-busy={retrying}
           onClick={() => { void retrySetup(); }}>{retrying ? "Requesting setup…" : "Try setup again"}</button>}
         {/* aria-disabled while checking: a disabled button drops keyboard focus to the page. */}

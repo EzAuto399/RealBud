@@ -1,9 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HermesStatus } from "@/state/store";
 import type { OfficeLinkStatus } from "../../server/office-link";
-import { ManagedBudStatus } from "./ManagedBudStatus";
+import { budServiceAction, ManagedBudStatus, RESTART_FAILED, RESTART_HELP } from "./ManagedBudStatus";
+import { SUPPORT_SAVED } from "./you/SupportCard";
 
 const monitor = vi.hoisted(() => ({ pending: false, error: "", refresh: vi.fn(), lastCheckedAt: null }));
 const office = vi.hoisted(() => ({ status: { state: "unlinked" } as OfficeLinkStatus, error: "" }));
@@ -214,5 +215,66 @@ describe("managed Bud status", () => {
     expect(html).toContain("Model access withdrawn");
     expect(html).toContain("withdrawn for this fictional computer");
     expect(html).not.toMatch(/Connect to your office|Connect with this code<\/button>/);
+  });
+});
+
+describe("holds staff clear themselves", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const held = (code: "held_restart" | "held_recovery" | "held_unavailable"): HermesStatus => ({ ...ready, ready: false,
+    cli: { ...ready.cli, compatible: false }, modelAccess: { managed: true, withdrawn: false, attached: true, detail: "managed" },
+    autoSetup: { state: "held", code, step: 1, total: 4, detail: "fixture" } });
+  const service = (patch: Record<string, unknown> = {}) => ({
+    serviceStatus: vi.fn(async () => ({ running: true, manageable: true })),
+    serviceStop: vi.fn(async () => ({ ok: true, status: { running: false } })),
+    serviceStart: vi.fn(async () => ({ ok: true, status: { running: true } })),
+    saveSupportFile: vi.fn(async () => ({ ok: true, officeReport: true })), ...patch });
+
+  it("offers a service restart, with what it does, when a Bud update waits for one", () => {
+    vi.stubGlobal("window", { ogb: service() });
+    for (const status of [held("held_restart"), { ...ready, ready: false, cli: { ...ready.cli, compatible: false }, restartRequired: true }]) {
+      const html = render(status);
+      expect(html).toMatch(/<button[^>]*class="pm-decision[^"]*"[^>]*>Restart RealBud’s service<\/button>/);
+      expect(html).toContain(RESTART_HELP);
+      expect(html).not.toContain("Try setup again");
+    }
+    expect(render(ready)).not.toContain("Restart RealBud’s service");
+    expect(render(held("held_restart"), { recovering: true })).not.toContain("Restart RealBud’s service");
+  });
+  it("says where to restart when this window has no desktop service controls", () => {
+    const html = render(held("held_restart"));
+    expect(html).not.toContain("Restart RealBud’s service</button>");
+    expect(html).toContain("Open the RealBud desktop app to restart its service.");
+  });
+  it("offers a support file for a damaged setup record, and names a usable computer when setup is unavailable here", () => {
+    vi.stubGlobal("window", { ogb: service() });
+    const recovery = render(held("held_recovery"));
+    expect(recovery).toContain("Save a support file and send it to RealBud support.");
+    expect(recovery).toContain(">Save a support file</button>");
+    expect(recovery).not.toMatch(/Try setup again|Restart RealBud’s service/);
+    const unavailable = render(held("held_unavailable"));
+    expect(unavailable).toContain("Use RealBud on a Mac or Windows computer for Bud’s work");
+    expect(unavailable).not.toMatch(/Try setup again|Save a support file<\/button>|Restart RealBud’s service/);
+  });
+  it("restarts once for a double press, only through the owned stop and start", async () => {
+    const bridge = service();
+    const [first, second] = [budServiceAction("restart", bridge), budServiceAction("restart", bridge)];
+    expect(await first).toEqual({ ok: true, text: "RealBud’s service restarted." });
+    expect(await second).toEqual(await first);
+    expect(bridge.serviceStop).toHaveBeenCalledTimes(1);
+    expect(bridge.serviceStart).toHaveBeenCalledTimes(1);
+    expect(bridge.serviceStop.mock.invocationCallOrder[0]).toBeLessThan(bridge.serviceStart.mock.invocationCallOrder[0]!);
+  });
+  it("never stops a service this installation does not own, and keeps the failure copy fixed", async () => {
+    const external = service({ serviceStatus: vi.fn(async () => ({ running: true, manageable: false })) });
+    expect(await budServiceAction("restart", external)).toEqual({ ok: false, text: RESTART_FAILED });
+    expect(external.serviceStop).not.toHaveBeenCalled();
+    const failed = service({ serviceStart: vi.fn(async () => ({ ok: false, status: { running: false } })) });
+    expect(await budServiceAction("restart", failed)).toEqual({ ok: false, text: RESTART_FAILED });
+    expect(RESTART_FAILED).not.toMatch(/backup|restore/i);
+  });
+  it("reports a saved, cancelled or failed support file in fixed words", async () => {
+    expect(await budServiceAction("support", service())).toEqual({ ok: true, text: SUPPORT_SAVED });
+    expect(await budServiceAction("support", service({ saveSupportFile: vi.fn(async () => ({ ok: false, canceled: true })) }))).toBeNull();
+    expect((await budServiceAction("support", service({ saveSupportFile: vi.fn(async () => { throw new Error("/private/path"); }) })))?.text).not.toContain("private");
   });
 });

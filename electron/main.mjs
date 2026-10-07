@@ -7,6 +7,7 @@ import { registerHermiosView } from "./hermios-view.mjs";
 import { guardedIpc, guardOfficeWindow, openExternalHttps, trustedDisplayRequest, trustedOfficePermission, trustedOfficeSender } from "./external-links.mjs";
 import { localSessionFor } from "../shared/local-session.mjs";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
+import { openWindowWhileServiceStarts, showWhenDecided } from "./launch-window.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
@@ -137,6 +138,10 @@ let serviceStartProblem = null;
 // Start. It records intent, not outcome: an unconfirmed stop is still a stop the
 // watchdog must not undo.
 let serviceStopRequested = false;
+// The launch's start-or-adopt decision while it is still running. A window
+// created meanwhile (a macOS dock click after the first was closed, a reopen from
+// the notification area) waits on it too rather than load a port not yet chosen.
+let pendingLaunchDecision = null;
 
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
@@ -242,10 +247,14 @@ async function startServerPackaged({ onlyPort = null } = {}) {
   return false;
 }
 
+// The waiting page: shown at launch while the office service is decided, and
+// whenever the desk loses the service. It has no controls, so nothing on it can
+// reach the service before it is up. Technical detail stays in the logs and the
+// support file, never on these pages.
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Waiting for the office service</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud keeps checking for the office service for the next few minutes and opens the desk as soon as it answers. A first start can be slow while the company database opens.</p><p style="color:#fcfcfc99;line-height:1.5">If this page stays, reopen RealBud, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key. Keep the existing workspace files for recovery — they are what the office is restored from.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Getting your office ready</h2><p style="color:#fcfcfc99;line-height:1.5">Your desk opens here by itself as soon as it is ready. The first start on a computer can take a few minutes.</p><p style="color:#fcfcfc99;line-height:1.5">There is nothing you need to do. Your saved work stays on this computer while you wait.</p></div></body>`,
   );
 
 // Shown when the dedicated bounded wait runs out. The ordinary background
@@ -253,7 +262,7 @@ const ERROR_PAGE =
 const WAIT_ENDED_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">The office service did not start</h2><p style="color:#fcfcfc99;line-height:1.5">The initial wait has ended. RealBud will open the desk if its background check finds the service. Reopen RealBud to try again, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key.</p><p style="color:#fcfcfc99;line-height:1.5">Keep the existing workspace files for recovery — they are what the office is restored from. Nothing has been lost by this.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Your office did not open</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud waited a few minutes and your office has not started. It keeps checking, and your desk opens here if it does.</p><p style="color:#fcfcfc99;line-height:1.5">Your saved work is kept on this computer. Nothing has been deleted.</p><p style="color:#fcfcfc99;line-height:1.5">Quit RealBud and open it again. If this page comes back, contact your administrator.</p></div></body>`,
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
@@ -290,7 +299,7 @@ function writeSmokeResult(payload) {
   }
 }
 
-function createWindow() {
+function createWindow({ untilServiceDecided = pendingLaunchDecision } = {}) {
   const isMac = process.platform === "darwin";
   const workArea = screen.getPrimaryDisplay().workArea;
   const width = Math.min(1440, workArea.width);
@@ -336,68 +345,73 @@ function createWindow() {
     shell,
     log: slog,
   });
-  win.webContents.once("did-finish-load", () => markWindowLoaded());
+  // Attached just before the first real page loads. A launch window shows the
+  // waiting page first, and that load must not count as the window having loaded
+  // (macOS computer use starts on it) or run the smoke check against it.
+  const watchFirstLoad = () => {
+    win.webContents.once("did-finish-load", () => markWindowLoaded());
 
-  // Packaged CI smoke hook. It validates the real renderer/preload bridge and
-  // same-origin embedded server, then follows the normal window-close path.
-  // No debugging port or sandbox override is needed.
-  if (smokeMode) {
-    win.webContents.once("did-finish-load", async () => {
-      try {
-        const result = await win.webContents.executeJavaScript(`
-          (async () => {
-            if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
-            const [capabilities, healthResponse] = await Promise.all([
-              window.ogb.getCapabilities(),
-              fetch("/api/health"),
-            ]);
-            if (!healthResponse.ok) {
-              throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
-            }
-            const health = await healthResponse.json();
-            const token = await window.ogb.getLocalSession().catch(() => null);
-            if (!token) throw new Error("local desktop session is unavailable");
-            const companyResponse = await fetch("/api/company/status", { headers: { "x-realbud-session": token } });
-            if (!companyResponse.ok) throw new Error("company setup status is unavailable");
-            const company = await companyResponse.json();
-            if (company.remoteJoinAvailable !== true) throw new Error("fresh installed desktop cannot join a company host");
-            return { capabilities, health, company: { remoteJoinAvailable: company.remoteJoinAvailable, configured: company.configured }, location: window.location.href, title: document.title };
-          })()
-        `);
-        const expectedLocation = `http://127.0.0.1:${SERVER_PORT}/`;
-        if (result.location !== expectedLocation) {
-          throw new Error(
-            `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
-          );
+    // Packaged CI smoke hook. It validates the real renderer/preload bridge and
+    // same-origin embedded server, then follows the normal window-close path.
+    // No debugging port or sandbox override is needed.
+    if (smokeMode) {
+      win.webContents.once("did-finish-load", async () => {
+        try {
+          const result = await win.webContents.executeJavaScript(`
+            (async () => {
+              if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
+              const [capabilities, healthResponse] = await Promise.all([
+                window.ogb.getCapabilities(),
+                fetch("/api/health"),
+              ]);
+              if (!healthResponse.ok) {
+                throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
+              }
+              const health = await healthResponse.json();
+              const token = await window.ogb.getLocalSession().catch(() => null);
+              if (!token) throw new Error("local desktop session is unavailable");
+              const companyResponse = await fetch("/api/company/status", { headers: { "x-realbud-session": token } });
+              if (!companyResponse.ok) throw new Error("company setup status is unavailable");
+              const company = await companyResponse.json();
+              if (company.remoteJoinAvailable !== true) throw new Error("fresh installed desktop cannot join a company host");
+              return { capabilities, health, company: { remoteJoinAvailable: company.remoteJoinAvailable, configured: company.configured }, location: window.location.href, title: document.title };
+            })()
+          `);
+          const expectedLocation = `http://127.0.0.1:${SERVER_PORT}/`;
+          if (result.location !== expectedLocation) {
+            throw new Error(
+              `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
+            );
+          }
+          const payload = { ok: true, result };
+          writeSmokeResult(payload);
+          console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
+        } catch (error) {
+          const message = error?.stack ?? String(error);
+          writeSmokeResult({ ok: false, error: message });
+          console.error(`[smoke] renderer-failed ${message}`);
+        } finally {
+          // Let computer use finish starting before asking the app to quit.
+          //
+          // `startCua()` is deliberately not awaited at startup so a slow or broken
+          // driver cannot delay the window. The shutdown hook's `stopCua()` only
+          // sees a host once that start has ASSIGNED one, so a start still in
+          // flight is invisible to it: the host then finishes after cleanup, and
+          // nothing ever stops it or the daemon it spawns. The window opens before
+          // the driver is ready often enough — a cold first launch of a freshly
+          // signed bundle — that the clean-exit proof cannot be left to that race.
+          // Smoke mode owns its own shutdown ordering, so it waits here. Bounded,
+          // because a driver that never settles must still not hang the smoke.
+          await settledWithin(cuaReady, 10_000, "computer use start");
+          if (smokeMode && serviceHandle) {
+            await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
+          }
+          win.close();
+          if (smokeMode) app.quit();
         }
-        const payload = { ok: true, result };
-        writeSmokeResult(payload);
-        console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
-      } catch (error) {
-        const message = error?.stack ?? String(error);
-        writeSmokeResult({ ok: false, error: message });
-        console.error(`[smoke] renderer-failed ${message}`);
-      } finally {
-        // Let computer use finish starting before asking the app to quit.
-        //
-        // `startCua()` is deliberately not awaited at startup so a slow or broken
-        // driver cannot delay the window. The shutdown hook's `stopCua()` only
-        // sees a host once that start has ASSIGNED one, so a start still in
-        // flight is invisible to it: the host then finishes after cleanup, and
-        // nothing ever stops it or the daemon it spawns. The window opens before
-        // the driver is ready often enough — a cold first launch of a freshly
-        // signed bundle — that the clean-exit proof cannot be left to that race.
-        // Smoke mode owns its own shutdown ordering, so it waits here. Bounded,
-        // because a driver that never settles must still not hang the smoke.
-        await settledWithin(cuaReady, 10_000, "computer use start");
-        if (smokeMode && serviceHandle) {
-          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()), { dataDirectory: realbudDataDir(), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
-        }
-        win.close();
-        if (smokeMode) app.quit();
-      }
-    });
-  }
+      });
+    }
+  };
 
   if (app.isPackaged) {
     // A slow-but-successful start used to leave staff on a dead page until they
@@ -449,15 +463,11 @@ function createWindow() {
       };
       waitTimer = setTimeout(look, SERVICE_WAIT_INTERVAL_MS);
     };
-    // A start that failed for a known reason gets a page naming it and the one
-    // thing to do, not a wait the log has already ruled out. The watchdog can
-    // still recover this window if a service of ours answers after all.
-    const problemPage = serverReady || !serviceStartProblem
-      ? null
-      : startProblemPage(serviceStartProblem, { dataDirectory: realbudDataDir(), ports: serviceIdentity(realbudDataDir()).ports });
+    // A start-problem page joins these once the service decision names one.
+    const fallbackUrls = [ERROR_PAGE, WAIT_ENDED_PAGE];
     const recoverWindow = createServiceWindowRecovery({
       window: win,
-      fallbackUrls: [ERROR_PAGE, WAIT_ENDED_PAGE, ...(problemPage ? [problemPage] : [])],
+      fallbackUrls,
       blocked: () => serviceStopRequested || appQuitting(),
       beforeLoad: (port) => {
         stopWait();
@@ -496,16 +506,31 @@ function createWindow() {
       win.loadURL(ERROR_PAGE);
       waitForOfficeService();
     });
-    if (serverReady) {
-      win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
-    } else if (problemPage) {
-      slog(`the office service cannot start (${serviceStartProblem}); showing what to do`);
-      win.loadURL(problemPage);
-    } else {
-      win.loadURL(ERROR_PAGE);
-      waitForOfficeService();
-    }
+    const openOffice = () => {
+      // A start that failed for a known reason gets a page naming it and the one
+      // thing to do, not a wait the log has already ruled out. The watchdog can
+      // still recover this window if a service of ours answers after all.
+      const problemPage = serverReady || !serviceStartProblem
+        ? null
+        : startProblemPage(serviceStartProblem, { dataDirectory: realbudDataDir(), ports: serviceIdentity(realbudDataDir()).ports });
+      if (problemPage) fallbackUrls.push(problemPage);
+      watchFirstLoad();
+      if (serverReady) {
+        win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
+      } else if (problemPage) {
+        slog(`the office service cannot start (${serviceStartProblem}); showing what to do`);
+        win.loadURL(problemPage);
+      } else {
+        win.loadURL(ERROR_PAGE);
+        waitForOfficeService();
+      }
+    };
+    // While the service is being decided the window shows the waiting page, then
+    // the outcome replaces it here, in this same window.
+    if (untilServiceDecided) void showWhenDecided(win, { waitingUrl: ERROR_PAGE, decided: untilServiceDecided, show: openOffice });
+    else openOffice();
   } else {
+    watchFirstLoad();
     win.loadURL(DEV_URL);
   }
   return win;
@@ -1549,19 +1574,33 @@ app.whenReady().then(async () => {
     kill: (proc) => { try { proc?.kill(); } catch { /* already gone */ } },
     onStatus: (status) => slog(`service ${status.state} restarts=${status.restarts}${status.lastExitCode === null ? "" : ` exit=${status.lastExitCode}`}`),
   });
+  let win = null;
   if (app.isPackaged) {
-    try { serverReady = await startOrAdoptOfficeService(); }
-    catch (error) {
-      serverReady = false;
-      serviceStartProblem = classifyStartError(error);
-      slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // The window comes first, on the waiting page: a slow first start used to show
+    // nothing at all for over a minute. The decision behind it is the same single
+    // start-or-adopt call as before, made once, and its outcome (desk, start
+    // problem or bounded wait) replaces the waiting page in that same window.
+    const launch = openWindowWhileServiceStarts({
+      createWindow: (decided) => createWindow({ untilServiceDecided: decided }),
+      start: async () => {
+        try { serverReady = await startOrAdoptOfficeService(); }
+        catch (error) {
+          serverReady = false;
+          serviceStartProblem = classifyStartError(error);
+          slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
+    });
+    win = launch.win;
+    pendingLaunchDecision = launch.decided;
+    await launch.decided;
+    pendingLaunchDecision = null;
     if (!smokeMode) startServiceWatchdog();
   }
   // After the service decision, because applying the settings reads the office's
   // last reported schedule state and must not delay the window.
   startServicePersistence();
-  const win = createWindow();
+  win ??= createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
   startUpdater(win);

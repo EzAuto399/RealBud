@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingState } from '@shared/onboarding';
 import { Onboarding } from './Onboarding';
 import type { ConnectOfficeViewProps } from './ConnectOffice';
+import { defaultComputerName } from './you/browser-link';
 import type { OfficeLinkStatus } from '../../server/office-link';
 
 const fixture = vi.hoisted(() => ({
@@ -11,6 +12,7 @@ const fixture = vi.hoisted(() => ({
   api: vi.fn(), dispatch: vi.fn(), onDone: vi.fn(), track: vi.fn(), emailGate: vi.fn(),
   config: { profile: { name: '', email: '' } },
   connect: null as unknown as { office: string | null; view: ConnectOfficeViewProps },
+  personName: undefined as string | undefined,
 }));
 // Exercise the real rendered handlers while keeping state across explicit
 // rerenders. No DOM, server, effect-driven API request or browser storage.
@@ -38,7 +40,7 @@ vi.mock('./Avatar', () => ({ MausAvatar: () => null }));
 // The connect step's link state is injected; its protocol is tested in ConnectOffice.test.ts.
 vi.mock('./ConnectOffice', async importOriginal => ({
   ...(await importOriginal<typeof import('./ConnectOffice')>()),
-  useConnectOffice: () => fixture.connect,
+  useConnectOffice: (personName?: string) => { fixture.personName = personName; return fixture.connect; },
 }));
 const OFFICE = 'Fictional Harbour Agency';
 const request = { approvalUrl: `https://realbud.app/link/${'A'.repeat(43)}`, displayCode: 'ABCD-EFGH', expiresAt: '2026-09-30T10:00:00.000Z' };
@@ -270,8 +272,8 @@ describe('connect this computer to your office', () => {
     expect(markup).not.toContain('Connect with this code');
   });
 
-  it('skips connecting when this computer is already linked and continues to Bud setup', async () => {
-    fixture.config.profile.name = 'Fictional Draft'; vi.stubGlobal('history', { replaceState: vi.fn() });
+  it('skips connecting when this computer is already linked and opens Bud setup over Desk', async () => {
+    fixture.config.profile.name = 'Fictional Draft'; const replaceState = vi.fn(); vi.stubGlobal('history', { replaceState });
     const markup = html();
     expect(markup).toMatch(/<h1[^>]*>This computer is connected<\/h1>/);
     expect(markup).toContain(`Connected to ${OFFICE}`);
@@ -280,7 +282,34 @@ describe('connect this computer to your office', () => {
       .mockResolvedValueOnce({ ...saved, revision: 4, stage: 'complete' });
     button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledWith('bud'));
-    expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showAsk' });
+    // Get started lives on Desk, the store's first view, so the setup sheet opens over it and no view change closes it.
+    expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showDesk' });
+    expect(fixture.dispatch).not.toHaveBeenCalledWith({ type: 'showAsk' });
+    expect(replaceState).toHaveBeenCalledTimes(1);
+  });
+
+  it('explores the sample desk without saving a placeholder as the person’s name, and can still finish', async () => {
+    const office: Record<string, unknown> = {};
+    fixture.api.mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(init.body) : undefined;
+      if (path === '/api/config') return { profile: body.profile };
+      if (path === '/api/onboarding') return { ...initial, stage: body.stage, revision: body.expectedRevision + 1 };
+      if (path === '/api/desk') return { book: { office: { pmUser: '' } } };
+      if (path === '/api/desk/agency') { Object.assign(office, body.office); return { book: { office } }; }
+      throw new Error('Unexpected fixture request');
+    });
+    button(render(), 'Explore the sample desk').props.onClick!();
+    await vi.waitFor(() => expect(text(render())).toContain('Step 1 of 5'));
+    expect(fixture.api.mock.calls[0][0]).toBe('/api/config');
+    expect(JSON.parse(fixture.api.mock.calls[0][1].body)).toEqual({ profile: { name: '', email: '' } });
+    expect(defaultComputerName(fixture.personName)).toBe('Office computer');
+    const finishSample = button(render(), 'Open the sample desk first');
+    expect(finishSample.props.disabled).toBe(false);
+    finishSample.props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    // Only the sample book carries the sample contact, which first run never counts as a person.
+    expect(office).toEqual({ pmUser: 'Sample PM' });
+    expect(fixture.api.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(1);
   });
 
   it('numbers connecting as Get started step 1 of 5, with the name page before it', () => {
