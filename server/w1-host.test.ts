@@ -371,18 +371,46 @@ describe("W1 host", () => {
     await f.call("/api/w1/runs/start");
     let now = await f.settle();
     await f.review(now.run!.fetch!.batchId);
-    // No list, a list without a stamp, a list over a day old: refused before anything is uploaded (REI then shows nothing, and the upload is offered again).
-    for (const [index, stale] of [null, {}, { savedAt: Date.now() - REI_FRESH_MS - 60_000 }].entries()) {
+    // No list, a list without a stamp, a list over a day old: refused before anything is uploaded, and the check that follows
+    // is refused the same way. A refusal is an unknown outcome with its own sentence, never "REI shows nothing", never a re-upload.
+    for (const stale of [null, {}, { savedAt: Date.now() - REI_FRESH_MS - 60_000 }]) {
       f.tenants.directory = stale;
-      now = await f.act(index ? "retry-upload" : "advance");
-      expect(String(now.note)).toContain("Refresh REI tenants first.");
+      now = await f.act("advance");
+      expect(now.note).toBe("Refresh REI tenants first.");
+      expect(now.run).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
       expect(now.ask).toBeNull();
+      await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
       expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
     }
+    // Refreshed: the check reads REI's complete register, which shows nothing, and only then is a second upload offered.
     f.tenants.directory = { savedAt: Date.now() - REI_FRESH_MS + 60_000 };
+    await f.act("advance");
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
     await f.act("retry-upload");
     now = await f.answer();
     expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
+  });
+
+  it("an incomplete Receipt Register is never proof that nothing reached REI: no upload is offered", windowsAdmissionTimeout(255), async () => {
+    // The register is exported for a period that ends before the batch: REI's file does not cover the window.
+    const short = { on: true };
+    const f = await fixture(lab => ({ load: async portal => {
+      const pack = await lab.load(portal), recipe = pack.recipes["receipt-register"];
+      if (!short.on) return pack;
+      return { ...pack, recipes: { ...pack.recipes, "receipt-register": { ...recipe, steps: recipe.steps.map(step => "type" in step && (step.type as { field?: string }).field === "To Date" ? { type: { field: "To Date", value: "2026-09-01" } } : step) } } };
+    } }));
+    await f.configure();
+    await f.lab.handle({ action: "sign-in" });
+    await f.call("/api/w1/runs/start");
+    let now = await f.settle();
+    await f.review(now.run!.fetch!.batchId);
+    await f.act("advance");
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
+    expect(String(now.note)).toMatch(/does not show that it covers the whole date range/);
+    await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
+    expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
   });
 
   it("a different business in REI's top bar stops the run before anything is uploaded", windowsAdmissionTimeout(255), async () => {

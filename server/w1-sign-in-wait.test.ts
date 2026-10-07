@@ -168,6 +168,8 @@ describe("W1 loop run waits at REI sign-in", () => {
     // The person does not allow the upload: nothing reaches REI.
     const ask = (await resumed.status()).ask!;
     await f.call(resumed, `/api/w1/runs/${run.id}/answer`, { requestId: ask.requestId, allowed: false });
+    // Only REI's complete register (its download is the person's to allow) can show nothing arrived.
+    expect(await f.answer(resumed)).toContain("browser_download");
     expect(await loop).toMatchObject({ ok: true, status: "awaiting-approval", detail: expect.stringMatching(/^REI shows nothing from the earlier upload/) });
     expect(await f.portal()).toMatchObject({ uploads: 0, effects: [] });
     expect(f.pulls.count).toBe(pullsBefore);

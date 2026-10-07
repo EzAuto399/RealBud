@@ -146,8 +146,6 @@ export function createW1Host(deps: W1HostDeps) {
   const readbacks = new Map<string, { accepted: number; rejected: number; pending: number; warnings: string[] }>();
   const handoffs = new Map<string, string>();
   const previews = new Map<string, { batch: W1ReiBatch; outcome: W1PreviewOutcome }>();
-  /** Attempts proven never to have dispatched an upload (this process only). */
-  const notUploaded = new Set<string>();
   const working = new Map<string, Promise<void>>();
   /** The Stop for each advance in flight. */
   const stops = new Map<string, AbortController>();
@@ -379,9 +377,8 @@ export function createW1Host(deps: W1HostDeps) {
         if (before.status !== "read") fail(409, `REI's Receipt Register could not be read before the upload, so nothing was uploaded${before.detail ? `: ${before.detail}` : "."}`);
         else await saved_.saveBaseline(attemptId, before.baseline);
         ctx = await context_("preview", prepared.batch.destination.marker, { name: prepared.batch.artifact.name, bytes: prepared.bytes });
-      } catch (error) { notUploaded.add(attemptId); note(message(error)); throw error; }
+      } catch (error) { note(message(error)); throw error; }
       const outcome = await preview(prepared.batch, ctx);
-      if (outcome.status === "not-uploaded") notUploaded.add(attemptId);
       if (outcome.status === "not-uploaded" || outcome.status === "unknown-upload") {
         note(outcome.status === "not-uploaded" ? `Nothing was uploaded${outcome.detail ? `: ${outcome.detail}` : "."}` : "The upload may have reached REI, but its preview was not confirmed.");
         throw new Error(outcome.reason ?? outcome.status);
@@ -401,8 +398,9 @@ export function createW1Host(deps: W1HostDeps) {
       catch (error) { note(message(error)); throw error; }
     },
     async inspect({ attemptId, destination, artifactDigest }): Promise<W1Inspection> {
-      if (notUploaded.has(attemptId)) return { kind: "nothing" };
-      // Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
+      // A refusal (stale tenants, account scope, an unverified recipe, an incomplete register, Stop) is never "nothing":
+      // only a complete, verified register that shows nothing of the batch, and no pending import, may offer a re-upload.
+      // The refusal's own sentence is the note. Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
       try { const found = await register(attemptId, destination, artifactDigest); return found ? { kind: "posted", readback: found } : await pendingImport(attemptId, destination, artifactDigest); }
       // An unreadable or unattributed register proves nothing either way.
       catch (error) { note(message(error)); return { kind: "unknown" }; }
