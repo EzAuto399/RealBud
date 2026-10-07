@@ -1,12 +1,19 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { stageFailureNote, bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
+import { stageFailureNote, bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap, writeBootstrapGitConfig } from "./worker-bootstrap.ts";
+import * as privacy from "./windows-file-privacy.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
+
+// Pass-through spies: the real (no-op off Windows) calls still run.
+vi.mock("./windows-file-privacy.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./windows-file-privacy.ts")>();
+  return { ...actual, windowsFilePrivacy: vi.fn(actual.windowsFilePrivacy), windowsFilePrivacyBatchSync: vi.fn(actual.windowsFilePrivacyBatchSync) };
+});
 
 const homes: string[] = [];
 const home = () => { const path = mkdtempSync(join(tmpdir(), "bud-setup-test-")); homes.push(path); return path; };
@@ -321,6 +328,28 @@ describe("runtime stage contract", () => {
   });
 });
 
+
+describe("Windows setup's own Git file", () => {
+  it("locks the folder, then the still-empty file, without a blocking privacy call (Windows issues log #43)", async () => {
+    vi.mocked(privacy.windowsFilePrivacy).mockClear(); vi.mocked(privacy.windowsFilePrivacyBatchSync).mockClear();
+    const folder = home(), contentAtLock: string[] = [];
+    vi.mocked(privacy.windowsFilePrivacy).mockImplementation(async (path, kind) => { if (kind === "file") contentAtLock.push(readFileSync(path, "utf8")); });
+    const file = await writeBootstrapGitConfig(folder);
+    expect(file).toBe(join(folder, "config"));
+    expect(vi.mocked(privacy.windowsFilePrivacy).mock.calls).toEqual([[folder, "directory", true], [file, "file", true]]);
+    expect(contentAtLock).toEqual([""]);
+    expect(readFileSync(file, "utf8")).toBe("[core]\n\tautocrlf = false\n\tlongpaths = true\n");
+    expect(privacy.windowsFilePrivacyBatchSync).not.toHaveBeenCalled();
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+    // A refused lockdown writes nothing, and an existing file is never reused.
+    vi.mocked(privacy.windowsFilePrivacy).mockImplementation(async (_path, kind) => { if (kind === "file") throw new Error("fictional refusal"); });
+    const refused = home();
+    await expect(writeBootstrapGitConfig(refused)).rejects.toThrow("fictional refusal");
+    expect(readFileSync(join(refused, "config"), "utf8")).toBe("");
+    await expect(writeBootstrapGitConfig(folder)).rejects.toMatchObject({ code: "EEXIST" });
+  });
+  afterEach(() => { vi.mocked(privacy.windowsFilePrivacy).mockReset(); });
+});
 
 describe("setup subprocess boundary", () => {
   it("isolates Windows PowerShell modules without changing the parent or existing stage controls", () => {

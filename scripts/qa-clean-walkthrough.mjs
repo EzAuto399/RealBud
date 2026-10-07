@@ -225,7 +225,7 @@ try {
     check(c, 'Keyboard only: typed name and pressed Continue');
     await page.reload();
     await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
-    check(c, 'Refresh mid-flow: step 2 of 3 is kept after reload (server receipt, not a browser flag)');
+    check(c, 'Refresh mid-flow: the connect step is kept after reload (server receipt, not a browser flag)');
     assert.deepEqual(pageErrors, []);
   });
 

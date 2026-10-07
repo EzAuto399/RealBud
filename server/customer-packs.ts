@@ -192,6 +192,8 @@ export interface CustomerPackServiceOptions {
   officeSettings?: () => Promise<{ loops: { id: string; schedule: LoopSchedule }[] }>;
   /** Applies an installed pack's office/settings.json loops (server/austin-pack.ts): never switches one on, keeps office-changed clocks. */
   applyLoops?: (loops: CustomerPackOfficeSettings['loops']) => Promise<unknown>;
+  /** After an install: an agency workflow pack becomes the agency's chosen pack when none is chosen (server/agency-setup.ts). */
+  selectWorkflowPack?: (packId: string) => Promise<unknown>;
   /** Packs the office uploaded on the website (server/office-link.ts). Untrusted until admitted with a signature. */
   officePacks?: () => Promise<OfficePacksSource>;
 }
@@ -439,6 +441,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
         try { await options.applyLoops((JSON.parse(settings) as CustomerPackOfficeSettings).loops); }
         catch { return fail('The pack was installed, but its workflow times could not be set. Your saved schedule is unchanged. Recover the schedule, then import the same pack again.', 503); }
       }
+      try { await options.selectWorkflowPack?.(entry.pack.id); }
+      catch { return fail('The pack was installed, but it could not be chosen for this agency. Choose it in Agency workflow setup.', 503); }
       return status(entry);
     });
   }

@@ -258,6 +258,11 @@ const WAIT_ENDED_PAGE =
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 let cuaControl;
+// On macOS, computer use waits for the first office window to finish loading,
+// so macOS asks for Accessibility and Screen Recording over RealBud's own
+// window rather than before any window exists. Windows asks nothing.
+let markWindowLoaded = () => {};
+const windowLoaded = new Promise((resolve) => { markWindowLoaded = resolve; });
 
 /** Wait for a promise to settle, but never longer than `ms`. Returns whether it
  * settled in time; a rejection counts as settled, because the point is only that
@@ -331,6 +336,7 @@ function createWindow() {
     shell,
     log: slog,
   });
+  win.webContents.once("did-finish-load", () => markWindowLoaded());
 
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
   // same-origin embedded server, then follows the normal window-close path.
@@ -1505,12 +1511,12 @@ app.whenReady().then(async () => {
   registerCuaIpc(officeIpc);
   cuaControl = await startCuaControl({ release: releaseCuaForHuman, verify: verifyCuaAfterHuman, restore: restoreCuaAfterHuman });
   registerUpdaterIpc(officeIpc);
-  // Start the CUA daemon before the window so the harness can pick up the
-  // connection descriptor on first render. Never blocks window creation on
-  // failure — computer use degrades to "unavailable", the rest still works.
+  // On macOS started once the window has loaded (see windowLoaded); assigned
+  // now so capabilities and shutdown wait on the real start. Never blocks the
+  // window: a failure degrades computer use to "unavailable", the rest works.
   cuaReady =
     (process.platform === "darwin" || process.platform === "win32")
-      ? startCua().catch((e) => {
+      ? (process.platform === "darwin" ? windowLoaded : Promise.resolve()).then(() => startCua()).catch((e) => {
           console.error("[cua] start failed:", e);
           return { mode: "unavailable", reason: String(e) };
         })

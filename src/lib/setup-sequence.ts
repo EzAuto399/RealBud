@@ -30,10 +30,10 @@ export type SetupStepState = "done" | "current" | "working" | "later" | "unknown
 
 /**
  * Where this step's single action goes: the link-code entry in Workspace, Bud's
- * setup progress, the packs from the office on Schedule, Connections in
- * Workspace, or one Schedule job (`job-<loop id>`).
+ * setup progress, the packs from the office on Schedule, Agency workflow setup
+ * on Schedule, Connections in Workspace, or one Schedule job (`job-<loop id>`).
  */
-export type SetupJumpTarget = "you-website" | "bud-setup" | "schedule-packs" | "you-connected-apps" | `job-${string}`;
+export type SetupJumpTarget = "you-website" | "bud-setup" | "schedule-packs" | "schedule-agency" | "you-connected-apps" | `job-${string}`;
 
 export interface SetupStep {
   id: SetupStepId;
@@ -126,6 +126,8 @@ export interface SetupSequenceInput {
    * `officeAppsToConnect`. Connecting one is the person's own sign-in.
    */
   appsToConnect?: readonly string[];
+  /** The office shared Gmail is this computer's mailbox, but the owner hasn't allowed this computer (`sharedGmailNotAllowed`). */
+  sharedGmailBlocked?: boolean;
 }
 
 /**
@@ -136,6 +138,15 @@ export interface SetupSequenceInput {
 export function officeAppsToConnect(access: ConnectedAppsStatus | null | undefined, managed: boolean): string[] {
   if (!managed || !access?.configured || access.error || access.sourceKind === "office_shared") return [];
   return Object.keys(access.services).filter((slug) => officeSourceState(access, slug) === "connect" && !access.services[slug]?.accounts.length);
+}
+
+/**
+ * The office shared Gmail is this computer's mailbox and the managed service
+ * reports it not connected here: only the office owner can allow this computer
+ * on realbud.app. Only a fresh, error-free read counts.
+ */
+export function sharedGmailNotAllowed(access: ConnectedAppsStatus | null | undefined, managed: boolean): boolean {
+  return managed && access?.sourceKind === "office_shared" && officeSourceState(access, "gmail") === "connect";
 }
 
 /** One named loop as the host reports it on the RealBud clock. */
@@ -293,6 +304,7 @@ function checkRollup(
 
 const NO_GMAIL = "No Gmail is needed for the work you chose.";
 const SIGN_IN_GMAIL = "Sign in to the office Gmail in your browser.";
+const ASK_OWNER: Fact = { fact: "todo", status: "Ask the office owner to allow this computer on realbud.app.", actionLabel: "Open connected apps" };
 const REVIEW_EACH = "Open each workflow, read what it does, then switch it on.";
 
 /**
@@ -300,13 +312,13 @@ const REVIEW_EACH = "Open each workflow, read what it does, then switch it on.";
  * check; without one, the agency setup's Gmail check, after any app the linked
  * service offers that has no account yet. Signing in is the person's own.
  */
-function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: readonly string[]): Fact {
+function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: readonly string[], sharedBlocked: boolean): Fact {
+  // A shared mailbox is the owner's to allow; signing in here would not help.
+  const signIn: Fact = sharedBlocked ? ASK_OWNER : { fact: "todo", status: SIGN_IN_GMAIL };
   if (pack && pack !== "unavailable" && pack.installed) {
     const item = pack.checklist.find((entry) => entry.id === "gmail");
     if (!item) return { fact: "done", status: NO_GMAIL };
-    return item.done
-      ? { fact: "done", status: "The office Gmail is connected." }
-      : { fact: "todo", status: SIGN_IN_GMAIL };
+    return item.done ? { fact: "done", status: "The office Gmail is connected." } : signIn;
   }
   if (!setup || setup === "unavailable") return { fact: "unknown", status: `${NOT_CHECKED} Your office’s connections could not be read yet.` };
   if (appsToConnect.length) {
@@ -322,7 +334,7 @@ function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: 
   // check is read across every workflow that reports one.
   const rolled = checkRollup(selected.length ? selected : setup.workflows, "gmail", { fact: "done", status: NO_GMAIL });
   // The host's check wording is diagnostic; the step stays one plain sentence.
-  if (rolled.fact === "todo") return { fact: "todo", status: SIGN_IN_GMAIL };
+  if (rolled.fact === "todo") return signIn;
   if (rolled.fact === "unknown") return { fact: "unknown", status: `${NOT_CHECKED} The office Gmail hasn’t been checked.` };
   return rolled.status === NO_GMAIL ? rolled : { fact: "done", status: "The office Gmail is connected." };
 }
@@ -381,12 +393,33 @@ function approveFact(setup: AgencySetupFacts, schedule: ScheduleRead | undefined
   return scheduleFact(schedule, selected);
 }
 
+/** Mail loops the host switches on only once their agency workflow is ready to run. */
+const AGENCY_GATED_LOOPS: Record<string, AgencyWorkflowId> = { "weekly-bills": "bills-calendar", "inbound-triage": "morning-priorities" };
+
+/**
+ * What stands before the next workflow: its first unmet need on the pack's own
+ * checklist (REI sign-in, Redbark, the tenant or supplier list), then for mail
+ * work the agency setup the host requires. Only a reported fact blocks.
+ */
+function nextBlocker(pack: AustinPackView, setup: AgencySetupRead, loopId: string, name: string): Omit<Fact, "fact"> | null {
+  const needs = pack.loops.find((loop) => loop.loopId === loopId)?.needs ?? [];
+  // Gmail is step 4's own; this names what only this workflow still needs.
+  const need = pack.checklist.find((item) => item.id !== "gmail" && needs.includes(item.id) && !item.done);
+  if (need) return { status: `Before ${name}: ${need.detail}` };
+  const agency = setup && setup !== "unavailable" ? setup.workflows.find((row) => row.id === AGENCY_GATED_LOOPS[loopId]) : undefined;
+  if (agency && !agency.readyForRun) {
+    return { status: `Before ${name} can switch on, finish Agency workflow setup and approve it there.`, actionLabel: "Open Agency workflow setup", target: "schedule-agency" };
+  }
+  return null;
+}
+
 /**
  * Step 5 with a role pack: each of the pack's workflows reviewed and switched
  * on. The count follows the live loops when they are read, else the pack's
- * own checklist; the action opens the next workflow still off.
+ * own checklist; the action opens the next workflow still off, or what it
+ * still needs first.
  */
-function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefined): Fact {
+function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefined, setup: AgencySetupRead): Fact {
   if (schedule?.read !== "ready") {
     const item = pack.checklist.find((entry) => entry.id === "workflows");
     if (!item) return { fact: "unknown", status: `${NOT_CHECKED} Your workflows could not be read yet.` };
@@ -399,16 +432,17 @@ function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefi
   if (!off.length) return { fact: "done", status: `All ${ids.length} workflows are on.` };
   const next = off[0];
   const name = loops.find((loop) => loop.id === next)?.name?.trim() || "the next workflow";
+  const blocker = nextBlocker(pack, setup, next, name);
   return {
     fact: "todo",
-    status: `${ids.length - off.length} of ${ids.length} on. ${REVIEW_EACH}`,
-    actionLabel: `Review ${name}`,
-    target: `job-${next}`,
+    status: `${ids.length - off.length} of ${ids.length} on. ${blocker?.status ?? REVIEW_EACH}`,
+    actionLabel: blocker?.actionLabel ?? `Review ${name}`,
+    target: blocker?.target ?? `job-${next}`,
   };
 }
 
 function workflowsFact(pack: AustinPackRead, setup: AgencySetupRead, schedule: ScheduleRead | undefined): Fact {
-  if (pack && pack !== "unavailable" && pack.installed) return packWorkflowsFact(pack, schedule);
+  if (pack && pack !== "unavailable" && pack.installed) return packWorkflowsFact(pack, schedule, setup);
   if (!setup || setup === "unavailable") return { fact: "unknown", status: `${NOT_CHECKED} Your workflows could not be read yet.` };
   return approveFact(setup, schedule);
 }
@@ -425,7 +459,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
   const facts: Record<Exclude<SetupStepId, "bud">, Fact> = {
     link: linkFact(input.websiteLink),
     pack: packFact(input.austinPack, input.agencySetup, input.officeAgencyName ?? ""),
-    gmail: gmailFact(input.austinPack, input.agencySetup, input.appsToConnect ?? []),
+    gmail: gmailFact(input.austinPack, input.agencySetup, input.appsToConnect ?? [], input.sharedGmailBlocked === true),
     workflows: workflowsFact(input.austinPack, input.agencySetup, input.schedule),
   };
 

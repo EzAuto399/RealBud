@@ -14,4 +14,10 @@ describe('workflow setup drawer', () => {
     expect(html.indexOf('aria-label="Packs from your office"')).toBeLessThan(more);
     for (const owner of ['aria-label="Agency workflow setup"', 'aria-label="Company workflow templates"', 'Auston Phase 1 examples and older pack snapshots', 'Import Auston Phase 1 packs', 'Restore snapshot']) expect(html.indexOf(owner)).toBeGreaterThan(more);
   });
+
+  it('puts Agency workflow setup first, once, when Get started sends a workflow there', () => {
+    const html = renderToStaticMarkup(createElement(WorkflowPacksCard, { agencyFirst: true }));
+    expect(html.match(/aria-label="Agency workflow setup"/g)).toHaveLength(1);
+    expect(html.indexOf('aria-label="Agency workflow setup"')).toBeLessThan(html.indexOf('aria-label="Packs from your office"'));
+  });
 });

@@ -62,7 +62,7 @@ export function BrowserCard({ id = "you-browser", defaultOpen = false, disabledR
   const chosen = status?.browsers.find(b => b.id === status.selectedBrowserId);
   const connectionLabel = unavailable ? "Preview only" : !state.connected ? "RealBud is offline" : error ? "Connection needs checking" : checking ? "Checking browser connection…" : ready && status?.active ? "Browser work is running" : status ? labels[status.state] : "Checking browser connection…";
   const connectionDetail = unavailable || (!state.connected ? "Reconnect RealBud to use the work browser." : error ? "" : status?.active ? "Bud is using the work browser. Stop the task to take over."
-    : ready ? "Tell Bud what you want to do in Ask. Use the work browser to sign in if the website asks."
+    : ready ? "Tell Bud what you want to do in Work. Use the work browser to sign in if the website asks."
     : status?.state === "recovery_required" ? "Release the earlier browser task, then check any unfinished work."
     : status?.state === "not_installed" ? "Install Google Chrome or Microsoft Edge, then check again."
     : status && ["extension_needed", "needs_update"].includes(status.state) ? "Update RealBud, then check the connection again."

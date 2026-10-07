@@ -69,6 +69,22 @@ describe('private reusable agency setup', () => {
     const changed = { ...f.settings(), workflowPackId: 'austin-office' as const };
     const saved = await f.service.save({ expectedRevision: 1, settings: changed }); expect(saved.state.revision).toBe(2); expect(saved.state.reviews).toEqual({});
   });
+  it('chooses an installed role pack only when no pack is chosen, by its known id, and never replaces a choice', async () => {
+    const f = await fixture();
+    expect(await f.service.selectInstalledPack('austin-property')).toBe(false);
+    expect(await f.service.selectInstalledPack('Auston accounts — Kevin')).toBe(false);
+    await expect(readFile(join(f.root, 'agency-setup.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await f.service.selectInstalledPack('austin-accounts')).toBe(true);
+    const state = await createAgencySetupService(f.options).getConfiguration();
+    expect(state).toMatchObject({ revision: 1, reviews: {}, settings: { ...defaultAgencySettings(), workflowPackId: 'austin-accounts' } });
+    expect(await f.service.selectInstalledPack('office-core')).toBe(false);
+    expect((await f.service.getConfiguration()).settings.workflowPackId).toBe('austin-accounts');
+    // Choosing a pack is not a review: the workflows still wait for setup checks and approval.
+    expect((await f.service.get()).workflows.every(workflow => !workflow.readyForRun)).toBe(true);
+    const chosen = await reviewedFixture();
+    expect(await chosen.service.selectInstalledPack('austin-accounts')).toBe(false);
+    expect((await chosen.service.getConfiguration()).settings.workflowPackId).toBe('office-core');
+  });
   it('preserves valid saved bytes when revision growth would become unreadable', async () => {
     const f = await fixture(); await f.service.save({ expectedRevision: 0, settings: f.settings() });
     const file = join(f.root, 'agency-setup.json'), state = JSON.parse(await readFile(file, 'utf8'));
