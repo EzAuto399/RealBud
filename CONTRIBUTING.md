@@ -60,11 +60,10 @@ The suite is colocated (`server/**/*.test.ts`) and runs with `pnpm test`. Three 
 
 - **Unit** — registry, bus, store. Pure in-process, use the fake driver in
   [`server/testing/fake-driver.ts`](server/testing/fake-driver.ts).
-- **Driver contract** — [`claude.test.ts`](server/drivers/claude.test.ts) and
-  [`codex.test.ts`](server/drivers/codex.test.ts) spawn the scripted fake CLIs in `server/testing/`
-  and assert the canonical event stream, argv/env hygiene, interrupts, and the permission broker.
-  Failure modes are toggled by env var (`FAKE_CLAUDE_MODE=exit-early`, etc.) — extend those fakes
-  rather than mocking `child_process`.
+- **Driver contract** — [`acp.test.ts`](server/drivers/acp/acp.test.ts) spawns the scripted fake
+  ACP CLI in `server/testing/fake-acp-cli.ts` and asserts the canonical event stream, argv/env
+  hygiene, interrupts, and the permission broker. Failure modes are toggled by env var
+  (`FAKE_ACP_MODE=exit-early`, etc.) — extend that fake rather than mocking `child_process`.
 - **API smoke** — [`index.test.ts`](server/index.test.ts) boots the real server against a throwaway
   home directory and exercises the HTTP surface.
 

@@ -61,7 +61,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
     const profile = companion ? join(data, "companion") : data;
     if (companion) { await mkdir(profile, { mode: 0o700 }); await writeFile(join(profile, "config.json"), JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver" } } }), { mode: 0o600 }); }
     const launched = spawn(process.execPath, ["--experimental-strip-types", "server/index.ts"], {
-      cwd: process.cwd(), env: { ...process.env, OMB_PORT: String(port), OMB_TEST_FLEET: "1", VITEST: "1",
+      cwd: process.cwd(), env: { ...process.env, OMB_PORT: String(port), VITEST: "1",
         REALBUD_DATA_DIR: profile, OMB_DATA_DIR: profile, REALBUD_HERMES_HOME: join(profile, "hermes"), HERMES_HOME: join(profile, "hermes"),
         REALBUD_COMPANY_DATABASE_URL: fixture.applicationUrl, REALBUD_MANAGED_SERVICE: "1", REALBUD_SERVICE_ENTITLEMENT_REQUIRED: "1",
         REALBUD_SERVICE_ADMIN_FILE: join(data, "service-admin.json"),

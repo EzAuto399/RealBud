@@ -1,13 +1,14 @@
 import { withWorkerProfile } from "../../hermes-profile.ts";
 // ACP driver contract tests, run against the scripted fake ACP CLI in
 // server/testing/fake-acp-cli.ts. Covers the shared acp/core.ts runtime via
-// its two harness shims (grok = fail-closed auth, gemini = lenient auth):
+// the Hermes worker (lenient auth) and the test-only FakeAcpDriver
+// (fail-closed auth, server/testing/fake-acp-driver.ts):
 // normalize the ACP handshake into canonical events, keep argv/env hygiene,
 // broker permission asks, and settle interrupts/crashes cleanly.
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,9 +18,7 @@ import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
-import { GrokAgentDriver } from "./grok.ts";
-import { GeminiAgentDriver } from "./gemini.ts";
-import { KimiAgentDriver } from "./kimi.ts";
+import { FakeAcpDriver } from "../../testing/fake-acp-driver.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
 import { ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
@@ -45,21 +44,6 @@ const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test
 delete process.env.NODE_V8_COVERAGE;
 
 describe("ACP decodeConfig", () => {
-  it("grok defaults to the grok binary", () => {
-    expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false, workspace: undefined });
-  });
-  it("gemini defaults to the gemini binary", () => {
-    expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: false, workspace: undefined });
-  });
-  it("kimi defaults to the kimi binary and declares cross-platform setup", () => {
-    expect(KimiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "kimi", fullAuto: false, workspace: undefined });
-    expect(KimiAgentDriver.install?.command).toMatchObject({
-      darwin: expect.stringContaining("install.sh"),
-      linux: expect.stringContaining("install.sh"),
-      win32: expect.stringContaining("install.ps1"),
-    });
-    expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
-  });
   it("hermes defaults to the hermes binary and pins a commit on install", () => {
     const book = seedVault();
     expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: "hermes", fullAuto: false, workspace: book });
@@ -97,8 +81,8 @@ describe("ACP decodeConfig", () => {
     expect(ENGINE_FAILURE_REPLY).not.toMatch(/hermes|\/retry|\/model|provider|custom/i);
   });
   it("fullAuto only when explicitly true", () => {
-    expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
-    expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
+    expect(FakeAcpDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
+    expect(FakeAcpDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
   });
 });
 
@@ -107,7 +91,7 @@ describe("ACP turns (fake CLI)", () => {
   let recorder: EventRecorder;
   let scratch: string;
 
-  const create = async (driver = GrokAgentDriver, mode?: string, fullAuto = false) => {
+  const create = async (driver: typeof FakeAcpDriver = FakeAcpDriver, mode?: string, fullAuto = false) => {
     if (mode) process.env.FAKE_ACP_MODE = mode;
     instance = await driver.create({
       instanceId: "acp-test",
@@ -170,7 +154,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("normalizes a full turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "grok-4.5" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "fake-model" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -184,7 +168,7 @@ describe("ACP turns (fake CLI)", () => {
       "item.completed", // assistant_text (summed) on settle
       "turn.completed",
     ]);
-    expect(recorder.events.every((e) => e.turnId === turnId && e.provider === "grokAgent")).toBe(true);
+    expect(recorder.events.every((e) => e.turnId === turnId && e.provider === "fakeAcp")).toBe(true);
     expect(recorder.events.find((e) => e.type === "item.started")).toMatchObject({
       toolFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
@@ -200,7 +184,7 @@ describe("ACP turns (fake CLI)", () => {
   it("still reads token usage from a legacy _meta prompt result", async () => {
     process.env.FAKE_ACP_USAGE_META = "1";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-meta", text: "hi", model: "grok-4.5" });
+    await instance.adapter.sendTurn({ threadId: "t-meta", text: "hi", model: "fake-model" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject({ input: 10, output: 5 });
   });
@@ -235,9 +219,9 @@ describe("ACP turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     await create();
 
-    const first = await instance.adapter.sendTurn({ threadId: "t-warm", text: "one", model: "grok-4.5" });
+    const first = await instance.adapter.sendTurn({ threadId: "t-warm", text: "one", model: "fake-model" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
-    const second = await instance.adapter.sendTurn({ threadId: "t-warm", text: "two", model: "grok-4.5" });
+    const second = await instance.adapter.sendTurn({ threadId: "t-warm", text: "two", model: "fake-model" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -354,13 +338,13 @@ describe("ACP turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     await create();
 
-    const first = await instance.adapter.sendTurn({ threadId: "t-rewind", text: "one", model: "grok-4.5" });
+    const first = await instance.adapter.sendTurn({ threadId: "t-rewind", text: "one", model: "fake-model" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
     const before = JSON.parse(readFileSync(dump, "utf8"));
     const second = await instance.adapter.sendTurn({
       threadId: "t-rewind",
       text: "rewritten request",
-      model: "grok-4.5",
+      model: "fake-model",
       resumeCursor: undefined,
       transcript: [{ role: "user", text: "replacement history" }],
     });
@@ -546,8 +530,8 @@ describe("ACP turns (fake CLI)", () => {
     } finally { factory.mockRestore(); }
   });
 
-  it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
-    await create();
+  it("passes Hermes' ACP flags and strips XAI_API_KEY from the child env", async () => {
+    await create(HermesAgentDriver);
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     process.env.XAI_API_KEY = "xai-should-not-leak";
@@ -556,14 +540,13 @@ describe("ACP turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.argv).toContain("agent");
-    expect(seen.argv).toContain("stdio");
-    expect(seen.argv).toContain("--permission-mode");
+    expect(seen.argv).toContain("-p");
+    expect(seen.argv.at(-1)).toBe("acp");
     expect(seen.env.XAI_API_KEY).toBeUndefined();
   });
 
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
-    await create(GrokAgentDriver, "permission");
+    await create(FakeAcpDriver, "permission");
     await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
@@ -582,7 +565,7 @@ describe("ACP turns (fake CLI)", () => {
     expect(WORKER_APPROVAL_CARD_MS).toBeLessThan(300_000);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
-      await create(GrokAgentDriver, "permission");
+      await create(FakeAcpDriver, "permission");
       await instance.adapter.sendTurn({ threadId: "t-late", text: "go" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       vi.advanceTimersByTime(WORKER_APPROVAL_CARD_MS - 1_000);
@@ -602,7 +585,7 @@ describe("ACP turns (fake CLI)", () => {
   it("uses the provider's expiring session grant when the user allows similar steps for the task", async () => {
     const dump = join(scratch, "session-approval.json");
     process.env.FAKE_ACP_DUMP = dump;
-    await create(GrokAgentDriver, "permission");
+    await create(FakeAcpDriver, "permission");
     await instance.adapter.sendTurn({ threadId: "t-session-perm", text: "go" });
     const opened = await recorder.until((event) => event.type === "request.opened");
 
@@ -829,7 +812,7 @@ process.stdin.on("data", chunk => {
   it("falls back to one-time approval when a provider has no session scope", async () => {
     const dump = join(scratch, "approval-fallback.json");
     process.env.FAKE_ACP_DUMP = dump;
-    await create(GrokAgentDriver, "permission-once-only");
+    await create(FakeAcpDriver, "permission-once-only");
     await instance.adapter.sendTurn({ threadId: "t-perm-fallback", text: "go" });
     const opened = await recorder.until((event) => event.type === "request.opened");
 
@@ -849,8 +832,8 @@ process.stdin.on("data", chunk => {
     expect(done).toMatchObject({ ok: true });
   });
 
-  it("grok fails closed when the CLI advertises no cached_token (needs login)", async () => {
-    await create(GrokAgentDriver, "no-auth");
+  it("a fail-closed shim stops when the CLI advertises no cached_token (needs login)", async () => {
+    await create(FakeAcpDriver, "no-auth");
     await instance.adapter.sendTurn({ threadId: "t-auth", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
@@ -858,18 +841,18 @@ process.stdin.on("data", chunk => {
     expect(err.message).toMatch(/not signed in/);
   });
 
-  it("gemini proceeds through a missing auth method (lenient login)", async () => {
-    await create(GeminiAgentDriver, "no-auth");
+  it("hermes proceeds through a missing auth method (lenient login)", async () => {
+    await create(HermesAgentDriver, "no-auth");
     await instance.adapter.sendTurn({ threadId: "t-lenient", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
-    expect(recorder.events.some((e) => e.provider === "geminiAgent")).toBe(true);
+    expect(recorder.events.some((e) => e.provider === "hermesAgent")).toBe(true);
   });
 
   it(
     "rejects a second turn while one is in flight",
     async () => {
-      await create(GrokAgentDriver, "hang");
+      await create(FakeAcpDriver, "hang");
       await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
       await recorder.until((e) => e.type === "session.started");
       await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
@@ -882,7 +865,7 @@ process.stdin.on("data", chunk => {
   it(
     "interrupt settles a hung turn as cancelled",
     async () => {
-      await create(GrokAgentDriver, "hang");
+      await create(FakeAcpDriver, "hang");
       await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
       await recorder.until((e) => e.type === "session.started");
       await instance.adapter.interruptTurn("t-int");
@@ -893,7 +876,7 @@ process.stdin.on("data", chunk => {
   );
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
-    await create(GrokAgentDriver, "exit-early");
+    await create(FakeAcpDriver, "exit-early");
     await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
@@ -979,61 +962,15 @@ process.stdin.on("data", chunk => {
 
 describe("ACP snapshot", () => {
   it("a missing binary is unavailable", async () => {
-    const instance = await GrokAgentDriver.create({
-      instanceId: "grok-missing",
+    const instance = await FakeAcpDriver.create({
+      instanceId: "acp-missing",
       displayName: undefined,
       environment: {},
       enabled: true,
-      config: { cli: "definitely-not-a-real-grok-binary", fullAuto: false },
+      config: { cli: "definitely-not-a-real-acp-binary", fullAuto: false },
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("unavailable");
     await instance.dispose();
-  });
-
-  it("kimi checks KIMI_CODE_HOME before the child HOME", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-auth-"));
-    const kimiHome = join(scratch, "custom-kimi-home");
-    const childHome = join(scratch, "child-home");
-    mkdirSync(join(childHome, ".kimi-code", "credentials"), { recursive: true });
-    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), "{}");
-
-    const instance = await KimiAgentDriver.create({
-      instanceId: "kimi-custom-home",
-      displayName: undefined,
-      environment: { KIMI_CODE_HOME: kimiHome, HOME: childHome },
-      enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: false },
-    });
-    try {
-      expect((await instance.snapshot()).authenticated).toBe(false);
-      mkdirSync(join(kimiHome, "credentials"), { recursive: true });
-      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), "{}");
-      expect((await instance.snapshot()).authenticated).toBe(true);
-    } finally {
-      await instance.dispose();
-      rmSync(scratch, { recursive: true, force: true });
-    }
-  });
-
-  it("kimi resolves default credentials from the child HOME", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-home-"));
-    const credentialDir = join(scratch, ".kimi-code", "credentials");
-    mkdirSync(credentialDir, { recursive: true });
-    writeFileSync(join(credentialDir, "kimi-code.json"), "{}");
-
-    const instance = await KimiAgentDriver.create({
-      instanceId: "kimi-child-home",
-      displayName: undefined,
-      environment: { HOME: scratch },
-      enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: false },
-    });
-    try {
-      expect((await instance.snapshot()).authenticated).toBe(true);
-    } finally {
-      await instance.dispose();
-      rmSync(scratch, { recursive: true, force: true });
-    }
   });
 });
