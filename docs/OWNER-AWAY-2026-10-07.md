@@ -53,10 +53,14 @@ The two working sessions were consolidated into one ("Enterprise onboarding opti
 - Website: [RealBud-website#26](https://github.com/EzAuto399/RealBud-website/pull/26) is open. It is waiting on the owner because merging deploys realbud.app.
 - Leftover worktrees whose work was already on main were removed.
 
-**Uncommitted work preserved, nothing reset.** Copies are kept as local branches only; they are not pushed, because the RealBud repo is public:
-- `backup/shared-checkout-2026-10-07`: the shared `/Users/yo-da/projects/RealBud` checkout. It sits on old local `main` 8bfb143a with 461 changed paths, mostly earlier drafts of work merged since (for example the watch-and-learn port, #113).
+**Uncommitted work preserved, then the shared folders reset to main (owner's go-ahead).** Copies are kept as local branches only; they are not pushed, because the RealBud repo is public:
+- `backup/shared-checkout-2026-10-07`: the shared `/Users/yo-da/projects/RealBud` checkout as it was. It sat on old local `main` 8bfb143a with 461 changed paths and 71 untracked files, which were two things:
+  - Codex's stopped work from 4–5 Oct (Contained Hermes, owned worker runtime, local-service HTTPS). The owner stopped that session on 5 Oct, and the same files are byte-identical in `backup/shared-worktree-20261005-1302`.
+  - This morning's watch-and-learn drafts, merged since (#113).
+
+  The folder now matches `origin/main`, with dependencies reinstalled.
 - `backup/codex-plugin-core-2026-10-07` and `backup/codex-gmail-read-approval-2026-10-07`: two Codex worktrees, each 7 days old.
-- `backup/website-checkout-2026-10-07`: the website checkout, 22 commits behind, with 30 changed files from the 4 Oct computer-cap work.
+- `backup/website-checkout-2026-10-07`: the website checkout. It was 22 commits behind, with 30 changed files from the 4 Oct computer-cap work (later merged as website #19). It now matches website `main`.
 
 **Owner actions** (only the owner can do these)
 1. Sign in to the Windows VM (`realbud QA`). This unblocks the installed Windows run.
@@ -65,7 +69,6 @@ The two working sessions were consolidated into one ("Enterprise onboarding opti
 4. Code signing (SmartScreen) and Mac notarisation.
 5. Confirm Jev's price, and leave one bank import unprocessed so W1's pending view can be mapped.
 6. Decide:
-   - whether the shared checkout may be reset to `origin/main` (its backup is above);
    - whether to hide Hermios for offices without it (Windows issues #27, #52);
    - whether to re-enable GitHub CI (#25).
 
