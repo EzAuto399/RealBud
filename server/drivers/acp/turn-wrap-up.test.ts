@@ -13,7 +13,7 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { PRODUCT_TURN_DEFAULTS, productTurnWrapUp } from "../../product-mode.ts";
 import { HERMES_WRAP_UP_NOTE } from "./core.ts";
-import { GrokAgentDriver } from "./grok.ts";
+import { FakeAcpDriver } from "../../testing/fake-acp-driver.ts";
 import { HermesAgentDriver } from "./hermes.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
@@ -39,7 +39,7 @@ describe("ACP wrap-up note (fake CLI)", () => {
   let scratch: string;
   let dump: string;
 
-  const create = async (driver: typeof HermesAgentDriver | typeof GrokAgentDriver, mode: string) => {
+  const create = async (driver: typeof HermesAgentDriver | typeof FakeAcpDriver, mode: string) => {
     process.env.FAKE_ACP_MODE = mode;
     instance = await driver.create({ instanceId: "wrap-test", displayName: "Wrap Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
@@ -138,8 +138,8 @@ describe("ACP wrap-up note (fake CLI)", () => {
     process.env.OMB_PRODUCT_TURN_MAX_MS = "100";
     process.env.FAKE_ACP_TOOL_CALLS = "6";
     process.env.FAKE_ACP_WRAP_WAIT_MS = "300";
-    await create(GrokAgentDriver, "wrap-up");
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "wrap-grok", text: "long research" });
+    await create(FakeAcpDriver, "wrap-up");
+    const { turnId } = await instance!.adapter.sendTurn({ threadId: "wrap-other", text: "long research" });
     await recorder!.until(e => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(seen().steers).toEqual([]);

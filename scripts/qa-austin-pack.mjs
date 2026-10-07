@@ -4,7 +4,8 @@
 // Install the pack from Schedule → Workflow setup → Schedule lists all six
 // workflows with Brisbane times and off → Desk's Get started card ticks the
 // import and counts workflows → open Maintenance checks, switch it on → it shows
-// its next Brisbane run.
+// its next Brisbane run. Kevin's pack import also chooses it for agency setup,
+// and Get started points weekly bills at Agency workflow setup until it's ready.
 //
 //   REALBUD_UI_DIR=<scratch vite build> PLAYWRIGHT_MODULE=... CHROME_EXECUTABLE=... QA_OUTPUT=<fresh dir> node scripts/qa-austin-pack.mjs
 import assert from 'node:assert/strict';
@@ -86,6 +87,13 @@ try {
   await page.getByRole('button', { name: 'Close Workflow setup', exact: true }).click();
   await page.goto(base + '/#/schedule'); await page.reload(); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
   pass('Importing both role packs sets all six workflows to Brisbane time and leaves every one off');
+  const agency = await request('/api/agency-setup');
+  assert.equal(agency.state.settings.workflowPackId, 'austin-accounts');
+  assert.equal(agency.workflows.find(w => w.id === 'bills-calendar').checks.find(c => c.id === 'pack').state, 'passed');
+  // Gmail, the agency details and the review are still the office's own steps, so the host still holds the switch.
+  const held = await request('/api/loops/weekly-bills', 'PATCH', { enabled: true }, 409);
+  assert.match(held.error, /Open Agency workflow setup/);
+  pass("Importing Kevin's pack chooses it as the agency workflow pack; weekly bills still waits for Agency workflow setup");
 
   // ── 2. Schedule lists all six with Brisbane times and Off ──
   for (const [name, timing] of SIX) {
@@ -156,8 +164,22 @@ try {
   await card.evaluate(el => el.scrollIntoView({ block: 'start' }));
   await page.screenshot({ path: join(output, '09-desk-get-started-390.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'horizontal scroll on Desk at 390px');
+  pass('Schedule and Desk with Get started fit 390x844 without horizontal scroll');
+
+  // ── 6. With bank references on, weekly bills is next: Get started says it needs Agency workflow setup, and the link opens it first ──
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await request('/api/loops/bank-references', 'PATCH', { enabled: true });
+  card = await getStarted();
+  await card.getByText('2 of 6 on. Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.', { exact: true }).waitFor();
+  await page.screenshot({ path: join(output, '10-desk-weekly-bills-needs-agency.png') });
+  await page.goto(base + '/#/schedule'); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'schedule-agency'; });
+  const setupDrawer = page.getByRole('dialog');
+  await setupDrawer.getByRole('region', { name: 'Agency workflow setup', exact: true }).waitFor();
+  assert.ok(await setupDrawer.evaluate(el => { const all = [...el.querySelectorAll('[aria-label]')]; const at = label => all.findIndex(node => node.getAttribute('aria-label') === label); return at('Agency workflow setup') >= 0 && at('Agency workflow setup') < at('Packs from your office'); }), 'Agency workflow setup opens first');
+  await page.screenshot({ path: join(output, '11-agency-setup-first.png') });
   assert.deepEqual(errors, []);
-  pass('Schedule and Desk with Get started fit 390x844 without horizontal scroll, and the renderer recorded no page errors');
+  pass("Get started names Agency workflow setup before Weekly bills review can switch on; its link opens that setup first; the renderer recorded no page errors");
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); if (page) await page.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {
   await browser?.close();
@@ -167,7 +189,8 @@ finally {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure,
     layer: 'Actual local HTTP app + built UI from source; fictional empty office; not live Gmail/Redbark/REI, packaged, Windows or customer proof', checks, errors,
     limits: ['No Gmail, Redbark or REI connection exists here, so every connection item stays open; their done states are unit-tested (server/austin-pack.test.ts).',
-      'This computer is never linked, so Get started keeps "Enter link code" as its current action and the "Review <next workflow>" button is unit-tested (src/lib/setup-sequence.test.ts), not clicked here.',
+      'This computer is never linked, so Get started keeps "Enter link code" as its current action; its "Review <next workflow>" and "Open Agency workflow setup" buttons are unit-tested (src/lib/setup-sequence.test.ts), and the agency link is followed here by its hash, not clicked.',
+      'Weekly bills is never switched on here: that needs a verified Gmail, a reviewed agency setup and an approved plan. The import-to-switch-on chain is a service test (server/customer-pack-roles.test.ts).',
       'The REI "signed in once" record comes from a finished REI sign-in handover; this run performs none.',
       'Fictional data; Mac browser rendering only; no packaged build, Windows or customer acceptance.'],
     failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2));

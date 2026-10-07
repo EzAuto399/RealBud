@@ -54,7 +54,8 @@ export interface WorkerAutoSetupDeps {
 }
 
 type HeldCode = Extract<WorkerAutoSetupCode, `held_${string}`>;
-interface Attempts { version: 1; attempts: number; nextRetryAt: number | null; held: HeldCode | null; stageRetried: boolean }
+/** `step`: the setup step a hold stopped at, so its copy survives a restart. */
+interface Attempts { version: 1; attempts: number; nextRetryAt: number | null; held: HeldCode | null; stageRetried: boolean; step?: number }
 
 export const AUTO_SETUP_FILE = "worker-auto-setup.json";
 export const AUTO_SETUP_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
@@ -86,11 +87,21 @@ export const AUTO_SETUP_COPY: Record<WorkerAutoSetupCode, string> = {
   held_restart: "Bud’s update is installed. Restart RealBud to use it.",
   held_unavailable: "Automatic Bud setup is not available on this computer yet.",
 };
+/** Plain words for the four setup steps, so a hold says where it stopped. */
+const STAGE_WORDS: Record<number, string> = { 1: "installing Bud", 2: "applying Bud’s safeguards", 3: "connecting Bud’s model", 4: "running the private readiness check" };
+/** A stopped setup names the step it stopped at, when that step is known. */
+export function autoSetupDetail(code: WorkerAutoSetupCode, step: number): string {
+  const stage = STAGE_WORDS[step];
+  if (stage && code === "held_failed") return `Bud’s setup stopped while ${stage}. Your files are kept. Try again, or contact RealBud support.`;
+  if (stage && code === "held_exhausted") return `Bud couldn’t finish setting up on this computer. It stopped while ${stage}. RealBud support has the details; try again later.`;
+  return AUTO_SETUP_COPY[code];
+}
 
 function validAttempts(value: unknown): Attempts {
   const row = value as Record<string, unknown> | null;
   if (!row || typeof row !== "object" || Array.isArray(row) || row.version !== 1
-    || Object.keys(row).some(key => !["version", "attempts", "nextRetryAt", "held", "stageRetried"].includes(key))
+    || Object.keys(row).some(key => !["version", "attempts", "nextRetryAt", "held", "stageRetried", "step"].includes(key))
+    || (row.step !== undefined && (!Number.isInteger(row.step) || (row.step as number) < 0 || (row.step as number) > TOTAL))
     || !Number.isInteger(row.attempts) || (row.attempts as number) < 0
     || !(row.nextRetryAt === null || (typeof row.nextRetryAt === "number" && Number.isFinite(row.nextRetryAt)))
     || !(row.held === null || HELD.includes(row.held as HeldCode))
@@ -130,7 +141,7 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   let staleRechecks: Array<{ fingerprint: string; at: number }> = [];
 
   const set = (state: WorkerAutoSetupState, step: number, code?: WorkerAutoSetupCode, nextRetryAt?: number) => {
-    current = { state, step, total: TOTAL, detail: code ? AUTO_SETUP_COPY[code] : "", ...(code ? { code } : {}), ...(nextRetryAt ? { nextRetryAt } : {}) };
+    current = { state, step, total: TOTAL, detail: code ? autoSetupDetail(code, step) : "", ...(code ? { code } : {}), ...(nextRetryAt ? { nextRetryAt } : {}) };
   };
   const read = async (): Promise<Attempts> => { const raw = await readPrivateJson(path, 4_000); return raw === undefined ? { ...FRESH } : validAttempts(raw); };
   const save = async (next: Attempts, saved: Attempts) => { if (JSON.stringify(next) !== JSON.stringify(saved)) await writePrivateJson(path, next); };
@@ -175,7 +186,7 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   }
   async function hold(saved: Attempts, code: HeldCode, reason: string, runEpoch: number) {
     if (!(await stillActive(runEpoch))) return;
-    await save({ ...saved, nextRetryAt: null, held: code }, saved);
+    await save({ ...saved, nextRetryAt: null, held: code, step: current.step }, saved);
     if (!(await stillActive(runEpoch))) return;
     cancelRetry();
     set("held", current.step, code);
@@ -216,7 +227,7 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
       const status = await deps.status();
       if (!(await stillActive(runEpoch))) return;
       if (status.ready) return ready(saved, runEpoch);
-      set("held", current.step, saved.held);
+      set("held", saved.step ?? 0, saved.held);
       return;
     }
     if (saved.nextRetryAt !== null && now() < saved.nextRetryAt) {

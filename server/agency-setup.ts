@@ -182,6 +182,19 @@ export function createAgencySetupService(options: AgencySetupOptions) {
   }
   return {
     get, getConfiguration: read, save, review,
+    /** An installed role pack that is one of the known agency workflow packs is
+     * chosen when no pack is chosen yet, as one saved revision. An existing
+     * choice is never replaced. Returns whether the saved setup changed. */
+    async selectInstalledPack(packId: string): Promise<boolean> {
+      if (!isAgencyWorkflowPackId(packId)) return false;
+      return exclusive(async () => {
+        const state = await read();
+        if (state.settings.workflowPackId !== null) return false;
+        if (state.revision === Number.MAX_SAFE_INTEGER) return fail('Agency setup reached its revision limit. Existing settings were preserved; contact support before changing setup.', 409);
+        await persist({ ...state, revision: state.revision + 1, updatedAt: now(), settings: { ...state.settings, workflowPackId: packId }, reviews: {} });
+        return true;
+      });
+    },
     async assertWorkflowReady(workflow: AgencyWorkflowId, expectedReview?: { revision: number; evidenceDigest: string }) {
       const view = await get(), result = view.workflows.find(item => item.id === workflowId(workflow))!;
       expected(await read(), view.state.revision);

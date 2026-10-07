@@ -25,11 +25,21 @@
 //
 // Portal names never live here: origin, account marker, sign-in hosts,
 // routes and labels come from the pack's recipes document.
+//
+// Drifted controls (Ask only): when a select, type, radio, paginate or read-safe
+// click step finds its named control missing or more than once, an injected
+// chooser (TypeSafe Jev, server/jev-client.ts) may pick one of the same-role
+// controls in the dialog or main region. It sees role and name only, never a
+// value or a table's rows. Its pick is data: accepted only above the margin,
+// re-guarded by name, never recipe-covered (every ask goes to the person), and
+// never under a loop's read, for an upload, download or menu, or for a label
+// the recipe stops before.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBrowserBroker, type BrowserApprovalProjection, type BrowserBroker } from "./browser-broker.ts";
-import { accessibleName, jobBrowserUrl, learnedPressable, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
+import { accessibleName, consequentialKind, jobBrowserUrl, learnedPressable, portalAccountName, type BrowserPortalControls } from "./browser-authority.ts";
+import type { JevRequest, JevResult } from "./jev-client.ts";
 import { browserTaskWorkroom, grantedUploadPath, type BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -65,7 +75,15 @@ export interface PortalRecipeResult {
   download?: { name: string; size: number; sha256: string; contentType: string; rows: string[][] };
   sub?: Record<string, PortalRecipeResult>;
 }
-export interface PortalStepReceipt { recipe: string; index: number; verb: string; target?: string; valueSha256?: string; ok: boolean; ms: number }
+/** One chooser question for a drifted control: what was offered (role and name only) and what came of it. */
+export interface PortalChooserReceipt {
+  model: string | null; questionSha256: string; candidates: Array<{ role: string; name: string }>;
+  /** The option id answered ("c0".."c15" or "none"), or null without an answer. */
+  pick: string | null; confidence: number | null; top3: number[];
+  outcome: "picked" | "below-threshold" | "no-answer" | "refused-by-guard"; ms: number;
+}
+export interface PortalStepReceipt { recipe: string; index: number; verb: string; target?: string; valueSha256?: string; ok: boolean; ms: number; chooser?: PortalChooserReceipt }
+export type PortalChooser = (request: JevRequest, options: { signal?: AbortSignal }) => Promise<JevResult>;
 export interface PortalRunReceipt {
   portal: string; origin: string; grantId: string; runId: string; startedAt: number; endedAt: number;
   steps: PortalStepReceipt[];
@@ -113,6 +131,8 @@ export interface PortalRunOptions {
   /** Labels the person confirmed while teaching Bud, for the learned recipes this task runs (server/portal-recipe-task.ts).
    * Kept apart from the pack's readSafe: each is clicked only when learnedPressable, and a loop's read never uses them. */
   learnedReadSafe?: readonly string[];
+  /** Ask recipe tasks only (server/portal-recipe-task.ts): picks a drifted control (see the header). Ignored under a loop's read. */
+  chooser?: PortalChooser;
   pollMs?: number;
   maxWaitReads?: number;
 }
@@ -183,6 +203,9 @@ const FOOTER_ENTRIES = /^Showing [\d,]+ to [\d,]+ of ([\d,]+) entries(?: \(filte
 const TEMPLATE_CELL = /(?:^|\s+)is template cell column header (.*)$/s;
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
+const ROWS = new Set(["table", "grid", "treegrid", "row", "rowgroup"]);
+/** A chooser's pick counts only when it is not "none", confidence ≥ 0.95, and it leads every other option by ≥ 0.3. */
+const CHOOSER_OPTIONS = 16, CHOOSER_CONFIDENCE = 0.95, CHOOSER_MARGIN = 0.3;
 
 // ── tab URL tap ──────────────────────────────────────────────────────────
 /** The broker withholds URLs from its tool results (a query can carry tokens).
@@ -242,6 +265,8 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   };
   // A loop's unattended read never sees labels confirmed while teaching Bud.
   const learned = grant.route === "loop-read" ? [] : [...options.learnedReadSafe ?? []];
+  // Nor a chooser: unattended, a missing control stays a map-drift block.
+  const chooser = grant.route === "loop-read" ? undefined : options.chooser;
   let broker: BrowserBroker;
   try {
     broker = await startBrowserBroker({
@@ -325,10 +350,19 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   const current = async (allRows = false) => (stale || !view ? read(allRows) : view);
   /** The content a recipe acts in: an open dialog, else the main region; never the menu or header. */
   const scope = (page: PageView) => first(page.root, node => node.role === "dialog" || node.role === "alertdialog") ?? first(page.root, node => node.role === "main") ?? page.root;
+  const matching = (page: PageView, roles: string[], name: string) =>
+    all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name !== null && accessibleName(node.name) === accessibleName(name));
   const control = (page: PageView, roles: string[], name: string): Node | null => {
-    const found = all(scope(page), node => node.ref !== null && roles.includes(node.role) && node.name !== null && accessibleName(node.name) === accessibleName(name));
+    const found = matching(page, roles, name);
     if (found.length > 1) throw blocked("ambiguous-control", `More than one ${name} control is on the page.`);
     return found[0] ?? null;
+  };
+  /** What a chooser may be offered: same-role named controls in an open dialog or the main region (never the page's
+   * menus), outside any table's rows (row data never leaves), at most CHOOSER_OPTIONS. */
+  const choices = (page: PageView, roles: string[]) => {
+    const where = scope(page);
+    const inRows = (node: Node) => { for (let at = node.parent; at && at !== where; at = at.parent) if (ROWS.has(at.role)) return true; return false; };
+    return where === page.root ? [] : all(where, node => node.ref !== null && roles.includes(node.role) && accessibleName(node.name) !== "" && !inRows(node)).slice(0, CHOOSER_OPTIONS);
   };
   const act = async (name: string, args: BrowserJson, expect: { name?: string; recipe?: boolean } = {}) => {
     stale = true; const text = await tool(name, { tab_id: tabId, ...args }, expect); await read(); return text;
@@ -383,6 +417,51 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     for (const input of recipe.inputs) if (!(input in inputs)) throw blocked("missing-input", `The ${name} recipe needs ${input}.`);
     const fill = (value: unknown): string => String(value).replace(/\{(\w+)\}/g, (_, key: string) => { if (!(key in inputs)) throw blocked("missing-input", `The ${name} recipe needs ${key}.`); return inputs[key]; });
     const stops = new Set([...recipe.stopBefore, ...consequential]);
+    /** A consequential word, or a label this recipe stops before (or the pack calls consequential) as a whole phrase in the name. */
+    const stopName = (name: string) => consequentialKind(name) !== null || [...stops].some(label =>
+      new RegExp(`(?:^|[^\\p{L}\\p{N}])${accessibleName(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\p{N}])`, "iu").test(accessibleName(name)));
+    const sameAs = (labels: Iterable<string>, name: string) => [...labels].some(label => accessibleName(label) === accessibleName(name));
+    /** One chooser question for a drifted step; the offered index when its answer clears the margin and `allowed` passes the pick's own name. */
+    const choose = async (entry: PortalStepReceipt, page: PageView, wanted: string, offered: Node[], allowed: (name: string) => boolean): Promise<number | null> => {
+      const candidates = offered.map(node => ({ role: node.role, name: redactSecretsInText(accessibleName(node.name)).slice(0, 200) }));
+      const criteria: Record<string, string> = Object.fromEntries(candidates.map((item, at) => [`c${at}`, `${item.role} "${item.name}"`]));
+      criteria.none = "None of these controls, or not sure.";
+      const request: JevRequest = {
+        state: { step: entry.verb, wanted, page: { title: redactSecretsInText(first(page.root, node => node.role === "rootwebarea")?.name ?? "").slice(0, 200), path: page.url ? new URL(page.url).pathname : "" }, candidates },
+        questions: { control: { type: "choice", criteria,
+          instructions: "A saved portal recipe step names a control (wanted) that is not on this page exactly once. Which listed control is that same control, renamed or relabelled? Choose none unless one clearly is." } },
+      };
+      const started = now();
+      let result: JevResult;
+      try { result = await chooser!(request, options.signal ? { signal: options.signal } : {}); } catch { result = { ok: false, reason: "http" }; }
+      const answer = result.ok && result.answers.control?.type === "choice" ? result.answers.control : null;
+      const p = answer?.probabilities ?? {};
+      const at = answer && /^c\d{1,2}$/.test(answer.choice) ? Number(answer.choice.slice(1)) : -1;
+      // Missing confidence or probabilities count as below the threshold.
+      const sure = answer !== null && at >= 0 && at < offered.length && (answer.confidence ?? 0) >= CHOOSER_CONFIDENCE && p[answer.choice] !== undefined &&
+        p[answer.choice] - Math.max(0, ...Object.entries(p).filter(([key]) => key !== answer.choice).map(([, value]) => value)) >= CHOOSER_MARGIN;
+      const outcome = !answer ? "no-answer" : !sure ? "below-threshold" : allowed(offered[at].name!) ? "picked" : "refused-by-guard";
+      entry.chooser = { model: result.ok ? result.model : null, questionSha256: sha256(JSON.stringify(request)), candidates, pick: answer?.choice ?? null,
+        confidence: answer?.confidence ?? null, top3: Object.values(p).sort((a, b) => b - a).slice(0, 3), outcome, ms: now() - started };
+      if (outcome !== "picked") return null;
+      // A drifted page, like a drifted version: no upload or download follows in this run.
+      drift = true; receipt.flags.push(`map-drift: "${wanted}" → "${candidates[at].name}"`);
+      return at;
+    };
+    /** The step's named control. On a miss or ambiguity the chooser (Ask only, once per step, never for a label the recipe
+     * stops before) may pick a same-role control; the pick's own name must pass `allowed` and stopName. `pick` marks it. */
+    const resolve = async (entry: PortalStepReceipt, roles: string[], wanted: string, allowed: (name: string) => boolean = () => true): Promise<{ node: Node; pick?: number } | null> => {
+      const page = await current();
+      const found = matching(page, roles, wanted);
+      if (found.length === 1) return { node: found[0] };
+      const offered = chooser && !entry.chooser && !stopName(wanted) ? choices(page, roles) : [];
+      const pick = offered.length ? await choose(entry, page, wanted, offered, name => allowed(name) && !stopName(name)) : null;
+      if (pick !== null) return { node: offered[pick], pick };
+      if (found.length > 1) throw blocked("ambiguous-control", `More than one ${wanted} control is on the page.`);
+      return null;
+    };
+    /** A chosen node goes through the same broker path, but the recipe never answers for it: every ask goes to the person. */
+    const by = (found: { node: Node; pick?: number }, name: string) => found.pick === undefined ? { name } : { name: found.node.name!, recipe: false as const };
     for (const [index, step] of recipe.steps.entries()) {
       if (stopped()) throw new RunEnd("stopped", "stop");
       const [verb, raw] = Object.entries(step)[0];
@@ -441,22 +520,25 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
         }
         case "select": {
           const field = arg("field"); const option = arg("option"); entry.target = field;
-          const box = control(await current(), ["combobox", "listbox"], field);
-          if (!box) throw blocked("field-missing", `No ${field} field on the page.`);
+          const found = await resolve(entry, ["combobox", "listbox"], field);
+          if (!found) throw blocked("field-missing", `No ${field} field on the page.`);
+          const box = found.node;
           const options = box.children.filter(node => node.role === "option").map(node => node.name ?? "");
           if (options.length && !options.includes(option)) throw blocked("option-missing", `${field} has no option ${option}.`);
-          await act("browser_select", { ref: box.ref!, values: [option] }, { name: field });
+          await act("browser_select", { ref: box.ref!, values: [option] }, by(found, field));
           break;
         }
         case "type": {
           const field = arg("field"); const value = arg("value"); entry.target = field; entry.valueSha256 = sha256(value);
-          const box = control(await current(), ["textbox", "searchbox", "textarea"], field);
-          if (!box) throw blocked("field-missing", `No ${field} field on the page.`);
-          await act("browser_fill", { ref: box.ref!, value }, { name: field });
-          // Tab commits the typed filter (map trap: an uncommitted filter resets on the next click).
-          const again = control(await current(), ["textbox", "searchbox", "textarea"], field);
-          if (!again) throw blocked("field-missing", `The ${field} field went away after typing.`);
-          await act("browser_press", { ref: again.ref!, key: "Tab" }, { name: field });
+          const roles = ["textbox", "searchbox", "textarea"];
+          const found = await resolve(entry, roles, field);
+          if (!found) throw blocked("field-missing", `No ${field} field on the page.`);
+          await act("browser_fill", { ref: found.node.ref!, value }, by(found, field));
+          // Tab commits the typed filter (map trap: an uncommitted filter resets on the next click). A picked field is found again by its place.
+          const page = await current();
+          const again = found.pick === undefined ? control(page, roles, field) : choices(page, roles)[found.pick];
+          if (!again || accessibleName(again.name) !== accessibleName(found.node.name)) throw blocked("field-missing", `The ${field} field went away after typing.`);
+          await act("browser_press", { ref: again.ref!, key: "Tab" }, by(found, field));
           if (accessibleName(field) === "Search") {
             const table = await waitTable();
             if (table.records.length && !table.records.some(row => Object.values(row).join(" ").toLowerCase().includes(value.toLowerCase()))) throw blocked("search-not-applied");
@@ -465,9 +547,9 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
         }
         case "radio": {
           const label = fill(raw); entry.target = label;
-          const radio = control(await current(), ["radio"], label);
-          if (!radio) throw blocked("field-missing", `No ${label} option on the page.`);
-          await act("browser_click_semantic", { ref: radio.ref! }, { name: label });
+          const found = await resolve(entry, ["radio"], label);
+          if (!found) throw blocked("field-missing", `No ${label} option on the page.`);
+          await act("browser_click_semantic", { ref: found.node.ref! }, by(found, label));
           break;
         }
         case "click": {
@@ -476,9 +558,10 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
           const label = fill(eachRun ? (raw as Record<string, unknown>).label : raw); entry.target = label;
           if (stops.has(label)) throw new RunEnd("stopped-before", "consequential-label", label);
           if (!eachRun && !readSafe.has(label) && !(learned.includes(label) && learnedPressable(label))) throw blocked("not-read-safe", label);
-          const target = control(await current(), ["button", "link", "tab", "menuitem"], label);
-          if (!target) throw blocked("control-missing", `No ${label} control on the page.`);
-          await act("browser_click_semantic", { ref: target.ref! }, { name: label, ...(eachRun ? { recipe: false } : {}) });
+          // A picked control must itself be one the pack (or this task's teaching) calls read-safe.
+          const found = await resolve(entry, ["button", "link", "tab", "menuitem"], label, name => sameAs(readSafe, name) || sameAs(learned, name) && learnedPressable(name));
+          if (!found) throw blocked("control-missing", `No ${label} control on the page.`);
+          await act("browser_click_semantic", { ref: found.node.ref! }, { ...by(found, label), ...(eachRun ? { recipe: false } : {}) });
           break;
         }
         case "read": {
@@ -496,11 +579,14 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
         case "paginate": {
           entry.target = pack.pagination.next;
           let previous = JSON.stringify((await waitTable()).records);
+          // A picked pager control is then found by its own name on each page, and is never recipe-covered.
+          let next = { name: pack.pagination.next } as { name: string; recipe?: false };
           for (let guard = 0; ; guard++) {
             if (guard > 200) throw blocked("pagination-did-not-end");
-            const next = control(await current(), ["button", "link"], pack.pagination.next);
-            if (!next || next.disabled) break;
-            await act("browser_click_semantic", { ref: next.ref! }, { name: pack.pagination.next });
+            const found = await resolve(entry, ["button", "link"], next.name);
+            if (!found || found.node.disabled) break;
+            if (found.pick !== undefined) next = by(found, next.name);
+            await act("browser_click_semantic", { ref: found.node.ref! }, next);
             const table = await waitTable(); const signature = JSON.stringify(table.records);
             // A page identical to the last one means the click raced a re-render; counting it would double rows.
             if (signature === previous) throw blocked("pagination-stalled");

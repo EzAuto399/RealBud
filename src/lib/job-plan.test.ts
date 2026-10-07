@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Recipe } from "./desk";
-import { jobPlanChanged, jobPlanFields, jobPlanInput } from "./job-plan";
+import { JOB_ABILITY_LABELS, jobPlanChanged, jobPlanFields, jobPlanInput } from "./job-plan";
+
+describe("job ability labels", () => {
+  it("offers web research only as what a run can do: list public sources to check", () => {
+    expect(JOB_ABILITY_LABELS["web-research"]).toBe("List public sources to check");
+    expect(Object.values(JOB_ABILITY_LABELS).join(" ")).not.toMatch(/research the public web/i);
+  });
+});
 
 const plan: Recipe = {
   id: "owner-review",

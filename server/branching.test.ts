@@ -1,11 +1,12 @@
-// Conversation branching, end to end: boots the real harness server with
-// the grokAgent driver on the fake ACP CLI, runs a real turn, edits the
-// user message, and asserts the conversation forks — the old branch stays
+// Conversation branching, end to end: boots the real product server with
+// Bud on the Hermes ACP driver pointed at the fake ACP CLI, runs a real turn,
+// edits the user message, and asserts the conversation forks — the old branch stays
 // in the tree but off the active path, the edited branch gets its own
 // reply, and version switching flips between the two. A second instance
 // runs the fake in `hang` mode to pin the anti-double-generation contract:
 // editing mid-turn interrupts the old turn and never leaves two turns (or
-// two visible tails) running at once.
+// two visible tails) running at once. Each case starts its own Bud task so
+// the threads stay separate, as separate bots once did in the legacy fleet.
 //
 // Same POSIX gating as comms.test.ts (the fake CLI is a shebang script).
 import { readSessionToken } from "./testing/local-session.ts";
@@ -42,7 +43,7 @@ function activePath(messages: Msg[], leafId: string | null): Msg[] {
   return path.reverse();
 }
 
-posixOnly("conversation branching e2e (fake ACP fleet)", () => {
+posixOnly("conversation branching e2e (Bud on the fake ACP CLI)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
@@ -60,6 +61,14 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   const getBot = async (id: string) =>
     (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
 
+  // Bud is the one product worker; a fresh task gives each case its own thread.
+  const freshBudTask = async (instanceId: string) => {
+    const task = await api("POST", "/api/bots/bud/tasks", {});
+    expect(task.status).toBe(201);
+    expect((await api("PATCH", "/api/bots/bud", { modelSelection: { instanceId, model: "default" } })).status).toBe(200);
+    return { id: "bud" };
+  };
+
   const waitFor = async (predicate: () => Promise<boolean>, what: string, ms = 25_000) => {
     const deadline = Date.now() + ms;
     while (!(await predicate())) {
@@ -76,16 +85,17 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       join(home, ".realbud", "config.json"),
       JSON.stringify({
         instances: {
-          happy: { driver: "grokAgent", config: { cli: FAKE_CLI, fullAuto: true } },
+          happy: { driver: "hermesAgent", config: { cli: FAKE_CLI } },
           hang: {
-            driver: "grokAgent",
+            driver: "hermesAgent",
             environment: { FAKE_ACP_MODE: "hang" },
-            config: { cli: FAKE_CLI, fullAuto: true },
+            config: { cli: FAKE_CLI },
           },
           slow: {
-            driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "slow" },
-            config: { cli: FAKE_CLI, fullAuto: true },
+            driver: "hermesAgent",
+            // long enough for the queue edits below to land mid-turn
+            environment: { FAKE_ACP_MODE: "slow", FAKE_ACP_SLOW_MS: "3000" },
+            config: { cli: FAKE_CLI },
           },
         },
       }),
@@ -97,10 +107,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         // child-process coverage: the v8 provider measures the spawned server
         ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
+        VITEST: "true",
         HOME: home,
         USERPROFILE: home,
         OMB_PORT: String(PORT),
-        OMB_TEST_FLEET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -135,10 +145,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   it(
     "forks on edit, replies on the new branch, and switches versions cleanly",
     async () => {
-      const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
-        modelSelection: { instanceId: "happy", model: "fake-model" },
-      });
+      const created = await freshBudTask("happy");
 
       // turn 1 settles on the original branch
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "original question" })).status).toBe(202);
@@ -187,10 +194,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   it(
     "refuses to rewind a live thread, then edits cleanly once it is stopped",
     async () => {
-      const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
-        modelSelection: { instanceId: "hang", model: "fake-model" },
-      });
+      const created = await freshBudTask("hang");
 
       // start a turn that will never finish on its own
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first try" })).status).toBe(202);
@@ -232,6 +236,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       // and only one copy of each attempt ever exists — no duplicated turns
       expect(bot.messages.filter((m: Msg) => m.text === "first try")).toHaveLength(1);
       expect(bot.messages.filter((m: Msg) => m.text === "second try")).toHaveLength(1);
+
+      // the forked turn hangs too; stop it so the next case can open a task
+      expect((await api("POST", `/api/bots/${created.id}/interrupt`)).status).toBe(200);
+      await waitFor(async () => (await getBot(created.id)).busy === false, "the forked turn to stop", 20_000);
     },
     45_000,
   );
@@ -239,10 +247,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   it(
     "replaces and drains one durable follow-up, then steers a live turn atomically",
     async () => {
-      const created = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${created.id}`, {
-        modelSelection: { instanceId: "slow", model: "fake-model" },
-      });
+      const created = await freshBudTask("slow");
 
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "slow first" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the slow turn to start");
@@ -266,7 +271,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       expect(bot.messages.filter((message: Msg) => message.text === "final follow-up")).toHaveLength(1);
 
       await api("PATCH", `/api/bots/${created.id}`, {
-        modelSelection: { instanceId: "hang", model: "fake-model" },
+        modelSelection: { instanceId: "hang", model: "default" },
       });
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "direction one" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to steer");

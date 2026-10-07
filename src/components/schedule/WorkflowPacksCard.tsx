@@ -17,9 +17,11 @@ import { AgencyWorkflowSetup } from './AgencyWorkflowSetup';
 type Props = {
   onInstalled?: () => void | Promise<void>;
   className?: string;
+  /** Opened from Get started for a workflow that needs it: Agency workflow setup comes first, not under owner options. */
+  agencyFirst?: boolean;
 };
 
-export function WorkflowPacksCard({ onInstalled, className }: Props) {
+export function WorkflowPacksCard({ onInstalled, className, agencyFirst = false }: Props) {
   const [packs, setPacks] = useState<WorkflowPackStatus[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -120,9 +122,10 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
         </div>
       </div>
 
+      {agencyFirst ? <div className="mt-4"><AgencyWorkflowSetup onSaved={onInstalled} /></div> : null}
       {/* Office packs, previews, installed packs and recovery stay visible; everything an office owner sets up once goes into the card's one collapsed section. */}
       <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} moreOptions={<>
-      <AgencyWorkflowSetup onSaved={onInstalled} />
+      {agencyFirst ? null : <AgencyWorkflowSetup onSaved={onInstalled} />}
       <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
       <div className="border-t border-line pt-4">
         <h4 className="font-medium text-ink">Auston Phase 1 examples and older pack snapshots</h4>

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Recipe } from '../shared/contracts.ts';
 import { parseOfficePacks, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
+import { createAgencySetupService, type AgencySetupOptions } from './agency-setup.ts';
 import { createAustinPack, loadAustinPack } from './austin-pack.ts';
 import { austinAccountsCustomerPack, austinPropertyCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
@@ -27,7 +28,7 @@ const NOW = Date.parse('2026-10-06T09:00:00+10:00');
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
 
-function office(options: { officePacks?: () => Promise<OfficePacksSource> } = {}) {
+function office({ observe, ...options }: { officePacks?: () => Promise<OfficePacksSource>; observe?: AgencySetupOptions['observe'] } = {}) {
   const dir = privateTempRoot(join(realpathSync(tmpdir()), 'rb-role-packs-'));
   cleanup.push(() => removeFixture(dir));
   const loops = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => NOW, execute: async () => ({ ok: true, detail: 'Fictional run.' }) });
@@ -36,12 +37,13 @@ function office(options: { officePacks?: () => Promise<OfficePacksSource> } = {}
   const austin = createAustinPack({ loops, maintenance, inspection: createInspectionRulesStore({ file: join(dir, 'inspection.json') }), file: join(dir, 'austin-pack.json'), now: () => NOW,
     officeTimeZone: async () => null, signals: async () => ({ gmail: false, redbark: false, tenants: 0, suppliers: 0 }) });
   let recipes: Recipe[] = [];
+  const agency = createAgencySetupService({ directory: dir, workspaceId: 'workspace-fictional', actorId: () => 'fictional-owner', now: () => NOW, observe });
   const packs = createCustomerPackService({ directory: dir, profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'), trustedKeys: FICTIONAL_PACK_KEYS,
     listRecipes: () => recipes, saveRecipes: ((inputs: unknown[]) => { recipes.push(...inputs.map(raw => ({ ...(raw as object), revision: 1 } as Recipe))); return recipes; }) as never,
-    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply),
+    resetRecipeApprovals: () => {}, applyLoops: loopsToApply => austin.applyPackLoops(loopsToApply), selectWorkflowPack: id => agency.selectInstalledPack(id),
     officeSettings: async () => ({ loops: loops.listLoops().map(loop => ({ id: loop.id, schedule: loop.schedule })) }), ...options });
   const install = async (pack: unknown) => packs.install(pack, (await packs.preview(pack)).digest);
-  return { loops, maintenance, austin, packs, install, loop: (id: string) => loops.listLoops().find(item => item.id === id)! };
+  return { loops, maintenance, austin, agency, packs, install, loop: (id: string) => loops.listLoops().find(item => item.id === id)! };
 }
 
 describe('Auston role packs', () => {
@@ -113,6 +115,38 @@ describe('installing a pack applies its loops', () => {
     expect((await f.maintenance.read()).rule).toEqual({ basis: 'invoiceDate', span: 'rolling30' });
   });
 
+  it("chooses Kevin's pack for agency setup when nothing is chosen, and leaves Sherry's and an earlier choice alone", async () => {
+    const f = office();
+    await f.install(austinPropertyCustomerPack());
+    expect((await f.agency.getConfiguration()).settings.workflowPackId).toBeNull();
+    await f.install(austinAccountsCustomerPack());
+    expect((await f.agency.getConfiguration()).settings.workflowPackId).toBe('austin-accounts');
+    const chosen = office();
+    await chosen.agency.save({ expectedRevision: 0, settings: { ...(await chosen.agency.getConfiguration()).settings, workflowPackId: 'office-core' } });
+    await chosen.install(austinAccountsCustomerPack());
+    expect((await chosen.agency.getConfiguration()).settings.workflowPackId).toBe('office-core');
+  });
+
+  it("lets Kevin switch weekly bills on after a fresh import once agency setup is reviewed, with no manual pack choice", async () => {
+    // Fictional observations: the account check and plan admission the host would report.
+    const f = office({ observe: async () => ({
+      gmail: { accounts: [{ id: 'mail-fictional-a', label: 'Fictional office Gmail', status: 'active' }], accountId: 'mail-fictional-a', state: 'verified', checkedAt: NOW, bindingRevision: 'fictional-source-v1' },
+      billRegister: { state: 'available', count: 0 },
+      workflows: { 'bills-calendar': { state: 'available', bindingRevision: 'fictional-bills-v1', detail: 'Fictional plan admission.' } },
+    }) });
+    await f.install(austinAccountsCustomerPack());
+    const chosen = await f.agency.getConfiguration();
+    expect(chosen.settings.workflowPackId).toBe('austin-accounts');
+    let view = await f.agency.save({ expectedRevision: chosen.revision, settings: { ...chosen.settings, agencyName: 'Fictional Realty', timeZone: 'Australia/Brisbane', gmailAccountId: 'mail-fictional-a', selectedWorkflows: ['bills-calendar'] } });
+    const bills = view.workflows.find(w => w.id === 'bills-calendar')!;
+    expect(bills.checks.find(c => c.id === 'pack')?.state).toBe('passed');
+    view = await f.agency.review('bills-calendar', { expectedRevision: view.state.revision, expectedEvidenceDigest: bills.evidenceDigest });
+    // PATCH /api/loops/weekly-bills checks this reviewed workflow and the selected pack's invoice plan binding (plan approval is its own step).
+    const ready = await f.agency.assertWorkflowReady('bills-calendar');
+    await expect(f.packs.packRecipeBinding(ready.settings.workflowPackId!, workflowRecipeId(ready.settings.workflowPackId, 'invoice-review')!)).resolves.toMatch(/^[a-f0-9]{64}$/);
+    expect(f.loops.patchClock('weekly-bills', { enabled: true, timezone: ready.settings.timeZone })).toMatchObject({ enabled: true, nextRunAt: expect.any(Number) });
+  });
+
   it('says plainly when the pack installed but its workflow times could not be set', async () => {
     const dir = privateTempRoot(join(realpathSync(tmpdir()), 'rb-role-fail-'));
     cleanup.push(() => removeFixture(dir));
@@ -121,6 +155,9 @@ describe('installing a pack applies its loops', () => {
     const pack = austinPropertyCustomerPack();
     await expect(packs.install(pack, (await packs.preview(pack)).digest)).rejects.toThrow(/installed, but its workflow times could not be set/);
     expect((await packs.list()).installations.map(i => i.id)).toEqual(['austin-property']);
+    const choosing = createCustomerPackService({ directory: join(dir, 'choosing'), profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'),
+      listRecipes: () => [], saveRecipes: (() => []) as never, selectWorkflowPack: async () => { throw new Error('Fictional agency recovery'); } });
+    await expect(choosing.install(pack, (await choosing.preview(pack)).digest)).rejects.toThrow('The pack was installed, but it could not be chosen for this agency. Choose it in Agency workflow setup.');
   });
 });
 
@@ -179,7 +216,14 @@ describe('packs from your office', () => {
       const exported = await f.packs.handle(`/api/customer-packs/${build().id}/export`, 'GET');
       expect(exported?.body).toEqual(validateCustomerPack(build()));
       expect((await f.packs.preview(exported!.body)).canInstall).toBe(true);
+      // The fallback preview admits only an exact copy: one changed field needs a signature.
+      await expect(f.packs.preview({ ...(exported!.body as object), title: 'Fictional changed title' })).rejects.toMatchObject({ status: 400 });
     }
+    // The owner's Preview then Import of a built-in role pack installs it like an office pack.
+    const exported = (await f.packs.handle('/api/customer-packs/austin-accounts/export', 'GET'))!.body;
+    const preview = await f.packs.handle('/api/customer-packs/preview', 'POST', { pack: exported });
+    expect((await f.packs.handle('/api/customer-packs/install', 'POST', { pack: exported, expectedDigest: (preview!.body as { digest: string }).digest }))?.status).toBe(200);
+    expect((await f.packs.list()).installations.map(i => i.id)).toEqual(['austin-accounts']);
     expect((await f.packs.handle('/api/customer-packs/not-built-in/export', 'GET'))?.status).toBe(404);
   });
 

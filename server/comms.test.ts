@@ -1,17 +1,16 @@
-// Agent-to-agent comms, end to end: boots the real harness server with the
-// grokAgent driver pointed at the fake ACP CLI in ask-peer mode, then has
-// bot A's "agent" reach bot B through the injected agents proxy (list_bots →
-// ask_bot → B runs a real depth-1 turn → reply folds back into A's answer).
-// This exercises the whole chain the packaged app uses: startTurn →
-// session/new mcpServers → agents-proxy → /api/internal/ask-bot →
-// askBotAndWait → bus fold. The internal endpoints' auth is pinned too.
+// Agent-to-agent comms. The mention and room-routing units run as before.
+// The e2e half boots the real product server with Bud on the Hermes ACP
+// driver pointed at the fake ACP CLI in ask-peer mode, beside a second
+// visible bot such as an upgraded install may still hold. The product turn
+// path never mounts the agents proxy, so the fake has no peer to reach: the
+// test pins that, plus the internal endpoints' boot-token seal.
 //
 // The fake CLI is a shebang script — POSIX-only until resolveCliSpawn
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { readSessionToken } from "./testing/local-session.ts";
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,11 +77,12 @@ describe("roomResponders", () => {
   });
 });
 
-describe("comms e2e (fake ACP fleet)", () => {
+describe("comms e2e (product build, fake ACP CLI)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
   let sessionToken = "";
+  let dump = "";
 
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
@@ -96,19 +96,29 @@ describe("comms e2e (fake ACP fleet)", () => {
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-comms-test-"));
-    mkdirSync(join(home, ".realbud"), { recursive: true });
+    const data = join(home, ".realbud");
+    mkdirSync(data, { recursive: true, mode: 0o700 });
+    // The fictional ACP peer obeys the same write fence as the real worker.
+    dump = join(data, "vault", "bud-work", "fake-acp-dump.json");
     writeFileSync(
-      join(home, ".realbud", "config.json"),
+      join(data, "config.json"),
       JSON.stringify({
         instances: {
-          grok: {
-            driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "ask-peer" },
-            config: { cli: FAKE_CLI, fullAuto: true },
+          hermes: {
+            driver: "hermesAgent",
+            environment: { FAKE_ACP_MODE: "ask-peer", FAKE_ACP_DUMP: dump },
+            config: { cli: FAKE_CLI },
           },
         },
       }),
+      { mode: 0o600 },
     );
+    // Bud plus one more visible bot, as an install from the legacy fleet era may hold.
+    const bot = (id: string, name: string) => ({
+      id, threadId: `${id}-thread`, name, title: "", description: "", notifications: false, color: "green", unread: false,
+      modelSelection: { instanceId: "hermes", model: "default" }, resumeCursors: {}, createdAt: 1,
+    });
+    writeFileSync(join(data, "bots.json"), JSON.stringify([bot("bud", "Bud"), bot("helper", "Helper")]), { mode: 0o600 });
 
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
@@ -118,10 +128,10 @@ describe("comms e2e (fake ACP fleet)", () => {
         ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
         // without SystemRoot, winsock fails to initialize in the child
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        VITEST: "true",
         HOME: home,
         USERPROFILE: home,
         OMB_PORT: String(PORT),
-        OMB_TEST_FLEET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -161,70 +171,44 @@ describe("comms e2e (fake ACP fleet)", () => {
   });
 
   it(
-    "carries a question from bot A through the agents proxy to bot B and back",
+    "never hands Bud the peer-agent tools, even beside a second visible bot",
     async () => {
-      // deterministic roster: no starter bot is seeded anymore (Desk is
-      // home), so the two bots created here are the whole fleet
+      // The roster cannot grow in the product: extra bots are a route denial.
+      expect((await api("POST", "/api/bots", {})).status).toBe(403);
       const roster = (await api("GET", "/api/bots")).body;
-      for (const leftover of roster.bots) {
-        await api("PATCH", `/api/bots/${leftover.id}`, { hidden: true });
-      }
-      const selection = { instanceId: "grok", model: "fake-model" };
-      const helper = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${helper.id}`, { name: "Helper", modelSelection: selection });
-      const asker = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${asker.id}`, { name: "Asker", modelSelection: selection });
+      expect(roster.bots.filter((b: any) => !b.hidden).map((b: any) => b.id).sort()).toEqual(["bud", "helper"]);
 
-      const send = await api("POST", `/api/bots/${asker.id}/messages`, { text: "hey @Helper ping" });
+      const send = await api("POST", "/api/bots/bud/messages", { text: "hey @Helper ping" });
       expect(send.status).toBe(202);
 
-      // wait for A's turn to settle with the peer's reply folded in
+      // Without an agents server the ask-peer fake answers a plain turn.
       const deadline = Date.now() + 25_000;
-      let askerBot: any;
+      let bud: any;
       for (;;) {
-        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
-        const settled = askerBot.messages.some(
-          (m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("peer says:"),
+        bud = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === "bud");
+        const settled = bud.messages.some(
+          (m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("hello from fake acp"),
         );
-        if (settled && !askerBot.busy) break;
+        if (settled && !bud.busy) break;
         if (Date.now() > deadline) {
-          throw new Error(
-            `A never got the peer reply. messages: ${JSON.stringify(askerBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`,
-          );
+          throw new Error(`Bud never settled. messages: ${JSON.stringify(bud.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
         }
         await new Promise((r) => setTimeout(r, 250));
       }
 
-      // A's answer contains B's actual reply, via the proxy's wrapper
-      const reply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
-      expect(reply.text).toContain("Helper replied:");
-      expect(reply.text).toContain("hello from fake acp"); // B's happy-path turn text
+      // The worker's session/new carried no agents MCP server.
+      const mounted = JSON.parse(readFileSync(dump, "utf8")).mcpServers as Array<{ name?: string }>;
+      expect(mounted.map((server) => server.name)).not.toContain("agents");
 
-      // visibility: A's thread shows a clickable "Messaged @Helper" chip
-      // that links to the auto-created bot⇄bot channel
-      const note = askerBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name === "Messaged @Helper");
-      expect(note).toBeTruthy();
-      expect(note.comm?.groupId).toBeTruthy();
-      expect(note.comm?.withName).toBe("Helper");
-
-      // the exchange is mirrored into that channel, attributed to each bot
+      // Nothing reached the other bot and no bot⇄bot channel was opened.
       const state = (await api("GET", "/api/bots")).body;
-      const channel = state.groups.find((g: any) => g.id === note.comm.groupId);
-      expect(channel?.dm).toBe(true);
-      expect(channel.memberIds).toContain(asker.id);
-      expect(channel.memberIds).toContain(helper.id);
-      expect(channel.messages.some((m: any) => m.from?.botId === asker.id)).toBe(true);
-      expect(channel.messages.some((m: any) => m.from?.botId === helper.id && m.text?.includes("hello from fake acp"))).toBe(true);
-
-      // B's thread received the attributed message and ran a real turn,
-      // plus a receive-side chip pointing at the same channel
-      const helperBot = state.bots.find((b: any) => b.id === helper.id);
-      const inbound = helperBot.messages.find((m: any) => m.role === "user" && m.kind === "text");
-      expect(inbound.text).toContain("[Message from @Asker");
-      expect(inbound.text).toContain("ping from fake");
-      const rnote = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name === "Message from @Asker");
-      expect(rnote?.comm?.groupId).toBe(note.comm.groupId);
-      expect(helperBot.busy).toBeFalsy();
+      bud = state.bots.find((b: any) => b.id === "bud");
+      expect(bud.messages.some((m: any) => m.text?.includes("peer says:"))).toBe(false);
+      expect(bud.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Messaged @Helper")).toBe(false);
+      const helper = state.bots.find((b: any) => b.id === "helper");
+      expect(helper.messages.some((m: any) => m.role === "user")).toBe(false);
+      expect(helper.busy).toBeFalsy();
+      expect(state.groups.some((g: any) => g.dm)).toBe(false);
     },
     40_000,
   );

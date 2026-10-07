@@ -8,7 +8,7 @@ paths:
 
 Authority
 - Routes are one flat `if (path === … && method === …)` chain in `server/index.ts` (no router); place a new route after the gates it depends on. Add every new `/api/*` prefix to `needsSession` in `server/session-auth.ts`, otherwise it is reachable without the per-boot session token.
-- Non-GET `/api/*` must be `application/json`; `/api/company/*` responses are `no-store`. `productDenied` in `server/product-mode.ts` is a hard route denylist in PRODUCT_MODE.
+- Non-GET `/api/*` must be `application/json`; `/api/company/*` responses are `no-store`. `productDenied` in `server/product-mode.ts` is a hard route denylist.
 - Company reads/writes go through `authenticated()` and `authorizedScope()` in `server/company/index.ts`: advisory locks in fixed order (lifecycle → member → session → scope), the session re-checked after locking, RLS context set. Department permission is the SQL `scope_allowed()`; do not reimplement it in TypeScript. Member sessions (`x-realbud-member-session`) and execution grants (`x-realbud-execution-grant`) are different credentials and never convert into each other.
 - Re-verify identity and permission after every `await` that crosses a lock or host boundary (pattern: `server/company-execution-client.ts`). A UI filter or an enqueue-time check alone is not access control. Never hand a `pg` Pool or its credentials to a worker.
 
@@ -23,11 +23,11 @@ Durable execution
 - Case claims are fence + lease + token-hash; every admit/renew/settle bumps the fence and re-asserts liveness after the write; settlement lands in `recovery_required` and is never silently reopened.
 
 Secrets
-- Everything persisted or shown passes `redactSecretsInText` (`server/redact.ts`); redaction is deliberately high-precision, so do not add generic hex/base64 heuristics. Child processes get `serviceSafeChildEnv()` (`server/service-child-env.ts`); model adapters strip their own provider keys. Credential-shaped input is rejected in PRODUCT_MODE, not redacted.
+- Everything persisted or shown passes `redactSecretsInText` (`server/redact.ts`); redaction is deliberately high-precision, so do not add generic hex/base64 heuristics. Child processes get `serviceSafeChildEnv()` (`server/service-child-env.ts`); model adapters strip their own provider keys. Credential-shaped input is rejected, not redacted.
 - Fixtures use obviously synthetic values (`fictional-*`, `/synthetic/...`): no real keys, mailboxes, customer names or machine paths.
 
 Hermes boundary
-- Profiles resolve only through `baseWorkerProfile()`/`hermesProfileFor()` (`server/hermes-profile.ts`); never accept a caller- or model-supplied profile name or directory. `server/hermes-pack.ts` installs by file copy, rewrites the policy block (`approvals: manual`, `cron_mode: deny`) on every install, and rejects `off`/`smart`/`yolo`. The readiness check requires the `web`, `terminal`, `file`, `vision`, `todo`, `session_search` and `delegation` toolsets and rejects `code_execution`, `computer_use`, `cronjob` and `skills` (`hermes-pack.ts` worker readiness). That list governs CLI jobs only; Ask runs Hermes' own ACP bundle. Model text is data with a sha256 evidence row, never authority. Never launch Hermes.app; never edit Hermes source.
+- Profiles resolve only through `baseWorkerProfile()`/`hermesProfileFor()` (`server/hermes-profile.ts`); never accept a caller- or model-supplied profile name or directory. `server/hermes-pack.ts` installs by file copy, rewrites the policy block (`approvals: manual`, `cron_mode: deny`) on every install, and rejects `off`/`smart`/`yolo`. The readiness check requires the `terminal`, `file`, `vision`, `todo`, `session_search` and `delegation` toolsets and rejects `code_execution`, `computer_use`, `cronjob`, `skills` and `web` (`hermes-pack.ts` worker readiness); native `web` is disabled everywhere and Bud reads pages only through `read_page`. That list governs CLI jobs only; Ask runs Hermes' own ACP bundle. Model text is data with a sha256 evidence row, never authority. Never launch Hermes.app; never edit Hermes source.
 
 Tests
 - Colocated `*.test.ts`; run one with `pnpm exec vitest run <file>`; server-only types with `pnpm exec tsc -p tsconfig.server.json`. `server/testing/setup.ts` gives each file a throwaway HOME, so never read `os.homedir()` at import time.

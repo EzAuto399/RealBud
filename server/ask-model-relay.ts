@@ -14,7 +14,10 @@
  * uses, and the one Modelvia answers `unsupported_parameter:reasoning_effort`
  * on when a model refuses a value) from the current choice on every request,
  * replacing whatever the worker sent, and drops any second reasoning channel.
- * Messages, tools and replay fields pass through untouched.
+ * Messages, tools and replay fields pass through untouched. The one other
+ * model it admits is `MANAGED_VISION_CHOICE`'s, for an office on a text-only
+ * choice and only for Hermes' image call (`auxiliaryImageRequest`), never for
+ * a turn.
  *
  * Key custody: the office key stays in this process (`workerModelAccessSnapshot`,
  * refreshed from the private vault). An Ask worker gets only the loopback URL
@@ -60,12 +63,31 @@ import { managedServiceFailure } from "./managed-service.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
 import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER_ENTRY, managedModelProfile } from "./hermes-pack.ts";
 import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
-import { managedModelChoice } from "../shared/managed-model-choices.ts";
+import { MANAGED_VISION_CHOICE, managedModelChoice } from "../shared/managed-model-choices.ts";
 import { noteModelKeyAnswer } from "./office-link.ts";
 
 /** Office copy when an Ask launch finds no running relay in this process.
  * Listed in `MANAGED_ACCESS_REFUSALS`, so Ask shows exactly this sentence. */
 export const ASK_MODEL_RELAY_UNAVAILABLE = MANAGED_ACCESS_RELAY_DOWN;
+
+const VISION_CHOICE = managedModelChoice(MANAGED_VISION_CHOICE);
+/** What Bud is told when a text-only office's plan refuses the image model
+ * (Modelvia 403 `mode_not_allowed`, 503 `model_route_unavailable`). */
+export const ASK_VISION_UNAVAILABLE = `Bud can't read images on this office's AI plan right now. To read images, choose ${VISION_CHOICE.label} in Bud setup, or ask RealBud support to add it to the plan.`;
+
+/** Hermes' auxiliary image call (0.21.5 tools/vision_tools.py `_media_messages`
+ * → agent/auxiliary_client.py `async_call_llm(task="vision")`): one user
+ * message of text and at least one image, and no tools. A turn carries Bud's
+ * instructions and its conversation, so it never matches. */
+function auxiliaryImageRequest(body: Record<string, unknown>): boolean {
+  if (["tools", "tool_choice", "functions", "function_call"].some(key => body[key] !== undefined)) return false;
+  const messages = body.messages;
+  if (!Array.isArray(messages) || messages.length !== 1) return false;
+  const message = messages[0] as { role?: unknown; content?: unknown } | null;
+  if (!message || typeof message !== "object" || message.role !== "user" || !Array.isArray(message.content)) return false;
+  const types = (message.content as unknown[]).map(part => part && typeof part === "object" ? (part as { type?: unknown }).type : undefined);
+  return types.includes("image_url") && types.every(type => type === "text" || type === "image_url");
+}
 
 /** The Hermes env name that selects a managed-scope directory. */
 export const ASK_MODEL_RELAY_OVERLAY_ENV = "HERMES_MANAGED_DIR";
@@ -430,12 +452,16 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
         body = parsed as Record<string, unknown>;
       } catch { throw new RelayRefusal(400, "Bud's AI connection received a request it cannot read."); }
-      if (body.model !== choice.model) throw new RelayRefusal(400, "This request names a model other than the one chosen for this office.");
+      // A text-only choice reads images with `MANAGED_VISION_CHOICE` (the
+      // profile's `auxiliary.vision`, hermes-pack.ts `managedVisionRoute`).
+      const vision = !choice.supportsVision && body.model === VISION_CHOICE.model && auxiliaryImageRequest(body);
+      const route = vision ? VISION_CHOICE : choice;
+      if (body.model !== route.model) throw new RelayRefusal(400, "This request names a model other than the one chosen for this office.");
       if (body.stream !== undefined && typeof body.stream !== "boolean") throw new RelayRefusal(400, "Bud's AI connection received a request it cannot read.");
       // The choice table pairs each model only with an effort the gateway
       // accepts for it (Flash only ever `high`), so this never adds a value a
       // model refuses. Whatever the worker sent is replaced.
-      body.reasoning_effort = choice.effort;
+      body.reasoning_effort = route.effort;
       // No second channel for reasoning or provider options, one completion
       // per request, and no output beyond the model's published ceiling.
       delete body.reasoning; delete body.extra_body;
@@ -443,7 +469,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         if (typeof body.n !== "number" || !Number.isFinite(body.n) || body.n < 1) throw new RelayRefusal(400, "Bud's AI connection received a request it cannot read.");
         body.n = 1;
       }
-      clampOutput(body, maxOutput.get(choice.model) ?? FALLBACK_MAX_OUTPUT_TOKENS);
+      clampOutput(body, maxOutput.get(route.model) ?? FALLBACK_MAX_OUTPUT_TOKENS);
 
       const digest = createHash("sha256").update(raw).digest("hex");
       const issued = capability.issued;
@@ -464,8 +490,14 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         redirect: "error",
         signal: forwarding.signal,
       });
-      noteKeyAnswer(grant.keyId, upstream.status);
+      // A refused image call says nothing about the office key: the plan may
+      // just not include the image model. Bud gets one plain sentence for that.
+      if (!vision || upstream.ok) noteKeyAnswer(grant.keyId, upstream.status);
       forwarding.signal.throwIfAborted();
+      if (vision && (upstream.status === 403 || upstream.status === 503)) {
+        await upstream.body?.cancel().catch(() => {});
+        throw new RelayRefusal(upstream.status, ASK_VISION_UNAVAILABLE);
+      }
       const upstreamType = upstream.headers.get("content-type") || "application/json";
       streaming = /^text\/event-stream\b/i.test(upstreamType);
       const retryAfter = upstream.status === 429 ? boundedRetryAfter(upstream.headers.get("retry-after")) : null;

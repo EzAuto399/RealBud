@@ -122,6 +122,14 @@ const SETUP_HOLDS: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = 
   held_restart: "Bud’s update is installed. Restart RealBud to use it.",
   held_unavailable: "Automatic Bud setup is not available on this computer yet.",
 };
+/** The setup step a stop happened at (1–4), in the same words as its progress. */
+const HELD_AT: Record<number, string | undefined> = { 1: "installing Bud", 2: SETUP_PHASES.safeguards, 3: SETUP_PHASES.model, 4: SETUP_PHASES.readiness };
+function heldDetail(auto: BudAutoSetup): string {
+  const stage = HELD_AT[auto.step];
+  if (stage && auto.code === "held_failed") return `Bud’s setup stopped while ${stage}. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.`;
+  if (stage && auto.code === "held_exhausted") return `Bud couldn’t finish setting up on this computer. It stopped while ${stage}. RealBud support has the details; try again later.`;
+  return (auto.code && SETUP_HOLDS[auto.code]) || "Bud’s setup could not finish. Contact RealBud support.";
+}
 // A fixed phrase, not a measurement: keep the word "usually".
 const SETUP_ESTIMATE = "Usually about 10 minutes.";
 const NOTHING_TO_DO = "Nothing to do; keep RealBud open.";
@@ -162,7 +170,7 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
       working: true,
     };
   }
-  if (auto.state === "held") return { label: "Bud setup stopped", detail: (auto.code && SETUP_HOLDS[auto.code]) || "Bud’s setup could not finish. Contact RealBud support.", working: false };
+  if (auto.state === "held") return { label: "Bud setup stopped", detail: heldDetail(auto), working: false };
   // A linked office whose grant is in force, with no setup run in progress:
   // never an administrator dead end. The person can ask the service to run
   // its own check again (the server re-checks the link).

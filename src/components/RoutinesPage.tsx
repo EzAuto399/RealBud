@@ -33,7 +33,7 @@ import { beginLoopRequest, pendingLoopRequest, resumeLoopRequest, confirmLoopRec
 /** `flagged` pins the receipt that needed review when the job was opened, so it
  * is shown directly and acknowledging it does not swap it out of the detail. */
 type Flagged = { kind: "loop" | "job"; id: string; word: string };
-type Drawer = { mode: "job"; key: string; flagged?: Flagged; reviewResult?: boolean } | { mode: "create" } | { mode: "archive" } | { mode: "packs" } | { mode: "learn" };
+type Drawer = { mode: "job"; key: string; flagged?: Flagged; reviewResult?: boolean } | { mode: "create" } | { mode: "archive" } | { mode: "packs"; agency?: boolean } | { mode: "learn" };
 const SCHEDULE_FILTERS: readonly { key: ScheduleFilter; label: string }[] = [
   { key: "all", label: "All jobs" }, { key: "attention", label: "Needs you" },
   { key: "scheduled", label: "Scheduled" }, { key: "paused", label: "Paused" },
@@ -406,8 +406,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
       else setError("That job is no longer available. Choose a saved job below.");
     } else if (hash === "bud-job-builder") {
       openCreate();
-    } else if (hash === "schedule-packs") {
-      changeDrawer({ mode: "packs" });
+    } else if (hash === "schedule-packs" || hash === "schedule-agency") {
+      changeDrawer({ mode: "packs", agency: hash === "schedule-agency" });
     } else if (hash === "schedule-learn") {
       changeDrawer({ mode: "learn" });
     } else if (hash === "schedule-runs") {
@@ -504,7 +504,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   let drawerBody: ReactNode = null;
   if (drawer?.mode === "create") drawerBody = workspace;
   else if (drawer?.mode === "packs") drawerBody = (
-    <WorkflowPacksCard onInstalled={refreshSchedule} className="mb-0 border-0 bg-transparent p-0" />
+    <WorkflowPacksCard onInstalled={refreshSchedule} agencyFirst={drawer.agency} className="mb-0 border-0 bg-transparent p-0" />
   );
   else if (drawer?.mode === "learn") drawerBody = <LearnedRecipesCard bare />;
   else if (drawer?.mode === "archive") {

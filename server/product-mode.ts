@@ -1,7 +1,5 @@
 import { connectorAdminRoute, connectorRoute, CONNECTORS_API } from "../shared/mcp-connector.ts";
-// Server-enforced RealBud product mode. Hidden UI is not enough.
-
-export const PRODUCT_MODE = process.env.OMB_TEST_FLEET === "1" ? false : true;
+// Server-enforced RealBud product rules. Hidden UI is not enough.
 
 export const CANONICAL_BUD_ID = "bud";
 export const CANONICAL_BUD_NAME = "Bud";
@@ -23,10 +21,9 @@ function positiveInt(raw: string | undefined, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
-/** The product turn ceilings with the same env overrides the server's
- * watchdog applies (`OMB_PRODUCT_TURN_MAX_*`), or null outside product mode. */
+/** The product turn ceilings with their env overrides (`OMB_PRODUCT_TURN_MAX_*`);
+ * the server's watchdog and the ACP wrap-up notice both read these. */
 export function productTurnLimits(env: Record<string, string | undefined> = process.env) {
-  if (!PRODUCT_MODE) return null;
   return {
     maxMs: positiveInt(env.OMB_PRODUCT_TURN_MAX_MS, PRODUCT_TURN_DEFAULTS.maxMs),
     maxTools: positiveInt(env.OMB_PRODUCT_TURN_MAX_TOOLS, PRODUCT_TURN_DEFAULTS.maxTools),
@@ -37,7 +34,6 @@ export function productTurnLimits(env: Record<string, string | undefined> = proc
 /** When to ask Bud to wrap up: after this many tool calls or milliseconds. */
 export function productTurnWrapUp(env: Record<string, string | undefined> = process.env) {
   const limits = productTurnLimits(env);
-  if (!limits) return null;
   return {
     afterTools: Math.max(1, Math.floor(limits.maxTools * PRODUCT_TURN_WRAP_UP_FRACTION)),
     afterMs: Math.max(1, Math.floor(limits.maxMs * PRODUCT_TURN_WRAP_UP_FRACTION)),
@@ -52,7 +48,6 @@ const DENIED = new Set([
 ]);
 
 export function productDenied(method: string, path: string): string | null {
-  if (!PRODUCT_MODE) return null;
   const key = `${method} ${path}`;
   if (DENIED.has(key)) return "RealBud is one desk and one Bud thread. That route is not part of the product.";
   if (method === "POST" && /^\/api\/groups(\/|$)/.test(path)) {

@@ -132,7 +132,7 @@ describe("managed Bud status", () => {
       autoSetup: { state: "held", code: "held_failed", step: 1, total: 4, detail: "Downloading Bud" } });
     expect(html).toContain("Bud setup stopped");
     expect(html).not.toContain("Last readiness check");
-    expect(html).toContain("Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
+    expect(html).toContain("Bud’s setup stopped while installing Bud. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.");
     expect(html).toContain("Try setup again</button>");
     expect(html).not.toMatch(/In progress|Setting up Bud|Usually about/);
   });
