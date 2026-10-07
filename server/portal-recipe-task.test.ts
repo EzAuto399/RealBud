@@ -12,13 +12,22 @@ import { BrowserApprovalStore } from "./browser-authority.ts";
 import { BrowserTaskStore } from "./browser-grants.ts";
 import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalTaskPack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, learnedReadSafe, loadPortalRecipePack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
-import { LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes } from "./learned-recipes.ts";
+import { createLearnedRecipeStore, LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
+import { runPortalRecipes } from "./portal-recipe-runner.ts";
+import type { BrowserJson } from "./browser-runtime.ts";
+import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { LearnedRecipe } from "../shared/learned-recipes.ts";
 import type { PortalPathStore } from "./portal-path-overrides.ts";
+
+// The real runner, watched: what runPortalRecipeTask hands it (the pack, learnedReadSafe) is the check.
+vi.mock("./portal-recipe-runner.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-runner.ts")>();
+  return { ...real, runPortalRecipes: vi.fn(real.runPortalRecipes) };
+});
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -221,26 +230,99 @@ describe("learned confirmations are read-safe only in a task that runs their rec
     return pack;
   };
 
-  it("adds nothing to a task that runs only shipped recipes", () => {
+  it("names a learned recipe's own confirmations (and those of the recipes it runs), and none for shipped recipes", () => {
     const pack = merged();
     const shipped = fictionalReiPack().labels.readSafe;
-    expect(pack.labels.readSafe).toEqual(shipped);
     expect(learnedReadSafe(pack, [{ recipe: "open-session" }])).toEqual([]);
-    expect(portalTaskPack(pack, [{ recipe: "open-session" }])).toBe(pack);
-    expect(portalTaskPack(pack, [{ recipe: "open-session" }]).labels.readSafe).not.toContain("Show fictional detail");
-  });
-
-  it("adds a learned recipe's own confirmations, and another's only when that one runs too", () => {
-    const pack = merged();
-    const shipped = fictionalReiPack().labels.readSafe;
-    const a = portalTaskPack(pack, [{ recipe: "open-session" }, { recipe: "learned-a" }]);
-    expect(a.labels.readSafe).toEqual([...shipped, "Show fictional detail"]);
-    expect(a.labels.readSafe).not.toContain("Open fictional notes");
-    expect(portalTaskPack(pack, [{ recipe: "learned-b" }]).labels.readSafe).toEqual([...shipped, "Open fictional notes"]);
+    expect(learnedReadSafe(pack, [{ recipe: "open-session" }, { recipe: "learned-a" }])).toEqual(["Show fictional detail"]);
     expect(learnedReadSafe(pack, [{ recipe: "learned-a" }, { recipe: "learned-b" }])).toEqual(["Show fictional detail", "Open fictional notes"]);
     expect(learnedReadSafe(pack, [{ recipe: "wrapper" }])).toEqual(["Open fictional notes"]);
     // The loaded pack itself is never changed.
     expect(pack.labels.readSafe).toEqual(shipped);
+  });
+});
+
+describe("learned confirmations reach the runner as learnedReadSafe, never as the pack's readSafe (fictional REI mock)", () => {
+  const SHIPPED = fictionalReiPack().labels.readSafe;
+  const recipe = (id: string, name: string, label: string): LearnedRecipe => ({ version: 1, purpose: "realbud-learned-recipe", id: `lr_${id.repeat(24)}`, portal: "rei-cloud", name, title: name,
+    state: "published", steps: [{ click: label }, { read: "controls" }], inputs: [], stopBefore: [], confirmedLabels: [label], flags: [], createdAt: 1, updatedAt: 1, revision: 1 });
+  const BENIGN = recipe("1", "learned-detail", "Show fictional detail");
+  // A hand-edited (tampered) learned file: Submit, a disguised Save, Save changes and Continue marked published and confirmed.
+  const TAMPERED = [recipe("2", "learned-submit", "Submit"), recipe("3", "learned-save", "Sa\u200bve"), recipe("4", "learned-save-changes", "Save changes"), recipe("5", "learned-continue", "Continue")];
+
+  /** The fictional portal with one extra button in its main area, pressed only into `pressed`. */
+  async function portalWith(button: string) {
+    const f = await fixture();
+    const pressed: string[] = [];
+    const command = async (args: string[], signal?: AbortSignal): Promise<BrowserJson> => {
+      if (args[0] === "click" && args[args.indexOf("--ref") + 1] === "@e900") { pressed.push(button); return { ok: true }; }
+      const out = await f.mock.command(args, signal);
+      return args[0] === "observe" && typeof out.text === "string"
+        ? { ...out, text: out.text.replace(/^( {4}main\n {6}heading [^\n]*)$/m, `$1\n      @e900 button ${JSON.stringify(button)}`) } : out;
+    };
+    const runtime = new BrowserRuntime({ root: privateTempRoot(join(tmpdir(), "rb-recipe-task-learned-")), command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
+    cleanup.push(() => removeFixture(runtime.root));
+    await runtime.connect(); await runtime.select("work");
+    return { ...f, runtime, pressed };
+  }
+  async function runLearned(pack: PortalRecipePack, target: string, button: string) {
+    const f = await portalWith(button);
+    const load = async () => pack;
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target, account: ACCOUNT }, load), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const approve = vi.fn(async () => false);
+    vi.mocked(runPortalRecipes).mockClear();
+    const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve, signal: new AbortController().signal, isActive: () => true, load, ...f.stores });
+    const handed = vi.mocked(runPortalRecipes).mock.calls[0][0];
+    return { result, approve, pressed: f.pressed, effects: f.mock.effects, handed };
+  }
+
+  it("a tampered file's Submit or disguised Save never joins the pack, and is never pressed even if it slipped through", async () => {
+    const file = join(privateTempRoot(join(tmpdir(), "rb-recipe-task-tampered-")), "learned-recipes.json");
+    cleanup.push(() => removeFixture(join(file, "..")));
+    plantPrivateFile(file, JSON.stringify({ version: 1, purpose: "realbud-learned-recipes", revision: 9, recipes: [BENIGN, ...TAMPERED] }));
+    const pack = mergeLearnedRecipes(fictionalReiPack(), await createLearnedRecipeStore(file).list());
+    // The merge drops both tampered recipes; the honest one joins with its own confirmation, and readSafe stays shipped.
+    expect(Object.keys(pack.recipes).filter(name => name.startsWith("learned-"))).toEqual(["learned-detail"]);
+    expect(pack.labels.readSafe).toEqual(SHIPPED);
+
+    // Benign control: a confirmed harmless label is pressed as routine, in its own task, nobody asked.
+    const benign = await runLearned(pack, "learned-detail", "Show fictional detail");
+    expect(benign.result.outcome, benign.result.detail).toBe("completed");
+    expect(benign.pressed).toEqual(["Show fictional detail"]);
+    expect(benign.approve).not.toHaveBeenCalled();
+    expect(benign.handed.pack.labels.readSafe).toEqual(SHIPPED);
+    expect(benign.handed.learnedReadSafe).toEqual(["Show fictional detail"]);
+
+    // Defence in depth: as if the merge had let them through, each runs in its own task. The label goes to the
+    // runner as learnedReadSafe only (never the pack's readSafe), so its Submit/Save name is refused before any press.
+    // Submit is one of the pack's consequential labels, so the run stops before it for the person. The others fail the
+    // learned re-check (learnedPressable) and the runner refuses them before the broker; merged into the pack's readSafe
+    // they passed the runner as shipped read-safe labels and reached the broker.
+    const refused = { outcome: "blocked", reason: "not-read-safe" } as const;
+    for (const [bad, button, ending] of [[TAMPERED[0], "Submit", { outcome: "stopped-before", reason: "consequential-label" }],
+      [TAMPERED[1], "Save", refused], [TAMPERED[2], "Save changes", refused], [TAMPERED[3], "Continue", refused]] as const) {
+      const slipped: PortalRecipePack = { ...pack, recipes: { ...pack.recipes, [bad.name]: { kind: "read", tier: [], inputs: [], grantNeeds: [],
+        steps: structuredClone(bad.steps) as PortalRecipePack["recipes"][string]["steps"], stopBefore: [], confirmed: [...bad.confirmedLabels] } as LearnedPackRecipe } };
+      const run = await runLearned(slipped, bad.name, button);
+      expect(run.pressed, bad.name).toEqual([]);
+      expect(run.effects, bad.name).toEqual([]);
+      expect(run.result, bad.name).toMatchObject({ ...ending, detail: bad.confirmedLabels[0] });
+      expect(run.handed.pack.labels.readSafe, bad.name).toEqual(SHIPPED);
+      expect(run.handed.learnedReadSafe, bad.name).toEqual(bad.confirmedLabels);
+    }
+  });
+
+  it("a task running only shipped recipes hands the runner no learned labels", async () => {
+    const pack = mergeLearnedRecipes(fictionalReiPack(), [BENIGN]);
+    const f = await fixture();
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT }, async () => pack), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    vi.mocked(runPortalRecipes).mockClear();
+    await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: async () => pack, ...f.stores });
+    const handed = vi.mocked(runPortalRecipes).mock.calls[0][0];
+    expect(handed.pack.labels.readSafe).toEqual(SHIPPED);
+    expect(handed.learnedReadSafe).toEqual([]);
   });
 });
 
