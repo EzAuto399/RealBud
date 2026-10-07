@@ -45,10 +45,6 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
 const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
-/** The pack's recipes still drive the old Arrears/Tasks filters ("From day", "Hide vacated tenants", Tasks' From/To).
- * ponytail: compatibility default while main's recipes and the recipes rewrite overlap; once no recipe names
- * "From day", the live shape is the default with no test edits. Delete this and `legacyFilters` after that PR lands. */
-const RECIPES_USE_OLD_FILTERS = readFileSync(RECIPES_FILE, "utf8").includes('"From day"');
 /** FICTIONAL tenant and supplier export reports on the Reports page, for Ask tasks that explore it. The pack's
  * directory recipes read the lists' own grids and never open them. */
 const TENANT_DEFAULT = "Tenant list export (fictional)", SUPPLIER_DEFAULT = "Supplier list export (fictional)";
@@ -298,9 +294,6 @@ export interface FictionalReiOptions {
   bankReconciliationForm?: boolean;
   /** Path → the addresses the page moves itself to, one during each read after loading (rehearses a page that settles its address late). */
   addressSettles?: Record<string, string[]>;
-  /** Arrears and Tasks with their old named filters (From day, Hide vacated tenants; Status, From, To) instead of live
-   * REI's "Show entries" and "Search:" only. Defaults to whatever the pack's recipes still drive. */
-  legacyFilters?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -320,7 +313,6 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   /** Addresses this page's own script still moves to, one per read (addressSettles). */
   let settle: string[] = [];
   const block = options.gridBlock ?? 4;
-  const legacy = options.legacyFilters ?? RECIPES_USE_OLD_FILTERS;
   /** Rows the Tenants grid has rendered: one block until its content scrolls. */
   let rendered = block;
   /** The report whose parameters popup is open. */
@@ -357,8 +349,6 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     const search: Field = { kind: "textbox", name: "Search", value: "", ...(options.searchLabel ? { label: options.searchLabel } : {}) };
     if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
-    if (legacy && path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
-    if (legacy && path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
     // Live DataTables pages (7 Oct 2026): only "Show entries" and the "Search:" box are named; the day, status and date
     // filters have no accessible name, so the fictional page shows none. FICTIONAL: rows per page stay `pageSize`, so paging stays exercised.
     const entries = (value: string, choices: string[]): Field => ({ kind: "combobox", name: "Show entries", value, options: choices });
@@ -389,8 +379,9 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (path === "/customers/supplier") return list(FICTIONAL_SUPPLIER_COLUMNS, options.suppliers ?? FICTIONAL_SUPPLIER_LIST, [0, 1]);
     if (path === "/customers/owner") return filter("owners", () => true);
     if (path === "/customers/property") return filter("rentals", () => true);
-    if (path === "/customers/task") return filter("tasks", row => (!field("From") || row[2] >= field("From")) && (!field("To") || row[2] <= field("To")));
-    if (path === "/customers/arrears/") return filter("arrears", row => Number(row[4]) >= Number(field("From day") || 1) && !(field("Hide vacated tenants") === "Yes" && row[1] === "Vacated"), false);
+    if (path === "/customers/task") return filter("tasks", () => true);
+    // FICTIONAL: the default Arrears grid lists tenants a day or more behind.
+    if (path === "/customers/arrears/") return filter("arrears", row => Number(row[4]) >= 1, false);
     if (path === "/customers/reconciliation/bankreconciliation") return TABLES.reconciliation;
     if (path === "/customers/transaction/pendingtransactions") return TABLES.pendingPayments;
     if (path === "/customers/importbanklink/index") {
@@ -473,7 +464,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
           grid.push(...body(shown));
         }
         // Live Arrears and Tasks are DataTables: "Showing 1 to 10 of N entries", "(filtered from M total entries)" while searched.
-        const dataTable = !legacy && (path === "/customers/arrears/" || path === "/customers/task");
+        const dataTable = (path === "/customers/arrears/" || path === "/customers/task");
         const n = table.rows.length, total = field("Search") ? tableFor(path, false)!.rows.length : null;
         const info = `Showing ${n ? page * size() + 1 : 0} to ${Math.min((page + 1) * size(), n)} of ${n} entries${total !== null ? ` (filtered from ${total} total entries)` : ""}`;
         if (loading === 0) grid.push(`StaticText ${q(dataTable ? info : `${n} records · 0 row(s) selected`)}`);

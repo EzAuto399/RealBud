@@ -11,7 +11,8 @@
 import type { Property, ReiField, ReiFieldValue, ReiRefs } from "../shared/contracts.ts";
 import { matchExportRow } from "./csv-ledger.ts";
 import type { Desk, ReiDeskApplied, ReiDeskRead } from "./desk.ts";
-import type { PortalRecipeResult, PortalRunRequest } from "./portal-recipe-runner.ts";
+import type { PortalRunRequest } from "./portal-recipe-runner.ts";
+import type { FilteredPortalResult } from "./portal-recipe.ts";
 import { reiPartsFreshness } from "./source-gate.ts";
 
 export const REI_PARTS = ["tenants", "arrears", "owners"] as const;
@@ -26,9 +27,10 @@ export function reiPartOf(run: PortalRunRequest): { part: ReiPart; whole: boolea
   return null;
 }
 
-/** Every page was read: the run finished the recipe, no page came back cut short, and the grid showed its own record count and every one was read. Without that count nothing proves the read whole. */
-const complete = (result: PortalRecipeResult) =>
-  result.outcome === "completed" && result.table !== "unread" && !result.truncated && result.footer !== undefined && result.rows.length >= result.footer;
+/** Every page was read: the run finished the recipe, no page came back cut short, and the grid showed its own record count and every one was read
+ * (counted before RealBud's row filter, server/portal-recipe.ts). Without that count nothing proves the read whole. */
+const complete = (result: FilteredPortalResult) =>
+  result.outcome === "completed" && result.table !== "unread" && !result.truncated && result.footer !== undefined && (result.filtered?.read ?? result.rows.length) >= result.footer;
 
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function cell(row: Record<string, string>, ...names: string[]): string {
@@ -65,7 +67,7 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 }
 
 /** Maps a read onto Desk. Pure: `properties` is the book as it stands. */
-export function reiDeskRead(properties: Property[], runs: PortalRunRequest[], results: PortalRecipeResult[], observedAt: number): ReiDeskRead {
+export function reiDeskRead(properties: Property[], runs: PortalRunRequest[], results: FilteredPortalResult[], observedAt: number): ReiDeskRead {
   const read: ReiDeskRead = { observedAt, updates: [], proposals: [], holds: [], fresh: [] };
   const parts = new Map<ReiPart, Array<Record<string, string>>>();
   // A part is fresh only when every read of it in this run was whole and complete.
@@ -163,7 +165,7 @@ export function reiDeskRead(properties: Property[], runs: PortalRunRequest[], re
 export interface ReiDeskSync extends ReiDeskApplied { stale: ReiPart[] }
 
 /** Applies a finished REI read to Desk; null when the run read no Desk part. */
-export function syncReiReadIntoDesk(desk: Desk, input: { runs: PortalRunRequest[]; results: PortalRecipeResult[]; observedAt: number; now?: number }): ReiDeskSync | null {
+export function syncReiReadIntoDesk(desk: Desk, input: { runs: PortalRunRequest[]; results: FilteredPortalResult[]; observedAt: number; now?: number }): ReiDeskSync | null {
   if (!input.runs.some((run) => reiPartOf(run))) return null;
   const read = reiDeskRead(desk.snapshot().properties, input.runs, input.results, input.observedAt);
   const applied = desk.applyReiRead(read);

@@ -79,10 +79,10 @@ screens:
   - {id: owners, label: Owners, menu: [Owners], route: /customers/owner, tier: C, controls: [Search, Status, Category, Zone, View], columns: [properties, contact]}
   - {id: suppliers, label: Suppliers, menu: [Suppliers], route: /customers/supplier, tier: L, controls: [Search, Status, Category, View], columns: [reference, description, contact]}
   - {id: contacts, label: Contacts, menu: [Contacts], route: /customers/contact, tier: C, controls: [Search, Status, Contact type], columns: [file as, company, portfolio, contact]}
-  - {id: tasks, label: Tasks, menu: [Tasks], route: /customers/task, tier: C, controls: [View, Type, Status, Portfolio, Scheme, Archived, From, To], columns: [due date, priority, assigned to, linked record]}
+  - {id: tasks, label: Tasks, menu: [Tasks], route: /customers/task, tier: L, controls: [Show entries, "Search:"], unnamed: [View, Type, Status, Date filter, From, To], columns: [due date, priority, assigned to, linked record]}
   - {id: listings, label: Listings, menu: [Listings], route: /customers/listing, tier: C, controls: [Search, Status, Category, Listing status, View], columns: [type, price, zone, portfolio, archive]}
   - {id: sales, label: Sales, menu: [Sales], route: /customers/sales, tier: C, controls: [Search, Status, Category, Sales status, View], columns: [settlement, seller, buyer]}
-  - {id: arrears, label: Arrears, menu: [Process, Arrears], route: /customers/arrears/, tier: L, controls: [Day condition, From day, Property portfolio, Hide vacated tenants, Search], stop: [Notice, Email, SMS, Send], columns: [paid to, rent credit, days arrears, amount owing]}
+  - {id: arrears, label: Arrears, menu: [Process, Arrears], route: /customers/arrears/, tier: L, controls: [Show entries, "Search:", Load], unnamed: [days box, day condition, Hide vacated checkbox], stop: [Notice, Email, SMS, Send], columns: [paid to, rent credit, days arrears, amount owing]}
   - {id: tenant-receipts, label: Tenant, menu: [Receipts, Tenant], route: /customers/transaction/tenantreceipt, tier: L, controls: [Search, Tenant], stop: [Save, Post, Submit], note: "Selecting a tenant prepares a receipt form; stop there."}
   - {id: bulk-receipting, label: Bulk Receipting, menu: [Receipts, Bulk Receipting], route: /customers/importbanklink/index, tier: L, format_selected_live: ANZ(csv file), controls: [File Format, Load File], stop: [Process Receipts, Receipt All, Save, Post, Finalise], formats_advertised: [ABA, BRF, ERP, TXN, common AU bank CSVs, Custom CSV, StrataPay, payment providers]}
   - {id: bank-reconciliation, label: Bank Reconciliation, menu: [Process, Bank Reconciliation], route: /customers/reconciliation/bankreconciliation, tier: L, controls: [Business, Statement balance, Reconciliation date, Search], stop: [Reconcile, Save, Tick, Finalise, Update, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot], columns: [debit, credit, reconciled]}
@@ -124,14 +124,17 @@ steps:
   - nav: ["{list}"]
   - check: account
   - wait: table
-  - select: {field: Status, option: All}
   - type: {field: Search, value: "{query}"}
   - wait: table
   - read: table
 success: exactly one matching row; report its visible columns
-on_empty: report "no match with Status=All"; never widen the query silently
+on_empty: report "no match in the list's default (Active) rows"; never widen the query silently
 on_many: list candidates and ask; never pick by name similarity
-note: "list is one of Tenants, Owners, Rentals, Suppliers, Contacts, Agents, Listings, Sales."
+note: >-
+  list is one of Tenants, Owners, Rentals, Suppliers, Contacts, Agents,
+  Listings, Sales. Live (7 Oct) these are Syncfusion grids: the textbox
+  "Search" and a "Filters" button are named, and there is no Status select,
+  so the read covers the list's default rows.
 ```
 
 ```yaml
@@ -144,14 +147,19 @@ steps:
   - nav: [Process, Arrears]
   - check: account
   - wait: table
-  - type: {field: From day, value: "{min_days}"}
-  - select: {field: Hide vacated tenants, option: "Yes"}
+  - select: {field: Show entries, option: All}
   - wait: table
   - read: table
   - paginate: true
+row_filter:
+  - {column: Days Arrears, op: ">=", input: min_days, as: number}
 stop_before: [Notice, Email, SMS, Send]
-success: every arrears row across all pages, with the filter state recorded
+success: every row of the default arrears grid, then RealBud keeps rows with Days Arrears at least min_days
 note: >-
+  Live (7 Oct): the days box (#arrears_from_day), the day condition select
+  (#arrears_day_con) and the Hide vacated checkbox (#hide_vacated_tenant) have
+  no accessible name, so Bud never touches them. Only "Show entries"
+  (10/15/All), "Search:" and Load are named. Vacated tenants are not hidden.
   Days in arrears is REI's figure. Bud never computes a legal clock or decides
   notice eligibility. Queensland RTA rules vary by tenancy type and action;
   staff verify current requirements before any notice. See
@@ -214,7 +222,7 @@ Directory lists (tenant-list, supplier-list), live findings 6 Oct (`L`):
 ```yaml
 recipe: tenant-list
 workflow: Austin W1 tenant directory (REI Reference → bank file last column)
-kind: prepare
+kind: read
 tier: [U]
 grant_needs: []
 steps:
@@ -315,13 +323,20 @@ inputs: [date_from, date_to]
 steps:
   - nav: [Tasks]
   - check: account
-  - select: {field: Status, option: Open}
-  - type: {field: From, value: "{date_from}"}
-  - type: {field: To, value: "{date_to}"}
+  - wait: table
+  - select: {field: Show entries, option: "100"}
   - wait: table
   - read: table
   - paginate: true
-success: open REI tasks due in range, with priority and assignee
+row_filter:
+  - {column: Date Due, op: ">=", input: date_from, as: date}
+  - {column: Date Due, op: "<=", input: date_to, as: date}
+success: every row of the default Tasks grid, then RealBud keeps tasks with Date Due in range, with priority and assignee
+note: >-
+  Live (7 Oct): TaskView, TaskType, TaskStatus, TaskDateFilterType,
+  TaskFromDate and TaskToDate have no accessible name and TaskStatus has no
+  Open option, so Bud never touches them. Only "Show entries" (15/30/45/100)
+  and "Search:" are named. Rows are not filtered by status.
 ```
 
 ```yaml
@@ -329,19 +344,19 @@ recipe: compliance-expiry
 workflow: morning priorities; lease and compliance watch
 kind: read
 tier: [C, S]
-inputs: [view]
 steps:
   - nav: [Rentals]
   - check: account
-  - select: {field: View, option: "{view}"}
   - wait: table
   - read: table
   - paginate: true
-success: rows with the view's date column
+success: every row of the Rentals grid's default view
 note: >-
-  view is one of lease expiry, management expiry, smoke, pool, pest, water,
-  rates/insurance, inspection, vacancy, key register. REI's date is data,
-  not a verified legal deadline.
+  Live (7 Oct): Rentals is a Syncfusion grid with a textbox "Search" and a
+  "Filters" button; its View select has no accessible name, so Bud reads the
+  default view only. The lease and compliance date views stay with the
+  person until a named control reaches them. REI's date is data, not a
+  verified legal deadline.
 ```
 
 ```yaml
@@ -405,7 +420,7 @@ A click, upload, toast or HTTP 200 is **not** a readback.
 ## 6. Labels Bud may and may not press
 
 ```yaml
-read_safe_labels: [Search, Status, Category, Zone, View, From day, Hide vacated tenants, From, To, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel]
+read_safe_labels: [Search, "Search:", Show entries, Status, Category, Zone, View, From day, Hide vacated tenants, From, To, Type, Portfolio, Scheme, Archived, Receipt Register, Date Range, Current Period, Next, Previous, Close, Cancel]
 consequential_labels: [Process Receipts, Process Pending, Delete Pending, Process, Receipt All, Save, Post, Finalise, Reconcile, Tick, Disburse, End of Month, Pay, Payment, Transfer, Journal, Reverse, Reversal, Delete, Send, Email, SMS, Notice, Generate, Import, Approve, Submit, Send Email, Email Only, Export & Email, Process File, Update, Apply Automation, Apply Recurring Batch, Complete Task(s), Retry Task(s), Form 9, Form 11, Invite to Portal, Sync to Outlook, Delete Statement Message, Re-Assign Portfolios, Re-Assign Template, Re-Assign Copy Last Inspection, Re-Assign Housekeeper, Add An Adjustment, Delete Marked (Reconciled) Adjustments, Create Bank Reconciliation Snapshot, Set Payment Type, Email Invoice]
 forbidden_areas: [Settings, My Profile, Process › Disbursement, Process › End of Month, Process › Journals, Process › Reversals, Process › Direct Debit, Process › Payments]
 ```
@@ -422,7 +437,7 @@ broad grant. Read-only study of Settings › Integrations is the one exception.
 | Receipt Register modal loads async; shared radio name (`C`) | `wait: modal`; radio by visible label |
 | Bare route loses account context | Menu first; re-check URL reicid and header business code after every load |
 | Loading, empty and no-match tables look alike | `wait: table` until the loading state clears; report which state |
-| Lists default to Active; pagination hides rows (`C`) | Status=All when searching; `paginate` before counting |
+| Lists default to Active; pagination hides rows (`C`) | Live lists have no named Status select: read the default rows and say so; DataTables pages set Show entries, then `paginate` before counting |
 | Sign-in journey expires when idle (`docs/REI-LOGIN-TEST.md`) | Hand over; never retry sign-in for the person |
 | UI version drift | `map-drift`, read-only until controls re-verified |
 | Upload result unknown | Request approved Export Only readback; hold if unavailable; never re-upload blind |
