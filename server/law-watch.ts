@@ -6,22 +6,19 @@ import { join } from "node:path";
 import { readPrivateFileSync, writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { LAW_REFERENCE_FILE } from "./law-reference.ts";
-import { askWorker, lastJsonObject, type WorkerChatOpts } from "./recipe-draft.ts";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe } from "./recipes.ts";
 import { seedVault } from "./vault.ts";
 
 export const LAW_WATCH_ID = "law-watch";
 
-const MAX_DRIFT = 20;
+/** What a check answers. No public search provider is configured, a one-shot
+ * worker cannot mount RealBud's page reader (Hermes safe mode loads no MCP
+ * server), and there are no reviewed section-level URLs for RealBud to read
+ * itself, so nothing could re-read the Acts: no worker is started. */
+export const LAW_WATCH_UNAVAILABLE = "Search provider not configured: Bud can't re-read the legislation sites yet, so the shop reference was not checked. Nothing was changed.";
+
 const MAX_FIELD = 300;
 const MAX_SOURCE = 200;
-
-const OFFICIAL_SITES: Record<string, string> = {
-  ACT: "legislation.gov.au",
-  NSW: "legislation.nsw.gov.au",
-  VIC: "legislation.vic.gov.au",
-  QLD: "legislation.qld.gov.au",
-};
 
 export type DriftItem = {
   jurisdiction: string;
@@ -108,62 +105,6 @@ export function loadLawWatch(): LawWatchState {
 
 export function lawWatchView(): LawWatchView {
   return { ...loadLawWatch(), scheduled: Boolean(getRecipe(LAW_WATCH_ID)) };
-}
-
-function officialHosts(jurisdictions: string[]): string[] {
-  const hosts: string[] = [];
-  for (const raw of jurisdictions) {
-    const host = OFFICIAL_SITES[raw.trim().toUpperCase()];
-    if (host && !hosts.includes(host)) hosts.push(host);
-  }
-  return hosts.length ? hosts : Object.values(OFFICIAL_SITES);
-}
-
-function watchPrompt(jurisdictions: string[]): string {
-  const named = jurisdictions.length ? jurisdictions.join(", ") : "not named";
-  const hosts = officialHosts(jurisdictions).join(", ");
-  return (
-    `The workroom has AU-RENTAL-LAW.md — a verification guide, not a source of legal deadlines. ` +
-    `Do not edit that file. Report only.\n` +
-    `The book's jurisdictions: ${named}.\n` +
-    `Using web research on ONLY these official legislation sites (${hosts}), ` +
-    `re-read the current rent-increase, arrears-process, entry-notice, and bond-cap rules ` +
-    `and compare them against the shop reference.\n` +
-    `Never invent a rule. If a source cannot be read, say so in note and skip the item.\n` +
-    `Return JSON only as the last line: ` +
-    `{ "drift": [{ "jurisdiction": "", "topic": "", "reference": "", "current": "", "note": "" }], ` +
-    `"checkedSources": ["<url>"] }\n` +
-    `Empty drift array when the reference matches.`
-  );
-}
-
-function parseWatchReply(parsed: unknown): { drift: DriftItem[]; checkedSources: string[] } | null {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const row = parsed as Record<string, unknown>;
-  if (!Array.isArray(row.drift) || row.drift.length > MAX_DRIFT) return null;
-  const drift: DriftItem[] = [];
-  for (const item of row.drift) {
-    const parsedItem = asDriftItem(item);
-    if (!parsedItem) return null;
-    drift.push(parsedItem);
-  }
-  const checkedSources = asSources(row.checkedSources);
-  if (!checkedSources) return null;
-  return { drift, checkedSources };
-}
-
-export async function runLawWatch(
-  opts?: WorkerChatOpts & { jurisdictions?: string[] },
-): Promise<{ drift: DriftItem[]; checkedSources: string[] } | null> {
-  // Re-reading several legislation sites is real research, not a one-shot
-  // answer — the check gets a wider budget than a draft or a narration.
-  const result = await askWorker(watchPrompt(opts?.jurisdictions ?? []), {
-    timeoutMs: 300_000,
-    ...opts,
-    toolsets: ["file", "web"],
-  });
-  if (!result.ok) return null;
-  return parseWatchReply(lastJsonObject(result.stdout));
 }
 
 export function persistLawWatchResult(result: { drift: DriftItem[]; checkedSources: string[] }): LawWatchState {

@@ -22,7 +22,11 @@ import { seedVault } from "./vault.ts";
 // share this budget. 120s covers a slow model without hanging the run.
 const WORKER_TIMEOUT_MS = 120_000;
 
-const WORKER_TOOLSETS = ["todo", "file", "web"] as const;
+// No `web`: Hermes' native web toolset is disabled in the pack, and a
+// one-shot job runs Hermes in safe mode, which mounts no MCP server, so
+// RealBud's `read_page` cannot join it either. A request for anything else is
+// refused as an unusable tool boundary.
+const WORKER_TOOLSETS = ["todo", "file"] as const;
 export type WorkerToolset = (typeof WORKER_TOOLSETS)[number];
 
 export type WorkerChatOpts = {
