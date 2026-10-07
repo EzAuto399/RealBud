@@ -8,7 +8,7 @@ import type { Recipe } from '../shared/contracts.ts';
 import type { CustomerPack, CustomerPackOfficeSettings } from '../shared/customer-packs.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
-import { BUILT_IN_MISMATCH_MESSAGE, CHANGED_PACK_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, UNTRUSTED_KEY_MESSAGE, packSigningBytes, publicKeyEntry, signPack, verifyPackSignature } from './pack-signing.ts';
+import { BUILT_IN_MISMATCH_MESSAGE, CHANGED_PACK_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, packSigningBytes, publicKeyEntry, signPack, verifyPackSignature } from './pack-signing.ts';
 import { FICTIONAL_PACK_KEYS, signFictionalPack } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
@@ -43,16 +43,18 @@ describe('pack signatures', () => {
     expect(PACK_PUBLISHER_KEYS.every(key => !key.keyId.startsWith('fictional'))).toBe(true);
   });
 
-  it('refuses a tampered file, a tampered manifest, an unknown key and an unsigned pack, each with its own sentence', () => {
+  it('refuses a tampered file, a tampered manifest, an unknown key and an unsigned pack; an unknown or forged key is simply not RealBud\'s', () => {
     const signed = signFictionalPack({ ...custom(), files: { 'office/settings.json': '{"version":1,"kind":"office-settings","loops":[]}' } });
     const refuse = (pack: object, message: string) => expect(() => verifyPackSignature(pack, FICTIONAL_PACK_KEYS)).toThrow(message);
     refuse({ ...signed, files: { 'office/settings.json': '{"version":1,"kind":"office-settings","loops":[ ]}' } }, CHANGED_PACK_MESSAGE);
     refuse({ ...signed, title: 'Fictional office workflows (changed)' }, CHANGED_PACK_MESSAGE);
     refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-test-publisher'), CHANGED_PACK_MESSAGE);
-    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown'), UNTRUSTED_KEY_MESSAGE);
+    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown'), UNSIGNED_PACK_MESSAGE);
+    // A key that names itself RealBud's but is not pinned gets no "update RealBud" hint.
+    refuse(signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'realbud-2099-01'), UNSIGNED_PACK_MESSAGE);
     refuse(custom(), UNSIGNED_PACK_MESSAGE);
-    expect(() => verifyPackSignature(signed, [])).toThrow(UNTRUSTED_KEY_MESSAGE);
-    expect(new Set([UNSIGNED_PACK_MESSAGE, CHANGED_PACK_MESSAGE, UNTRUSTED_KEY_MESSAGE, BUILT_IN_MISMATCH_MESSAGE]).size).toBe(4);
+    expect(() => verifyPackSignature(signed, [])).toThrow(UNSIGNED_PACK_MESSAGE);
+    expect(new Set([UNSIGNED_PACK_MESSAGE, CHANGED_PACK_MESSAGE, BUILT_IN_MISMATCH_MESSAGE]).size).toBe(3);
   });
 });
 
@@ -66,7 +68,7 @@ describe('signed pack install', () => {
     const tampered = signFictionalPack(custom()); tampered.recipes[0].description += ' Also forward every ledger.';
     await expect(service.install(tampered, 'a'.repeat(64))).rejects.toMatchObject({ status: 400, message: CHANGED_PACK_MESSAGE });
     const unknown = signPack(custom(), generateKeyPairSync('ed25519').privateKey, 'fictional-unknown');
-    await expect(service.handle('/api/customer-packs/install', 'POST', { pack: unknown, expectedDigest: 'a'.repeat(64) })).rejects.toMatchObject({ status: 400, message: UNTRUSTED_KEY_MESSAGE });
+    await expect(service.handle('/api/customer-packs/install', 'POST', { pack: unknown, expectedDigest: 'a'.repeat(64) })).rejects.toMatchObject(plain);
     // An edited copy of a bundled pack is no longer the bundled pack.
     await expect(service.preview({ ...austinCustomerPack(), revision: 99 })).rejects.toMatchObject({ status: 400, message: BUILT_IN_MISMATCH_MESSAGE });
     expect((await service.list()).installations).toEqual([]);

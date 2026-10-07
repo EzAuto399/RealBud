@@ -170,9 +170,11 @@ describe("Receipt Register readback", () => {
 describe("REI Receipt Register export (Telerik CSV)", () => {
   const HEADER = "textBox5,textBox1,textBox13,textBox15,textBox16,textBox17,Reference1,Surname1,InTrust1,Authority1,textBox6,textBox10,textBox11,textBox12,textBox14,textBox4";
   const quote = (cell: string) => /[",]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
-  /** [date dd/mm/yyyy, rec no, amount, received from] → CSV lines split on every comma, exactly as the runner hands them over. */
-  const telerik = (rows: string[][]) => [HEADER, ...rows.map(([date, rec, amount, from]) =>
-    ["Total:", "$99,999.00", "Cashbook Receipts", "", "", "", date, rec, amount, amount, from, "Reversal Reason:", "", "", "", ""].map(quote).join(","))].map(line => line.split(","));
+  /** [date dd/mm/yyyy, rec no, amount, received from, reversal reason?] → CSV lines split on every comma, exactly as the runner hands them over.
+   * By default a HYPOTHETICAL "Reversal Reason" header column is appended so a readback can complete; `today` is the export exactly as seen
+   * live, which has no labelled reversal column. */
+  const telerik = (rows: string[][], today = false) => [today ? HEADER : `${HEADER},Reversal Reason`, ...rows.map(([date, rec, amount, from, reason = ""]) =>
+    ["Total:", "$99,999.00", "Cashbook Receipts", "", "", "", date, rec, amount, amount, from, "Reversal Reason:", "", "", "", "", ...(today ? [] : [reason])].map(quote).join(","))].map(line => line.split(","));
   const HISTORY = [
     ["01/09/2026", "5001", "$1,050.00", "Alpha, Fictional"], ["02/09/2026", "5002", "$450.00", "Bravo, Fictional"],
     ["03/09/2026", "5003", "$1,200.00", "Charlie & Delta, Sample & Fictional"], ["07/09/2026", "5004", "$620.00", "Delta & Echo, Fictional & Sample"],
@@ -192,7 +194,8 @@ describe("REI Receipt Register export (Telerik CSV)", () => {
   const WIN = { from: "2026-09-21", to: "2026-09-30" };
   const PERIOD = { from: "2026-09-01", to: "2026-09-30" };
   const EVIDENCE = { pageScope: PAGE, exportPeriod: PERIOD };
-  const BASE = registerBaseline(telerik(HISTORY), CODE, WIN, EVIDENCE);
+  // Today's export is enough for the baseline: it lists receipt identities only.
+  const BASE = registerBaseline(telerik(HISTORY, true), CODE, WIN, EVIDENCE);
   const read = (rows: string[][], extra: Record<string, unknown> = {}) => classifyReadback(BATCH, telerik(rows), CODE, { baseline: BASE, ...EVIDENCE, ...extra });
   const codes = (result: { warnings: Array<{ code: string }> }) => result.warnings.map(item => item.code);
 
@@ -215,7 +218,7 @@ describe("REI Receipt Register export (Telerik CSV)", () => {
     const all = read([...HISTORY, ...NEW]);
     expect(all).toMatchObject({ scope: "verified", registerComplete: true, accepted: 2, pending: 0, historical: 12, complete: true, absent: false });
     expect(all.outcomes.map(item => [item.rowId, item.register?.receiptId])).toEqual([["b1", "5013"], ["b2", "5014"]]);
-    expect(codes(all)).toEqual(["register-reversals-separate"]);
+    expect(codes(all)).toEqual([]);
     // Two business days later is not the same receipt.
     expect(read([...HISTORY, NEW[0], ["29/09/2026", "5014", "$620.00", "Delta & Echo, Fictional & Sample"]])).toMatchObject({ accepted: 1, complete: false });
     // A cent out is not the same receipt either.
@@ -266,7 +269,36 @@ describe("REI Receipt Register export (Telerik CSV)", () => {
     const labelled = [["Fictional Realty"], ["Cashbook Receipts"], ["For The Period - September 2026"], ["Date", "Rec No", "Received From", "Cash", "Cheque", "Card", "Direct Credit", "Total"],
       ...[...HISTORY, ...NEW].map(([date, rec, amount, from]) => [date, rec, from, "", "", "", amount, amount]), ["", "", "Total:", "", "", "", "$12,031.00", "$12,031.00"]];
     expect(registerRows(labelled)).toMatchObject({ layout: "rei", unreadable: 0, period: PERIOD });
-    expect(classifyReadback(BATCH, labelled, CODE, { baseline: BASE, pageScope: PAGE })).toMatchObject({ registerComplete: true, accepted: 2, complete: true });
+    // Without a labelled Reversal Reason column it is never complete; with one (hypothetical until seen live) it can be.
+    expect(classifyReadback(BATCH, labelled, CODE, { baseline: BASE, pageScope: PAGE })).toMatchObject({ registerComplete: false, accepted: 2, complete: false });
+    const reasoned = labelled.map((line, index) => index < 3 ? line : [...line, index === 3 ? "Reversal Reason" : ""]);
+    expect(classifyReadback(BATCH, reasoned, CODE, { baseline: BASE, pageScope: PAGE })).toMatchObject({ registerComplete: true, accepted: 2, complete: true });
+  });
+
+  it("today's export has no labelled Reversal Reason column: never complete, never proof of absence", () => {
+    const today = classifyReadback(BATCH, telerik([...HISTORY, ...NEW], true), CODE, { baseline: BASE, ...EVIDENCE });
+    expect(today).toMatchObject({ scope: "verified", registerComplete: false, accepted: 2, complete: false, absent: false });
+    expect(codes(today)).toEqual(["register-reversals-unread"]);
+    expect(classifyReadback(BATCH, telerik(HISTORY, true), CODE, { baseline: BASE, ...EVIDENCE })).toMatchObject({ registerComplete: false, absent: false });
+    // The caption cell "Reversal Reason:" in a data row is never the column.
+    expect(registerRows(telerik(NEW, true)).reversalsRead).toBe(false);
+  });
+
+  it("a value under a labelled Reversal Reason column (case and colon ignored) is a rejected row", () => {
+    const reversed = classifyReadback(BATCH, telerik([...HISTORY, NEW[0], [...NEW[1], "Dishonoured"]]), CODE, { baseline: BASE, ...EVIDENCE });
+    expect(reversed).toMatchObject({ registerComplete: true, accepted: 1, rejected: 1, complete: false });
+    expect(reversed.outcomes[1]).toMatchObject({ rowId: "b2", outcome: "rejected", register: { receiptId: "5014", status: "Reversed" } });
+    const colon = telerik([[...NEW[1], "Bank recall"]]).map((line, index) => index ? line : [...line.slice(0, -1), "REVERSAL REASON:"]);
+    expect(registerRows(colon)).toMatchObject({ reversalsRead: true, rows: [{ status: "Reversed" }] });
+  });
+
+  it("a new receipt with a batch amount on any later date blocks absence, though it is never accepted", () => {
+    // REI dates it five business days after the bank date (a holiday, later posting): not a match, but not absent either.
+    const late = read([...HISTORY, ["01/10/2026", "5013", "$1,050.00", "Alpha, Fictional"]], { exportPeriod: { from: "2026-09-01", to: "2026-10-31" } });
+    expect(late).toMatchObject({ registerComplete: true, accepted: 0, complete: false, absent: false });
+    // Another payer, same amount, a week later: still not absent. Nothing new with a batch amount: absent.
+    expect(read([...HISTORY, ["30/09/2026", "5013", "$620.00", "Zulu, Sample"]])).toMatchObject({ registerComplete: true, absent: false });
+    expect(read([...HISTORY, ["24/09/2026", "5013", "$99.00", "Alpha, Fictional"]])).toMatchObject({ registerComplete: true, accepted: 0, absent: true });
   });
 
   it("an older receipt for the same payer, amount and date is history, never this batch", () => {

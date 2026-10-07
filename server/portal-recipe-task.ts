@@ -13,7 +13,7 @@
 // that exact file, and the upload itself is still asked once of the person.
 // The pack file comes from a fixed list, never from a request. A terminal
 // (scripts/portal-run.mjs) never reaches a live site: only this path does.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,10 +35,21 @@ export const PORTAL_RECIPE_PACKS: Readonly<Record<string, string>> = {
 };
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 
+/** The shipped recipes text (LF-normalised), refused unless its sha256 equals provenance.json's reviewed `recipesSha256`.
+ * Checked before any learned path or override is applied. `readText` is for tests only. */
+export async function verifiedShippedRecipesText(portal: string, readText: (path: string) => Promise<string> = path => readFile(path, "utf8")): Promise<string> {
+  if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no recipes for that portal.");
+  const file = join(ROOT, PORTAL_RECIPE_PACKS[portal]);
+  const [text, provenance] = await Promise.all([readText(file).then(value => value.replace(/\r\n/g, "\n")), readText(join(dirname(file), "provenance.json"))]);
+  let pinned: unknown;
+  try { pinned = (JSON.parse(provenance) as { recipesSha256?: unknown }).recipesSha256; } catch { pinned = undefined; }
+  if (typeof pinned !== "string" || createHash("sha256").update(text).digest("hex") !== pinned) throw fail(409, "These REI recipes were changed after review. Reinstall RealBud.");
+  return text;
+}
+
 /** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them. */
 export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
-  if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no recipes for that portal.");
-  const pack = parsePortalRecipePack(JSON.parse(await readFile(join(ROOT, PORTAL_RECIPE_PACKS[portal]), "utf8")));
+  const pack = parsePortalRecipePack(JSON.parse(await verifiedShippedRecipesText(portal)));
   if (pack.portal !== portal) throw fail(409, "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.");
   return paths.apply(pack);
 }

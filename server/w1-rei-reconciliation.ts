@@ -162,10 +162,14 @@ export function reconcilePreview(expected: readonly W1ExpectedRow[], records: Re
 //     column repeats report totals or captions. The Excel export is labelled
 //     (Date, Rec No, Received From, ..., Direct Credit, Total) under a business
 //     name and "For The Period - <Month Year>". Neither names a business code,
-//     a tenant reference or a status: every row is a posted receipt (reversals
-//     are not in this report and are checked separately), the account comes
-//     from the runner's own page checks around the download, and the period
-//     from the caption or the period the recipe asked for.
+//     a tenant reference or a status. A reversal is read only from a column
+//     whose header is labelled "Reversal Reason" (a non-empty value = reversed,
+//     i.e. rejected). Today's Telerik CSV has no such header (only a caption
+//     cell reading "Reversal Reason:"), so its readback is never complete: a
+//     real export that contains a reversal is needed to identify the value
+//     column before that can change. The account comes from the runner's own
+//     page checks around the download, and the period from the caption or a
+//     period the host proves REI applied.
 //   - "labelled": Date, Reference, Tenant, Amount, Status with business/from/to
 //     scope lines before the header (the fictional portal).
 // A receipt is attributable only when it is new since the pre-upload baseline,
@@ -214,8 +218,6 @@ export interface W1Readback {
 
 const REJECTED = /^(rejected|reversed|reversal|dishonou?red|failed|cancelled|void(ed)?)$/i;
 const ACCEPTED = /^(receipted|posted|processed|accepted|ok|complete(d)?)$/i;
-/** Informational warnings: shown, but they do not hold a complete readback. */
-const NOTES = new Set(["register-reversals-separate"]);
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 /** "For The Period - September 2026" → that calendar month. */
 function captionPeriod(text: string): W1DateWindow | null {
@@ -231,8 +233,10 @@ function cellsOf(raw: readonly string[]): string[] | null {
   try { return parseCsvTable(raw.join(","))[0] ?? []; } catch { return null; }
 }
 
+/** A header labelled "Reversal Reason" (case and a trailing colon ignored). Never a guessed Telerik id. */
+const REASON = (name: string) => name.replace(/:\s*$/, "").trim() === "reversal reason";
 /** Splits the register export (rows as the runner gives them) into scope and data rows. */
-export function registerRows(lines: ReadonlyArray<readonly string[]>): { scope: Record<string, string>; rows: W1RegisterRow[]; unreadable: number; layout: "rei" | "labelled" | null; period: W1DateWindow | null } {
+export function registerRows(lines: ReadonlyArray<readonly string[]>): { scope: Record<string, string>; rows: W1RegisterRow[]; unreadable: number; layout: "rei" | "labelled" | null; period: W1DateWindow | null; reversalsRead: boolean } {
   const scope: Record<string, string> = {}; const rows: W1RegisterRow[] = []; let unreadable = 0; let period: W1DateWindow | null = null;
   let header: string[] | null = null; let layout: "rei" | "labelled" | null = null;
   let cols: { date: string[]; receipt: string[]; amount: string[]; also?: string[]; tenant: string[]; reference?: string[] } = { date: [], receipt: [], amount: [], tenant: [] };
@@ -257,6 +261,7 @@ export function registerRows(lines: ReadonlyArray<readonly string[]>): { scope: 
     if (cells.every(cell => !cell.trim())) continue;
     const at = (names: string[] | undefined) => { const i = names ? header!.findIndex(name => names.includes(name)) : -1; const value = i < 0 ? undefined : cells[i]?.trim(); return value ? value : null; };
     const hasStatus = header.includes("status");
+    const reason = header.findIndex(REASON);
     if (layout === "labelled") {
       if (lower[0] === "total") continue;
       const row: W1RegisterRow = { line, receiptId: at(cols.receipt), date: isoDate(at(cols.date)), reference: at(cols.reference) ?? "", amountCents: amountCents(at(cols.amount)),
@@ -269,11 +274,12 @@ export function registerRows(lines: ReadonlyArray<readonly string[]>): { scope: 
     if (!at(cols.date) && !at(cols.receipt) && lower.some(cell => /^total:?$/.test(cell))) continue;
     const amount = amountCents(at(cols.amount)), also = at(cols.also);
     const row: W1RegisterRow = { line, receiptId: at(cols.receipt), date: isoDate(at(cols.date)), reference: "", amountCents: amount,
-      tenant: at(cols.tenant), tenantId: null, status: hasStatus ? at(["status"]) : "Receipted" };
+      tenant: at(cols.tenant), tenantId: null, status: hasStatus ? at(["status"]) : reason >= 0 && cells[reason]?.trim() ? "Reversed" : "Receipted" };
     if (row.date === null || amount === null || !row.receiptId || !/^\d+$/.test(row.receiptId) || (also !== null && amountCents(also) !== amount)) { unreadable += 1; continue; }
     rows.push(row);
   }
-  return { scope, rows, unreadable, layout, period };
+  const reversalsRead = layout === "labelled" || (!!header && (header.includes("status") || header.some(REASON)));
+  return { scope, rows, unreadable, layout, period, reversalsRead };
 }
 
 /** The next weekday after a YYYY-MM-DD date. */
@@ -303,7 +309,7 @@ const money = (cents: number | null) => cents === null ? "an unreadable amount" 
 const label = (row: W1RegisterRow) => row.reference || `receipt ${row.receiptId ?? `on line ${row.line + 1}`}`;
 
 function readRegister(lines: ReadonlyArray<readonly string[]>, destination: W1Destination, window: W1DateWindow | undefined, evidence: W1RegisterEvidence) {
-  const { scope: fileScope, rows, unreadable, layout, period: caption } = registerRows(lines);
+  const { scope: fileScope, rows, unreadable, layout, period: caption, reversalsRead } = registerRows(lines);
   const warnings: W1PreviewWarning[] = [];
   // The file's business code decides; a reicid shown beside it must equal a saved one. A file that names no business is
   // verified only by both of the runner's page checks for this destination. Any other account named anywhere is a mismatch.
@@ -317,9 +323,9 @@ function readRegister(lines: ReadonlyArray<readonly string[]>, destination: W1De
   if (scope === "absent") warnings.push({ code: "register-scope-absent", message: "The Receipt Register export does not name its account, and the account was not checked on the page before and after the export. Confirm it in REI." });
   if (layout === null) warnings.push({ code: "register-layout-unknown", message: "The Receipt Register export's columns were not recognised." });
   if (unreadable) warnings.push({ code: "register-row-unreadable", message: `${unreadable} Receipt Register row${unreadable === 1 ? " is" : "s are"} unreadable.` });
-  if (layout === "rei") warnings.push({ code: "register-reversals-separate", message: "The Receipt Register lists posted receipts only; reversals are checked separately." });
-  // The export's own period (scope lines, else REI's "For The Period" caption); without one, the period the recipe asked for,
-  // and then every row must fall inside it.
+  if (layout !== null && !reversalsRead) warnings.push({ code: "register-reversals-unread", message: "The Receipt Register export has no Reversal Reason column, so a reversal can't be ruled out. Check reversals in REI." });
+  // The export's own period (scope lines, else REI's "For The Period" caption); without one, a period the host proves REI
+  // applied, and then every row must fall inside it.
   const named = fileScope.from !== undefined || fileScope.to !== undefined;
   const from = isoDate(fileScope.from), to = isoDate(fileScope.to);
   const own = named ? (from !== null && to !== null ? { from, to } : null) : caption;
@@ -327,14 +333,15 @@ function readRegister(lines: ReadonlyArray<readonly string[]>, destination: W1De
   const inside = named || caption !== null || !period || rows.every(row => row.date! >= period.from && row.date! <= period.to);
   const covers = validWindow(window) && validWindow(period) && period.from <= window.from && period.to >= window.to && inside;
   if (!covers) warnings.push({ code: "register-period-unproven", message: inside ? "The Receipt Register export does not show that it covers the whole date range." : "The Receipt Register export has receipts outside the period it was asked for." });
-  return { rows, warnings, scope, layout, registerComplete: scope === "verified" && layout !== null && !unreadable && covers };
+  // The baseline only lists receipt identities; reversals matter to the readback alone.
+  return { rows, warnings, scope, layout, reversalsRead, registerComplete: scope === "verified" && layout !== null && !unreadable && covers };
 }
 
 /** The pre-upload register: refused unless it is account-scoped and complete for the window. */
 export function registerBaseline(lines: ReadonlyArray<readonly string[]>, destination: W1Destination, window: W1DateWindow, evidence: W1RegisterEvidence = {}): W1RegisterBaseline {
   if (!validWindow(window)) throw new Error("Choose the Receipt Register dates to read.");
   const read = readRegister(lines, destination, window, evidence);
-  if (!read.registerComplete) throw new Error(read.warnings.find(item => !NOTES.has(item.code))?.message ?? "The Receipt Register export is incomplete.");
+  if (!read.registerComplete) throw new Error(read.warnings.find(item => item.code !== "register-reversals-unread")?.message ?? "The Receipt Register export is incomplete.");
   return { kind: "w1-rei-register-baseline", destination: { ...(destination.urlValue !== undefined ? { urlValue: destination.urlValue } : {}), marker: destination.marker }, window: { ...window }, receipts: read.rows.map(receiptKey) };
 }
 
@@ -342,7 +349,9 @@ export function classifyReadback(expected: readonly W1ExpectedRow[], lines: Read
   attribution: { window?: W1DateWindow; baseline?: W1RegisterBaseline } & W1RegisterEvidence = {}): W1Readback {
   assertExpectedRows(expected);
   const window = attribution.window ?? attribution.baseline?.window;
-  const { rows, warnings, scope, layout, registerComplete } = readRegister(lines, destination, window, attribution);
+  const read = readRegister(lines, destination, window, attribution);
+  const { rows, warnings, scope, layout } = read;
+  const registerComplete = read.registerComplete && read.reversalsRead;
   const baseline = attribution.baseline;
   if (!baseline) warnings.push({ code: "register-baseline-absent", message: "There is no pre-upload Receipt Register to tell new receipts from older ones." });
   else if (baseline.destination.urlValue !== destination.urlValue || baseline.destination.marker !== destination.marker || !validWindow(window) || baseline.window.from > window.from)
@@ -351,9 +360,12 @@ export function classifyReadback(expected: readonly W1ExpectedRow[], lines: Read
   const before = new Map<string, number>();
   for (const key of baseline?.receipts ?? []) before.set(key, (before.get(key) ?? 0) + 1);
   const fresh: W1RegisterRow[] = [];
+  /** Every receipt the baseline did not hold, whatever its date: the pool for proving absence. */
+  const added: W1RegisterRow[] = [];
   for (const row of rows) {
     const key = receiptKey(row), held = before.get(key) ?? 0;
     if (held > 0) { before.set(key, held - 1); continue; }
+    added.push(row);
     if (validWindow(window) && (row.date! < window.from || row.date! > window.to)) continue;
     fresh.push(row);
   }
@@ -401,8 +413,10 @@ export function classifyReadback(expected: readonly W1ExpectedRow[], lines: Read
   if (scope === "mismatch") for (const outcome of outcomes) { outcome.outcome = "pending"; delete outcome.register; }
   const count = (kind: W1RowOutcome) => outcomes.filter(item => item.outcome === kind).length;
   const accepted = count("accepted");
-  // Without a baseline every related receipt in the window counts as present.
-  const absent = registerComplete && !fresh.some(row => expected.some(item => related(item, row)));
+  // Absence ignores dates and payers: REI can date a receipt days later (a holiday, later posting), and calling a receipt
+  // absent that did land would let a retry import it twice. Any new receipt in the export with a batch row's amount (or,
+  // with references, its reference) holds it. Without a baseline every such receipt in the export counts as present.
+  const absent = registerComplete && !added.some(row => expected.some(item => byReference ? same(item, row) : item.amountCents === row.amountCents));
   return { kind: "w1-rei-readback", scope, registerComplete, absent, outcomes, accepted, rejected: count("rejected"), pending: count("pending"), unclaimed, historical: rows.length - fresh.length, warnings,
-    complete: scope === "verified" && registerComplete && !!baseline && accepted === expected.length && !warnings.some(item => !NOTES.has(item.code)) };
+    complete: scope === "verified" && registerComplete && !!baseline && accepted === expected.length && !warnings.length };
 }

@@ -41,6 +41,7 @@ import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { answerPortalRecipeAsk, loadPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { isFresh, REI_FRESH_MS } from "./source-gate.ts";
 import { pullRedbarkReview } from "./redbark-source.ts";
 import { amountCents, isoDate, reconcilePreview, type W1PreviewReconciliation, type W1RegisterBaseline } from "./w1-rei-reconciliation.ts";
 import { assertW1ReiBatch, awaitPosting, captureBaseline, preview, readback, W1_REI_PORTAL, w1ImportProof, w1ReiAccountKey, w1ReiGrantNeeds, type W1ImportProof, type W1PreviewOutcome, type W1ReiBatch, type W1ReiContext } from "./w1-rei-workflow.ts";
@@ -91,6 +92,8 @@ export interface W1HostDeps {
   store: () => BankReferenceStore;
   /** Office-local calendar date. */
   today: () => Promise<string>;
+  /** The saved REI tenant directory (server/tenant-directory.ts) a batch's tenants come from, or null before the first save. */
+  tenantDirectory: () => { savedAt?: number } | null;
   /** index.ts passes the shared browserRuntime, whose connect() opens the work browser at a cold start. */
   runtime: BrowserSessionRuntime & { connect?: () => Promise<unknown> };
   /** The selected browser when it is ready, else null. */
@@ -227,6 +230,10 @@ export function createW1Host(deps: W1HostDeps) {
   async function batchFor(batchId: string, artifactDigest: string, destination: string): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
     const office = await settings();
     if (destinationOf(office) !== destination) fail(409, "The saved REI account changed since this import started. Close it and start again.");
+    // Each row's tenant comes from the saved REI tenant directory: a stale list can name the wrong ledger. No stamp is stale.
+    // (Desk's src-rei-tenants is stamped by a different read, so it is not the list W1 uses.)
+    const savedAt = deps.tenantDirectory()?.savedAt;
+    if (typeof savedAt !== "number" || !isFresh(savedAt, REI_FRESH_MS, now())) fail(409, "Refresh REI tenants first.");
     const bank = deps.store(), file = bank.importArtifact(batchId);
     if (!file.artifact || file.artifact.digest !== artifactDigest) fail(409, "The reviewed import file changed. Nothing was uploaded.");
     const problems: string[] = [];

@@ -102,7 +102,7 @@ async function w1Fixture() {
   const coverage = new RedbarkCoverage(dir);
   /** One service process: a fresh host over the same folder, as after a restart. */
   const host = (extra: Partial<W1HostDeps> = {}) => createW1Host({ dataDir: dir, provider: () => lab.provider, coverage, store: () => store, today: async () => "2026-10-02",
-    runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => false, timeZone: async () => ZONE, now: lab.now, waitPollMs: 5, ...extra });
+    tenantDirectory: () => ({ savedAt: lab.now() }), runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => false, timeZone: async () => ZONE, now: lab.now, waitPollMs: 5, ...extra });
   const first = host();
   const call = (h: ReturnType<typeof host>, path: string, body?: unknown) => h.handle(path, "POST", new URLSearchParams(), async () => body);
   await first.handle("/api/w1/settings", "PUT", new URLSearchParams(), async () => ({ account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 }));

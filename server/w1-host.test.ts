@@ -13,6 +13,7 @@ import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
 import { createW1Host } from "./w1-host.ts";
+import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
@@ -26,7 +27,7 @@ const txn = (id: string, date: string, cents: number, reference: string) => ({ i
   extended_description: null, amount: { amount: cents, currency: "aud" }, direction: cents < 0 ? "debit" : "credit", provider_category: null, category: null,
   merchant_name: null, merchant_category_code: null, livemode: true });
 
-type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load">>;
+type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load" | "tenantDirectory">>;
 async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeof createW1Lab>>) => HostExtras) = {}) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-w1-host-")); dirs.push(dir);
   const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 9) }); dbs.push(db);
@@ -47,8 +48,10 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
   store.create({ csv: "Date,Amount,Narrative,Reference\n2026-09-01,1.00,FICTIONAL SEED,\n", columns: { date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" }, dateFormat: "YYYY-MM-DD", rules });
   const hold = { signIn: false };
   const extras = typeof extrasOrLab === "function" ? extrasOrLab(lab) : extrasOrLab;
+  // The saved REI tenant directory's stamp: fresh unless a test moves it.
+  const tenants = { directory: { savedAt: Date.now() } as { savedAt?: number } | null };
   const host = createW1Host({ dataDir: dir, provider: () => lab.provider, coverage: new RedbarkCoverage(dir), store: () => store, today: async () => TODAY,
-    runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
+    tenantDirectory: () => tenants.directory, runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
   const call = async (path: string, method = "POST", body?: unknown) => {
     const result = await host.handle(path, method, new URL(`http://x${path}`).searchParams, async () => body);
     if (result.status !== 200) throw Object.assign(new Error(JSON.stringify(result.body)), { status: result.status });
@@ -85,7 +88,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
     }));
   };
   const configure = () => call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
-  return { dir, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure };
+  return { dir, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants };
 }
 
 describe("W1 host", () => {
@@ -361,6 +364,27 @@ describe("W1 host", () => {
     expect((await f.lab.handle({ action: "status" })).uploads).toBe(1);
   });
 
+  it("refuses to send a batch to REI until the saved REI tenant list is under a day old; no stamp is stale", windowsAdmissionTimeout(255), async () => {
+    const f = await fixture();
+    await f.configure();
+    await f.lab.handle({ action: "sign-in" });
+    await f.call("/api/w1/runs/start");
+    let now = await f.settle();
+    await f.review(now.run!.fetch!.batchId);
+    // No list, a list without a stamp, a list over a day old: refused before anything is uploaded (REI then shows nothing, and the upload is offered again).
+    for (const [index, stale] of [null, {}, { savedAt: Date.now() - REI_FRESH_MS - 60_000 }].entries()) {
+      f.tenants.directory = stale;
+      now = await f.act(index ? "retry-upload" : "advance");
+      expect(String(now.note)).toContain("Refresh REI tenants first.");
+      expect(now.ask).toBeNull();
+      expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+    }
+    f.tenants.directory = { savedAt: Date.now() - REI_FRESH_MS + 60_000 };
+    await f.act("retry-upload");
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "handoff", attention: null });
+  });
+
   it("a different business in REI's top bar stops the run before anything is uploaded", windowsAdmissionTimeout(255), async () => {
     const f = await fixture();
     await f.configure();
@@ -399,7 +423,7 @@ describe("W1 host", () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-w1-host-")); dirs.push(dir);
     const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 9) }); dbs.push(db);
     const lab = await createW1Lab(dir);
-    const host = createW1Host({ dataDir: dir, provider: () => null, coverage: new RedbarkCoverage(dir), store: () => new BankReferenceStore(db), today: async () => TODAY,
+    const host = createW1Host({ dataDir: dir, provider: () => null, coverage: new RedbarkCoverage(dir), store: () => new BankReferenceStore(db), today: async () => TODAY, tenantDirectory: () => null,
       runtime: lab.runtime, browserId: lab.browserId, load: lab.load, pollMs: 0 });
     await expect(host.handle("/api/w1/accounts", "GET", new URLSearchParams(), async () => undefined)).rejects.toMatchObject({ status: 409, code: "bank_not_connected" });
     expect(() => labRedbarkFetch("http://evil.example:4555")).toThrow(/loopback/);

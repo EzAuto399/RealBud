@@ -261,11 +261,12 @@ describe("W1 register evidence from the run receipt", () => {
   const batch = batchFor(CSV);
   it("counts only the readback recipe's own account checks on each side of a completed download", () => {
     const both = run([["open-session", "check", "account", true], ["receipt-register", "check", "account", true], ["receipt-register", "download", "Export", true], ["receipt-register", "check", "account", true]]);
-    expect(w1RegisterEvidence(batch, both, WINDOW)).toEqual({ pageScope: { marker: FICTIONAL_BUSINESS, checkedBefore: true, checkedAfter: true }, exportPeriod: WINDOW });
+    // The requested range never stands in for the export's period.
+    expect(w1RegisterEvidence(batch, both)).toEqual({ pageScope: { marker: FICTIONAL_BUSINESS, checkedBefore: true, checkedAfter: true } });
     // The session recipe's check is not the export page's, and a check that did not finish is no check.
     const sessionOnly = run([["open-session", "check", "account", true], ["receipt-register", "download", "Export", true], ["receipt-register", "check", "account", false]]);
-    expect(w1RegisterEvidence(batch, sessionOnly, WINDOW).pageScope).toEqual({ marker: FICTIONAL_BUSINESS, checkedBefore: false, checkedAfter: false });
+    expect(w1RegisterEvidence(batch, sessionOnly).pageScope).toEqual({ marker: FICTIONAL_BUSINESS, checkedBefore: false, checkedAfter: false });
     const noDownload = run([["receipt-register", "check", "account", true], ["receipt-register", "check", "account", true]]);
-    expect(w1RegisterEvidence(batch, noDownload, WINDOW).pageScope).toMatchObject({ checkedBefore: false, checkedAfter: false });
+    expect(w1RegisterEvidence(batch, noDownload).pageScope).toMatchObject({ checkedBefore: false, checkedAfter: false });
   });
 });

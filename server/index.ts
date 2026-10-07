@@ -2645,11 +2645,12 @@ async function bankServices() {
 }
 function w1Host() {
   return w1HostPromise ??= (async () => {
-    const [{ createW1Host }, { localDate }, { connectedBankProvider }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts")]);
+    const [{ createW1Host }, { localDate }, { connectedBankProvider }, { createTenantDirectoryStore }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts"), import("./tenant-directory.ts")]);
     const services = await bankServices();
     const lab = w1Lab ? await w1Lab : null;
     return createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
       today: async () => localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined),
+      tenantDirectory: () => createTenantDirectoryStore(workflowDatabase()).read().directory,
       runtime: lab?.runtime ?? browserRuntime, lab, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       // Self-serve REI sign-in: opens REI's own sign-in page and resumes when signed in.
