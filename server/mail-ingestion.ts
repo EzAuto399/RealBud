@@ -577,6 +577,64 @@ export function createMailIngestionService(options: Options) {
             return { ...prepared.receipt, batchThreadCount: prepared.binding.input.threads.length };
         }));
     }
+    /** Jev pre-screen before the review batches. Only conversations nobody has
+     * given a view of (unreviewed, new evidence, still held or already noise)
+     * are offered. `classify` answers which saved threads are noise; each one
+     * is saved as low-priority noise that stays listed, and a staff edit or a
+     * later Bud review replaces it. A conversation that changed meanwhile keeps
+     * its own state. */
+    async function screenNoise(expected: Pick<MailScanReceipt, 'id' | 'accountId' | 'bindingRevision'>,
+        classify: (threads: MailThread[]) => Promise<{ noise: string[]; model: string } | null>): Promise<{ screened: number; model: string } | null> {
+        assertWorkflowAccess();
+        const authority = await options.authorize('morning-priorities');
+        const offered = await locked(() => storage.run(() => {
+            recover();
+            const receipt = storage.metadata().latestScan;
+            if (!receipt || receipt.id !== expected.id || receipt.accountId !== expected.accountId || receipt.bindingRevision !== expected.bindingRevision ||
+                receipt.accountId !== authority.accountId || receipt.bindingRevision !== authority.bindingRevision)
+                fail('The Gmail source changed during preparation. Start a fresh review for the current source.');
+            const raw = storage.source(receipt.id);
+            if (!raw)
+                mailRecovery();
+            const source = validateMailSource(raw, receipt, options.workspaceId);
+            if (hash(source.settings) !== hash(authority.settings))
+                fail('Mail settings changed. Collect a fresh scan before preparing this list.');
+            const rows: { item: MailWorkItem; thread: MailThread }[] = [];
+            for (const row of storage.records('mail-item')) {
+                const item = row.value as MailWorkItem;
+                if (item.accountId !== authority.accountId || item.reviewed || item.status !== 'open' || !mailNeedsPreparation(item) || !['hold', 'noise'].includes(item.disposition))
+                    continue;
+                const thread = source.data.threads.find(t => t.id === item.threadId);
+                if (thread && hash(thread) === item.sourceDigest)
+                    rows.push({ item, thread });
+            }
+            return rows;
+        }));
+        if (!offered.length)
+            return null;
+        const answer = await classify(offered.map(row => structuredClone(row.thread)));
+        if (!answer)
+            return null;
+        const current = await options.authorize('morning-priorities');
+        if (current.accountId !== authority.accountId || current.bindingRevision !== authority.bindingRevision || current.settingsRevision !== authority.settingsRevision)
+            fail('Mail setup changed during preparation. Prepare the current source again.');
+        const noise = new Set(answer.noise);
+        return locked(() => storage.run(() => {
+            let screened = 0;
+            for (const { item: asked } of offered) {
+                const item = storage.item(asked.id);
+                if (!noise.has(asked.threadId) || !item || item.revision !== asked.revision)
+                    continue;
+                storage.saveItem({ ...item, disposition: 'noise', priority: 'low', reason: 'Screened as noise',
+                    nextAction: 'No action needed. If a person should handle it, change what this conversation needs.',
+                    screenedBy: 'jev', newEvidence: false, revision: item.revision + 1, updatedAt: now() });
+                screened++;
+            }
+            if (screened)
+                storage.saveRegister(storage.register());
+            return { screened, model: answer.model };
+        }));
+    }
     async function applyReview(run: JobRun) {
         assertWorkflowAccess();
         const authority = await options.authorize('morning-priorities'), recipeId = workflowRecipeId(authority.settings.workflowPackId, 'inbox-triage');
@@ -638,7 +696,9 @@ export function createMailIngestionService(options: Options) {
                             revision: item.revision + 1, updatedAt: now() });
                     continue;
                 }
-                storage.saveItem({ ...item, disposition: row.disposition, priority: row.priority, owner: row.owner, reason: row.reason, nextAction: row.nextAction, missingFacts: row.missingFacts, newEvidence: false,
+                // Bud's review replaces any earlier Jev screen.
+                const { screenedBy: _screen, ...unscreened } = item;
+                storage.saveItem({ ...unscreened, disposition: row.disposition, priority: row.priority, owner: row.owner, reason: row.reason, nextAction: row.nextAction, missingFacts: row.missingFacts, newEvidence: false,
                     ...(followUp !== null ? { followUpReviewedKey: followUp } : {}), revision: item.revision + 1, updatedAt: now() });
             }
             reg.latestReview = { runId: run.id, sourceReceiptId: receipt.id, at: now() };
@@ -660,6 +720,9 @@ export function createMailIngestionService(options: Options) {
                 const next = { ...item, ...Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'expectedRevision')), reviewed: true, newEvidence: false, updatedAt: now(), revision: item.revision + 1 };
                 if (next.status !== 'snoozed')
                     next.snoozedUntil = null;
+                // Undoing a Jev screen is an ordinary disposition edit.
+                if (next.disposition !== 'noise')
+                    delete next.screenedBy;
                 if (!validItem(next) || next.status === 'snoozed' && (next.snoozedUntil! <= now() || next.snoozedUntil! > now() + 365 * 86400000))
                     fail('Check the task fields and choose a future snooze time.', 400);
                 storage.saveItem(next);
@@ -746,7 +809,7 @@ export function createMailIngestionService(options: Options) {
             }));
         },
         collect, collectHistory, historyCoverage, startHistory, resumeHistoryIfPending, historyStatus,
-        prepareInput, applyReview, update, page, scanHistory,
+        prepareInput, screenNoise, applyReview, update, page, scanHistory,
         cancel: () => active?.abort(), get: async () => ({ ...await locked(read), history: await historyStatus() }),
         getItem: (id: string) => locked(() => storage.run(() => { recover(); return storage.item(id) ?? fail('That mail task is unavailable.', 404); })),
         getLegacySnapshot: () => locked(() => storage.run(() => { recover(); const meta = storage.metadata(); return { version: 1, revision: meta.revision, latestScan: meta.latestScan, latestReview: meta.latestReview, items: [...storage.records('mail-item')].map(r => r.value as MailWorkItem).sort(compare) } satisfies MailWorkspaceSnapshot; })),
