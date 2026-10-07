@@ -38,7 +38,7 @@ import { bankNotConnected, providerClient, type BankProvider } from "./bank-prov
 import { sameW1Destination, type BankReferenceStore, type RedbarkCoverage } from "./bank-reference-store.ts";
 import { addBrowserTaskUpload, browserTaskWorkroom } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
-import { answerPortalRecipeAsk, loadPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, loadShippedPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { pullRedbarkReview } from "./redbark-source.ts";
@@ -134,7 +134,8 @@ const NO_HANDOFF_HOST = { release: readOnly, verify: readOnly };
 
 export function createW1Host(deps: W1HostDeps) {
   const store = new W1StateStore(deps.dataDir);
-  const load = deps.load ?? loadPortalRecipePack;
+  // The shipped pack only: W1 uploads and prepares, so it never inherits a learned path, learned recipe or confirmed label.
+  const load = deps.load ?? loadShippedPortalRecipePack;
   const context = new AsyncLocalStorage<RunContext>();
   /** Per-run facts shown beside the saved run. In memory only: after a restart
    * the saved run alone decides what happens next. */

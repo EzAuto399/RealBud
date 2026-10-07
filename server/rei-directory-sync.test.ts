@@ -1,4 +1,5 @@
 // Refresh from REI end to end in one process: the FICTIONAL REI-style portal
+import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { privateTempRoot } from "./testing/private-fixture.ts";
 // behind the real BrowserRuntime, broker and recipe runner (w1-lab.ts), the
 // real tenant and supplier directory stores. No network, no REI account: a
@@ -7,8 +8,6 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DATA_DIR } from "./config.ts";
-import { createLearnedRecipeStore } from "./learned-recipes.ts";
 import { loadPortalRecipePack, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
@@ -245,18 +244,12 @@ describe("scheduled Supplier list check (fictional portal)", () => {
 
 describe("refresh from REI and watch-and-learn recipes", () => {
   it("runs on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
-    // A published learned recipe in this test's own data folder (never ~/.realbud), with a confirmed label.
-    const file = join(DATA_DIR, "learned-recipes.json");
-    expect(file.startsWith(process.env.HOME!)).toBe(true);
-    const store = createLearnedRecipeStore(file);
+    const cleanup = await publishLearnedInDataDir();
     const shipped = await loadShippedPortalRecipePack("rei-cloud");
-    const draft = await store.create({ portal: "rei-cloud", title: "Loop leak check", steps: [{ click: "Show fictional detail" }, { read: "controls" }], stopBefore: [], flags: [] });
-    const confirmed = await store.update(draft.id, draft.revision, { confirmedLabels: ["Show fictional detail"] }, shipped.labels);
-    await store.publish(confirmed.id, confirmed.revision, shipped);
     try {
       const merged = await loadPortalRecipePack("rei-cloud");
-      expect(merged.recipes["learned-loop-leak-check"]).toBeDefined();
-      expect(merged.labels.readSafe).toContain("Show fictional detail");
+      expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
+      expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
       vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
 
       // No injected `load`: the refresh picks its own loader.
@@ -267,7 +260,7 @@ describe("refresh from REI and watch-and-learn recipes", () => {
       const used = await vi.mocked(loadShippedPortalRecipePack).mock.results[0].value;
       expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
       expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
-      expect(used.labels.readSafe).not.toContain("Show fictional detail");
-    } finally { rmSync(file, { force: true }); }
+      expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
+    } finally { cleanup(); }
   });
 });

@@ -13,7 +13,7 @@ Owner ask: "Show Bud" a portal task once, then Bud repeats it. This is our answe
    - every click label either on the pack's read-safe list or confirmed by a reviewer;
    - no confirmed label on the consequential list;
    - the merged pack still passes `parsePortalRecipePack`.
-6. **Replay is unchanged.** `loadPortalRecipePack` merges the published learned recipes into the shipped pack, for person-started tasks only: unattended loops (REI morning refresh, directory refresh) load `loadShippedPortalRecipePack`. A damaged learned file is named in the Ask run's reply. Recipes are added under the `learned-` prefix, and confirmed labels are added to read-safe. Running one is a normal `POST /api/browser/tasks/recipe`, so the Start grant, broker, fence, per-instance approval, sign-in pause and Stop all apply. Learned recipes are `kind: "read"`.
+6. **Replay is unchanged.** `loadPortalRecipePack` merges the published learned recipes into the shipped pack, for person-started Ask recipe tasks only: unattended loops (REI morning refresh, directory refresh) and W1 (uploads and prepare recipes) load `loadShippedPortalRecipePack`. A damaged learned file is named in the Ask run's reply. Recipes are added under the `learned-` prefix, and confirmed labels are added to read-safe. Running one is a normal `POST /api/browser/tasks/recipe`, so the Start grant, broker, fence, per-instance approval, sign-in pause and Stop all apply. Learned recipes are `kind: "read"`.
 
 ## Borrowed ideas, no new packages
 - Playwright codegen (Apache-2.0): accessible role and name instead of CSS selectors.
