@@ -9,6 +9,8 @@ export type ChannelConnected = {
   botUsername: string;
   pairedName: string | null;
   paired: boolean;
+  /** False when the pairing came from a group or predates sender ids: no Allow/Deny on the phone. */
+  decisions?: boolean;
   lastMessageAt: number | null;
 };
 
@@ -41,6 +43,7 @@ function readChannelStatus(raw: unknown): ChannelStatus {
     botUsername: typeof rec.botUsername === "string" ? rec.botUsername.replace(/^@/, "") : "",
     pairedName: typeof rec.pairedName === "string" && rec.pairedName.trim() ? rec.pairedName : null,
     paired: rec.paired === true,
+    decisions: rec.decisions === true,
     lastMessageAt: typeof rec.lastMessageAt === "number" ? rec.lastMessageAt : null,
   };
 }
@@ -86,18 +89,19 @@ export function readTelegramChannel(body: unknown): TelegramChannel {
 
 export function channelStatusLine(
   _platform: ChannelPlatform,
-  status: Pick<ChannelConnected, "paired" | "pairedName" | "lastMessageAt">,
+  status: Pick<ChannelConnected, "paired" | "pairedName" | "lastMessageAt" | "decisions">,
   now = Date.now(),
 ): string {
   if (!status.paired) {
     return "Create a pairing code on this computer, then send it to the bot in a private chat.";
   }
   const who = status.pairedName?.trim() ? `Paired with ${status.pairedName.trim()}` : "Paired";
-  return status.lastMessageAt ? `${who} · last message ${relativeAgo(status.lastMessageAt, now)}` : who;
+  const line = status.lastMessageAt ? `${who} · last message ${relativeAgo(status.lastMessageAt, now)}` : who;
+  return status.decisions === false ? `${line}. Re-pair from a private chat to approve from your phone.` : line;
 }
 
 export function telegramPairingLine(
-  channel: Pick<TelegramConnected, "paired" | "pairedName" | "lastMessageAt">,
+  channel: Pick<TelegramConnected, "paired" | "pairedName" | "lastMessageAt" | "decisions">,
   now = Date.now(),
 ): string {
   return channelStatusLine("telegram", channel, now);

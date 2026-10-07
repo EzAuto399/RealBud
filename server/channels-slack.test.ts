@@ -88,73 +88,20 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-describe("Slack channel", () => {
-  it('preserves incoming work and polling position until the backup pause releases', async () => {
-    const startTurn = vi.fn(async () => {}), wired = deps({ startTurn, fetch: stubFetch() });
-    slack.bindSlackBridge(wired); await slack.connectSlack(TOKEN, null, wired.fetch);
-    await slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: createPairingCode('slack', wired.now!()).command, ts: '10.1' }], wired);
-    const gate = new WorkspaceActivityGate(), lease = await gate.pause();
-    const incoming = slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: 'Review the fictional tasks', ts: '11.1' }], { ...wired, withWorkspaceActivity: gate.run });
-    await new Promise(resolve => setImmediate(resolve)); expect(startTurn).not.toHaveBeenCalled();
-    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('10.1');
-    lease.release(); await incoming; expect(startTurn).toHaveBeenCalledTimes(1);
-    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('11.1');
-  });
-  it("rejects a bad bot token without writing channel-slack.json", async () => {
-    await expect(slack.connectSlack(TOKEN, null, stubFetch({ auth: "fail" }))).rejects.toThrow(/did not answer/i);
-    expect(slack.loadChannel()).toBeNull();
-  });
-
-  it("connects, pairs with the Mac code, and refuses a second chat", async () => {
-    const posts: Array<{ channel: string; text: string }> = [];
-    const d = deps({
-      fetch: stubFetch({
-        onPost: (channel, text) => posts.push({ channel, text }),
-      }),
-    });
-    slack.bindSlackBridge(d);
-    await slack.connectSlack(TOKEN, null, d.fetch);
-
-    await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam Office", text: createPairingCode("slack", d.now!()).command, ts: "10.1" }],
-      d,
-    );
-    expect(slack.loadChannel()?.pairedChannelId).toBe("D_PAIR");
-    expect(slack.loadChannel()?.pairedName).toBe("Sam Office");
-    expect(posts.some((p) => p.text.includes("Paired with your RealBud computer"))).toBe(true);
-
-    await slack.handleSlackInbound(
-      [{ channelId: "D_OTHER", userId: "U_OTHER", name: "Other", text: "hi", ts: "11.1" }],
-      d,
-    );
-    expect(posts.some((p) => p.channel === "D_OTHER" && p.text.includes("paired elsewhere"))).toBe(true);
-  });
-
-  it("treats allow in the paired DM as the pending decision", async () => {
-    const decided: Array<{ id: string; via?: string; status: string; reason?: string }> = [];
-    const posts: string[] = [];
-    const drafts: Draft[] = [
-      {
-        id: "d-oak",
-        propertyId: "prop-oak",
-        kind: "courtesy-rent",
-        status: "pending",
-        channel: "sms",
-        to: "0400",
-        body: "Hi",
-        periodDueAt: 1,
-        createdAt: 1,
-      },
-    ];
-    const fetchFn = stubFetch({ onPost: (_c, text) => posts.push(text) });
-    const d = deps({ fetch: fetchFn });
-    slack.bindSlackBridge(d);
-    await slack.connectSlack(TOKEN, null, fetchFn);
-    await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: createPairingCode("slack", d.now!()).command, ts: "1.0" }],
-      d,
-    );
-
+async function bindSlackDesk(decided: Array<{ id: string; via?: string; status: string; reason?: string }>): Promise<void> {
+  const drafts: Draft[] = [
+    {
+      id: "d-oak",
+      propertyId: "prop-oak",
+      kind: "courtesy-rent",
+      status: "pending",
+      channel: "sms",
+      to: "0400",
+      body: "Hi",
+      periodDueAt: 1,
+      createdAt: 1,
+    },
+  ];
     remote.bindRemoteDecisions({
       desk: {
         snapshot: () =>
@@ -236,16 +183,103 @@ describe("Slack channel", () => {
       sources: [],
       demo: true,
     } as never);
+}
+
+async function pairSlack(posts: string[], channelId: string, channelType?: string): Promise<SlackDeps> {
+  const fetchFn = stubFetch({ onPost: (_c, text) => posts.push(text) });
+  const d = deps({ fetch: fetchFn });
+  slack.bindSlackBridge(d);
+  await slack.connectSlack(TOKEN, null, fetchFn);
+  await slack.handleSlackInbound(
+    [{ channelId, ...(channelType ? { channelType } : {}), userId: "U_SAM", name: "Sam", text: createPairingCode("slack", d.now!()).command, ts: "1.0" }],
+    d,
+  );
+  return d;
+}
+
+describe("Slack channel", () => {
+  it('preserves incoming work and polling position until the backup pause releases', async () => {
+    const startTurn = vi.fn(async () => {}), wired = deps({ startTurn, fetch: stubFetch() });
+    slack.bindSlackBridge(wired); await slack.connectSlack(TOKEN, null, wired.fetch);
+    await slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: createPairingCode('slack', wired.now!()).command, ts: '10.1' }], wired);
+    const gate = new WorkspaceActivityGate(), lease = await gate.pause();
+    const incoming = slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: 'Review the fictional tasks', ts: '11.1' }], { ...wired, withWorkspaceActivity: gate.run });
+    await new Promise(resolve => setImmediate(resolve)); expect(startTurn).not.toHaveBeenCalled();
+    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('10.1');
+    lease.release(); await incoming; expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('11.1');
+  });
+  it("rejects a bad bot token without writing channel-slack.json", async () => {
+    await expect(slack.connectSlack(TOKEN, null, stubFetch({ auth: "fail" }))).rejects.toThrow(/did not answer/i);
+    expect(slack.loadChannel()).toBeNull();
+  });
+
+  it("connects, pairs with the Mac code, and refuses a second chat", async () => {
+    const posts: Array<{ channel: string; text: string }> = [];
+    const d = deps({
+      fetch: stubFetch({
+        onPost: (channel, text) => posts.push({ channel, text }),
+      }),
+    });
+    slack.bindSlackBridge(d);
+    await slack.connectSlack(TOKEN, null, d.fetch);
+
+    await slack.handleSlackInbound(
+      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam Office", text: createPairingCode("slack", d.now!()).command, ts: "10.1" }],
+      d,
+    );
+    expect(slack.loadChannel()?.pairedChannelId).toBe("D_PAIR");
+    expect(slack.loadChannel()?.pairedName).toBe("Sam Office");
+    expect(posts.some((p) => p.text.includes("Paired with your RealBud computer"))).toBe(true);
+
+    await slack.handleSlackInbound(
+      [{ channelId: "D_OTHER", userId: "U_OTHER", name: "Other", text: "hi", ts: "11.1" }],
+      d,
+    );
+    expect(posts.some((p) => p.channel === "D_OTHER" && p.text.includes("paired elsewhere"))).toBe(true);
+  });
+
+  it("treats allow in the paired DM as the pending decision, only from the person who paired", async () => {
+    const decided: Array<{ id: string; via?: string; status: string; reason?: string }> = [];
+    const posts: string[] = [];
+    const d = await pairSlack(posts, "D_PAIR", "im");
+    expect(slack.loadChannel()).toMatchObject({ pairedUserId: "U_SAM", pairedChatType: "im" });
+    expect(slack.slackAdapter.status()).toMatchObject({ paired: true, decisions: true });
+    await bindSlackDesk(decided);
 
     expect(remote.pendingDraftId("slack")).toBe("d-oak");
+    const code = remote.pendingDecisionId("slack");
+    expect(posts.some((text) => text.includes(`allow ${code}`))).toBe(true);
     const startTurn = vi.fn(async () => {});
     await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: `allow ${remote.pendingDecisionId("slack")}`, ts: "2.0" }],
+      [{ channelId: "D_PAIR", userId: "U_OTHER", name: "Other", text: `allow ${code}`, ts: "1.5" }],
+      { ...d, startTurn },
+    );
+    expect(decided).toEqual([]);
+    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.");
+    await slack.handleSlackInbound(
+      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: `allow ${code}`, ts: "2.0" }],
       { ...d, startTurn },
     );
     expect(decided[0]).toMatchObject({ id: "d-oak", status: "allowed", via: "via Slack · Sam" });
     expect(posts.some((text) => /^Allowed via Slack · Sam · /.test(text))).toBe(true);
     expect(startTurn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "a channel", channelId: "C_TEAM", channelType: "channel" },
+    { label: "a legacy DM (no type recorded)", channelId: "D_PAIR", channelType: undefined },
+  ])("sends a pairing from $label no reply code, recipient or wording, and refuses its decisions", async ({ channelId, channelType }) => {
+    const decided: Array<{ id: string; via?: string; status: string; reason?: string }> = [];
+    const posts: string[] = [];
+    const d = await pairSlack(posts, channelId, channelType);
+    expect(slack.slackAdapter.status()).toMatchObject({ paired: true, decisions: false });
+    await bindSlackDesk(decided);
+    expect(posts.at(-1)).toBe("Courtesy SMS wording is ready. Open Desk to review and decide. To approve from your phone, re-pair from a private chat.");
+    expect(remote.pendingDecisionId("slack")).toBeNull();
+    await slack.handleSlackInbound([{ channelId, userId: "U_SAM", name: "Sam", text: "allow abcdef123456", ts: "2.0" }], d);
+    expect(decided).toEqual([]);
+    expect(posts.at(-1)).toBe("Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat.");
   });
 
   it("never echoes the bot token in the public status", async () => {
@@ -256,6 +290,7 @@ describe("Slack channel", () => {
       botUsername: "realbud",
       pairedName: null,
       paired: false,
+      decisions: false,
       lastMessageAt: null,
     });
     expect(JSON.stringify(pub)).not.toContain(TOKEN);

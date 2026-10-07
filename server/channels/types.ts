@@ -7,6 +7,8 @@ export type ChannelStatus = {
   botUsername: string;
   pairedName: string | null;
   paired: boolean;
+  /** Paired from a private chat with a recorded sender: phone Allow/Deny is on. */
+  decisions: boolean;
   lastMessageAt: number | null;
 };
 
