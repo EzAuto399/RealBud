@@ -108,7 +108,8 @@ import { createSourceBillsApi } from './source-bills-api.ts';
 import { createBillProposals, readBillProposal } from './bill-proposals.ts';
 import { BillReviewDraftStore } from './bill-review-drafts.ts';
 import { createBillReviewApi } from './bill-review-api.ts';
-import { browserTaskIntent, portalJobIntentReply } from "./portal-job-intent.ts";
+import { browserTaskIntent, portalJobIntentReply, reiReadIntent, reiReadOffer } from "./portal-job-intent.ts";
+import { handleReiAccount, readReiAccount, readReiAccountRef, REI_ACCOUNT_NEEDED, saveReiAccount } from "./rei-account.ts";
 import {
   askBrowserTaskSystemBlock,
   BROWSER_TASK_OFFER,
@@ -905,7 +906,7 @@ function runAskRecipeTask(threadId: string, botId: string, record: Awaited<Retur
     let reply: string;
     let end: BrowserTaskEnd = "finished";
     try {
-      const result = await runPortalRecipeTask({ record, grant, runtime: browserRuntime, approve, signal: stop.signal,
+      const result = await runPortalRecipeTask({ record, grant, runtime: askBrowserRuntime(), load: askPortalPackLoader(), approve, signal: stop.signal,
         isActive: () => !stop.signal.aborted && fenceContextFor(threadId)?.grant?.id === grant.id });
       reply = portalRecipeTaskReply(result);
       // REI rows land on Desk under the source-of-truth rule (read-only: nothing goes back to REI).
@@ -1769,6 +1770,32 @@ async function startSeatTurn(
         broadcast({ kind: "message", threadId, message: reply });
         return;
       }
+      // A read question about REI becomes the pack's read recipe as a task card (Start, account check, fence, Stop):
+      // a plain model turn has no work-browser tools, so without this Bud could only say it can't read REI.
+      const reiRead = reiReadIntent(text);
+      if (reiRead) {
+        let userMessage = opts?.userMessage;
+        if (!userMessage) {
+          userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+          broadcast({ kind: "message", threadId, message: userMessage });
+        }
+        let reply: Message;
+        try {
+          const account = await readReiAccountRef(DATA_DIR);
+          if (!account) reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: REI_ACCOUNT_NEEDED });
+          else {
+            if (reiRead.dated) { const day = (await import("./redbark-source.ts")).localDate(new Date(), await reiWaitTimeZone()); reiRead.inputs = { date_from: day, date_to: day }; }
+            const proposal = await portalRecipeTaskProposal({ threadId, messageId: "pending", portal: "rei-cloud", target: reiRead.target, inputs: reiRead.inputs, account }, askPortalPackLoader());
+            reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: reiReadOffer(reiRead.what, account.marker) });
+            try { await browserTasks().propose({ ...proposal, messageId: reply.id }); }
+            catch { reply = store.patchMessage(threadId, reply.id, { text: BROWSER_TASK_UNAVAILABLE }) ?? reply; }
+          }
+        } catch (error) {
+          reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: `I couldn't prepare the REI read, so nothing was done in your browser. ${error instanceof Error ? error.message : ""}`.trim() });
+        }
+        broadcast({ kind: "message", threadId, message: reply });
+        return;
+      }
       // A one-off site request becomes a task card the person starts once;
       // routine and take-over requests keep the saved-job draft below.
       const taskIntent = browserTaskIntent(text, listRecipes);
@@ -2123,7 +2150,9 @@ async function startSeatTurn(
           // Approval settings through the same GET and PUT as Workspace → Approvals, which check edit rights on every call.
           // A single desktop needs no session; an office member's own session, sent with their message, proves who they are.
           // Without one (a phone, a loop, a queued follow-up) Bud says to change them in Workspace → Approvals.
-          ...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {}) });
+          ...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {}),
+          // The office's REI business code: Bud proposes it on the card; the person allows; the store's revision check saves it.
+          reiAccount: { read: () => readReiAccount(DATA_DIR), save: (account, expectedRevision) => saveReiAccount(DATA_DIR, account, expectedRevision) } });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
         const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
         integrations.bankSource = {
@@ -2521,11 +2550,11 @@ async function resumeReiSignInWaits() {
 let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
 function reiDirectorySync() {
   return reiDirectoryPromise ??= (async () => {
-    const [{ createReiDirectorySync }, { createTenantDirectoryStore }, { readW1Settings }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts"), import("./w1-host.ts")]);
+    const [{ createReiDirectorySync }, { createTenantDirectoryStore }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts")]);
     const lab = w1Lab ? await w1Lab : null;
     return createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
-      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      account: () => readReiAccountRef(DATA_DIR),
       tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
       signIn: () => lab ? lab.openForSignIn : openForSignIn,
       dataDir: DATA_DIR, timeZone: reiWaitTimeZone, ...(lab ? { now: lab.now, waitPollMs: 100 } : {}) });
@@ -2535,13 +2564,13 @@ function reiDirectorySync() {
 let reiRefreshPromise: Promise<import("./rei-morning-refresh.ts").ReiMorningRefresh> | undefined;
 function reiMorningRefresh() {
   return reiRefreshPromise ??= (async () => {
-    const [{ createReiMorningRefresh }, { readW1Settings }, { localDate }] = await Promise.all([import("./rei-morning-refresh.ts"), import("./w1-host.ts"), import("./redbark-source.ts")]);
+    const [{ createReiMorningRefresh }, { localDate }] = await Promise.all([import("./rei-morning-refresh.ts"), import("./redbark-source.ts")]);
     const lab = w1Lab ? await w1Lab : null;
     const now = lab?.now ?? Date.now;
     return createReiMorningRefresh({ desk, runtime: lab?.runtime ?? browserRuntime, now, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       // Only a work browser that is already open: the clock never launches one.
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
-      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      account: () => readReiAccountRef(DATA_DIR),
       today: async () => localDate(new Date(now()), await reiWaitTimeZone()) });
   })().catch(error => { reiRefreshPromise = undefined; throw error; });
 }
@@ -3791,6 +3820,15 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, result.status, result.body);
     }
     // ---- END REI directory refresh routes ----
+    // The office's REI account (business code, optional reicid) for every REI read and W1 (server/rei-account.ts).
+    if (path === "/api/rei/account" && (method === "GET" || method === "PUT")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      res.setHeader("cache-control", "no-store");
+      if (method === "PUT" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const result = await handleReiAccount(DATA_DIR, method, () => readBody(req, 4096));
+      return json(res, result.status, result.body);
+    }
     if (path === '/api/job-runs/history' && method === 'GET') {
       return json(res, 200, jobRuns.history({
         cursor: url.searchParams.get('cursor') ?? undefined,
@@ -4147,7 +4185,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const bud = store.productBud();
       if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
       try {
-        const proposal = await portalRecipeTaskProposal({ threadId, messageId: "pending", portal: body.portal, target: body.target, inputs: body.inputs, account: body.account });
+        const proposal = await portalRecipeTaskProposal({ threadId, messageId: "pending", portal: body.portal, target: body.target, inputs: body.inputs, account: body.account }, askPortalPackLoader());
         let reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: BROWSER_TASK_OFFER });
         let task;
         try { task = await browserTasks().propose({ ...proposal, messageId: reply.id }); }

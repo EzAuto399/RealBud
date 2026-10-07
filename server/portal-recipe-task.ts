@@ -21,7 +21,7 @@ import type { BrowserApprovalProjection } from "./browser-broker.ts";
 import type { BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { validBrowserTaskRecipe, type BrowserTaskProposal, type BrowserTaskRecipe, type BrowserTaskRecord } from "./browser-grants.ts";
-import { filterPortalRunRows, parsePortalRecipePack, type FilteredPortalResult, type PortalRecipePack } from "./portal-recipe.ts";
+import { filterPortalRunRows, parsePortalRecipePack, wholePortalRead, type FilteredPortalResult, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
@@ -341,6 +341,14 @@ export function portalRecipeTaskReply(result: PortalRunResult & { results: Filte
     if (item.outcome === "not-run" || item.recipe === "open-session") continue;
     const kept = item.filtered ? `, kept from ${item.filtered.read} read${item.filtered.unapplied.length ? ` (not filtered by ${item.filtered.unapplied.join(", ")}: the column or input was missing)` : ""}` : "";
     lines.push(`\n**${item.recipe}**: ${item.table === "unread" ? "not read" : `${item.rows.length} row${item.rows.length === 1 ? "" : "s"} over ${item.pages} page${item.pages === 1 ? "" : "s"}${kept}`}${item.stopBefore.length ? `; stopped before ${item.stopBefore.join(", ")}` : ""}.`);
+    // Where the rows came from, and whether every record the grid counts was read (else the answer says partial).
+    if (item.table !== "unread") {
+      const page = result.receipt.steps.findLast(step => step.recipe === item.recipe && step.verb === "nav" && step.ok)?.target;
+      const read = item.filtered?.read ?? item.rows.length, from = page ? `page ${page}` : "the page";
+      lines.push(wholePortalRead(item) ? `Source: ${from}, all ${read} of the ${item.footer} records it lists.`
+        : item.footer === undefined ? `Partial read: ${from} showed no record count, so RealBud can't confirm all its rows were read (${read} read).`
+        : `Partial read: ${from} lists ${item.footer} records and ${read} were read${item.truncated ? " (a page came back cut short)" : ""}. Don't rely on these as the full list.`);
+    }
     for (const row of item.rows.slice(0, 20)) lines.push(`- ${Object.values(row).join(" | ")}`);
     if (item.rows.length > 20) lines.push(`- …and ${item.rows.length - 20} more.`);
   }

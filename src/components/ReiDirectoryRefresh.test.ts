@@ -3,7 +3,27 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
 vi.mock("@/state/store", () => ({ api: vi.fn(() => new Promise(() => {})) }));
-import { parseReiDirectoryStatus, ReiDirectoryRefresh, SupplierChangeList } from "./ReiDirectoryRefresh";
+import { parseReiAccount, parseReiDirectoryStatus, ReiBusinessCode, ReiDirectoryRefresh, SupplierChangeList } from "./ReiDirectoryRefresh";
+
+describe("REI business code", () => {
+  it("is one labelled field with a save, open until a code is saved and folded behind the saved code after", () => {
+    const open = renderToStaticMarkup(createElement(ReiBusinessCode, { saved: null, onSaved: () => {} }));
+    expect(open).toContain("REI business code (shown at the top of REI)");
+    expect(open).toMatch(/<label[^>]*>REI business code \(shown at the top of REI\)<input/);
+    // Disabled until the saved revision has loaded.
+    expect(open).toMatch(/<button type="submit"[^>]*disabled=""[^>]*>Save<\/button>/);
+    expect(open).not.toContain("<details");
+    const folded = renderToStaticMarkup(createElement(ReiBusinessCode, { saved: "FICT1", onSaved: () => {} }));
+    expect(folded).toMatch(/<details><summary[^>]*>REI business: FICT1 · Change<\/summary>/);
+    expect(folded).toContain('value="FICT1"');
+  });
+  it("reads the server's account and refuses a malformed one", () => {
+    expect(parseReiAccount({ account: null })).toBeNull();
+    expect(parseReiAccount({ account: { marker: "FICT1", revision: 2, savedAt: "x" } })).toEqual({ marker: "FICT1", revision: 2 });
+    expect(() => parseReiAccount({ account: { marker: 1, revision: 2 } })).toThrow(/could not be read/);
+    expect(() => parseReiAccount({})).toThrow(/could not be read/);
+  });
+});
 
 describe("Refresh from REI panel", () => {
   it("renders the refresh button disabled until the server's status arrives", () => {
