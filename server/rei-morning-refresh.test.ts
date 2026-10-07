@@ -6,17 +6,24 @@
 import { copyFileSync, cpSync, existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { releaseBrowserBrokers, startBrowserBroker } from "./browser-broker.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
 import { Desk } from "./desk.ts";
 import { portalRecipeGrantNeeds, type PortalRunRequest } from "./portal-recipe-runner.ts";
-import { loadPortalSiteMap, loopReadRefusal, runPortalReadLoop } from "./portal-recipe-task.ts";
+import { loadPortalRecipePack, loadPortalSiteMap, loadShippedPortalRecipePack, loopReadRefusal, runPortalReadLoop } from "./portal-recipe-task.ts";
 import { createReiMorningRefresh, REI_SIGN_IN_MISSED, reiMorningRuns } from "./rei-morning-refresh.ts";
 import { LoopManager } from "./routines.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictionalBook, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
+import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+
+// The real loaders, wrapped so a test can see which one an unattended loop used and what it got.
+vi.mock("./portal-recipe-task.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
+  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack) };
+});
 
 const dirs: string[] = [];
 const managers: LoopManager[] = [];
@@ -320,3 +327,32 @@ async function runtimeFor(root: string, options: FictionalReiOptions) {
   await runtime.connect(); await runtime.select("work");
   return runtime;
 }
+
+describe("an unattended refresh and watch-and-learn recipes", () => {
+  it("runs on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
+    const cleanup = await publishLearnedInDataDir();
+    const restore = await saveApprovedPathInDataDir();
+    const shipped = await loadShippedPortalRecipePack("rei-cloud");
+    try {
+      // The Ask loader merges it.
+      const merged = await loadPortalRecipePack("rei-cloud");
+      expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
+      expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
+      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
+
+      // No injected `load`: the loop picks its own loader.
+      const f = await fixture();
+      const { load: _load, ...deps } = f.deps;
+      await createReiMorningRefresh(deps).run();
+      expect(loadPortalRecipePack).not.toHaveBeenCalled();
+      expect(loadShippedPortalRecipePack).toHaveBeenCalledWith("rei-cloud");
+      const used = await vi.mocked(loadShippedPortalRecipePack).mock.results[0].value;
+      expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
+      expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
+      expect(used.labels.readSafe).not.toContain(LEARNED_LEAK_LABEL);
+      // Nor a path approved in Ask: an unattended read never downloads.
+      expect(used.recipes["tenant-list"].steps).toEqual(shipped.recipes["tenant-list"].steps);
+      expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
+    } finally { cleanup(); await restore(); }
+  });
+});

@@ -26,10 +26,8 @@ import { DATA_DIR } from "./config.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HumanHandoffs } from "./human-handoffs.ts";
-import { answerPortalRecipeAsk, loadPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, loadShippedPortalRecipePack, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PortalRecipeResult, type PortalRunResult } from "./portal-recipe-runner.ts";
-import { PortalPathStore } from "./portal-path-overrides.ts";
-import type { PortalRecipePack } from "./portal-recipe.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { createSupplierDirectory } from "./supplier-directory.ts";
 import { parseTenantList, type TenantDirectoryStore, type TenantEntry, type TenantRejection } from "./tenant-directory.ts";
@@ -46,8 +44,6 @@ const LIST: Record<ReiDirectoryKind, string> = { tenants: "tenant list", supplie
 const SOURCE: Record<ReiDirectoryKind, string> = { tenants: "REI Tenants list (read from the page)", suppliers: "REI Suppliers list (read from the page)" };
 /** What a directory refresh may ever be granted: reading the list's own page. */
 const ALLOWED: readonly BrowserActionClass[] = ["read", "navigate", "click"];
-/** Applies no learned path: the repo pack as it is. */
-class RepoPathsOnly extends PortalPathStore { apply(pack: PortalRecipePack): Promise<PortalRecipePack> { return Promise.resolve(pack); } }
 const STOPPED = "Stopped. Nothing was saved.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
 const NO_BROWSER = "The work browser could not be opened. Check that Chrome or Edge is installed, then try again.";
@@ -162,8 +158,9 @@ function endedBecause(kind: ReiDirectoryKind, run: PortalRunResult, marker: stri
 }
 
 export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
-  // The repo pack only: the recipe reads the list's own grid, so a learned export path (Ask) would only add a report and a download it does not need.
-  const load: PackLoader = deps.load ?? (portal => loadPortalRecipePack(portal, new RepoPathsOnly()));
+  // The repo pack only: the recipe reads the list's own grid, so a learned export path (Ask) would only add a report and a download
+  // it does not need, and a watch-and-learn recipe never joins an unattended read.
+  const load: PackLoader = deps.load ?? loadShippedPortalRecipePack;
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), { release: readOnly, verify: readOnly }).isHolding());
   const waits = reiSignInWaits(deps.dataDir ?? DATA_DIR), now = deps.now ?? Date.now;
   let current: Run | null = null;

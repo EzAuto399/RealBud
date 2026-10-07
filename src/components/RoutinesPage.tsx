@@ -3,7 +3,7 @@ import { openDeskTasks } from "@/lib/desk-view-state";
 // Schedule is one compact list of jobs; each row opens one detail drawer.
 // All execution still uses RealBud's existing scheduler and approval boundaries.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, CircleAlert, History, Plus, Search, Square } from "lucide-react";
+import { CalendarDays, CircleAlert, History, MousePointerClick, Plus, Search, Square } from "lucide-react";
 
 import "@/schedule.css";
 import type { Recipe } from "@/lib/desk";
@@ -20,6 +20,7 @@ import { buildScheduleRows, listedScheduleRows, RECOVERY_NOTICE, scheduleRowForJ
 import { filterScheduleRows, scheduleRowSection, type ScheduleFilter } from "@/lib/schedule-presentation";
 import { acknowledgeActivity, JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
+import { LearnedRecipesCard } from "./schedule/LearnedRecipesCard";
 import { AustinPlanDetail } from "./schedule/AustinPackCard";
 import { hiddenAustinLoopIds, parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
 import { JobRunFeed } from "./desk/JobRunFeed";
@@ -32,7 +33,7 @@ import { beginLoopRequest, pendingLoopRequest, resumeLoopRequest, confirmLoopRec
 /** `flagged` pins the receipt that needed review when the job was opened, so it
  * is shown directly and acknowledging it does not swap it out of the detail. */
 type Flagged = { kind: "loop" | "job"; id: string; word: string };
-type Drawer = { mode: "job"; key: string; flagged?: Flagged; reviewResult?: boolean } | { mode: "create" } | { mode: "archive" } | { mode: "packs" };
+type Drawer = { mode: "job"; key: string; flagged?: Flagged; reviewResult?: boolean } | { mode: "create" } | { mode: "archive" } | { mode: "packs" } | { mode: "learn" };
 const SCHEDULE_FILTERS: readonly { key: ScheduleFilter; label: string }[] = [
   { key: "all", label: "All jobs" }, { key: "attention", label: "Needs you" },
   { key: "scheduled", label: "Scheduled" }, { key: "paused", label: "Paused" },
@@ -378,7 +379,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   };
 
   // Deep links: a saved job, the job builder, or agency workflow setup
-  // (`#schedule-packs`, used by the Desk setup steps). Read once, then cleared.
+  // (`#schedule-packs`, used by the Desk setup steps; `#schedule-learn`). Read once, then cleared.
   const consumeHash = useRef<() => void>(() => {});
   // A saved job handed over without a deep link (Workspace saved views set the
   // plan and open Schedule) opens in the drawer once jobs have loaded.
@@ -407,6 +408,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
       openCreate();
     } else if (hash === "schedule-packs") {
       changeDrawer({ mode: "packs" });
+    } else if (hash === "schedule-learn") {
+      changeDrawer({ mode: "learn" });
     } else if (hash === "schedule-runs") {
       changeDrawer({ mode: "archive" });
     } else if (!hash.startsWith("schedule-")) {
@@ -435,6 +438,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   const drawerTitle = drawer?.mode === "create" ? "Add a job"
     : drawer?.mode === "archive" ? "Past results"
     : drawer?.mode === "packs" ? "Workflow setup"
+    : drawer?.mode === "learn" ? "Show Bud a task"
     : drawerRow?.name ?? "Job";
   const loopRunsFor = (loopId: string): LoopRun[] => state.loopRuns.filter((run) => run.loopId === loopId);
   const workspace = (
@@ -502,6 +506,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   else if (drawer?.mode === "packs") drawerBody = (
     <WorkflowPacksCard onInstalled={refreshSchedule} className="mb-0 border-0 bg-transparent p-0" />
   );
+  else if (drawer?.mode === "learn") drawerBody = <LearnedRecipesCard bare />;
   else if (drawer?.mode === "archive") {
     drawerBody = (
       <div className="space-y-3">
@@ -581,6 +586,9 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
             {attentionCount ? <p className="text-[14px] text-hold">{attentionCount} {attentionCount === 1 ? "job needs" : "jobs need"} your attention. Choose a job below to see what it needs.</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => changeDrawer({ mode: "learn" })} className="pm-control inline-flex items-center gap-1.5 rounded px-3 text-[13px] text-ink-muted hover:bg-raised hover:text-ink">
+              <MousePointerClick size={15} aria-hidden />Show Bud a task
+            </button>
             <button type="button" onClick={() => changeDrawer({ mode: "archive" })} className="pm-control inline-flex items-center gap-1.5 rounded px-3 text-[13px] text-ink-muted hover:bg-raised hover:text-ink">
               <History size={15} aria-hidden />Past results
             </button>
@@ -653,7 +661,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
       </div>
 
       {drawer ? (
-        <JobDrawer title={drawerTitle} busy={drawerBusy} wide={drawerRow?.loop?.id === "bank-references" || drawer.mode === "packs"} actions={drawerActions} notice={error || pauseNotice ? <div className="-mt-3">{notices}</div> : undefined} onClose={closeDrawer}>
+        <JobDrawer title={drawerTitle} busy={drawerBusy} wide={drawerRow?.loop?.id === "bank-references" || drawer.mode === "packs" || drawer.mode === "learn"} actions={drawerActions} notice={error || pauseNotice ? <div className="-mt-3">{notices}</div> : undefined} onClose={closeDrawer}>
           {drawerBody}
         </JobDrawer>
       ) : null}

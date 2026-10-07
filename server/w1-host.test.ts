@@ -7,12 +7,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readBankTransactions } from "./bank-provider.ts";
 import { BankReferenceStore, RedbarkCoverage } from "./bank-reference-store.ts";
 import { createW1Lab, labRedbarkFetch } from "./testing/w1-lab.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID } from "./testing/fictional-rei-portal.ts";
 import { createTenantDirectoryStore, type TenantEntry } from "./tenant-directory.ts";
+import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
+import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
 import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
@@ -27,6 +29,13 @@ const txn = (id: string, date: string, cents: number, reference: string) => ({ i
   post_date: date, post_datetime: `${date}T03:00:00.000Z`, value_date: null, value_datetime: null, description: `FICTIONAL PAYMENT ${reference}`, reference,
   extended_description: null, amount: { amount: cents, currency: "aud" }, direction: cents < 0 ? "debit" : "credit", provider_category: null, category: null,
   merchant_name: null, merchant_category_code: null, livemode: true });
+
+// The real loaders, wrapped so a test can see which one W1 used and what it got.
+vi.mock("./portal-recipe-task.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
+  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack),
+    loadPortalRecipePackWithPaths: vi.fn(real.loadPortalRecipePackWithPaths) };
+});
 
 type HostExtras = Partial<Pick<Parameters<typeof createW1Host>[0], "openForSignIn" | "today" | "runtime" | "browserId" | "load" | "tenantDirectory">>;
 async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeof createW1Lab>>) => HostExtras) = {}) {
@@ -512,5 +521,35 @@ describe("W1 host", () => {
     expect(() => labRedbarkFetch("http://evil.example:4555")).toThrow(/loopback/);
     const real = async (input: string) => new Response(input);
     expect(await (await labRedbarkFetch("http://127.0.0.1:4555", real as never)("https://api.redbark.com/v2/accounts?limit=1", {} as never)).text()).toBe("http://127.0.0.1:4555/v2/accounts?limit=1");
+  });
+});
+
+describe("W1 and watch-and-learn recipes", () => {
+  it("keeps a person-approved path but never a learned recipe or a label a reviewer confirmed", async () => {
+    const forget = await publishLearnedInDataDir();
+    const restore = await saveApprovedPathInDataDir();
+    const shipped = await loadShippedPortalRecipePack("rei-cloud");
+    try {
+      const merged = await loadPortalRecipePack("rei-cloud");
+      expect(merged.recipes[LEARNED_LEAK_RECIPE]).toBeDefined();
+      expect(merged.labels.readSafe).toContain(LEARNED_LEAK_LABEL);
+      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadPortalRecipePackWithPaths).mockClear();
+
+      // No injected `load`: the host picks its own loader on the way to REI.
+      const f = await fixture({ load: undefined });
+      await f.configure();
+      await f.call("/api/w1/runs/start");
+      const now = await f.settle();
+      await f.review(now.run!.fetch!.batchId);
+      await f.act("advance");
+      expect(loadPortalRecipePack).not.toHaveBeenCalled();
+      expect(loadPortalRecipePackWithPaths).toHaveBeenCalledWith("rei-cloud");
+      for (const { value } of vi.mocked(loadPortalRecipePackWithPaths).mock.results) {
+        const used = await value;
+        expect(used.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } }); // the approved path
+        expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
+        expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
+      }
+    } finally { forget(); await restore(); }
   });
 });

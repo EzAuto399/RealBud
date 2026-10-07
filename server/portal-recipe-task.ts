@@ -25,6 +25,7 @@ import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
+import { createLearnedRecipeStore, mergeLearnedRecipes } from "./learned-recipes.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -47,11 +48,38 @@ export async function verifiedShippedRecipesText(portal: string, readText: (path
   return text;
 }
 
-/** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them. */
-export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+/** The pack as shipped in the repo, without learned paths or recipes: what watch-and-learn review compares click labels
+ * against. Every loader builds on this one, so the reviewed-digest check above always runs first. */
+export async function loadShippedPortalRecipePack(portal: string): Promise<PortalRecipePack> {
   const pack = parsePortalRecipePack(JSON.parse(await verifiedShippedRecipesText(portal)));
   if (pack.portal !== portal) throw fail(409, "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.");
-  return paths.apply(pack);
+  return pack;
+}
+
+/** Why a loaded pack has no learned recipes (the store's own sentence), shown in the Ask run's reply. */
+const learnedNotices = new WeakMap<PortalRecipePack, string>();
+
+/** The shipped pack with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over it, and no
+ * watch-and-learn recipes or confirmed labels: for reviewed jobs that upload or prepare (W1), so a REI menu move doesn't stop them. */
+export async function loadPortalRecipePackWithPaths(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+  return paths.apply(await loadShippedPortalRecipePack(portal));
+}
+
+/** The pack with approved paths (loadPortalRecipePackWithPaths) plus published watch-and-learn recipes. For the
+ * person-started Ask recipe path only: W1 uses loadPortalRecipePackWithPaths, unattended loops loadShippedPortalRecipePack. */
+export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+  const pack = await loadPortalRecipePackWithPaths(portal, paths);
+  // Published watch-and-learn recipes join as read recipes; a damaged learned file never breaks the shipped ones.
+  try {
+    const { DATA_DIR } = await import("./config.ts");
+    return mergeLearnedRecipes(pack, await createLearnedRecipeStore(join(DATA_DIR, "learned-recipes.json")).list());
+  } catch (error) {
+    const status = (error as { status?: unknown } | null)?.status;
+    const notice = typeof status === "number" && error instanceof Error ? error.message : "Learned recipes could not be added.";
+    console.warn(`[learn] ${notice} Using the shipped portal recipes only.`);
+    learnedNotices.set(pack, `${notice} Only the shipped portal recipes were available.`);
+    return pack;
+  }
 }
 export type PackLoader = (portal: string) => Promise<PortalRecipePack>;
 
@@ -175,13 +203,15 @@ export async function runPortalRecipeTask(input: {
   dispatching.add(grant.id); running.add(grant.id);
   try {
     const pack = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
-    return await runPortalRecipes({
+    const result = await runPortalRecipes({
       pack, runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
       approve: input.approve, signal: input.signal, isActive: input.isActive,
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
     });
+    const notice = learnedNotices.get(pack);
+    return notice ? { ...result, detail: [result.detail, notice].filter(Boolean).join(" ") } : result;
   } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
 }
 

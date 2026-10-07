@@ -58,10 +58,10 @@ function financialRoute(address: string, portal: BrowserPortalControls | null): 
   } catch { return false; }
 }
 export const SUBMIT_CONTROL = /\b(submit|save|continue|next|confirm|lodge|create|update)\b/i;
-const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
+export const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
 const READ_AFFORDANCE = /\b(view|show|statement|transaction|history|download|export|search|filter|previous|next page)\b/i;
 /** Words that say a control delivers a file rather than acting on something. */
-const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
+export const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
 const TEXT_ROLE = /^(textbox|searchbox|textarea|editable|textfield)$/;
 const CHOICE_ROLE = /^(combobox|listbox|option|radio|radiogroup|slider|spinbutton|menuitemradio)$/;
 /** An amount field on a form, even before it shows a currency. */

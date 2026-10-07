@@ -119,7 +119,7 @@ import {
   browserTasks,
   type BrowserTaskEnd,
 } from "./browser-grants.ts";
-import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask, loadPortalRecipePack, loadShippedPortalRecipePack, PORTAL_RECIPE_PACKS } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
@@ -284,6 +284,17 @@ import {
   stopRemoteDecisionFlush,
 } from "./remote-decisions.ts";
 import { buildSupportBundle, supportBundleRequest } from "./support-bundle.ts";
+import { createLearnedRecipeStore, parseLearnTitle, type LearnedRecipeStore } from "./learned-recipes.ts";
+import { compileLearnedSteps } from "./learn-compile.ts";
+import { LearnRecorder } from "./learn-recorder.ts";
+
+// Watch and learn (docs/decisions/2026-10-07-watch-and-learn.md): one recorder on the work browser, one drafts file.
+let learnRecorderInstance: LearnRecorder | null = null;
+const learnRecorder = () => learnRecorderInstance ??= new LearnRecorder({ open: (url: string) => browserRuntime.learnTarget(url) });
+// While a recording watches a tab, no browser task may start (and learnTarget refuses while a task holds the browser).
+browserRuntime.setLearning(() => learnRecorderInstance?.recording() ?? false);
+let learnedRecipeStore: LearnedRecipeStore | null = null;
+const learnedRecipes = () => learnedRecipeStore ??= createLearnedRecipeStore(join(DATA_DIR, "learned-recipes.json"));
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -4708,6 +4719,56 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         "content-length": String(body.length),
       });
       return res.end(body);
+    }
+
+    // ── Watch and learn: record a portal task in the work browser, review the draft, publish it ──
+    // A published recipe runs only through POST /api/browser/tasks/recipe (Start grant, broker, fence).
+    if (path === "/api/learn" && method === "GET") {
+      const portals = Object.keys(PORTAL_RECIPE_PACKS);
+      // Shipped labels (before learned merge): what review compares click labels against.
+      const labels = Object.fromEntries(await Promise.all(portals.map(async portal => {
+        const { readSafe, consequential } = (await loadShippedPortalRecipePack(portal)).labels;
+        return [portal, { readSafe, consequential }] as const;
+      })));
+      return json(res, 200, { session: learnRecorder().view(), recipes: await learnedRecipes().list(), portals, labels });
+    }
+    if (path === "/api/learn/start" && method === "POST") {
+      const body = await readBody(req);
+      const portal = typeof body.portal === "string" ? body.portal : "";
+      if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) return json(res, 404, { error: "RealBud has no recipes for that portal." });
+      const pack = await loadPortalRecipePack(portal);
+      return json(res, 200, { session: await learnRecorder().start(portal, pack.origin) });
+    }
+    if (path === "/api/learn/stop" && method === "POST") {
+      const body = await readBody(req);
+      const portal = learnRecorder().view().portal;
+      if (!portal) return json(res, 409, { error: "Bud isn't watching a task right now." });
+      // Check the name and load the shipped pack and the drafts file before stopping; the recorder
+      // keeps the events until the draft is saved, so a failed save is retried with Stop again.
+      const title = parseLearnTitle((typeof body.title === "string" ? body.title.trim().slice(0, 80) : "") || "Learned task");
+      const pack = await loadShippedPortalRecipePack(portal);
+      await learnedRecipes().list();
+      const recipe = await learnRecorder().finish((events, recorded) => {
+        if (recorded !== portal) throw Object.assign(new Error("The recording changed. Press Stop again."), { status: 409 });
+        return learnedRecipes().create({ portal, title, ...compileLearnedSteps(events, pack) });
+      });
+      return json(res, 200, { recipe });
+    }
+    if (path === "/api/learn/cancel" && method === "POST") {
+      await learnRecorder().cancel();
+      return json(res, 200, { session: learnRecorder().view() });
+    }
+    const learnRoute = path.match(/^\/api\/learn\/recipes\/(lr_[0-9a-f]{24})(?:\/(publish|unpublish|delete))?$/);
+    if (learnRoute && method === "POST") {
+      const [, recipeId, action] = learnRoute;
+      const body = await readBody(req);
+      if (action === "delete") { await learnedRecipes().remove(recipeId, body.expectedRevision); return json(res, 200, { ok: true }); }
+      if (action === "unpublish") return json(res, 200, { recipe: await learnedRecipes().unpublish(recipeId, body.expectedRevision) });
+      const recipe = (await learnedRecipes().list()).find(item => item.id === recipeId);
+      if (!recipe) return json(res, 404, { error: "That learned recipe no longer exists." });
+      if (action === "publish") return json(res, 200, { recipe: await learnedRecipes().publish(recipeId, body.expectedRevision, await loadShippedPortalRecipePack(recipe.portal)) });
+      const { labels } = await loadShippedPortalRecipePack(recipe.portal);
+      return json(res, 200, { recipe: await learnedRecipes().update(recipeId, body.expectedRevision, { title: body.title, steps: body.steps, confirmedLabels: body.confirmedLabels, flags: body.flags }, labels) });
     }
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
