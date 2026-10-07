@@ -67,13 +67,24 @@ describe("decide", () => {
     expect(decide([], { group: "site:portal.fictional-strata.example", tool: "browser_read", cls: "read" })).toBe("card");
     expect(decide([], { group: "connector:redbark", tool: "list_accounts", args: {}, cls: "read" })).toBe("run");
   });
-  it("runs only allowlisted reads whose arguments pass; anything else asks", () => {
-    expect(decide([], { ...read, tool: "GMAIL_CREATE_EMAIL_DRAFT" })).toBe("card");
-    expect(decide([], { ...read, tool: "GMAIL_ADD_LABEL_TO_EMAIL", args: { add_label_ids: ["STARRED"] } })).toBe("card");
-    expect(decide([], { ...read, args: ["not", "an", "object"] })).toBe("card");
-    expect(decide([], { ...read, cls: "write" })).toBe("card");
-    expect(decide([], { group: "app:googlecalendar", tool: "GOOGLECALENDAR_EVENTS_LIST", args: { status: "cancelled" }, cls: "read" })).toBe("card");
-    expect(decide([], { group: "app:outlook", tool: "GMAIL_FETCH_EMAILS", args: {}, cls: "read" })).toBe("card");
+  it("passes a managed group's class through unchanged: drafts and labels still run (owner decision 2 Oct)", () => {
+    for (const choice of [undefined, "read-without-asking"] as const) {
+      const list = choice ? [settings({ "app:gmail": choice })] : [];
+      expect(decide(list, { ...read, tool: "GMAIL_CREATE_EMAIL_DRAFT" })).toBe("run");
+      expect(decide(list, { ...read, tool: "GMAIL_ADD_LABEL_TO_EMAIL", args: { add_label_ids: ["STARRED"] } })).toBe("run");
+      expect(decide(list, { group: "app:xero", tool: "XERO_GET_INVOICES", args: {}, cls: "read" })).toBe("run");
+      expect(decide(list, { ...read, cls: "write" })).toBe("card");
+    }
+    // Ask and Don't use only make it stricter.
+    expect(decide([settings({ "app:gmail": "ask" })], { ...read, tool: "GMAIL_CREATE_EMAIL_DRAFT" })).toBe("card");
+    expect(decide([settings({ "app:gmail": "deny" })], { ...read, tool: "GMAIL_CREATE_EMAIL_DRAFT" })).toBe("refuse");
+  });
+  it("widens past today only for exact allowlisted reads whose arguments pass", () => {
+    const direct = { ...read, direct: true }, open = settings({ "app:gmail": "read-without-asking", "app:outlook": "read-without-asking" }, ["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS"]);
+    expect(decide([open], direct)).toBe("run");
+    expect(decide([open], { ...direct, args: ["not", "an", "object"] })).toBe("card");
+    expect(decide([open], { ...direct, group: "app:outlook" })).toBe("card");
+    expect(decide([open], { ...direct, tool: "GMAIL_CREATE_EMAIL_DRAFT" })).toBe("card");
     const site = settings({ "site:portal.fictional-strata.example": "read-without-asking" });
     expect(decide([site], { group: "site:portal.fictional-strata.example", tool: "browser_read", cls: "read" })).toBe("run");
     expect(decide([site], { group: "site:portal.fictional-strata.example", tool: "browser_navigate", args: { url: "https://app.portal.fictional-strata.example/ledger" }, cls: "read" })).toBe("run");

@@ -6,16 +6,20 @@ import { CONNECTOR_ID } from './mcp-connector.ts';
  * office connector. Set per department (company records) or on this computer
  * (single desktop), and read through `decide`. Three choices per group:
  *
- * - `read-without-asking`: calls on the read-only allowlist run; anything else asks.
+ * - `read-without-asking` (also the managed default): today's behaviour. What the
+ *   boundary already runs without a card still does; everything else asks.
  * - `ask`: every call shows the person a card.
  * - `deny`: nothing in the group runs.
  *
- * Groups are `app:<toolkit>`, `site:<host>` and `connector:<id>`. The locked
- * "Always asks" rows are `class:<per-instance class>` and accept only `ask` or
- * `deny`: sends, payments, signatures, notices and the rest are approved one
- * at a time whatever a group says. `reviewedReads` (owner only) lists the
- * read-only tools a direct connection may run without a card; a direct
- * connection's tool names confer no authority on their own.
+ * `ask` and `deny` only ever make things stricter. Widening past today (a
+ * direct connection's reads, a website's reads) needs the exact read-only
+ * allowlist below. Groups are `app:<toolkit>`, `site:<host>` and
+ * `connector:<id>`. The locked "Always asks" rows are `class:<per-instance
+ * class>` and accept only `ask` or `deny`: sends, payments, signatures, notices
+ * and the rest are approved one at a time whatever a group says.
+ * `reviewedReads` (owner only) lists the read-only tools a direct connection
+ * may run without a card; a direct connection's tool names confer no authority
+ * on their own.
  */
 export type ApprovalChoice = 'read-without-asking' | 'ask' | 'deny';
 export const APPROVAL_CHOICES = ['read-without-asking', 'ask', 'deny'] as const satisfies readonly ApprovalChoice[];
@@ -136,23 +140,18 @@ function resolve(settings: ApprovalSettings, call: ApprovalCall): ApprovalChoice
   const choice = Object.hasOwn(settings.groups, call.group) ? settings.groups[call.group] : groupDefault(call);
   return choice === 'read-without-asking' && call.direct && !settings.reviewedReads.includes(call.tool) ? 'ask' : choice;
 }
-/** True when this exact call is on the read-only allowlist and its arguments pass. */
+/** A widening: true only when this exact call is on the read-only allowlist and its arguments pass. */
 function readOnlyCall(call: ApprovalCall): boolean {
   if (call.args !== undefined && !object(call.args)) return false;
   const args = (call.args ?? {}) as Record<string, unknown>;
   const kind = groupKind(call.group), rest = call.group.slice(call.group.indexOf(':') + 1);
   if (kind === 'app') return READ_ONLY_APP_TOOLS.has(call.tool) && classifyAppToolCall(call.tool, args, { app: rest }) === 'read';
-  if (kind === 'site') {
-    if (!SITE_READ_TOOLS.has(call.tool)) return false;
-    if (call.tool !== 'browser_navigate') return true;
-    try {
-      const target = new URL(String(args.url));
-      return target.protocol === 'https:' && (target.hostname === rest || target.hostname.endsWith(`.${rest}`));
-    } catch { return false; }
-  }
-  // An office connector's allowlist is the owner's own tool review: the
-  // boundary passes `read` only for tools that review marked read.
-  return kind === 'connector';
+  if (kind !== 'site' || !SITE_READ_TOOLS.has(call.tool)) return false;
+  if (call.tool !== 'browser_navigate') return true;
+  try {
+    const target = new URL(String(args.url));
+    return target.protocol === 'https:' && (target.hostname === rest || target.hostname.endsWith(`.${rest}`));
+  } catch { return false; }
 }
 
 /**
@@ -160,10 +159,18 @@ function readOnlyCall(call: ApprovalCall): boolean {
  * Pure: it reads only the settings that govern this desktop (one per
  * department, strictest-first; or this computer's own) and the call.
  *
- * Contract: only `run` lets a call skip its card. A `card` is answered by the
- * person, one instance at a time; a `refuse` is final. No local saved rule, bot
- * `alwaysAllow` or this-task grant may turn either into a run (so none can
- * override an effective Ask or Don't use), which is why none of them is an
+ * With nothing saved it returns exactly today's outcome. For a managed app or
+ * an office connector, `read-without-asking` passes the boundary's own class
+ * through (`read` → run, anything else → card, `blocked` → refuse), so Gmail
+ * drafts and labels still run without a card (owner decision 2 Oct). `ask`
+ * and `deny` only ever make that stricter. The exact read-only allowlist
+ * governs only widenings past today: a direct connection's reviewed reads and
+ * a website set to read without asking (and anything Bud proposes, checked by
+ * its own broker).
+ *
+ * Contract: a `card` is answered by the person, one instance at a time, and a
+ * `refuse` is final. No local saved rule, bot `alwaysAllow` or this-task grant
+ * may override an effective Ask or Don't use, which is why none of them is an
  * input here. Callers may only make the answer stricter. Blocked classes stay
  * refused, and the boundary's own checks (capability, receipt, argument and
  * fence checks) still run before and after.
@@ -176,7 +183,9 @@ export function decide(settingsList: readonly ApprovalSettings[], call: Approval
   if ((PER_INSTANCE_CLASSES as readonly string[]).includes(call.cls)) {
     return list.some(settings => settings.groups[`class:${call.cls}`] === 'deny') ? 'refuse' : 'card';
   }
-  return call.cls === 'read' && choice === 'read-without-asking' && readOnlyCall(call) ? 'run' : 'card';
+  if (call.cls !== 'read' || choice !== 'read-without-asking') return 'card';
+  // Past today's line (a direct connection, a website) only the exact allowlist runs.
+  return call.direct || call.group.startsWith('site:') ? (readOnlyCall(call) ? 'run' : 'card') : 'run';
 }
 
 /** Card metadata shared by the approval packets. Types only until each packet

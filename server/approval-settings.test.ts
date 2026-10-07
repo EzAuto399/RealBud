@@ -3,7 +3,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApprovalSettings, onlyEditors, SIGN_IN_TO_CHANGE, type DepartmentApprovals } from './approval-settings.ts';
-import { defaultApprovalSettings, type ApprovalChoice, type ApprovalSettings } from '../shared/approval-settings.ts';
+import { decide, defaultApprovalSettings, type ApprovalChoice, type ApprovalSettings } from '../shared/approval-settings.ts';
+import { connectedAppPolicy } from './connected-apps-broker.ts';
+import { MAIL_SENDS } from '../shared/app-tool-policy.ts';
+
+describe('decide() with nothing saved equals today\'s managed policy', () => {
+  // Every slug the classifier names (mail reads, drafts, labels, sends, moves,
+  // Trash, blocked mail tools, calendar reads and declines), plus name-classified
+  // tools from other apps and the argument-dependent cases.
+  const source = readFileSync(new URL('../shared/app-tool-policy.ts', import.meta.url), 'utf8');
+  const known = [...new Set([...source.matchAll(/"([A-Z][A-Z0-9]*_[A-Z0-9_]+)"/g)].map(match => match[1]))];
+  const rows: Array<[string, Record<string, unknown>]> = [
+    ...known.map(tool => [tool, {}] as [string, Record<string, unknown>]),
+    ...['XERO_GET_INVOICES', 'SLACK_LIST_CHANNELS', 'XERO_CREATE_INVOICE', 'STRIPE_PAY_INVOICE', 'SLACK_DELETE_MESSAGE', 'GOOGLEDRIVE_GET_PERMISSIONS', 'SLACK_FROBNICATE']
+      .map(tool => [tool, {}] as [string, Record<string, unknown>]),
+    ['GMAIL_ADD_LABEL_TO_EMAIL', { add_label_ids: ['TRASH'] }],
+    ['GMAIL_MODIFY_THREAD_LABELS', { add_label_ids: ['STARRED'] }],
+    ['OUTLOOK_MOVE_MESSAGE', { destination_id: 'archive' }],
+    ['OUTLOOK_MOVE_MESSAGE', { destination_id: 'fictional-folder-id' }],
+    ['GOOGLECALENDAR_UPDATE_EVENT', { status: 'cancelled' }],
+  ];
+  it('covers every one of the classifier\'s own lists', () => expect(known).toEqual(expect.arrayContaining([...MAIL_SENDS,
+    'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_DELETE_DRAFT', 'GMAIL_ADD_LABEL_TO_EMAIL', 'GMAIL_MOVE_TO_TRASH', 'GMAIL_DELETE_MESSAGE', 'GMAIL_CREATE_FILTER',
+    'OUTLOOK_MOVE_MESSAGE', 'OUTLOOK_DECLINE_EVENT', 'GOOGLECALENDAR_FREE_BUSY_QUERY'])));
+  it.each(rows)('%s %j', (tool, args) => {
+    const policy = connectedAppPolicy({ name: tool, arguments: args }, { managed: true });
+    // The class the managed broker would hand decide(): sends are per-instance.
+    const cls = policy === 'read' ? 'read' : policy === 'blocked' ? 'blocked' : MAIL_SENDS.has(tool) ? 'send' : 'write';
+    const expected = { read: 'run', review: 'card', blocked: 'refuse' }[policy];
+    expect(decide([], { group: `app:${tool.split('_')[0].toLowerCase()}`, tool, args, cls })).toBe(expected);
+    expect(decide([defaultApprovalSettings()], { group: `app:${tool.split('_')[0].toLowerCase()}`, tool, args, cls })).toBe(expected);
+  });
+});
 
 const settings = (groups: Record<string, ApprovalChoice> = {}, reviewedReads: string[] = []): ApprovalSettings =>
   ({ version: 1, purpose: 'approval-settings', groups, reviewedReads });
