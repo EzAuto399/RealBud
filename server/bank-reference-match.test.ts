@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { BankReferenceStore } from "./bank-reference-store.ts";
-import { bankFirstPass, matchReference, maskPayer, narrativeTail, referenceVariants } from "./bank-reference-match.ts";
+import { bankFirstPass, jevPayerHints, matchReference, maskPayer, narrativeTail, referenceVariants } from "./bank-reference-match.ts";
+import type { JevRequest, JevResult } from "./jev-client.ts";
 import { redbarkBankUpload, REDBARK_CSV_COLUMNS, type RedbarkAccount, type RedbarkTransaction } from "./redbark-source.ts";
 import { bankImportArtifact, createBankReferenceBatch, parseBankCsv, reviewBankReferences, tenantDirectoryRules, type BankReferenceDecision, type BankReferenceRule, type BankReferenceUpload } from "./bank-reference.ts";
 
@@ -298,5 +299,144 @@ describe("saved ANZ review", () => {
       expect(store.get(created.id).firstPass?.summary.matched).toBe(14);
       expect(store.importArtifact(created.id).summary).toEqual({ rows: 27, import: 14, hold: 10, exclude: 3 });
     } finally { db?.close(); await removeFixture(dir); }
+  });
+});
+
+describe("Jev payer hint (data, never a match)", () => {
+  // Tenant names only on the extra rules, so the sync payer-name pass leaves row 11 (JOHN DOE, $410, no reference) unhinted.
+  const named = [...rules, rule("P-AF", "AF1", { tenant: "Alex Fictional" }), rule("P-JD", "JD1", { tenant: "John Doe" })];
+  const pick = (choice: string, confidence: number, probabilities: Record<string, number>) => {
+    const asked: JevRequest[] = [];
+    const decide = async (request: JevRequest): Promise<JevResult> => {
+      asked.push(request);
+      return { ok: true, model: "fictional-decider", ms: 1, answers: { tenant: { type: "choice", choice, confidence, probabilities } } };
+    };
+    return { asked, decide };
+  };
+  const run = async (choice: string, confidence: number, probabilities: Record<string, number>) => {
+    const batch = createBankReferenceBatch(upload(bytes, named));
+    const before = bankFirstPass(batch)!, summary = { ...before.summary };
+    const { asked, decide } = pick(choice, confidence, probabilities);
+    const after = await jevPayerHints(batch, before, decide);
+    return { after, summary, asked, row: after.rows[10] };
+  };
+
+  it("sets only the hint on an unmatched no-reference row", async () => {
+    const { after, summary, asked, row } = await run("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+    expect(asked).toHaveLength(1);
+    expect(asked[0].state).toEqual({ payer: "JOHN DOE", amount: "410.00" });
+    expect(asked[0].questions.tenant).toMatchObject({ type: "choice", criteria: { t1: "Alex Fictional", t2: "John Doe", none: expect.any(String) } });
+    expect(row).toMatchObject({ class: "exception", disposition: "hold", propertyId: "P-JD", hintSource: "jev", reason: "No reference found." });
+    expect(row.suggestion).toMatch(/^Possibly P-JD \(JD1\)/);
+    expect(after.summary).toEqual(summary);
+    expect(after.summary.matched).toBe(14);
+    expect(after.rows.filter(item => item.disposition === "import")).toHaveLength(14);
+  });
+  it("leaves the row unhinted on none", async () => {
+    const { row } = await run("none", 0.97, { t1: 0.01, t2: 0.02, none: 0.97 });
+    expect(row.propertyId).toBeUndefined(); expect(row.suggestion).toBeUndefined(); expect(row.hintSource).toBeUndefined();
+  });
+  it("ignores an answer without confidence or probabilities", async () => {
+    const batch = createBankReferenceBatch(upload(bytes, named)), pass = bankFirstPass(batch)!;
+    await jevPayerHints(batch, pass, async () => ({ ok: true, model: "jev-1.13", ms: 1, answers: { tenant: { type: "choice", choice: "t2" } } }));
+    expect(pass.rows[10].propertyId).toBeUndefined();
+  });
+  it("ignores low confidence and a narrow lead", async () => {
+    expect((await run("t2", 0.85, { t1: 0.1, t2: 0.85, none: 0.05 })).row.propertyId).toBeUndefined();
+    expect((await run("t2", 0.9, { t1: 0.62, t2: 0.9, none: 0 })).row.propertyId).toBeUndefined();
+  });
+  it("asks once per eligible row at import, saves the hints, and never asks on view", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      const store = new BankReferenceStore(db, { decide });
+      const created = store.create(upload(bytes, named));
+      expect(asked).toHaveLength(0); // creating the record alone never bills
+      const eligible = created.firstPass!.rows.filter(row => row.class === "exception" && row.reason === "No reference found." && !row.propertyId && !row.suggestion);
+      expect(eligible).toHaveLength(1);
+      const hinted = await store.addJevHints(created.id);
+      expect(asked).toHaveLength(eligible.length);
+      expect(hinted.revision).toBe(created.revision + 1);
+      expect(hinted.value.jevHints).toEqual([{ rowId: eligible[0].rowId, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) }]);
+      for (let read = 0; read < 3; read++) {
+        const view = store.get(created.id);
+        expect(view.firstPass!.rows.find(row => row.rowId === eligible[0].rowId)).toMatchObject({ propertyId: "P-JD", hintSource: "jev", disposition: "hold", class: "exception" });
+        expect(view.firstPass!.summary).toEqual(created.firstPass!.summary);
+      }
+      await store.addJevHints(created.id); // once per batch
+      expect(asked).toHaveLength(1);
+      // A store without Jev (no model or key) reads the saved hints and asks nothing.
+      expect(new BankReferenceStore(db).get(created.id).firstPass!.rows.find(row => row.rowId === eligible[0].rowId)?.hintSource).toBe("jev");
+      // The review still needs the person's decisions and saves over the hinted revision.
+      const reviewed = store.review(created.id, hinted.revision, firstPassDecisions(store.get(created.id).firstPass!));
+      expect(reviewed.value.jevHints).toHaveLength(1);
+      expect(store.importArtifact(created.id).summary).toEqual({ rows: 27, import: 14, hold: 10, exclude: 3 });
+      expect(asked).toHaveLength(1);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("saves nothing when Jev gave no answer, and skips without decide", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      let calls = 0;
+      const unavailable = new BankReferenceStore(db, { decide: async () => { calls++; return { ok: false, reason: "unavailable" }; } });
+      const created = unavailable.create(upload(bytes, named));
+      const after = await unavailable.addJevHints(created.id);
+      expect(calls).toBe(1);
+      expect(after.revision).toBe(created.revision);
+      expect(after.value.jevHints).toBeUndefined();
+      expect((await new BankReferenceStore(db).addJevHints(created.id)).revision).toBe(created.revision);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("never fails the upload when Jev throws, times out or refuses: the batch stays unhinted at its revision", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const hang = (_request: JevRequest, options?: { signal?: AbortSignal }) => new Promise<JevResult>(resolve =>
+        options?.signal?.addEventListener("abort", () => resolve({ ok: false, reason: "timeout" })));
+      const failing: [string, (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>][] = [
+        ["throws", async () => { throw new Error("fictional Jev failure"); }],
+        ["times out", hang],
+        ["refused", async () => ({ ok: false, reason: "refused" })],
+      ];
+      for (const [, failure] of failing) {
+        let calls = 0;
+        const store = new BankReferenceStore(db, { decide: (request, options) => { calls++; return failure(request, options); } });
+        // As the upload route runs it: create, then the hint pass with the created batch as its fallback.
+        const created = store.create(upload(bytes, named));
+        const started = Date.now();
+        const reply = await store.addJevHints(created.id, { timeoutMs: 50 }).catch(() => null);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        expect(reply).toMatchObject({ id: created.id, revision: created.revision, firstPass: { summary: created.firstPass!.summary } });
+        expect(reply!.value.jevHints).toBeUndefined();
+        expect(reply!.firstPass!.rows.some(row => row.hintSource)).toBe(false);
+        expect(calls).toBe(1);
+      }
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("reads readiness at each hint pass, not when the store was made", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bud-jev-"));
+    let db: WorkflowDatabase | undefined;
+    try {
+      db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
+      const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      let ready = false;
+      const store = new BankReferenceStore(db, { decide, ready: () => ready });
+      const created = store.create(upload(bytes, named));
+      expect((await store.addJevHints(created.id)).revision).toBe(created.revision);
+      expect(asked).toHaveLength(0);
+      ready = true; // the office's Jev model and key arrived after the store was made
+      const hinted = await store.addJevHints(created.id);
+      expect(asked).toHaveLength(1);
+      expect(hinted).toMatchObject({ revision: created.revision + 1, value: { jevHints: [{ propertyId: "P-JD" }] } });
+      expect(hinted.firstPass!.summary).toEqual(created.firstPass!.summary);
+    } finally { db?.close(); await removeFixture(dir); }
+  });
+  it("stays off without an injected decide (the sync pass never asks)", () => {
+    expect(bankFirstPass(createBankReferenceBatch(upload(bytes, named)))!.rows[10].propertyId).toBeUndefined();
   });
 });

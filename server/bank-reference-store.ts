@@ -7,7 +7,8 @@ import type { BankBatchSummary, BankHistoryPage, BankHistoryQuery } from '../sha
 import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
-import { bankFirstPass } from './bank-reference-match.ts';
+import { bankFirstPass, jevPayerHints } from './bank-reference-match.ts';
+import type { JevRequest, JevResult } from './jev-client.ts';
 import { savedTenantDirectoryCsv } from './tenant-directory.ts';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
@@ -23,10 +24,23 @@ export interface SavedBankBatch {
   amends?: BankReviewAmendment;
   supersededBy?: BankReviewSuccessor;
   result?: Pick<ReturnType<typeof reviewBankReferences>, "csv" | "changes" | "originalDigest" | "outputDigest"> & Partial<Pick<ReturnType<typeof reviewBankReferences>, "bytesBase64" | "byteLength" | "encoding">>;
+  /** Jev payer hints, asked once when the batch was imported (`addJevHints`).
+   * Suggestions only: shown with hintSource "jev", never a match or an import. */
+  jevHints?: BankJevHint[];
 }
+export interface BankJevHint { rowId: string; propertyId: string; suggestion: string }
+type JevDecide = (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>;
+/** The whole hint pass, every row included; a slower Jev leaves the batch unhinted. */
+const JEV_HINTS_MS = 15_000;
 export class BankReferenceStore {
   private db: WorkflowDatabase;
-  constructor(db: WorkflowDatabase) { this.db = db; }
+  private decide?: JevDecide;
+  private jevReady: () => boolean;
+  /** `decide`: Jev. `ready` is read on each hint pass (the office's model and key can
+   * change after this store is made); no hint pass runs without both. */
+  constructor(db: WorkflowDatabase, options: { decide?: JevDecide; ready?: () => boolean } = {}) {
+    this.db = db; this.decide = options.decide; this.jevReady = options.ready ?? (() => true);
+  }
   private validated(record: { id: string; revision: number; value: SavedBankBatch }) {
     if (!Number.isSafeInteger(record.revision) || record.revision < 1) throw Object.assign(new Error('This saved bank review needs recovery.'),{status:503});
     validateBankReviewLinks(record,id=>this.db.get<SavedBankBatch>('bank',id));
@@ -79,8 +93,37 @@ export class BankReferenceStore {
     return this.validated(record);
   }
   /** A review as shown to the person: the saved record plus the first-pass
-   * suggestions, derived from the saved batch on every read and never stored. */
-  private view<T extends { value: SavedBankBatch }>(record: T) { return { ...record, firstPass: bankFirstPass(record.value.batch) }; }
+   * suggestions, derived from the saved batch on every read and never stored,
+   * with any saved Jev hints laid on top. Reading never asks Jev. */
+  private view<T extends { value: SavedBankBatch }>(record: T) {
+    const firstPass = bankFirstPass(record.value.batch);
+    for (const hint of record.value.jevHints ?? []) {
+      const row = firstPass?.rows.find(item => item.rowId === hint.rowId);
+      if (row && !row.propertyId && !row.suggestion) Object.assign(row, { propertyId: hint.propertyId, suggestion: hint.suggestion, hintSource: "jev" as const });
+    }
+    return { ...record, firstPass };
+  }
+  /** Ask Jev once for payer hints on a freshly imported, unreviewed batch and
+   * save them with it; returns the batch as shown. Call before the batch is
+   * handed to anyone (the saved revision moves). Never throws for Jev: without
+   * `decide` or readiness, after an earlier ask, on no answer, an error or the
+   * time budget, the batch stays unhinted. A batch changed meanwhile keeps no hints. */
+  async addJevHints(id: string, options: { timeoutMs?: number } = {}) {
+    const record = this.load(id), decide = this.decide;
+    try {
+      const pass = decide && this.jevReady() && !record.value.jevHints && !record.value.result && !record.value.supersededBy ? bankFirstPass(record.value.batch) : null;
+      if (!decide || !pass) return this.view(record);
+      const signal = AbortSignal.timeout(options.timeoutMs ?? JEV_HINTS_MS);
+      let answered = 0;
+      await jevPayerHints(record.value.batch, pass, async (request, asked) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }, { signal });
+      if (!answered || signal.aborted) return this.view(record);
+      const jevHints = pass.rows.flatMap((row): BankJevHint[] => row.hintSource === "jev" ? [{ rowId: row.rowId, propertyId: row.propertyId!, suggestion: row.suggestion! }] : []);
+      return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, record.revision, value => ({ ...value, jevHints }))));
+    } catch {
+      // A conflict, a failed write or a Jev error: the batch as it is now, hints or not.
+      return this.get(id);
+    }
+  }
   /** `tenantList`: an REI Tenants export (CSV text) used as this batch's directory, the
    * given rules as fallback. The merged rules are saved in the batch, so preparing the
    * same file again with a different list meets the existing-review conflict below. */

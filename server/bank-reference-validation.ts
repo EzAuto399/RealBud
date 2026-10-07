@@ -13,7 +13,7 @@ const hold = (): never => { throw Object.assign(new Error('This saved bank revie
 export function validateSavedBankBatch(id: string, value: unknown): SavedBankBatch {
   try {
     if (!object(value) || ![1,2].includes(Number(value.version)) || typeof value.version !== 'number' || !at(value.createdAt) || !object(value.batch) ||
-        Object.keys(value).some(key => !['version','createdAt','reviewedAt','batch','result',...(value.version === 2 ? ['decisions','legacyDecisionsUnavailable','amends','supersededBy'] : [])].includes(key)) ||
+        Object.keys(value).some(key => !['version','createdAt','reviewedAt','batch','result',...(value.version === 2 ? ['decisions','legacyDecisionsUnavailable','amends','supersededBy','jevHints'] : [])].includes(key)) ||
         (value.reviewedAt !== undefined && (!at(value.reviewedAt) || value.result === undefined))) return hold();
     const saved = value as unknown as SavedBankBatch, batch = saved.batch;
     const source = bankBatchSource(batch);
@@ -34,6 +34,11 @@ export function validateSavedBankBatch(id: string, value: unknown): SavedBankBat
     if (saved.version === 2 && saved.result && saved.decisions === undefined && !saved.legacyDecisionsUnavailable) return hold();
     const fresh = createBankReferenceBatch(batch.version === 2 ? { source: source.artifact, columns: batch.input.columns, dateFormat: batch.input.dateFormat, rules: batch.input.rules } : batch.input);
     if (!isDeepStrictEqual(batch, fresh)) return hold();
+    // Jev hints are suggestions on this batch's own rows and properties, one per row.
+    const hints: unknown = saved.jevHints;
+    if (hints !== undefined && (!Array.isArray(hints) || hints.length > fresh.rows.length || new Set(hints.map(hint => object(hint) ? hint.rowId : undefined)).size !== hints.length ||
+        hints.some(hint => !object(hint) || Object.keys(hint).sort().join(',') !== 'propertyId,rowId,suggestion' || !fresh.rows.some(row => row.id === hint.rowId) ||
+          !fresh.input.rules.some(rule => rule.propertyId === hint.propertyId) || typeof hint.suggestion !== 'string' || !hint.suggestion || hint.suggestion.length > 500 || /[\x00-\x1f\x7f]/.test(hint.suggestion)))) return hold();
     if (saved.result !== undefined) {
       const result = saved.result;
       if (!object(result) || Object.keys(result).some(key => !['csv','changes','originalDigest','outputDigest','bytesBase64','byteLength','encoding'].includes(key)) ||

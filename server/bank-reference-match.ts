@@ -1,4 +1,5 @@
-import { parseBankCsv, type BankReferenceBatch, type BankReferenceRule, type BankRowDisposition } from "./bank-reference.ts";
+import { parseBankCsv, type BankReferenceBatch, type BankReferenceRule, type BankRowDisposition, type BankTable } from "./bank-reference.ts";
+import type { JevRequest, JevResult } from "./jev-client.ts";
 
 /** First-pass reference matching for the ANZ export and bank-feed (Redbark)
  * batches (Austin Realty W1). A bank-feed row has a description and a
@@ -15,6 +16,8 @@ export interface FirstPassRow {
   /** The matched property for `matched`; otherwise a suggestion to check. */
   propertyId?: string;
   reason: string; suggestion?: string;
+  /** Set when the suggestion came from a Jev answer: data to check, never a match. */
+  hintSource?: "jev";
 }
 export interface FirstPass {
   layout: "anz-export" | "bank-feed";
@@ -130,14 +133,19 @@ const amountReason = (cents: bigint, rule: BankReferenceRule) => {
 };
 const label = (rule: BankReferenceRule) => `${rule.propertyId} (${rule.reference})`;
 
+// ANZ: narrative, payer, reference 2, reference (col 8). Bank feed: the mapped description and reference.
+const rowCells = (batch: BankReferenceBatch, table: BankTable, index: number) => {
+  const row = batch.rows[index];
+  return batch.source?.provenance ? ["", "", row.narrative, "", "", "", "", row.reference] : table[index + 1].cells;
+};
+
 export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
   const table = parseBankCsv(batch.input.csv), feed = batch.source?.provenance;
   if (table.layout !== "anz-export" && !feed) return null;
   const rules = batch.input.rules;
   const payers = new Map<string, string>();
   const rows = batch.rows.map((row, index): FirstPassRow => {
-    // ANZ: narrative, payer, reference 2, reference (col 8). Bank feed: the mapped description and reference.
-    const cells = feed ? ["", "", row.narrative, "", "", "", "", row.reference] : table[index + 1].cells, cents = BigInt(row.amount.replace(".", ""));
+    const cells = rowCells(batch, table, index), cents = BigInt(row.amount.replace(".", ""));
     const { name, tail } = narrativeTail(cells[2], cells[3]);
     const base = { rowId: row.id, date: row.date, amount: row.amount, payer: maskPayer(name) };
     payers.set(row.id, key(name));
@@ -188,4 +196,50 @@ export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
   return { layout: feed ? "bank-feed" : "anz-export", rows,
     summary: { rows: rows.length, matched: count("matched"), invoice: count("invoice"), exception: count("exception"), notRent: count("not-rent"), carried: carried.length },
     exceptions: order.flatMap(kind => rows.filter(row => row.class === kind)) };
+}
+
+const NO_REFERENCE = "No reference found.";
+/** Options for one Jev question; "none" is always offered too. */
+const MAX_TENANT_OPTIONS = 63;
+
+/**
+ * Optional second pass after `bankFirstPass`: for rows still unmatched with no
+ * reference and no hint, ask Jev which tenant (among those whose rent fits the
+ * amount) the payer is. Off unless the caller injects `decide`. Only the hint
+ * fields change (`propertyId` as a suggestion, `suggestion`, `hintSource`):
+ * the row stays an exception on hold, the summary is untouched, and nothing
+ * is imported on a hint. Jev sees the payer name, the amount and each
+ * candidate's tenant names/aliases (no addresses), nothing else.
+ */
+export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
+  decide: (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<FirstPass> {
+  const table = parseBankCsv(batch.input.csv), rules = batch.input.rules;
+  const named = (rule: BankReferenceRule) => [...new Set([rule.tenant ?? "", ...rule.aliases].map(text => text.trim()).filter(text => text && !/\d/.test(text)))];
+  // ponytail: sequential, one call per unmatched row; batch questions (max 8) if offices see long holds.
+  for (const row of pass.rows) {
+    if (options.signal?.aborted) break;
+    if (row.class !== "exception" || row.reason !== NO_REFERENCE || row.propertyId || row.suggestion) continue;
+    const index = batch.rows.findIndex(item => item.id === row.rowId);
+    if (index < 0) continue;
+    const cells = rowCells(batch, table, index), cents = BigInt(row.amount.replace(".", ""));
+    const candidates = rules.filter(rule => rentFits(cents, rule) && named(rule).length);
+    // ponytail: more fitting tenants than options means no hint rather than a truncated, biased list.
+    if (!candidates.length || candidates.length > MAX_TENANT_OPTIONS) continue;
+    const criteria: Record<string, string> = Object.fromEntries(candidates.map((rule, at) => [`t${at + 1}`, named(rule).join("; ")]));
+    criteria.none = "None of these tenants, or not sure.";
+    const result = await decide({
+      state: { payer: narrativeTail(cells[2], cells[3]).name, amount: row.amount },
+      questions: { tenant: { type: "choice", instructions: "Which tenant most likely made this rent payment, judged by the payer name? Choose none unless one tenant clearly fits.", criteria } },
+    }, { signal: options.signal });
+    if (!result.ok) continue;
+    const answer = result.answers.tenant;
+    // Missing confidence or probabilities count as below the threshold.
+    if (answer?.type !== "choice" || answer.choice === "none" || !answer.probabilities || (answer.confidence ?? 0) < 0.9) continue;
+    const [top = 0, second = 0] = Object.values(answer.probabilities).sort((a, b) => b - a);
+    if (answer.probabilities[answer.choice] !== top || top - second < 0.3) continue;
+    const rule = candidates[Number(answer.choice.slice(1)) - 1];
+    if (!rule) continue;
+    Object.assign(row, { propertyId: rule.propertyId, suggestion: `Possibly ${label(rule)} (AI reading of the payer name: check it)`, hintSource: "jev" });
+  }
+  return pass;
 }
