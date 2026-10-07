@@ -28,9 +28,10 @@ import { batchBackupFixture } from './testing/batch-backup-fixture.ts';
 import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const AT = Date.parse('2026-09-21T03:00:00Z'), roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
-// Thousands of encrypted SQLite inserts and reads. Shared CI runners have much
-// slower disks than a developer machine, so only the hosted budget is raised.
-const BULK_TIMEOUT_MS = process.env.CI ? 120_000 : 30_000;
+// Thousands of encrypted SQLite inserts, each its own fsync'd commit (synchronous=FULL).
+// Fsync time follows disk contention, not this code: alone it takes 13-27 s on a
+// developer Mac, and a full parallel suite pushes it past 30 s. CI was 120 s already.
+const BULK_TIMEOUT_MS = 120_000;
 afterEach(async () => { vi.restoreAllMocks(); for (const c of catalogs.splice(0)) c.close(); await Promise.all(roots.splice(0).map(dir => removeFixture(dir))); });
 async function fixture(workspaceId = randomUUID(), base = true, maxEntries = 20_000) {
   const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud logical restore ')); roots.push(directory);

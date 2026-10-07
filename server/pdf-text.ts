@@ -19,9 +19,13 @@ export function extractPdfText(bytes: Uint8Array, signal?: AbortSignal): Promise
       reads.push(fileURLToPath(new URL('../package.json', import.meta.url)));
     } catch { /* packaged bundle */ }
   }
+  // ponytail: one wall-clock cap. A cold start (new runtime + pdf.js load) took 6.7 s on a
+  // Windows 11 VM for a one-page bill; warm reads 1.3-4 s. The sandbox (fs read allowlist,
+  // 96 MB heap, 70 KB output, 20 pages) bounds a hostile PDF; split cold-start and parse
+  // budgets if real bills ever need more.
   return new Promise((resolve,reject) => {
     const child=execFile(process.execPath,['--permission',...reads.map(path=>`--allow-fs-read=${path}`),'--max-old-space-size=96',worker],
-      {env:{ELECTRON_RUN_AS_NODE:'1'},timeout:5_000,killSignal:'SIGKILL',maxBuffer:70_000,encoding:'utf8',...(signal?{signal}:{})},(error,stdout)=>{
+      {env:{ELECTRON_RUN_AS_NODE:'1'},timeout:20_000,killSignal:'SIGKILL',maxBuffer:70_000,encoding:'utf8',...(signal?{signal}:{})},(error,stdout)=>{
         if(error)return reject(failed(signal?.aborted?'PDF reading was stopped. No contents were accepted.':undefined));
         try {
           const result=JSON.parse(stdout);
