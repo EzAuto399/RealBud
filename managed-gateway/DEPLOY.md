@@ -215,7 +215,8 @@ POST /v1/connectors/events    { "after": <seq> }   device credential, answers { 
   project key: `POST /webhook_subscriptions` with `webhook_url`
   `<base>/v1/webhooks/composio/<companyId>`, the four events and `version: "V3"`.
   Its signing secret goes to the secret store as
-  `REALBUD_COMPOSIO_WEBHOOK_<COMPANY>` (one 0600 file, like the project key).
+  `REALBUD_COMPOSIO_WEBHOOK_<SHA256(companyId), upper hex>` (one 0600 file, like the project key;
+  hashed so no two offices can share a name).
   It is never logged, audited or returned; the audit line
   `connector_webhook_subscribed` carries the subscription id only.
 - **Verification.** The path only selects the office's secret. The raw body
@@ -256,7 +257,7 @@ POST /v1/connectors/events    { "after": <seq> }   device credential, answers { 
    another URL, and `connector_webhook_ambiguous` means it has more than one:
    fix them in the Composio dashboard first. `pending` (503) is safe to repeat.
 3. **Rotate** an office's secret: delete the file
-   `$REALBUD_GATEWAY_SECRETS_DIR/REALBUD_COMPOSIO_WEBHOOK_<COMPANY>`, then call
+   `$REALBUD_GATEWAY_SECRETS_DIR/REALBUD_COMPOSIO_WEBHOOK_<SHA256(companyId)>`, then call
    the route in step 2. It finds the existing subscription, rotates its secret
    (`POST /webhook_subscriptions/{id}/rotate_secret`) and stores the new one.
    Deliveries in between answer 401 and Composio redelivers them. The same

@@ -60,12 +60,19 @@ describe('isolated Auston maintenance rehearsal pack', () => {
     expect(recipe.description).toContain('hold all affected rows, including copies, before duplicate handling');
   });
 
-  it.each(['origin', 'schedule', 'portal-capability', 'executable-asset'])('rejects %s additions through the normal pack validator', defect => {
+  it.each(['origin', 'portal-capability', 'executable-asset'])('rejects %s additions through the normal pack validator', defect => {
     const value = read('realbud-austin-maintenance-rehearsal-v1.json');
     if (defect === 'origin') value.recipes[0].allowedOrigins = ['https://fictional.example.test'];
-    if (defect === 'schedule') value.recipes[0].schedule = { time: '08:00', weekdays: [1] };
     if (defect === 'portal-capability') value.recipes[0].capabilities.push('portal-read');
     if (defect === 'executable-asset') value.scripts = ['run-something'];
+    expect(() => validateCustomerPack(value)).toThrow();
+  });
+
+  it('accepts a recipe schedule only as data: it still installs as an unapproved shadow (customer-packs.test.ts)', () => {
+    const value = read('realbud-austin-maintenance-rehearsal-v1.json');
+    value.recipes[0].schedule = { time: '08:00', weekdays: [1] };
+    expect(() => validateCustomerPack(value)).not.toThrow();
+    value.recipes[0].schedule = { time: '08:00', weekdays: [1], enabled: true };
     expect(() => validateCustomerPack(value)).toThrow();
   });
 
