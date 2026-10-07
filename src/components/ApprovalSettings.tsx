@@ -316,7 +316,7 @@ export function ApprovalSettings() {
           )}
           {listNote ? <p className="text-[12px] text-hold">{listNote}</p> : null}
           <details className="settings-section">
-            <summary><span>Always asks, every time</span><span className="settings-section-hint">Ask or Don't use</span></summary>
+            <summary><span>Always asks, every time</span><span className="settings-section-hint">Sending, paying, signing, notices, account changes, deleting and more</span></summary>
             <div className="settings-section-body"><ul>{LOCKED_ROWS.map(renderRow)}</ul></div>
           </details>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
