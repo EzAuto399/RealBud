@@ -58,7 +58,13 @@ try{
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===base)return route.continue();unexpectedNetwork.push(route.request().url());return route.abort();});
   page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));
   await page.goto(base+'/#/schedule');
-  await page.getByRole('button',{name:'Open job: Bank reference review',exact:true}).click();
+  // The list leaves out a never-run, off Auston job; its deep link (and the sidebar) still open it. Land on Schedule first (a reload drops the door hash, and a job hash set before Schedule mounts reads as an unknown door).
+  const openBankJob=async()=>{
+    await page.evaluate(()=>{location.hash='#/schedule';});
+    await page.getByRole('list',{name:'Jobs',exact:true}).waitFor();
+    await page.evaluate(()=>{location.hash='job-bank-references';});
+  };
+  await openBankJob();
   await page.getByText('Earlier reviews',{exact:true}).click();
   await page.getByLabel('Saved reviews',{exact:true}).selectOption(row.id);
   const decide=async()=>{
@@ -118,7 +124,7 @@ try{
   record('Both versions remain reachable with distinct byte-checked downloads and an earlier-version warning');
   // The session token is per boot: re-prime the tab after the restart, as staff would reconnect.
   await stop();await start();await primeBrowserSession(page.context(),base,token);await page.reload();
-  await page.getByRole('button',{name:'Open job: Bank reference review',exact:true}).click();
+  await openBankJob();
   await page.getByText('Earlier reviews',{exact:true}).click();
   await page.getByLabel('Saved reviews',{exact:true}).selectOption(secondId);
   await page.getByText('Review version 2',{exact:true}).waitFor();
