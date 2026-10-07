@@ -1,5 +1,6 @@
 // Versioned portal recipes.
 import type { PortalRecipe } from "../shared/contracts.ts";
+import type { PortalRecipeResult, PortalRunRequest } from "./portal-recipe-runner.ts";
 import { GRID_SCROLL } from "./hermes-browser-transport.ts";
 
 export const FAKE_PORTAL_RECIPE: PortalRecipe = {
@@ -33,6 +34,8 @@ export interface PortalPackRecipe {
   /** Grant action classes beyond reading this recipe needs (upload, download). */
   grantNeeds: string[];
   steps: PortalRecipeStep[];
+  /** Filters RealBud applies to the rows after the read (filterPortalRunRows), so a recipe never needs a portal's filter controls. */
+  rowFilter?: PortalRowFilter[];
   /** Labels that end Bud's part: never pressed by the runner. */
   stopBefore: string[];
   onUnknown?: string;
@@ -61,6 +64,10 @@ export interface PortalRecipePack {
   recipes: Record<string, PortalPackRecipe>;
   batches: Record<string, string[]>;
 }
+
+/** Keep rows whose `column` cell, read `as` a number or a date, is `op` the run's `input`. */
+export interface PortalRowFilter { column: string; op: ">=" | "<="; input: string; as: "number" | "date" }
+const ROW_FILTER_KEYS = ["as", "column", "input", "op"].join();
 
 const INVALID_PACK = "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.";
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === "string");
@@ -92,8 +99,53 @@ export function parsePortalRecipePack(value: unknown): PortalRecipePack {
       if (keys[0] === "run" && !Object.hasOwn(doc.recipes, String(step.run))) fail();
     }
     if (recipe.stopBefore.some(label => !doc.labels.consequential.includes(label))) fail();
+    if (recipe.rowFilter !== undefined && (!Array.isArray(recipe.rowFilter) || recipe.rowFilter.some(filter => !object(filter) || Object.keys(filter).sort().join() !== ROW_FILTER_KEYS ||
+      typeof filter.column !== "string" || !filter.column.trim() || !(filter.op === ">=" || filter.op === "<=") || !(filter.as === "number" || filter.as === "date") ||
+      typeof filter.input !== "string" || !recipe.inputs.includes(filter.input)))) fail();
   }
   for (const members of Object.values(doc.batches)) if (!strings(members) || members.some(name => !Object.hasOwn(doc.recipes, name))) fail();
   return structuredClone(doc);
 }
 
+
+// ── row filters, after the read ───────────────────────────────────────────
+const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+/** The row's key for a column: the header itself, or a DataTables header that reads "<name>: activate to sort column …". */
+const columnKey = (row: Record<string, string>, column: string) => Object.keys(row).find(key => tidy(key) === tidy(column) || tidy(key).startsWith(`${tidy(column)}:`));
+/** A number ("$1,320.00", "-3") or a date (YYYY-MM-DD or DD/MM/YYYY, time ignored) as a comparable value; null when unreadable. */
+function comparable(text: string, as: PortalRowFilter["as"]): number | string | null {
+  const clean = text.trim();
+  if (as === "number") { const plain = clean.replace(/[$,\s]/g, ""); return /^-?\d+(\.\d+)?$/.test(plain) ? Number(plain) : null; }
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(clean); if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(clean);
+  return dmy ? `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}` : null;
+}
+/** Pure: the rows a recipe's row filters keep. A filter whose column no row shows, or whose input is unreadable, is not
+ * applied (its column is listed in `unapplied`) and keeps every row; a row whose cell is unreadable fails that filter. */
+export function filterPortalRows(recipe: Pick<PortalPackRecipe, "rowFilter">, inputs: Record<string, string>, rows: Array<Record<string, string>>): { rows: Array<Record<string, string>>; unapplied: string[] } {
+  const unapplied: string[] = [];
+  const active = (recipe.rowFilter ?? []).filter(filter => {
+    const ok = comparable(inputs[filter.input] ?? "", filter.as) !== null && rows.some(row => columnKey(row, filter.column) !== undefined);
+    if (!ok && rows.length) unapplied.push(filter.column);
+    return ok;
+  });
+  const keep = (row: Record<string, string>) => active.every(filter => {
+    const key = columnKey(row, filter.column);
+    const cell = key === undefined ? null : comparable(row[key], filter.as), bound = comparable(inputs[filter.input], filter.as)!;
+    return cell !== null && (filter.op === ">=" ? cell >= bound : cell <= bound);
+  });
+  return { rows: rows.filter(keep), unapplied: [...new Set(unapplied)] };
+}
+/** A read whose rows were filtered after the run: `read` is how many rows the portal showed, so completeness is judged on those. */
+export type FilteredPortalResult = PortalRecipeResult & { filtered?: { read: number; unapplied: string[] } };
+/** Each run's results with its recipe's row filters applied (sub-recipes use the run's inputs). The runner's rows are not changed. */
+export function filterPortalRunRows(pack: PortalRecipePack, runs: readonly PortalRunRequest[], results: readonly PortalRecipeResult[]): FilteredPortalResult[] {
+  const one = (result: PortalRecipeResult, inputs: Record<string, string>): FilteredPortalResult => {
+    const sub = result.sub ? { sub: Object.fromEntries(Object.entries(result.sub).map(([name, inner]) => [name, one(inner, inputs)])) } : {};
+    const recipe = pack.recipes[result.recipe];
+    if (!recipe?.rowFilter?.length || result.table === "unread") return { ...result, ...sub };
+    const kept = filterPortalRows(recipe, inputs, result.rows);
+    return { ...result, ...sub, rows: kept.rows, filtered: { read: result.rows.length, unapplied: kept.unapplied } };
+  };
+  return results.map((result, index) => one(result, runs[index]?.inputs ?? {}));
+}
