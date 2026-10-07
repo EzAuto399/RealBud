@@ -1,6 +1,7 @@
 import type { LoopRun } from '@shared/contracts';
 import { reiWaitNotice } from '@shared/rei-sign-in-wait';
 import { SHOW_DESK_EVENT } from './notify-desktop';
+import { evaluatorForLoop } from '@shared/workflow-catalog';
 
 const delivered = new Set<string>();
 const previousHold = new Map<string, string>();
@@ -8,7 +9,7 @@ const previousHold = new Map<string, string>();
 export function notifyRoutineRun(run: LoopRun): void {
   const rei = reiWaitNotice(run);
   if (rei) { notifyReiWait(run, rei === 'waiting'); return; }
-  if (!['weekly-bills', 'inbound-triage', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'].includes(run.loopId) || run.seenAt ||
+  if (!evaluatorForLoop(run.loopId)?.notify || run.seenAt ||
       !['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'].includes(run.status) ||
       typeof Notification === 'undefined' || Notification.permission !== 'granted' || delivered.has(run.id)) return;
   const hold = ['failed', 'missed', 'interrupted'].includes(run.status), signature = `${run.status}:${run.detail}`;
