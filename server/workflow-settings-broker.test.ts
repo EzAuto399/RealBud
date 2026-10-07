@@ -19,6 +19,7 @@ import { removeFixture } from "./testing/private-fixture.ts";
 import { LoopManager, type LoopManagerOptions } from "./routines.ts";
 import type { LoopbackToolServer } from "./web-research-broker.ts";
 import { createApprovalSettings } from "./approval-settings.ts";
+import { APPROVAL_DENIED, APPROVAL_TIMED_OUT } from "./approval-answer.ts";
 import { defaultApprovalSettings, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { APPROVAL_POLICY_CONFLICT, bindApprovalPolicy, bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
 
@@ -98,7 +99,7 @@ describe("working rules broker", () => {
     const { settings, maintenance, inspection, agencySaves } = await stores();
     const cards = await start(settings, async () => false);
     expect(await call("workflow_settings_propose", { target: "maintenance_month_rule", values: { span: "rolling30" }, reason: "Sherry compares the last 30 days." }))
-      .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+      .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
     expect(cards[0]).toBe("Change maintenance month rule\nComparison window: calendar month → rolling 30 days\nWhy: Sherry compares the last 30 days.");
     expect(await call("workflow_settings_propose", { target: "morning_priorities", values: { localTime: "07:00", weekdays: [1, 3, 5] }, reason: "Earlier\nstart‮" })).toMatchObject({ isError: true });
     expect(cards[1]).toBe("Change Morning priorities preferences\nTime: 7:30 am → 7:00 am\nDays: Mon, Tue, Wed, Thu, Fri → Mon, Wed, Fri\nSaving changes the agency setup, so Morning priorities and Weekly bills turn off until their setup is reviewed again.\nWhy: Earlier start");
@@ -161,7 +162,7 @@ describe("working rules broker", () => {
     const cards = await start(settings, async () => allow);
     await call("workflow_settings_propose", { target: "inspection_rules", values: { cycleMonths: 3 }, reason: "Try three." });
     allow = false;
-    expect(await call("workflow_settings_restore", { target: "inspection_rules", reason: "Go back." })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+    expect(await call("workflow_settings_restore", { target: "inspection_rules", reason: "Go back." })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
     expect((await inspection.read()).rules.cycleMonths).toBe(3);
     allow = true;
     expect((await call("workflow_settings_restore", { target: "inspection_rules", reason: "Go back." })).isError).toBeUndefined();
@@ -185,7 +186,7 @@ describe("working rules broker", () => {
       const approve = vi.fn(async () => true);
       await start(settings, approve);
       const result = await call("workflow_settings_read", { target: "loop_schedule" });
-      expect(result.content[0].text).toContain('- loop_schedule weekly-bills "Weekly bills review" (revision 1, off): Mondays 8:00 am {"time":"08:00","weekdays":[1]}');
+      expect(result.content[0].text).toContain('- loop_schedule weekly-bills "Weekly bills review" (revision 1, off, can repeat weekdays|every-n-days): Mondays 8:00 am {"time":"08:00","weekdays":[1]}');
       expect(result.content[0].text).toContain('- loop_schedule inbound-triage "Morning priorities" (revision 1, off, time set by agency setup)');
       expect(result.structuredContent.loops.find((row: any) => row.loopId === "morning-arrears")).toEqual({ loopId: "morning-arrears", name: "Morning money check",
         enabled: true, revision: 1, schedule: { time: "07:30", weekdays: [1, 2, 3, 4, 5] }, waitingForPlan: false, agencyTimed: false });
@@ -197,7 +198,7 @@ describe("working rules broker", () => {
       let allow = false;
       const cards = await start(settings, async () => allow);
       const propose = () => call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "weekly-bills", schedule: { weekdays: [4, 1] } }, reason: "Bills land on Thursdays too." });
-      expect(await propose()).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+      expect(await propose()).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
       expect(cards[0]).toBe("Change workflow schedule\nWeekly bills review: Mondays 8:00 am → Mondays and Thursdays 8:00 am\nIt stays off until someone switches it on in Schedule.\nWhy: Bills land on Thursdays too.");
       expect(loop("weekly-bills")).toMatchObject({ revision: 1, enabled: false, schedule: { time: "08:00", weekdays: [1] } });
       allow = true;
@@ -223,10 +224,10 @@ describe("working rules broker", () => {
       const { settings, loop } = await stores();
       const cards = await start(settings, async () => true);
       const propose = (values: unknown) => call("workflow_settings_propose", { target: "loop_schedule", values, reason: "x" });
-      expect(await propose({ loopId: "maintenance-review", schedule: { enabled: true } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes time, weekdays") }] });
+      expect(await propose({ loopId: "maintenance-review", schedule: { enabled: true } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes repeat, time, weekdays. It can repeat on chosen weekdays or every day (weekdays).") }] });
       expect(await propose({ loopId: "maintenance-review", schedule: { time: "09:00" }, enabled: true })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("loopId and schedule") }] });
       expect(await propose({ loopId: "inbound-triage", schedule: { time: "06:00" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("agency setup") }] });
-      expect(await propose({ loopId: "morning-arrears", schedule: { intervalDays: 2, anchorDate: "2026-10-07" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes time, weekdays.") }] });
+      expect(await propose({ loopId: "morning-arrears", schedule: { intervalDays: 2, anchorDate: "2026-10-07" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Morning money check can only repeat on chosen weekdays or every day (weekdays), as in Schedule.") }] });
       expect(await propose({ loopId: "weekly-bills", schedule: { time: "8am" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("HH:MM") }] });
       expect(await propose({ loopId: "weekly-bills", schedule: { intervalDays: 40, anchorDate: "2026-10-05" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("1–31") }] });
       expect(await propose({ loopId: "no-such-workflow", schedule: { time: "09:00" } })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("loopId") }] });
@@ -250,6 +251,49 @@ describe("working rules broker", () => {
       expect(cards[0]).toBe("Change workflow schedule\nFictional Friday check: Fridays 4:00 pm → Fridays 3:00 pm\nIt still waits for its plan to be approved, and approving the plan uses the plan's own time.\nWhy: Earlier.");
       expect(loop("recipe-fictional-job")).toMatchObject({ waitingForPlan: true, enabled: false, nextRunAt: null, schedule: { time: "15:00", weekdays: [5] } });
     });
+
+    it("changes the repeat pattern only to one Schedule offers for that workflow, with the true before → after", async () => {
+      const { settings, loop } = await stores();
+      const cards = await start(settings, async () => true);
+      const propose = (loopId: string, schedule: unknown) => call("workflow_settings_propose", { target: "loop_schedule", values: { loopId, schedule }, reason: "Sherry asked." });
+      // The inspection draft repeats on the first weekday of each month and Schedule only edits its time: "every Tuesday" is refused before any card.
+      expect(await propose("inspection-draft", { repeat: "weekdays", weekdays: [2], time: "09:00" })).toMatchObject({ isError: true,
+        content: [{ text: "Inspection draft can only repeat on the first weekday of each month (first-weekday-of-month), as in Schedule. Nothing was changed." }] });
+      expect(await propose("inspection-draft", { weekdays: [2] })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("schedule takes repeat, time. It can repeat on the first weekday of each month") }] });
+      expect(await propose("weekly-bills", { repeat: "first-weekday-of-month" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Weekly bills review can only repeat on chosen weekdays or every day (weekdays) or every N days") }] });
+      expect(await propose("morning-arrears", { repeat: "every-n-days", intervalDays: 2, anchorDate: "2026-10-07" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Morning money check can only repeat on chosen weekdays or every day (weekdays), as in Schedule.") }] });
+      expect(await propose("bank-references", { repeat: "every-n-days", intervalDays: 2, anchorDate: "2026-10-02" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("already runs Every 2 days") }] });
+      expect(cards).toEqual([]);
+      expect(loop("inspection-draft")).toMatchObject({ revision: 1, schedule: { weekdays: [1, 2, 3, 4, 5], monthly: "first-weekday" } });
+      // Its time still moves, and it stays monthly and off.
+      expect((await propose("inspection-draft", { time: "10:00" })).isError).toBeUndefined();
+      expect(cards.at(-1)).toBe("Change workflow schedule\nInspection draft: First weekday of each month, 9:00 am → First weekday of each month, 10:00 am\nIt stays off until someone switches it on in Schedule.\nWhy: Sherry asked.");
+      expect(loop("inspection-draft")).toMatchObject({ revision: 2, enabled: false, schedule: { time: "10:00", weekdays: [1, 2, 3, 4, 5], monthly: "first-weekday" } });
+      // Every 2 days → every Tuesday: nothing of the old cadence carries over.
+      expect(await propose("bank-references", { repeat: "weekdays", weekdays: [2], intervalDays: 3 })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("leave out intervalDays") }] });
+      expect((await propose("bank-references", { repeat: "weekdays", weekdays: [2], time: "09:00" })).isError).toBeUndefined();
+      expect(cards.at(-1)).toContain("Bank reference review: Every 2 days from 2 Oct 2026, 8:00 am → Tuesdays 9:00 am");
+      expect(loop("bank-references").schedule).toEqual({ type: "daily", time: "09:00", weekdays: [2] });
+      expect(loop("bank-references")).toMatchObject({ revision: 2, enabled: false });
+      // And back to every N days, which needs its interval and first date.
+      expect(await propose("bank-references", { repeat: "every-n-days" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("give intervalDays (1–31) and anchorDate") }] });
+      expect((await propose("bank-references", { repeat: "every-n-days", intervalDays: 7, anchorDate: "2026-10-13" })).isError).toBeUndefined();
+      expect(cards.at(-1)).toContain("Bank reference review: Tuesdays 9:00 am → Every 7 days from 13 Oct 2026, 9:00 am");
+      expect(loop("bank-references")).toMatchObject({ revision: 3, enabled: false, schedule: { weekdays: [0, 1, 2, 3, 4, 5, 6], intervalDays: 7, anchorDate: "2026-10-13" } });
+    });
+  });
+
+  it("tells Bud a card nobody answered, or a stop, apart from Don't allow, and changes nothing", async () => {
+    const { settings, loop } = await stores();
+    let answer: { allowed: boolean; resolution: "user" | "timeout" | "stopped" } = { allowed: false, resolution: "timeout" };
+    broker = await startWorkflowSettingsBroker({ turnId: () => "turn-1", settings: () => settings, approve: async () => answer });
+    const propose = () => call("workflow_settings_propose", { target: "loop_schedule", values: { loopId: "weekly-bills", schedule: { time: "09:00" } }, reason: "Later." });
+    expect(await propose()).toMatchObject({ isError: true, content: [{ text: APPROVAL_TIMED_OUT }] });
+    answer = { allowed: false, resolution: "stopped" };
+    expect(await propose()).toMatchObject({ isError: true, content: [{ text: "Bud is no longer working on this request. Nothing was changed." }] });
+    answer = { allowed: false, resolution: "user" };
+    expect(await propose()).toMatchObject({ isError: true, content: [{ text: `${APPROVAL_DENIED} Do not retry without a new request.` }] });
+    expect(loop("weekly-bills")).toMatchObject({ revision: 1, schedule: { time: "08:00" } });
   });
 });
 
@@ -280,7 +324,7 @@ describe("approval settings (approval_policy)", () => {
     expect(read.content[0].text).toContain('- approval_policy this computer "This computer" (revision 0, you can change it): nothing saved');
     expect(cards).toEqual([]);
     const stricter = [{ group: "app:gmail", choice: "ask" }, { group: "class:pay", choice: "deny" }];
-    expect(await propose(stricter)).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+    expect(await propose(stricter)).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
     expect(cards[0]).toBe("Change approval settings\nGmail: Recommended → Ask every time\nAlways asks: Payments: Recommended → Don't use\nWhy: Sherry wants to check these first.");
     expect((await saved()).local.revision).toBe(0);
     allow = true;
