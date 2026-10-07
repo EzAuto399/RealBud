@@ -21,23 +21,39 @@ const MAX_RECEIPT_BYTES = 64 * 1024;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const count = (value: unknown): number | undefined => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
 
-export function emptyRunUsage(): RunUsage { return { requestIds: [], calls: 0 }; }
+/** `unidentified` counts calls whose answer carried no usable request id (a
+ * repeated id is one receipt, not a gap). Any such call makes the run's price
+ * incomplete. Absent means none.
+ * ponytail: declared here, not on shared/contracts.ts RunUsage (outside this
+ * change's files); move it there when that file is next edited. */
+export type RecordedRunUsage = RunUsage & { unidentified?: number };
 
-function addRequestId(usage: RunUsage, id: unknown): void {
-  if (typeof id === "string" && REQUEST_ID.test(id) && !usage.requestIds.includes(id) && usage.requestIds.length < MAX_RUN_REQUEST_IDS) usage.requestIds.push(id);
+export function emptyRunUsage(): RecordedRunUsage { return { requestIds: [], calls: 0 }; }
+
+const usableId = (id: unknown): id is string => typeof id === "string" && REQUEST_ID.test(id);
+function addRequestId(usage: RunUsage, id: string): void {
+  if (!usage.requestIds.includes(id) && usage.requestIds.length < MAX_RUN_REQUEST_IDS) usage.requestIds.push(id);
 }
 
 /** One request forwarded to Modelvia, with the `X-Request-Id` its answer carried. */
-export function noteModelviaRequest(usage: RunUsage, requestId: string | null): void {
+export function noteModelviaRequest(usage: RecordedRunUsage, requestId: string | null): void {
   usage.calls += 1;
-  addRequestId(usage, requestId);
+  if (usableId(requestId)) addRequestId(usage, requestId);
+  else usage.unidentified = (usage.unidentified ?? 0) + 1;
 }
 
 /** A non-streamed JSON answer: its token `usage`, and on a 409
- * `request_already_processed` the original request's id from its receipt. */
-export function noteModelviaReply(usage: RunUsage, body: unknown): void {
+ * `request_already_processed` the original request's id from its receipt,
+ * which identifies a call whose answer carried no id of its own.
+ * ponytail: with two calls of one lease in flight, that call may be a
+ * different id-less one; pass the reply's own header id here if that matters. */
+export function noteModelviaReply(usage: RecordedRunUsage, body: unknown): void {
   const refusal = modelviaRefusal(body);
-  if (refusal?.code === "request_already_processed") addRequestId(usage, refusal.receipt?.requestId);
+  const original = refusal?.code === "request_already_processed" ? refusal.receipt?.requestId : undefined;
+  if (usableId(original)) {
+    addRequestId(usage, original);
+    if (usage.unidentified) { usage.unidentified -= 1; if (!usage.unidentified) delete usage.unidentified; }
+  }
   const tokens = record(body) && record(body.usage) ? body.usage : null;
   const input = count(tokens?.prompt_tokens), output = count(tokens?.completion_tokens);
   if (input !== undefined) usage.inputTokens = (usage.inputTokens ?? 0) + input;
@@ -46,12 +62,14 @@ export function noteModelviaReply(usage: RunUsage, body: unknown): void {
 
 /** A saved usage record, or undefined when absent or unreadable: a run saved
  * before usage was recorded loads without it. */
-export function cleanRunUsage(value: unknown): RunUsage | undefined {
+export function cleanRunUsage(value: unknown): RecordedRunUsage | undefined {
   if (!record(value) || !Array.isArray(value.requestIds)) return undefined;
-  const calls = count(value.calls);
-  if (calls === undefined) return undefined;
-  const usage: RunUsage = { requestIds: [], calls };
-  for (const id of value.requestIds) addRequestId(usage, id);
+  const calls = count(value.calls), unidentified = count(value.unidentified);
+  // An unreadable count of id-less calls never reads as none.
+  if (calls === undefined || value.unidentified !== undefined && unidentified === undefined) return undefined;
+  const usage: RecordedRunUsage = { requestIds: [], calls };
+  for (const id of value.requestIds) if (usableId(id)) addRequestId(usage, id);
+  if (unidentified) usage.unidentified = unidentified;
   const input = count(value.inputTokens), output = count(value.outputTokens);
   if (input !== undefined) usage.inputTokens = input;
   if (output !== undefined) usage.outputTokens = output;
@@ -64,6 +82,8 @@ export type RunCost =
   | { state: "priced"; requests: number; chargedNanoAud: string }
   | { state: "pending"; requests: number }
   | { state: "not-priced"; requests: number }
+  /** Some calls carried no receipt id: their charge cannot be read, so no sum is a total. */
+  | { state: "incomplete"; requests: number }
   | { state: "unavailable"; requests: number };
 
 /** The office's granted endpoint and key, read by the caller per request. */
@@ -95,9 +115,10 @@ async function readReceipt(fetcher: typeof fetch, base: string, key: string, id:
  * "unavailable" rather than a partial total. Wholesale and margin are never
  * read: a project key's receipt carries only the office's own charge.
  */
-export async function runCost(usage: RunUsage | undefined, access: RunCostAccess | null, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<RunCost> {
+export async function runCost(usage: RecordedRunUsage | undefined, access: RunCostAccess | null, options: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<RunCost> {
   if (!usage || usage.calls === 0 && usage.requestIds.length === 0) return { state: "none" };
   const requests = Math.max(usage.calls, usage.requestIds.length);
+  if (usage.unidentified) return { state: "incomplete", requests };
   // ponytail: a run past MAX_RUN_REQUEST_IDS shows "unavailable" rather than
   // an understated sum; keep every id (or a running total) if runs grow that long.
   if (!access || !usage.requestIds.length || usage.requestIds.length >= MAX_RUN_REQUEST_IDS) return { state: "unavailable", requests };

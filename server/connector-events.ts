@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { DATA_DIR, type AppConfig } from './config.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
-import { managedConnectorAccess, managedConnectorConfigured, managedConnectorTriggers, pullConnectorEvents, setConnectorTrigger, type ManagedTrigger } from './managed-connectors.ts';
+import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings, managedConnectorTriggers, pullConnectorEvents, setConnectorTrigger, type ManagedTrigger } from './managed-connectors.ts';
 import type { Loop, LoopId, LoopRun } from './routines.ts';
 
 /** Only Morning priorities may be woken by new mail for now. */
@@ -20,7 +20,14 @@ const RECONNECT_GMAIL = 'Reconnect Gmail in Connected apps. The morning run stil
 const STOPPED = 'New-mail checks stopped. Turn this off and on again. The morning run still happens.';
 
 export type NewMailState = { loopId: string; enabled: boolean; available: boolean; reason?: string };
-type State = { version: 1; cursor: number; newMail: Record<string, boolean> };
+/** `binding` names the service endpoint and computer credential the cursor came from (a hash prefix, never the credential). */
+type State = { version: 1; cursor: number; binding?: string; newMail: Record<string, boolean> };
+
+/** A cursor from another endpoint or credential would acknowledge events this computer never read. */
+const cursorBinding = (cfg: AppConfig): string => {
+  const { url, key } = managedConnectorSettings(cfg);
+  return createHash('sha256').update(`realbud-connector-cursor\0${url}\0${key}`).digest('hex').slice(0, 32);
+};
 
 export interface ConnectorEventsOptions {
   cfg: () => AppConfig;
@@ -44,10 +51,11 @@ function parseState(value: unknown): State {
   if (value === undefined) return { version: 1, cursor: 0, newMail: {} };
   const record = value as Partial<State> | null;
   if (!record || typeof record !== 'object' || record.version !== 1 || !Number.isSafeInteger(record.cursor) || record.cursor! < 0 ||
+    (record.binding !== undefined && (typeof record.binding !== 'string' || !/^[a-f0-9]{32}$/.test(record.binding))) ||
     !record.newMail || typeof record.newMail !== 'object' || Object.values(record.newMail).some(flag => typeof flag !== 'boolean')) {
     throw Object.assign(new Error('New-mail checks need recovery. Saved schedules are unchanged.'), { status: 503 });
   }
-  return { version: 1, cursor: record.cursor!, newMail: { ...record.newMail } };
+  return { version: 1, cursor: record.cursor!, ...(record.binding ? { binding: record.binding } : {}), newMail: { ...record.newMail } };
 }
 
 export class ConnectorEvents {
@@ -114,7 +122,9 @@ export class ConnectorEvents {
     // A paused loop does nothing: no pull, no run, the cursor stays for when it resumes.
     const wake = () => this.options.loops.listLoops().filter(loop => ELIGIBLE.has(loop.id) && state.newMail[loop.id] === true && loop.enabled && loop.available);
     if (!wake().length) return;
-    const page = await pullConnectorEvents(cfg, state.cursor);
+    // A cursor saved under another endpoint or credential starts over at 0, which acknowledges nothing.
+    const binding = cursorBinding(cfg);
+    const page = await pullConnectorEvents(cfg, state.binding === binding ? state.cursor : 0);
     const loops = wake();
     if (!this.timer || !loops.length) return;
     const mail = page.events.filter(event => event.kind === 'message' && event.app === 'gmail' && event.event === 'new-message');
@@ -127,7 +137,7 @@ export class ConnectorEvents {
         } catch { return; } // Busy or held: keep the cursor and try again on the next pull.
       }
     }
-    await this.update(saved => { saved.cursor = page.cursor; });
+    await this.update(saved => { saved.cursor = page.cursor; saved.binding = binding; });
   }
 
   private assertEligible(loopId: string) {
@@ -140,7 +150,8 @@ export class ConnectorEvents {
     const access = await managedConnectorAccess(cfg);
     const triggers = managedConnectorTriggers(cfg).filter(row => row.app === 'gmail' && row.event === 'new-message');
     const trigger = triggers.find(row => row.state === 'expired') ?? triggers.find(row => row.state === 'provider_disabled') ?? triggers[0];
-    if (!access.services.gmail?.connected) return { available: false, reason: trigger?.state === 'expired' ? RECONNECT_GMAIL : CONNECT_GMAIL, trigger };
+    // The revision travels here too: turning off an expired Gmail's trigger is still reviewed by the gateway.
+    if (!access.services.gmail?.connected) return { available: false, reason: trigger?.state === 'expired' ? RECONNECT_GMAIL : CONNECT_GMAIL, policyRevision: access.policyRevision, trigger };
     return { available: true, policyRevision: access.policyRevision, trigger };
   }
 

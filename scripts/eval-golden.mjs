@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readSessionToken } from './local-session.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 import { pmInboxCases } from './lib/pm-inbox-fixture.mjs';
-import { awaitingCards, consequential, entitiesOutsideFixture, extractJson, gateVerdict, safetyFailures } from './lib/eval-golden-grade.mjs';
+import { awaitingCards, entitiesOutsideFixture, executedTools, extractJson, gateVerdict, safetyFailures } from './lib/eval-golden-grade.mjs';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { provisionMockWorkerGrant } from './testing/mock-worker-grant.mjs';
 
@@ -89,7 +89,7 @@ const SUPPLIER_DIFF = { added: ['FS-PAINT'], removed: ['FS-ROOF'], emailChanged:
 const OUTSIDE = 'rentals.enquiry@outside-agency.example.invalid';
 const json = (shape) => `End your reply with one fenced json block: ${shape}`;
 const sameSet = (a, b) => JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
-const ran = trace => trace.events.filter(e => e.type === 'item.started' && e.itemType === 'tool' && consequential(e.title)).map(e => e.title);
+const ran = trace => executedTools(trace.events);
 
 // ── Tasks: prompts are what a person would type in Ask; graders see only the reply and the recorded state ──
 const TASKS = [
@@ -221,11 +221,13 @@ const SETUPS = {
 
 // ── One office per task x trial ──
 const freePort = async () => { const s = createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const { port } = s.address(); await new Promise(r => s.close(r)); return port; };
-async function boot(task, scratch) {
-  const home = join(scratch, 'home'), data = join(home, 'data'), hermes = join(data, 'hermes');
+/** Starts `office` in place, so the caller's `stop(office)` releases whatever
+ * started (listener, service) even when a later step fails. */
+async function boot(task, office) {
+  const { scratch } = office, home = join(scratch, 'home'), data = join(home, 'data'), hermes = join(data, 'hermes');
   for (const [label, p] of [['REALBUD_DATA_DIR', data], ['REALBUD_HERMES_HOME', hermes], ['The trial log folder', scratch]]) guardPath(label, p);
   mkdirSync(hermes, { recursive: true, mode: 0o700 });
-  const office = { scratch, data, logs: '', granted: [], closers: [] };
+  office.data = data;
   const answer = answers?.tasks?.[task.id];
   office.script = join(scratch, 'fake-acp-script.json');
   const config = { instances: { hermes: { driver: 'hermesAgent', config: { cli: live ? live.cli : join(root, 'server/testing/fake-acp-cli.ts') },
@@ -269,7 +271,6 @@ async function boot(task, scratch) {
   };
   office.thread = (await office.request('/api/bots')).bots.find(b => b.id === 'bud')?.threadId;
   if (!office.thread) throw new Error('Bud is missing from a fresh office.');
-  return office;
 }
 async function stop(office) {
   const { child } = office;
@@ -308,9 +309,11 @@ async function runTrial(task, n) {
   const started = Date.now(), dir = join(out, task.id, `trial-${n}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'realbud-eval-'));
-  let office, row;
+  // Created before boot so the finally below stops a half-started office too.
+  const office = { scratch, logs: '', granted: [], closers: [] };
+  let row;
   try {
-    office = await boot(task, scratch);
+    await boot(task, office);
     const setup = task.setup ? await SETUPS[task.setup](office) : {};
     const prompts = task.prompts(setup), turns = answers?.tasks?.[task.id]?.turns ?? [];
     const replies = [], awaiting = [];
@@ -331,7 +334,7 @@ async function runTrial(task, n) {
   } catch (error) {
     row = { trial: n, pass: false, grade: [`harness: ${sanitize(error instanceof Error ? error.message : error).slice(0, 800)}`], safety: [], awaiting: [], effects: [], tokens: null, costUsd: null, elapsedMs: Date.now() - started };
   } finally {
-    if (office) { await stop(office); writeFileSync(join(dir, 'server.log'), sanitize(office.logs), { mode: 0o600 }); }
+    await stop(office); writeFileSync(join(dir, 'server.log'), sanitize(office.logs), { mode: 0o600 });
     rmSync(scratch, { recursive: true, force: true });
   }
   writeFileSync(join(dir, 'result.json'), sanitize(JSON.stringify(row, null, 2)) + '\n', { mode: 0o600 });

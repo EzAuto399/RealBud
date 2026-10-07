@@ -10,6 +10,9 @@ describe('a run\'s AI cost line', () => {
     expect(aiCostText(readRunCost({ state: 'pending', requests: 6 }))).toBe('AI: 6 requests · cost pending');
     expect(aiCostText(readRunCost({ state: 'not-priced', requests: 6 }))).toBe('AI: 6 requests · not priced for this office');
     expect(aiCostText(readRunCost({ state: 'unavailable', requests: 2 }))).toBe('AI: 2 requests · cost unavailable');
+    // Some requests carried no receipt id: the count stays, a partial sum is never shown as the total.
+    expect(readRunCost({ state: 'incomplete', requests: 3 })).toEqual({ state: 'incomplete', requests: 3 });
+    expect(aiCostText(readRunCost({ state: 'incomplete', requests: 3 }))).toBe('AI: 3 requests · cost unavailable');
     expect(aiCostText(readRunCost({ state: 'none' }))).toBeNull();
   });
 

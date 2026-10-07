@@ -537,7 +537,7 @@ export class ManagedConnectors {
           const access = await (this.options.access ?? getGmailReadOnlyAccess)(binding); current();
           requireThat(binding.accountId && access.services.gmail?.accounts.some(account => account.id === binding.accountId && account.status === 'ACTIVE'), 'connector_account_not_connected', 409);
         }
-        return { status: 200, body: await this.triggers.set(device.companyId, device.projectKeyEnv, binding, spec, enabled as boolean, input.signal) };
+        return { status: 200, body: await this.triggers.set(device, binding, spec, enabled as boolean, input.signal) };
       }
       if (input.path === '/v1/connectors/status' && input.method === 'GET') {
         const services: Record<string, ServiceStatus> = {}; const names: string[] = []; let officeShared: ServiceStatus | undefined;
