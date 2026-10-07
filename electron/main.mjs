@@ -566,7 +566,7 @@ officeIpc.handle("screen:frame", async () => {
 // Returns false when the renderer should show the clipboard fallback.
 officeIpc.handle("engine:open-terminal", async (_event, command) => {
   if (typeof command !== "string" || !command.trim()) return false;
-  clipboard.writeText(command);
+  await clipboard.writeText(command); // Electron 44: clipboard writes return a promise
   return openBlankTerminal();
 });
 
