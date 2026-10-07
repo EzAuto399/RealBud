@@ -16,6 +16,8 @@ Fork of OpenMausBot (MIT). We own the **visible window**. Hermes is a pinned **h
 | Author | Milind Soni | **EzAuto399** |
 | Do not use | PropertyMe (PMS trademark), Hermes, OpenMausBot | — |
 
+Bud's self-description is one text: `BUD_IDENTITY` in `shared/bud-identity.ts` is the opening paragraph of `pack/property/SOUL.md`, and `shared/bud-identity.test.ts` fails if they drift. Core Bud is a neutral business office assistant; industry wording (for example property management) ships as a workflow-pack skill, such as the Auston pack's `property-management`.
+
 Internal env (`OMB_PORT`, `OMB_DATA_DIR`, …) stays so tests and Electron wiring do not break.
 
 Leave MIT copyright for OpenMausBot contributors in `LICENSE`.
