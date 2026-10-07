@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, type FenceContext } from "./portal-fence.ts";
+import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
 
 const ctx: FenceContext = {
   allowedOrigins: ["vantagestrata.com.au"],
@@ -278,5 +279,55 @@ describe("read-back evidence", () => {
     expect(hasReadBack("portal.vantagestrata.com.au shows balance due", ["vantagestrata.com.au"])).toBe(true);
     expect(hasReadBack("The page looks done.", ["vantagestrata.com.au"])).toBe(false);
     expect(hasReadBack("The report shows arrears due", ["vantagestrata.com.au"])).toBe(false);
+  });
+});
+
+describe("approval settings on the job fence", () => {
+  const settings = (groups: Record<string, ApprovalChoice>): ApprovalSettings[] => [{ version: 1, purpose: "approval-settings", groups, reviewedReads: [] }];
+  const rules = [{ key: "portal:read:vantagestrata.com.au", decision: "allow" as const }, { key: "portal:prefill:vantagestrata.com.au", decision: "allow" as const }];
+  const all: FenceContext = { ...ctx, capabilities: ["portal-read", "portal-prefill", "portal-submit"], rules };
+  const REQUESTS = [
+    { tool: "read", params: { url: "https://vantagestrata.com.au/arrears" } },
+    { tool: "navigate", params: { url: "https://portal.vantagestrata.com.au/levy" } },
+    { tool: "fill", params: { label: "Property code", url: "https://vantagestrata.com.au" } },
+    { tool: "fill", params: { label: "Password", url: "https://vantagestrata.com.au" } },
+    { tool: "click_semantic", params: { label: "Show details", url: "https://vantagestrata.com.au" } },
+    { tool: "click_semantic", params: { label: "Lodge request", url: "https://vantagestrata.com.au" } },
+    { tool: "click_semantic", params: { label: "Pay now", url: "https://vantagestrata.com.au" } },
+    { tool: "navigate", params: { url: "https://evil.example/login" } },
+    { tool: "get_browser_state", params: {} },
+  ];
+
+  it.each(REQUESTS)("with nothing saved, decides exactly as today: $tool $params.label $params.url", request => {
+    for (const context of [ctx, all]) {
+      const today = fenceDecision(context, request);
+      for (const approvals of [[], settings({}), settings({ "site:other.example": "deny" })]) expect(fenceDecision({ ...context, approvals }, request)).toEqual(today);
+    }
+  });
+
+  it("refuses a site set to Don't use with one plain line, and every step while settings need recovery", () => {
+    for (const request of REQUESTS.slice(0, 7).filter(row => row.params.label !== "Password")) {
+      expect(fenceDecision({ ...all, approvals: settings({ "site:vantagestrata.com.au": "deny" }) }, request)).toMatchObject({
+        kind: "deny", reason: "vantagestrata.com.au is set to Don't use in Workspace → Approvals, so Bud did nothing there." });
+      expect(fenceDecision({ ...all, approvals: null }, request)).toMatchObject({ kind: "deny", reason: expect.stringContaining("need recovery") });
+    }
+  });
+
+  it("lets Ask every time override a standing allow rule", () => {
+    const approvals = settings({ "site:vantagestrata.com.au": "ask" });
+    for (const request of REQUESTS.slice(0, 3)) {
+      expect(fenceDecision(all, request).kind).toBe("allow");
+      expect(fenceDecision({ ...all, approvals }, request).kind).toBe("ask");
+    }
+    // Stricter only: a consequential label stays denied, an off-job site stays denied.
+    expect(fenceDecision({ ...all, approvals }, REQUESTS[6]).kind).toBe("deny");
+    expect(fenceDecision({ ...all, approvals }, REQUESTS[7]).kind).toBe("deny");
+  });
+
+  it("treats Read without asking as a reading rule for reads and same-site opens only", () => {
+    const approvals = settings({ "site:vantagestrata.com.au": "read-without-asking" });
+    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[0])).toEqual({ kind: "allow", surface: "portal-read", origin: "vantagestrata.com.au" });
+    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[1])).toEqual({ kind: "allow", surface: "portal-read", origin: "vantagestrata.com.au" });
+    for (const request of REQUESTS.slice(2)) expect(fenceDecision({ ...ctx, approvals }, request)).toEqual(fenceDecision(ctx, request));
   });
 });

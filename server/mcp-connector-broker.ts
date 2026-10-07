@@ -6,10 +6,16 @@
 // - 'write': every call shows the once-only card with its exact arguments.
 // - 'consequential': every call shows a distinct "Consequential action" card
 //   with the exact arguments, only in an attended Ask turn, never batched.
+// Approval settings (Workspace → Approvals) can only make a connector
+// stricter: Ask every time cards its reads too, Don't use refuses every call.
+// Marking a tool trusted stays with the owner's connector review.
 // Arguments too large to show in full are refused. Results are scrubbed of
 // credentials, marked untrusted, capped, timed out and receipted. Stop aborts
 // the upstream call. The connection's credential stays with the host.
 import { CONSEQUENTIAL_WARNING, stripSchemaProse } from "../shared/mcp-connector.ts";
+import { approvalGroupKey, decide, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { governingApprovals } from "./approval-settings.ts";
+import type { ApprovalCardDetails } from "./contracts.ts";
 import type { Approval, ToolClass } from "./mcp-connector-core.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { startLoopbackToolServer, toolError, untrustedBlock, type LoopbackToolDefinition, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
@@ -61,8 +67,10 @@ export async function startMcpConnectorBroker(options: {
   tools: readonly BudConnectorTool[];
   turnId(): string | null;
   connectors(): BudMcpConnectors | undefined;
-  approve(summary: string, signal: AbortSignal): Promise<boolean>;
+  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<boolean>;
   receipt?: (receipt: ConnectorCallReceipt) => void;
+  /** The approval settings that govern this desktop (default: the host's registered store). */
+  approvalSettings?: () => Promise<ApprovalSettings[]>;
 }): Promise<LoopbackToolServer> {
   const definitions = connectorToolDefinitions(options.tools);
   const byName = new Map(definitions.map(definition => [definition.name, definition.binding]));
@@ -85,8 +93,16 @@ export async function startMcpConnectorBroker(options: {
       if (!live()) { receipt("refused"); return stopped(); }
       if (!toolClass) { receipt("refused"); return toolError("This tool is no longer available. The office owner can review the connector in Connected apps."); }
       if (JSON.stringify(args).length > MAX_CONNECTOR_ARGS) { receipt("refused"); return toolError("These arguments are too large to send."); }
+      let settings: ApprovalSettings[];
+      try { settings = await (options.approvalSettings ?? governingApprovals)(); }
+      catch { receipt("refused"); return toolError("The approval settings on this computer need recovery, so Bud did not use this service. Nothing was sent. Check Workspace → Approvals."); }
+      if (!live()) { receipt("refused"); return stopped(); }
+      const group = `connector:${binding.connector}`;
+      // A connector no setting can name keeps today's answer.
+      const decision = approvalGroupKey(group) ? decide(settings, { group, tool: binding.tool, args, cls: toolClass }) : toolClass === "read" ? "run" : "card";
+      if (decision === "refuse") { receipt("refused"); return toolError(`${label(binding.label)} is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent.`); }
       let approval: Approval | undefined;
-      if (toolClass !== "read") {
+      if (decision === "card") {
         if (toolClass === "consequential" && connectors.attended !== true) {
           receipt("refused");
           return toolError("This consequential action needs the person present in Ask. It is never run from a schedule or job. Nothing was sent.");
@@ -97,9 +113,11 @@ export async function startMcpConnectorBroker(options: {
         const summary = toolClass === "consequential"
           ? `${CONSEQUENTIAL_LABEL} · ${label(binding.label)} · ${binding.tool}\n${CONSEQUENTIAL_WARNING}\n${exact}`
           : `${label(binding.label)} · ${binding.tool}\n${exact}`;
-        if (!await options.approve(summary, signal)) { receipt("declined"); return toolError("The person did not allow this. Nothing was sent."); }
+        const remote = toolClass === "read" ? "read" as const : toolClass === "write" ? "write" as const : "desktop-only" as const;
+        if (!await options.approve(summary, signal, { remote })) { receipt("declined"); return toolError("The person did not allow this. Nothing was sent."); }
         if (!live()) { receipt("refused"); return stopped(); }
-        approval = toolClass;
+        // A read carded by Ask every time still runs as a read: the registry's own class decides the call.
+        approval = toolClass === "read" ? undefined : toolClass;
       }
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT)]);
       let result: Record<string, unknown>;

@@ -80,7 +80,12 @@ export interface OptionCardData extends ApprovalCardMeta {
   memoryReview?: MemoryApprovalReview;
   /** A consequential browser step's verified facts and expiry. Re-validated
    * before display; null or damaged is held, never approvable. */
-  browserApproval?: BrowserApprovalCard | null;
+  browserApproval?: BrowserApprovalCard | null;  /** The exact request behind a plain-line card (`subtitle`), for an "Exact request" disclosure. */
+  detail?: string;
+  /** A read-only allowlisted app read: offer "Allow for this task" (respond
+   * `scope: "task"`) and, when `always`, "Always allow reading {appLabel}"
+   * (`scope: "always-reads"`). */
+  readOffer?: { appLabel: string; always: boolean };
 }
 
 export interface Message {

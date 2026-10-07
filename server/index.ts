@@ -88,7 +88,7 @@ import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } fro
 import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRules } from './permission-policy.ts';
 import { applyLawDrift, LAW_WATCH_UNAVAILABLE, lawWatchView, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
-import { createApprovalSettings } from './approval-settings.ts';
+import { createApprovalSettings, governApprovals, governingApprovals } from './approval-settings.ts';
 import { appendHistory, listHistory } from "./computer-history.ts";
 import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
 import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
@@ -168,7 +168,7 @@ import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
 import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { asksForOfficeMailbox, revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
 import {
   containerComputerAction,
   containerComputerScreenshot,
@@ -197,7 +197,7 @@ import { askBrowserRuntime, askPortalPackLoader, askSignInRuntime, useAskBrowser
 import { askTaskSignIn } from "./ask-task-sign-in.ts";
 import type { SignInOutcome } from "./browser-sign-in.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
-import { jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
+import { effectiveRules, jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -234,12 +234,12 @@ import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEven
 import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
-import { containsCredential } from "./redact.ts";
+import { containsCredential, redactSecretsInText } from "./redact.ts";
 import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
 import { connectionFailureReply, connectionCheckReply } from "./connection-outcome.ts";
 import { formatConnectedAppsReply, parseConnectedStatusIntent } from "./connected-status-intent.ts";
-import { parseRequestDecision } from "./request-decision.ts";
+import { parseRequestDecision, readGrantError, saveAlwaysReads, type ParsedRequestDecision } from "./request-decision.ts";
 import { TurnWatchdog, type TurnExpiryReason } from "./turn-watchdog.ts";
 import { SingleFlight } from "./single-flight.ts";
 import { writeDeskContext } from "./desk-context.ts";
@@ -1193,7 +1193,7 @@ function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   const fence = fenceContextFor(event.threadId);
   if (!fence) return event;
   const decision = fenceDecision(
-    { ...fence, rules: loadRules() },
+    { ...fence, ...effectiveRules() },
     { tool: event.tool, params: event.params, summary: event.summary },
   );
   const payload = fencePayload(decision);
@@ -1403,7 +1403,7 @@ bus.subscribe((raw: RuntimeEvent) => {
           })();
           break;
         }
-        const decision = fenceDecision({ ...fence, rules: loadRules() }, request);
+        const decision = fenceDecision({ ...fence, ...effectiveRules() }, request);
         const allowNote = decision.kind === "allow" ? ruleAllowNote(decision) : undefined;
         if (!(onceApproval && decision.kind === 'allow')) recordFenceEvidence(
           event.threadId,
@@ -1528,6 +1528,11 @@ bus.subscribe((raw: RuntimeEvent) => {
           held: onceApproval ? 'This request needs your approval once. Saved rules do not apply.' : permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
           ...(event.type === "request.opened" && event.fence ? { fence: event.fence } : {}),
           ...(event.type === "request.opened" && event.browserApproval ? { browserApproval: event.browserApproval } : {}),
+          // The broker's card metadata: deadline, phone class, the exact request and a read offer.
+          ...(event.deadline ? { deadline: event.deadline } : {}),
+          ...(event.remote ? { remote: event.remote } : {}),
+          ...(event.detail ? { detail: redactSecretsInText(event.detail) } : {}),
+          ...(permission && event.readOffer ? { readOffer: { ...event.readOffer } } : {}),
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -1552,7 +1557,7 @@ bus.subscribe((raw: RuntimeEvent) => {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
           const patched = store.patchMessage(event.threadId, messageId, {
-            card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
+            card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}) },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
@@ -1576,6 +1581,8 @@ bus.subscribe((raw: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
+      // "Allow for this task" read grants end with the task.
+      taskReadGrants.clear(event.threadId);
       settleAttendedTurn(event.threadId, intentionallyStopped
         ? { ok: false, stopReason: "cancelled", detail: "Stopped by you. Check the last result before running again." }
         : { ok: Boolean(event.ok), stopReason: event.stopReason });
@@ -2875,6 +2882,8 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
 // Approval settings: this computer's own, or the office departments that govern its member.
 const approvals = createApprovalSettings({ dataDir: DATA_DIR, seatIdentity: () => companyHost.seatIdentity(),
   company: (path, req, body) => companyHost.handle(path, 'POST', req, body) });
+// The brokers the worker driver starts, and the job fence below, read the same settings.
+governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null });
 
 // Vendor provisioning arrives with the pairing redeem: the connector credential
 // goes to config, the model key to the private vault, and the worker sees it
@@ -3022,6 +3031,56 @@ const workerAutoSetup = createWorkerAutoSetup({
 
 /** Work an update must not cut short: a turn, a browser task, a held workspace operation. */
 function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0; }
+/** The one way a waiting card is answered (both respond routes). The request
+ * must still be waiting in this process: a persisted card from another client
+ * or an earlier process is never a grant. Client scope, rules and read grants
+ * never broaden a once-only request (guardPermissionDecision); a refusal
+ * before answering leaves the card live, so Allow once still works. `owner`
+ * names the bot whose provider holds the request. */
+async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision, req: IncomingMessage,
+  owner: () => ReturnType<typeof store.bot> | undefined): Promise<{ status: number; body: unknown }> {
+  const live = `${threadId}:${parsed.requestId}`;
+  const gone = { status: 409, body: { error: "This request is no longer waiting. Refresh the conversation to see its result." } };
+  // Check the live request before saving a rule or grant, or calling the provider.
+  if (!askMessageByRequest.has(live)) return gone;
+  const card = store.messagesFor(threadId).find((message) => message.id === askMessageByRequest.get(live))?.card;
+  let decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
+  const fence = fenceContextFor(threadId);
+  // A session grant tells the worker to stop asking for that tool, and the
+  // fence only sees what the worker asks. During an attended run every
+  // browser action stays a one-time allow; a site rule is the safe
+  // "don't ask again" because the fence re-checks it per request.
+  if (fence && card?.fence && decision.behavior === "allow" && decision.scope === "session") {
+    decision = { ...decision, scope: "once" };
+  }
+  if (parsed.rule) {
+    const ruleError = portalRespondRuleError(parsed.rule, { behavior: decision.behavior, tool: card?.tool, allowedOrigins: fence?.allowedOrigins });
+    if (ruleError) return { status: 400, body: { error: ruleError } };
+    const editor = await approvals.editor(req);
+    if (!editor.ok) return { status: editor.status, body: { error: editor.error } };
+    if (!askMessageByRequest.has(live)) return gone;
+    addPortalRule(parsed.rule.surface, parsed.rule.origin);
+  }
+  if (parsed.readGrant) {
+    // Only the card's own read offer; the broker re-checks the settings and the allowlist on every later call.
+    const refused = readGrantError(card, parsed.readGrant);
+    if (refused || !card?.readOffer) return { status: 400, body: { error: refused } };
+    if (parsed.readGrant === "always-reads") {
+      const saved = await saveAlwaysReads(approvals, req, card.readOffer.group);
+      if (saved) return saved;
+      void governingApprovals().catch(() => {});
+      if (!askMessageByRequest.has(live)) return gone;
+    } else taskReadGrants.add(threadId, card.readOffer.group);
+  }
+  // A running portal recipe task's ask is answered by its runner's channel, never a provider.
+  if (answerPortalRecipeAsk(threadId, parsed.requestId, decision.behavior === "allow")) return { status: 200, body: { ok: true } };
+  const bot = owner();
+  if (!bot) return { status: 404, body: { error: "nothing is waiting on an answer in this conversation" } };
+  const instance = registry.get(bot.modelSelection.instanceId);
+  if (!instance) return { status: 409, body: { error: "provider unavailable" } };
+  await instance.adapter.respondToRequest(threadId, parsed.requestId, decision);
+  return { status: 200, body: { ok: true } };
+}
 let localSessionPublished = false;
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -3383,6 +3442,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const reply = await approvals.handle(path, method, req, url.searchParams, method === "PUT" ? await readBody(req, 32_768) : undefined);
+      // A decision that cannot wait (the job fence) uses the last read: refresh it now.
+      if (method === "PUT") void governingApprovals().catch(() => {});
       return json(res, reply.status, reply.body);
     }
 
@@ -5216,19 +5277,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const parsed = parseRequestDecision(await readBody(req));
-      const { requestId } = parsed;
-      if (!askMessageByRequest.has(`${bot.threadId}:${requestId}`)) {
-        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-      }
-      const liveMessageId = askMessageByRequest.get(`${bot.threadId}:${requestId}`);
-      const card = store.messagesFor(bot.threadId).find(message => message.id === liveMessageId)?.card;
-      const decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
-      if (answerPortalRecipeAsk(bot.threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
-      const instance = registry.get(bot.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
-      return json(res, 200, { ok: true });
+      const reply = await answerLiveRequest(bot.threadId, parseRequestDecision(await readBody(req)), req, () => bot);
+      return json(res, reply.status, reply.body);
     }
     // Answer by THREAD, so a request raised inside a room can be answered
     // too: a member's turn runs on the room's thread, and the bot that
@@ -5236,50 +5286,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const threadId = m[1];
-      const parsed = parseRequestDecision(await readBody(req));
-      const { requestId } = parsed;
-      let { decision } = parsed;
-      // Check the live request before saving a rule or calling the provider.
-      // Persisted cards from another client or an earlier process are not grants.
-      if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
-        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-      }
-      const card = store
-        .messagesFor(threadId)
-        .find((message) => message.id === askMessageByRequest.get(`${threadId}:${requestId}`));
-      decision = guardPermissionDecision(card?.card, decision, parsed.rule);
-      const fence = fenceContextFor(threadId);
-      // A session grant tells the worker to stop asking for that tool, and the
-      // fence only sees what the worker asks. During an attended run every
-      // browser action stays a one-time allow; a site rule is the safe
-      // "don't ask again" because the fence re-checks it per request.
-      if (fence && card?.card?.fence && decision.behavior === "allow" && decision.scope === "session") {
-        decision = { ...decision, scope: "once" };
-      }
-      if (parsed.rule) {
-        const ruleError = portalRespondRuleError(parsed.rule, {
-          behavior: decision.behavior,
-          tool: card?.card?.tool,
-          allowedOrigins: fence?.allowedOrigins,
-        });
-        if (ruleError) return json(res, 400, { error: ruleError });
-        // Refused before answering: the card stays live, so Allow once still works.
-        const editor = await approvals.editor(req);
-        if (!editor.ok) return json(res, editor.status, { error: editor.error });
-        if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
-          return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-        }
-        addPortalRule(parsed.rule.surface, parsed.rule.origin);
-      }
-      // A running portal recipe task's ask is answered by its runner's channel, never a provider.
-      if (answerPortalRecipeAsk(threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
-      const group = store.groupByThread(threadId);
-      const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
-      if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const instance = registry.get(owner.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(threadId, requestId, decision);
-      return json(res, 200, { ok: true });
+      const reply = await answerLiveRequest(threadId, parseRequestDecision(await readBody(req)), req, () => {
+        const group = store.groupByThread(threadId);
+        return group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+      });
+      return json(res, reply.status, reply.body);
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
     if (m && method === "POST") {

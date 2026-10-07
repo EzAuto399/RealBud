@@ -421,6 +421,34 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-app-boundary");
   });
 
+  it("opens a connected-app card with plain lines, its deadline, phone class and exact request, and closes it as a timeout, not a person's answer", async () => {
+    const dump = join(scratch, "app-timeout.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      await create(HermesAgentDriver, "hang", true);
+      await instance.adapter.sendTurn({ threadId: "t-app-timeout", text: "prepare work", integrations: { composio: { key: "ak_fixture", url: "http://127.0.0.1:1/mcp" } } });
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+      const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: any) => row.name === "connected-apps");
+      const args = { to: "fixture@example.test", text: "Review the report" };
+      const response = fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: any) => [row.name, row.value])),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "send_email", arguments: args } }) });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      if (opened.type !== "request.opened") throw new Error("Expected an app card");
+      const opensAt = Date.now();
+      expect(Date.parse(opened.deadline!) - opensAt).toBeGreaterThan(WORKER_APPROVAL_CARD_MS - 5_000);
+      expect(Date.parse(opened.deadline!) - opensAt).toBeLessThanOrEqual(WORKER_APPROVAL_CARD_MS);
+      expect(opened.remote).toBe("desktop-only");
+      expect(opened.summary).toContain("To: fixture@example.test");
+      expect(opened.summary).not.toMatch(/[{}]/);
+      expect(JSON.parse(opened.detail!)).toEqual({ name: "send_email", arguments: args });
+      vi.advanceTimersByTime(WORKER_APPROVAL_CARD_MS);
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ requestId: opened.requestId, behavior: "deny", source: "system", resolution: "timeout" });
+      expect((await (await response).json() as any).result.isError).toBe(true);
+      await instance.adapter.interruptTurn("t-app-timeout");
+    } finally { vi.useRealTimers(); }
+  });
+
   it.each([false, true])("revokes pending connected-app approval immediately when Stop is requested (Gmail readonly: %s)", async readOnly => {
     const dump = join(scratch, "app-stop.json");
     process.env.FAKE_ACP_DUMP = dump;

@@ -31,6 +31,8 @@ import {
   observationRefs,
   approvalUrl,
   pageOrigin,
+  effectiveRules,
+  type BrowserApprovals,
   type BrowserApprovalStore,
   type BrowserAuthorization,
   type BrowserClassification,
@@ -38,6 +40,8 @@ import {
   type BrowserFenceProjection,
 } from "./browser-authority.ts";
 import { loadRules } from "./rules.ts";
+import { governingApprovals } from "./approval-settings.ts";
+import type { ApprovalSettings } from "../shared/approval-settings.ts";
 import { signInHandoverBlocks } from "./browser-sign-in.ts";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, saveAskAttachment } from "./ask-attach.ts";
 import { DATA_DIR } from "./config.ts";
@@ -210,6 +214,8 @@ export async function startBrowserBroker(options: {
   approvals?: BrowserApprovalStore;
   /** Site read/prefill rules, read per step so a newly saved rule applies. */
   rules?: () => ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
+  /** The approval settings that govern this desktop (default: the host's registered store), read per step. */
+  approvalSettings?: () => Promise<ApprovalSettings[]>;
   assertCapability?: () => void;
   now?: () => number;
   /** RealBud's private folder for this task's downloads and granted uploads. Never supplied by a model. */
@@ -260,7 +266,11 @@ export async function startBrowserBroker(options: {
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } }),
     ...(learn ? [proposeTool(Object.keys(LEARNABLE_SLOTS[learn.pack.portal]))] : [])];
-  const rules = options.rules ?? (() => context.rules ?? loadRules());
+  // Standing rules are read on every decision; the approval settings once per step and again after each wait for a person.
+  const standing = options.rules ?? (() => context.rules ?? loadRules());
+  let approvalsNow: BrowserApprovals = null;
+  const readApprovals = async () => { approvalsNow = await (options.approvalSettings ?? governingApprovals)().catch(() => null); };
+  const rules = () => effectiveRules(approvalsNow, standing());
   let closed = false; let session: string | null = null; let busy = false;
   // A task continuing after sign-in keeps what it already spent.
   let used = usage.get(grant.id)?.used ?? 0;
@@ -280,7 +290,7 @@ export async function startBrowserBroker(options: {
     for (const listener of decisionListeners) { try { listener({ threadId: options.threadId, runId: options.runId, entry, ...(action ? { action } : {}) }); } catch { /* evidence display is best effort */ } }
   };
   const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string, taskScope?: NonNullable<Parameters<typeof authorizeBrowserAction>[4]>["taskScope"]): BrowserAuthorization =>
-    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used, taskScope, ...(portal ? { portal } : {}) });
+    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { ...rules(), now: now(), used, taskScope, ...(portal ? { portal } : {}) });
   const ensure = async (signal: AbortSignal) => {
     check(signal);
     if (checkpoint && (await runtime.status()).selectedBrowserId !== checkpoint.browserId) throw problem("The browser profile changed after sign-in. Check the intended page again before continuing.");
@@ -311,6 +321,7 @@ export async function startBrowserBroker(options: {
     if (auth.decision === "allow") { if (auth.note) publish("action", auth.note); check(signal); return; }
     publish("asked", fenceEvidenceLine({ tool }, { kind: "ask" }));
     if (!await options.approve(presentAs, params, auth.summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
+    await readApprovals();
     check(signal);
   };
   const observe = async (tabId: number, signal: AbortSignal, help = false, scroll?: string): Promise<{ text: string; truncated: boolean; source: string }> => {
@@ -438,6 +449,7 @@ export async function startBrowserBroker(options: {
     // A Stop (broker close, turn interrupt, browser stop) is recorded as a stop, never as the person's refusal.
     if (closed || signal.aborted || !options.isActive()) return refuse("stopped", STOPPED);
     if (!approved) return refuse("denied", NOT_APPROVED);
+    await readApprovals();
     try { check(signal); } catch (error) { return refuse("stopped", STOPPED, error); }
     // The approval is for the page, control and facts the person saw, not whatever replaced them.
     try { await observe(tabId, signal); } catch (error) { return refuse("changed", "The page changed after approval. Nothing was pressed.", error); }
@@ -493,6 +505,7 @@ export async function startBrowserBroker(options: {
     let approval: { id: string; noun: string; host: string } | undefined;
     let staged: string | undefined; let logged: Omit<BrowserActionRecord, "outcome"> | undefined;
     try {
+      await readApprovals(); check(signal);
       if (name === "browser_tabs") {
         await gate(name, authorize(name, null, args), {}, signal);
         return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.id, site: new URL(row.url).origin, borrowed: borrowed.has(row.id) })) });

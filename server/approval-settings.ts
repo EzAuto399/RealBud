@@ -60,6 +60,34 @@ function lapsed(settings: ApprovalSettings): ApprovalSettings {
   return { ...settings, groups: Object.fromEntries(Object.entries(settings.groups).filter(([, choice]) => choice !== 'read-without-asking')), reviewedReads: [] };
 }
 
+// ── The settings that govern this desktop, for enforcement points the host
+// does not construct (brokers started by the worker driver). index.ts
+// registers its store once at boot.
+let governing: { effective: () => Promise<ApprovalSettings[]>; singleDesktop: () => Promise<boolean> } | null = null;
+let known: ApprovalSettings[] | null = null;
+/** Register this desktop's store. Starts a first read so a decision that cannot wait has settings to use. */
+export function governApprovals(source: NonNullable<typeof governing>): void {
+  governing = source; known = null;
+  void governingApprovals().catch(() => {});
+}
+/** Fresh governing settings for one decision. Throws when storage needs
+ * recovery (callers refuse). With no store registered (tests, tools) nothing
+ * is saved, so today's defaults apply. */
+export async function governingApprovals(): Promise<ApprovalSettings[]> {
+  if (!governing) return [];
+  try { known = await governing.effective(); return known; } catch (error) { known = null; throw error; }
+}
+/** The last settings read, for a decision that cannot wait (and a fresh read
+ * for the next one). Null while unknown or needing recovery: callers refuse. */
+export function lastGoverningApprovals(): ApprovalSettings[] | null {
+  if (!governing) return [];
+  void governingApprovals().catch(() => {});
+  return known;
+}
+/** True on a single desktop, whose person may always change its settings. An
+ * office member changes theirs in Workspace → Approvals, where edit rights are proven. */
+export const approvalsEditableHere = (): Promise<boolean> => governing ? governing.singleDesktop().catch(() => false) : Promise.resolve(true);
+
 export function createApprovalSettings(options: {
   dataDir: string;
   /** This private workspace's office member id, or null for a single desktop. */
