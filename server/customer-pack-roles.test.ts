@@ -1,7 +1,7 @@
 // Auston role packs (Kevin's accounts, Sherry's property management), their
 // loops applied on install, and packs offered by the office website.
 import { createHash } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,10 +9,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Recipe } from '../shared/contracts.ts';
 import { parseOfficePacks, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
+import { hiddenAustinLoopIds } from '../shared/austin-pack.ts';
 import { createAgencySetupService, type AgencySetupOptions } from './agency-setup.ts';
 import { createAustinPack, loadAustinPack } from './austin-pack.ts';
 import { austinAccountsCustomerPack, austinPropertyCustomerPack } from './customer-pack-definition.ts';
-import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
+import { createCustomerPackService, validateCustomerPack, type CustomerPackServiceOptions } from './customer-packs.ts';
+import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically } from './recipes.ts';
+import { DATA_DIR } from './config.ts';
 import { createInspectionRulesStore } from './inspection-rules.ts';
 import { createMaintenanceReviewStore } from './maintenance-review.ts';
 import { CHANGED_PACK_MESSAGE, UNSIGNED_PACK_MESSAGE } from './pack-signing.ts';
@@ -28,7 +31,7 @@ const NOW = Date.parse('2026-10-06T09:00:00+10:00');
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
 
-function office({ observe, ...options }: { officePacks?: () => Promise<OfficePacksSource>; observe?: AgencySetupOptions['observe'] } = {}) {
+function office({ observe, ...options }: Partial<CustomerPackServiceOptions> & { observe?: AgencySetupOptions['observe'] } = {}) {
   const dir = privateTempRoot(join(realpathSync(tmpdir()), 'rb-role-packs-'));
   cleanup.push(() => removeFixture(dir));
   const loops = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => NOW, execute: async () => ({ ok: true, detail: 'Fictional run.' }) });
@@ -158,6 +161,25 @@ describe('installing a pack applies its loops', () => {
     const choosing = createCustomerPackService({ directory: join(dir, 'choosing'), profileDirectory: () => join(dir, 'profile'), workroomDirectory: () => join(dir, 'vault'),
       listRecipes: () => [], saveRecipes: (() => []) as never, selectWorkflowPack: async () => { throw new Error('Fictional agency recovery'); } });
     await expect(choosing.install(pack, (await choosing.preview(pack)).digest)).rejects.toThrow('The pack was installed, but it could not be chosen for this agency. Choose it in Agency workflow setup.');
+  });
+});
+
+describe('upgrading a role pack applies its loops', () => {
+  it('sets a loop the new revision adds, still off, so Schedule lists it', async () => {
+    // A version change needs the real plan store (this file's throwaway HOME).
+    cleanup.push(() => rmSync(join(DATA_DIR, 'recipes.json'), { force: true }));
+    const f = office({ listRecipes: () => loadRecipes(true), saveRecipes: saveRecipesAtomically, resetRecipeApprovals: resetRecipeApprovalsAtomically });
+    await f.install(austinPropertyCustomerPack());
+    const next = validateCustomerPack(austinPropertyCustomerPack()), settings = settingsOf(next);
+    settings.loops.push({ ...settingsOf(austinAccountsCustomerPack()).loops.find(loop => loop.id === 'bank-references')! });
+    const signed = signFictionalPack({ ...next, revision: 2, files: { ...next.files, 'office/settings.json': JSON.stringify(settings) } });
+    const preview = await f.packs.previewUpgrade(signed);
+    const installed = (await f.packs.list()).installations[0];
+    await f.packs.upgrade({ pack: signed, expectedInstalledDigest: installed.digest, expectedInstalledRevision: 1, expectedDigest: preview.digest, expectedPreviewDigest: preview.previewDigest });
+    const view = await f.austin.view();
+    expect(view.installed?.loopIds).toContain('bank-references');
+    expect(f.loop('bank-references')).toMatchObject({ enabled: false, nextRunAt: null, schedule: { timezone: 'Australia/Brisbane' } });
+    expect(hiddenAustinLoopIds(view, f.loops.listLoops(), new Set())).not.toContain('bank-references');
   });
 });
 
