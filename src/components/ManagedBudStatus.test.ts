@@ -205,14 +205,15 @@ describe("managed Bud status", () => {
     expect(render(held, { recovering: true })).not.toContain("Try setup again");
     office.status = { state: "linked", serviceWithdrawn: true };
     const withdrawn = render({ ...held, modelAccess: { ...held.modelAccess!, withdrawn: true } });
-    expect(withdrawn).toContain("Model access withdrawn");
+    expect(withdrawn).toContain("Disconnected from your office");
+    expect(withdrawn).toContain("Reconnect this computer</button>");
     expect(withdrawn).not.toContain("Try setup again");
     expect(withdrawn).not.toContain("Connect with this code</button>");
   });
   it("keeps the worker's withdrawal on an unlinked computer instead of a link prompt", () => {
     const html = render({ ...ready, ready: false, model: { ...ready.model!, attached: false },
       modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Model access was withdrawn for this fictional computer." } });
-    expect(html).toContain("Model access withdrawn");
+    expect(html).toContain("Disconnected from your office");
     expect(html).toContain("withdrawn for this fictional computer");
     expect(html).not.toMatch(/Connect to your office|Connect with this code<\/button>/);
   });

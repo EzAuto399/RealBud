@@ -5,22 +5,24 @@ import type { UsageBudget } from "@shared/usage-budget";
 import { openDeskTasks } from "@/lib/desk-view-state";
 import { deskRunStatus, nextLoop, nextLoopLine, openScheduleLoop } from "./shell-layout";
 import type { ShellBrowser } from "./shell-status";
-import { useOfficeLinkRead } from "@/lib/use-office-link";
+import { useOfficeLinkStatus } from "@/lib/use-office-link";
 
 const dot = { agency: "bg-agency", hold: "bg-hold", muted: "bg-ink-muted", danger: "bg-danger" } as const;
 
 /** Slim facts across the bottom. Stale, sample or unreported facts say so; nothing
  *  here is presented as live unless it is. Each fact with somewhere to go opens it;
- *  connection state is only a fact. Hidden below 960px. */
+ *  connection state is only a fact, except "not connected", which opens its fix.
+ *  Hidden below 960px. */
 export function StatusBar({ browser, stopping, stopError, onStop, budget }: { browser: ShellBrowser; stopping: boolean; stopError: string; onStop: () => void; budget: UsageBudget | null }) {
   const { state, dispatch } = useStore();
   // Re-read relative times each minute so "checked 5 min ago" does not freeze.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
-  const link = useOfficeLinkRead(state.connected);
+  const { link, officeInactive } = useOfficeLinkStatus(state.connected);
   // "Connected" means this computer is joined to its office. The local service
   // being down is its own fact and wins over any link wording.
   const connection = !state.connected ? { tone: dot.hold, label: "Offline — reconnecting" }
+    : link === "linked" && officeInactive ? { tone: dot.hold, label: "Office account inactive" }
     : link === "linked" ? { tone: dot.agency, label: "Connected" }
     : link === "not-linked" ? { tone: dot.hold, label: "Not connected to your office" }
     : link === "unavailable" ? { tone: dot.hold, label: "Office connection unavailable" }
@@ -30,9 +32,13 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
   const openDesk = () => { openDeskTasks(); dispatch({ type: "showDesk" }); };
   const openSchedule = () => (loop ? openScheduleLoop(loop.id, () => dispatch({ type: "showRoutines" })) : dispatch({ type: "showRoutines" }));
   const openSpend = () => { location.hash = "you-settings"; dispatch({ type: "showYou" }); };
+  const openWebsite = () => { location.hash = "you-website"; dispatch({ type: "showYou" }); };
   return (
     <footer className="rb-status-bar" aria-label="Status bar">
-      <span className="rb-status-item"><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</span>
+      {/* Not linked, or an inactive office: the Website account card explains and fixes it. */}
+      {state.connected && (link === "not-linked" || (link === "linked" && officeInactive)) ? (
+        <button type="button" className="rb-status-item rb-status-link" title={officeInactive ? "Open Website account" : "Reconnect this computer in Workspace"} onClick={openWebsite}><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</button>
+      ) : <span className="rb-status-item"><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</span>}
       <button type="button" className="rb-status-item rb-status-link" title="Open Desk tasks" onClick={openDesk}><span className={cn("rb-status-dot", dot[run.tone])} aria-hidden />{run.label}</button>
       <button type="button" className="rb-status-item rb-status-link" title={loop ? `Open ${loop.name} in Schedule` : "Open Schedule"} onClick={openSchedule}>{nextLoopLine(state.loops, now)}</button>
       {browser?.active ? (

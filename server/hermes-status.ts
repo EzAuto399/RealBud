@@ -66,7 +66,7 @@ export function modelAccessStatus(root?: string): ModelAccessStatus {
   const grant = workerModelGrant();
   if (grant.state === "withdrawn") {
     return { managed: false, withdrawn: true, attached: false,
-      detail: "Model access was withdrawn for this computer. Your records are kept. Ask service support to restore access." };
+      detail: "This computer's office access ended, so Bud can't answer here. Everything saved stays on this computer. Reconnect it in Workspace → Website account." };
   }
   // Not paired: no model access at all. Setup shows the pairing path.
   if (grant.state !== "active") return { managed: false, withdrawn: false, attached: false, detail: "" };

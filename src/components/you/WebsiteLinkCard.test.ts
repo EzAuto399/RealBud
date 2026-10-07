@@ -20,6 +20,21 @@ const view = (phase: BrowserLinkPhase, status: OfficeLinkStatus | null = unlinke
 const liveRegion = (html: string) => /<p role="status" aria-live="polite" class="sr-only">([^<]*)<\/p>/.exec(html)?.[1];
 
 describe("website account card", () => {
+  it("leads a disconnected computer straight to Reconnect, with its old name and the date", () => {
+    const revoked: OfficeLinkStatus = { state: "revoked", label: "Fictional Front Desk", agencyLabel: "Fictional Realty", revokedAt: "2026-10-04T14:25:39.101Z", serviceWithdrawn: true };
+    const html = view({ kind: "idle" }, revoked, "Fictional Front Desk");
+    expect(html).toContain("This computer was disconnected from Fictional Realty on ");
+    expect(html).toContain("Reconnect this computer</button>");
+    expect(html).toContain("Account → Computers");
+    expect(html).not.toMatch(/service support|Link with your RealBud account/);
+    // An inactive office is a calm pause, not a red failure or a revoke.
+    const paused = view({ kind: "idle" }, { state: "linked", label: "Fictional Front Desk", agencyLabel: "Fictional Realty", officeInactive: true, error: "Fictional inactive error." });
+    expect(paused).toContain("Fictional Realty’s RealBud account is inactive.");
+    expect(paused).toContain("reconnects by itself");
+    expect(paused).not.toContain("Fictional inactive error.");
+    // Linked again: no disconnect notice.
+    expect(view({ kind: "idle" }, { state: "linked", label: "Fictional Front Desk", agencyLabel: "Fictional Realty" })).not.toContain("was disconnected");
+  });
   it("leads with the browser approval and keeps the pasted code behind a disclosure", () => {
     const html = view({ kind: "idle" });
     expect(html).toMatch(/<button type="button" class="pm-decision[^"]*">Link with your RealBud account<\/button>/);
