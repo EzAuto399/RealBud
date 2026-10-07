@@ -55,7 +55,13 @@ try {
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/schedule');
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  // The list leaves out a never-run, off Auston job; its deep link (and the sidebar) still open it. Land on Schedule first (a reload drops the door hash, and a job hash set before Schedule mounts reads as an unknown door).
+  const openBankJob = async () => {
+    await page.evaluate(() => { location.hash = '#/schedule'; });
+    await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+    await page.evaluate(() => { location.hash = 'job-bank-references'; });
+  };
+  await openBankJob();
   await page.getByText('Prepare a new export', { exact: true }).click();
   const csv = '\uFEFFDate,Amount,Narrative,Reference,Extra\r\n2026-09-10,500.00,"FICTIONAL RENT café 🏡\n""quoted""","P101",unchanged\r\n2026-09-10,-20.00,FICTIONAL FEE,"",unchanged\n';
   const bytes = Buffer.from(csv), filename = 'Fictional bank café.csv';
@@ -84,7 +90,7 @@ try {
   record('Actual reviewed binary download changes only the approved reference and retains its quoting');
   const id = (await request('/api/bank-reference')).batches[0].id;
   await page.reload();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  await openBankJob();
   await page.getByText('Earlier reviews', { exact: true }).click();
   await page.getByLabel('Saved reviews', { exact: true }).selectOption(id);
   await page.getByRole('button', { name: 'Download reviewed REI copy', exact: true }).waitFor();
@@ -105,7 +111,7 @@ try {
   record('Unsupported encoding clears the pending upload and leaves saved reviews unchanged');
   const legacy = await request('/api/bank-reference', 'POST', { csv: csv.replace('FICTIONAL RENT', 'FICTIONAL LEGACY'), columns, dateFormat: 'YYYY-MM-DD', rules: [] });
   await page.reload();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  await openBankJob();
   await page.getByText('Earlier reviews', { exact: true }).click();
   await page.getByLabel('Saved reviews', { exact: true }).selectOption(legacy.id);
   await page.getByRole('note').filter({ hasText: 'older review saved text only' }).waitFor();
@@ -122,7 +128,7 @@ try {
   const first = await request('/api/bank-reference?limit=20');
   assert.equal(first.version, 2); assert.equal(first.total, 26); assert.equal(first.batches.length, 20); assert.ok(first.nextCursor);
   await page.reload();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  await openBankJob();
   await page.getByText('Earlier reviews', { exact: true }).click();
   const history = page.getByRole('region', { name: 'Saved bank review history', exact: true });
   await history.getByText('20 of 26 saved reviews loaded.', { exact: false }).waitFor();
@@ -227,7 +233,7 @@ try {
   };
   await page.route(settingsMatcher, delaySettings);
   await page.reload();
-  await page.getByRole('button', { name: 'Open job: Bank reference review', exact: true }).click();
+  await openBankJob();
   await page.getByText('Prepare a new export', { exact: true }).click();
   await page.getByLabel('Date format', { exact: true }).selectOption('DD/MM/YYYY');
   await page.getByLabel('date column', { exact: true }).fill('Human draft date header');
