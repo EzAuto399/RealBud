@@ -123,7 +123,7 @@ declare global {
       /** Start the office service if it is not already running. */
       serviceStart?(): Promise<{ ok: boolean; status: ServiceLifecycleStatus }>;
       /** Explicitly stop the office service. Closing the window never does this. */
-      serviceStop?(): Promise<{ ok: boolean; status: ServiceLifecycleStatus }>;
+      serviceStop?(options?: { ifIdle?: boolean }): Promise<{ ok: boolean; busy?: boolean; status: ServiceLifecycleStatus }>;
       /** Start after sign-in, and keep this computer awake for scheduled work.
        * `set` also reports whether the office has anything scheduled; the
        * office owns that fact, the main process only caches the last report. */

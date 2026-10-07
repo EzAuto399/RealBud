@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HermesStatus } from "@/state/store";
 import type { OfficeLinkStatus } from "../../server/office-link";
-import { budServiceAction, ManagedBudStatus, RESTART_FAILED, RESTART_HELP, RESTART_NOT_OWNED } from "./ManagedBudStatus";
+import { budServiceAction, ManagedBudStatus, RESTART_BUSY, RESTART_FAILED, RESTART_HELP, RESTART_NOT_OWNED } from "./ManagedBudStatus";
 import { SUPPORT_SAVED } from "./you/SupportCard";
 
 const monitor = vi.hoisted(() => ({ pending: false, error: "", refresh: vi.fn(), lastCheckedAt: null }));
@@ -272,6 +272,15 @@ describe("holds staff clear themselves", () => {
     const failed = service({ serviceStart: vi.fn(async () => ({ ok: false, status: { running: false } })) });
     expect(await budServiceAction("restart", failed)).toEqual({ ok: false, text: RESTART_FAILED });
     expect(RESTART_FAILED).not.toMatch(/backup|restore/i);
+  });
+  it("never cuts off Bud's work: the stop asks the service to refuse while busy", async () => {
+    const busy = service({ serviceStop: vi.fn(async () => ({ ok: false, busy: true, status: { running: true } })) });
+    expect(await budServiceAction("restart", busy)).toEqual({ ok: false, text: RESTART_BUSY });
+    expect(busy.serviceStop).toHaveBeenCalledWith({ ifIdle: true });
+    expect(busy.serviceStart).not.toHaveBeenCalled();
+    const idle = service();
+    expect(await budServiceAction("restart", idle)).toEqual({ ok: true, text: "RealBud’s service restarted." });
+    expect(idle.serviceStop).toHaveBeenCalledWith({ ifIdle: true });
   });
   it("a restart pressed while a support file is saving waits for it, then restarts", async () => {
     let release!: () => void;

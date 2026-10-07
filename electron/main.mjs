@@ -747,13 +747,20 @@ officeIpc.handle("service:retry", async () => {
   return { ok, status: await officeServiceStatus() };
 });
 // Explicitly stop the office service. Closing the window never does this.
-officeIpc.handle("service:stop", async () => {
+officeIpc.handle("service:stop", async (_event, options) => {
+  // `ifIdle`: a restart that must not cut off Bud's work (Bud status). The
+  // service refuses while busy, and a refused stop is no stop request.
+  const ifIdle = options?.ifIdle === true;
+  const stopWasRequested = serviceStopRequested;
   serviceStopRequested = true;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacyAsync })) {
-    return { ok: false, status: await officeServiceStatus() };
+  if (!await requestServiceStop(handle, identity, { dataDirectory, verifyWindowsPrivacy: windowsKeyPrivacyAsync, ...(ifIdle ? { ifIdle: true } : {}) })) {
+    if (!ifIdle) return { ok: false, status: await officeServiceStatus() };
+    serviceStopRequested = stopWasRequested;
+    const busy = (await findRunningService(identity))?.body?.busy === true;
+    return { ok: false, ...(busy ? { busy: true } : {}), status: await officeServiceStatus() };
   }
   // Wait for the port to be released so the next start is not racing a dying service.
   for (let attempt = 0; attempt < 40; attempt++) {

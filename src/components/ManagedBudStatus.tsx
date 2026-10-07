@@ -4,7 +4,7 @@ import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFacingCopy
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
-import { restartBackupService, type BackupServiceBridge } from "@/lib/private-backup";
+import type { BackupServiceBridge } from "@/lib/private-backup";
 import { SUPPORT_SAVED, supportSaveOutcome } from "./you/SupportCard";
 import { Card } from "./SettingsPrimitives";
 import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
@@ -25,9 +25,13 @@ type ManagedBudStatusProps = {
 
 export const RESTART_HELP = "RealBud stops and starts its service on this computer. Your work is kept.";
 export const RESTART_FAILED = "RealBud couldn’t confirm its service restarted. Your work is kept. Start it from RealBud service under Settings & help, or contact RealBud support.";
+export const RESTART_BUSY = "Bud is still working, so RealBud didn’t restart its service. Try again when the current work finishes. Your work is kept.";
 export const RESTART_NOT_OWNED = "Another RealBud installation on this computer started this service, so only that installation can restart it. Your work is kept.";
 type ServiceNote = { ok: boolean; text: string } | null;
-type ServiceBridge = Partial<BackupServiceBridge> & { saveSupportFile?: () => Promise<unknown> };
+type ServiceBridge = Partial<Omit<BackupServiceBridge, "serviceStop">> & {
+  serviceStop?(options?: { ifIdle?: boolean }): Promise<{ ok: boolean; busy?: boolean; status: { running?: boolean } }>;
+  saveSupportFile?: () => Promise<unknown>;
+};
 type ServiceKind = "restart" | "support";
 let serviceActionFlight: { kind: ServiceKind; promise: Promise<ServiceNote> } | null = null;
 
@@ -44,8 +48,15 @@ export function budServiceAction(kind: ServiceKind, bridge: ServiceBridge | unde
     if (kind === "restart") {
       try {
         const current = await bridge!.serviceStatus!();
-        if (current.running === true && !current.manageable) return { ok: false, text: RESTART_NOT_OWNED };
-        await restartBackupService({ serviceStatus: () => bridge!.serviceStatus!(), serviceStop: () => bridge!.serviceStop!(), serviceStart: () => bridge!.serviceStart!() });
+        if (typeof current.running !== "boolean") return { ok: false, text: RESTART_FAILED };
+        if (current.running && !current.manageable) return { ok: false, text: RESTART_NOT_OWNED };
+        if (current.running) {
+          // Never cut off Bud's work: the service refuses this stop while busy.
+          const stopped = await bridge!.serviceStop!({ ifIdle: true });
+          if (!stopped.ok) return { ok: false, text: stopped.busy ? RESTART_BUSY : RESTART_FAILED };
+        }
+        const started = await bridge!.serviceStart!();
+        if (!started.ok || started.status.running !== true) return { ok: false, text: RESTART_FAILED };
         return { ok: true, text: "RealBud’s service restarted." };
       } catch { return { ok: false, text: RESTART_FAILED }; }
     }

@@ -140,7 +140,7 @@ describe('bounded setup reads', () => {
     return { seen, read };
   };
 
-  it('tries a timed-out read again, then keeps the last good value through a few bounded retries', async () => {
+  it('tries a timed-out read again a few bounded times, and a failed refresh reads as unknown, not the old value', async () => {
     vi.useFakeTimers();
     replyWith(['hang', { linked: true }, 'fail', 'fail', 'fail', 'fail']);
     const { seen, read } = reader();
@@ -150,12 +150,12 @@ describe('bounded setup reads', () => {
     await vi.advanceTimersByTimeAsync(READ_RETRY_DELAYS_MS[0]);
     expect(store.api).toHaveBeenCalledTimes(2);
     expect(seen.value).toEqual({ linked: true });
-    // A refresh (the link card changed) that keeps failing never replaces the good read.
+    // A refresh (the link card changed) that keeps failing: the old read may be stale, so it is unknown.
     read.refresh();
     for (const delay of READ_RETRY_DELAYS_MS) await vi.advanceTimersByTimeAsync(delay);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(store.api).toHaveBeenCalledTimes(3 + READ_RETRY_DELAYS_MS.length);
-    expect(seen.value).toEqual({ linked: true });
+    expect(seen.value).toBe('unavailable');
     read.stop();
   });
 

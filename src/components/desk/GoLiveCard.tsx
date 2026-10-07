@@ -36,7 +36,7 @@ export const READ_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 /**
  * Bounded reads of one path: a hung or failed read becomes "unavailable",
- * never a permanent "Reading…", and a later failure keeps the last good value.
+ * never a permanent "Reading…"; a failed read tries again a few times.
  */
 export function boundedRead<T>(path: string, parse: (body: unknown) => T, set: (update: (previous: Read<T>) => Read<T>) => void) {
   let alive = true;
@@ -56,7 +56,8 @@ export function boundedRead<T>(path: string, parse: (body: unknown) => T, set: (
       })
       .catch(() => {
         if (!alive || controller !== current) return;
-        set((previous) => (previous === undefined ? "unavailable" : previous));
+        // Absent evidence is never evidence: a failed read is unknown, never the last good value.
+        set(() => "unavailable");
         if (attempt < READ_RETRY_DELAYS_MS.length) retry = setTimeout(() => load(attempt + 1), READ_RETRY_DELAYS_MS[attempt]);
       })
       .finally(() => clearTimeout(timer));
@@ -202,7 +203,7 @@ export function GoLiveCard({
             dismissSetUp();
             setDoneDismissed(true);
           }}
-          className="min-h-8 shrink-0 px-1 text-[12px] text-ink-muted hover:text-ink"
+          className="pm-control shrink-0 px-2 text-[12px] text-ink-muted hover:text-ink"
         >
           Dismiss
         </button>
