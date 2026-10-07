@@ -118,9 +118,9 @@ const SETUP_PHASES: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> =
 const SETUP_HOLDS: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
   held_exhausted: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.",
   held_failed: "Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.",
-  held_recovery: "Bud’s setup record needs recovery. Your files are kept; contact RealBud support.",
-  held_restart: "Bud’s update is installed. Restart RealBud to use it.",
-  held_unavailable: "Automatic Bud setup is not available on this computer yet.",
+  held_recovery: "Bud’s setup record needs recovery. Your files are kept. Save a support file and send it to RealBud support.",
+  held_restart: "Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.",
+  held_unavailable: "Bud can’t be set up automatically on this kind of computer. Use RealBud on a Mac or Windows computer for Bud’s work; your files are kept.",
 };
 /** The setup step a stop happened at (1–4), in the same words as its progress. */
 const HELD_AT: Record<number, string | undefined> = { 1: "installing Bud", 2: SETUP_PHASES.safeguards, 3: SETUP_PHASES.model, 4: SETUP_PHASES.readiness };
@@ -213,7 +213,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   });
   if (stage === "install") {
     if (status.restartRequired) {
-      return unavailable("Restart to finish update", "Bud’s update is installed. Quit and reopen RealBud to start using it. Your draft is kept.");
+      return unavailable("Restart to finish update", "Bud’s update is installed. RealBud’s service needs to restart to use it. Your draft is kept.");
     }
     if (status.cli.installed && !(status.cli.compatible ?? status.cli.matchesPin)) {
       return unavailable(

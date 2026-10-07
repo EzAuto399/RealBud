@@ -36,7 +36,7 @@ describe("Bud availability across Ask and Schedule", () => {
   it("asks for a restart, not another restore, once the supported update is installed", () => {
     const state = budAvailability({ ...ready, cli: { ...ready.cli, compatible: false }, ready: false, restartRequired: true }, true);
     expect(state).toMatchObject({ ready: false, label: "Restart to finish update", action: null });
-    expect(state.detail).toMatch(/Quit and reopen RealBud/);
+    expect(state.detail).toMatch(/service needs to restart/);
     expect(parseBudStatus({ ...ready, restartRequired: true }).restartRequired).toBe(true);
     expect(() => parseBudStatus({ ...ready, restartRequired: "yes" })).toThrow();
   });

@@ -56,7 +56,8 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Start the office service if it is not already running. */
   serviceStart: () => ipcRenderer.invoke("service:start"),
   /** Explicitly stop the office service. Closing the window never does this. */
-  serviceStop: () => ipcRenderer.invoke("service:stop"),
+  /** `{ ifIdle: true }` asks the service to refuse while Bud is working. */
+  serviceStop: (options) => ipcRenderer.invoke("service:stop", options?.ifIdle === true ? { ifIdle: true } : undefined),
   /** Save a masked support file where the person chooses in the native save
    * dialog. Takes no argument and returns only the outcome, never a path. */
   saveSupportFile: () => ipcRenderer.invoke("support:save"),

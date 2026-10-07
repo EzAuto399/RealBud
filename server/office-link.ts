@@ -306,7 +306,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   const PROVISIONING_TIMEOUT_MS = 60_000;
   async function request(route: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
     try { return await fetcher(`${ORIGIN}/api/installations/${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(timeoutMs), headers: { "Content-Type": "application/json", ...init.headers } }); }
-    catch { throw new Error("The website could not be reached. Your link is saved; try again when connected."); }
+    catch { throw new Error("The website could not be reached. Check this computer’s internet connection, then try again."); }
   }
   /**
    * A read that is safe to repeat gets one more try, shortly after, when the
@@ -372,7 +372,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       input = input && typeof input === "object" ? input : {};
       const code = typeof input.code === "string" ? input.code.trim() : "";
       const label = typeof input.label === "string" ? input.label.trim() : "";
-      if (!/^rb1_[a-f0-9]{64}$/.test(code) || !label || label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) throw Object.assign(new Error("Paste the link code and name this computer."), { status: 400 });
+      if (!/^rb1_[a-f0-9]{64}$/.test(code) || !label || label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) throw Object.assign(new Error("This link code could not be used. Paste the whole code your office sent you into Link code, then choose Connect with this code."), { status: 400 });
       let saved = await read();
       if (saved?.companyId && !saved.revoked) throw Object.assign(new Error("Disconnect the current website link before linking another office."), { status: 409 });
       if (saved?.browser && !saved.revoked) throw Object.assign(new Error("Cancel the browser approval before using a link code."), { status: 409 });

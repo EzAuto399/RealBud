@@ -69,7 +69,7 @@ const setupPhases = {
   'managed-components': { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Installing Bud’s components' },
   'managed-reuse': { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Checking already downloaded Bud' },
   'managed-model': { state: 'verifying', code: 'model', step: 3, total: 4, detail: 'Connecting Bud’s model' },
-  'managed-readiness': { state: 'verifying', code: 'readiness', step: 4, total: 4, detail: 'Running the private readiness check' },
+  'managed-readiness': { state: 'verifying', code: 'readiness', step: 4, total: 4, detail: 'Testing Bud on this computer' },
 };
 const scenarioNames = ['unlinked-missing-worker', 'linked-pending', 'linked-local-recovery', 'linked-preflight-recovery', 'relink-pending-old-withdrawal', 'managed-installing', ...Object.keys(setupPhases), 'held-retry-error', 'held-retry-success', 'recovery', 'withdrawn', 'ready'];
 const qaState = () => ({ status: fixture, connected: qaConnected, recovering: qaRecovering });

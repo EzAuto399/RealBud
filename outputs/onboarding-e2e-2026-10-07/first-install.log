@@ -1,0 +1,1 @@
+{"passed":true,"checks":["fresh onboarding opens setup over Ask","Windows action enabled","progress recovers without duplicate install","cancel and retry","failure survives reopening panel","320/390px layout and touch target","successful install advances to model connection","not ready prematurely","Ask draft preserved"],"liveInstallation":false,"liveProvider":false}

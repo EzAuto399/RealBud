@@ -257,7 +257,8 @@ try {
     await pressByKeyboard('Continue to Bud setup');
     const dialog = page.getByRole('dialog', { name: 'Bud status', exact: true });
     await dialog.waitFor();
-    assert.equal(new URL(page.url()).hash, '#/ask', 'setup opens over Work');
+    // First run lands on Desk, where Get started lives; setup opens over it.
+    assert.ok(['', '#/desk'].includes(new URL(page.url()).hash), `setup opens over Desk, not ${new URL(page.url()).hash}`);
     await wait(1500);
     await shot('bud-status-first');
     // A linked office sees the staff status view (Check again / Try setup again).
@@ -291,9 +292,9 @@ try {
     assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'focus is inside Bud status before Escape');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
-    check(c, 'Keyboard: Escape closes Bud status back to Work');
-    await page.getByRole('heading', { name: 'What can I take off your plate?' }).waitFor();
-    check(c, 'Work empty state shows the first-task prompt');
+    check(c, 'Keyboard: Escape closes Bud status back to Desk');
+    await page.getByRole('region', { name: 'Get started', exact: true }).first().waitFor();
+    check(c, 'Desk shows Get started with the next setup step');
   });
 
   await step(4, 'Desk: add a property, edit it, customize the desk', async c => {

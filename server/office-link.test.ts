@@ -26,7 +26,8 @@ describe("website installation link", () => {
       return Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" });
     }) as unknown as typeof fetch;
     const { app, create, file } = fixture(fetcher);
-    await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow(/could not be reached/);
+    // Nothing is linked yet, so the reply never claims a saved link.
+    await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow("The website could not be reached. Check this computer’s internet connection, then try again.");
     expect((await app.status()).state).toBe("pending");
     await expect(app.link({ code: `rb1_${"c".repeat(64)}`, label: "Other" })).rejects.toThrow(/still finishing the first code you pasted/);
     // Names the box both connect screens show ("Link code"), not a label that no longer exists.
@@ -122,7 +123,8 @@ describe("website installation link", () => {
   it("does not contact the website for an unlinked desk and rejects unsafe local state", async () => {
     const fetcher = vi.fn(); const { app, file } = fixture(fetcher);
     await app.report(); expect(fetcher).not.toHaveBeenCalled();
-    await expect(app.link({ code: "bad", label: "Desk" })).rejects.toThrow(/Paste/);
+    // Names the desktop's own box and button; the person never names this computer.
+    await expect(app.link({ code: "bad", label: "Desk" })).rejects.toThrow("This link code could not be used. Paste the whole code your office sent you into Link code, then choose Connect with this code.");
     expect(fetcher).not.toHaveBeenCalled();
     fetcher.mockRejectedValue(new Error("offline"));
     await expect(app.link({ code, label: "Desk" })).rejects.toThrow();

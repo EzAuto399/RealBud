@@ -1,5 +1,7 @@
 # RealBud end state
 
+Onboarding, 7 October: [Onboarding end to end](ONBOARDING-E2E-2026-10-07.md) closes the gaps between invite, website, download, link and first work. The window opens before the service starts, linking lands on Desk with Get started, Bud setup holds can be cleared by staff, and role packs are offered in the staff path. On the website, owners no longer dead-end after setup, link codes last one hour with a copy-ready staff message, and RealBud uploads office packs (website PR #26, not deployed). Source, local tests and fictional renderer QA only.
+
 Latest continuation, 7 October: [Watch and learn](WATCH-AND-LEARN-2026-10-07.md) lets staff show Bud a portal task once in the work browser; it becomes a reviewed draft read recipe that replays through the existing runner, broker and Start card. Typed values are never kept, risky labels can never be confirmed, and drafts never publish themselves. Source, local tests and a local real-Chrome recording pass; no packaged, installed or live REI run yet.
 
 Showcase target, 5 October: [Austin Windows showcase, Friday 9 Oct](AUSTIN-WINDOWS-SHOWCASE-2026-10-09.md). Installs on Austin's Windows PC and demos W1–W5 on fictional data first. Plan and status only; it records no installed or customer acceptance.

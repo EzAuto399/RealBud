@@ -29,42 +29,78 @@ const STATE_LABEL: Record<SetupStep["state"], string> = {
   unknown: "Not checked yet",
 };
 
-/** One bounded read: a hung or failed read becomes "unavailable", never a permanent "Reading…". */
-function useBoundedRead<T>(path: string, parse: (body: unknown) => T, skip: boolean, refreshEvent?: string): T | "unavailable" | undefined {
-  const [value, setValue] = useState<T | "unavailable" | undefined>(undefined);
-  useEffect(() => {
-    if (skip) return;
-    let alive = true;
-    let controller: AbortController | undefined;
-    const load = () => {
-      controller?.abort();
-      const current = new AbortController();
-      controller = current;
-      const timer = setTimeout(() => current.abort(), 15_000);
-      void api(path, { signal: current.signal })
-        .then((body: unknown) => {
-          if (alive && controller === current) setValue(parse(body));
-        })
-        .catch(() => {
-          if (alive && controller === current) setValue("unavailable");
-        })
-        .finally(() => clearTimeout(timer));
-    };
-    load();
-    if (refreshEvent) window.addEventListener(refreshEvent, load);
-    return () => {
+type Read<T> = T | "unavailable" | undefined;
+const READ_TIMEOUT_MS = 15_000;
+/** A busy PC can miss one 15 s window (Windows issues #15), so a failed read tries again a few times. */
+export const READ_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
+
+/**
+ * Bounded reads of one path: a hung or failed read becomes "unavailable",
+ * never a permanent "Reading…"; a failed read tries again a few times.
+ */
+export function boundedRead<T>(path: string, parse: (body: unknown) => T, set: (update: (previous: Read<T>) => Read<T>) => void) {
+  let alive = true;
+  let controller: AbortController | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const load = (attempt: number) => {
+    controller?.abort();
+    clearTimeout(retry);
+    const current = new AbortController();
+    controller = current;
+    const timer = setTimeout(() => current.abort(), READ_TIMEOUT_MS);
+    void api(path, { signal: current.signal })
+      .then((body: unknown) => {
+        if (!alive || controller !== current) return;
+        const next = parse(body);
+        set(() => next);
+      })
+      .catch(() => {
+        if (!alive || controller !== current) return;
+        // Absent evidence is never evidence: a failed read is unknown, never the last good value.
+        set(() => "unavailable");
+        if (attempt < READ_RETRY_DELAYS_MS.length) retry = setTimeout(() => load(attempt + 1), READ_RETRY_DELAYS_MS[attempt]);
+      })
+      .finally(() => clearTimeout(timer));
+  };
+  return {
+    refresh: () => load(0),
+    stop: () => {
       alive = false;
       controller?.abort();
-      if (refreshEvent) window.removeEventListener(refreshEvent, load);
+      clearTimeout(retry);
+    },
+  };
+}
+
+function useBoundedRead<T>(path: string, parse: (body: unknown) => T, skip: boolean, refreshEvent?: string): Read<T> {
+  const [value, setValue] = useState<Read<T>>(undefined);
+  useEffect(() => {
+    if (skip) return;
+    const read = boundedRead(path, parse, setValue);
+    read.refresh();
+    if (refreshEvent) window.addEventListener(refreshEvent, read.refresh);
+    return () => {
+      read.stop();
+      if (refreshEvent) window.removeEventListener(refreshEvent, read.refresh);
     };
     // `parse` is a module-level function at every call site.
   }, [path, skip, refreshEvent]);
   return value;
 }
 
+const SET_UP_DISMISSED = "realbud.get-started-done-dismissed.v1";
+function setUpDismissed(): boolean {
+  try { return localStorage.getItem(SET_UP_DISMISSED) === "1"; } catch { return false; }
+}
+/** Remembers on this computer that the person has seen the set-up line. */
+export function dismissSetUp() {
+  try { localStorage.setItem(SET_UP_DISMISSED, "1"); } catch { /* hidden for this session only */ }
+}
+
 /**
  * "Get started": the one setup checklist, on Desk. Five steps that tick from
- * the host's own facts; the card disappears once every step is done.
+ * the host's own facts; once every step is done it folds to one line the
+ * person can dismiss on this computer.
  */
 export function GoLiveCard({
   agencyName,
@@ -89,6 +125,7 @@ export function GoLiveCard({
 }) {
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(true);
+  const [doneDismissed, setDoneDismissed] = useState(setUpDismissed);
   // Unknown setup state stays unknown: a failed or slow read may never read as
   // finished setup, so the step carries its own honest wording instead.
   const agencyRead = useBoundedRead("/api/agency-setup", readAgencySetupFacts, agencySetup !== undefined);
@@ -144,18 +181,38 @@ export function GoLiveCard({
     if (typeof document !== "undefined") document.getElementById(step.target)?.scrollIntoView({ block: "start" });
   };
 
-  // Every step done: the card goes away. It never announces "ready".
-  if (setupSequenceComplete(steps)) return null;
-
-  const doneCount = steps.filter((step) => step.state === "done").length;
-  const summary = `${doneCount} of ${SETUP_STEP_COUNT} done`;
-
   const frame = (card: ReactNode) => (
     <div className="mb-3 flex items-start gap-2" inert={inert}>
       <div className="min-w-0 flex-1">{card}</div>
       {menu}
     </div>
   );
+
+  // Every step done: one calm line until dismissed. Setup never claims workflow readiness.
+  if (setupSequenceComplete(steps)) {
+    if (doneDismissed) return null;
+    return frame(
+      <section className="flex items-center justify-between gap-2 rounded-lg border border-line bg-sheet px-3.5 py-2" aria-label="Get started">
+        <p className="flex items-center gap-2 text-[13px] text-ink">
+          <CheckCircle2 size={16} className="shrink-0 text-agency" aria-hidden />
+          You’re set up. Ask Bud whenever you need a hand.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            dismissSetUp();
+            setDoneDismissed(true);
+          }}
+          className="pm-control shrink-0 px-2 text-[12px] text-ink-muted hover:text-ink"
+        >
+          Dismiss
+        </button>
+      </section>
+    );
+  }
+
+  const doneCount = steps.filter((step) => step.state === "done").length;
+  const summary = `${doneCount} of ${SETUP_STEP_COUNT} done`;
 
   if (compact && !open) {
     return frame(

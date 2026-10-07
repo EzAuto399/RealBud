@@ -1,0 +1,46 @@
+{
+  "output": "/private/tmp/claude-501/-Users-yo-da-projects-RealBud/be33b517-8f93-4095-99a5-3ea46a1df99a/scratchpad/qa/qa-onboarding-setup",
+  "checks": [
+    "Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact",
+    "Fresh workspace Desk shows one \"Get started\" card with five steps, 0 of 5 done, step 1 \"Enter link code\" as the single current step, Bud never current or done, and nothing claiming ready",
+    "Naming the agency on You through PATCH /api/desk/agency (Fictional Harbour Agency) does not tick \"Import your office’s pack\" on its own",
+    "The Schedule door with #schedule-packs puts the packs section in the document",
+    "Schedule → Agency workflow setup tabs read \"Agency Gmail Property references Review workflows\"",
+    "Open Agency workflow setup scrolls #schedule-packs into the viewport",
+    "Saving the agency name, timezone (Australia/Brisbane) and workflow pack (office-core) in one PUT /api/agency-setup ticks \"Import your office’s pack\" (1 of 5 done) for an office without a role pack, while the unlinked computer keeps \"Enter link code\" as the single current action",
+    "Enter link code opens the Website account controls in Workspace without starting a link or marking the computer linked",
+    "Workspace → Connected apps opens #you-connected-apps, expanded and visible, without connecting an account",
+    "The Desk workspace setup card renders at 390x844 with no horizontal page scroll",
+    "Workspace → Office details shows the zone the fresh v3 book recorded (Australia/Brisbane), matching the server process, with no \"not recorded yet\" fallback",
+    "A fresh browser without the legacy flag enters the completed workspace directly, preserves the saved profile and leaves the saved office contact (Fictional Saved Person) untouched",
+    "No renderer pageerror during onboarding, Desk, Schedule, You or fresh-browser re-entry"
+  ],
+  "defects": [],
+  "observations": {
+    "serverOrigin": "http://127.0.0.1:59206",
+    "rendererOrigin": "http://127.0.0.1:59207",
+    "hostTimezone": "Australia/Brisbane",
+    "freshSetupCard": "Get started 0 of 5 done Hide 1. Paste the link code your office sent you · Now Your office owner sends this code. Ask them if you don’t have one yet. Enter link code 2. Bud is setting itself up · Later Starts by itself once this computer is connected. See progress 3. Import your office’s pack · Later Import the pack your office shared with you. Each workflow arrives switched off. 4. Connect the office Gmail · Later Sign in to the office Gmail in your browser. 5. Review and switch on your workflows · Later Open each workflow, read what it does, then switch it on.",
+    "namedOnYouSetupCard": "Get started 0 of 5 done Hide 1. Paste the link code your office sent you · Now Your office owner sends this code. Ask them if you don’t have one yet. Enter link code 2. Bud is setting itself up · Later Starts by itself once this computer is connected. See progress 3. Import your office’s pack · Later Import the pack your office shared with you. Each workflow arrives switched off. 4. Connect the office Gmail · Later Sign in to the office Gmail in your browser. 5. Review and switch on your workflows · Later Open each workflow, read what it does, then switch it on.",
+    "hashAfterOpenSetup": "",
+    "agencySetupStepLabels": "Agency Gmail Property references Review workflows",
+    "schedulePacksBox": {
+      "top": 77,
+      "bottom": 2543,
+      "height": 2466,
+      "viewport": 1050,
+      "hash": "",
+      "focused": ""
+    },
+    "savedAgencySetupCard": "Get started 1 of 5 done Hide 1. Paste the link code your office sent you · Now Your office owner sends this code. Ask them if you don’t have one yet. Enter link code 2. Bud is setting itself up · Later Starts by itself once this computer is connected. See progress 3. Import your office’s pack · Done 4. Connect the office Gmail · Later Sign in to the office Gmail in your browser. 5. Review and switch on your workflows · Later Open each workflow, read what it does, then switch it on.",
+    "hashAfterOpenAccountLink": "#you-website",
+    "hashAfterOpenConnections": "#you-website",
+    "narrowWidths": {
+      "scrollWidth": 390,
+      "innerWidth": 390
+    },
+    "bookTimezone": "Australia/Brisbane",
+    "officeZoneLine": "Book timezone: Australia/Brisbane",
+    "officeAfterFreshBrowser": "Fictional Saved Person"
+  }
+}

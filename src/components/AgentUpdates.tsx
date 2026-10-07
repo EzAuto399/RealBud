@@ -43,7 +43,7 @@ export function AgentUpdates({ disabled = false, onSettled }: { disabled?: boole
           if (cancelled) return;
           setStatus(next); setInstalling(false);
           if (install.state === "failed") { setError(budFacingCopy(install.error, "Bud setup did not finish. Your current installation is kept.")); setMessage(""); }
-          else setMessage(next.restartRequired ? "Bud's update is ready. Quit and reopen RealBud to use it, then run the readiness check." : "Bud setup finished. Continue connecting Bud.");
+          else setMessage(next.restartRequired ? "Bud's update is ready. Restart RealBud's service (Settings & help, RealBud service) to use it, then test Bud." : "Bud setup finished. Continue connecting Bud.");
           await settled.current();
           return;
         }
@@ -62,7 +62,7 @@ export function AgentUpdates({ disabled = false, onSettled }: { disabled?: boole
       if (!mounted.current) return;
       if (kind === "check") { setStatus(result); setMessage("Bud update check finished."); }
       if (kind === "install") { setInstalling(true); setMessage("Preparing a verified Bud update. Your current installation remains available."); }
-      if (kind === "restore") { setStatus(await api("/api/hermes/update")); setMessage("Previous Bud build selected. Quit and reopen RealBud to use it. Your private setup and office files are kept."); }
+      if (kind === "restore") { setStatus(await api("/api/hermes/update")); setMessage("Previous Bud build selected. Restart RealBud's service (Settings & help, RealBud service) to use it. Your private setup and office files are kept."); }
       if (kind === "cancel") setMessage("Stopping setup. Your current installation is kept.");
     } catch (err) { if (mounted.current) setError(budFacingCopy(err, "Bud update did not finish. Try again.")); }
     finally { if (mounted.current) setBusy(false); }

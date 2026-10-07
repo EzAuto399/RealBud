@@ -60,6 +60,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const connect = useConnectOffice(name.trim());
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
+  // Sample exploration may leave the name blank; wait for saved settings so a typed name is never missed.
+  const nameRead = name.trim().length > 0 || Boolean(state.config);
 
   useEffect(() => {
     if (edited.current) return;
@@ -98,24 +100,24 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
 
   const saveProfile = () => canContinue ? advanceProfile(name.trim(), email.trim().toLowerCase()) : undefined;
 
+  // First run lands on Desk, where Get started lives; "bud" opens the setup sheet over it.
   const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
     setEmailGateDone(emailStatus);
-    if (destination === "bud") {
-      history.replaceState(null, "", location.pathname + location.search);
-      dispatch({ type: "showAsk" });
-    } else {
-      dispatch({ type: "showDesk" });
-    }
+    // A leftover door hash would move the view on mount and close the sheet.
+    if (destination === "bud") history.replaceState(null, "", location.pathname + location.search);
+    dispatch({ type: "showDesk" });
     onDone(destination === "bud" ? "bud" : undefined);
   };
 
+  // Only a typed name is saved as the person's: the placeholder would later
+  // name this computer when it links.
   const exploreSampleDesk = async () => {
     track("onboarding_sample_desk");
-    await advanceProfile(name.trim() || SAMPLE_PROFILE_NAME, emailOk ? email.trim().toLowerCase() : '');
+    await advanceProfile(name.trim(), emailOk ? email.trim().toLowerCase() : '');
   };
 
   const finish = async (destination: "desk" | "bud") => {
-    if (!name.trim() || busy !== null || pending.current) return;
+    if (!nameRead || busy !== null || pending.current) return;
     pending.current = true;
     setBusy("finish");
     setError("");
@@ -129,7 +131,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
       if (!officeContactNamed(currentDesk)) {
         const snapshot = await finishRequest("/api/desk/agency", {
           method: "PATCH",
-          body: JSON.stringify({ office: { pmUser: name.trim() } }),
+          // The sample book's own contact when no name was typed; first-run.ts never counts it as a person.
+          body: JSON.stringify({ office: { pmUser: name.trim() || SAMPLE_PROFILE_NAME } }),
         });
         dispatch({ type: "deskSnapshot", snapshot });
       }
@@ -339,14 +342,14 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                     <button
                       type="button"
                       onClick={() => void finish("bud")}
-                      disabled={busy !== null || !name.trim()}
+                      disabled={busy !== null || !nameRead}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {busy === "finish" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={15} />}
                       Continue to Bud setup
                     </button>
                   ) : null}
-                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"><BookOpen size={14} />Open the sample desk first</button>}
+                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !nameRead} className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"><BookOpen size={14} />Open the sample desk first</button>}
                   <button
                     type="button"
                     onClick={() => void back()}

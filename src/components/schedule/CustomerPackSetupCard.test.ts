@@ -10,7 +10,8 @@ import type { PackSkillReviewState } from './PackSkillReview';
 
 const pack = { id: 'austin-accounts', revision: 2, title: 'Fictional accounts role' } as CustomerPack;
 const ready: OfficePacksView = { state: 'ready', packs: [{ id: 'austin-accounts', title: 'Fictional accounts role', revision: 2, digest: 'd'.repeat(64), pack }], refused: [{ id: 'fictional-other', revision: 1, reason: "This pack isn't signed by RealBud, so it wasn't installed." }] };
-const render = (view: OfficePacksView | null) => renderToStaticMarkup(createElement(OfficePacks, { view, busy: false, onPreview: () => {}, onRefresh: () => {} }));
+const render = (view: OfficePacksView | null) => renderToStaticMarkup(createElement(OfficePacks, { view, busy: false, onPreview: () => {}, onPreviewBuiltIn: () => {}, onRefresh: () => {} }));
+const builtIn = 'aria-label="Role packs built into RealBud"';
 
 describe('Packs from your office', () => {
   it('lists each signed pack with its role title, version and a named Preview, and says why others cannot be used', () => {
@@ -22,13 +23,25 @@ describe('Packs from your office', () => {
   });
 
   it('explains empty, unlinked, unavailable and checking states in plain words', () => {
-    expect(render({ state: 'ready', packs: [], refused: [] })).toContain('Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again. Until then, preview a built-in role pack under More setup options below.');
+    expect(render({ state: 'ready', packs: [], refused: [] })).toContain('Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again. Until then, preview your role pack built into RealBud below.');
     expect(render({ state: 'not-linked' })).toContain('Connect this computer to your office first.');
     expect(render({ state: 'not-linked' })).toMatch(/<button type="button"[^>]*>Connect this computer<\/button>/);
     expect(render({ state: 'unavailable' })).not.toContain('>Connect this computer</button>');
     expect(render({ state: 'unavailable' })).toContain('couldn’t be checked right now. Nothing on this computer changed.');
     expect(render(null)).toContain('Checking your office for packs');
     for (const view of [{ state: 'not-linked' }, { state: 'unavailable' }, ready] as OfficePacksView[]) expect(render(view)).toContain('>Check again</button>');
+  });
+
+  it('offers the built-in Kevin and Sherry role packs in the staff path only while the office has none to share', () => {
+    for (const view of [{ state: 'ready', packs: [], refused: [] }, { state: 'not-linked' }, { state: 'unavailable' }] as OfficePacksView[]) {
+      const html = render(view);
+      expect(html).toContain(builtIn);
+      expect(html).toContain('>Preview built-in Auston accounts — Kevin</button>');
+      expect(html).toContain('>Preview built-in Auston property management — Sherry</button>');
+      expect(html).not.toMatch(/Austin|More setup options/);
+    }
+    expect(render(ready)).not.toContain(builtIn);
+    expect(render(null)).not.toContain(builtIn);
   });
 
   it('refuses a malformed answer instead of showing a partial list', () => {
@@ -45,7 +58,9 @@ describe('Packs from your office', () => {
     expect(html.match(/More setup options \(office owner\)/g)).toHaveLength(1);
     expect(html.indexOf('Packs from your office')).toBeLessThan(more);
     expect(html.indexOf('Refresh setup checks')).toBeLessThan(more);
-    for (const owner of ['Role packs built into RealBud', 'Preview built-in Auston accounts — Kevin', 'Preview built-in Auston property management — Sherry', 'Start with department case reviews', 'Preview real estate office core pack', 'Preview a pack file', 'Earlier Auston office pack (all workflows in one)', 'Preview Auston office pack', 'Fictional owner extra']) expect(html.indexOf(owner)).toBeGreaterThan(more);
+    // Built-in role packs are the staff fallback beside office packs, never owner setup.
+    expect(html.slice(more)).not.toMatch(/Role packs built into RealBud|Preview built-in/);
+    for (const owner of ['Start with department case reviews', 'Preview real estate office core pack', 'Preview a pack file', 'Earlier Auston office pack (all workflows in one)', 'Preview Auston office pack', 'Fictional owner extra']) expect(html.indexOf(owner)).toBeGreaterThan(more);
     // Collapsed by default and the card's last child, so pending changes, repair and previews never render inside it.
     expect(html).not.toMatch(/<details[^>]* open/);
     expect(html.endsWith('</details></section>')).toBe(true);

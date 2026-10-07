@@ -1,0 +1,21 @@
+PASS 1. First run: welcome screen
+PASS 2. Office link through the lab website (link code)
+FAIL 3. Bud setup status (fixture worker in place of the runtime install)
+locator.waitFor: Timeout 15000ms exceeded.
+Call log:
+  - waiting for getByRole('heading', { name: 'What can I take off your plate?' }) to be visible
+
+    at /Users/yo-da/projects/RealBud-onbdesk/scripts/qa-clean-walkthrough.mjs:296:82
+    at async step (/Users/yo-da/projects/RealBud-onbdesk/scripts/qa-clean-walkthrough.mjs:163:9)
+    at async file:///Users/yo-da/projects/RealBud-onbdesk/scripts/qa-clean-walkthrough.mjs:256:3
+PASS 4. Desk: add a property, edit it, customize the desk
+PASS 5. Work: send a message and get Bud's answer
+PASS 6. Schedule: disable and enable a loop
+PASS 7. Approval card and Stop
+PASS 8. Service down, then a recovery card appears and resolves
+PASS 9. Workspace: Settings & help
+PASS 10. Restart: everything is kept
+PASS 11. Update banner: deferred restart
+PASS 12. Second clean computer: expired link code, then a fresh code
+PASS 13. No renderer page errors
+FAILED: 12/13 steps · receipt /private/tmp/claude-501/-Users-yo-da-projects-RealBud/be33b517-8f93-4095-99a5-3ea46a1df99a/scratchpad/qa/clean-walkthrough/receipt.json

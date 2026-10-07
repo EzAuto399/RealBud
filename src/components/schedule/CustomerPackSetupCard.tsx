@@ -20,8 +20,10 @@ export function parseOfficePacksView(body: unknown): OfficePacksView {
   return body as unknown as OfficePacksView;
 }
 
-/** Packs the office uploaded on realbud.app. Preview opens the normal review and import. */
-export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: OfficePacksView | null; busy: boolean; onPreview: (pack: CustomerPack) => void; onRefresh: () => void }) {
+/** The same role packs as the signed office ones, shipped inside RealBud: only an exact copy imports without a signature. */
+const BUILT_IN_ROLE_PACKS = [['austin-accounts', 'Auston accounts — Kevin'], ['austin-property', 'Auston property management — Sherry']] as const;
+/** Packs the office uploaded on realbud.app, then the built-in role packs while the office offers none. Preview opens the normal review and import. */
+export function OfficePacks({ view, busy, onPreview, onPreviewBuiltIn, onRefresh }: { view: OfficePacksView | null; busy: boolean; onPreview: (pack: CustomerPack) => void; onPreviewBuiltIn: (id: string) => void; onRefresh: () => void }) {
   const again = <button className={button} disabled={busy} onClick={onRefresh}>Check again</button>;
   return <section aria-label="Packs from your office" className="rounded-lg border border-agency p-4 space-y-2">
     <h4 className="font-medium text-ink">Packs from your office</h4>
@@ -33,15 +35,20 @@ export function OfficePacks({ view, busy, onPreview, onRefresh }: { view: Office
         {view.packs.length ? <ul className="divide-y divide-line">{view.packs.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <span className="text-sm"><strong className="font-medium">{item.title}</strong> · version {item.revision}</span>
           <button className={button} disabled={busy} aria-label={`Preview ${item.title}`} onClick={() => onPreview(item.pack)}>Preview</button>
-        </li>)}</ul> : <p className="text-sm">Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again. Until then, preview a built-in role pack under More setup options below.</p>}
+        </li>)}</ul> : <p className="text-sm">Your office hasn’t shared any packs yet. Ask your office owner to add your role pack on realbud.app, then press Check again. Until then, preview your role pack built into RealBud below.</p>}
         {view.refused.map(item => <p key={`${item.id}-${item.revision}`} role="alert" className="text-sm text-danger">{item.id} version {item.revision} can’t be used: {item.reason}</p>)}
         {again}
       </>}
+    {view && !(view.state === 'ready' && view.packs.length) && <div role="group" aria-label="Role packs built into RealBud" className="space-y-2 border-t border-line pt-3">
+      <h4 className="font-medium text-ink">Role packs built into RealBud</h4>
+      <p className="text-sm text-ink-secondary">Use yours while your office has none to share. You review it before importing, and its workflows arrive switched off.</p>
+      <div className="flex flex-wrap gap-2">{BUILT_IN_ROLE_PACKS.map(([id, title]) => <button key={id} className={button} disabled={busy} onClick={() => onPreviewBuiltIn(id)}>Preview built-in {title}</button>)}</div>
+    </div>}
   </section>;
 }
 /** A pending suggestion, archival or upgrade hold is a review item and stays in view; otherwise instruction history is owner setup. */
 export const skillReviewPending = (state: PackSkillReviewState) => state.proposals.length > 0 || state.pendingUpgrades.length > 0 || state.skillHistories.some(history => !!history.pendingArchive);
-/** Staff see office packs, previews, installed packs and recovery. Owner-only setup sits in one collapsed section; `moreOptions` joins it. */
+/** Staff see office packs (or the built-in role packs while the office has none), previews, installed packs and recovery. Owner-only setup sits in one collapsed section; `moreOptions` joins it. */
 export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalled?: () => void | Promise<void>; moreOptions?: ReactNode }) {
   const [installed, setInstalled] = useState<CustomerPackInstallation[]>([]);
   const [office, setOffice] = useState<OfficePacksView | null>(null);
@@ -80,7 +87,7 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
     if (alive.current) setNotice('Portable pack downloaded. It includes plans and instructions; no customer records, sign-ins or local approvals.');
   };
   return <section aria-label="Customer workflow pack setup" className="mt-5 border-t border-line pt-4 space-y-4" aria-busy={busy}>
-    <OfficePacks view={office} busy={busy} onPreview={pack => void run(() => inspect(pack))} onRefresh={() => void run(async () => { setOffice(null); await loadOffice(); })} />
+    <OfficePacks view={office} busy={busy} onPreview={pack => void run(() => inspect(pack))} onPreviewBuiltIn={id => void run(async () => inspect(await api(`/api/customer-packs/${id}/export`)))} onRefresh={() => void run(async () => { setOffice(null); await loadOffice(); })} />
     {change&&<CustomerPackChangeReview key={change.previewDigest} preview={change} busy={busy} cancel={()=>setChange(null)} apply={()=>void run(async()=>{
       const body={expectedInstalledDigest:change.installedDigest,expectedInstalledRevision:change.installedRevision,expectedDigest:change.digest,expectedPreviewDigest:change.previewDigest,
         ...(change.action==='upgrade'?{pack:change.pack}:{packId:change.pack.id,installationRevision:change.rollbackRevision})};
@@ -124,12 +131,6 @@ export function CustomerPackSetupCard({ onInstalled, moreOptions }: { onInstalle
     <p role="status" className="text-sm text-ink-secondary">{busy ? 'Checking local pack setup…' : notice}</p>
     {/* Owner-only setup. Recovery (pending changes, repair) and previews stay outside so nothing urgent hides here. */}
     <details className="border-t border-line pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-ink focus-visible:outline-2 focus-visible:outline-agency">More setup options (office owner)</summary><div className="mt-3 space-y-4">
-      {/* The same role packs as the signed office ones, shipped inside RealBud: only an exact copy imports without a signature. */}
-      <div className="space-y-2"><h4 className="font-medium text-ink">Role packs built into RealBud</h4>
-        <p className="text-sm text-ink-secondary">Use one while your office hasn’t uploaded its signed packs yet. You review it before importing, and its workflows arrive switched off.</p>
-        <div className="flex flex-wrap gap-2">{([['austin-accounts', 'Auston accounts — Kevin'], ['austin-property', 'Auston property management — Sherry']] as const).map(([id, title]) =>
-          <button key={id} className={button} disabled={busy} onClick={() => void run(async () => inspect(await api(`/api/customer-packs/${id}/export`)))}>Preview built-in {title}</button>)}</div>
-      </div>
       <div className="rounded-lg bg-inset p-4 space-y-2">
         <h4 className="font-medium text-ink">Start with department case reviews</h4>
         <p className="text-sm text-ink-secondary">Five plans for Accounts and Property Management, including general admin, maintenance and inspections. Bud uses the assigned case text to prepare findings and drafts for review.</p>
