@@ -195,8 +195,8 @@ export interface ApprovalCardMeta {
   deadline?: string;
   /** Why the card closed. */
   resolution?: 'user' | 'timeout' | 'phone' | 'stopped';
-  /** Who answered and where. */
-  answeredBy?: { name: string; via: 'desktop' | 'telegram' | 'discord' | 'slack' };
+  /** Who answered, where and when (ISO time): "Allowed once by Sam via Telegram · 2:16 pm". */
+  answeredBy?: { name: string; via: 'desktop' | 'telegram' | 'discord' | 'slack'; at?: string };
   /** What a phone may do with this card; absent means desktop only. */
   remote?: 'read' | 'write' | 'send' | 'desktop-only';
 }

@@ -777,6 +777,18 @@ describe("harness HTTP API", () => {
     expect((await api("GET", "/api/approvals/history")).body.entries).toHaveLength(1);
   });
 
+  it("binds Bud's approval_policy to the Workspace → Approvals store, as the person who sent the message", () => {
+    // Source contract (a turn needs a real worker): a single desktop binds with no session; an office member's
+    // turn binds only with the member session their own request carried; anything else stays unbound.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const binding = source.slice(source.indexOf("const memberSession = opts?.memberSession;"), source.indexOf("integrations.bankSource = {"));
+    expect(binding).toContain("const singleDesktop = !memberSession && await companyHost.seatIdentity().then(seat => seat === null, () => false);");
+    expect(binding).toContain("...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {})");
+    expect(source).toContain("const personTurn = (req: IncomingMessage): { memberSession?: string } => { const session = companyMemberToken(req); return session ? { memberSession: session } : {}; };");
+    expect(source.match(/memberSession: session/g)).toHaveLength(1);
+    expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
+  });
+
   it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
     const empty = await api("GET", "/api/law-watch");
     expect(empty.status).toBe(200);

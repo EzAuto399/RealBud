@@ -60,7 +60,7 @@ import { createPropertyReferenceApi, createPropertyReferenceStore } from './prop
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionBookingsStore, createInspectionsApi, runInspectionDraft } from './inspection-bookings.ts';
 import { createAustinPack } from './austin-pack.ts';
-import { bindWorkflowSettings } from './workflow-settings-broker.ts';
+import { bindApprovalPolicy, bindWorkflowSettings } from './workflow-settings-broker.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createLoopChatCards } from './loop-chat-cards.ts';
 import type { LoopRun } from '../shared/contracts.ts';
@@ -1719,6 +1719,9 @@ async function startSeatTurn(
     signInResumeId?: string;
     /** Phone channel Ask — full Hermes Bud, not Desk FAQ shortcuts. */
     channelRelay?: boolean;
+    /** The office member session the renderer sent with the person's own message (`personTurn`).
+     * Bud's approval_policy acts as that person for this turn only; never persisted. */
+    memberSession?: string;
   },
 ) {
   const bot = store.bot(botId);
@@ -2086,6 +2089,9 @@ async function startSeatTurn(
         // Working rules (maintenance month rule, inspection rules, Morning priorities)
         // through the same stores and revision checks as their routes; every change
         // and restore is shown on the one-time card first.
+        const memberSession = opts?.memberSession;
+        const singleDesktop = !memberSession && await companyHost.seatIdentity().then(seat => seat === null, () => false);
+        assertDispatch();
         integrations.workflowSettings = bindWorkflowSettings({ maintenance: maintenanceReview, inspection: inspectionRules,
           agency: { read: () => agencySetup.getConfiguration(), save: async body => {
             const previous = (await agencySetup.getConfiguration()).revision;
@@ -2094,7 +2100,11 @@ async function startSeatTurn(
           // Workflow clocks through the same door as PATCH /api/loops/:id, which pins weekly bills to its reviewed setup.
           loops: { listLoops: () => loops!.listLoops(), patchClock: async (id, patch) => loops!.patchClock(id, id === 'weekly-bills' ? { ...patch, timezone: (await authorizeBillWorkflow()).settings.timeZone } : patch) },
           writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
-            : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
+            : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null,
+          // Approval settings through the same GET and PUT as Workspace → Approvals, which check edit rights on every call.
+          // A single desktop needs no session; an office member's own session, sent with their message, proves who they are.
+          // Without one (a phone, a loop, a queued follow-up) Bud says to change them in Workspace → Approvals.
+          ...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {}) });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
         const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
         integrations.bankSource = {
@@ -3081,6 +3091,9 @@ async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision
   await instance.adapter.respondToRequest(threadId, parsed.requestId, decision);
   return { status: 200, body: { ok: true } };
 }
+/** A turn started by the person's own message carries the office member session the renderer sent with it
+ * (`MEMBER_SESSION_PATHS` in src/state/store.tsx), for Bud's approval_policy only. */
+const personTurn = (req: IncomingMessage): { memberSession?: string } => { const session = companyMemberToken(req); return session ? { memberSession: session } : {}; };
 let localSessionPublished = false;
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -5130,7 +5143,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (!text) return json(res, 400, { error: "text required" });
       const sizeError = askMessageSizeError(text);
       if (sizeError) return json(res, 413, { error: sizeError });
-      await startTurn(m[1], text);
+      await startTurn(m[1], text, personTurn(req));
       return json(res, 202, { ok: true });
     }
 
@@ -5150,7 +5163,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
-        await startTurn(bot.id, text);
+        await startTurn(bot.id, text, personTurn(req));
         return json(res, 202, { ok: true, started: true });
       }
       const queued = store.setQueuedMessage(bot.id, text, bot.threadId);
@@ -5187,7 +5200,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
-        await startTurn(bot.id, text);
+        await startTurn(bot.id, text, personTurn(req));
         return json(res, 202, { ok: true, started: true });
       }
       if (steeringBots.has(bot.id)) return json(res, 409, { error: "Bud is already applying another steer" });
@@ -5200,7 +5213,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (connectionOperations.has(bot.id)) {
           connectionOperations.delete(bot.id);
           store.patchBot(bot.id, { busy: false });
-          await startTurn(bot.id, text, { threadId });
+          await startTurn(bot.id, text, { threadId, ...personTurn(req) });
           return json(res, 202, { ok: true, steered: true });
         }
         const instance = registry.get(bot.modelSelection.instanceId);
@@ -5218,7 +5231,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const current = store.bot(bot.id);
         if (!current) return json(res, 404, { error: "no such bot" });
         store.patchBot(current.id, { busy: false });
-        await startTurn(current.id, text, { threadId });
+        await startTurn(current.id, text, { threadId, ...personTurn(req) });
         return json(res, 202, { ok: true, steered: true });
       } finally {
         steeringBots.delete(bot.id);
@@ -5255,7 +5268,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       store.patchBot(bot.id, { rewound: true });
       broadcast({ kind: "message", threadId: bot.threadId, message });
       broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
-      await startTurn(bot.id, text, { userMessage: message });
+      await startTurn(bot.id, text, { userMessage: message, ...personTurn(req) });
       return json(res, 202, { ok: true });
     }
 

@@ -20,8 +20,8 @@ import { BrowserPendingActions, BrowserPendingPanel, browserApprovalBlocked } fr
 import { fmtTimeOfDay } from "@/lib/au";
 import { officeAppLabel } from "@shared/office-sources";
 
-/** An eligible read card's offer: this task's reads, or (`always`) every read of this app. */
-export interface ReadOffer { app: string; always: boolean }
+/** An eligible read card's offer (server `ApprovalReadOffer`): this task's reads, or (`always`) every read of this app. */
+export interface ReadOffer { appLabel: string; always: boolean }
 /** Who answered a card, and where. */
 export interface AnsweredBy { name: string; via: "desktop" | "telegram" | "discord" | "slack"; at?: number }
 const VIA: Record<AnsweredBy["via"], string> = { desktop: "desktop", telegram: "Telegram", discord: "Discord", slack: "Slack" };
@@ -31,9 +31,8 @@ const plain = (value: unknown, max: number) => typeof value === "string" && valu
 export function readReadOffer(value: unknown): ReadOffer | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const offer = value as Record<string, unknown>;
-  const slug = plain(offer.app, 64);
-  const app = plain(offer.label, 80) ?? (slug ? officeAppLabel(slug) : null);
-  return app ? { app, always: offer.always === true } : null;
+  const appLabel = plain(offer.appLabel, 80);
+  return appLabel ? { appLabel, always: offer.always === true } : null;
 }
 export function readAnsweredBy(value: unknown): AnsweredBy | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -57,10 +56,21 @@ export function timeLeft(deadline: string | undefined, now: number): string | nu
 /** One side-panel row: "Gmail · Send email · 2 min left". The app and action come
  * from the read offer or the exact request's tool name, else the card's headline. */
 export function waitingLine(pending: Pending, now: number): string {
-  const slug = /"name":\s*"([A-Z][A-Z0-9]*)_([A-Z0-9_]+)"/.exec(pending.detail);
-  const app = pending.readOffer?.app ?? (slug ? officeAppLabel(slug[1]!.toLowerCase()) : null);
+  const slug = /"name":\s*"([A-Z][A-Z0-9]*)_([A-Z0-9_]+)"/.exec(pending.exactRequest ?? pending.detail);
+  const app = pending.readOffer?.appLabel ?? (slug ? officeAppLabel(slug[1]!.toLowerCase()) : null);
   const words = slug ? slug[2]!.toLowerCase().replace(/_/g, " ") : approvalHeadline(pending.tool, pending.detail);
   return [app, words.charAt(0).toUpperCase() + words.slice(1), timeLeft(pending.deadline, now)].filter(Boolean).join(" · ");
+}
+
+/** The exact request behind a card's plain lines, collapsed until the person opens it. */
+export function ExactRequest({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <details className="mt-2">
+      <summary className="pm-control flex cursor-pointer items-center text-[12.5px] text-ink-secondary hover:text-ink">Exact request</summary>
+      <pre tabIndex={0} role="region" aria-label="Exact request" className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12px] leading-relaxed text-ink focus-visible:outline-2 focus-visible:outline-agency">{text}</pre>
+    </details>
+  );
 }
 
 export interface Pending {
@@ -69,7 +79,10 @@ export interface Pending {
   tool: string;
   /** the narrow grant "always allow" writes, computed server-side */
   allowKey?: string;
+  /** The card's plain lines. */
   detail: string;
+  /** The exact request behind them (card `detail`), shown under "Exact request". */
+  exactRequest?: string;
   held?: string;
   fence?: RequestFence;
   approvalPolicy?: ApprovalPolicy;
@@ -101,7 +114,8 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       memoryReview: m.card!.memoryReview,
       ...(m.card!.browserApproval !== undefined ? { browserApproval: readBrowserApprovalCard(m.card!.browserApproval) } : {}),
       // Card metadata from the approval packets, read defensively until each lands.
-      ...optional("readOffer", readReadOffer((m.card as { readOffer?: unknown }).readOffer)),
+      ...optional("readOffer", readReadOffer(m.card!.readOffer)),
+      ...optional("exactRequest", typeof m.card!.detail === "string" && m.card!.detail ? m.card!.detail : null),
       ...optional("deadline", typeof m.card!.deadline === "string" ? m.card!.deadline : null),
       ...optional("answeredBy", readAnsweredBy(m.card!.answeredBy)),
     }));
@@ -187,6 +201,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
           {pending.detail}
         </pre>
       )}
+      {isMemory ? null : <ExactRequest text={pending.exactRequest} />}
       {isSubmit ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
@@ -266,7 +281,7 @@ export function PendingApprovalActions({
           <button type="button" onClick={() => decide("allow", { scope: "once" })} className={cn(base, "bg-agency font-medium text-white hover:bg-agency-hover")}>Allow once</button>
           <button type="button" onClick={() => decide("allow", { scope: "task" })} className={cn(base, "border border-line text-ink hover:bg-raised")}>Allow for this task</button>
           {readOffer.always ? (
-            <button type="button" onClick={() => decide("allow", { scope: "always-reads" })} className={cn(base, "border border-line text-ink hover:bg-raised")}>Always allow reading {readOffer.app}</button>
+            <button type="button" onClick={() => decide("allow", { scope: "always-reads" })} className={cn(base, "border border-line text-ink hover:bg-raised")}>Always allow reading {readOffer.appLabel}</button>
           ) : null}
           <button type="button" onClick={() => decide("deny")} className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}>Deny</button>
           <button type="button" onClick={onCancelTurn} className={cn(base, "text-ink-muted hover:bg-raised hover:text-ink")}>Stop this turn</button>

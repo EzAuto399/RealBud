@@ -21,6 +21,8 @@ export type FenceDecision = {
   reason?: string;
   surface?: PortalFenceSurface;
   origin?: string;
+  /** An allow that came from the site's approval setting (Read without asking), not a standing rule. */
+  bySettings?: true;
 };
 
 export interface FenceRequest {
@@ -314,8 +316,9 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
     return { kind: "ask", surface: "portal-read", origin };
   }
 
-  if ((tool === "read" || tool === "navigate") && setting.kind !== "ask" && (setting.kind === "reads" || ruleAllows(ctx, "portal-read", origin, hosts))) {
-    return { kind: "allow", surface: "portal-read", origin };
+  if ((tool === "read" || tool === "navigate") && setting.kind !== "ask") {
+    if (ruleAllows(ctx, "portal-read", origin, hosts)) return { kind: "allow", surface: "portal-read", origin };
+    if (setting.kind === "reads") return { kind: "allow", surface: "portal-read", origin, bySettings: true };
   }
 
   return { kind: "ask", surface, origin };
@@ -337,7 +340,7 @@ export function fencePayload(decision: FenceDecision): FencePayload | undefined 
 export function ruleAllowNote(decision: FenceDecision): string {
   const surface: PortalRuleSurface = decision.surface === "portal-prefill" ? "portal-prefill" : "portal-read";
   const origin = decision.origin ?? "this site";
-  return `allowed by rule · ${portalRuleLabel(surface, origin)}`;
+  return `${decision.bySettings ? "allowed by approval settings" : "allowed by rule"} · ${portalRuleLabel(surface, origin)}`;
 }
 
 /** PM-facing denial that always names the attempted action. */

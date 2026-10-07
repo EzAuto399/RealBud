@@ -18,6 +18,8 @@ import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictio
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { governApprovals } from "./approval-settings.ts";
+import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
 import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 
 // The real loaders, wrapped so a test can see which one an unattended loop used and what it got.
@@ -387,5 +389,29 @@ describe("an unattended refresh and watch-and-learn recipes", () => {
       expect(used.recipes["tenant-list"].steps).toEqual(shipped.recipes["tenant-list"].steps);
       expect(merged.recipes["tenant-list"].steps).toContainEqual({ download: { label: "Export" } });
     } finally { cleanup(); await restore(); }
+  });
+});
+
+describe("approval settings on the office-approved morning refresh", () => {
+  // The host registers its store once at boot; here the refresh reads these settings through the real broker.
+  const govern = (choice?: ApprovalChoice) => governApprovals({ singleDesktop: async () => true,
+    effective: async (): Promise<ApprovalSettings[]> => [{ version: 1, purpose: "approval-settings", groups: choice ? { "site:rei-mock.fictional.test": choice } : {}, reviewedReads: [] }] });
+  afterEach(() => govern());
+
+  it("still reads REI with the site set to Ask every time, and reads nothing with Don't use", async () => {
+    govern("ask");
+    const f = await fixture();
+    const asked = await f.refresh.run();
+    expect(asked, asked.detail).toMatchObject({ ok: true, status: "completed" });
+    expect(bravo(f.desk).rei).toMatchObject({ tenancy: "FT-BRAVO" });
+
+    govern("deny");
+    const g = await fixture();
+    const refused = await g.refresh.run();
+    expect(refused).toMatchObject({ ok: false, status: "failed" });
+    expect(refused.detail).toContain("rei-mock.fictional.test is set to Don't use in Workspace → Approvals, so Bud did nothing there.");
+    expect(reiStamps(g.desk)).toEqual([]);
+    expect(bravo(g.desk).rei).toBeUndefined();
+    expect(g.mock.calls.some(call => ["snapshot", "fill", "press", "click"].includes(call[0]))).toBe(false);
   });
 });

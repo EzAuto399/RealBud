@@ -12,6 +12,7 @@ import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
 import { readBrowserApprovalCard } from "@shared/browser-approval-card";
 import { BrowserApprovalRecord } from "./BrowserApprovalCard";
+import { answeredByLine, ExactRequest, readAnsweredBy } from "./PendingApproval";
 
 const LONG_DETAIL_CHARS = 400;
 const LONG_DETAIL_LINES = 8;
@@ -61,6 +62,16 @@ export function ApprovalCard({
     : `${bot ? `${bot.name} wants to ` : "Wants to "}${legacyToolLabel(card.tool)}`;
   const detail = card.subtitle ?? "";
   const longDetail = detail.length > LONG_DETAIL_CHARS || detail.split("\n").length > LONG_DETAIL_LINES;
+  // Answered on the phone or another desktop: the record collapses to who answered, where and when.
+  const answeredBy = settled ? readAnsweredBy(card.answeredBy) : null;
+  if (answeredBy) {
+    return (
+      <div className="w-full max-w-[840px] rounded-2xl border border-line bg-sheet p-4 opacity-70">
+        <div className="text-[15px] font-semibold text-ink" title={card.tool}>{headline}</div>
+        <p role="status" className="mt-1 text-[13px] text-ink-secondary">{answeredByLine(answeredBy, settled)}</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -103,6 +114,7 @@ export function ApprovalCard({
           )}
         </div>
       )}
+      <ExactRequest text={card.detail} />
 
       {card.fence?.surface === "portal-submit" ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>

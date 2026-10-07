@@ -264,8 +264,10 @@ const groupWords = (group: string) => {
   if (kind === "app") return officeAppLabel(rest);
   return kind === "connector" ? `Office connector ${rest}` : rest;
 };
-/** What an unset group does today: websites and the locked rows ask; apps and connectors use the recommended default. */
-const unsetChoice = (group: string): ApprovalChoice => group.startsWith("site:") || group.startsWith("class:") ? "ask" : "read-without-asking";
+/** What an unset group compares as: the locked rows ask; apps, connectors and websites use their recommended default.
+ * A website's Recommended lets approved workflows and saved rules read, so a saved Ask every time is stricter, and
+ * Read without asking is still a widening (it names its tools below). */
+const unsetChoice = (group: string): ApprovalChoice => group.startsWith("class:") ? "ask" : "read-without-asking";
 const APPROVALS_UNBOUND = "Approval settings can't be changed from this conversation. Change them in Workspace → Approvals. Nothing was changed.";
 const approvalSummary = (settings: ApprovalSettings) => Object.entries(settings.groups).map(([group, choice]) => `${group} ${choice}`).join("; ") || "nothing saved, every row uses the recommended setting";
 

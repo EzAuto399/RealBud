@@ -320,6 +320,13 @@ describe("approval settings (approval_policy)", () => {
     expect((await propose([{ group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_click"] }]))).toMatchObject({ isError: true });
   });
 
+  it("proposes Ask every time for a website on Recommended as a stricter change", async () => {
+    const { cards, saved } = await desktop();
+    expect((await propose([{ group: "site:portal.fictional.test", choice: "ask" }])).isError).toBeUndefined();
+    expect(cards[0]).toBe("Change approval settings\nportal.fictional.test: Recommended → Ask every time\nWhy: Sherry wants to check these first.");
+    expect((await saved()).local.settings.groups).toEqual({ "site:portal.fictional.test": "ask" });
+  });
+
   it("reports a conflict when the settings changed while the card was open", async () => {
     let put: Awaited<ReturnType<typeof desktop>>["put"] | undefined;
     const env = await desktop(async () => { await put!({ "app:outlook": "deny" }); return true; });

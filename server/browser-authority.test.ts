@@ -1130,7 +1130,7 @@ describe("approval settings for websites (Workspace \u2192 Approvals)", () => {
     expect(authorize(CASES[0], [settings({ "site:portal.example": "deny" })]).decision).toBe("allow");
   });
 
-  it("Ask every time overrides a standing allow rule and the task's own scope, offers no rule, and never reads on a schedule", () => {
+  it("Ask every time overrides a standing allow rule and the task's own scope and offers no rule, but not an approved workflow's unattended read", () => {
     const approvals = [settings({ "site:portal.example": "ask" })];
     const read = authorize(CASES[2], approvals);
     expect(authorize(CASES[2])).toMatchObject({ decision: "allow" });
@@ -1138,14 +1138,15 @@ describe("approval settings for websites (Workspace \u2192 Approvals)", () => {
     expect(authorize(CASES[6], approvals)).toMatchObject({ decision: "ask", fence: { ruleOffer: null } });
     expect(authorize(CASES[12])).toMatchObject({ decision: "allow" });
     expect(authorize(CASES[12], approvals)).toMatchObject({ decision: "ask" });
-    expect(authorize(CASES[16], approvals)).toMatchObject({ decision: "deny", reason: "portal.example is set to Ask every time in Workspace \u2192 Approvals, so Bud does not read it on a schedule." });
+    expect(authorize(CASES[16], approvals)).toEqual(authorize(CASES[16]));
+    expect(authorize(CASES[17], approvals)).toEqual(authorize(CASES[17]));
     // Consequential steps keep their once-only card with verified facts.
     expect(authorize(CASES[10], approvals)).toMatchObject({ decision: "ask", once: true, draft: expect.objectContaining({ kind: "pay" }) });
   });
 
   it("Read without asking runs reading and a same-site open only, like a reading rule", () => {
     const approvals = [settings({ "site:portal.example": "read-without-asking" })];
-    expect(authorize(CASES[1], approvals)).toMatchObject({ decision: "allow", note: "read without asking \u00b7 Reading on portal.example" });
+    expect(authorize(CASES[1], approvals)).toMatchObject({ decision: "allow", note: "allowed by approval settings \u00b7 Reading on portal.example" });
     expect(authorize(CASES[5], approvals)).toMatchObject({ decision: "allow" });
     for (const row of CASES.filter(([name]) => ["ordinary click", "submit", "payment", "upload", "task-scope submit"].includes(name))) {
       expect(authorize(row, approvals), row[0]).toEqual(authorize(row));
@@ -1165,6 +1166,19 @@ describe("approval settings for websites (Workspace \u2192 Approvals)", () => {
     expect(authorize(CASES[15], [settings({ "class:upload": "deny" })])).toMatchObject({ decision: "deny" });
     expect(authorize(CASES[2], [settings({ "class:upload": "deny" })])).toMatchObject({ decision: "allow" });
     expect(authorize(CASES[2], null)).toMatchObject({ decision: "deny", reason: expect.stringContaining("need recovery") });
+  });
+
+  it("an approved workflow's unattended read (the REI morning refresh's loop-read grant) runs under Ask every time and stops at Don't use", () => {
+    const rei = explicitTask({ route: "loop-read", sites: ["rei-mock.fictional.test"], actions: ["read", "navigate", "click", "fill", "keys"], uploads: [] });
+    const tenants = page("", "https://rei-mock.fictional.test/tenants");
+    const steps: Array<[string, Record<string, unknown>]> = [["browser_read", { tab_id: 1 }], ["browser_navigate", { url: "https://rei-mock.fictional.test/arrears" }]];
+    for (const [tool, args] of steps) {
+      const today = authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000 });
+      expect(today, tool).toMatchObject({ decision: "allow", note: "read-only loop" });
+      expect(authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000, approvals: [settings({ "site:rei-mock.fictional.test": "ask" })] }), tool).toEqual(today);
+      expect(authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000, approvals: [settings({ "site:rei-mock.fictional.test": "deny" })] }), tool)
+        .toMatchObject({ decision: "deny", reason: "rei-mock.fictional.test is set to Don't use in Workspace \u2192 Approvals, so Bud did nothing there." });
+    }
   });
 
   it("bundles standing rules with the settings for one decision", () => {

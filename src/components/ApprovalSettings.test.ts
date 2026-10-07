@@ -5,7 +5,7 @@ import { defaultApprovalSettings, type ApprovalSettings as Settings } from '@sha
 
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: { config: { composio: { managed: true } } }, dispatch: vi.fn() }) }));
 vi.mock('@/lib/connected-apps-refresh', () => ({ useOfficeSources: () => ({ snapshot: null }) }));
-import { APPROVALS_INTRO, ApprovalSettings, approvalRows, changeLines, LOCKED_ROWS, readApprovalHistory, readApprovalsPayload } from './ApprovalSettings';
+import { APPROVALS_INTRO, ApprovalSettings, approvalRows, changeLines, LOCKED_ROWS, readApprovalHistory, readApprovalsPayload, rowOptions, SITE_HINT } from './ApprovalSettings';
 
 const settings = (groups: Settings['groups'] = {}, reviewedReads: string[] = []): Settings => ({ ...defaultApprovalSettings(), groups, reviewedReads });
 
@@ -38,6 +38,21 @@ describe('Workspace → Approvals', () => {
     expect(approvalRows({ apps: ['gmail'], managed: false, sites: [], connectors: [], saved: [] })[0]?.kind).toBe('direct');
     expect(approvalRows({ apps: [], managed: true, sites: [], connectors: [], saved: [] })).toEqual([]);
     expect(LOCKED_ROWS.map(row => row.label)).toContain('Payments');
+  });
+
+  it('offers a website Recommended, Read without asking or Don\'t use, and a saved Ask every time only while it is saved', () => {
+    const words = (saved?: 'ask' | 'deny' | 'read-without-asking') => rowOptions('site', saved).map(([value, label]) => [value, label]);
+    expect(words()).toEqual([[null, 'Recommended'], ['read-without-asking', 'Read without asking'], ['deny', "Don't use"]]);
+    expect(words('deny')).toEqual(words());
+    expect(words('ask')).toEqual([...words(), ['ask', 'Ask every time']]);
+    expect(SITE_HINT).toBe('Recommended: approved workflows read this site; Bud asks before reading anywhere else here.');
+    // Apps and connectors keep their choices.
+    expect(rowOptions('managed', 'ask').map(([, label]) => label)).toEqual(['Recommended', 'Ask every time', "Don't use"]);
+    expect(rowOptions('direct', undefined).map(([, label]) => label)).toEqual(['Ask every time', 'Read without asking', "Don't use"]);
+    expect(rowOptions('connector', undefined).map(([, label]) => label)).toEqual(['Recommended', 'Ask every time', "Don't use"]);
+    const rows = approvalRows({ apps: [], managed: true, sites: ['portal.fictional.test'], connectors: [], saved: [] });
+    const change = { at: Date.parse('2026-10-08T04:14:00.000Z'), by: 'Bud', before: settings(), after: settings({ 'site:portal.fictional.test': 'ask' }) };
+    expect(changeLines(change, rows)[0]).toMatch(/^Bud · portal\.fictional\.test: Recommended → Ask every time · /);
   });
 
   it('reads history from this computer and from a department, and says each change in words', () => {

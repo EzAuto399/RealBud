@@ -20,6 +20,7 @@ mkdirSync(output, { recursive: true });
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'fictional-approvals-'));
 const data = join(temp, 'data'); mkdirSync(data, { mode: 0o700 });
 const SITE = 'portal.fictional.test', GROUP = `site:${SITE}`;
+const SITE_HINT = 'Recommended: approved workflows read this site; Bud asks before reading anywhere else here.';
 const checks = [], errors = [], screenshots = [];
 let child, browser, page, logs = '';
 const wait = ms => new Promise(resolveWait => setTimeout(resolveWait, ms));
@@ -51,6 +52,12 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, reducedMotion: 'reduce' });
   await primeBrowserSession(context, origin, token);
+  // Keep a handle on the renderer's live event stream so step 9 can deliver the server's own card frames.
+  await context.addInitScript(() => {
+    const Native = window.EventSource;
+    window.__qaStreams = [];
+    window.EventSource = class extends Native { constructor(...args) { super(...args); window.__qaStreams.push(this); } };
+  });
   await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
   page = await context.newPage(); page.setDefaultTimeout(15_000);
   page.on('pageerror', error => errors.push(error.message));
@@ -66,6 +73,7 @@ try {
   const settings = page.getByRole('region', { name: 'Approval settings', exact: true });
   const row = () => settings.getByRole('radiogroup', { name: SITE, exact: true });
   const option = name => row().locator('label').filter({ hasText: new RegExp(`^${name}$`) });
+  const choices = () => row().getByRole('radio').evaluateAll(items => items.map(item => item.closest('label').textContent));
   const radio = name => row().getByRole('radio', { name, exact: true });
   const save = settings.getByRole('button', { name: 'Save changes', exact: true });
   const statusLine = settings.getByRole('status').filter({ hasText: /\S/ });
@@ -100,7 +108,9 @@ try {
   assert.equal(rule.status, 201, JSON.stringify(rule.body));
   await deepLink('#you-approvals');
   await row().waitFor();
-  assert.ok(await radio('Ask every time').isChecked(), 'A website asks by default');
+  assert.ok(await radio('Recommended').isChecked(), 'A website starts on Recommended (nothing saved)');
+  assert.deepEqual(await choices(), ['Recommended', 'Read without asking', "Don't use"], 'A website offers Recommended, Read without asking or Don\'t use');
+  await settings.getByText(SITE_HINT, { exact: true }).waitFor();
   await settings.getByText('Recommended', { exact: true }).first().waitFor();
   await settings.getByRole('button', { name: `Revoke Reading on ${SITE}`, exact: true }).waitFor();
   await option("Don't use").click();
@@ -114,7 +124,7 @@ try {
   await settings.getByText('Saved on this computer', { exact: true }).first().waitFor();
   await settings.getByText(new RegExp(`^This computer · ${SITE.replace(/\./g, '\\.')}: Recommended → Don't use · `)).waitFor();
   await noOverflow(); await shot('02-saved-and-reloaded-1440.png');
-  pass('Change a website row to Don\'t use, save, reload (via #you-rules): persisted on the server, row says "Saved on this computer", Changes lists who and when');
+  pass('A website row starts on Recommended with the hint and three choices; change it to Don\'t use, save, reload (via #you-rules): persisted on the server, row says "Saved on this computer", Changes lists who and when');
 
   // 3. Keyboard only: Tab into the row, arrow to a new choice, Tab to Save, Enter.
   await section.locator('summary').first().focus();
@@ -137,16 +147,32 @@ try {
   const before = await approvals();
   const behind = await call('/api/approvals', 'PUT', { expectedRevision: before.revision, settings: { ...before.settings, groups: { ...before.settings.groups, 'class:pay': 'deny' } } });
   assert.equal(behind.status, 200, JSON.stringify(behind.body));
-  await option('Ask every time').click();
+  await option('Recommended').click();
   await save.click();
   await statusLine.filter({ hasText: 'Someone changed these settings. Review the latest and save again.' }).waitFor();
-  assert.ok(await radio('Ask every time').isChecked(), 'The person\'s own edit is kept');
+  assert.ok(await radio('Recommended').isChecked(), 'The person\'s own edit is kept');
   await settings.getByText('Not saved yet', { exact: true }).waitFor();
   await save.click();
   await statusLine.filter({ hasText: 'Saved.' }).waitFor();
   assert.deepEqual((await approvals()).settings.groups, { 'class:pay': 'deny' }, 'Saving again keeps the other change and applies this one');
   await shot('03-stale-save-resolved-1440.png');
   pass('Stale save: "Someone changed these settings. Review the latest and save again." keeps the edit; saving again merges with the other person\'s change');
+
+  // 4b. A saved Ask every time (Bud can propose it as stricter) shows as a fourth, selected choice only while saved.
+  const current = await approvals();
+  assert.equal((await call('/api/approvals', 'PUT', { expectedRevision: current.revision, settings: { ...current.settings, groups: { ...current.settings.groups, [GROUP]: 'ask' } } })).status, 200);
+  await deepLink('#you-approvals');
+  await row().waitFor();
+  assert.deepEqual(await choices(), ['Recommended', 'Read without asking', "Don't use", 'Ask every time']);
+  assert.ok(await radio('Ask every time').isChecked(), 'The saved Ask every time is selected');
+  await noOverflow(); await shot('03b-saved-ask-every-time-1440.png');
+  await option('Recommended').click();
+  assert.equal(await radio('Ask every time').count(), 1, 'Still offered while it is the saved value');
+  await save.click();
+  await statusLine.filter({ hasText: 'Saved.' }).waitFor();
+  assert.deepEqual((await approvals()).settings.groups, { 'class:pay': 'deny' });
+  await until(async () => (await choices()).length === 3, 'Ask every time leaves the row once Recommended is saved');
+  pass('A saved Ask every time shows as a fourth, selected choice; back to Recommended and saved, the choice is gone');
 
   // 5. 390px: reachable from the rail and usable.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -196,6 +222,7 @@ try {
   assert.equal(await settings.getByLabel('Settings for').inputValue(), department.id);
   await row().waitFor();
   assert.ok((await settings.getByRole('radio').evaluateAll(items => items.every(item => item.disabled))), 'Every choice is read-only');
+  assert.ok(await radio('Ask every time').isChecked(), 'The department\'s saved Ask every time shows as the selected fourth choice');
   assert.ok(await save.isDisabled(), 'Save changes is disabled');
   assert.equal(await settings.getByRole('button', { name: 'Reset to recommended', exact: true }).count(), 0, 'No reset for a read-only member');
   await settings.getByText('Set by Accounts', { exact: true }).waitFor();
@@ -205,6 +232,68 @@ try {
   await page.unroute(url => url.pathname === '/api/approvals');
   await page.unroute(url => url.pathname === '/api/approvals/history');
 
+  // 9. One live approval card with a read offer and its exact request, as the server sends it (request.opened → message).
+  const { bots } = (await call('/api/bots')).body;
+  const bud = bots.find(bot => bot.id === 'bud' || bot.name === 'Bud');
+  assert.ok(bud?.threadId, 'Bud has a conversation');
+  const exact = JSON.stringify({ name: 'GMAIL_FETCH_EMAILS', arguments: { query: 'from:fictional-tenant@example.test', max_results: 5 } }, null, 2);
+  const card = { id: 'fictional-card-1', role: 'bot', kind: 'options', at: Date.now(), card: { title: 'Approval needed', options: ['Allow', 'Deny'],
+    subtitle: 'Bud wants to use Gmail.\nAccount: the account connected in Connected apps\nAction: Fetch emails (GMAIL_FETCH_EMAILS)\n  Query: from:fictional-tenant@example.test\n  Max results: 5\nThis approval applies once to this request only. The exact request is under Exact request.',
+    requestId: 'fictional-request-1', tool: 'bud_connected_app_action', deadline: new Date(Date.now() + 285_000).toISOString(), remote: 'read', detail: exact,
+    readOffer: { appLabel: 'Gmail', always: true, group: 'app:gmail' } } };
+  const deliver = frame => page.evaluate(value => {
+    const stream = [...window.__qaStreams].reverse().find(item => item.readyState === 1);
+    if (!stream) throw new Error('No open event stream');
+    stream.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) }));
+  }, frame);
+  const answers = [];
+  await page.route(url => /^\/api\/threads\/[\w-]+\/respond$/.test(url.pathname), async route => {
+    answers.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+  await page.goto(`${origin}/#/desk`); await page.reload();
+  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  const panel = page.getByRole('complementary', { name: 'Side panel' }).getByRole('region', { name: 'Approvals waiting' });
+  await panel.waitFor();
+  await until(() => page.evaluate(() => (window.__qaStreams ?? []).some(item => item.readyState === 1)), 'The live event stream opens');
+  await deliver({ kind: 'message', threadId: bud.threadId, message: card });
+  await panel.getByText('Bud is waiting on you: 1', { exact: true }).waitFor();
+  const waitingRow = panel.getByRole('button', { name: /^Open the conversation: Gmail · Fetch emails · \d+ min left$/ });
+  await waitingRow.waitFor();
+  await noOverflow(); await shot('07-bud-waiting-panel-1440.png');
+  pass('Right panel shows "Bud is waiting on you: 1" with "Gmail · Fetch emails · N min left" while the card is open');
+  await waitingRow.click();
+  const composerCard = page.getByText('Pending approval', { exact: true }).locator('xpath=ancestor::div[contains(@class, "rounded-2xl")][1]');
+  await composerCard.waitFor();
+  await composerCard.getByText('Action: Fetch emails (GMAIL_FETCH_EMAILS)', { exact: false }).waitFor();
+  const offered = await composerCard.getByRole('button').evaluateAll(items => items.map(item => item.textContent));
+  assert.deepEqual(offered, ['Allow once', 'Allow for this task', 'Always allow reading Gmail', 'Deny', 'Stop this turn'], 'The read offer buttons, named from appLabel');
+  const disclosure = composerCard.locator('details').filter({ has: page.locator('summary', { hasText: /^Exact request$/ }) });
+  assert.equal(await disclosure.evaluate(element => element.open), false, 'The exact request starts collapsed');
+  await disclosure.locator('summary').click();
+  const exactRegion = composerCard.getByRole('region', { name: 'Exact request', exact: true });
+  await exactRegion.waitFor();
+  assert.ok((await exactRegion.textContent()).includes('"name": "GMAIL_FETCH_EMAILS"'), 'The exact request shows the tool call');
+  await noOverflow(); await shot('08-live-card-exact-request-1440.png');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await composerCard.getByRole('button', { name: 'Allow for this task', exact: true }).scrollIntoViewIfNeeded();
+  await noOverflow(); await shot('09-live-card-390.png');
+  await page.setViewportSize({ width: 1440, height: 940 });
+  pass('Live card: plain lines first, buttons Allow once · Allow for this task · Always allow reading Gmail · Deny · Stop this turn, Exact request opens from collapsed, no horizontal scroll at 1440 or 390');
+  await composerCard.getByRole('button', { name: 'Allow for this task', exact: true }).click();
+  await until(() => answers.length === 1, 'Allow for this task answers the card');
+  assert.deepEqual(answers[0], { path: `/api/threads/${bud.threadId}/respond`, body: { requestId: 'fictional-request-1', behavior: 'allow', scope: 'task' } });
+  // The server settles the card (request.resolved → message.patch).
+  await deliver({ kind: 'message.patch', threadId: bud.threadId, message: { ...card, card: { ...card.card, answered: 'allow', dismissed: false, resolution: 'user' } } });
+  await page.getByText('Pending approval', { exact: true }).waitFor({ state: 'hidden' });
+  await page.getByText('Approved', { exact: true }).last().waitFor();
+  await shot('10-live-card-resolved-1440.png');
+  await page.goto(`${origin}/#/desk`);
+  await panel.getByText('Nothing is waiting for your approval.', { exact: true }).waitFor();
+  assert.equal(await panel.getByText(/^Bud is waiting on you/).count(), 0);
+  pass('Allow for this task sends scope "task" to /api/threads/:id/respond; once the server settles it the composer card closes, the conversation shows Approved and the panel count clears');
+  await page.unroute(url => /^\/api\/threads\/[\w-]+\/respond$/.test(url.pathname));
+
   assert.deepEqual(errors, [], 'No renderer page errors');
   pass('Zero renderer page errors');
   rmSync(join(output, 'failure.png'), { force: true });
@@ -213,7 +302,8 @@ try {
       'Built React UI and an isolated local service (single desktop) with fictional records and an offline worker; no packaged build, installed device, live integration or customer proof.',
       'The read-only member case stubs GET /api/approvals and its history in the browser with an office reply; the store\'s department editor checks are proven by unit tests, not by a real office host.',
       'No connected app or office connector exists here, so the managed, direct and connector rows and the owner\'s "This only reads" links are covered by component tests, not this run.',
-      'Card buttons (read offer, answered-by line) and the side panel\'s "Bud is waiting on you" rows need a live approval card and are covered by component tests only.',
+      'The live approval card (step 9) is delivered as the server\'s own event frames (message, then message.patch) into the renderer\'s open event stream, and the respond POST is captured in the browser: no provider holds a live request in this run. The server side of respond (live-card check, scope task/always-reads, read grants) is covered by index.test.ts and request-decision tests.',
+      'The answered-by line ("Allowed once by … via Telegram · time") is covered by component tests; no phone channel exists in this run.',
     ] }, null, 2) + '\n');
   console.log(`PASS approvals QA: ${checks.length} checks, ${screenshots.length} screenshots, 0 page errors. Evidence: ${output}`);
 } catch (error) {

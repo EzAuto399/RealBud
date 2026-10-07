@@ -128,11 +128,13 @@ describe('an approval read aloud on a call', () => {
 });
 
 describe('approval settings on the card', () => {
+  const exact = '{\n  "name": "GMAIL_FETCH_EMAILS",\n  "arguments": {\n    "query": "rent"\n  }\n}';
   const appCard = (card: Record<string, unknown>): Message => ({ id: 'app-message', role: 'bot', kind: 'options', at: 1, card: { title: 'Approval needed',
-    subtitle: 'Bud wants to use a connected app.\n\n{\n  "name": "GMAIL_FETCH_EMAILS"\n}', options: ['Allow', 'Deny'], requestId: 'request-app', tool: 'bud_connected_app_action', ...card } as Message['card'] });
+    subtitle: 'Bud wants to use Gmail.\nAccount: the account connected in Connected apps\nAction: Fetch emails (GMAIL_FETCH_EMAILS)\n  Query: rent', detail: exact,
+    options: ['Allow', 'Deny'], requestId: 'request-app', tool: 'bud_connected_app_action', ...card } as Message['card'] });
   it('offers once, this task and always-reads on an eligible read, each sending its scope', () => {
-    const value = pendingApprovals([appCard({ readOffer: { app: 'gmail', always: true } })])[0]!;
-    expect(value.readOffer).toEqual({ app: 'Gmail', always: true });
+    const value = pendingApprovals([appCard({ readOffer: { appLabel: 'Gmail', always: true, group: 'app:gmail' } })])[0]!;
+    expect(value.readOffer).toEqual({ appLabel: 'Gmail', always: true });
     const rendered = buttons(PendingApprovalActions(props(value)));
     expect(rendered.map(button => button.text)).toEqual(['Allow once', 'Allow for this task', 'Always allow reading Gmail', 'Deny', 'Stop this turn']);
     for (const [index, scope] of [[0, 'once'], [1, 'task'], [2, 'always-reads']] as const) {
@@ -141,12 +143,14 @@ describe('approval settings on the card', () => {
     }
     expect(renderActions(value)).toContain('Change future approvals in Workspace → Approvals.');
     // Without `always` (not an editor, or not eligible) there is no standing offer.
-    const once = pendingApprovals([appCard({ readOffer: { label: 'Google Calendar', always: false } })])[0]!;
+    const once = pendingApprovals([appCard({ readOffer: { appLabel: 'Google Calendar', always: false, group: 'app:googlecalendar' } })])[0]!;
     expect(buttons(PendingApprovalActions(props(once))).map(button => button.text)).toEqual(['Allow once', 'Allow for this task', 'Deny', 'Stop this turn']);
   });
   it('ignores a malformed offer and never offers it on a once-only card', () => {
-    expect(pendingApprovals([appCard({ readOffer: { app: 42 } })])[0]!.readOffer).toBeUndefined();
-    const value = pending({ tool: 'bud_connected_app_action', approvalPolicy: 'once', memoryReview: undefined, readOffer: { app: 'Gmail', always: true } });
+    for (const readOffer of [{ appLabel: 42 }, { app: 'gmail', always: true }, { label: 'Gmail', always: true }, 'Gmail']) {
+      expect(pendingApprovals([appCard({ readOffer })])[0]!.readOffer, JSON.stringify(readOffer)).toBeUndefined();
+    }
+    const value = pending({ tool: 'bud_connected_app_action', approvalPolicy: 'once', memoryReview: undefined, readOffer: { appLabel: 'Gmail', always: true } });
     expect(renderActions(value)).not.toContain('Always allow reading');
   });
   it('points the site-rule footnote at Workspace → Approvals', () => {
@@ -162,6 +166,16 @@ describe('approval settings on the card', () => {
     expect(renderPanel(value)).toMatch(/Allowed once by Fictional Sam via Telegram · \d{1,2}:16/);
     expect(renderActions(value)).toBe('');
     expect(pendingApprovals([appCard({ answeredBy: { name: 'Fictional Sam', via: 'pager' } })])[0]!.answeredBy).toBeUndefined();
+  });
+  it('shows plain lines first and the exact request collapsed under "Exact request"', () => {
+    const value = pendingApprovals([appCard({})])[0]!;
+    expect(value.exactRequest).toBe(exact);
+    const html = renderPanel(value);
+    expect(html.indexOf('Action: Fetch emails (GMAIL_FETCH_EMAILS)')).toBeLessThan(html.indexOf('<details'));
+    expect(html).toMatch(/<details[^>]*><summary[^>]*>Exact request<\/summary><pre[^>]*aria-label="Exact request"[^>]*>\{\n {2}&quot;name&quot;: &quot;GMAIL_FETCH_EMAILS&quot;/);
+    expect(html).not.toContain('<details open');
+    // A card without one shows no disclosure.
+    expect(renderPanel(pendingApprovals([appCard({ detail: undefined })])[0]!)).not.toContain('Exact request');
   });
   it('names the app, action and time left for the side panel', () => {
     const now = Date.parse('2026-10-08T05:00:00Z');

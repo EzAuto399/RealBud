@@ -20,15 +20,24 @@ const UNCONFIRMED = "RealBud did not confirm this save. Check the settings below
 export type RowKind = "managed" | "direct" | "site" | "connector" | "locked";
 export interface ApprovalRow { key: string; label: string; kind: RowKind }
 const RWA = "read-without-asking" as const;
-const OPTIONS: Record<RowKind, Array<[ApprovalChoice, string]>> = {
+/** A row's choice; null is nothing saved (a website's Recommended). */
+type RowChoice = ApprovalChoice | null;
+const OPTIONS: Record<RowKind, Array<[RowChoice, string]>> = {
   managed: [[RWA, "Recommended"], ["ask", "Ask every time"], ["deny", "Don't use"]],
   connector: [[RWA, "Recommended"], ["ask", "Ask every time"], ["deny", "Don't use"]],
   direct: [["ask", "Ask every time"], [RWA, "Read without asking"], ["deny", "Don't use"]],
-  site: [["ask", "Ask every time"], [RWA, "Read without asking"], ["deny", "Don't use"]],
+  // Recommended (nothing saved) is today's behaviour: approved workflows and saved rules read; Bud asks otherwise.
+  site: [[null, "Recommended"], [RWA, "Read without asking"], ["deny", "Don't use"]],
   locked: [["ask", "Ask"], ["deny", "Don't use"]],
 };
 /** What an unset row does; choosing it removes the saved entry. */
-const DEFAULT: Record<RowKind, ApprovalChoice> = { managed: RWA, connector: RWA, direct: "ask", site: "ask", locked: "ask" };
+const DEFAULT: Record<RowKind, RowChoice> = { managed: RWA, connector: RWA, direct: "ask", site: null, locked: "ask" };
+const CHOICE_WORDS: Record<ApprovalChoice, string> = { [RWA]: "Read without asking", ask: "Ask every time", deny: "Don't use" };
+export const SITE_HINT = "Recommended: approved workflows read this site; Bud asks before reading anywhere else here.";
+/** A row's choices. A website saved as Ask every time (Bud may propose it as stricter) shows that choice only while it is saved. */
+export function rowOptions(kind: RowKind, saved: ApprovalChoice | undefined): Array<[RowChoice, string]> {
+  return kind === "site" && saved === "ask" ? [...OPTIONS.site, ["ask", CHOICE_WORDS.ask]] : OPTIONS[kind];
+}
 const LOCKED: Record<string, string> = { send: "Sending messages", pay: "Payments", sign: "Signing", notice: "Notices", "account-change": "Account changes", trash: "Deleting",
   upload: "Uploading files", submit: "Submitting forms", memory: "Memory changes", settings: "Settings changes", script: "Scripts", consequential: "Other steps that can't be undone" };
 export const LOCKED_ROWS: ApprovalRow[] = PER_INSTANCE_CLASSES.map(cls => ({ key: `class:${cls}`, label: LOCKED[cls] ?? cls, kind: "locked" }));
@@ -83,7 +92,7 @@ export function approvalRows(input: { apps: string[]; managed: boolean; sites: s
   return [...rows.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.label.localeCompare(b.label));
 }
 const choiceWord = (row: ApprovalRow | undefined, choice: ApprovalChoice | undefined) =>
-  choice === undefined ? "Recommended" : OPTIONS[row?.kind ?? "site"].find(([value]) => value === choice)?.[1] ?? choice;
+  choice === undefined ? "Recommended" : OPTIONS[row?.kind ?? "site"].find(([value]) => value === choice)?.[1] ?? CHOICE_WORDS[choice] ?? choice;
 const toolWords = (tool: string) => { const words = tool.replace(/^[A-Z0-9]+_/, "").toLowerCase().replace(/_/g, " "); return words.charAt(0).toUpperCase() + words.slice(1); };
 const rowLabel = (rows: ApprovalRow[], key: string) => rows.find(row => row.key === key)?.label ?? key.slice(key.indexOf(":") + 1);
 /** "Sam · Gmail: Recommended → Ask every time · 8 Oct, 2:14 pm" for each difference. */
@@ -194,10 +203,10 @@ export function ApprovalSettings() {
   }) : [];
   const dirty = !!draft && !!saved && fingerprint(draft) !== fingerprint(saved);
 
-  const choose = (row: ApprovalRow, choice: ApprovalChoice) => setDraft(current => {
+  const choose = (row: ApprovalRow, choice: RowChoice) => setDraft(current => {
     if (!current) return current;
     const groups = { ...current.groups };
-    if (choice === DEFAULT[row.kind]) delete groups[row.key]; else groups[row.key] = choice;
+    if (choice === null || choice === DEFAULT[row.kind]) delete groups[row.key]; else groups[row.key] = choice;
     return { ...current, groups };
   });
   const toggleReviewed = (tool: string) => setDraft(current => current && ({ ...current,
@@ -239,20 +248,21 @@ export function ApprovalSettings() {
           <span className="text-[12px] text-ink-muted">{source(row.key)}</span>
         </div>
         <div role="radiogroup" aria-label={row.label} className="mt-2 flex flex-wrap gap-1.5">
-          {OPTIONS[row.kind].map(([value, words]) => {
+          {rowOptions(row.kind, saved?.groups[row.key]).map(([value, words]) => {
             // A direct connection reads without asking only the tools the owner marked.
             const unavailable = row.kind === "direct" && value === RWA && !reviewed && current !== RWA;
             return (
-              <label key={value} className={cn("pm-control inline-flex cursor-pointer items-center rounded border px-3 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-agency",
+              <label key={value ?? "recommended"} className={cn("pm-control inline-flex cursor-pointer items-center rounded border px-3 text-[13px] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-agency",
                 current === value ? "border-agency bg-selected font-medium text-ink" : "border-field-border bg-sheet text-ink-secondary hover:bg-raised",
                 (!canEdit || unavailable) && "cursor-not-allowed opacity-60")}>
-                <input type="radio" className="sr-only" name={`approval-${row.key}`} value={value} checked={current === value} disabled={!canEdit || unavailable} onChange={() => choose(row, value)} />
+                <input type="radio" className="sr-only" name={`approval-${row.key}`} value={value ?? "recommended"} checked={current === value} disabled={!canEdit || unavailable} onChange={() => choose(row, value)} />
                 {words}
               </label>
             );
           })}
         </div>
         {row.kind === "direct" && !reviewed ? <p className="mt-1 text-[12px] text-ink-muted">Read without asking needs the owner to mark which tools only read.</p> : null}
+        {row.kind === "site" ? <p className="mt-1 text-[12px] text-ink-muted">{SITE_HINT}</p> : null}
         {row.kind === "direct" && owner && tools.length ? (
           <details className="mt-2">
             <summary className="cursor-pointer text-[13px] text-agency">Tools that only read</summary>

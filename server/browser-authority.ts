@@ -1101,7 +1101,8 @@ export function effectiveRules(approvals: BrowserApprovals = lastGoverningApprov
 const APPROVALS_RECOVERY = "The approval settings on this computer need recovery, so Bud did nothing on this site. Check Workspace → Approvals.";
 /** How a website's approval setting bears on one step. `today`: nothing saved
  * for this site, so the checks below decide exactly as before. `ask`: Ask
- * every time; no standing rule, task scope or schedule allows the step.
+ * every time; no standing rule or task scope allows the step (an approved
+ * workflow's unattended read still runs).
  * `reads`: Read without asking, for a same-site read or open. `refuse`: Don't
  * use (the site, or this kind of step), or settings needing recovery. */
 export type SiteApproval = { kind: "today" | "ask" | "reads" } | { kind: "refuse"; reason: string };
@@ -1199,9 +1200,9 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   // refused. Reading, a same-site read-only address, and a control the pack declares read-safe that browserReadOnlyAction
   // proves sits apart from anything that changes records; a key is only Tab, never Enter or an arrow that changes a
   // choice. Never a download, upload, submit, consequential or unclassified step, whatever the grant, a rule or the recipe says.
-  // A site set to Ask every time is never read with nobody there to ask.
+  // The office approved this workflow, so its reads obey Don't use (refused above) but not Ask every time,
+  // which is for Bud's own browsing in a conversation; Read without asking never widens it either.
   if (grant.route === "loop-read") {
-    if (setting.kind === "ask") return deny(`${site} is set to Ask every time in Workspace → Approvals, so Bud does not read it on a schedule.`);
     const routine = classification.class === "routine" && !classification.unusualName && (LOOP_READ_ACTIONS as readonly string[]).includes(classification.action) &&
       grant.actions.includes(classification.action) ? classification : null;
     const tab = routine?.step !== "press" || /^(Shift\+)?Tab$/.test(browserKey(args.key)?.spec ?? "");
@@ -1272,7 +1273,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   }
   // Read without asking works like a reading rule, for reading the page and opening a same-site address only.
   if (rulable && setting.kind === "reads" && (step === "read" || step === "navigate")) {
-    return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `read without asking · ${portalRuleLabel("portal-read", site)}` };
+    return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by approval settings · ${portalRuleLabel("portal-read", site)}` };
   }
   const target = step === "navigate" ? jobBrowserUrl(args.url, grant.sites) : null;
   const summary = step === "borrow" ? `Use the existing tab on ${url.hostname} for this saved job. The browser will also ask for confirmation.`

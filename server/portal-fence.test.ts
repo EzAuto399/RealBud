@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, type FenceContext } from "./portal-fence.ts";
+import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, ruleAllowNote, type FenceContext } from "./portal-fence.ts";
 import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
 
 const ctx: FenceContext = {
@@ -326,8 +326,12 @@ describe("approval settings on the job fence", () => {
 
   it("treats Read without asking as a reading rule for reads and same-site opens only", () => {
     const approvals = settings({ "site:vantagestrata.com.au": "read-without-asking" });
-    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[0])).toEqual({ kind: "allow", surface: "portal-read", origin: "vantagestrata.com.au" });
-    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[1])).toEqual({ kind: "allow", surface: "portal-read", origin: "vantagestrata.com.au" });
+    const bySettings = { kind: "allow", surface: "portal-read", origin: "vantagestrata.com.au", bySettings: true };
+    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[0])).toEqual(bySettings);
+    expect(fenceDecision({ ...ctx, approvals }, REQUESTS[1])).toEqual(bySettings);
     for (const request of REQUESTS.slice(2)) expect(fenceDecision({ ...ctx, approvals }, request)).toEqual(fenceDecision(ctx, request));
+    // The log names what allowed the step: the setting, or a saved rule when there is one.
+    expect(ruleAllowNote(fenceDecision({ ...ctx, approvals }, REQUESTS[0]))).toBe("allowed by approval settings · Reading on vantagestrata.com.au");
+    expect(ruleAllowNote(fenceDecision({ ...all, approvals }, REQUESTS[0]))).toBe("allowed by rule · Reading on vantagestrata.com.au");
   });
 });

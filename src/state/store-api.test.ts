@@ -30,7 +30,7 @@ describe("api() local session recovery", () => {
     expect(events).not.toContain("realbud-local-session-required");
   });
 
-  it("sends the tab's office member session only on approval changes and answers", async () => {
+  it("sends the tab's office member session only on approval changes, answers and the person's own turn-starting messages", async () => {
     const member = "fictional_member_session_000000000000000000";
     vi.stubGlobal("window", {
       ogb: { getLocalSession: async () => BEFORE },
@@ -39,10 +39,12 @@ describe("api() local session recovery", () => {
     });
     const { api } = await import("./store");
     fetchMock.mockImplementation(async () => json({ ok: true }));
-    const paths = ["/api/rules", "/api/rules/fictional-rule", "/api/approvals", "/api/approvals/history?departmentId=x", "/api/threads/t-1/respond", "/api/bots/bud/respond", "/api/desk", "/api/company/me", "/api/rulesets"];
+    const paths = ["/api/rules", "/api/rules/fictional-rule", "/api/approvals", "/api/approvals/history?departmentId=x", "/api/threads/t-1/respond", "/api/bots/bud/respond",
+      "/api/bots/bud/messages", "/api/bots/bud/steer", "/api/bots/bud/queued-message", "/api/bots/bud/messages/m-1/edit",
+      "/api/desk", "/api/company/me", "/api/rulesets", "/api/bots/bud/interrupt", "/api/bots/bud/messages/m-1/edit/x", "/api/bots", "/api/bots/bud/cards/m-1"];
     for (const path of paths) await api(path, { method: "POST", body: "{}" });
     const sent = fetchMock.mock.calls.map(([path, init]) => [path, new Headers(init?.headers).get("x-realbud-member-session")]);
-    expect(sent).toEqual(paths.map((path, index) => [path, index < 6 ? member : null]));
+    expect(sent).toEqual(paths.map((path, index) => [path, index < 10 ? member : null]));
   });
 
   it("asks the owner to reconnect after a second refusal instead of retrying again", async () => {

@@ -905,8 +905,10 @@ const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 /** Approval changes on an office member's computer are checked against that
  * member's department rights, so these calls carry the tab's member session
- * exactly as company calls do (`companyApi`, loaded on demand). */
-const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond)(?:\?|$)/;
+ * exactly as company calls do (`companyApi`, loaded on demand). A message that
+ * starts Bud's turn carries it too, so Bud's approval settings card acts as
+ * this person (server `personTurn`). */
+const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond|bots\/[\w-]+\/(?:messages|steer|queued-message|messages\/[\w-]+\/edit))(?:\?|$)/;
 const memberSessionHeaders = async (): Promise<Record<string, string>> =>
   import("@/lib/company-api").then(module => module.companyApi.memberSessionHeaders(), () => ({}));
 
