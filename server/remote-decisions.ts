@@ -22,6 +22,9 @@ export type RemoteChannelAdapter = {
   id: RemoteChannelId;
   label: string;
   pairedKey(): string | null;
+  /** Immutable id of the person who paired, only when they paired from a
+   * private chat. Null or absent: this pairing is not for decisions. */
+  pairedSender?(): string | null;
   sendDecision(text: string, draftId: string): Promise<void>;
   sendDigest?(text: string): Promise<void>;
 };
@@ -51,6 +54,8 @@ const ELSEWHERE = "This Bud is paired elsewhere.";
 const FLUSH_MS = 60_000;
 const PUSH_MAX = 500;
 const REVIEW_MAX = 1800;
+const ONLY_PAIRED = "Only the person who paired this Bud can decide here.";
+const VIEW_ONLY = "Open Desk to review and decide. To approve from your phone, re-pair from a private chat.";
 const STALE_CARD = "This review card is no longer current. Use the latest card, or review the wording on Desk. Nothing was changed by this reply.";
 
 type ChannelPending = { draftId: string; decisionId: string; fingerprint: string; pairedKey: string; deferred: boolean; previewOnly: boolean };
@@ -118,13 +123,28 @@ export function parseRemoteDecisionText(text: string): { decision: "allow" | "de
   return reason ? { decision: "deny", reason } : { decision: "deny" };
 }
 
+/** Card key: chat plus the paired person, so a view-only card never stands in for a decision card. */
+function pushKey(channel: RemoteChannelAdapter): string | null {
+  const chat = channel.pairedKey();
+  if (!chat) return null;
+  const sender = channel.pairedSender?.();
+  return sender ? `${chat}#${sender}` : `${chat}#view`;
+}
+
+/** The decision boundary: this chat is the paired private chat and this sender is the person who paired. */
+export function remoteSenderMayDecide(channel: RemoteChannelId, chatKey: string, senderKey: string | null): boolean {
+  const adapter = bound?.channels.find((item) => item.id === channel);
+  if (!adapter || !senderKey || adapter.pairedKey() !== chatKey) return false;
+  return adapter.pairedSender?.() === senderKey;
+}
+
 /** Bare yes/no can refer to a conversation or an older card. Never guess. */
-export async function decideRemoteText(channel: RemoteChannelId, chatKey: string, text: string, byName: string): Promise<RemoteDecideResult | null> {
+export async function decideRemoteText(channel: RemoteChannelId, chatKey: string, text: string, byName: string, senderKey: string | null): Promise<RemoteDecideResult | null> {
   const parsed = parseRemoteDecisionText(text);
   if (!parsed) return null;
   if (bound?.channels.find(item => item.id === channel)?.pairedKey() !== chatKey) return { ok: false, message: ELSEWHERE };
-  if (parsed.decisionId) return decideRemotely(channel, chatKey, parsed.decisionId, parsed.decision, parsed.reason, byName);
-  const current = pendingDecisionId(channel);
+  if (parsed.decisionId) return decideRemotely(channel, chatKey, parsed.decisionId, parsed.decision, parsed.reason, byName, senderKey);
+  const current = remoteSenderMayDecide(channel, chatKey, senderKey) ? pendingDecisionId(channel) : null;
   if (!current) return null;
   return { ok: false, message: `Review the card, then use its buttons or reply “allow ${current}” or “deny ${current}”. Nothing has changed.` };
 }
@@ -135,13 +155,16 @@ export function parseDecisionCallback(data: string): { draftId: string; decision
   return { draftId: match[1]!, decision: match[2] as "allow" | "deny" };
 }
 
+function readyLine(kind: DraftKind): string {
+  return kind === "levy-from-rent"
+    ? "Levy-from-rent wording is ready."
+    : kind === "owner-letter"
+      ? "Owner update wording is ready."
+      : "Courtesy SMS wording is ready.";
+}
+
 export function decisionPushText(address: string, kind: DraftKind): string {
-  const ready =
-    kind === "levy-from-rent"
-      ? "Levy-from-rent wording is ready."
-      : kind === "owner-letter"
-        ? "Owner update wording is ready."
-        : "Courtesy SMS wording is ready.";
+  const ready = readyLine(kind);
   const allowMeans =
     kind === "levy-from-rent"
       ? "Allow sends nothing; it approves the levy flag wording for you to copy."
@@ -178,8 +201,9 @@ export function decideRemotely(
   decision: "allow" | "deny",
   reason: string | undefined,
   byName: string,
+  senderKey: string | null,
 ): Promise<RemoteDecideResult> {
-  const work = () => decideRemotelyAdmitted(channel, chatKey, decisionId, decision, reason, byName);
+  const work = () => decideRemotelyAdmitted(channel, chatKey, decisionId, decision, reason, byName, senderKey);
   return bound?.withWorkspaceActivity ? bound.withWorkspaceActivity(work) : work();
 }
 async function decideRemotelyAdmitted(
@@ -189,17 +213,19 @@ async function decideRemotelyAdmitted(
   decision: "allow" | "deny",
   reason: string | undefined,
   byName: string,
+  senderKey: string | null,
 ): Promise<RemoteDecideResult> {
   if (!bound) return { ok: false, message: BOOK_MOVED };
   const adapter = bound.channels.find((item) => item.id === channel);
   if (!adapter || adapter.pairedKey() !== chatKey) return { ok: false, message: ELSEWHERE };
+  if (!remoteSenderMayDecide(channel, chatKey, senderKey)) return { ok: false, message: ONLY_PAIRED };
 
   const snapshot = bound.desk.snapshot();
   if (snapshot.escalations.some((item) => item.id === decisionId)) {
     return { ok: false, message: LICENSEE_REFUSAL };
   }
   const shown = pendingByChannel.get(channel);
-  if (!shown || shown.deferred || shown.previewOnly || shown.decisionId !== decisionId || shown.pairedKey !== chatKey) {
+  if (!shown || shown.deferred || shown.previewOnly || shown.decisionId !== decisionId || shown.pairedKey !== pushKey(adapter)) {
     void notifyDeskSnapshot(snapshot);
     return { ok: false, message: STALE_CARD };
   }
@@ -468,7 +494,7 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
     const tracked = pendingByChannel.get(channel.id);
     if (tracked) {
       const live = snapshot.drafts.find((item) => item.id === tracked.draftId);
-      if (!live || !isDecidableDraft(live) || tracked.pairedKey !== channel.pairedKey() || tracked.fingerprint !== reviewFingerprint(snapshot, live)) {
+      if (!live || !isDecidableDraft(live) || tracked.pairedKey !== pushKey(channel) || tracked.fingerprint !== reviewFingerprint(snapshot, live)) {
         pendingByChannel.delete(channel.id);
         persistDecisionPushStore();
       } else if (!tracked.deferred) {
@@ -488,7 +514,7 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
         row.channel === channel.id
         && row.draftId === next.id
         && row.fingerprint === fingerprint
-        && row.pairedKey === channel.pairedKey(),
+        && row.pairedKey === pushKey(channel),
     );
     if (delivered) {
       // Already shown on this channel for this wording — restore memory, do not re-send.
@@ -504,7 +530,7 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
       continue;
     }
     if (quiet) {
-      pendingByChannel.set(channel.id, { draftId: next.id, decisionId: randomBytes(6).toString("hex"), fingerprint, pairedKey: channel.pairedKey()!, deferred: true, previewOnly: false });
+      pendingByChannel.set(channel.id, { draftId: next.id, decisionId: randomBytes(6).toString("hex"), fingerprint, pairedKey: pushKey(channel)!, deferred: true, previewOnly: false });
       persistDecisionPushStore();
       continue;
     }
@@ -514,20 +540,24 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
 
 async function sendPush(channel: RemoteChannelAdapter, draft: Draft, snapshot: DeskSnapshot): Promise<void> {
   const owner = bound;
-  const pairedKey = channel.pairedKey();
+  const pairedKey = pushKey(channel);
   if (!owner || !pairedKey) return;
   const fingerprint = reviewFingerprint(snapshot, draft);
   const prior = pendingByChannel.get(channel.id);
   const decisionId = prior?.fingerprint === fingerprint && prior.pairedKey === pairedKey ? prior.decisionId : randomBytes(6).toString("hex");
-  const text = reviewText(snapshot, draft, decisionId);
+  // A pairing that is not for decisions (group chat, or saved before sender ids)
+  // gets a view-only nudge: no buttons, no reply code, no recipient or wording.
+  const canDecide = Boolean(channel.pairedSender?.());
+  const text = canDecide ? reviewText(snapshot, draft, decisionId) : null;
   const pending: ChannelPending = { draftId: draft.id, decisionId, fingerprint, pairedKey, deferred: true, previewOnly: text === null };
   pendingByChannel.set(channel.id, pending);
   persistDecisionPushStore();
   try {
     if (text !== null) await channel.sendDecision(text, decisionId);
+    else if (!canDecide && channel.sendDigest) await channel.sendDigest(`${readyLine(draft.kind)} ${VIEW_ONLY}`);
     else if (channel.sendDigest) await channel.sendDigest(`${decisionPushText(addressFor(snapshot, draft.propertyId), draft.kind)}\n\nThe full wording is too long for this review card. Open its draft on Desk to review before deciding.`);
     else return;
-    if (bound !== owner || channel.pairedKey() !== pairedKey || pendingByChannel.get(channel.id) !== pending) return;
+    if (bound !== owner || pushKey(channel) !== pairedKey || pendingByChannel.get(channel.id) !== pending) return;
     const latest = owner.desk.snapshot();
     const live = latest.drafts.find(item => item.id === draft.id);
     if (latest.recovery.active || !live || !isDecidableDraft(live) || reviewFingerprint(latest, live) !== fingerprint) {

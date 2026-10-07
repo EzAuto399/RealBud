@@ -30,6 +30,9 @@ export type SlackRecord = {
   botUserId: string;
   pairedChannelId: string | null;
   pairedName: string | null;
+  /** Slack user id and channel type ("im" for a DM) at pairing. Decisions need both, with type "im". */
+  pairedUserId?: string | null;
+  pairedChatType?: string | null;
   /** Per-IM last seen message ts for poll mode. */
   lastTsByChannel: Record<string, string>;
   connectedAt: number;
@@ -75,7 +78,7 @@ const BACKOFF_CAP_MS = 30_000;
 
 type QueuedAsk = { text: string; userMessage?: Message };
 type PendingRelay = { threadId: string; userMessageId: string };
-type InboundSlack = { channelId: string; userId: string; name: string; text: string; ts: string };
+type InboundSlack = { channelId: string; channelType?: string; userId: string; name: string; text: string; ts: string };
 
 let bound: SlackDeps | null = null;
 let abort: AbortController | null = null;
@@ -121,6 +124,8 @@ function asChannel(value: unknown): SlackRecord | null {
     pairedChannelId:
       typeof row.pairedChannelId === "string" && row.pairedChannelId.trim() ? row.pairedChannelId : null,
     pairedName: typeof row.pairedName === "string" ? row.pairedName : null,
+    pairedUserId: typeof row.pairedUserId === "string" && row.pairedUserId.trim() ? row.pairedUserId : null,
+    pairedChatType: typeof row.pairedChatType === "string" ? row.pairedChatType : null,
     lastTsByChannel,
     connectedAt: typeof row.connectedAt === "number" && Number.isFinite(row.connectedAt) ? row.connectedAt : 0,
     lastMessageAt: typeof row.lastMessageAt === "number" && Number.isFinite(row.lastMessageAt) ? row.lastMessageAt : null,
@@ -155,8 +160,14 @@ export function toPublic(record: SlackRecord | null): SlackPublic {
     botUsername: record.botUsername,
     pairedName: record.pairedName,
     paired: record.pairedChannelId != null,
+    decisions: decisionSender(record) != null,
     lastMessageAt: record.lastMessageAt,
   };
+}
+
+/** Pairings from a channel or group DM, or saved before sender ids were kept, are not for decisions. */
+function decisionSender(record: SlackRecord | null): string | null {
+  return record?.pairedChannelId != null && record.pairedChatType === "im" && record.pairedUserId ? record.pairedUserId : null;
 }
 
 export function clipSlackText(text: string): string {
@@ -391,6 +402,8 @@ async function handleSlackInboundAdmitted(items: InboundSlack[], deps: SlackDeps
         ...next,
         pairedChannelId: inbound.channelId,
         pairedName: inbound.name,
+        pairedUserId: inbound.userId || null,
+        pairedChatType: inbound.channelType ?? null,
         lastMessageAt: now(),
       };
       saveChannel(next);
@@ -419,7 +432,7 @@ async function handleSlackInboundAdmitted(items: InboundSlack[], deps: SlackDeps
     saveChannel(next);
     const continuation = channelContinuation(inbound.text, deps.store);
     if (continuation !== null) { await relayText(continuation, deps); continue; }
-    const result = await decideRemoteText("slack", inbound.channelId, inbound.text, inbound.name);
+    const result = await decideRemoteText("slack", inbound.channelId, inbound.text, inbound.name, inbound.userId || null);
     if (result) {
       try {
         await sendMessage(fetchFn, next.botToken, inbound.channelId, result.ok ? result.stamp : result.message);
@@ -447,6 +460,7 @@ function asMessageEvent(payload: unknown, botUserId: string): InboundSlack | nul
   if (row.bot_id != null) return null;
   return {
     channelId: row.channel,
+    ...(typeof row.channel_type === "string" ? { channelType: row.channel_type } : {}),
     userId: row.user,
     name: "Slack",
     text: row.text,
@@ -485,7 +499,7 @@ async function pollOnce(deps: SlackDeps, signal: AbortSignal): Promise<void> {
       if (row.bot_id != null) continue;
       if (typeof row.text !== "string" || !row.text.trim()) continue;
       const name = await resolveUserName(fetchFn, record.botToken, row.user);
-      inbound.push({ channelId: ch.id, userId: row.user, name, text: row.text, ts: row.ts });
+      inbound.push({ channelId: ch.id, channelType: "im", userId: row.user, name, text: row.text, ts: row.ts });
     }
   }
   if (inbound.length) await handleSlackInbound(inbound, deps);
@@ -681,6 +695,9 @@ export function slackDecisionAdapter(): RemoteChannelAdapter {
     pairedKey() {
       const rec = loadChannel();
       return rec?.pairedChannelId ?? null;
+    },
+    pairedSender() {
+      return decisionSender(loadChannel());
     },
     async sendDecision(text, _draftId) {
       const rec = loadChannel();

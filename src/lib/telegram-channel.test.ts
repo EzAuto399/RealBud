@@ -23,6 +23,7 @@ describe("readTelegramChannel", () => {
           botUsername: "@realbud_bot",
           pairedName: "Sam",
           paired: true,
+          decisions: true,
           lastMessageAt: 1_700_000_000_000,
         },
       }),
@@ -31,6 +32,7 @@ describe("readTelegramChannel", () => {
       botUsername: "realbud_bot",
       pairedName: "Sam",
       paired: true,
+      decisions: true,
       lastMessageAt: 1_700_000_000_000,
     });
   });
@@ -59,6 +61,7 @@ describe("readChannels", () => {
         botUsername: "realbud_bot",
         pairedName: "Sam",
         paired: true,
+        decisions: false,
         lastMessageAt: 1_700_000_000_000,
       },
       discord: { connected: false },
@@ -89,6 +92,7 @@ describe("readChannels", () => {
         botUsername: "realbud",
         pairedName: null,
         paired: false,
+        decisions: false,
         lastMessageAt: null,
       },
       slack: {
@@ -96,6 +100,7 @@ describe("readChannels", () => {
         botUsername: "bud",
         pairedName: "Sam",
         paired: true,
+        decisions: false,
         lastMessageAt: 9,
       },
     });
@@ -123,6 +128,15 @@ describe("telegram pairing line", () => {
 });
 
 describe("channelStatusLine", () => {
+  it("asks a group or legacy pairing to re-pair before phone approvals", () => {
+    expect(
+      channelStatusLine("telegram", { paired: true, pairedName: "Sam", lastMessageAt: null, decisions: false }),
+    ).toBe("Paired with Sam. Re-pair from a private chat to approve from your phone.");
+    expect(
+      channelStatusLine("slack", { paired: true, pairedName: "Sam", lastMessageAt: null, decisions: true }),
+    ).toBe("Paired with Sam");
+  });
+
   it("asks Discord for a first DM when unpaired", () => {
     expect(
       channelStatusLine("discord", { paired: false, pairedName: null, lastMessageAt: null }),
@@ -164,6 +178,7 @@ describe("mergeChannelsPatch", () => {
           botUsername: "realbud_bot",
           pairedName: "Yoda",
           paired: true,
+          decisions: true,
           lastMessageAt: 9,
         },
       }),
@@ -173,6 +188,7 @@ describe("mergeChannelsPatch", () => {
         botUsername: "realbud_bot",
         pairedName: "Yoda",
         paired: true,
+        decisions: true,
         lastMessageAt: 9,
       },
       discord: { connected: false },

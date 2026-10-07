@@ -21,6 +21,7 @@ import {
   decideRemotely,
   parseDecisionCallback,
   decideRemoteText,
+  remoteSenderMayDecide,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -32,6 +33,9 @@ export type ChannelRecord = {
   botUsername: string;
   pairedChatId: number | null;
   pairedName: string | null;
+  /** Telegram `from.id` and `chat.type` at pairing. Decisions need both, with type "private". */
+  pairedUserId?: number | null;
+  pairedChatType?: string | null;
   offset: number;
   connectedAt: number;
   lastMessageAt: number | null;
@@ -62,6 +66,7 @@ export type TelegramDeps = {
 
 const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
+const ONLY_PAIRED = "Only the person who paired this Bud can decide here.";
 const BAD_TOKEN = "that token did not answer — check it against BotFather";
 const CLIP_AT = 3900;
 const POLL_TIMEOUT_SEC = 25;
@@ -112,6 +117,8 @@ function asChannel(value: unknown): ChannelRecord | null {
     botUsername: typeof row.botUsername === "string" ? row.botUsername : "",
     pairedChatId: typeof row.pairedChatId === "number" && Number.isFinite(row.pairedChatId) ? row.pairedChatId : null,
     pairedName: typeof row.pairedName === "string" ? row.pairedName : null,
+    pairedUserId: typeof row.pairedUserId === "number" && Number.isSafeInteger(row.pairedUserId) ? row.pairedUserId : null,
+    pairedChatType: typeof row.pairedChatType === "string" ? row.pairedChatType : null,
     offset: typeof row.offset === "number" && Number.isFinite(row.offset) && row.offset >= 0 ? Math.floor(row.offset) : 0,
     connectedAt: typeof row.connectedAt === "number" && Number.isFinite(row.connectedAt) ? row.connectedAt : 0,
     lastMessageAt: typeof row.lastMessageAt === "number" && Number.isFinite(row.lastMessageAt) ? row.lastMessageAt : null,
@@ -146,8 +153,15 @@ export function toPublic(record: ChannelRecord | null): TelegramPublic {
     botUsername: record.botUsername,
     pairedName: record.pairedName,
     paired: record.pairedChatId != null,
+    decisions: decisionSender(record) != null,
     lastMessageAt: record.lastMessageAt,
   };
+}
+
+/** Pairings from a group, or saved before sender ids were kept, are not for decisions. */
+function decisionSender(record: ChannelRecord | null): string | null {
+  if (record?.pairedChatId == null || record.pairedChatType !== "private" || record.pairedUserId == null) return null;
+  return String(record.pairedUserId);
 }
 
 export function telegramStatus(): { telegram: TelegramPublic } {
@@ -362,29 +376,47 @@ function isTurnBusy(error: unknown): boolean {
   return /already running|already working/i.test(msg);
 }
 
+type TelegramFrom = { id?: unknown; first_name?: string; last_name?: string; username?: string };
+
+function senderId(from: TelegramFrom | undefined): number | null {
+  return typeof from?.id === "number" && Number.isSafeInteger(from.id) ? from.id : null;
+}
+
 function asInboundMessage(value: unknown): {
   update_id: number;
   text: string;
   chatId: number;
+  chatType: string;
+  senderId: number | null;
   name: string;
 } | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.update_id !== "number" || !Number.isFinite(row.update_id)) return null;
+  const empty = { update_id: row.update_id, text: "", chatId: 0, chatType: "", senderId: null, name: "" };
   const message = row.message;
-  if (!message || typeof message !== "object") return { update_id: row.update_id, text: "", chatId: 0, name: "" };
+  if (!message || typeof message !== "object") return empty;
   const msg = message as Record<string, unknown>;
-  if (typeof msg.text !== "string" || !msg.text) return { update_id: row.update_id, text: "", chatId: 0, name: "" };
-  const chat = msg.chat && typeof msg.chat === "object" ? (msg.chat as { id?: unknown }) : null;
-  if (typeof chat?.id !== "number") return { update_id: row.update_id, text: "", chatId: 0, name: "" };
-  const from = msg.from && typeof msg.from === "object" ? (msg.from as { first_name?: string; last_name?: string; username?: string }) : undefined;
-  return { update_id: row.update_id, text: msg.text, chatId: chat.id, name: senderName(from) };
+  if (typeof msg.text !== "string" || !msg.text) return empty;
+  const chat = msg.chat && typeof msg.chat === "object" ? (msg.chat as { id?: unknown; type?: unknown }) : null;
+  if (typeof chat?.id !== "number") return empty;
+  const from = msg.from && typeof msg.from === "object" ? (msg.from as TelegramFrom) : undefined;
+  return {
+    update_id: row.update_id,
+    text: msg.text,
+    chatId: chat.id,
+    chatType: typeof chat.type === "string" ? chat.type : "",
+    senderId: senderId(from),
+    name: senderName(from),
+  };
 }
 
 function asCallbackQuery(value: unknown): {
   update_id: number;
   callbackId: string;
   chatId: number;
+  chatType: string;
+  senderId: number | null;
   messageId: number;
   data: string;
   name: string;
@@ -398,14 +430,16 @@ function asCallbackQuery(value: unknown): {
   if (typeof cb.id !== "string" || !cb.id) return null;
   if (typeof cb.data !== "string" || !cb.data) return null;
   const message = cb.message && typeof cb.message === "object" ? (cb.message as Record<string, unknown>) : null;
-  const chat = message?.chat && typeof message.chat === "object" ? (message.chat as { id?: unknown }) : null;
+  const chat = message?.chat && typeof message.chat === "object" ? (message.chat as { id?: unknown; type?: unknown }) : null;
   if (typeof chat?.id !== "number") return null;
   if (typeof message?.message_id !== "number") return null;
-  const from = cb.from && typeof cb.from === "object" ? (cb.from as { first_name?: string; last_name?: string; username?: string }) : undefined;
+  const from = cb.from && typeof cb.from === "object" ? (cb.from as TelegramFrom) : undefined;
   return {
     update_id: row.update_id,
     callbackId: cb.id,
     chatId: chat.id,
+    chatType: typeof chat.type === "string" ? chat.type : "",
+    senderId: senderId(from),
     messageId: message.message_id,
     data: cb.data,
     name: senderName(from),
@@ -587,9 +621,7 @@ async function handleTelegramUpdatesAdmitted(updates: unknown[], deps: TelegramD
     if (callback) {
       if (callback.update_id >= next.offset) next.offset = callback.update_id + 1;
       saveChannel(next);
-      if (next.pairedChatId != null && callback.chatId === next.pairedChatId) {
-        await handlePairedCallback(callback, fetchFn, next.botToken);
-      }
+      await handleDecisionCallback(callback, fetchFn, next.botToken);
       continue;
     }
     const inbound = asInboundMessage(raw);
@@ -605,6 +637,8 @@ async function handleTelegramUpdatesAdmitted(updates: unknown[], deps: TelegramD
         ...next,
         pairedChatId: inbound.chatId,
         pairedName: inbound.name,
+        pairedUserId: inbound.senderId,
+        pairedChatType: inbound.chatType || null,
         lastMessageAt: now(),
       };
       saveChannel(next);
@@ -632,7 +666,7 @@ async function handleTelegramUpdatesAdmitted(updates: unknown[], deps: TelegramD
     saveChannel(next);
     const continuation = channelContinuation(inbound.text, deps.store);
     if (continuation !== null) { await relayText(continuation, deps); continue; }
-    const result = await decideRemoteText("telegram", String(inbound.chatId), inbound.text, inbound.name);
+    const result = await decideRemoteText("telegram", String(inbound.chatId), inbound.text, inbound.name, inbound.senderId == null ? null : String(inbound.senderId));
     if (result) {
       try {
         await sendMessage(fetchFn, next.botToken, inbound.chatId, result.ok ? result.stamp : result.message);
@@ -647,20 +681,25 @@ async function handleTelegramUpdatesAdmitted(updates: unknown[], deps: TelegramD
   saveChannel(next);
 }
 
-async function handlePairedCallback(
-  callback: { callbackId: string; chatId: number; messageId: number; data: string; name: string },
+async function handleDecisionCallback(
+  callback: { callbackId: string; chatId: number; chatType: string; senderId: number | null; messageId: number; data: string; name: string },
   fetchFn: TelegramFetch,
   token: string,
 ): Promise<void> {
   const parsed = parseDecisionCallback(callback.data);
   if (!parsed) return;
+  const sender = callback.senderId == null ? null : String(callback.senderId);
+  // Only the paired person, in the paired private chat. Anyone else gets a
+  // toast and the card stays exactly as it was.
+  const mayDecide = callback.chatType === "private" && remoteSenderMayDecide("telegram", String(callback.chatId), sender);
   try {
-    await answerCallbackQuery(fetchFn, token, callback.callbackId);
+    await answerCallbackQuery(fetchFn, token, callback.callbackId, mayDecide ? undefined : ONLY_PAIRED);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logQuiet(msg, token);
   }
-  const result = await decideRemotely("telegram", String(callback.chatId), parsed.draftId, parsed.decision, undefined, callback.name);
+  if (!mayDecide) return;
+  const result = await decideRemotely("telegram", String(callback.chatId), parsed.draftId, parsed.decision, undefined, callback.name, sender);
   try {
     await editMessageText(fetchFn, token, callback.chatId, callback.messageId, result.ok ? result.stamp : result.message);
   } catch (error) {
@@ -763,6 +802,9 @@ export function telegramDecisionAdapter(): RemoteChannelAdapter {
     pairedKey() {
       const rec = loadChannel();
       return rec?.pairedChatId != null ? String(rec.pairedChatId) : null;
+    },
+    pairedSender() {
+      return decisionSender(loadChannel());
     },
     async sendDecision(text, draftId) {
       const rec = loadChannel();

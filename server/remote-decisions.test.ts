@@ -87,6 +87,7 @@ function stubChannel(id: "telegram" | "discord", sent: Array<{ id: string; text:
     id,
     label: id === "telegram" ? "Telegram" : "Discord",
     pairedKey: () => "chat-1",
+    pairedSender: () => "user-1",
     async sendDecision(text, draftId) {
       sent.push({ id, text, draftId });
     },
@@ -242,7 +243,7 @@ describe("decideRemotely", () => {
       withWorkspaceActivity: gate.run, now: () => Date.UTC(2026, 7, 31, 0) });
     await notifyDeskSnapshot(desk.snapshot());
     const decisionId = pendingDecisionId("telegram")!, lease = await gate.pause();
-    const decision = decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam");
+    const decision = decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam", "user-1");
     await new Promise(resolve => setImmediate(resolve));
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
     expect(commit).not.toHaveBeenCalled(); expect(gate.queued).toBe(1);
@@ -260,14 +261,14 @@ describe("decideRemotely", () => {
     await notifyDeskSnapshot(desk.snapshot());
     const decisionId = pendingDecisionId("telegram")!;
     desk.snapshot().drafts[0]!.body = "Different wording";
-    const result = await decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam");
+    const result = await decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam", "user-1");
     expect(result.ok).toBe(false);
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
   });
   it("does not approve a card that was never delivered to this channel", async () => {
     const desk = fakeDesk(snapshot([draft("d-1", 10)]));
     bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])] });
-    expect((await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam", "user-1")).ok).toBe(false);
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
   });
   it("coalesces overlapping snapshots while delivery is pending", async () => {
@@ -294,7 +295,7 @@ describe("decideRemotely", () => {
       now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
     });
     await notifyDeskSnapshot(desk.snapshot());
-    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda");
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda", "user-1");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.draft.status).toBe("allowed");
@@ -315,7 +316,7 @@ describe("decideRemotely", () => {
       now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
     });
     await notifyDeskSnapshot(desk.snapshot());
-    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "deny", "too soon", "Sam");
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "deny", "too soon", "Sam", "user-1");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.draft.status).toBe("denied");
@@ -336,7 +337,7 @@ describe("decideRemotely", () => {
       now: () => Date.UTC(2026, 7, 31, 0),
     });
     await notifyDeskSnapshot(desk.snapshot());
-    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda");
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda", "user-1");
     expect(result).toEqual({ ok: false, message: "This work changed. Review the current wording on Desk before deciding." });
     desk.allowDraft = original;
     expect(desk.snapshot().drafts[0]?.status).toBe("pending");
@@ -357,7 +358,7 @@ describe("decideRemotely", () => {
       commit: () => {},
       channels: [stubChannel("telegram", [])],
     });
-    await expect(decideRemotely("telegram", "chat-1", "esc-1", "allow", undefined, "Yoda")).resolves.toEqual({
+    await expect(decideRemotely("telegram", "chat-1", "esc-1", "allow", undefined, "Yoda", "user-1")).resolves.toEqual({
       ok: false,
       message: "that card needs the licensee — open Desk when you're at a screen",
     });
@@ -429,9 +430,9 @@ describe("review card identity and recovery", () => {
     const current = pendingDecisionId("telegram")!;
     expect(current).not.toBe(old);
     expect(sent).toHaveLength(2);
-    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam", "user-1")).ok).toBe(false);
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
-    expect((await decideRemotely("telegram", "chat-1", current, "allow", undefined, "Sam")).ok).toBe(true);
+    expect((await decideRemotely("telegram", "chat-1", current, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
   });
 
   it("shows exact recipient and wording, and does not invalidate review for an unrelated revision", async () => {
@@ -441,16 +442,16 @@ describe("review card identity and recovery", () => {
     expect(sent[0]!.text).toContain("Allow sends nothing");
     const id = pendingDecisionId("telegram")!;
     desk.snapshot().revision++;
-    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam")).ok).toBe(true);
+    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
   });
 
   it("does not guess what yes means or apply a repeated coded reply to the next card", async () => {
     const { desk } = setup(); await notifyDeskSnapshot(desk.snapshot());
     const id = pendingDecisionId("telegram")!;
-    expect(await decideRemoteText("telegram", "chat-1", "yes", "Sam")).toMatchObject({ ok: false, message: expect.stringContaining(`allow ${id}`) });
+    expect(await decideRemoteText("telegram", "chat-1", "yes", "Sam", "user-1")).toMatchObject({ ok: false, message: expect.stringContaining(`allow ${id}`) });
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
-    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam"))?.ok).toBe(true);
-    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam"))?.ok).toBe(false);
+    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam", "user-1"))?.ok).toBe(true);
+    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam", "user-1"))?.ok).toBe(false);
     expect(desk.snapshot().drafts[1]!.status).toBe("pending");
   });
 
@@ -460,8 +461,8 @@ describe("review card identity and recovery", () => {
     await notifyDeskSnapshot(desk.snapshot());
     const first = pendingDecisionId("telegram")!, second = pendingDecisionId("discord")!;
     const outcomes = await Promise.all([
-      decideRemotely("telegram", "chat-1", first, "allow", undefined, "Sam"),
-      decideRemotely("discord", "chat-1", second, "deny", undefined, "Sam"),
+      decideRemotely("telegram", "chat-1", first, "allow", undefined, "Sam", "user-1"),
+      decideRemotely("discord", "chat-1", second, "deny", undefined, "Sam", "user-1"),
     ]);
     expect(outcomes.filter(result => result.ok)).toHaveLength(1);
     expect(desk.snapshot().revision).toBe(2);
@@ -471,7 +472,7 @@ describe("review card identity and recovery", () => {
     const { desk, options } = setup();
     bindRemoteDecisions({ ...options, commit: () => { throw new Error("notification failed"); } });
     await notifyDeskSnapshot(desk.snapshot());
-    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
+    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
     expect(desk.snapshot().drafts[0]!.status).toBe("allowed");
   });
 
@@ -482,7 +483,7 @@ describe("review card identity and recovery", () => {
     expect(sendDecision).not.toHaveBeenCalled();
     expect(sendDigest).toHaveBeenCalledWith(expect.stringContaining("full wording"));
     expect(pendingDecisionId("telegram")).toBeNull();
-    expect((await decideRemotely("telegram", "chat-1", "long", "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", "long", "allow", undefined, "Sam", "user-1")).ok).toBe(false);
   });
 
   it("recovers failed delivery using the same card identity", async () => {
@@ -502,12 +503,12 @@ describe("review card identity and recovery", () => {
     await notifyDeskSnapshot(desk.snapshot());
     const old = pendingDecisionId("telegram")!;
     bindRemoteDecisions(options);
-    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam", "user-1")).ok).toBe(false);
     await notifyDeskSnapshot(desk.snapshot());
     expect(pendingDecisionId("telegram")).not.toBe(old);
     const current = pendingDecisionId("telegram")!;
     paired = "chat-2";
-    expect((await decideRemotely("telegram", "chat-2", current, "allow", undefined, "Other")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-2", current, "allow", undefined, "Other", "user-1")).ok).toBe(false);
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
   });
 
@@ -534,15 +535,15 @@ describe("review card identity and recovery", () => {
     expect(sendDecision).toHaveBeenCalledTimes(2);
     expect(pendingDecisionId("telegram")).toBe(sendDecision.mock.calls[1]![1]);
     expect(pendingDecisionId("telegram")).not.toBe(old);
-    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam", "user-1")).ok).toBe(false);
   });
 
   it("holds decisions during book recovery and does not disclose reply codes to another pairing", async () => {
     const { desk } = setup(); await notifyDeskSnapshot(desk.snapshot());
     const id = pendingDecisionId("telegram")!;
-    expect(await decideRemoteText("telegram", "other", "yes", "Other")).toEqual({ ok: false, message: "This Bud is paired elsewhere." });
+    expect(await decideRemoteText("telegram", "other", "yes", "Other", "user-1")).toEqual({ ok: false, message: "This Bud is paired elsewhere." });
     desk.snapshot().recovery.active = true;
-    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam", "user-1")).ok).toBe(false);
     expect(desk.snapshot().drafts[0]!.status).toBe("pending");
   });
 
@@ -560,10 +561,56 @@ describe("review card identity and recovery", () => {
     expect(draftId).toBe("d-review");
     const old = pendingDecisionId("telegram")!;
     const edited = desk.editDraft(draftId!, "Updated wording for this tenant only.", desk.snapshot().revision);
-    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam", "user-1")).ok).toBe(false);
     await notifyDeskSnapshot(desk.snapshot());
     expect(sent.at(-1)!.text).toContain(edited.body);
-    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
+    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
     expect(desk.snapshot().drafts.find((row) => row.id === draftId)).toMatchObject({ status: "allowed", body: edited.body });
+  });
+});
+
+describe("decisions only from the paired person in a private chat", () => {
+  it("sends a view-only nudge with no buttons, code, recipient or wording to a pairing that is not for decisions", async () => {
+    const desk = fakeDesk(snapshot([draft("d-1", 10, { body: "Rent of $580 is overdue" })]));
+    const sendDecision = vi.fn(), sendDigest = vi.fn();
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [{ ...stubChannel("telegram", []), pairedSender: () => null, sendDecision, sendDigest }], now: () => Date.UTC(2026, 7, 31, 0) });
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sendDecision).not.toHaveBeenCalled();
+    expect(sendDigest).toHaveBeenCalledTimes(1);
+    expect(sendDigest.mock.calls[0]![0]).toBe("Courtesy SMS wording is ready. Open Desk to review and decide. To approve from your phone, re-pair from a private chat.");
+    expect(pendingDecisionId("telegram")).toBeNull();
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sendDigest).toHaveBeenCalledTimes(1);
+    expect(await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam", "user-1")).toEqual({ ok: false, message: "Only the person who paired this Bud can decide here." });
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+  });
+
+  it("refuses another sender in the paired chat and never discloses the reply code to them", async () => {
+    const desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])], now: () => Date.UTC(2026, 7, 31, 0) });
+    await notifyDeskSnapshot(desk.snapshot());
+    const id = pendingDecisionId("telegram")!;
+    const refusal = { ok: false, message: "Only the person who paired this Bud can decide here." };
+    expect(await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Other", "user-2")).toEqual(refusal);
+    expect(await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Other", null)).toEqual(refusal);
+    expect(await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Other", "user-2")).toEqual(refusal);
+    expect(await decideRemoteText("telegram", "chat-1", "yes", "Other", "user-2")).toBeNull();
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+    expect(pendingDecisionId("telegram")).toBe(id);
+    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
+  });
+
+  it("re-sends the current card with buttons once the pairing qualifies", async () => {
+    const desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    let sender: string | null = null;
+    const sent: Array<{ id: string; text: string; draftId: string }> = [];
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [{ ...stubChannel("telegram", sent), pairedSender: () => sender, sendDigest: vi.fn() }], now: () => Date.UTC(2026, 7, 31, 0) });
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent).toHaveLength(0);
+    sender = "user-1";
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.draftId).toBe(pendingDecisionId("telegram"));
+    expect((await decideRemotely("telegram", "chat-1", sent[0]!.draftId, "allow", undefined, "Sam", "user-1")).ok).toBe(true);
   });
 });
