@@ -68,17 +68,17 @@ describe("provisioned installations never ask for a provider key", () => {
     expect(html).not.toMatch(/OpenAI|Anthropic|OpenRouter/);
   });
 
-  it("offers exactly the three managed choices as an accessible radio group", () => {
+  it("offers exactly the four managed choices as an accessible radio group", () => {
     const html = renderToStaticMarkup(createElement(ManagedModelChoices, { value: "sonnet-high", onChange: () => {} }));
     // One accessible group name: the fieldset's legend, not a second radiogroup label.
     expect(html).toMatch(/<fieldset[^>]*><legend[^>]*>Bud&#x27;s model<\/legend>/);
     expect(html).not.toContain('role="radiogroup"');
-    expect(html.match(/type="radio"/g)).toHaveLength(3);
-    for (const label of ["DeepSeek V4.1 Flash · High", "Claude Sonnet 5.5 · High", "Claude Sonnet 5.5 · Extra high"]) {
+    expect(html.match(/type="radio"/g)).toHaveLength(4);
+    for (const label of ["DeepSeek V4.1 Flash · High", "Claude Sonnet 5.5 · Medium", "Claude Sonnet 5.5 · High", "Claude Sonnet 5.5 · Extra high"]) {
       expect(html).toContain(`aria-label="${label}"`);
     }
     // 44 px decision targets, and only the saved choice is checked.
-    expect(html.match(/pm-decision/g)).toHaveLength(3);
+    expect(html.match(/pm-decision/g)).toHaveLength(4);
     expect(html.match(/checked=""/g)).toHaveLength(1);
     expect(html.match(/<input[^>]*checked=""[^>]*>/)?.[0]).toContain('value="sonnet-high"');
     expect(html).not.toMatch(/Provider API key|password|Custom model|Base URL|Sign in with|#[0-9a-f]{6}/i);

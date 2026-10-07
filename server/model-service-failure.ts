@@ -36,7 +36,7 @@ export function modelServiceFailure(message: string): string | null {
     return "the model service refused a retry that did not match the original request; start the task again";
   }
   // The model or its reasoning setting is not one this office's plan allows.
-  // Only the three RealBud choices are ever sent, so this is a service-side
+  // Only the four RealBud choices are ever sent, so this is a service-side
   // plan change, not something the office can fix by typing a model name.
   if (/\bmode_not_allowed\b/i.test(message)) {
     return "the chosen model is not included in this office's AI plan; choose DeepSeek V4.1 Flash · High in Bud setup, or ask RealBud support to check the plan";

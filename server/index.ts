@@ -3228,7 +3228,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // were removed with the managed-only model decision (29 Sep 2026). Gone for
     // everyone, before any administrator gate: there is nothing left to protect.
     if (path === "/api/hermes/providers" || path === "/api/hermes/models" || path === "/api/hermes/oauth" || path.startsWith("/api/hermes/oauth/")) {
-      return json(res, 410, { error: "RealBud uses this office's managed AI access. Choose one of the three RealBud models in Bud setup." });
+      return json(res, 410, { error: "RealBud uses this office's managed AI access. Choose one of the four RealBud models in Bud setup." });
     }
     if (adminState.managed && !["GET", "HEAD", "OPTIONS"].includes(method)) {
       const bodyDependent = path === "/api/config" || path.startsWith("/api/bots/") || path.startsWith("/api/channels/");
