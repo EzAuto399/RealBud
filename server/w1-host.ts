@@ -93,7 +93,7 @@ export interface W1HostDeps {
   /** Office-local calendar date. */
   today: () => Promise<string>;
   /** The saved REI tenant directory (server/tenant-directory.ts) a batch's tenants come from, or null before the first save. */
-  tenantDirectory: () => { savedAt?: number } | null;
+  tenantDirectory: () => { checkedAt?: number; savedAt?: number; hash?: string } | null;
   /** index.ts passes the shared browserRuntime, whose connect() opens the work browser at a cold start. */
   runtime: BrowserSessionRuntime & { connect?: () => Promise<unknown> };
   /** The selected browser when it is ready, else null. */
@@ -124,6 +124,7 @@ const PENDING_RECIPE = "bulk-receipting-pending";
 const BULK_RECEIPTING_ROUTE = "/customers/importbanklink/index";
 const PENDING_HANDOFF = "Your earlier upload is waiting in REI. Process or delete it there.";
 const STOPPED = "Stopped. Bud did nothing more in REI. Check the import before continuing.";
+const LIST_CHANGED = "The REI tenant list changed since this batch was prepared. Prepare it again.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
 const WAIT_COPY = (until: string): ReiWaitCopy => ({
   first: `Sign in to REI Cloud so Bud can finish the bank import. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in (waiting until ${until}).`,
@@ -151,6 +152,8 @@ export function createW1Host(deps: W1HostDeps) {
   const stops = new Map<string, AbortController>();
   /** Attempts whose file REI shows pending and unposted (found by inspect). */
   const pendingFound = new Set<string>();
+  /** Attempts refused before sending because the saved REI tenant list changed since the batch was built (this process only). */
+  const listChanged = new Set<string>();
   /** Runs waiting for the person to sign in to REI → the handover's thread (GET /api/browser/sign-in?threadId=…). */
   const signingIn = new Map<string, string>();
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), NO_HANDOFF_HOST).isHolding());
@@ -224,19 +227,25 @@ export function createW1Host(deps: W1HostDeps) {
   // ── REI over the portal recipe runner ──
   const settings = async () => (await readW1Settings(deps.dataDir)) ?? fail(409, "Choose the bank account and REI account for bank imports first.");
   const runFor = async (attemptId: string) => (await store.list()).find(run => run.upload?.attemptId === attemptId) ?? fail(404, "That upload is not part of a saved bank import.");
-  /** The REI import file and its rows, exactly as reviewed. Throws a sentence when REI receipting cannot take it. */
-  async function batchFor(batchId: string, artifactDigest: string, destination: string): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
+  /** The REI import file and its rows, exactly as reviewed. Throws a sentence when REI receipting cannot take it.
+   * `sending`: the file is about to go to REI, so its tenants must still be the saved list's. */
+  async function batchFor(batchId: string, artifactDigest: string, destination: string, sending = false): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
     const office = await settings();
     if (destinationOf(office) !== destination) fail(409, "The saved REI account changed since this import started. Close it and start again.");
     const bank = deps.store(), file = bank.importArtifact(batchId);
     // Gate on the list W1 actually reads (recorded when the batch was made): any import row whose tenant came from the saved
     // REI tenant list (alone or mixed with the office's rules), or an unrecorded source, needs that list under a day old.
     // A batch whose tenants all come from the office's own rules is not gated on REI. No stamp is stale. The current list's
-    // stamp is checked, so a refresh unblocks a run. (Desk's src-rei-tenants is stamped by a different read.)
+    // last complete REI check (else its save) is used, so a refresh, even one that finds no change, unblocks a run.
+    // Before sending, the list must also be the one the batch was built from (old batches carry no hash).
+    // (Desk's src-rei-tenants is stamped by a different read.)
     const source = bank.tenantSource(batchId);
     const fromDirectory = !source || (source.source === "rei-directory" && file.rows.some(row => row.disposition === "import" && row.propertyId !== undefined && source.propertyIds.includes(row.propertyId)));
-    const savedAt = deps.tenantDirectory()?.savedAt;
-    if (fromDirectory && (typeof savedAt !== "number" || !isFresh(savedAt, REI_FRESH_MS, now()))) fail(409, "Refresh REI tenants first.");
+    if (fromDirectory) {
+      const list = deps.tenantDirectory(), checkedAt = list?.checkedAt ?? list?.savedAt;
+      if (typeof checkedAt !== "number" || !isFresh(checkedAt, REI_FRESH_MS, now())) fail(409, "Refresh REI tenants first.");
+      if (sending && source?.source === "rei-directory" && source.hash !== undefined && list?.hash !== source.hash) fail(409, LIST_CHANGED);
+    }
     if (!file.artifact || file.artifact.digest !== artifactDigest) fail(409, "The reviewed import file changed. Nothing was uploaded.");
     const problems: string[] = [];
     const rows = file.rows.flatMap(row => {
@@ -375,13 +384,13 @@ export function createW1Host(deps: W1HostDeps) {
     async uploadPreview({ attemptId, destination, batchId, artifactDigest }) {
       let prepared: Awaited<ReturnType<typeof batchFor>>, ctx: W1ReiContext;
       try {
-        prepared = await batchFor(batchId, artifactDigest, destination);
+        prepared = await batchFor(batchId, artifactDigest, destination, true);
         // The register as it stands before anything is uploaded, so a later readback counts only new receipts.
         const before = await captureBaseline(prepared.batch, await context_("readback", prepared.batch.destination.marker), windowFor(prepared.batch));
         if (before.status !== "read") fail(409, `REI's Receipt Register could not be read before the upload, so nothing was uploaded${before.detail ? `: ${before.detail}` : "."}`);
         else await saved_.saveBaseline(attemptId, before.baseline);
         ctx = await context_("preview", prepared.batch.destination.marker, { name: prepared.batch.artifact.name, bytes: prepared.bytes });
-      } catch (error) { note(message(error)); throw error; }
+      } catch (error) { if (message(error) === LIST_CHANGED) listChanged.add(attemptId); note(message(error)); throw error; }
       const outcome = await preview(prepared.batch, ctx);
       if (outcome.status === "not-uploaded" || outcome.status === "unknown-upload") {
         note(outcome.status === "not-uploaded" ? `Nothing was uploaded${outcome.detail ? `: ${outcome.detail}` : "."}` : "The upload may have reached REI, but its preview was not confirmed.");
@@ -404,7 +413,9 @@ export function createW1Host(deps: W1HostDeps) {
     async inspect({ attemptId, destination, artifactDigest }): Promise<W1Inspection> {
       // A refusal (stale tenants, account scope, an unverified recipe, an incomplete register, Stop) is never "nothing":
       // only a complete, verified register that shows nothing of the batch, and no pending import, may offer a re-upload.
-      // The refusal's own sentence is the note. Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
+      // The refusal's own sentence is the note. A batch refused because the tenant list changed stays unknown (no REI read can
+      // clear it, and a later readback is never blocked by the list): prepare it again. Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
+      if (listChanged.has(attemptId)) { note(LIST_CHANGED); return { kind: "unknown" }; }
       try { const found = await register(attemptId, destination, artifactDigest); return found ? { kind: "posted", readback: found } : await pendingImport(attemptId, destination, artifactDigest); }
       // An unreadable or unattributed register proves nothing either way.
       catch (error) { note(message(error)); return { kind: "unknown" }; }

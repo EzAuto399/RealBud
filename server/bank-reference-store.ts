@@ -8,11 +8,11 @@ import { validateSavedBankBatch, validateBankReviewLinks } from './bank-referenc
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass } from './bank-reference-match.ts';
-import { createTenantDirectoryStore, tenantDirectoryCsv } from './tenant-directory.ts';
+import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash } from './tenant-directory.ts';
 
 /** Where a batch's REI tenants came from, recorded when the batch is created: the office's saved REI tenant list
  * (its savedAt, and the property ids whose rules it supplied) or only the office's own rules. */
-export type BankTenantSource = { source: 'bank-rules' } | { source: 'rei-directory'; savedAt: number; propertyIds: string[] };
+export type BankTenantSource = { source: 'bank-rules' } | { source: 'rei-directory'; savedAt: number; propertyIds: string[]; /** tenantListHash of the list used. */ hash?: string };
 const TENANT_SOURCE = 'bank-tenant-source';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
@@ -103,7 +103,7 @@ export class BankReferenceStore {
       const saved = createTenantDirectoryStore(this.db).read().directory;
       if (saved) {
         const merged = withTenantDirectory({ ...input, tenantList: tenantDirectoryCsv(saved.tenants) }), references = new Set(saved.tenants.map(tenant => tenant.reference));
-        return [merged, { source: 'rei-directory', savedAt: saved.savedAt, propertyIds: merged.rules.filter(rule => references.has(rule.reference)).map(rule => rule.propertyId) }];
+        return [merged, { source: 'rei-directory', savedAt: saved.savedAt, propertyIds: merged.rules.filter(rule => references.has(rule.reference)).map(rule => rule.propertyId), hash: tenantListHash(saved.tenants) }];
       }
       return [input, { source: 'bank-rules' }];
     }

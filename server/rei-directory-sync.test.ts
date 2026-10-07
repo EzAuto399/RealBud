@@ -6,7 +6,7 @@ import { privateTempRoot } from "./testing/private-fixture.ts";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
@@ -83,9 +83,12 @@ describe("refresh from REI (fictional portal)", () => {
     expect(f.tenants.read().directory!.tenants.find(t => t.reference === "FT-BRAVO")).toMatchObject({ property: "FP-02", bpay: "4470002" });
     expect(f.tenants.read().directory!.source).toMatchObject({ name: "REI Tenants list (read from the page)", rows: 10 });
     // A repeat refresh with no change in REI: a preview that says so, and no new revision.
+    const checked = vi.spyOn(f.tenants, "markChecked");
     await f.start("tenants");
     now = await f.finish();
     expect(now.run!.preview).toMatchObject({ unchanged: true, baseRevision: 1 });
+    // The complete read already renewed the list's freshness for bank imports (W1), with no new revision.
+    expect(checked.mock.results.map(result => result.value)).toEqual([true]);
     now = await f.save(1);
     expect(now.run!.saved).toEqual({ revision: 1, changed: false });
     expect(f.tenants.read().revision).toBe(1);

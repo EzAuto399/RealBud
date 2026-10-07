@@ -50,7 +50,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
   const hold = { signIn: false };
   const extras = typeof extrasOrLab === "function" ? extrasOrLab(lab) : extrasOrLab;
   // The saved REI tenant directory's stamp: fresh unless a test moves it.
-  const tenants = { directory: { savedAt: Date.now() } as { savedAt?: number } | null };
+  const tenants = { directory: { savedAt: Date.now() } as { checkedAt?: number; savedAt?: number; hash?: string } | null };
   const host = createW1Host({ dataDir: dir, provider: () => lab.provider, coverage: new RedbarkCoverage(dir), store: () => store, today: async () => TODAY,
     tenantDirectory: () => tenants.directory, runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
   const call = async (path: string, method = "POST", body?: unknown) => {
@@ -368,10 +368,10 @@ describe("W1 host", () => {
   describe("REI tenant freshness gates only batches whose tenants came from the saved REI tenant list", () => {
     const tenant = (reference: string, property: string): TenantEntry => ({ reference, property, surname: "Fictional", firstname: "Tenant", rent: "", bpay: "" });
     /** A pulled and reviewed batch; `list` is the REI tenant list saved before the pull (null: none, so only the office's rules). */
-    async function reviewed(list: TenantEntry[] | null) {
+    async function reviewed(list: TenantEntry[] | null, savedAt: () => number = Date.now) {
       const f = await fixture();
-      if (list) createTenantDirectoryStore(f.db).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: "a".repeat(64), rows: list.length }, expectedRevision: 0 });
-      f.tenants.directory = list ? createTenantDirectoryStore(f.db).read().directory : null;
+      if (list) createTenantDirectoryStore(f.db, savedAt).save({ tenants: list, source: { name: "fictional-tenants.csv", sha256: "a".repeat(64), rows: list.length }, expectedRevision: 0 });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
       await f.configure();
       await f.lab.handle({ action: "sign-in" });
       await f.call("/api/w1/runs/start");
@@ -380,10 +380,10 @@ describe("W1 host", () => {
       return f;
     }
     const STALE = { savedAt: Date.now() - REI_FRESH_MS - 60_000 };
-    const refused = async (f: Awaited<ReturnType<typeof reviewed>>) => {
+    const refused = async (f: Awaited<ReturnType<typeof reviewed>>, sentence = "Refresh REI tenants first.") => {
       // A refusal is an unknown outcome with its own sentence, never "REI shows nothing", never a re-upload.
       const now = await f.act("advance");
-      expect(now.note).toBe("Refresh REI tenants first.");
+      expect(now.note).toBe(sentence);
       expect(now.run).toMatchObject({ step: "check_outcome", attention: { reason: "outcome_unknown" }, uncertain: { inspection: "unknown" } });
       expect(now.ask).toBeNull();
       await expect(f.act("retry-upload")).rejects.toMatchObject({ status: 409 });
@@ -403,7 +403,7 @@ describe("W1 host", () => {
       expect(f.store.tenantSource((await f.host.status()).run!.fetch!.batchId)).toMatchObject({ source: "rei-directory", propertyIds: ["FP-02", "FP-03"] });
       for (const stale of [null, {}, STALE]) { f.tenants.directory = stale; await refused(f); }
       // Refreshed: the check reads REI's complete register, which shows nothing, and only then is a second upload offered.
-      f.tenants.directory = { savedAt: Date.now() - REI_FRESH_MS + 60_000 };
+      f.tenants.directory = { ...createTenantDirectoryStore(f.db).freshness()!, checkedAt: Date.now() - REI_FRESH_MS + 60_000 };
       await f.act("advance");
       let now = await f.answer();
       expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
@@ -412,6 +412,33 @@ describe("W1 host", () => {
       expect(now.tools).toContain("browser_upload");
       expect(now.note).not.toBe("Refresh REI tenants first.");
       expect((await f.lab.handle({ action: "status" }) as { uploads: number }).uploads).toBe(1);
+    });
+
+    it("an unchanged REI refresh 25 hours after the save renews the list: the batch goes to REI", windowsAdmissionTimeout(255), async () => {
+      const list = [tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")];
+      const f = await reviewed(list, () => Date.now() - 25 * 60 * 60_000);
+      await refused(f);
+      // Refresh from REI reads the same list (nothing to save) and records the check.
+      expect(createTenantDirectoryStore(f.db).markChecked(list)).toBe(true);
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+      await f.act("advance");
+      let now = await f.answer();
+      expect(now.run, String(now.note)).toMatchObject({ step: "check_outcome", attention: { reason: "nothing_found" } });
+      await f.act("retry-upload");
+      now = await f.answer();
+      expect(now.tools).toContain("browser_upload");
+    });
+
+    it("a batch built from an older tenant list is refused before sending: prepare it again, never a re-upload", windowsAdmissionTimeout(255), async () => {
+      const f = await reviewed([tenant("FT-BRAVO", "FP-02"), tenant("FT-CHARLIE", "FP-03")]);
+      createTenantDirectoryStore(f.db).save({ tenants: [tenant("FT-BRAVO", "FP-02")], source: { name: "fictional-tenants.csv", sha256: "b".repeat(64), rows: 1 }, expectedRevision: 1 });
+      f.tenants.directory = createTenantDirectoryStore(f.db).freshness();
+      await refused(f, "The REI tenant list changed since this batch was prepared. Prepare it again.");
+      // Checking again changes nothing: still unknown with the same sentence, and nothing was sent.
+      const now = await f.act("advance");
+      expect(now.note).toBe("The REI tenant list changed since this batch was prepared. Prepare it again.");
+      expect(now.run).toMatchObject({ attention: { reason: "outcome_unknown" } });
+      expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
     });
 
     it("a batch mixing the saved list and the office's rules is refused while the list is stale", windowsAdmissionTimeout(255), async () => {
