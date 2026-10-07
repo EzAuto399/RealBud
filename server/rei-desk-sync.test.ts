@@ -18,6 +18,7 @@ import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import type { PortalRecipeResult, PortalRunRequest } from "./portal-recipe-runner.ts";
 import { portalRecipeTaskProposal, runPortalRecipeTask } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
+import { morningCheckResult } from "./routines.ts";
 import { REI_FRESH_MS, reiPartsFreshness } from "./source-gate.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
@@ -289,5 +290,52 @@ describe("REI read through the fictional portal into Desk", () => {
     const sync = syncReiReadIntoDesk(desk, { runs, results: result.results, observedAt: tick(1000) })!;
     expect(sync.fresh).toEqual(["tenants"]);
     expect(sync.stale).toEqual(["arrears", "owners"]);
+  });
+});
+
+describe("morning money check on REI facts", () => {
+  it("holds a proposal built on REI facts while REI tenants or arrears are not fresh; Desk-only properties still draft", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-rei-money-"));
+    dirs.push(dir);
+    let now = T0;
+    // Every property is 3 days late with no rent landed: a courtesy draft unless something holds it.
+    const desk = new Desk({ file: join(dir, "desk.json"), now: () => now, key: KEY,
+      hermes: async (ids) => ({ rows: ids.map((propertyId) => ({ propertyId, daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null })), detail: "Worker answered." }) });
+    desk.startLiveBook();
+    desk.addProperty({ address: "1 Desk Only St", tenantName: "Fictional Desk", tenantPhone: "0400 000 001", weeklyRentCents: 40_000 });
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Bravo", tenantPhone: "0400 000 002", weeklyRentCents: 50_000 });
+    const deskOnly = desk.snapshot().properties.find((property) => property.propertyCode !== "FP-02")!.id;
+    const bravoId = bravoProperty(desk).id;
+    const outcome = (snap: Awaited<ReturnType<Desk["runMorningCheckLive"]>>, id: string) => snap.results.find((row) => row.propertyId === id);
+
+    // A Desk-only book with REI never read: nothing is gated.
+    let snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, deskOnly)).toMatchObject({ outcome: "draft" });
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "draft" });
+    expect(morningCheckResult(snap, now)).toEqual({ ok: true, detail: "Worker answered." });
+
+    // Tenants read whole (REI now owns Bravo's tenant name), arrears never read: Bravo is held with a plain reason.
+    now += 1000;
+    readTenants(desk, [bravo()], now);
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, deskOnly)).toMatchObject({ outcome: "draft" });
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "hold", reason: "stale-source" });
+    expect(snap.workItems.find((item) => item.propertyId === bravoId && item.state === "held")?.holdReason)
+      .toBe("stale-source: REI arrears not fresh: run the REI morning refresh or sign in to REI.");
+    expect(morningCheckResult(snap, now)).toEqual({ ok: false, covered: 1, uncovered: 1,
+      detail: "Worker answered. 1 property held: REI arrears not fresh: run the REI morning refresh or sign in to REI." });
+
+    // Arrears read whole too: Bravo's proposal goes ahead.
+    now += 1000;
+    syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [])], observedAt: now });
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "draft" });
+    expect(morningCheckResult(snap, now).ok).toBe(true);
+
+    // A day later both parts are stale again.
+    now += REI_FRESH_MS + 1;
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "hold", reason: "stale-source" });
+    expect(morningCheckResult(snap, now).detail).toMatch(/1 property held: REI tenants and arrears not fresh/);
   });
 });

@@ -21,6 +21,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { reiMoneyStaleReason } from "./source-gate.ts";
 import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
@@ -89,7 +90,8 @@ export const EMPTY_BOOK_DETAIL = "Nothing to check yet — add properties to the
 
 /** What a morning money check reports from the Desk snapshot its Recheck produced. */
 export function morningCheckResult(
-  snapshot: Pick<DeskSnapshot, "properties" | "hands" | "handsDetail" | "mode" | "results">,
+  snapshot: Pick<DeskSnapshot, "properties" | "hands" | "handsDetail" | "mode" | "results" | "sources">,
+  now = Date.now(),
 ): LoopExecuteResult {
   // Desk did not ask Bud: nothing ran, nothing is held, nothing to read.
   if (snapshot.properties.length === 0) return { ok: true, detail: EMPTY_BOOK_DETAIL, quiet: true };
@@ -100,7 +102,12 @@ export function morningCheckResult(
   if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
   // "held" returned above; Bud and CSV facts are live, demo and fixture facts are not.
   const live = snapshot.hands !== "demo" && snapshot.hands !== "fixture";
-  return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
+  const detail = snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts");
+  // Desk held proposals that would have used REI facts while REI was not fresh (server/desk.ts evaluateBook).
+  const staleRei = snapshot.results.filter((row) => row.outcome === "hold" && row.reason === "stale-source").length;
+  if (!staleRei) return { ok: live, detail };
+  const why = reiMoneyStaleReason(snapshot.sources, now) ?? "REI was not fresh: run the REI morning refresh or sign in to REI.";
+  return { ok: false, detail: `${detail} ${staleRei} propert${staleRei === 1 ? "y" : "ies"} held: ${why}`, covered: snapshot.results.length - staleRei, uncovered: staleRei };
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];

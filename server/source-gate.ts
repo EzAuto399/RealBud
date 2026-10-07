@@ -23,6 +23,15 @@ export function reiPartsFreshness<P extends string>(
   })) as Record<P, boolean>;
 }
 
+/** The REI parts the morning money check's REI facts come from (tenant, rent, amount owing, paid to). */
+const REI_MONEY_PARTS = ["tenants", "arrears"] as const;
+/** Why REI-sourced money facts can't back a proposal now, or null when both parts are fresh. */
+export function reiMoneyStaleReason(sources: ReadonlyArray<{ id: string; lastCheckedAt?: number | null }>, now: number): string | null {
+  const fresh = reiPartsFreshness(REI_MONEY_PARTS, sources, now);
+  const stale = REI_MONEY_PARTS.filter((part) => !fresh[part]);
+  return stale.length ? `REI ${stale.join(" and ")} not fresh: run the REI morning refresh or sign in to REI.` : null;
+}
+
 export function sourceReady(input: {
   sourceId: string;
   stableKey: string;

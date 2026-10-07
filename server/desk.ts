@@ -55,7 +55,7 @@ import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type Br
 import type { RoutineOrigin } from "../shared/contracts.ts";
 import { emptyOffice, parseJurisdictions, parseOfficePatch } from "../shared/office.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
-import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
+import { CSV_FRESH_MS, isFresh, reiMoneyStaleReason } from "./source-gate.ts";
 import {
   appendAllowedLine,
   appendAllowedLines,
@@ -133,6 +133,8 @@ export interface ReiDeskApplied { updated: number; differs: number; proposed: nu
 
 /** The source a REI read stamps for one part, e.g. src-rei-tenants. */
 export const reiSourceId = (part: string) => `src-rei-${part}`;
+/** Fields a money proposal reads that REI may own. */
+const REI_MONEY_FIELDS: readonly ReiField[] = ["tenantName", "weeklyRentCents", "amountOwingCents", "paidTo"];
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function readField(property: Property, field: ReiField): ReiFieldValue | undefined {
@@ -1357,6 +1359,8 @@ export class Desk {
   ): DeskSnapshot {
     const now = this.now();
     const results = [];
+    // REI's tenant, rent and arrears facts back a proposal only while REI's tenants and arrears are fresh.
+    const reiStale = reiMoneyStaleReason(this.store.data.sources, now);
     for (const property of this.store.data.properties) {
       if (skipIds?.has(property.id)) {
         results.push({ propertyId: property.id, outcome: "hold" as const, reason: "uncovered-by-worker" as const, daysLate: this.facts(property.id).daysSinceDue });
@@ -1364,6 +1368,11 @@ export class Desk {
       }
       const facts = this.facts(property.id);
       const classified = classifyMoneyRow(property, facts, now, hands === "csv" ? "src-csv" : hands === "hermes" ? "src-hermes" : "src-demo");
+      if (classified.outcome === "draft" && reiStale && REI_MONEY_FIELDS.some((field) => property.origins?.[field]?.source === "rei")) {
+        this.holdWork({ ...classified, reason: "stale-source", sourceId: "src-rei", detail: reiStale });
+        results.push({ propertyId: property.id, outcome: "hold" as const, reason: "stale-source" as const, daysLate: classified.daysLate });
+        continue;
+      }
       results.push({ propertyId: classified.propertyId, outcome: classified.outcome, reason: classified.reason, daysLate: classified.daysLate });
       const periodDueAt = dueDate(now, facts.daysSinceDue);
       if (classified.outcome === "hold") {

@@ -45,6 +45,10 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
 const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
+/** The pack's recipes still drive the old Arrears/Tasks filters ("From day", "Hide vacated tenants", Tasks' From/To).
+ * ponytail: compatibility default while main's recipes and the recipes rewrite overlap; once no recipe names
+ * "From day", the live shape is the default with no test edits. Delete this and `legacyFilters` after that PR lands. */
+const RECIPES_USE_OLD_FILTERS = readFileSync(RECIPES_FILE, "utf8").includes('"From day"');
 /** FICTIONAL tenant and supplier export reports on the Reports page, for Ask tasks that explore it. The pack's
  * directory recipes read the lists' own grids and never open them. */
 const TENANT_DEFAULT = "Tenant list export (fictional)", SUPPLIER_DEFAULT = "Supplier list export (fictional)";
@@ -221,16 +225,17 @@ const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(
 
 const TABLES: Record<string, { cols: string[]; rows: string[][] }> = {
   /** The arrears page (filters on Status and Days). */
-  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: TENANTS },
+  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days Arrears", "Amount owing"], rows: TENANTS },
   owners: { cols: ["Name", "Status", "Properties"], rows: [["Fictional Owner One", "Active", "2"], ["Fictional Owner Two", "Active", "1"]] },
   rentals: { cols: ["Property", "Status", "Lease expiry", "Smoke due"], rows: Array.from({ length: 7 }, (_, i) => [`${i + 1} Fictional St`, "Active", `2026-1${i % 3}-0${i + 1}`, `2026-10-1${i}`]) },
-  tasks: { cols: ["Task", "Status", "Due date", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
+  tasks: { cols: ["Task", "Status", "Date Due", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
   reconciliation: { cols: ["Date", "Description", "Debit", "Credit", "Reconciled"], rows: [["2026-09-24", "Fictional deposit", "", "1200.00", "No"], ["2026-09-24", "Fictional fee", "15.00", "", "No"]] },
   /** Pending payments/levies/invoices: not bank imports. */
   pendingPayments: { cols: ["Owner/Business", "Description", "Amount", "Sufficient Funds"], rows: [["Fictional Owner One", "Fictional levy", "120.00", "Yes"], ["Fictional Owner Two", "Fictional invoice", "80.00", "No"]] },
   empty: { cols: ["Name"], rows: [] },
 };
-type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[] };
+/** `label`: the accessible name shown, when it differs from the field's own name. */
+type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[]; label?: string };
 type Control = { role: string; name: string; action: string; disabled?: boolean; options?: string[]; value?: string };
 
 export interface FictionalReiOptions {
@@ -284,6 +289,18 @@ export interface FictionalReiOptions {
   dialogOn?: string;
   /** The person has a second REI tab open. */
   secondReiTab?: boolean;
+  /** The Search box's accessible name (live REI's DataTables boxes read "Search:"). */
+  searchLabel?: string;
+  /** The Tenants and Suppliers grids in live REI's Syncfusion shape (7 Oct 2026): rows in rowgroups, a hidden empty-named
+   * first column, and template cells whose names end " is template cell column header <Col>". */
+  syncfusionGrid?: boolean;
+  /** Bank Reconciliation as live REI shows it: an editable form above the grid. */
+  bankReconciliationForm?: boolean;
+  /** Path → the addresses the page moves itself to, one during each read after loading (rehearses a page that settles its address late). */
+  addressSettles?: Record<string, string[]>;
+  /** Arrears and Tasks with their old named filters (From day, Hide vacated tenants; Status, From, To) instead of live
+   * REI's "Show entries" and "Search:" only. Defaults to whatever the pack's recipes still drive. */
+  legacyFilters?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -300,7 +317,10 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   if (!signedIn) url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`;
   // Per-page state, reset on each load.
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
+  /** Addresses this page's own script still moves to, one per read (addressSettles). */
+  let settle: string[] = [];
   const block = options.gridBlock ?? 4;
+  const legacy = options.legacyFilters ?? RECIPES_USE_OLD_FILTERS;
   /** Rows the Tenants grid has rendered: one block until its content scrolls. */
   let rendered = block;
   /** The report whose parameters popup is open. */
@@ -329,24 +349,35 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
     page = 0; loading = 1; modal = options.dialogOn === new URL(url).pathname; reportsListed = false; uploadError = null; report = ""; rendered = block;
+    settle = [...(options.addressSettles?.[new URL(url).pathname] ?? [])];
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
     const status = (value: string): Field => ({ kind: "combobox", name: "Status", value, options: ["Active", "Inactive", "Open", "Closed", "All"] });
-    const search: Field = { kind: "textbox", name: "Search", value: "" };
+    const search: Field = { kind: "textbox", name: "Search", value: "", ...(options.searchLabel ? { label: options.searchLabel } : {}) };
     if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
-    if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
-    if (path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
-    if (path === "/customers/reconciliation/bankreconciliation") return [{ kind: "textbox", name: "Statement balance", value: "" }];
+    if (legacy && path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
+    if (legacy && path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
+    // Live DataTables pages (7 Oct 2026): only "Show entries" and the "Search:" box are named; the day, status and date
+    // filters have no accessible name, so the fictional page shows none. FICTIONAL: rows per page stay `pageSize`, so paging stays exercised.
+    const entries = (value: string, choices: string[]): Field => ({ kind: "combobox", name: "Show entries", value, options: choices });
+    if (path === "/customers/task") return [entries("15", ["15", "30", "45", "100"]), { ...search, label: "Search:" }];
+    if (path === "/customers/arrears/") return [entries("10", ["10", "15", "All"]), { ...search, label: "Search:" }];
+    // Live REI (7 Oct 2026): an editable form (a one-option business select, statement balance, reconciled date) above an unnamed DataTables search.
+    if (path === "/customers/reconciliation/bankreconciliation") return options.bankReconciliationForm
+      ? [{ kind: "combobox", name: "Business", value: AGENCY, options: [AGENCY] }, { kind: "textbox", name: "Statement Balance", value: "1185.00" },
+        { kind: "textbox", name: "Reconciled", value: "30/09/2026" }, { kind: "textbox", name: "Search", value: "", label: "" }]
+      : [{ kind: "textbox", name: "Statement balance", value: "" }];
     if (path === "/report/reportlist") return [search];
     if (path === "/customers/importbanklink/index") return [{ kind: "combobox", name: "File Format", value: FICTIONAL_DEFAULT_FILE_FORMAT, options: [...FICTIONAL_FILE_FORMATS] }];
     return [search];
   };
   const field = (name: string) => fields.find(item => item.name === name)?.value ?? "";
-  const tableFor = (path: string): { cols: string[]; rows: string[][] } | null => {
+  /** `searched: false` leaves the Search box out (a DataTable's "filtered from N total entries"). */
+  const tableFor = (path: string, searched = true): { cols: string[]; rows: string[][] } | null => {
     const filter = (key: string, keep: (row: string[]) => boolean, statusDefault = true) => {
-      const base = key === "arrears" && options.arrears ? { cols: TABLES.arrears.cols, rows: options.arrears } : key === "owners" && options.owners ? { cols: TABLES.owners.cols, rows: options.owners } : TABLES[key]; const status = field("Status"); const query = field("Search").toLowerCase();
+      const base = key === "arrears" && options.arrears ? { cols: TABLES.arrears.cols, rows: options.arrears } : key === "owners" && options.owners ? { cols: TABLES.owners.cols, rows: options.owners } : TABLES[key]; const status = field("Status"); const query = searched ? field("Search").toLowerCase() : "";
       return { cols: base.cols, rows: base.rows.filter(row => (!statusDefault || !status || status === "All" || row[1] === status) && (!query || row[0].toLowerCase().includes(query)) && keep(row)) };
     };
     // Tenants and Suppliers: Status filters a field that is not a column; Search matches the name columns.
@@ -404,7 +435,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       // The page's fields sit in their own region, apart from its record-changing buttons (FICTIONAL layout).
       if (fields.length) lines.push('      region "Filters"');
       for (const item of fields) {
-        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.name)} value=${q(item.value)}`);
+        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.label ?? item.name)} value=${q(item.value)}`);
         else if (item.kind === "combobox") {
           lines.push(`        ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
           for (const option of item.options ?? []) lines.push(`          option ${q(option)}`);
@@ -422,18 +453,30 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         // The grid, its footer and pager sit in their own region; the page's record-changing buttons are outside it.
         // The tenants grid scrolls (no pages) and shows "No records to display" before it fills, as live REI does.
         const scrolls = path === "/customers/tenant" || path === "/customers/supplier";
-        const grid = ['table "Results"'];
-        if (loading > 0 && scrolls) grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`), "  row", '    cell "No records to display"');
-        else if (loading > 0) grid.push("  row", '    cell "Loading…"');
+        // Syncfusion-shaped (syncfusionGrid): role grid, header and rows each in a rowgroup, a hidden first column whose
+        // header has an empty name, and every cell named "<text> is template cell column header <Col>".
+        const sf = scrolls && options.syncfusionGrid === true;
+        const header = sf ? ["  rowgroup", "    row", '      columnheader ""', ...table.cols.map(col => `      columnheader ${q(col)}`)] : ["  row", ...table.cols.map(col => `    columnheader ${q(col)}`)];
+        const note = (text: string) => sf ? ["  rowgroup", "    row", `      gridcell ${q(text)}`] : ["  row", `    cell ${q(text)}`];
+        const body = (rows: string[][]) => sf
+          ? ["  rowgroup", ...rows.flatMap(row => ["    row", '      gridcell ""', ...row.map((cell, i) => `      gridcell ${q(`${cell} is template cell column header ${table.cols[i]}`)}`)])]
+          : rows.flatMap(row => ["  row", ...row.map(cell => `    cell ${q(cell)}`)]);
+        const grid = [sf ? "grid" : 'table "Results"'];
+        if (loading > 0 && scrolls) grid.push(...header, ...note("No records to display"));
+        else if (loading > 0) grid.push(...note("Loading…"));
         else {
           // A short grid (directoryRows) still counts every row in its footer; Tenants shows only what has loaded.
           const listed = scrolls && options.directoryRows ? options.directoryRows(table.rows.map(row => [...row])) : table.rows;
           const shown = !scrolls ? table.rows.slice(page * size(), page * size() + size()) : path === "/customers/tenant" ? listed.slice(0, rendered) : listed;
-          grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`));
-          if (!shown.length) grid.push("  row", `    cell ${q(scrolls ? "No records to display" : "No records found")}`);
-          for (const row of shown) grid.push("  row", ...row.map(cell => `    cell ${q(cell)}`));
+          grid.push(...header);
+          if (!shown.length) grid.push(...note(scrolls ? "No records to display" : "No records found"));
+          grid.push(...body(shown));
         }
-        if (loading === 0) grid.push(`StaticText ${q(`${table.rows.length} records · 0 row(s) selected`)}`);
+        // Live Arrears and Tasks are DataTables: "Showing 1 to 10 of N entries", "(filtered from M total entries)" while searched.
+        const dataTable = !legacy && (path === "/customers/arrears/" || path === "/customers/task");
+        const n = table.rows.length, total = field("Search") ? tableFor(path, false)!.rows.length : null;
+        const info = `Showing ${n ? page * size() + 1 : 0} to ${Math.min((page + 1) * size(), n)} of ${n} entries${total !== null ? ` (filtered from ${total} total entries)` : ""}`;
+        if (loading === 0) grid.push(`StaticText ${q(dataTable ? info : `${n} records · 0 row(s) selected`)}`);
         if (!scrolls) {
           const last = (page + 1) * size() >= table.rows.length;
           const pages = Math.max(1, Math.min(20, Math.ceil(table.rows.length / size())));
@@ -494,6 +537,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
     if (args[0] === "observe") {
       const text = render(); if (loading > 0) loading -= 1;
+      // The page's own script moves its address while the read is under way (a redirect or history.replaceState).
+      const moved = settle.shift(); if (moved) url = new URL(moved, FICTIONAL_REI_ORIGIN).href;
       // The live helper caps an observation (--max-tokens): a long page comes back cut, and says so.
       const cut = options.observeChars !== undefined && text.length > options.observeChars;
       return { text: cut ? text.slice(0, options.observeChars) : text, tab_id: 1, truncated: cut };
