@@ -55,7 +55,7 @@ import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type Br
 import type { RoutineOrigin } from "../shared/contracts.ts";
 import { emptyOffice, parseJurisdictions, parseOfficePatch } from "../shared/office.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
-import { CSV_FRESH_MS, isFresh, reiMoneyStaleReason } from "./source-gate.ts";
+import { CSV_FRESH_MS, isFresh, reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
 import {
   appendAllowedLine,
   appendAllowedLines,
@@ -135,6 +135,8 @@ export interface ReiDeskApplied { updated: number; differs: number; proposed: nu
 export const reiSourceId = (part: string) => `src-rei-${part}`;
 /** Fields a money proposal reads that REI may own. */
 const REI_MONEY_FIELDS: readonly ReiField[] = ["tenantName", "weeklyRentCents", "amountOwingCents", "paidTo"];
+/** Owner and arrears fields an owner letter speaks to that REI may own. */
+const REI_OWNER_LETTER_FIELDS: readonly ReiField[] = ["ownerName", "ownerContact", "amountOwingCents", "paidTo"];
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function readField(property: Property, field: ReiField): ReiFieldValue | undefined {
@@ -1224,12 +1226,18 @@ export class Desk {
     this.assertWritable();
     const now = this.now();
     const weekStart = ownerLetterWeekStart(now);
+    // Same gate as the morning money check: REI's owner and arrears facts back a letter only while REI is fresh.
+    const reiStale = reiOwnerLetterStaleReason(this.store.data.sources, now);
     for (const property of this.store.data.properties) {
       const exists = this.store.data.drafts.some(
         (d) => d.propertyId === property.id && d.kind === "owner-letter" && d.periodDueAt === weekStart,
       );
       if (exists) continue;
       const facts = this.facts(property.id);
+      if (reiStale && REI_OWNER_LETTER_FIELDS.some((field) => property.origins?.[field]?.source === "rei")) {
+        this.holdWork({ propertyId: property.id, reason: "stale-source", daysLate: facts.daysSinceDue, observedAt: now, sourceId: "src-rei", detail: reiStale }, "owner-letter");
+        continue;
+      }
       const note = readPropertyNote(property.id, this.vaultRoot);
       const draft = composeOwnerLetter(property, facts, note, now);
       const work = this.newWork(property, draft, now, "proposed", ["src-desk"]);
@@ -1432,13 +1440,13 @@ export class Desk {
     this.emit();
   }
 
-  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string; detail?: string }): void {
-    const key = occurrenceKey(exception.propertyId, `hold:${exception.reason}`, 0);
+  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string; detail?: string }, kind: "money-arrears" | "owner-letter" = "money-arrears"): void {
+    const key = occurrenceKey(exception.propertyId, kind === "owner-letter" ? `hold:owner-letter:${exception.reason}` : `hold:${exception.reason}`, 0);
     if (this.store.data.workItems.some((w) => w.occurrenceKey === key && w.state === "held")) return;
     const property = this.store.data.properties.find((p) => p.id === exception.propertyId);
     this.store.data.workItems.push({
       id: `work-${randomUUID()}`,
-      kind: "money-arrears",
+      kind,
       state: "held",
       propertyId: exception.propertyId,
       occurrenceKey: key,
