@@ -321,9 +321,18 @@ export async function startBrowserBroker(options: {
       if (help) await signIn(tabId, before.url, "", signal, true);
       throw problem(ACCOUNT_SELECTION_NEEDED);
     }
-    const data = await runtime.observeTab(owner, tabId, signal, scroll);
-    const after = await currentTab(tabId, signal);
-    if (data.tabId !== tabId || typeof data.text !== "string" || before.url !== after.url) throw problem("The page changed during the read. Read it again before acting.");
+    let from = before.url;
+    let data = await runtime.observeTab(owner, tabId, signal, scroll);
+    let after = await currentTab(tabId, signal);
+    // A page that moves its own address while loading (a late redirect or history.replaceState) is read once more where
+    // it settled. Only a plain read is repeated: a grid scroll was allowed for the first address. Every check below
+    // still runs on the settled page, and an address that moves again is refused.
+    if (data.tabId === tabId && typeof data.text === "string" && from !== after.url && scroll === undefined) {
+      from = after.url;
+      data = await runtime.observeTab(owner, tabId, signal);
+      after = await currentTab(tabId, signal);
+    }
+    if (data.tabId !== tabId || typeof data.text !== "string" || from !== after.url) throw problem("The page changed during the read. Read it again before acting.");
     if (browserLoginFields(data.text) || portal?.signInHosts.some(host => host.toLowerCase() === new URL(after.url).hostname.toLowerCase())) {
       snapshots.delete(tabId);
       const resumed = help ? await signIn(tabId, String(after.url), data.text, signal) : null;

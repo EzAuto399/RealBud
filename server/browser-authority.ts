@@ -364,9 +364,13 @@ const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.
  *   account-change form;
  * - with no form or dialog around it (Chromium shows an unnamed form as a plain
  *   generic node), the whole page shows none of those either. */
+/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's
+ * DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
+export const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
+const sameName = (names: readonly string[], name: string) => names.some(item => accessibleName(item) === accessibleName(name));
 function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
   const name = controlName(label);
-  if (portal.consequential.includes(name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
+  if (sameName(portal.consequential, name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
   const { nodes } = parseVom(text);
   const targets = nodes.filter(node => node.ref === ref);
   if (targets.length !== 1 || targets[0].name !== name) return false;
@@ -395,7 +399,8 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
   // A read-safe name (a pack's, or a plain link's) never outranks the consequential classifiers: the global table,
   // the pack's own list, and the record-changing verbs a same-site address is refused for ("Process", "Approve").
   // A menu name above is a destination in the navigation landmark, as before.
-  } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name) && !WRITE_ROUTE.test(name);
+  // "Search:" is the pack's "Search"; a pager name with a colon is still a pager name, never read-safe outside the pager.
+  } else allowed = sameName(portal.readSafe, name) && !sameName(portal.pagination, name) && !WRITE_ROUTE.test(name);
   if (!allowed) return false;
   // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
   // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
