@@ -40,7 +40,9 @@ export function triggerSpec(app: unknown, event: unknown): TriggerSpec {
   return spec!;
 }
 /** Secret-store name of the office's webhook signing secret (provisioning writes it). */
-export const webhookSecretName = (companyId: string) => `REALBUD_COMPOSIO_WEBHOOK_${companyId.toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 80)}`;
+/** One secret name per office, injective: a lossy slug of the id would let two
+ * offices whose ids differ only in punctuation or case share a signing secret. */
+export const webhookSecretName = (companyId: string) => `REALBUD_COMPOSIO_WEBHOOK_${createHash('sha256').update(companyId).digest('hex').toUpperCase()}`;
 /** The office mailbox's provider user, as OfficeMailbox creates it. */
 export const officeUserId = (companyId: string) => `office_${createHash('sha256').update(companyId).digest('hex')}`;
 
@@ -77,6 +79,9 @@ function tables(db: Db) {
   db.run('CREATE TABLE IF NOT EXISTS composio_event_cursors (device TEXT PRIMARY KEY, company TEXT NOT NULL, acked INTEGER NOT NULL)');
   // Highest seq per provider user deleted unread by age: a cursor behind it has a gap.
   db.run('CREATE TABLE IF NOT EXISTS composio_event_retention (company TEXT NOT NULL, user_id TEXT NOT NULL, pruned_through INTEGER NOT NULL, PRIMARY KEY(company, user_id))');
+  // Highest seq ever stored per office. A device's cursor is compared with its own
+  // office's top, never the table-wide sequence, which would show other offices' traffic.
+  db.run('CREATE TABLE IF NOT EXISTS composio_event_tops (company TEXT PRIMARY KEY, top INTEGER NOT NULL)');
 }
 
 export interface TriggerDeps { ledger: UsageLedger; secret: (name: string) => string | undefined; apps: Pick<ComposioAppAdapter, 'setTriggerStatus'> }
@@ -178,7 +183,7 @@ export class ComposioTriggers {
    * already knows. At-least-once: a duplicate `webhook-id` answers `replayed`.
    */
   webhook(company: string, headers: { id?: unknown; timestamp?: unknown; signature?: unknown }, raw: Uint8Array): { received: true; replayed?: true; ignored?: true } {
-    const secret = this.deps.secret(webhookSecretName(company));
+    const secret = typeof company === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(company) ? this.deps.secret(webhookSecretName(company)) : undefined;
     // An office without a subscription answers like a bad signature: no office enumeration.
     requireThat(secret, 'invalid_composio_signature', 401);
     const webhookId = verifyComposioSignature(secret!, headers, raw, this.deps.ledger.now());
@@ -220,6 +225,7 @@ export class ComposioTriggers {
       if (replay()) return { received: true as const, replayed: true as const };
       const seq = Number(this.db.run('INSERT INTO composio_events(company,webhook_id,digest,trigger_id,user_id,kind,provider_msg_id,received) VALUES(?,?,?,?,?,?,?,?)',
         company, webhookId, digest, kind === 'message' || kind === 'trigger_disabled' ? rows[0]!.trigger_id : null, meta.user_id as string, kind, messageId ?? null, now).lastInsertRowid);
+      this.db.run('INSERT INTO composio_event_tops(company,top) VALUES(?,?) ON CONFLICT(company) DO UPDATE SET top=max(top,excluded.top)', company, seq);
       if (state) for (const row of rows) if (row.state === 'enabled') this.db.run('UPDATE composio_triggers SET state=?, updated=? WHERE trigger_id=?', state, now, row.trigger_id);
       this.db.append(company, 'composio_event_received', null, now, { webhookId, kind, seq, ...(rows.length === 1 ? { triggerId: rows[0]!.trigger_id } : {}) });
       return { received: true as const };
@@ -237,7 +243,7 @@ export class ComposioTriggers {
     object(value); exact(value, ['after']); integer(value.after, Number.MAX_SAFE_INTEGER);
     const company = device.companyId, db = this.db, after = value.after as number;
     this.prune(company);
-    const top = db.get<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name='composio_events'")?.seq ?? 0;
+    const top = db.get<{ top: number }>('SELECT top FROM composio_event_tops WHERE company=?', company)?.top ?? 0;
     const users = this.users(device), office = officeUserId(company);
     const pruned = Math.max(0, ...users.map(user => db.get<{ pruned_through: number }>('SELECT pruned_through FROM composio_event_retention WHERE company=? AND user_id=?', company, user)?.pruned_through ?? 0));
     // A cursor ahead of anything stored is from another ledger: acknowledge nothing, start over.
