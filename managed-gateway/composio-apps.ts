@@ -8,7 +8,8 @@
  * Gmail's saved workflows keep that reviewed read-only reader.
  *
  * API: GET /connected_accounts, POST /connected_accounts/link, GET /tools,
- * POST /tools/execute/{slug} — https://docs.composio.dev/reference/api-reference
+ * POST /tools/execute/{slug}, POST /trigger_instances/{slug}/upsert, PATCH
+ * /trigger_instances/manage/{id} — https://docs.composio.dev/reference/api-reference
  */
 import { COMPOSIO_PLATFORM_API, type HttpTransport } from './composio-org.ts';
 import { classifyAppTool, classifyAppToolCall, APP_TOOL_NAME, type AppToolPolicy } from '../shared/app-tool-policy.ts';
@@ -27,7 +28,12 @@ export interface ComposioAppAdapter {
    * caller can drop them and say why. */
   listTools(binding: AppBinding, slug: string, signal: AbortSignal): Promise<AppTool[]>;
   execute(binding: AppBinding, slug: string, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>>;
+  /** Creates or reuses the trigger instance for `binding.accountId`; returns its `ti_` id. */
+  upsertTrigger(binding: AppBinding, slug: string, config: Record<string, unknown>, signal: AbortSignal): Promise<string>;
+  /** Enables or disables one trigger instance. Only the project key is used. */
+  setTriggerStatus(binding: Pick<AppBinding, 'apiKey' | 'assertAuthority'>, triggerId: string, enabled: boolean, signal: AbortSignal): Promise<void>;
 }
+export const TRIGGER_ID = /^ti_[A-Za-z0-9_-]{1,128}$/;
 
 type ObjectValue = Record<string, any>;
 const record = (value: unknown): value is ObjectValue => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -60,14 +66,19 @@ async function readJson(response: Response, limit: number): Promise<ObjectValue>
   return result as ObjectValue;
 }
 
-export function composioAppAdapter(options: { fetch?: HttpTransport; base?: string } = {}): ComposioAppAdapter {
+export type ProjectRest = (binding: Pick<AppBinding, 'apiKey' | 'assertAuthority'>, path: string, signal: AbortSignal,
+  init?: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown; limit?: number }) => Promise<Record<string, any>>;
+/** One bounded call to the Composio project API under the office project key.
+ * The method defaults to GET, or POST with a body. Shared by the app adapter and
+ * the webhook subscription client (composio-triggers.ts). */
+export function composioProjectRest(options: { fetch?: HttpTransport; base?: string } = {}): ProjectRest {
   const base = (options.base ?? COMPOSIO_PLATFORM_API).replace(/\/+$/, '');
   const transport: HttpTransport = options.fetch ?? ((url, init) => fetch(url, init));
-  async function rest(binding: AppBinding, path: string, signal: AbortSignal, body?: unknown, limit = 2_000_000): Promise<ObjectValue> {
+  return async function rest(binding, path, signal, { method, body, limit = 2_000_000 } = {}) {
     try {
       signal.throwIfAborted(); binding.assertAuthority?.();
       const response = await transport(`${base}${path}`, {
-        method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal,
+        method: method ?? (body === undefined ? 'GET' : 'POST'), redirect: 'error', signal,
         headers: { 'x-api-key': binding.apiKey, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
@@ -79,14 +90,19 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
         if (response.status >= 400 && response.status < 500) fail('the provider refused the request.', 400);
         fail('the provider was unavailable.', 502);
       }
-      const result = await readJson(response, limit);
+      // A PATCH or DELETE may answer with no content. UNVERIFIED against live Composio.
+      const result = response.status === 204 ? {} : await readJson(response, limit);
       binding.assertAuthority?.();
       return result;
     } catch (error) {
       if (error instanceof AppAdapterError) throw error;
       throw new AppAdapterError('the connection was interrupted or its result could not be confirmed. No automatic retry was made.', 502);
     }
-  }
+  };
+}
+
+export function composioAppAdapter(options: { fetch?: HttpTransport; base?: string } = {}): ComposioAppAdapter {
+  const rest = composioProjectRest(options);
   function projectAccount(raw: unknown, binding: AppBinding, slug: string): AppAccount {
     const value = raw as ObjectValue;
     if (!record(value) || !identifier(value.id) || value.id.includes(binding.apiKey) || value.toolkit?.slug !== slug || value.auth_config?.id !== binding.authConfigId ||
@@ -120,7 +136,7 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
     },
     async authorize(input, signal) {
       const binding = bindingCopy(input);
-      const value = await rest(binding, '/connected_accounts/link', signal, { auth_config_id: binding.authConfigId, user_id: binding.userId });
+      const value = await rest(binding, '/connected_accounts/link', signal, { body: { auth_config_id: binding.authConfigId, user_id: binding.userId } });
       const url = value.redirect_url;
       let ok = typeof url === 'string' && url.length <= 4096 && !/\s/.test(url) && !url.includes(binding.apiKey);
       if (ok) { try { const parsed = new URL(url); ok = parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.port && (parsed.hostname === 'composio.dev' || parsed.hostname.endsWith('.composio.dev')); } catch { ok = false; } }
@@ -135,7 +151,7 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
       for (let page = 0; page < 5; page++) {
         const query = new URLSearchParams({ toolkit_slug: slug, limit: '100' });
         if (cursor) query.set('cursor', cursor);
-        const value = await rest(binding, `/tools?${query}`, signal, undefined, 6_000_000);
+        const value = await rest(binding, `/tools?${query}`, signal, { limit: 6_000_000 });
         if (!Array.isArray(value.items) || value.items.length > 100) fail('tool discovery was incomplete.', 502);
         for (const item of value.items) {
           if (!record(item) || !APP_TOOL_NAME.test(String(item.slug)) || item.toolkit?.slug !== slug || item.is_deprecated === true || item.no_auth === true) continue;
@@ -161,7 +177,7 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
       // calendar patch that cancels, say). Read/review cards are desktop-side:
       // the gateway forwards what the desktop dispatched after its card.
       if (!APP_TOOL_NAME.test(tool) || classifyAppToolCall(tool, args, { app: slug }) === 'blocked') fail('this tool is outside the connected-app boundary.', 403);
-      const value = await rest(binding, `/tools/execute/${tool}`, signal, { connected_account_id: binding.accountId, user_id: binding.userId, arguments: args });
+      const value = await rest(binding, `/tools/execute/${tool}`, signal, { body: { connected_account_id: binding.accountId, user_id: binding.userId, arguments: args } });
       const failed = value.successful === false || (value.error !== null && value.error !== undefined && value.error !== '');
       const data = value.data === undefined ? {} : value.data;
       const text = JSON.stringify(data);
@@ -170,6 +186,22 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
       // sentence stands in for it, and the projected data is still returned.
       const message = 'The app reported that this operation failed. Nothing was retried; check the app before trying again.';
       return { content: [{ type: 'text', text: failed ? `${message}\n${text}` : text }], ...(failed ? { isError: true } : {}), ...(record(data) ? { structuredContent: data } : {}) };
+    },
+    async upsertTrigger(input, slug, config, signal) {
+      const binding = bindingCopy(input);
+      if (!binding.accountId) fail('no connected account is bound for this app.', 403);
+      if (!/^[A-Z][A-Z0-9_]{1,127}$/.test(slug) || !record(config)) fail('the trigger is outside the connected-app boundary.', 403);
+      const value = await rest(binding, `/trigger_instances/${slug}/upsert`, signal, { body: { connected_account_id: binding.accountId, trigger_config: config } });
+      // UNVERIFIED: the response field name; `trigger_id` per Composio's docs, `id` accepted.
+      const triggerId = value.trigger_id ?? value.id;
+      if (typeof triggerId !== 'string' || !TRIGGER_ID.test(triggerId) || triggerId.includes(binding.apiKey)) fail('the provider did not return a trigger instance id.', 502);
+      return triggerId as string;
+    },
+    async setTriggerStatus(input, triggerId, enabled, signal) {
+      if (!record(input) || typeof input.apiKey !== 'string' || !/^ak_[A-Za-z0-9_-]{5,1000}$/.test(input.apiKey)) fail('the office project key is unusable.', 503);
+      if (!TRIGGER_ID.test(triggerId)) fail('the trigger instance id is invalid.');
+      // UNVERIFIED: body `{status: 'enable' | 'disable'}`.
+      await rest(input, `/trigger_instances/manage/${triggerId}`, signal, { method: 'PATCH', body: { status: enabled ? 'enable' : 'disable' } });
     },
   };
 }

@@ -13,6 +13,7 @@ import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, 
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import { ModelviaRotationRefused, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
+import { ComposioTriggers, triggerSpec } from './composio-triggers.ts';
 
 const ORG_KEY = 'fictional-org-key-never-in-a-response';
 const PROJECT_KEY = 'ak_fictional_project_key_for_tests';
@@ -1103,6 +1104,26 @@ test('revoke deactivates the device and the model key, and deletes the project o
     assert.ok(!lines[0]!.body.includes(MODEL_KEY) && !lines[0]!.body.includes(PROJECT_KEY));
     // A provisioned installation cannot be silently re-provisioned after revocation.
     await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_revoked/);
+  } finally { h.close(); }
+});
+
+test('revoke turns off the installation\'s own event triggers and does not wait on the provider to confirm', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const device = h.devices()[0]!, signal = new AbortController().signal;
+    const fake = { async upsertTrigger(binding: { userId: string }) { return `ti_${binding.userId.replace(/[^A-Za-z0-9]/g, '')}`; }, async setTriggerStatus() {} };
+    const triggers = new ComposioTriggers({ ledger: h.f.ledger, devices: () => h.devices(), secret: name => h.secrets.read(name), mailbox: { readyForDevice: () => false }, apps: fake });
+    for (const userId of [device.userId, 'installation-another']) {
+      await triggers.set(h.f.tenant.companyId, device.projectKeyEnv, { apiKey: PROJECT_KEY, authConfigId: device.authConfigId, userId, accountId: 'ca_fictional' }, triggerSpec('gmail', 'new-message'), true, signal);
+    }
+    const disabled: unknown[] = [];
+    const result = await h.make({ triggerApps: { async setTriggerStatus(binding, id, enabled) { disabled.push([binding.apiKey === PROJECT_KEY, id, enabled]); throw new Error('provider unavailable'); } } })
+      .revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+    assert.equal(result.revoked.connectorDeactivated, true);
+    assert.deepEqual(disabled, [[true, 'ti_installationinstallone', false]]);
+    assert.deepEqual(h.f.ledger.db.all<{ trigger_id: string; state: string }>('SELECT trigger_id, state FROM composio_triggers ORDER BY trigger_id').map(row => ({ ...row })),
+      [{ trigger_id: 'ti_installationanother', state: 'enabled' }, { trigger_id: 'ti_installationinstallone', state: 'disabled' }]);
+    assert.ok(h.f.ledger.db.get("SELECT seq FROM events WHERE kind='composio_trigger_disable_unconfirmed'"));
   } finally { h.close(); }
 });
 
