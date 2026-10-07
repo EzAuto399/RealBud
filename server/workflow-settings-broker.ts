@@ -6,7 +6,11 @@
 // conflict, never overwritten. The stores keep replaced versions so a change can
 // be undone. A workflow's clock (loop_schedule) goes the same way through the
 // clock's own compare-and-set; it never switches a workflow on or off, and
-// earlier clocks are not kept. Mounted per ACP session as a loopback MCP server.
+// earlier clocks are not kept. Approval settings (approval_policy) go through
+// server/approval-settings.ts: Bud may propose anything stricter, but may only
+// stop asking for tools it names that only read. Mounted per ACP session as a
+// loopback MCP server.
+import type { IncomingMessage } from "node:http";
 import { defaultAgencySettings, validateAgencySettings } from "./agency-setup.ts";
 import { validateInspectionRules, type InspectionRulesStore } from "./inspection-rules.ts";
 import { isMaintenanceWindowRule, MAINTENANCE_RULE_MESSAGE, type MaintenanceReviewStore } from "./maintenance-review.ts";
@@ -14,6 +18,8 @@ import { redactSecretsInText } from "./redact.ts";
 import { parseClockTime, parseWeekdays } from "./routines.ts";
 import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
 import type { AgencySetupSettings } from "../shared/agency-setup.ts";
+import { officeAppLabel } from "../shared/office-sources.ts";
+import { APPROVAL_CHOICES, approvalGroupKey, normalizeApprovalSettings, PER_INSTANCE_CLASSES, SITE_READ_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import type { Loop, LoopId, LoopSchedule } from "../shared/contracts.ts";
 import { validCalendarCadence } from "../shared/routine-clock.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -21,9 +27,18 @@ import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
 export const WORKFLOW_SETTINGS_SERVER = "workflow-settings";
 export const SETTINGS_CONFLICT = "These settings changed since Bud read them — ask again";
 export const LOOP_SCHEDULE_CONFLICT = "This schedule changed. Ask Bud again.";
-export const WORKFLOW_SETTINGS_TARGETS = ["maintenance_month_rule", "inspection_rules", "morning_priorities", "loop_schedule"] as const;
+export const APPROVAL_POLICY_CONFLICT = "Approval settings changed since Bud read them. Ask Bud again.";
+export const WORKFLOW_SETTINGS_TARGETS = ["maintenance_month_rule", "inspection_rules", "morning_priorities", "loop_schedule", "approval_policy"] as const;
 export type WorkflowSettingsTarget = typeof WORKFLOW_SETTINGS_TARGETS[number];
-type RuleTarget = Exclude<WorkflowSettingsTarget, "loop_schedule">;
+type RuleTarget = Exclude<WorkflowSettingsTarget, "loop_schedule" | "approval_policy">;
+/** One set of approval settings Bud may change: this computer's (departmentId null) or a department's. */
+export interface ApprovalPolicyView { departmentId: string | null; name: string; revision: number | string; canEdit: boolean; settings: ApprovalSettings }
+/** Approval settings through server/approval-settings.ts, the same GET and PUT as Workspace → Approvals. */
+export interface ApprovalPolicyBinding {
+  read(): Promise<ApprovalPolicyView[]>;
+  /** Compare-and-set on `view.revision`; the store checks edit rights again. Throws `code: "settings_changed"` when stale. */
+  save(view: ApprovalPolicyView, next: ApprovalSettings): Promise<void>;
+}
 type Values = Record<string, unknown>;
 /** A workflow's clock as Bud reads and proposes it: no timezone, no on/off. */
 export interface LoopClock { time: string; weekdays: number[]; intervalDays?: number; anchorDate?: string; monthly?: "first-weekday" }
@@ -46,6 +61,8 @@ export interface BudWorkflowSettings {
   checkLoop(loopId: unknown, schedule: unknown): { loop: LoopScheduleSnapshot; next: LoopClock };
   /** Compare-and-set on the workflow's revision; throws `code: "settings_changed"` when stale. */
   saveLoop(loopId: string, next: LoopClock, expectedRevision: number): Promise<void>;
+  /** Approval settings, when this turn's host binds them. */
+  approvals?: ApprovalPolicyBinding;
 }
 export interface WorkflowSettingsReceipt { tool: string; target?: WorkflowSettingsTarget; outcome: "succeeded" | "failed" | "refused" | "declined" | "conflict" }
 
@@ -113,9 +130,9 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const TARGET = { type: "string", enum: [...WORKFLOW_SETTINGS_TARGETS] };
 const REASON = { type: "string", minLength: 1, maxLength: 300, description: "One plain sentence the person will see on the card: why this change." };
 const TOOLS = [
-  { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions, and (loop_schedule) each workflow's loopId, revision, on/off and clock. target is optional (all when omitted). Read only, no card.",
+  { name: "workflow_settings_read", description: "Read the office's current working rules, their revision and kept earlier versions, (loop_schedule) each workflow's loopId, revision, on/off and clock, and (approval_policy) how often Bud asks before using each app, website and office connector. target is optional (all when omitted). Read only, no card.",
     inputSchema: { type: "object", additionalProperties: false, properties: { target: TARGET } } },
-  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {time (HH:MM), weekdays (0=Sun..6=Sat), and for workflows that repeat every N days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule).",
+  { name: "workflow_settings_propose", description: "Propose new values for one working rule. values holds only the fields to change: maintenance_month_rule {span: calendarMonth|rolling30, basis: invoiceDate|receivedDate}; inspection_rules {cycleMonths, cycleBasis: completed|planned, horizonMonths, workingDays (0=Sun..6=Sat), closedDates (YYYY-MM-DD), inspectors, dayStart (HH:MM), appointmentMinutes, travelMinutes, dailyCapacity}; morning_priorities {localTime (HH:MM), weekdays (0=Sun..6=Sat), followUpAfterDays}; loop_schedule {loopId, schedule: {time (HH:MM), weekdays (0=Sun..6=Sat), and for workflows that repeat every N days intervalDays (1-31) and anchorDate (YYYY-MM-DD)}} for one existing workflow, which never switches it on or off; approval_policy {departmentId (optional, from workflow_settings_read; omitted for this computer), changes: [{group: app:<app>|site:<host>|connector:<id>|class:<action>, choice: read-without-asking|ask|deny, tools}]}: ask and deny are always allowed; read-without-asking is only for a website row and needs tools [browser_read, browser_navigate]; app and connector rows can only become stricter, and a Don't use row cannot be lifted. The person approves the before → after once on a card; the replaced version is kept (not for loop_schedule or approval_policy).",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
@@ -141,10 +158,14 @@ export function bindWorkflowSettings(host: {
   /** The clock's one door (LoopManager.patchClock) with the checks PATCH /api/loops/:id adds. */
   loops: { listLoops(): Loop[]; patchClock(id: LoopId, patch: { time: string; weekdays: number[]; intervalDays?: number; anchorDate?: string; expectedRevision: number }): unknown };
   writable(): string | null;
+  /** Approval settings (`bindApprovalPolicy`); without it Bud cannot change them. */
+  approvals?: ApprovalPolicyBinding;
 }): BudWorkflowSettings {
   const changed = () => Object.assign(new Error(SETTINGS_CONFLICT), { code: "settings_changed" });
   const guard = () => { const refusal = host.writable(); if (refusal) throw Object.assign(new Error(refusal), { status: 503 }); };
+  const approvals = host.approvals;
   return {
+    ...(approvals ? { approvals: { read: () => approvals.read(), save: async (view: ApprovalPolicyView, next: ApprovalSettings) => { guard(); await approvals.save(view, next); } } } : {}),
     async read(target) {
       if (target === "maintenance_month_rule") {
         const state = await host.maintenance.read();
@@ -206,6 +227,93 @@ export function bindWorkflowSettings(host: {
   };
 }
 
+type ApprovalStoreReply = { status: number; body: unknown };
+/** Binds Bud's approval_policy to the approval settings store (`createApprovalSettings`)
+ * through its own GET and PUT, so every save is the store's compare-and-set and
+ * editor check. `request` carries the member session of the person this turn
+ * acts for (empty headers on a single desktop). */
+export function bindApprovalPolicy(store: { handle(path: string, method: string, request: Pick<IncomingMessage, "headers">, query: URLSearchParams, body?: unknown): Promise<ApprovalStoreReply> },
+  request: () => Pick<IncomingMessage, "headers">): ApprovalPolicyBinding {
+  const failed = (reply: ApprovalStoreReply, fallback: string) => {
+    const error = object(reply.body) && typeof reply.body.error === "string" ? reply.body.error : fallback;
+    return reply.status === 409 ? Object.assign(new Error(APPROVAL_POLICY_CONFLICT), { code: "settings_changed" }) : Object.assign(new Error(error), { status: reply.status });
+  };
+  return {
+    async read() {
+      const reply = await store.handle("/api/approvals", "GET", request(), new URLSearchParams());
+      if (reply.status !== 200 || !object(reply.body) || !object(reply.body.local) || !Array.isArray(reply.body.departments)) throw failed(reply, "Approval settings could not be read.");
+      const local = reply.body.local as { revision: number; canEdit: boolean; settings: ApprovalSettings };
+      return [{ departmentId: null, name: "This computer", revision: local.revision, canEdit: local.canEdit === true, settings: local.settings },
+        ...(reply.body.departments as Array<{ id: string; name: string; revision: string; canEdit: boolean; settings: ApprovalSettings }>)
+          .map(row => ({ departmentId: row.id, name: row.name, revision: row.revision, canEdit: row.canEdit === true, settings: row.settings }))];
+    },
+    async save(view, next) {
+      const reply = await store.handle("/api/approvals", "PUT", request(), new URLSearchParams(), { departmentId: view.departmentId, expectedRevision: view.revision, settings: next });
+      if (reply.status !== 200) throw failed(reply, "Approval settings could not be saved.");
+    },
+  };
+}
+
+const CHOICE_WORDS: Record<ApprovalChoice, string> = { "read-without-asking": "Read without asking", ask: "Ask every time", deny: "Don't use" };
+const RANK: Record<ApprovalChoice, number> = { "read-without-asking": 0, ask: 1, deny: 2 };
+const CLASS_WORDS: Record<string, string> = { pay: "Payments", sign: "Signing", send: "Sending", notice: "Notices", "account-change": "Account changes", trash: "Deleting",
+  upload: "Uploading files", submit: "Submitting forms", memory: "Memory changes", consequential: "Other consequential steps", settings: "Settings changes", script: "Scripts" };
+const groupWords = (group: string) => {
+  const cut = group.indexOf(":"), kind = group.slice(0, cut), rest = group.slice(cut + 1);
+  if (kind === "class") return `Always asks: ${CLASS_WORDS[rest] ?? rest}`;
+  if (kind === "app") return officeAppLabel(rest);
+  return kind === "connector" ? `Office connector ${rest}` : rest;
+};
+/** What an unset group compares as: the locked rows ask; apps, connectors and websites use their recommended default.
+ * A website's Recommended lets approved workflows and saved rules read, so a saved Ask every time is stricter, and
+ * Read without asking is still a widening (it names its tools below). */
+const unsetChoice = (group: string): ApprovalChoice => group.startsWith("class:") ? "ask" : "read-without-asking";
+const APPROVALS_UNBOUND = "Approval settings can't be changed from this conversation. Change them in Workspace → Approvals. Nothing was changed.";
+const approvalSummary = (settings: ApprovalSettings) => Object.entries(settings.groups).map(([group, choice]) => `${group} ${choice}`).join("; ") || "nothing saved, every row uses the recommended setting";
+
+/** Checks one Bud proposal against the settings it read. Stricter changes pass; a widening
+ * is only for a website row (reading and moving between pages); apps and connectors only get stricter. */
+function approvalChanges(view: ApprovalPolicyView, changes: unknown): { next: ApprovalSettings; lines: string[] } | string {
+  if (!Array.isArray(changes) || !changes.length || changes.length > 20) return "changes holds 1 to 20 items of {group, choice, tools?}.";
+  const groups = { ...view.settings.groups }, lines: string[] = [], seen = new Set<string>();
+  for (const change of changes) {
+    if (!object(change) || Object.keys(change).some(key => !["group", "choice", "tools"].includes(key))) return "Each change holds group, choice and, to read without asking, tools.";
+    const { group, choice, tools } = change;
+    const locked = typeof group === "string" && group.startsWith("class:") && (PER_INSTANCE_CLASSES as readonly string[]).includes(group.slice(6));
+    if (typeof group !== "string" || (!approvalGroupKey(group) && !locked)) return "Choose each group as app:<app>, site:<host>, connector:<id> or class:<action> from workflow_settings_read.";
+    if (seen.has(group)) return `${groupWords(group)} is listed twice.`;
+    seen.add(group);
+    if (!(APPROVAL_CHOICES as readonly unknown[]).includes(choice)) return "Choose read-without-asking, ask or deny.";
+    const before = groups[group], from = before ?? unsetChoice(group), label = groupWords(group);
+    const next = choice as ApprovalChoice;
+    if (from === "deny" && next !== "deny") return `${label} is set to Don't use. Bud can't turn it back on; change it in Workspace → Approvals.`;
+    // A direct connection's unset row already asks, so any Read without asking widens and names its tools.
+    const widens = next === "read-without-asking" || RANK[next] < RANK[from];
+    if (!widens) {
+      if (tools !== undefined) return "tools only name what Bud may read without asking.";
+      if (before === next || (before === undefined && next === from)) continue;
+      groups[group] = next;
+      lines.push(`${label}: ${before === undefined ? "Recommended" : CHOICE_WORDS[before]} → ${CHOICE_WORDS[next]}`);
+      continue;
+    }
+    if (locked || next !== "read-without-asking") return `Bud can only make ${label} stricter.`;
+    // A saved choice applies to the whole row, so the card must describe the whole row's effect.
+    // An app row's "read without asking" covers every tool the app or the owner treats as a read,
+    // not only the tools Bud names, so Bud never widens an app or connector: people do that in
+    // Workspace → Approvals. A website row's widening is exactly reading and moving between pages.
+    if (!group.startsWith("site:")) return `Bud can only make ${label} stricter. To go back to Recommended or read without asking, use Workspace → Approvals.`;
+    if (!Array.isArray(tools) || !tools.length || tools.some(tool => typeof tool !== "string" || !SITE_READ_TOOLS.has(tool))) {
+      return `To read ${label} without asking, name browser_read and browser_navigate. Nothing else on a website can skip the question.`;
+    }
+    if (before === next) continue;
+    groups[group] = next;
+    lines.push(`${label}: ${before === undefined ? "Recommended" : CHOICE_WORDS[before]} → ${CHOICE_WORDS[next]} (reading pages and moving between them; filling, uploading and submitting still ask)`);
+  }
+  if (!lines.length) return `${view.name} already has those approval settings.`;
+  try { return { next: normalizeApprovalSettings({ ...view.settings, groups }), lines }; }
+  catch (error) { return message(error, "Check the approval settings."); }
+}
+
 export async function startWorkflowSettingsBroker(options: {
   /** The current turn's id while it may still act, else null. */
   turnId(): string | null;
@@ -233,8 +341,15 @@ export async function startWorkflowSettingsBroker(options: {
       if (name === "workflow_settings_read") {
         const targets = args.target ? [args.target as WorkflowSettingsTarget] : [...WORKFLOW_SETTINGS_TARGETS];
         const rows: Record<string, WorkflowSettingsSnapshot> = {}, lines: string[] = [];
-        let loops: LoopScheduleSnapshot[] | undefined;
+        let loops: LoopScheduleSnapshot[] | undefined, approvals: ApprovalPolicyView[] | undefined;
         for (const target of targets) {
+          if (target === "approval_policy") {
+            if (!settings.approvals) { if (args.target) return toolError(APPROVALS_UNBOUND); lines.push("- approval_policy: not available in this conversation."); continue; }
+            try { approvals = await settings.approvals.read(); } catch (error) { return toolError(message(error, "The approval settings could not be read.")); }
+            lines.push(...approvals.map(view => `- approval_policy ${view.departmentId === null ? "this computer" : `departmentId ${view.departmentId}`} ${JSON.stringify(view.name)} ` +
+              `(revision ${view.revision}, ${view.canEdit ? "you can change it" : "read only"}): ${approvalSummary(view.settings)}`));
+            continue;
+          }
           if (target === "loop_schedule") {
             try { loops = settings.loops(); } catch (error) { return toolError(message(error, "The workflow schedules could not be read.")); }
             lines.push(...loops.map(loop => `- loop_schedule ${loop.loopId} ${JSON.stringify(loop.name)} (revision ${loop.revision}, ${loop.enabled ? "on" : "off"}` +
@@ -246,7 +361,7 @@ export async function startWorkflowSettingsBroker(options: {
           lines.push(`- ${target} (revision ${row.revision}): ${Object.keys(TARGETS[target].fields).map(field => `${field} ${show(field, row.values[field])}`).join("; ")}. ` +
             (row.previous === null ? "Earlier versions are not kept." : `${row.previous.length} earlier version(s) kept.`));
         }
-        return text(`Working rules:\n${lines.join("\n")}`, { settings: rows, ...(loops ? { loops } : {}) });
+        return text(`Working rules:\n${lines.join("\n")}`, { settings: rows, ...(loops ? { loops } : {}), ...(approvals ? { approvals } : {}) });
       }
       const target = args.target as WorkflowSettingsTarget;
       const reason = plainReason(args.reason);
@@ -269,6 +384,28 @@ export async function startWorkflowSettingsBroker(options: {
           return toolError(typeof (error as { status?: unknown }).status === "number" ? message(error, "") || "Nothing was changed." : `The ${label} could not be saved. Ask again to check whether it was kept.`);
         }
       };
+      if (target === "approval_policy") {
+        if (name === "workflow_settings_restore") return toolError("Earlier approval settings are listed under Changes in Workspace → Approvals. Propose the settings you want instead. Nothing was changed.");
+        if (!settings.approvals) return toolError(APPROVALS_UNBOUND);
+        const values = args.values;
+        if (object(values) && Object.hasOwn(values, "reviewedReads")) { note({ tool: name, target, outcome: "refused" }); return toolError("Only the owner marks which tools only read, in Workspace → Approvals. Nothing was changed."); }
+        if (!object(values) || Object.keys(values).some(key => key !== "departmentId" && key !== "changes") || (values.departmentId !== undefined && typeof values.departmentId !== "string")) {
+          return toolError("For approval_policy, values holds changes and, for a department, departmentId. Nothing was changed.");
+        }
+        let views: ApprovalPolicyView[];
+        try { views = await settings.approvals.read(); } catch (error) { return toolError(`${message(error, "The approval settings could not be checked.")} Nothing was changed.`); }
+        const view = views.find(row => row.departmentId === (values.departmentId ?? null));
+        if (!view) return toolError("Choose a departmentId from workflow_settings_read. Nothing was changed.");
+        const department = plainReason(view.name) || "these settings";
+        // Edit rights are checked here and again by the store when it saves.
+        if (!view.canEdit) { note({ tool: name, target, outcome: "refused" }); return toolError(`Only people who can edit ${view.departmentId === null ? "the departments that govern this computer" : department} can change these approval settings. Nothing was changed.`); }
+        const checked = approvalChanges(view, values.changes);
+        if (typeof checked === "string") { note({ tool: name, target, outcome: "refused" }); return toolError(`${checked} Nothing was changed.`); }
+        const card = [`Change approval settings${view.departmentId === null ? "" : ` for ${department}`}`, ...checked.lines, `Why: ${reason}`].join("\n");
+        return review(card, () => settings.approvals!.save(view, checked.next),
+          `Saved the approval settings${view.departmentId === null ? "" : ` for ${department}`}. Earlier versions are listed under Changes in Workspace → Approvals.`,
+          { target, departmentId: view.departmentId, settings: checked.next }, "approval settings");
+      }
       if (target === "loop_schedule") {
         if (name === "workflow_settings_restore") return toolError("Earlier workflow schedules are not kept, so there is nothing to restore. Propose the schedule you want instead. Nothing was changed.");
         const values = args.values;

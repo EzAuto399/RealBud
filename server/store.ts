@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { DiskFullError, isDiskFull } from "./private-json.ts";
-import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
+import { newId, type ApprovalReadOffer, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { HERMES_MEMORY_APPROVAL, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from '../shared/approval-policy.ts';
@@ -63,7 +63,14 @@ export interface OptionCardData extends ApprovalCardMeta {
     surface: "portal-read" | "portal-prefill" | "portal-submit";
     origin: string;
     ruleOffer: { surface: "portal-read" | "portal-prefill"; origin: string; label: string } | null;
-  };
+  };  /** The exact request behind a plain-line card, shown under "Exact request". */
+  detail?: string;
+  /** A read-only allowlisted app read: "Allow for this task" (and "Always allow reading" where `always`). */
+  readOffer?: ApprovalReadOffer;
+  /** The connected-app broker's id for this card, so a phone answer lands on its receipt. */
+  reviewId?: string;
+  /** Where the card is out besides this computer ("Also on Telegram"), or why not; a quiet line, never a hold. */
+  phoneNote?: string;
 }
 
 export interface Message {

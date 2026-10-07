@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { readPrivateJson, trimOldestToBytes, writePrivateJson } from './private-json.ts';
-import { defaultApprovalSettings, normalizeApprovalSettings, type ApprovalSettings } from '../shared/approval-settings.ts';
+import { defaultApprovalSettings, normalizeApprovalSettings, uncheckedOfficeSettings, type ApprovalSettings } from '../shared/approval-settings.ts';
 
 type Request = Pick<IncomingMessage, 'headers'>;
 type Reply = { status: number; body: unknown };
@@ -60,6 +60,46 @@ function lapsed(settings: ApprovalSettings): ApprovalSettings {
   return { ...settings, groups: Object.fromEntries(Object.entries(settings.groups).filter(([, choice]) => choice !== 'read-without-asking')), reviewedReads: [] };
 }
 
+// ── The settings that govern this desktop, for enforcement points the host
+// does not construct (brokers started by the worker driver). index.ts
+// registers its store once at boot.
+let governing: { effective: () => Promise<ApprovalSettings[]>; singleDesktop: () => Promise<boolean>;
+  /** One more verification with the person's own member session (the store's `verifyAgain`). */
+  verify?: () => Promise<void> } | null = null;
+let known: ApprovalSettings[] | null = null;
+/** Register this desktop's store. Starts a first read so a decision that cannot wait has settings to use. */
+export function governApprovals(source: NonNullable<typeof governing>): void {
+  governing = source; known = null;
+  void governingApprovals().catch(() => {});
+}
+/** Fresh governing settings for one decision. Throws when storage needs
+ * recovery (callers refuse). With no store registered (tests, tools) nothing
+ * is saved, so today's defaults apply. */
+export async function governingApprovals(): Promise<ApprovalSettings[]> {
+  if (!governing) return [];
+  try { known = await governing.effective(); return known; } catch (error) { known = null; throw error; }
+}
+/** The last settings read, for a decision that cannot wait (and a fresh read
+ * for the next one). Null while unknown or needing recovery: callers refuse. */
+export function lastGoverningApprovals(): ApprovalSettings[] | null {
+  if (!governing) return [];
+  void governingApprovals().catch(() => {});
+  return known;
+}
+export const OFFICE_NOT_CHECKED = 'Office approval settings could not be checked, so Bud did not do this. Try again when RealBud is connected to your office.';
+/** The settings after a person approved a card. An office desktop whose settings are still
+ * unchecked verifies once more, then reads again; still unchecked, the caller refuses with
+ * OFFICE_NOT_CHECKED, so nothing a department governs runs on unverified settings. */
+export async function settingsAfterCard(read: () => Promise<ApprovalSettings[]>): Promise<ApprovalSettings[]> {
+  const list = await read();
+  if (!list.some(settings => settings.unchecked)) return list;
+  await governing?.verify?.().catch(() => {});
+  return read();
+}
+/** True on a single desktop, whose person may always change its settings. An
+ * office member changes theirs in Workspace → Approvals, where edit rights are proven. */
+export const approvalsEditableHere = (): Promise<boolean> => governing ? governing.singleDesktop().catch(() => false) : Promise.resolve(true);
+
 export function createApprovalSettings(options: {
   dataDir: string;
   /** This private workspace's office member id, or null for a single desktop. */
@@ -72,6 +112,8 @@ export function createApprovalSettings(options: {
   const file = join(options.dataDir, 'approval-settings.json');
   const copyFile = join(options.dataDir, 'approval-settings-office.json');
   let queue: Promise<unknown> = Promise.resolve();
+  // The member session the last turn verified with, for one more try after a card (`verifyAgain`).
+  let turnRequest: Request | null = null;
   const serial = <T>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work, work); queue = next.catch(() => {}); return next; };
   const load = async (): Promise<LocalFile> => {
     let raw: unknown;
@@ -163,16 +205,36 @@ export function createApprovalSettings(options: {
 
     /** The settings that govern this desktop for `decide`: one per department
      * that governs its member (strictest merge happens in `decide`), else this
-     * computer's own. Throws when storage needs recovery; callers refuse. */
+     * computer's own. An office desktop with no verified copy for its member
+     * fails closed: this computer's own plus the unchecked mark, so whatever
+     * would run asks first. Throws when storage needs recovery; callers refuse. */
     async effective(): Promise<ApprovalSettings[]> {
       const seat = await options.seatIdentity();
       const local = (await load()).settings;
       if (seat === null) return [local];
       const copy = await loadCopy();
-      const governing = copy?.memberId === seat ? copy.departments.filter(department => department.governs) : [];
-      if (!copy || !governing.length) return [local];
+      if (copy?.memberId !== seat) return [local, uncheckedOfficeSettings()];
+      const governing = copy.departments.filter(department => department.governs);
+      if (!governing.length) return [local];
       const age = now() - copy.refreshedAt;
       return governing.map(department => age >= 0 && age <= STALE_MS ? department.settings : lapsed(department.settings));
+    },
+
+    /** Before a turn's first governed step: an office desktop with no verified copy for its member
+     * fetches one with the person's own member session. Nothing is fetched without one; it stays closed. */
+    async verifyIfMissing(request: Request): Promise<void> {
+      const seat = await options.seatIdentity();
+      if (seat === null) return;
+      turnRequest = request;
+      if ((await loadCopy())?.memberId === seat) return;
+      await verify(request, seat);
+    },
+
+    /** After a person approves a card on an unchecked office desktop: verify once more with the
+     * session the last turn used. Without one nothing is fetched, and it stays closed. */
+    async verifyAgain(): Promise<void> {
+      const seat = await options.seatIdentity();
+      if (seat !== null && turnRequest) await verify(turnRequest, seat);
     },
 
     /** `/api/approvals` (GET, PUT) and `/api/approvals/history` (GET). */

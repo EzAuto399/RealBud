@@ -487,6 +487,16 @@ function interaction(customId: string, channelId = "99", username = "Yoda", user
 }
 
 describe("remote decisions", () => {
+  it("adds the optional third button between Allow and Deny", async () => {
+    const bodies: Array<{ components: Array<{ components: Array<{ custom_id: string; label: string }> }> }> = [];
+    const fetchFn: DiscordFetch = async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return jsonRes({ id: "1" }); };
+    await discord.sendDecisionMessage(fetchFn, "fictional-token", "dm-1", "Bud wants to read — Gmail.", "abcdef123456", { allow: "Allow once", task: "Allow for this task", deny: "Deny" });
+    await discord.sendDecisionMessage(fetchFn, "fictional-token", "dm-1", "Desk card", "abcdef123456");
+    expect(bodies.map(body => body.components[0]!.components.map(button => [button.custom_id, button.label]))).toEqual([
+      [["d:abcdef123456:allow", "Allow once"], ["d:abcdef123456:task", "Allow for this task"], ["d:abcdef123456:deny", "Deny"]],
+      [["d:abcdef123456:allow", "Allow"], ["d:abcdef123456:deny", "Deny"]],
+    ]);
+  });
   it("acks INTERACTION_CREATE and patches the original message", async () => {
     const decided: Array<{ id: string; via?: string; status: string }> = [];
     const callbacks: unknown[] = [];

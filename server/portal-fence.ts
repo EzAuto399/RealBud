@@ -2,7 +2,7 @@
 import { ALLOWED_TOOLS, FORBIDDEN_TOOLS } from "./cua-bounded.ts";
 import type { JobCapability } from "../shared/contracts.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
-import { consequentialKind, SIGN_IN_CONTROL, SUBMIT_CONTROL, SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU } from "./browser-authority.ts";
+import { consequentialKind, readOnlyRoute, siteApproval, SIGN_IN_CONTROL, SUBMIT_CONTROL, SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU, type BrowserApprovals } from "./browser-authority.ts";
 
 export { SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU, submitPressSummary } from "./browser-authority.ts";
 
@@ -11,7 +11,9 @@ export type PortalFenceSurface = "portal-read" | "portal-prefill" | "portal-subm
 export interface FenceContext {
   allowedOrigins: string[];
   capabilities: JobCapability[];
-  rules?: Array<{ key: string; decision: "allow" | "deny" }>;
+  rules?: ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
+  /** The approval settings that govern this desktop (`effectiveRules`). Absent: nothing saved; null refuses. */
+  approvals?: BrowserApprovals;
 }
 
 export type FenceDecision = {
@@ -19,6 +21,11 @@ export type FenceDecision = {
   reason?: string;
   surface?: PortalFenceSurface;
   origin?: string;
+  /** An allow that came from the site's approval setting (Read without asking), not a standing rule. */
+  bySettings?: true;
+  /** An ask the site's Ask every time (or unchecked office settings) requires: it stays once-only,
+   * no standing or generic rule may answer it, and it offers none. */
+  siteAsks?: true;
 };
 
 export interface FenceRequest {
@@ -254,6 +261,19 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
 
   const origin = resolveOrigin(ctx, hosts);
   const surface = surfaceForTool(tool);
+  // The site's approval setting: Don't use refuses; Ask every time keeps every rule from allowing;
+  // Read without asking allows reading and a same-site open, like a reading rule.
+  const params = request.params && typeof request.params === "object" && !Array.isArray(request.params) ? request.params as Record<string, unknown> : {};
+  const clickLabel = tool === "click_semantic" ? `${clickBlob(request.params)} ${request.summary ?? ""}` : "";
+  // Opening an address that may change records (an API, /submit?…) is a submit, never a read.
+  const readOnlyOpen = tool === "navigate" && (() => { try { return readOnlyRoute(new URL(String(params.url))); } catch { return false; } })();
+  const setting = siteApproval(ctx.approvals, [...(origin ? [origin] : []), ...hosts], {
+    tool: `browser_${tool}`, args: tool === "navigate" ? { url: params.url } : {},
+    cls: tool === "read" || readOnlyOpen ? "read" : tool === "navigate" || (tool === "click_semantic" && SUBMIT_CONTROL.test(clickLabel)) ? "submit" : "write",
+  });
+  if (setting.kind === "refuse") return { kind: "deny", reason: setting.reason, surface, origin };
+  // Ask every time (or unchecked office settings) marks every ask below.
+  const asks = setting.kind === "ask" ? { siteAsks: true as const } : {};
 
   if (tool === "navigate" || tool === "fill" || tool === "click_semantic") {
     const parsedObject = request.params != null && typeof request.params === "object";
@@ -280,10 +300,10 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
         origin,
       };
     }
-    if (ruleAllows(ctx, "portal-prefill", origin, hosts)) {
+    if (setting.kind !== "ask" && ruleAllows(ctx, "portal-prefill", origin, hosts)) {
       return { kind: "allow", surface: "portal-prefill", origin };
     }
-    return { kind: "ask", surface: "portal-prefill", origin };
+    return { kind: "ask", surface: "portal-prefill", origin, ...asks };
   }
 
   if (tool === "click_semantic") {
@@ -298,22 +318,23 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
       if (!ctx.capabilities.includes("portal-submit")) {
         return { kind: "deny", reason: SUBMIT_JOB_DENY, surface: "portal-submit", origin };
       }
-      return { kind: "ask", surface: "portal-submit", origin };
+      return { kind: "ask", surface: "portal-submit", origin, ...asks };
     }
-    return { kind: "ask", surface: "portal-read", origin };
+    return { kind: "ask", surface: "portal-read", origin, ...asks };
   }
 
-  if ((tool === "read" || tool === "navigate") && ruleAllows(ctx, "portal-read", origin, hosts)) {
-    return { kind: "allow", surface: "portal-read", origin };
+  if ((tool === "read" || tool === "navigate") && setting.kind !== "ask") {
+    if (ruleAllows(ctx, "portal-read", origin, hosts)) return { kind: "allow", surface: "portal-read", origin };
+    if (setting.kind === "reads" && (tool === "read" || readOnlyOpen)) return { kind: "allow", surface: "portal-read", origin, bySettings: true };
   }
 
-  return { kind: "ask", surface, origin };
+  return { kind: "ask", surface, origin, ...asks };
 }
 
 export function fencePayload(decision: FenceDecision): FencePayload | undefined {
   if (!decision.surface || !decision.origin) return undefined;
   const ruleOffer =
-    decision.surface === "portal-read" || decision.surface === "portal-prefill"
+    !decision.siteAsks && (decision.surface === "portal-read" || decision.surface === "portal-prefill")
       ? {
           surface: decision.surface,
           origin: decision.origin,
@@ -326,7 +347,7 @@ export function fencePayload(decision: FenceDecision): FencePayload | undefined 
 export function ruleAllowNote(decision: FenceDecision): string {
   const surface: PortalRuleSurface = decision.surface === "portal-prefill" ? "portal-prefill" : "portal-read";
   const origin = decision.origin ?? "this site";
-  return `allowed by rule · ${portalRuleLabel(surface, origin)}`;
+  return `${decision.bySettings ? "allowed by approval settings" : "allowed by rule"} · ${portalRuleLabel(surface, origin)}`;
 }
 
 /** PM-facing denial that always names the attempted action. */

@@ -16,8 +16,10 @@ const { join } = await import("node:path");
 const { Store } = await import("./store.ts");
 const telegram = await import("./channels/telegram.ts");
 const remote = await import("./remote-decisions.ts");
+const toolCards = await import("./remote-tool-cards.ts");
 const { createPairingCode } = await import("./channel-pairing.ts");
 import type { Draft } from "../shared/contracts.ts";
+import type { OptionCardData } from "./store.ts";
 
 const TOKEN = "999001:SuperSecretTelegramTokenXYZ";
 
@@ -691,5 +693,43 @@ describe("phone continuation and busy recovery", () => {
     await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(1));
     expect(startTurn).toHaveBeenCalledWith(bot.id, "Include the new access question", expect.anything());
 
+  });
+});
+
+describe("live action cards", () => {
+  afterEach(() => toolCards.resetRemoteToolCards());
+  it("offers a read card with three buttons; only the paired person's tap answers it, through the answer path", async () => {
+    const sends: Array<Record<string, unknown>> = [], answered: Array<{ id: string; text?: string }> = [], edited: string[] = [];
+    const fetchFn = stubFetch({ onSend: (_chat, _text, body) => sends.push(body!), onAnswer: (id, text) => answered.push({ id, text }), onEdit: (_chat, _msg, text) => edited.push(text) });
+    const store = await bindPairedDesk([], fetchFn);
+    const card: OptionCardData = { title: "Approval needed", subtitle: "Bud wants to use Gmail.\nAccount: the account connected in Connected apps\nAction: Fetch emails (GMAIL_FETCH_EMAILS)",
+      options: ["Allow", "Deny"], requestId: "req-1", tool: "bud_connected_app_action", remote: "read", readOffer: { appLabel: "Gmail", always: false, group: "app:gmail" } };
+    const answer = vi.fn(async () => ({ status: 200 }));
+    await toolCards.bindRemoteToolCards({ channels: [telegram.telegramDecisionAdapter()], file: join(dataDir, "remote-tool-decisions.json"),
+      quiet: () => false, liveCard: () => card, noteCard: () => {}, answer });
+    sends.length = 0;
+    await toolCards.remoteToolCardOpened("thread-1", "req-1");
+    expect(sends).toHaveLength(1);
+    const keyboard = (sends[0]!.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }).inline_keyboard;
+    const id = /^d:([a-f0-9]{12}):allow$/.exec(keyboard[0]![0]!.callback_data)![1]!;
+    expect(keyboard).toEqual([[{ text: "Allow once", callback_data: `d:${id}:allow` }], [{ text: "Allow for this task", callback_data: `d:${id}:task` }], [{ text: "Deny", callback_data: `d:${id}:deny` }]]);
+
+    const wired = deps(store, async () => {}, fetchFn);
+    await telegram.handleTelegramUpdates([
+      callbackUpdate(50, 222, `d:${id}:allow`, "Other", { fromId: 222 }),
+      callbackUpdate(51, 111, `d:${id}:allow`, "Other", { fromId: 222 }),
+      callbackUpdate(52, 111, `d:${id}:allow`, "Sam", { type: "group" }),
+    ], wired);
+    expect(answer).not.toHaveBeenCalled();
+    expect(edited).toEqual([]);
+    expect(answered.map(row => row.text)).toEqual(Array(3).fill("Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat."));
+
+    await telegram.handleTelegramUpdates([callbackUpdate(53, 111, `d:${id}:task`, "Sam")], wired);
+    expect(answer).toHaveBeenCalledExactlyOnceWith("thread-1", "req-1", "task", { name: "Sam", via: "telegram" }, expect.stringMatching(/^Allowed for this task by Sam via Telegram · /));
+    expect(edited).toEqual([expect.stringMatching(/^Allowed for this task by Sam via Telegram · /)]);
+    // A second tap on the same card changes nothing.
+    await telegram.handleTelegramUpdates([callbackUpdate(54, 111, `d:${id}:allow`, "Sam")], wired);
+    expect(answer).toHaveBeenCalledOnce();
+    expect(edited.at(-1)).toBe("This card is no longer current. Nothing was changed.");
   });
 });

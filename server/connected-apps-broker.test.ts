@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, recordConnectedAppApproval, revokeConnectedAppsBrokers, startConnectedAppsBroker, taskReadGrants, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
+import { defaultApprovalSettings, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import type { ApprovalCardDetails } from "./contracts.ts";
+import { createApprovalSettings, governApprovals, OFFICE_NOT_CHECKED } from "./approval-settings.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
 import * as atomic from "./atomic.ts";
@@ -92,7 +96,7 @@ describe("connected app result classification", () => {
 describe("connected app authoritative broker", () => {
   let upstream: Server, broker: ConnectedAppsBroker;
   let active: boolean;
-  let approve = vi.fn<(summary: string, signal: AbortSignal) => Promise<boolean>>();
+  let approve = vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>();
   let received: any[];
   let url: string;
   let requestId: number;
@@ -132,7 +136,7 @@ describe("connected app authoritative broker", () => {
     await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
     const address = upstream.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
     url = `http://127.0.0.1:${address.port}/mcp`;
-    broker = await startConnectedAppsBroker({ threadId: "fixture-thread", key, url, operations, isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+    broker = await startConnectedAppsBroker({ threadId: "fixture-thread", key, url, operations, isActive: () => active, approve: (summary, signal, card) => approve(summary, signal, card) });
   });
   afterEach(async () => { broker?.close(); upstream?.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); vi.restoreAllMocks(); rmSync(scratch, { recursive: true, force: true }); });
 
@@ -170,6 +174,37 @@ describe("connected app authoritative broker", () => {
     const changed = await invoke("tools/call", { ...params, arguments: { to: "changed@example.test" } }, 7);
     expect(changed.body.result.isError).toBe(true);
     expect(received).toHaveLength(1);
+  });
+  it("records who answered from a paired phone on the operation receipt", async () => {
+    const params = { name: "send_email", arguments: { to: "fictional@example.test", text: "Draft" } };
+    approve.mockImplementation(async (_summary, _signal, card) => {
+      recordConnectedAppApproval("other-thread", card!.reviewId!, "Allowed once by Someone Else via Discord · 2:15 pm");
+      recordConnectedAppApproval("fixture-thread", card!.reviewId!, "Allowed once by Fictional Sam via Telegram · 2:16 pm");
+      return true;
+    });
+    await invoke("tools/call", params);
+    approve.mockResolvedValue(true);
+    await invoke("tools/call", { ...params, arguments: { ...params.arguments, text: "Desktop" } });
+    const rows = operations.list();
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.approval)).toEqual(expect.arrayContaining([undefined, "Allowed once by Fictional Sam via Telegram · 2:16 pm"]));
+  });
+  it("lands each phone answer on its own receipt when identical cards on one thread are answered newest first", async () => {
+    const params = { name: "send_email", arguments: { to: "fictional@example.test", text: "Draft" } };
+    const waiting: Array<{ reviewId: string; answer: (allowed: boolean) => void }> = [];
+    approve.mockImplementation((_summary, _signal, card) => new Promise<boolean>(answer => { waiting.push({ reviewId: card!.reviewId!, answer }); }));
+    const calls = [invoke("tools/call", params, 31), invoke("tools/call", params, 32)];
+    await vi.waitFor(() => expect(waiting).toHaveLength(2));
+    expect(waiting[0].reviewId).not.toBe(waiting[1].reviewId);
+    recordConnectedAppApproval("fixture-thread", waiting[1].reviewId, "Allowed once by Fictional Sam via Telegram · 2:16 pm");
+    waiting[1].answer(true);
+    recordConnectedAppApproval("fixture-thread", waiting[0].reviewId, "Denied by Fictional Alex via Slack · 2:17 pm");
+    waiting[0].answer(false);
+    await Promise.all(calls);
+    const rows = operations.list();
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => [row.status, row.approval])).toEqual(expect.arrayContaining([
+      ["succeeded", "Allowed once by Fictional Sam via Telegram · 2:16 pm"], ["denied", "Denied by Fictional Alex via Slack · 2:17 pm"]]));
   });
   it("reuses a denial on duplicate delivery", async () => {
     await invoke("tools/call", { name: "write" }, 5);
@@ -329,7 +364,7 @@ describe("connected app authoritative broker", () => {
     const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number; mailbox?: "office"; officeAddress?: string } = {}) => {
       const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
       return startConnectedAppsBroker({ threadId: extra.threadId ?? "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
-        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), ...(extra.officeAddress ? { officeAddress: extra.officeAddress } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), ...(extra.officeAddress ? { officeAddress: extra.officeAddress } : {}), isActive: () => active, approve: (summary, signal, card) => approve(summary, signal, card) });
     };
     const startManaged = async (managed: boolean, extra: { mailDrainMs?: number } = {}) => {
       broker.close();
@@ -458,6 +493,12 @@ describe("connected app authoritative broker", () => {
         expect(card.split("\n").filter(line => line.startsWith("To: "))).toEqual(['To: "tenant@example.test", "second@example.test"']);
         expect(sends().map(row => row.params)).toEqual([{ name: "GMAIL_SEND_EMAIL", arguments: args }]);
         expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_SEND_EMAIL", status: "succeeded" })]);
+        // The full message is on the card, so a phone may show it; the exact request sits under its disclosure.
+        const meta = approve.mock.calls[0][2]!;
+        expect(meta.remote).toBe("send");
+        expect(card).not.toContain("Exact request:");
+        expect(card).not.toMatch(/[{}]/);
+        expect(JSON.parse(meta.detail!)).toEqual({ name: "GMAIL_SEND_EMAIL", arguments: args, _meta: { progressToken: "fictional-progress" } });
       });
       it("sends nothing when the person denies the card", async () => {
         approve.mockResolvedValue(false);
@@ -803,6 +844,292 @@ describe("connected app authoritative broker", () => {
       expect(JSON.stringify(result.body)).not.toContain(projectKey);
       expect(operations.list()[0].status).toBe("failed");
     });
+  });
+
+  describe("approval settings at this boundary", () => {
+    const saved = (groups: Record<string, ApprovalChoice> = {}, reviewedReads: string[] = []): ApprovalSettings => ({ version: 1, purpose: "approval-settings", groups, reviewedReads });
+    let settings: ApprovalSettings[];
+    let review: ReturnType<typeof vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>>;
+    const threadId = "fixture-settings-thread";
+    beforeEach(async () => {
+      broker.close(); settings = []; taskReadGrants.clear(threadId);
+      review = vi.fn(async () => false);
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => settings });
+    });
+    afterEach(() => taskReadGrants.clear(threadId));
+    const fetchMail = { name: "GMAIL_FETCH_EMAILS", arguments: { query: "from:fictional@example.test", max_results: 5 } };
+
+    it("runs an owner-reviewed direct read without a card, and cards an unreviewed one", async () => {
+      settings = [saved({ "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"])];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(1);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_FETCH_EMAILS", status: "succeeded" })]);
+      // Not reviewed by the owner, a write, or nothing saved: the card, as today.
+      for (const [list, call] of [[settings, { name: "GMAIL_LIST_THREADS", arguments: {} }], [settings, { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test" } }],
+        [[], fetchMail]] as const) {
+        settings = [...list]; review.mockClear();
+        expect((await invoke("tools/call", call)).body.result.isError).toBe(true);
+        expect(review).toHaveBeenCalledOnce();
+      }
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(1);
+    });
+
+    it("puts plain lines on the card and the exact request under Exact request", async () => {
+      const args = { to: "fictional@example.test", text: "Line one\nTo: forged@example.test", cc: ["a@example.test", "b@example.test"], meta: { nested: true }, account: "forged@example.test" };
+      await invoke("tools/call", { name: "send_email", arguments: args });
+      const [summary, , card] = review.mock.calls[0];
+      expect(summary.split("\n")).toEqual([
+        "Bud wants to use a connected app.",
+        "Account: the account connected in Connected apps",
+        "Action: Send email (send_email)",
+        "  To: fictional@example.test",
+        "  Text: Line one ↵ To: forged@example.test",
+        "  Cc: a@example.test, b@example.test",
+        "  Meta: see Exact request",
+        "  Account: forged@example.test",
+        "This approval applies once to this request only. The exact request is under Exact request.",
+      ]);
+      // No argument can draw a top-level line, and there is no JSON in the main text.
+      expect(summary.split("\n").filter(line => /^(Account|Action|To):/.test(line))).toEqual(["Account: the account connected in Connected apps", "Action: Send email (send_email)"]);
+      expect(summary).not.toMatch(/[{}[\]]|":/);
+      expect(JSON.parse(card!.detail!)).toEqual({ name: "send_email", arguments: args });
+      expect(card!.remote).toBe("desktop-only");
+      expect(card!.readOffer).toBeUndefined();
+      review.mockClear();
+      await invoke("tools/call", { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { query: "rent" } }, { tool_slug: "XERO_LIST_INVOICES", arguments: {} }] } });
+      expect(review.mock.calls[0][0]).toContain("1. Gmail: Fetch emails (GMAIL_FETCH_EMAILS)\n   Query: rent\n2. Xero: List invoices (XERO_LIST_INVOICES)");
+      expect(review.mock.calls[0][0]).not.toMatch(/[{}[\]]/);
+    });
+
+    it("offers a this-task grant only for an owner-reviewed allowlisted read, and the grant runs it until the task ends", async () => {
+      settings = [saved({}, ["GMAIL_FETCH_EMAILS"])];
+      await invoke("tools/call", fetchMail);
+      expect(review.mock.calls[0][2]).toMatchObject({ remote: "read", readOffer: { appLabel: "Gmail", group: "app:gmail", always: true } });
+      taskReadGrants.add(threadId, "app:gmail");
+      review.mockClear();
+      expect((await invoke("tools/call", { ...fetchMail, arguments: { query: "second" } })).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      // The grant covers allowlisted reads only, and ends with the task.
+      expect((await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      taskReadGrants.clear(threadId); review.mockClear();
+      expect((await invoke("tools/call", { ...fetchMail, arguments: { query: "third" } })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      // An unreviewed direct read gets no offer: its name confers no authority.
+      settings = []; review.mockClear();
+      await invoke("tools/call", { ...fetchMail, arguments: { query: "fourth" } });
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+    });
+
+    it("lets Don't use and Ask every time win over a this-task grant", async () => {
+      taskReadGrants.add(threadId, "app:gmail");
+      settings = [saved({ "app:gmail": "ask" }, ["GMAIL_FETCH_EMAILS"])];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      settings = [saved({ "app:gmail": "deny" }, ["GMAIL_FETCH_EMAILS"])]; review.mockClear();
+      const refused = await invoke("tools/call", fetchMail);
+      expect(refused.body.result.content[0].text).toBe("Gmail is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent or changed.");
+      expect(review).not.toHaveBeenCalled();
+      // One department's Don't use wins over another's Read without asking.
+      settings = [saved({ "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"]), saved({ "app:gmail": "deny" })];
+      expect((await invoke("tools/call", fetchMail)).body.result.isError).toBe(true);
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      expect(operations.list().filter(row => row.status === "started" || row.status === "succeeded")).toEqual([]);
+    });
+
+    const managed = async () => {
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, managed: true, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card), approvalSettings: async () => settings });
+    };
+    it("refuses an operation whose locked row is Don't use, and keeps a shortened card off the phone", async () => {
+      await managed();
+      settings = [saved({ "class:upload": "deny", "class:trash": "deny" })];
+      for (const call of [{ name: "OUTLOOK_ADD_MAIL_ATTACHMENT", arguments: { message_id: "fictional-1" } }, { name: "GMAIL_DELETE_DRAFT", arguments: { draft_id: "fictional-2" } }]) {
+        expect((await invoke("tools/call", call)).body.result.content[0].text, call.name).toContain("This kind of action is set to Don't use");
+      }
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      // With nothing locked they still run without a card, as today.
+      settings = [];
+      expect((await invoke("tools/call", { name: "GMAIL_DELETE_DRAFT", arguments: { draft_id: "fictional-2" } })).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      settings = [saved({ "app:gmail": "ask" })];
+      await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test", body: "Short fictional note" } });
+      expect(review.mock.calls[0][2]?.remote).toBe("write");
+      review.mockClear();
+      await invoke("tools/call", { name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "fictional@example.test", body: "x".repeat(500) } });
+      expect(review.mock.calls[0][0]).toContain("see Exact request");
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+      settings = []; review.mockClear();
+      await invoke("tools/call", { name: "SLACK_POST_MESSAGE", arguments: { channel: "fictional", text: "y".repeat(500) } });
+      expect(review.mock.calls[0][2]?.remote).toBe("desktop-only");
+    });
+
+    it("on an office desktop whose settings could not be checked, cards what would run and says why", async () => {
+      await managed();
+      settings = [saved(), uncheckedOfficeSettings()];
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][0]).toContain(OFFICE_UNCHECKED);
+      expect(review.mock.calls[0][2]?.readOffer).toBeUndefined();
+      // A this-task grant cannot pass it; this computer's Don't use and blocked tools still refuse.
+      taskReadGrants.add(threadId, "app:gmail"); review.mockClear();
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: { query: "again" } })).body.result.isError).toBe(true);
+      expect(review).toHaveBeenCalledOnce();
+      settings = [saved({ "app:gmail": "deny" }), uncheckedOfficeSettings()]; review.mockClear();
+      expect((await invoke("tools/call", { name: "GMAIL_LIST_THREADS", arguments: { query: "third" } })).body.result.content[0].text).toContain("Gmail is set to Don't use");
+      expect((await invoke("tools/call", { name: "GMAIL_DELETE_MESSAGE", arguments: {} })).body.result.isError).toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+    });
+
+    it("re-reads the settings after the person approves: Don't use saved meanwhile refuses, with a refused receipt", async () => {
+      review.mockImplementation(async () => { settings = [saved({ "app:gmail": "deny" })]; return true; });
+      const result = await invoke("tools/call", fetchMail);
+      expect(review).toHaveBeenCalledOnce();
+      expect(result.body.result.content[0].text).toBe("Approval settings changed to Don't use for Gmail; Bud did not do it.");
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_FETCH_EMAILS", status: "denied" })]);
+      // Settings that need recovery after the card refuse too.
+      settings = []; review.mockImplementation(async () => { settings = null as unknown as ApprovalSettings[]; return true; });
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => { if (!settings) throw new Error("needs recovery"); return settings; } });
+      expect((await invoke("tools/call", fetchMail)).body.result.content[0].text).toContain("need recovery");
+      expect(received.filter(row => row.method === "tools/call")).toHaveLength(0);
+    });
+
+    it("refuses when the settings need recovery, and keeps the boundary's own refusals", async () => {
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card),
+        approvalSettings: async () => { throw new Error("needs recovery"); } });
+      expect((await invoke("tools/call", fetchMail)).body.result.content[0].text).toContain("need recovery");
+      // Discovery is RealBud's own read and needs no app setting.
+      expect((await invoke("tools/call", { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} })).body.result.isError).not.toBe(true);
+      broker.close();
+      settings = [saved({ "app:composio": "read-without-asking", "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"])];
+      broker = await startConnectedAppsBroker({ threadId, key, url, operations, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card), approvalSettings: async () => settings });
+      expect((await invoke("tools/call", { name: "COMPOSIO_REMOTE_WORKBENCH", arguments: {} })).body.result.content[0].text).toContain("outside Bud's connected-app boundary");
+      expect(review).not.toHaveBeenCalled();
+      expect(received.filter(row => row.method === "tools/call" && row.params.name !== "COMPOSIO_SEARCH_TOOLS")).toHaveLength(0);
+    });
+  });
+
+  describe("a fresh office desktop whose department settings cannot be checked", () => {
+    // The host's real store and registration: Accounts governs this member, and the office answers
+    // /api/company/approvals/mine in order ("down" is a 503); the turn's own check comes first.
+    const SESSION = "synthetic-member-session-0000000000000000000";
+    let answers: Array<"down" | ApprovalChoice>;
+    let review: ReturnType<typeof vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>>;
+    const company = async (path: string, request: { headers: Record<string, unknown> }) => {
+      const answer = answers.shift() ?? "down";
+      if (path !== "/api/company/approvals/mine" || request.headers["x-realbud-member-session"] !== SESSION || answer === "down") return { status: 503, body: null };
+      return { status: 200, body: { member: { id: "fictional-member-0001", displayName: "Fictional Sam", role: "member" }, departments: [{ id: "00000000-0000-4000-8000-0000000000a1",
+        name: "Accounts", canEdit: false, governs: true, revision: "0", settings: { version: 1, purpose: "approval-settings", groups: { "app:gmail": answer }, reviewedReads: [] } }] } };
+    };
+    const desktop = async (seat: string | null, office: Array<"down" | ApprovalChoice>) => {
+      answers = [...office]; review = vi.fn(async () => true);
+      const store = createApprovalSettings({ dataDir: mkdtempSync(join(scratch, "approvals-")), seatIdentity: async () => seat, company });
+      governApprovals({ effective: () => store.effective(), singleDesktop: async () => seat === null, verify: () => store.verifyAgain() });
+      await store.verifyIfMissing({ headers: { "x-realbud-member-session": SESSION } });
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId: "fixture-office-thread", key, url, operations, managed: true, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card) });
+    };
+    afterEach(() => governApprovals({ effective: async () => [], singleDesktop: async () => true }));
+    const listThreads = { name: "GMAIL_LIST_THREADS", arguments: { query: "from:fictional@example.test" } };
+    const dispatched = () => received.filter(row => row.method === "tools/call").length;
+
+    it("cards the call with its reason and, still unverified after approval, refuses it with nothing sent", async () => {
+      await desktop("fictional-member-0001", ["down", "down"]);
+      const result = await invoke("tools/call", listThreads);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][0]).toContain(OFFICE_UNCHECKED);
+      expect(result.body.result.content[0].text).toBe(OFFICE_NOT_CHECKED);
+      expect(answers).toEqual([]); // verification was tried once more after the card
+      expect(dispatched()).toBe(0);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_LIST_THREADS", status: "denied" })]);
+    });
+
+    it("applies the department's settings when verification succeeds after approval", async () => {
+      await desktop("fictional-member-0001", ["down", "deny"]);
+      expect((await invoke("tools/call", listThreads)).body.result.content[0].text).toBe("Approval settings changed to Don't use for Gmail; Bud did not do it.");
+      expect(dispatched()).toBe(0);
+      await desktop("fictional-member-0001", ["down", "read-without-asking"]);
+      expect((await invoke("tools/call", listThreads)).body.result.isError).not.toBe(true);
+      expect(dispatched()).toBe(1);
+    });
+
+    it("leaves a single desktop alone: no office call, and its reads run", async () => {
+      await desktop(null, ["deny"]);
+      expect((await invoke("tools/call", listThreads)).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(answers).toEqual(["deny"]);
+      expect(dispatched()).toBe(1);
+    });
+  });
+});
+
+describe("approval settings: every connected-app decision with nothing saved equals today's", () => {
+  const SLUGS = [...new Set([...READ_ONLY_APP_TOOLS, ...MAIL_SENDS, "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_MOVE_TO_TRASH", "GMAIL_DELETE_MESSAGE", "GMAIL_CREATE_FILTER",
+    "GMAIL_DELETE_DRAFT", "GMAIL_UPDATE_DRAFT", "OUTLOOK_ADD_MAIL_ATTACHMENT", "OUTLOOK_CREATE_FORWARD_DRAFT", "XERO_CREATE_PAYMENT", "STRIPE_CREATE_TRANSFER", "DOCUSIGN_SIGN_ENVELOPE",
+    "GMAIL_FROBNICATE", "OUTLOOK_MOVE_MESSAGE", "XERO_LIST_INVOICES", "XERO_CREATE_INVOICE", "XERO_DELETE_INVOICE", "SLACK_POST_MESSAGE", "SLACK_SEARCH_MESSAGES",
+    "GOOGLECALENDAR_CREATE_EVENT", "NOTION_BULK_ARCHIVE_PAGES", "GITHUB_REVOKE_TOKEN", "send_email", "READ"])];
+  const ARGS: Array<Record<string, unknown>> = [{}, { add_label_ids: ["TRASH"] }, { destination_id: "archive" }, { status: "cancelled" }, { attachment: { name: "fictional.pdf" } }];
+  const today = (policy: string) => policy === "read" ? "run" : policy === "review" ? "card" : "refuse";
+  it.each(SLUGS)("%s", slug => {
+    for (const args of ARGS) {
+      const call = { name: slug, arguments: args };
+      const managed = connectedAppPolicy(call, { managed: true });
+      expect(appVerdict([{ slug, args }], [], { direct: false }).decision, `managed ${JSON.stringify(args)}`).toBe(today(managed));
+      expect(appVerdict([{ slug, args }], [defaultApprovalSettings()], { direct: false }).decision).toBe(today(managed));
+      // A direct connection reviews everything today, and still does.
+      expect(connectedAppPolicy(call)).toBe("review");
+      expect(appVerdict([{ slug, args }], [], { direct: true }).decision, `direct ${JSON.stringify(args)}`).toBe("card");
+      expect(appVerdict([{ slug, args }], [defaultApprovalSettings()], { direct: true }).decision).toBe("card");
+    }
+  });
+  it("decides a batch as strictly as its strictest member", () => {
+    const rows = (...slugs: string[]) => slugs.map(slug => ({ slug, args: {} }));
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_LIST_INVOICES"), [], { direct: false }).decision).toBe("run");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "GMAIL_UPDATE_DRAFT"), [], { direct: false }).decision).toBe("run");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_CREATE_INVOICE"), [], { direct: false }).decision).toBe("card");
+    expect(appVerdict(rows("GMAIL_LIST_THREADS", "XERO_CREATE_INVOICE"), [], { direct: true }).decision).toBe("card");
+  });
+  it("lets a locked per-step row refuse sends and a saved Ask card reads, never widen a write", () => {
+    const send = [{ slug: "GMAIL_SEND_EMAIL", args: { recipient_email: "fictional@example.test" } }];
+    const locked: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "class:send": "deny" }, reviewedReads: [] };
+    expect(appVerdict(send, [locked], { direct: false })).toMatchObject({ decision: "refuse", reason: expect.stringContaining("This kind of action is set to Don't use") });
+    const ask: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "app:gmail": "ask" }, reviewedReads: [] };
+    expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).toMatchObject({ decision: "card", remote: "read" });
+    expect(appVerdict([{ slug: "GMAIL_LIST_THREADS", args: {} }], [ask], { direct: false })).not.toHaveProperty("offer");
+    const reads: ApprovalSettings = { version: 1, purpose: "approval-settings", groups: { "app:xero": "read-without-asking" }, reviewedReads: [] };
+    expect(appVerdict([{ slug: "XERO_CREATE_INVOICE", args: {} }], [reads], { direct: false })).toMatchObject({ decision: "card", remote: "desktop-only" });
+  });
+  it("classes what a tool actually does: a locked Don't use refuses it, and only exact reads and a few safe in-app writes reach a phone", () => {
+    const locked = (...classes: string[]): ApprovalSettings[] => [{ version: 1, purpose: "approval-settings", groups: Object.fromEntries(classes.map(cls => [`class:${cls}`, "deny"])), reviewedReads: [] }];
+    const row = (slug: string, args: Record<string, unknown> = {}) => [{ slug, args }];
+    for (const [slug, cls, args] of [["OUTLOOK_ADD_MAIL_ATTACHMENT", "upload"], ["GMAIL_DELETE_DRAFT", "trash"], ["XERO_CREATE_PAYMENT", "pay"], ["STRIPE_CREATE_TRANSFER", "pay"],
+      ["SLACK_POST_MESSAGE", "send"], ["OUTLOOK_REPLY_EMAIL", "send"], ["DOCUSIGN_SIGN_ENVELOPE", "sign"], ["GMAIL_ADD_LABEL_TO_EMAIL", "trash", { add_label_ids: ["TRASH"] }],
+      ["GMAIL_CREATE_EMAIL_DRAFT", "upload", { attachment: { name: "fictional.pdf" } }], ["send_email", "send"]] as Array<[string, string, Record<string, unknown>?]>) {
+      for (const direct of [false, true]) expect(appVerdict(row(slug, args), locked(cls), { direct }), `${slug} ${direct}`).toMatchObject({ decision: "refuse", reason: expect.stringContaining("This kind of action is set to Don't use") });
+    }
+    // Reading the same resources, and drafting, is none of those operations.
+    const all = locked("pay", "sign", "send", "notice", "account-change", "trash", "upload", "submit");
+    for (const slug of ["XERO_LIST_PAYMENTS", "GMAIL_GET_ATTACHMENT", "OUTLOOK_LIST_OUTLOOK_ATTACHMENTS", "GMAIL_LIST_DRAFTS", "GMAIL_CREATE_EMAIL_DRAFT", "OUTLOOK_CREATE_FORWARD_DRAFT", "OUTLOOK_GET_PROFILE"])
+      expect(appVerdict(row(slug), all, { direct: false }).decision, slug).toBe("run");
+    // Phone: exact reads as reads, a Gmail draft or label edit as a write, everything else desktop only.
+    const ask: ApprovalSettings[] = [{ version: 1, purpose: "approval-settings", groups: { "app:gmail": "ask", "app:outlook": "ask", "app:xero": "ask" }, reviewedReads: [] }];
+    expect(appVerdict(row("GMAIL_LIST_THREADS"), ask, { direct: false })).toMatchObject({ decision: "card", remote: "read" });
+    expect(appVerdict(row("GMAIL_CREATE_EMAIL_DRAFT", { body: "Fictional" }), ask, { direct: false })).toMatchObject({ decision: "card", remote: "write" });
+    expect(appVerdict(row("GMAIL_ADD_LABEL_TO_EMAIL", { remove_label_ids: ["INBOX"] }), ask, { direct: false })).toMatchObject({ decision: "card", remote: "write" });
+    for (const [slug, args] of [["GMAIL_DELETE_DRAFT", {}], ["OUTLOOK_ADD_MAIL_ATTACHMENT", {}], ["XERO_LIST_INVOICES", {}], ["GMAIL_ADD_LABEL_TO_EMAIL", { add_label_ids: ["SPAM"] }],
+      ["GMAIL_CREATE_EMAIL_DRAFT", { attachment: { name: "fictional.pdf" } }]] as Array<[string, Record<string, unknown>]>)
+      expect(appVerdict(row(slug, args), ask, { direct: false }), slug).toMatchObject({ decision: "card", remote: "desktop-only" });
+    for (const slug of ["XERO_CREATE_PAYMENT", "SLACK_POST_MESSAGE", "GOOGLECALENDAR_CREATE_EVENT"]) expect(appVerdict(row(slug), [], { direct: false }), slug).toMatchObject({ decision: "card", remote: "desktop-only" });
   });
 });
 

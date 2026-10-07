@@ -18,14 +18,16 @@ import { recordEvents, type EventRecorder } from "./testing/events.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
 import { LoopManager, type LoopManagerOptions } from "./routines.ts";
 import type { LoopbackToolServer } from "./web-research-broker.ts";
-import { bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
+import { createApprovalSettings } from "./approval-settings.ts";
+import { defaultApprovalSettings, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { APPROVAL_POLICY_CONFLICT, bindApprovalPolicy, bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } }));
 
 const directories: string[] = [], managers: LoopManager[] = [];
 const cleanUp = async () => { managers.splice(0).forEach(manager => manager.close()); await Promise.all(directories.splice(0).map(path => removeFixture(path))); };
-async function stores(listRecipes?: LoopManagerOptions["listRecipes"]) {
+async function stores(listRecipes?: LoopManagerOptions["listRecipes"], approvals?: Parameters<typeof bindWorkflowSettings>[0]["approvals"]) {
   const directory = privateTempRoot(join(tmpdir(), "realbud-bud-settings-")); directories.push(directory);
   const maintenance = createMaintenanceReviewStore({ file: join(directory, "maintenance-review.json"), now: () => 5_000 });
   const inspection = createInspectionRulesStore({ file: join(directory, "inspection-rules.json"), now: () => 5_000 });
@@ -35,7 +37,7 @@ async function stores(listRecipes?: LoopManagerOptions["listRecipes"]) {
     execute: async () => ({ ok: true, detail: "Fictional run." }) });
   managers.push(loops);
   let refusal: string | null = null;
-  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, loops, writable: () => refusal });
+  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, loops, writable: () => refusal, approvals });
   return { maintenance, inspection, agencyService, agencySaves, loops, settings, loop: (id: string) => loops.listLoops().find(row => row.id === id)!, refuse: (value: string | null) => { refusal = value; } };
 }
 
@@ -248,6 +250,119 @@ describe("working rules broker", () => {
       expect(cards[0]).toBe("Change workflow schedule\nFictional Friday check: Fridays 4:00 pm → Fridays 3:00 pm\nIt still waits for its plan to be approved, and approving the plan uses the plan's own time.\nWhy: Earlier.");
       expect(loop("recipe-fictional-job")).toMatchObject({ waitingForPlan: true, enabled: false, nextRunAt: null, schedule: { time: "15:00", weekdays: [5] } });
     });
+  });
+});
+
+describe("approval settings (approval_policy)", () => {
+  let broker: LoopbackToolServer | undefined;
+  afterEach(async () => { broker?.close(); broker = undefined; await cleanUp(); });
+  const call = async (name: string, args: unknown) => ((await (await fetch(broker!.descriptor.url, { method: "POST",
+    headers: { "content-type": "application/json", ...Object.fromEntries(broker!.descriptor.headers.map(row => [row.name, row.value])) },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json()) as any).result;
+  /** A single desktop's real store, bound the way the host binds it. */
+  async function desktop(approve: (summary: string) => Promise<boolean> | boolean = () => true) {
+    const directory = privateTempRoot(join(tmpdir(), "realbud-bud-approvals-")); directories.push(directory);
+    const store = createApprovalSettings({ dataDir: directory, seatIdentity: async () => null, company: async () => ({ status: 503, body: null }) });
+    const { settings } = await stores(undefined, bindApprovalPolicy(store, () => ({ headers: {} })));
+    const cards: string[] = [];
+    broker = await startWorkflowSettingsBroker({ turnId: () => "turn-1", settings: () => settings, approve: async summary => { cards.push(summary); return approve(summary); } });
+    const saved = async () => (await store.handle("/api/approvals", "GET", { headers: {} }, new URLSearchParams())).body as { local: { revision: number; settings: ApprovalSettings } };
+    const put = async (groups: ApprovalSettings["groups"]) => store.handle("/api/approvals", "PUT", { headers: {} }, new URLSearchParams(),
+      { expectedRevision: (await saved()).local.revision, settings: { ...defaultApprovalSettings(), groups } });
+    return { cards, saved, put };
+  }
+  const propose = (changes: unknown, extra: Record<string, unknown> = {}) => call("workflow_settings_propose", { target: "approval_policy", values: { changes, ...extra }, reason: "Sherry wants to check these first." });
+
+  it("reads the settings with no card and saves a stricter change only on Allow", async () => {
+    let allow = false;
+    const { cards, saved } = await desktop(() => allow);
+    const read = await call("workflow_settings_read", { target: "approval_policy" });
+    expect(read.content[0].text).toContain('- approval_policy this computer "This computer" (revision 0, you can change it): nothing saved');
+    expect(cards).toEqual([]);
+    const stricter = [{ group: "app:gmail", choice: "ask" }, { group: "class:pay", choice: "deny" }];
+    expect(await propose(stricter)).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("did not approve") }] });
+    expect(cards[0]).toBe("Change approval settings\nGmail: Recommended → Ask every time\nAlways asks: Payments: Recommended → Don't use\nWhy: Sherry wants to check these first.");
+    expect((await saved()).local.revision).toBe(0);
+    allow = true;
+    expect((await propose(stricter)).isError).toBeUndefined();
+    expect((await saved()).local).toMatchObject({ revision: 1, settings: { groups: { "app:gmail": "ask", "class:pay": "deny" } } });
+  });
+
+  it("refuses group-level widening, widening a write, lifting Don't use and reviewedReads changes before any card", async () => {
+    const { cards, saved, put } = await desktop();
+    await put({ "app:gmail": "ask", "site:portal.fictional.test": "deny", "class:send": "deny" });
+    const refused = async (changes: unknown, text: string, extra?: Record<string, unknown>) =>
+      expect(await propose(changes, extra)).toMatchObject({ isError: true, content: [{ text: expect.stringContaining(text) }] });
+    // A saved choice covers the whole row, so Bud never widens an app: the row would cover more than the tools it named.
+    await refused([{ group: "app:gmail", choice: "read-without-asking" }], "Bud can only make Gmail stricter");
+    await refused([{ group: "app:gmail", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS"] }], "Bud can only make Gmail stricter");
+    await refused([{ group: "site:other.fictional.test", choice: "read-without-asking", tools: ["browser_click"] }], "name browser_read and browser_navigate");
+    await refused([{ group: "site:portal.fictional.test", choice: "ask" }], "set to Don't use");
+    await refused([{ group: "class:send", choice: "ask" }], "set to Don't use");
+    await refused([{ group: "class:pay", choice: "read-without-asking", tools: ["GMAIL_FETCH_EMAILS"] }], "only make Always asks: Payments stricter");
+    await refused([{ group: "connector:fictional-crm", choice: "read-without-asking", tools: ["list_contacts"] }], "only make Office connector fictional-crm stricter");
+    await refused([{ group: "app:gmail", choice: "deny", tools: ["GMAIL_FETCH_EMAILS"] }], "tools only name");
+    await refused([{ group: "app:gmail", choice: "ask" }], "already has those approval settings");
+    await refused([{ group: "everything", choice: "deny" }], "Choose each group");
+    await refused([{ group: "app:gmail", choice: "deny" }], "Only the owner marks", { reviewedReads: ["GMAIL_FETCH_EMAILS"] });
+    expect(await call("workflow_settings_restore", { target: "approval_policy", reason: "x" })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Propose the settings you want") }] });
+    expect(cards).toEqual([]);
+    expect((await saved()).local.revision).toBe(1);
+  });
+
+  it("widens only a website's reading, after a card that states the whole effect", async () => {
+    const { cards, saved, put } = await desktop();
+    await put({ "app:gmail": "ask", "site:portal.fictional.test": "ask" });
+    expect((await propose([{ group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_read", "browser_navigate"] }])).isError).toBeUndefined();
+    expect(cards[0]).toBe("Change approval settings\nportal.fictional.test: Ask every time → Read without asking (reading pages and moving between them; filling, uploading and submitting still ask)\n" +
+      "Why: Sherry wants to check these first.");
+    expect((await saved()).local.settings.groups).toEqual({ "app:gmail": "ask", "site:portal.fictional.test": "read-without-asking" });
+    expect((await propose([{ group: "site:portal.fictional.test", choice: "read-without-asking", tools: ["browser_click"] }]))).toMatchObject({ isError: true });
+  });
+
+  it("proposes Ask every time for a website on Recommended as a stricter change", async () => {
+    const { cards, saved } = await desktop();
+    expect((await propose([{ group: "site:portal.fictional.test", choice: "ask" }])).isError).toBeUndefined();
+    expect(cards[0]).toBe("Change approval settings\nportal.fictional.test: Recommended → Ask every time\nWhy: Sherry wants to check these first.");
+    expect((await saved()).local.settings.groups).toEqual({ "site:portal.fictional.test": "ask" });
+  });
+
+  it("reports a conflict when the settings changed while the card was open", async () => {
+    let put: Awaited<ReturnType<typeof desktop>>["put"] | undefined;
+    const env = await desktop(async () => { await put!({ "app:outlook": "deny" }); return true; });
+    put = env.put;
+    expect(await propose([{ group: "app:gmail", choice: "ask" }])).toMatchObject({ isError: true, content: [{ text: APPROVAL_POLICY_CONFLICT }] });
+    expect((await env.saved()).local.settings.groups).toEqual({ "app:outlook": "deny" });
+  });
+
+  it("needs edit rights: a read-only member is refused before the card, and the store refuses a save without them", async () => {
+    const member = { headers: { "x-realbud-member-session": "synthetic-member-session" } };
+    const departmentId = "00000000-0000-4000-8000-0000000000a1";
+    let canEdit = false;
+    const directory = privateTempRoot(join(tmpdir(), "realbud-bud-approvals-office-")); directories.push(directory);
+    const store = createApprovalSettings({ dataDir: directory, seatIdentity: async () => "fictional-member-0001", company: async (path, request) => {
+      if (request.headers["x-realbud-member-session"] !== "synthetic-member-session") return { status: 401, body: {} };
+      const departments = [{ id: departmentId, name: "Accounts", canEdit, governs: true, revision: "0", settings: defaultApprovalSettings() }];
+      if (path === "/api/company/approvals/mine") return { status: 200, body: { member: { id: "fictional-member-0001", displayName: "Fictional Sam", role: "member" }, departments } };
+      return canEdit ? { status: 200, body: { revision: "1" } } : { status: 403, body: {} };
+    } });
+    const { settings } = await stores(undefined, bindApprovalPolicy(store, () => member));
+    const approve = vi.fn(async () => { canEdit = false; return true; });
+    broker = await startWorkflowSettingsBroker({ turnId: () => "turn-1", settings: () => settings, approve });
+    expect(await propose([{ group: "app:gmail", choice: "deny" }], { departmentId })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Only people who can edit Accounts") }] });
+    expect(await propose([{ group: "app:gmail", choice: "deny" }])).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Only people who can edit the departments") }] });
+    expect(approve).not.toHaveBeenCalled();
+    // Rights lost while the card was open: the store's own check refuses the save.
+    canEdit = true;
+    expect(await propose([{ group: "app:gmail", choice: "deny" }], { departmentId })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Only people who can edit Accounts") }] });
+    expect(approve).toHaveBeenCalledOnce();
+  });
+
+  it("says so when the conversation has no approval settings bound", async () => {
+    const { settings } = await stores();
+    broker = await startWorkflowSettingsBroker({ turnId: () => "turn-1", settings: () => settings, approve: async () => true });
+    expect((await call("workflow_settings_read", {})).content[0].text).toContain("- approval_policy: not available in this conversation.");
+    expect(await propose([{ group: "app:gmail", choice: "deny" }])).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Workspace → Approvals") }] });
   });
 });
 

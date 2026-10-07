@@ -1,5 +1,6 @@
-// RealBud's dispatch receipts contain identifiers and fixed status text only.
-// Tool arguments, provider results, account details and credentials stay out.
+// RealBud's dispatch receipts contain identifiers, fixed status text and, for a
+// card answered from a paired phone, who answered it and where. Tool arguments,
+// provider results, account details and credentials stay out.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,8 +17,10 @@ export interface ConnectedAppOperation {
   startedAt: number;
   finishedAt?: number;
   detail: string;
+  /** Who answered the card when it was not this computer, e.g. "Allowed once by Sam via Telegram · 2:16 pm". */
+  approval?: string;
 }
-type OperationInput = Pick<ConnectedAppOperation, "threadId" | "toolName" | "toolSlugs">;
+type OperationInput = Pick<ConnectedAppOperation, "threadId" | "toolName" | "toolSlugs" | "approval">;
 const MAX_OPERATIONS = 1_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const DETAILS = {
@@ -33,6 +36,7 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 export const validAppToolName = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,149}$/.test(value);
 export const validAppToolSlug = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_]{0,149}$/.test(value);
 const validThread = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
+const validApproval = (value: unknown): boolean => value === undefined || (typeof value === "string" && /^[^\r\n]{1,300}$/.test(value));
 const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
 const clone = (row: ConnectedAppOperation): ConnectedAppOperation => ({ ...row, toolSlugs: [...row.toolSlugs] });
 const failure = () => Object.assign(new Error(RECOVERY), { status: 503 });
@@ -57,8 +61,8 @@ export class ConnectedAppOperationStore {
           typeof row.status !== "string" || !["started", "succeeded", "failed", "unknown", "denied"].includes(row.status) ||
           (row.status === "started" ? row.finishedAt !== undefined : !timestamp(row.finishedAt)) ||
           (row.finishedAt !== undefined && Number(row.finishedAt) < row.startedAt) ||
-          (row.detail !== DETAILS[row.status as ConnectedAppOperationStatus] && !(row.status === "failed" && row.detail === DETAILS.partial)) ||
-          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail"].includes(key))) throw failure();
+          (row.detail !== DETAILS[row.status as ConnectedAppOperationStatus] && !(row.status === "failed" && row.detail === DETAILS.partial)) || !validApproval(row.approval) ||
+          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval"].includes(key))) throw failure();
         ids.add(row.id);
         return clone(row as unknown as ConnectedAppOperation);
       });
@@ -93,11 +97,11 @@ export class ConnectedAppOperationStore {
   private add(input: OperationInput, status: "started" | "denied"): ConnectedAppOperation {
     this.assertAvailable();
     if (!validThread(input.threadId) || !validAppToolName(input.toolName) || !Array.isArray(input.toolSlugs) ||
-      input.toolSlugs.length > 50 || !input.toolSlugs.every(validAppToolSlug)) throw Object.assign(new Error("Invalid app operation identifiers."), { status: 400 });
+      input.toolSlugs.length > 50 || !input.toolSlugs.every(validAppToolSlug) || !validApproval(input.approval)) throw Object.assign(new Error("Invalid app operation identifiers."), { status: 400 });
     const now = this.now();
     const row: ConnectedAppOperation = { id: randomUUID(), threadId: input.threadId, toolName: input.toolName,
       toolSlugs: [...new Set(input.toolSlugs)], status, startedAt: now,
-      ...(status === "denied" ? { finishedAt: now } : {}), detail: DETAILS[status] };
+      ...(status === "denied" ? { finishedAt: now } : {}), detail: DETAILS[status], ...(input.approval ? { approval: input.approval } : {}) };
     // Unresolved outcomes cannot disappear when routine successful reads churn.
     const next = [...this.rows];
     if (next.length >= MAX_OPERATIONS) {

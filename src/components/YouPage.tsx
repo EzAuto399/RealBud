@@ -19,11 +19,9 @@ import { activityLabel, activityResult, type ActivityEntry } from "@/lib/compute
 import { sourceKindLabel } from "@/lib/hands-label";
 import {
   AWAITING_REVIEW_COPY,
-  isPortalSiteRule,
   latestSessionFor,
   nextRecipeStatus,
   PORTAL_JOB_PATH_COPY,
-  portalRuleLabel,
   recipeNeedsPlanApproval,
   recipeSitesLine,
   recipeStatusChip,
@@ -52,6 +50,7 @@ import { BudSetupCard } from "./BudSetupCard";
 import { MemoryReviewPanel } from './MemoryReviewPanel';
 import { DESIGN_PREVIEW_REASON } from '@/lib/design-preview';
 import { ConnectedAppsCard } from "./ConnectedAppsCard";
+import { ApprovalSettings } from "./ApprovalSettings";
 import { ServiceAdministration } from "./ServiceAdministration";
 import { ServiceStatusCard } from "./ServiceStatusCard";
 import { CompanySetupCard } from "./CompanySetupCard";
@@ -124,14 +123,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const { snapshot: officeSnapshot } = useOfficeSources();
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
   const [deskError, setDeskError] = useState("");
-  const [rules, setRules] = useState<Array<{
-    id: string;
-    key: string;
-    label: string;
-    surface?: string;
-    origin?: string;
-  }> | null>(null);
-  const [rulesError, setRulesError] = useState("");
   const [recipes, setRecipes] = useState<Recipe[] | null>(null);
   const [sessions, setSessions] = useState<PortalSession[]>([]);
   const [jobsError, setJobsError] = useState("");
@@ -149,13 +140,6 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
       .catch((cause: unknown) => setDeskError(cause instanceof Error ? cause.message : String(cause)));
   }, [dispatch]);
-
-  const loadRules = useCallback(() => {
-    setRulesError("");
-    void api("/api/rules")
-      .then((body) => setRules(Array.isArray(body.rules) ? body.rules : []))
-      .catch((cause: unknown) => setRulesError(cause instanceof Error ? cause.message : String(cause)));
-  }, []);
 
   const loadJobs = useCallback(() => {
     setJobsError("");
@@ -179,8 +163,8 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       .then((body) => setSession(body))
       .catch(() => setSession(null));
     if (section !== "phone") loadDesk();
-    if (!section) { loadRules(); loadJobs(); loadLawWatch(); void refreshHermes(); }
-  }, [dispatch, loadChannels, loadDesk, loadJobs, loadLawWatch, loadRules, refreshHermes, section]);
+    if (!section) { loadJobs(); loadLawWatch(); void refreshHermes(); }
+  }, [dispatch, loadChannels, loadDesk, loadJobs, loadLawWatch, refreshHermes, section]);
 
   useEffect(() => {
     if (section) return;
@@ -354,51 +338,8 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           <PrivateWorkspaceBackup />
         </div>
         <details className="settings-section">
-          <summary><span>Advanced</span><span className="settings-section-hint">Jobs, rules, sources and diagnostics</span></summary>
+          <summary><span>Advanced</span><span className="settings-section-hint">Jobs, sources and diagnostics</span></summary>
           <div className="settings-section-body flex flex-col gap-4">
-        <Card title="Bud's rules" subtitle="Previously saved standing permissions. New approvals can stay scoped to one task.">
-          {rulesError ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-[12.5px] text-danger">{rulesError}</p>
-              <button type="button" onClick={loadRules} className="text-[12px] text-agency hover:underline">
-                Retry
-              </button>
-            </div>
-          ) : null}
-          {!rulesError && rules == null ? <YouLoadLines label="Loading rules" /> : null}
-          {!rulesError && rules && rules.length === 0 ? (
-            <p className="text-[13px] text-ink-secondary">
-              No standing rules. Allow for this task reduces repeat prompts for one run; 'Always allow reading on a site' saves a rule for that site only.
-            </p>
-          ) : null}
-          {!rulesError && rules && rules.length > 0 ? (
-            <ul className="text-[13px] text-ink">
-              {rules.map((rule) => (
-                <li key={rule.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
-                  <span className="flex flex-wrap items-baseline gap-2">
-                    {portalRuleLabel(rule)}
-                    {isPortalSiteRule(rule) ? <StatusLabel tone="agency">Site rule</StatusLabel> : (
-                      <span className="font-mono text-[11px] text-ink-muted">{rule.key}</span>
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    className="text-[12px] text-ink-muted underline-offset-2 hover:text-ink hover:underline"
-                    onClick={() => {
-                      void api(`/api/rules/${rule.id}`, { method: "DELETE" })
-                        .then(() => loadRules())
-                        .catch((cause: unknown) =>
-                          setRulesError(cause instanceof Error ? cause.message : String(cause)),
-                        );
-                    }}
-                  >
-                    Revoke
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </Card>
         <LawWatchCard watch={lawWatch} error={lawWatchError} onWatch={setLawWatch} onError={setLawWatchError} />
         <div id="you-packs">
           <WorkflowPacksCard
@@ -502,6 +443,15 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           <div className="flex flex-col">
             {officeSection}
             {appsSection}
+            <details id="you-approvals" className={WORKSPACE_ROW}>
+              <summary>
+                <span>Approvals</span>
+                <span className="settings-section-hint">How often Bud asks before using your apps and websites</span>
+              </summary>
+              <div className="settings-section-body">
+                <ApprovalSettings />
+              </div>
+            </details>
             <details id="you-memory" className={WORKSPACE_ROW}>
               <summary>
                 <span>What Bud learned</span>

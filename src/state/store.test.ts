@@ -13,6 +13,9 @@ vi.mock('react', async importOriginal => ({ ...await importOriginal<typeof impor
   useEffect: () => {},
 }));
 vi.mock('@/lib/local-session', () => ({ ensureSession: async () => '', clearLocalSession: () => {} }));
+// Sending also asks for the office member session (loaded on demand); with fake timers a real
+// module load would land after the timed window, so it answers at once here.
+vi.mock('@/lib/company-api', () => ({ companyApi: { memberSessionHeaders: async () => ({}) } }));
 
 // A stalled service: the request only ends when its signal aborts.
 const stalled = vi.fn((_path: string, init: RequestInit) => new Promise((_resolve, reject) => {

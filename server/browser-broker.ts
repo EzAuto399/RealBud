@@ -31,6 +31,8 @@ import {
   observationRefs,
   approvalUrl,
   pageOrigin,
+  effectiveRules,
+  type BrowserApprovals,
   type BrowserApprovalStore,
   type BrowserAuthorization,
   type BrowserClassification,
@@ -38,6 +40,8 @@ import {
   type BrowserFenceProjection,
 } from "./browser-authority.ts";
 import { loadRules } from "./rules.ts";
+import { governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
+import { OFFICE_UNCHECKED, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { signInHandoverBlocks } from "./browser-sign-in.ts";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, saveAskAttachment } from "./ask-attach.ts";
 import { DATA_DIR } from "./config.ts";
@@ -121,6 +125,7 @@ const hash = (text: string | Buffer) => createHash("sha256").update(text).digest
 const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "object" && !Array.isArray(v));
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
 const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
+const settingsChanged = (subject: string) => `Approval settings changed to Don't use for ${subject}; Bud did not do it.`;
 const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
 type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
 /** The type the bytes must show for a download to become a readable workroom attachment. */
@@ -210,6 +215,8 @@ export async function startBrowserBroker(options: {
   approvals?: BrowserApprovalStore;
   /** Site read/prefill rules, read per step so a newly saved rule applies. */
   rules?: () => ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
+  /** The approval settings that govern this desktop (default: the host's registered store), read per step. */
+  approvalSettings?: () => Promise<ApprovalSettings[]>;
   assertCapability?: () => void;
   now?: () => number;
   /** RealBud's private folder for this task's downloads and granted uploads. Never supplied by a model. */
@@ -260,7 +267,16 @@ export async function startBrowserBroker(options: {
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } }),
     ...(learn ? [proposeTool(Object.keys(LEARNABLE_SLOTS[learn.pack.portal]))] : [])];
-  const rules = options.rules ?? (() => context.rules ?? loadRules());
+  // Standing rules are read on every decision; the approval settings once per step and again after each wait for a person.
+  const standing = options.rules ?? (() => context.rules ?? loadRules());
+  let approvalsNow: BrowserApprovals = null;
+  const readApprovals = async (afterCard = false) => {
+    const read = options.approvalSettings ?? governingApprovals;
+    approvalsNow = await (afterCard ? settingsAfterCard(read) : read()).catch(() => null);
+  };
+  /** After a card, settings this office desktop still could not check refuse the step. */
+  const unverified = () => approvalsNow?.some(settings => settings.unchecked) === true;
+  const rules = () => effectiveRules(approvalsNow, standing());
   let closed = false; let session: string | null = null; let busy = false;
   // A task continuing after sign-in keeps what it already spent.
   let used = usage.get(grant.id)?.used ?? 0;
@@ -280,7 +296,7 @@ export async function startBrowserBroker(options: {
     for (const listener of decisionListeners) { try { listener({ threadId: options.threadId, runId: options.runId, entry, ...(action ? { action } : {}) }); } catch { /* evidence display is best effort */ } }
   };
   const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string, taskScope?: NonNullable<Parameters<typeof authorizeBrowserAction>[4]>["taskScope"]): BrowserAuthorization =>
-    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used, taskScope, ...(portal ? { portal } : {}) });
+    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { ...rules(), now: now(), used, taskScope, ...(portal ? { portal } : {}) });
   const ensure = async (signal: AbortSignal) => {
     check(signal);
     if (checkpoint && (await runtime.status()).selectedBrowserId !== checkpoint.browserId) throw problem("The browser profile changed after sign-in. Check the intended page again before continuing.");
@@ -305,13 +321,23 @@ export async function startBrowserBroker(options: {
   /** Routine steps: allow (grant or site rule), ask, or deny, exactly as decided. A card's params.url is approvalUrl (the
    * record path, for the local card and the private approval record only); the event log (withPageOrigin), decision
    * notes and run evidence keep pageOrigin, and learned-path evidence a declared route (portalRoute). */
-  const gate = async (tool: string, auth: BrowserAuthorization, params: BrowserJson, signal: AbortSignal, presentAs = tool) => {
+  const gate = async (tool: string, auth: BrowserAuthorization, params: BrowserJson, signal: AbortSignal, presentAs = tool, again?: () => BrowserAuthorization) => {
     check(signal);
     if (auth.decision === "deny") { publish("denied", fenceDenialNote(tool, auth.reason)); throw problem(auth.reason); }
     if (auth.decision === "allow") { if (auth.note) publish("action", auth.note); check(signal); return; }
     publish("asked", fenceEvidenceLine({ tool }, { kind: "ask" }));
-    if (!await options.approve(presentAs, params, auth.summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
+    const summary = approvalsNow?.some(settings => settings.unchecked) ? `${auth.summary} ${OFFICE_UNCHECKED}` : auth.summary;
+    if (!await options.approve(presentAs, params, summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
+    await readApprovals(true);
     check(signal);
+    // The step is authorized again with the settings read after the wait: a Don't use saved meanwhile refuses it.
+    // Settings this office desktop still could not check refuse it too.
+    const now = unverified() ? { decision: "deny" as const, reason: OFFICE_NOT_CHECKED, refusedBy: undefined } : again?.();
+    if (now?.decision === "deny") {
+      const reason = now.refusedBy ? settingsChanged(now.refusedBy) : now.reason;
+      operations.deny({ threadId: options.threadId, toolName: tool, toolSlugs: [] });
+      publish("denied", fenceDenialNote(tool, reason)); throw problem(reason);
+    }
   };
   const observe = async (tabId: number, signal: AbortSignal, help = false, scroll?: string): Promise<{ text: string; truncated: boolean; source: string }> => {
     const before = await currentTab(tabId, signal);
@@ -438,11 +464,14 @@ export async function startBrowserBroker(options: {
     // A Stop (broker close, turn interrupt, browser stop) is recorded as a stop, never as the person's refusal.
     if (closed || signal.aborted || !options.isActive()) return refuse("stopped", STOPPED);
     if (!approved) return refuse("denied", NOT_APPROVED);
+    await readApprovals(true);
     try { check(signal); } catch (error) { return refuse("stopped", STOPPED, error); }
+    if (unverified()) return refuse("denied", OFFICE_NOT_CHECKED);
     // The approval is for the page, control and facts the person saw, not whatever replaced them.
     try { await observe(tabId, signal); } catch (error) { return refuse("changed", "The page changed after approval. Nothing was pressed.", error); }
     const again = snapshots.get(tabId);
     const recheck = again && again.url === url && again.refs.get(ref) === label ? authorize(name, url, args, again.text) : null;
+    if (recheck?.decision === "deny" && recheck.refusedBy) return refuse("denied", settingsChanged(recheck.refusedBy));
     if (!recheck || recheck.decision !== "ask" || recheck.draft?.fingerprint !== saved.fingerprint) {
       return refuse("changed", `The ${noun} details or control changed after approval. Nothing was pressed. Read the page and prepare a new step.`);
     }
@@ -493,6 +522,7 @@ export async function startBrowserBroker(options: {
     let approval: { id: string; noun: string; host: string } | undefined;
     let staged: string | undefined; let logged: Omit<BrowserActionRecord, "outcome"> | undefined;
     try {
+      await readApprovals(); check(signal);
       if (name === "browser_tabs") {
         await gate(name, authorize(name, null, args), {}, signal);
         return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.id, site: new URL(row.url).origin, borrowed: borrowed.has(row.id) })) });
@@ -521,7 +551,7 @@ export async function startBrowserBroker(options: {
           publish("denied", fenceDenialNote(name, WRONG_BROWSER)); throw problem(WRONG_BROWSER);
         }
         check(signal);
-        await gate(name, authorize(name, url, args, undefined, taskScope), { url: approvalUrl(url) }, signal, "browser_read");
+        await gate(name, authorize(name, url, args, undefined, taskScope), { url: approvalUrl(url) }, signal, "browser_read", () => authorize(name, url, args, undefined, taskScope));
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
         receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
         await runtime.claimTab(owner, tabId, signal);
@@ -532,7 +562,7 @@ export async function startBrowserBroker(options: {
       if (name === "browser_read") {
         if ("all_rows" in args && typeof args.all_rows !== "boolean") throw problem("This browser tool or its arguments are not available.");
         const auth = authorize(name, url, args, undefined, taskScope);
-        await gate(name, auth, { url: approvalUrl(url) }, signal);
+        await gate(name, auth, { url: approvalUrl(url) }, signal, name, () => authorize(name, url, args, undefined, taskScope));
         // Only the portal's own declared grid container is scrolled, and only on its origin: a selector never comes from the model.
         const scroll = args.all_rows === true && portal?.gridScroll && pageOrigin(url) === pageOrigin(portal.origin) ? portal.gridScroll : undefined;
         const observed = await observe(tabId, signal, true, scroll);
@@ -550,7 +580,7 @@ export async function startBrowserBroker(options: {
         const target = auth.decision === "deny" ? null : jobBrowserUrl(args.url, sites);
         if (!target) { await gate(name, auth, {}, signal); throw problem("Open this page yourself."); }
         action = { kind: "navigate", tabId, url: target.href };
-        await gate(name, auth, { url: approvalUrl(target.href) }, signal);
+        await gate(name, auth, { url: approvalUrl(target.href) }, signal, name, () => authorize(name, url, args, snapshots.get(tabId)?.text, taskScope));
         observed = { tool: "navigate", role: "", label: "", path: portalRoute(learn?.pack, target) };
       } else {
         const snap = snapshots.get(tabId); const target = typeof args.ref === "string" ? args.ref : "";
@@ -568,7 +598,7 @@ export async function startBrowserBroker(options: {
           const page = approvalUrl(url);
           const shown = name === "browser_fill" ? { url: page, label, value: args.value } : name === "browser_press" ? { url: page, label, key: browserKey(args.key)?.spec }
             : name === "browser_select" ? { url: page, label, values: args.values } : upload ? { url: page, label, file: upload.name } : { url: page, label };
-          await gate(name, auth, shown, signal);
+          await gate(name, auth, shown, signal, name, () => authorize(name, url, args, snap.text, taskScope));
           // An approval is for the observed control and step, not whatever replaced them while waiting.
           await observe(tabId, signal);
           const fresh = snapshots.get(tabId);

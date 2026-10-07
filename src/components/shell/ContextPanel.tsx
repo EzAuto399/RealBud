@@ -6,7 +6,8 @@ import { queueCounts } from "@/lib/desk-queue";
 import { isObservedStale } from "@/lib/observed-stale";
 import { jobRunStatusChip } from "@/lib/job-run";
 import { fmtDateTime } from "@/lib/au";
-import { useStore } from "@/state/store";
+import { useStore, visibleMessages } from "@/state/store";
+import { pendingApprovals, waitingLine } from "../PendingApproval";
 import { CardMenu, useDeskArrangement } from "./DeskArrangement";
 import { clampPanelWidth, nextLoopLine, shellPanelLocked } from "./shell-layout";
 import { useDeskNav } from "./use-desk-nav";
@@ -37,11 +38,53 @@ function EvidencePanel() {
   </>);
 }
 
+export interface BudWaitingRow { key: string; line: string; open: () => void }
+/** Bud's live approval cards across conversations, mirrored; the decision stays on the card. */
+export function BudWaiting({ rows }: { rows: BudWaitingRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="mb-3">
+      <p className="font-medium text-ink">Bud is waiting on you: {rows.length}</p>
+      <ul className="mt-1 space-y-1">
+        {rows.map(row => (
+          <li key={row.key}>
+            <button type="button" className="rb-panel-row" aria-label={`Open the conversation: ${row.line}`} onClick={row.open}>
+              <span className="block truncate text-[13px]">{row.line}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function useBudWaiting(): BudWaitingRow[] {
+  const { state, dispatch } = useStore();
+  const [now, setNow] = useState(() => Date.now());
+  const sources = [
+    ...state.bots.map(bot => ({ id: bot.id, bud: bot.id === "bud" || bot.name === "Bud", messages: visibleMessages(bot) })),
+    ...state.groups.map(group => ({ id: group.id, bud: false, messages: group.messages })),
+  ];
+  const rows = sources.flatMap(source => pendingApprovals(source.messages).map(pending => ({
+    key: `${source.id}:${pending.requestId}`, line: waitingLine(pending, now),
+    open: () => dispatch(source.bud ? { type: "showAsk" } : { type: "select", id: source.id }),
+  })));
+  // "2 min left" counts down while anything waits.
+  useEffect(() => {
+    if (!rows.length) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [rows.length]);
+  return rows;
+}
+
 function ApprovalsPanel() {
   const nav = useDeskNav();
+  const bud = useBudWaiting();
   const waiting = nav.rows.filter(row => row.bucket === "now");
-  if (!waiting.length) return <p className="text-ink-muted">Nothing is waiting for your approval.</p>;
+  if (!waiting.length) return bud.length ? <BudWaiting rows={bud} /> : <p className="text-ink-muted">Nothing is waiting for your approval.</p>;
   return (<>
+    <BudWaiting rows={bud} />
     <ul className="space-y-1">
       {waiting.slice(0, APPROVAL_LIMIT).map(row => (
         <li key={row.id}>

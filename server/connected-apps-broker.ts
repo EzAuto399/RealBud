@@ -7,7 +7,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { readMcpRpcResponse } from "./composio.ts";
 import { redactSecrets, redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, validAppToolName, validAppToolSlug, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
+import { appToolOperations, classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
+import { approvalGroupKey, decide, defaultApprovalSettings, lockedOff, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { approvalsEditableHere, governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
+import type { ApprovalCardDetails } from "./contracts.ts";
 import { managedMailboxAccess } from "./managed-connectors.ts";
 
 const DISCOVERY = new Set(["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS"]);
@@ -107,7 +110,10 @@ export async function startConnectedAppsBroker(options: {
   url?: string;
   headers?: Record<string, string>;
   isActive(): boolean;
-  approve(summary: string, signal: AbortSignal): Promise<boolean>;
+  /** Shows the one-time card: `summary` is plain lines, `card` its exact request, phone class and read offer. */
+  approve(summary: string, signal: AbortSignal, card?: ApprovalCardDetails): Promise<boolean>;
+  /** The approval settings that govern this desktop (default: the host's registered store). */
+  approvalSettings?: () => Promise<ApprovalSettings[]>;
   operations?: ConnectedAppOperationStore;
   localTransport?: ConnectedAppsLocalTransport;
   /** Server-selected account shown on read approvals, never a caller argument. */
@@ -278,23 +284,60 @@ export async function startConnectedAppsBroker(options: {
             let recheckDraftDigest: string | undefined;
             const receipt = { threadId: options.threadId, toolName: call.name, toolSlugs: call.name === "COMPOSIO_MULTI_EXECUTE_TOOL"
               ? (call.arguments!.tools as { tool_slug: string }[]).map(row => row.tool_slug) : [] };
-            if (policy === "review") {
-              const context = office ? `Bud wants to use the ${office}. Review the exact operation and account or recipient below. This approval applies once to this request only.\n\n` : options.localTransport
-                ? `Gmail read-only review. Account: ${options.readOnlyAccountId || "the account selected in Connected apps"}. At most 10 threads from the last 7 days; only thread IDs returned in this task can be read. No sends, drafts, or mailbox changes. This approval applies once to this request only.\n\n`
-                : "Bud wants to use a connected app. Review the exact operation and account or recipient below. This approval applies once to this request only.\n\n";
-              let summary = (context + JSON.stringify(redactSecrets(call), null, 2)).replaceAll(options.key, "[private app key]");
+            // Approval settings (Workspace → Approvals) after the boundary's own
+            // checks: Ask and Don't use only tighten, and only an owner-reviewed
+            // direct read or a this-task grant on an allowlisted read is widened.
+            let review = policy === "review";
+            let approval: string | undefined;
+            let card: ApprovalCardDetails = {};
+            let unchecked = false;
+            const rows = appRows(call);
+            const how = { direct: !options.managed || Boolean(options.localTransport), local: Boolean(options.localTransport) };
+            const readSettings = options.approvalSettings ?? governingApprovals;
+            if (rows.length) {
+              let settings: ApprovalSettings[];
+              try { settings = await readSettings(); }
+              catch { return errorResult(APPROVALS_RECOVERY); }
+              const verdict = appVerdict(rows, settings, how);
+              if (verdict.decision === "refuse") return errorResult(verdict.reason);
+              review = verdict.decision === "card" && !(verdict.offer && taskReadGrants.has(options.threadId, verdict.offer.group));
+              unchecked = settings.some(item => item.unchecked);
+              card = { remote: options.managed && !options.localTransport && MAIL_SENDS.has(call.name) ? "send" : verdict.remote,
+                ...(verdict.offer ? { readOffer: { ...verdict.offer, always: await approvalsEditableHere() } } : {}) };
+            }
+            if (review) {
+              const safe = redactSecrets(call) as Call;
+              const hide = (text: string) => redactSecretsInText(text.replaceAll(options.key, "[private app key]"));
+              const shown = appCardText(safe, { office, account: options.localTransport ? options.readOnlyAccountId || "the account selected in Connected apps" : undefined });
+              let summary = hide(shown.text);
+              // A phone approves only what it shows in full: a shortened or redacted card stays on this computer.
+              if ((card.remote === "read" || card.remote === "write") && (!shown.complete || summary !== shown.text || JSON.stringify(safe) !== JSON.stringify(call))) card = { ...card, remote: "desktop-only" };
+              let detail = hide(JSON.stringify(safe, null, 2));
               if (options.managed && !options.localTransport && MAIL_SENDS.has(call.name)) {
                 // A message is approved only as the person will see it sent:
                 // every recipient, the subject, the body and the attachments.
                 const review = await prepareMailReview(call, reviewRead, office).catch(() => null);
                 if (!review || typeof review === "string") return errorResult(typeof review === "string" ? review : MAIL_UNREADABLE);
-                if (review.card.includes(options.key) || redactSecretsInText(review.card) !== review.card) return errorResult("This message contains what looks like a password, key or token, so Bud will not send it. Remove it and prepare the message again.");
-                summary = review.card;
+                if ([review.card, review.exact].some(text => text.includes(options.key) || redactSecretsInText(text) !== text)) return errorResult("This message contains what looks like a password, key or token, so Bud will not send it. Remove it and prepare the message again.");
+                summary = review.card; detail = review.exact;
                 if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
-              if (!await options.approve(summary, controller.signal)) {
-                operations.deny(receipt);
-                return errorResult("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
+              if (unchecked) summary = `${summary}\n${OFFICE_UNCHECKED}`;
+              // The review id rides on the card and is read back after the answer so the receipt names a phone answer.
+              const reviewId = randomBytes(6).toString("hex");
+              openReviews.set(reviewId, { threadId: options.threadId });
+              let approved: boolean;
+              try { approved = await options.approve(summary, controller.signal, { ...card, detail, reviewId }); }
+              finally { approval = openReviews.get(reviewId)?.approval; openReviews.delete(reviewId); }
+              const refused = (text: string) => { operations.deny({ ...receipt, ...(approval ? { approval } : {}) }); return errorResult(text); };
+              if (!approved) return refused("You did not approve this connected-app action. Nothing was sent or changed by this call. Do not retry without a new user request.");
+              // A Don't use saved while the card waited still refuses it.
+              if (rows.length) {
+                let now: ApprovalSettings[];
+                try { now = await settingsAfterCard(readSettings); } catch { return refused(APPROVALS_RECOVERY); }
+                if (now.some(item => item.unchecked)) return refused(OFFICE_NOT_CHECKED);
+                const again = appVerdict(rows, now, how);
+                if (again.decision === "refuse") return refused(`Approval settings changed to Don't use for ${again.label}; Bud did not do it.`);
               }
             }
             if (controller.signal.aborted || closed || !options.isActive()) {
@@ -322,7 +365,7 @@ export async function startConnectedAppsBroker(options: {
             // person approving the action cannot extend service authority.
             managedService.assertCapability("connected-tools");
             // The durable receipt must exist before any tool is dispatched.
-            operationId = operations.start(receipt).id;
+            operationId = operations.start({ ...receipt, ...(approval ? { approval } : {}) }).id;
           }
           // Recheck after waiting for a person: a cancelled/stale turn cannot act.
           if (controller.signal.aborted || closed || !options.isActive()) return errorResult("Bud stopped this action before it started.");
@@ -426,6 +469,137 @@ export async function startConnectedAppsBroker(options: {
   };
   liveBrokers.add(broker);
   return broker;
+}
+
+// ── Approval settings at this boundary ──
+const APPROVALS_RECOVERY = "The approval settings on this computer need recovery, so Bud did not use the app. Nothing was sent or changed. Check Workspace → Approvals.";
+/** This-task read grants ("Allow for this task" on a read offer): an app's
+ * allowlisted reads run without a card until the turn ends. A grant never
+ * passes an effective Ask or Don't use, nor a direct tool the owner has not
+ * reviewed: the broker checks both again on every call. */
+const taskReads = new Map<string, Set<string>>();
+export const taskReadGrants = {
+  add(threadId: string, group: string): void { if (approvalGroupKey(group)) taskReads.set(threadId, new Set([...taskReads.get(threadId) ?? [], group])); },
+  has: (threadId: string, group: string): boolean => taskReads.get(threadId)?.has(group) === true,
+  clear(threadId: string): void { taskReads.delete(threadId); },
+};
+/** Cards waiting for a person, by the review id each card carries. */
+const openReviews = new Map<string, { threadId: string; approval?: string }>();
+/** Records who answered a waiting card away from this computer, for its receipt. */
+export function recordConnectedAppApproval(threadId: string, reviewId: string, line: string): void {
+  const review = openReviews.get(reviewId);
+  if (review?.threadId === threadId && review.approval === undefined) review.approval = line;
+}
+type AppRow = { slug: string; args: Record<string, unknown> };
+/** The app tools a call dispatches, batch members included; RealBud's own discovery tools have none. */
+function appRows(call: Call): AppRow[] {
+  if (DISCOVERY.has(call.name) || call.name === "COMPOSIO_MANAGE_CONNECTIONS") return [];
+  if (call.name === "COMPOSIO_MULTI_EXECUTE_TOOL") return (call.arguments!.tools as Array<{ tool_slug: string; arguments: Record<string, unknown> }>).map(row => ({ slug: row.tool_slug, args: row.arguments }));
+  return [{ slug: call.name, args: call.arguments ?? {} }];
+}
+/** `app:<toolkit>` for a Composio slug, or null for a name no setting can name. */
+const appGroup = (slug: string): string | null => {
+  const group = NAMESPACED.test(slug) ? `app:${slug.slice(0, slug.indexOf("_")).toLowerCase()}` : "";
+  return approvalGroupKey(group) ? group : null;
+};
+const APP_LABELS: Record<string, string> = { gmail: "Gmail", outlook: "Outlook", googlecalendar: "Google Calendar", googledrive: "Google Drive", googlesheets: "Google Sheets", googledocs: "Google Docs" };
+const appLabel = (group: string) => { const toolkit = group.slice(4); return APP_LABELS[toolkit] ?? toolkit.charAt(0).toUpperCase() + toolkit.slice(1); };
+const STRICTNESS: Record<ApprovalDecision, number> = { run: 0, card: 1, refuse: 2 };
+/** In-app changes a phone may approve: writing or editing a Gmail draft, and a
+ * label edit the policy lets run (never Trash or Spam). Everything else that changes is desktop only. */
+const PHONE_WRITES = new Set(["GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_UPDATE_DRAFT", "GMAIL_ADD_LABEL_TO_EMAIL", "GMAIL_MODIFY_THREAD_LABELS"]);
+type Remote = NonNullable<ApprovalCardDetails["remote"]>;
+type AppVerdict = { decision: "refuse"; reason: string; label: string }
+  | { decision: "run" | "card"; remote: Remote; offer?: { appLabel: string; group: string } };
+/** The strictest answer across a call's rows. A managed row is classed as the
+ * policy above classes it; a direct row only so an owner-reviewed read can run
+ * (it never refuses what a direct connection reviews today). A row no setting
+ * can name keeps today's answer. What a row actually does (pays, sends,
+ * deletes, uploads…) never changes run or card; a locked Don't use on it refuses. */
+export function appVerdict(rows: AppRow[], settings: readonly ApprovalSettings[], how: { direct: boolean; local?: boolean }): AppVerdict {
+  const list = settings.length ? settings : [defaultApprovalSettings()];
+  const calls = rows.map(row => {
+    const policy: Policy = how.direct ? (classifyAppToolCall(row.slug, row.args) === "read" ? "read" : "review") : namespacedPolicy(row.slug, row.args);
+    const operations = appToolOperations(row.slug, row.args);
+    const cls: ApprovalCallClass = policy === "read" ? "read" : policy === "blocked" ? "blocked" : operations[0] ?? "write";
+    const group = appGroup(row.slug);
+    const call: ApprovalCall | null = group ? { group, tool: row.slug, args: row.args, cls, ...(how.direct ? { direct: true } : {}) } : null;
+    const decision: ApprovalDecision = lockedOff(list, operations) ? "refuse" : call ? decide(list, call)
+      : policy === "blocked" ? "refuse" : how.direct || policy === "review" || list.some(item => item.unchecked) ? "card" : "run";
+    // A phone sees exact reads as reads, and a few in-app changes as writes; names confer no authority on a
+    // direct connection, so only the owner's reviewed reads may be answered away from this computer.
+    const phone: Remote = operations.length || cls !== "read" ? "desktop-only"
+      : READ_ONLY_APP_TOOLS.has(row.slug) && (!how.direct || how.local || list.every(item => item.reviewedReads.includes(row.slug))) ? "read"
+      : !how.direct && PHONE_WRITES.has(row.slug) ? "write" : "desktop-only";
+    return { row, call, decision, phone };
+  });
+  if (!calls.length) return { decision: "refuse", reason: "Bud received an invalid app action.", label: "this app" };
+  const strictest = calls.reduce((a, b) => STRICTNESS[b.decision] > STRICTNESS[a.decision] ? b : a);
+  if (strictest.decision === "refuse") {
+    const group = strictest.call?.group;
+    const name = group ? appLabel(group) : "this app";
+    return group && list.some(item => item.groups[group] === "deny")
+      ? { decision: "refuse", label: name, reason: `${name} is set to Don't use in Workspace → Approvals, so Bud did not use it. Nothing was sent or changed.` }
+      : { decision: "refuse", label: `this kind of action in ${name}`, reason: `This kind of action is set to Don't use in Workspace → Approvals, so Bud did not do it in ${name}. Nothing was sent or changed.` };
+  }
+  const remote: Remote = calls.some(({ phone }) => phone === "desktop-only") ? "desktop-only" : calls.some(({ phone }) => phone === "write") ? "write" : "read";
+  // A read offer only where a grant could apply: one app, exact allowlisted reads, and
+  // nothing but a default holding them back (no saved Ask or Don't use, no unreviewed direct tool).
+  const group = calls[0].call?.group;
+  const widened = group ? list.map(item => Object.hasOwn(item.groups, group) ? item : { ...item, groups: { ...item.groups, [group]: "read-without-asking" as const } }) : [];
+  const offer = strictest.decision === "card" && group && calls.every(({ call, row }) => call?.group === group && call.cls === "read" && READ_ONLY_APP_TOOLS.has(row.slug) && decide(widened, call) === "run")
+    ? { appLabel: appLabel(group), group } : undefined;
+  return { decision: strictest.decision, remote, ...(offer ? { offer } : {}) };
+}
+/** Plain lines for a card: the app, the action in words, the account and the
+ * key fields. Each value is one line (a line break shows as ↵, invisible
+ * characters are spelled out); long or nested values point to the exact request. */
+export function appCard(call: Call, where: { office?: string; account?: string } = {}): string {
+  return appCardText(call, where).text;
+}
+/** The card's lines, and whether they show every argument in full (only then may a phone approve it). */
+function appCardText(call: Call, where: { office?: string; account?: string }): { text: string; complete: boolean } {
+  const rows = appRows(call);
+  let complete = true;
+  const cut = <T>(shown: T): T => { complete = false; return shown; };
+  const words = (text: string, key = false) => {
+    const plain = visibleMailText(text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[\s_-]+/g, " ").trim().toLowerCase());
+    const shown = plain.length > 60 ? (key ? cut(plain.slice(0, 60)) : plain.slice(0, 60)) : plain;
+    return shown ? shown.charAt(0).toUpperCase() + shown.slice(1) : "Field";
+  };
+  const action = (slug: string) => `${words(appGroup(slug) ? slug.slice(slug.indexOf("_") + 1) : slug)} (${slug})`;
+  const value = (item: unknown): string => {
+    if (typeof item === "string") {
+      const line = visibleMailText(item.replace(/\r\n?|\n/g, " ↵ ").replace(/\t/g, " "));
+      return line.length > 240 ? cut(`${line.slice(0, 240)}… (${item.length} characters, see Exact request)`) : line || "(empty)";
+    }
+    if (typeof item === "number" || typeof item === "boolean") return String(item);
+    if (item === null) return "none";
+    if (Array.isArray(item) && item.every(entry => entry === null || ["string", "number", "boolean"].includes(typeof entry))) {
+      return item.length ? `${item.slice(0, 10).map(value).join(", ")}${item.length > 10 ? cut(`, and ${item.length - 10} more`) : ""}` : "none";
+    }
+    return cut("see Exact request");
+  };
+  const fields = (args: Record<string, unknown>, indent = "") => {
+    const entries = Object.entries(args);
+    return [...entries.slice(0, 12).map(([key, item]) => `${indent}${words(key, true)}: ${value(item)}`),
+      ...(entries.length > 12 ? [cut(`${indent}And ${entries.length - 12} more fields (see Exact request)`)] : [])];
+  };
+  const apps = [...new Set(rows.map(row => appGroup(row.slug)))];
+  const named = apps.length === 1 && apps[0] ? appLabel(apps[0]) : null;
+  // The account comes first and fields sit indented under their action, so no argument can pass for either.
+  const lines = [where.office ? `Bud wants to use the ${where.office}.` : named ? `Bud wants to use ${named}.` : apps.length > 1 ? "Bud wants to use connected apps." : "Bud wants to use a connected app.",
+    `Account: ${where.office ? `the ${where.office}` : where.account ?? "the account connected in Connected apps"}`];
+  if (call.name === "COMPOSIO_MULTI_EXECUTE_TOOL") {
+    lines.push(`${rows.length} actions in one request, allowed or denied together:`);
+    rows.forEach((row, index) => {
+      const group = appGroup(row.slug);
+      lines.push(`${index + 1}. ${group && !named ? `${appLabel(group)}: ` : ""}${action(row.slug)}`, ...fields(row.args, "   "));
+    });
+  } else lines.push(`Action: ${action(call.name)}`, ...fields(call.arguments ?? {}, "  "));
+  if (where.account) lines.push("Gmail read-only review: at most 10 threads from the last 7 days, and only thread IDs returned in this task can be read. No sends, drafts or mailbox changes.");
+  lines.push("This approval applies once to this request only. The exact request is under Exact request.");
+  return { text: lines.join("\n"), complete };
 }
 
 /** Reads at most 2 KB of a refused gateway reply for its `{ error }` code.
@@ -689,7 +863,7 @@ export const visibleMailText = (value: string): string => value.replace(/[\u0000
 
 /** Saved drafts and Outlook replies name their recipients only by reference:
  * those are read through the same session before the card is shown. */
-async function prepareMailReview(call: Call, read: MailRead, office?: string): Promise<{ card: string; digest?: string; recheck?: () => Promise<string> } | string> {
+async function prepareMailReview(call: Call, read: MailRead, office?: string): Promise<{ card: string; exact: string; digest?: string; recheck?: () => Promise<string> } | string> {
   const a: Obj = call.arguments ?? {};
   const mailbox = a.user_id ?? a.userId;
   if (mailbox !== undefined && mailbox !== "me") return "Bud sends only from the connected account's own mailbox (user_id \"me\"). Nothing was sent.";
@@ -746,9 +920,8 @@ async function prepareMailReview(call: Call, read: MailRead, office?: string): P
       const lines = body.replace(/\r\n?/g, "\n").split("\n");
       return [`${title}, ${body.length} characters, every line shown:`, ...lines.map(line => `| ${line}`)];
     }),
-    "",
-    "Exact request:",
-    JSON.stringify(call, null, 2),
   ].join("\n");
-  return recheck ? { card: visibleMailText(card), digest: JSON.stringify(view), recheck } : { card: visibleMailText(card) };
+  // The exact request goes under the card's "Exact request" disclosure.
+  const exact = visibleMailText(JSON.stringify(call, null, 2));
+  return recheck ? { card: visibleMailText(card), exact, digest: JSON.stringify(view), recheck } : { card: visibleMailText(card), exact };
 }

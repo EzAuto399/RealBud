@@ -10,13 +10,18 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { answerToolCardTap, knowsToolCardPush } from "./remote-tool-cards.ts";
 import type { DeskSnapshot, Draft, DraftKind } from "../shared/contracts.ts";
 
 export type RemoteChannelId = "telegram" | "discord" | "slack";
 
 export type RemoteDecideResult =
-  | { ok: true; stamp: string; draft: Draft }
+  | { ok: true; stamp: string; draft?: Draft }
   | { ok: false; message: string };
+
+/** Button labels; `task` adds a third button ("Allow for this task"). */
+export type DecisionButtons = { allow: string; deny: string; task?: string };
+export type RemoteDecision = "allow" | "deny" | "task";
 
 export type RemoteChannelAdapter = {
   id: RemoteChannelId;
@@ -25,7 +30,7 @@ export type RemoteChannelAdapter = {
   /** Immutable id of the person who paired, only when they paired from a
    * private chat. Null or absent: this pairing is not for decisions. */
   pairedSender?(): string | null;
-  sendDecision(text: string, draftId: string): Promise<void>;
+  sendDecision(text: string, draftId: string, buttons?: DecisionButtons): Promise<void>;
   sendDigest?(text: string): Promise<void>;
 };
 
@@ -112,10 +117,11 @@ export function isQuietHours(now: number, timeZone: string): boolean {
   return minutes < 7 * 60 + 1 || minutes >= 18 * 60;
 }
 
-export function parseRemoteDecisionText(text: string): { decision: "allow" | "deny"; decisionId?: string; reason?: string } | null {
+export function parseRemoteDecisionText(text: string): { decision: RemoteDecision; decisionId?: string; reason?: string } | null {
   const trimmed = text.trim();
-  const scoped = /^(allow|deny)\s+([a-f0-9]{12})(?:\s*[-–—:]\s*(.{1,1000}))?$/i.exec(trimmed);
-  if (scoped) return { decision: scoped[1]!.toLowerCase() as "allow" | "deny", decisionId: scoped[2]!.toLowerCase(), ...(scoped[3] && scoped[1]!.toLowerCase() === "deny" ? { reason: scoped[3].trim() } : {}) };
+  // `task <id>` answers a read card "Allow for this task", for channels without buttons.
+  const scoped = /^(allow|deny|task)\s+([a-f0-9]{12})(?:\s*[-–—:]\s*(.{1,1000}))?$/i.exec(trimmed);
+  if (scoped) return { decision: scoped[1]!.toLowerCase() as RemoteDecision, decisionId: scoped[2]!.toLowerCase(), ...(scoped[3] && scoped[1]!.toLowerCase() === "deny" ? { reason: scoped[3].trim() } : {}) };
   if (/^(yes|y|allow)$/i.test(trimmed)) return { decision: "allow" };
   const deny = trimmed.match(/^(no|n|deny)(?:\s*[-–—:]\s*(.+))?$/i);
   if (!deny) return null;
@@ -149,10 +155,10 @@ export async function decideRemoteText(channel: RemoteChannelId, chatKey: string
   return { ok: false, message: `Review the card, then use its buttons or reply “allow ${current}” or “deny ${current}”. Nothing has changed.` };
 }
 
-export function parseDecisionCallback(data: string): { draftId: string; decision: "allow" | "deny" } | null {
-  const match = /^d:([\w-]+):(allow|deny)$/.exec(data.trim());
+export function parseDecisionCallback(data: string): { draftId: string; decision: RemoteDecision } | null {
+  const match = /^d:([\w-]+):(allow|deny|task)$/.exec(data.trim());
   if (!match) return null;
-  return { draftId: match[1]!, decision: match[2] as "allow" | "deny" };
+  return { draftId: match[1]!, decision: match[2] as RemoteDecision };
 }
 
 function readyLine(kind: DraftKind): string {
@@ -198,7 +204,7 @@ export function decideRemotely(
   channel: RemoteChannelId,
   chatKey: string,
   decisionId: string,
-  decision: "allow" | "deny",
+  decision: RemoteDecision,
   reason: string | undefined,
   byName: string,
   senderKey: string | null,
@@ -210,7 +216,7 @@ async function decideRemotelyAdmitted(
   channel: RemoteChannelId,
   chatKey: string,
   decisionId: string,
-  decision: "allow" | "deny",
+  decision: RemoteDecision,
   reason: string | undefined,
   byName: string,
   senderKey: string | null,
@@ -219,6 +225,11 @@ async function decideRemotelyAdmitted(
   const adapter = bound.channels.find((item) => item.id === channel);
   if (!adapter || adapter.pairedKey() !== chatKey) return { ok: false, message: ELSEWHERE };
   if (!remoteSenderMayDecide(channel, chatKey, senderKey)) return { ok: false, message: ONLY_PAIRED };
+  // An id that is not this channel's Desk card may be a live action card Bud pushed.
+  if (pendingByChannel.get(channel)?.decisionId !== decisionId && knowsToolCardPush(decisionId)) {
+    return answerToolCardTap(channel, chatKey, senderKey!, byName, decisionId, decision);
+  }
+  if (decision === "task") return { ok: false, message: STALE_CARD };
 
   const snapshot = bound.desk.snapshot();
   if (snapshot.escalations.some((item) => item.id === decisionId)) {

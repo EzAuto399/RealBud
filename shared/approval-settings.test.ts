@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyAppTool, MAIL_READS, MAIL_SENDS } from "./app-tool-policy.ts";
-import { decide, defaultApprovalSettings, normalizeApprovalSettings, PER_INSTANCE_CLASSES, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "./approval-settings.ts";
+import { decide, defaultApprovalSettings, normalizeApprovalSettings, PER_INSTANCE_CLASSES, READ_ONLY_APP_TOOLS, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "./approval-settings.ts";
 
 const settings = (groups: Record<string, ApprovalChoice> = {}, reviewedReads: string[] = []): ApprovalSettings =>
   ({ version: 1, purpose: "approval-settings", groups, reviewedReads });
@@ -123,5 +123,15 @@ describe("decide", () => {
     expect(decide([reviewed], { ...read, tool: "GMAIL_LIST_THREADS", direct: true })).toBe("card");
     // Reviewed is not enough without Read without asking: a direct connection defaults to Ask.
     expect(decide([settings({}, ["GMAIL_FETCH_EMAILS"])], { ...read, direct: true })).toBe("card");
+  });
+  it("cards whatever would run while an office desktop's settings are unchecked; Don't use and blocked still refuse, and no save can carry the mark", () => {
+    const unchecked = uncheckedOfficeSettings();
+    expect(decide([settings(), unchecked], read)).toBe("card");
+    expect(decide([settings({ "app:gmail": "read-without-asking" }, ["GMAIL_FETCH_EMAILS"]), unchecked], { ...read, direct: true })).toBe("card");
+    expect(decide([settings({ "app:gmail": "deny" }), unchecked], read)).toBe("refuse");
+    expect(decide([unchecked], { ...read, cls: "blocked" })).toBe("refuse");
+    expect(decide([unchecked], { ...read, tool: "GMAIL_SEND_EMAIL", cls: "send" })).toBe("card");
+    expect(decide([unchecked], { group: "site:portal.example", tool: "browser_read", cls: "read" })).toBe("card");
+    expect(() => normalizeApprovalSettings(unchecked)).toThrow();
   });
 });

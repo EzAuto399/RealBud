@@ -80,7 +80,14 @@ export interface OptionCardData extends ApprovalCardMeta {
   memoryReview?: MemoryApprovalReview;
   /** A consequential browser step's verified facts and expiry. Re-validated
    * before display; null or damaged is held, never approvable. */
-  browserApproval?: BrowserApprovalCard | null;
+  browserApproval?: BrowserApprovalCard | null;  /** The exact request behind a plain-line card (`subtitle`), for an "Exact request" disclosure. */
+  detail?: string;
+  /** A read-only allowlisted app read: offer "Allow for this task" (respond
+   * `scope: "task"`) and, when `always`, "Always allow reading {appLabel}"
+   * (`scope: "always-reads"`). */
+  readOffer?: { appLabel: string; always: boolean };
+  /** Where the card is out besides this computer ("Also on Telegram"), or why not; a quiet line, never a hold. */
+  phoneNote?: string;
 }
 
 export interface Message {
@@ -392,8 +399,9 @@ type Action =
       requestId: string;
       behavior: "allow" | "deny" | "answer";
       message?: string;
-      /** Expiring provider-native grant for matching steps in this task. */
-      scope?: "once" | "session";
+      /** Expiring provider-native grant for matching steps in this task. A read
+       * offer answers `task` (this app's reads for this task) or `always-reads`. */
+      scope?: "once" | "session" | "task" | "always-reads";
       /** Standing site rule saved with this allow (portal read/prefill). */
       rule?: { surface: PortalRuleOfferSurface; origin: string };
       /** remember this exact grant (the server's allowKey) for the bot */
@@ -899,10 +907,14 @@ const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 /** Approval changes on an office member's computer are checked against that
  * member's department rights, so these calls carry the tab's member session
- * exactly as company calls do (`companyApi`, loaded on demand). */
-const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond)(?:\?|$)/;
-const memberSessionHeaders = async (): Promise<Record<string, string>> =>
-  import("@/lib/company-api").then(module => module.companyApi.memberSessionHeaders(), () => ({}));
+ * exactly as company calls do (`companyApi`, loaded on demand). A message that
+ * starts Bud's turn carries it too, so Bud's approval settings card acts as
+ * this person (server `personTurn`). */
+const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond|bots\/[\w-]+\/(?:messages|steer|queued-message|messages\/[\w-]+\/edit))(?:\?|$)/;
+// Never lets a missing or failing office session stop the request itself.
+const memberSessionHeaders = async (): Promise<Record<string, string>> => {
+  try { return (await import("@/lib/company-api")).companyApi.memberSessionHeaders(); } catch { return {}; }
+};
 
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;

@@ -60,7 +60,7 @@ import { createPropertyReferenceApi, createPropertyReferenceStore } from './prop
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionBookingsStore, createInspectionsApi, runInspectionDraft } from './inspection-bookings.ts';
 import { createAustinPack } from './austin-pack.ts';
-import { bindWorkflowSettings } from './workflow-settings-broker.ts';
+import { bindApprovalPolicy, bindWorkflowSettings } from './workflow-settings-broker.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createLoopChatCards } from './loop-chat-cards.ts';
 import type { LoopRun } from '../shared/contracts.ts';
@@ -88,7 +88,7 @@ import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } fro
 import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRules } from './permission-policy.ts';
 import { applyLawDrift, LAW_WATCH_UNAVAILABLE, lawWatchView, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
-import { createApprovalSettings } from './approval-settings.ts';
+import { createApprovalSettings, governApprovals, governingApprovals } from './approval-settings.ts';
 import { appendHistory, listHistory } from "./computer-history.ts";
 import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
 import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
@@ -168,7 +168,7 @@ import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
 import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { asksForOfficeMailbox, revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, CONNECTED_APP_APPROVAL, recordConnectedAppApproval, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
 import {
   containerComputerAction,
   containerComputerScreenshot,
@@ -197,7 +197,7 @@ import { askBrowserRuntime, askPortalPackLoader, askSignInRuntime, useAskBrowser
 import { askTaskSignIn } from "./ask-task-sign-in.ts";
 import type { SignInOutcome } from "./browser-sign-in.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
-import { jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
+import { effectiveRules, jobBrowserUrl, legacyBrowserGrant } from "./browser-authority.ts";
 import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -234,12 +234,12 @@ import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEven
 import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
-import { containsCredential } from "./redact.ts";
+import { containsCredential, redactSecretsInText } from "./redact.ts";
 import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
 import { connectionFailureReply, connectionCheckReply } from "./connection-outcome.ts";
 import { formatConnectedAppsReply, parseConnectedStatusIntent } from "./connected-status-intent.ts";
-import { parseRequestDecision } from "./request-decision.ts";
+import { parseRequestDecision, readGrantError, saveAlwaysReads, type ParsedRequestDecision } from "./request-decision.ts";
 import { TurnWatchdog, type TurnExpiryReason } from "./turn-watchdog.ts";
 import { SingleFlight } from "./single-flight.ts";
 import { writeDeskContext } from "./desk-context.ts";
@@ -277,10 +277,12 @@ import type { ChannelsPayload } from "./channels/types.ts";
 import { pulseLoopSettled } from "./pulses.ts";
 import {
   bindRemoteDecisions,
+  isQuietHours,
   notifyDeskSnapshot,
   startRemoteDecisionFlush,
   stopRemoteDecisionFlush,
 } from "./remote-decisions.ts";
+import { bindRemoteToolCards, remoteToolCardOpened, remoteToolCardResolved, type ToolCardAnswerer } from "./remote-tool-cards.ts";
 import { buildSupportBundle, supportBundleRequest } from "./support-bundle.ts";
 import { createLearnedRecipeStore, parseLearnTitle, type LearnedRecipeStore } from "./learned-recipes.ts";
 import { compileLearnedSteps } from "./learn-compile.ts";
@@ -1106,6 +1108,9 @@ const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messa
 const toolNameByItem = new Map<string, string>(); // threadId:itemId -> tool title (history)
 const turnStartedAt = new Map<string, number>(); // threadId:turnId -> started ms
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+/** A paired phone's answer: who and where, and the line its receipts show. */
+type PhoneAnswer = { by: ToolCardAnswerer; line: string };
+const phoneAnswers = new Map<string, PhoneAnswer>(); // threadId:requestId, answered by phone until resolved
 
 async function denyPendingRequests(threadId: string, instance: ProviderInstance | null | undefined): Promise<void> {
   const prefix = `${threadId}:`;
@@ -1193,11 +1198,12 @@ function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   const fence = fenceContextFor(event.threadId);
   if (!fence) return event;
   const decision = fenceDecision(
-    { ...fence, rules: loadRules() },
+    { ...fence, ...effectiveRules() },
     { tool: event.tool, params: event.params, summary: event.summary },
   );
   const payload = fencePayload(decision);
-  return payload ? { ...event, ...(canUseReviewedPortalRules(event, decision) ? { approvalPolicy: undefined } : {}), fence: payload } : event;
+  // A site's Ask every time stays once-only: no saved site rule may answer it.
+  return payload ? { ...event, ...(!decision.siteAsks && canUseReviewedPortalRules(event, decision) ? { approvalPolicy: undefined } : {}), fence: payload } : event;
 }
 
 bus.subscribe((raw: RuntimeEvent) => {
@@ -1355,6 +1361,8 @@ bus.subscribe((raw: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      // Set when the site's Ask every time decided this request: no generic rule answers it below.
+      let siteAsks = false;
       if (permission && asker && event.requestId && !fromBroker && event.tool !== HERMES_MEMORY_APPROVAL && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
         const fence = fenceContextFor(event.threadId);
         const request = { tool: event.tool, params: event.params, summary: event.summary };
@@ -1403,7 +1411,8 @@ bus.subscribe((raw: RuntimeEvent) => {
           })();
           break;
         }
-        const decision = fenceDecision({ ...fence, rules: loadRules() }, request);
+        const decision = fenceDecision({ ...fence, ...effectiveRules() }, request);
+        siteAsks = decision.siteAsks === true;
         const allowNote = decision.kind === "allow" ? ruleAllowNote(decision) : undefined;
         if (!(onceApproval && decision.kind === 'allow')) recordFenceEvidence(
           event.threadId,
@@ -1452,7 +1461,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // says. Only standing rules settle one (guards still win).
       let settled: string | null = null;
       let ruleDeny = false;
-      if (permission && !onceApproval && !fromBroker && asker && event.requestId && event.tool !== "bud_connected_app_action") {
+      if (permission && !onceApproval && !fromBroker && !siteAsks && asker && event.requestId && event.tool !== "bud_connected_app_action") {
         const verdict = evaluateRules(loadRules(), event.tool, event.summary);
         if (verdict) {
           const key = approvalKey(event.tool, event.summary);
@@ -1528,13 +1537,25 @@ bus.subscribe((raw: RuntimeEvent) => {
           held: onceApproval ? 'This request needs your approval once. Saved rules do not apply.' : permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
           ...(event.type === "request.opened" && event.fence ? { fence: event.fence } : {}),
           ...(event.type === "request.opened" && event.browserApproval ? { browserApproval: event.browserApproval } : {}),
+          // The broker's card metadata: deadline, phone class, the exact request and a read offer.
+          ...(event.deadline ? { deadline: event.deadline } : {}),
+          ...(event.remote ? { remote: event.remote } : {}),
+          ...(event.detail ? { detail: redactSecretsInText(event.detail) } : {}),
+          ...(permission && event.readOffer ? { readOffer: { ...event.readOffer } } : {}),
+          ...(permission && event.reviewId ? { reviewId: event.reviewId } : {}),
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
+      if (permission && event.requestId) void remoteToolCardOpened(event.threadId, event.requestId).catch(() => {});
       break;
     }
     case "request.resolved": {
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
+      // Answered from a paired phone through answerLiveRequest; a timeout or stop is never the person's answer.
+      const phone = event.requestId ? phoneAnswers.get(`${event.threadId}:${event.requestId}`) : undefined;
+      if (event.requestId) phoneAnswers.delete(`${event.threadId}:${event.requestId}`);
+      const byPhone = phone && event.source === "user" ? phone : undefined;
+      if (event.requestId) remoteToolCardResolved(event.threadId, event.requestId, { behavior: event.behavior, resolution: event.resolution });
       if (event.behavior === "allow" && fenceContextFor(event.threadId)) {
         const resolvedCard = messageId
           ? store.messagesFor(event.threadId).find((m) => m.id === messageId)?.card
@@ -1545,14 +1566,15 @@ bus.subscribe((raw: RuntimeEvent) => {
           note:
             resolvedCard?.fence?.surface === "portal-submit"
               ? `Submit pressed with your approval on ${resolvedCard.fence.origin}.`
-              : "Allowed once by you.",
+              : byPhone ? `${byPhone.line}.` : "Allowed once by you.",
         });
       }
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
           const patched = store.patchMessage(event.threadId, messageId, {
-            card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
+            card: { ...existing.card, phoneNote: undefined, answered: event.behavior, dismissed: event.source !== "user", ...(event.resolution ? { resolution: event.resolution } : {}),
+              ...(byPhone ? { answeredBy: byPhone.by, resolution: "phone" as const } : {}) },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
@@ -1576,6 +1598,8 @@ bus.subscribe((raw: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
+      // "Allow for this task" read grants end with the task.
+      taskReadGrants.clear(event.threadId);
       settleAttendedTurn(event.threadId, intentionallyStopped
         ? { ok: false, stopReason: "cancelled", detail: "Stopped by you. Check the last result before running again." }
         : { ok: Boolean(event.ok), stopReason: event.stopReason });
@@ -1712,6 +1736,9 @@ async function startSeatTurn(
     signInResumeId?: string;
     /** Phone channel Ask — full Hermes Bud, not Desk FAQ shortcuts. */
     channelRelay?: boolean;
+    /** The office member session the renderer sent with the person's own message (`personTurn`).
+     * Bud's approval_policy acts as that person for this turn only; never persisted. */
+    memberSession?: string;
   },
 ) {
   const bot = store.bot(botId);
@@ -2015,6 +2042,8 @@ async function startSeatTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+      // An office desktop with no verified department settings fetches them with this person's own session first.
+      if (opts?.memberSession) { await approvals.verifyIfMissing({ headers: { 'x-realbud-member-session': opts.memberSession } }).catch(() => {}); await governingApprovals().catch(() => {}); assertDispatch(); }
       const access = !opts?.systemExtra ? await refreshOfficeSources() : null;
       assertDispatch();
       const allowedApps = officeAppsForTurn(access, Boolean(opts?.systemExtra));
@@ -2079,6 +2108,9 @@ async function startSeatTurn(
         // Working rules (maintenance month rule, inspection rules, Morning priorities)
         // through the same stores and revision checks as their routes; every change
         // and restore is shown on the one-time card first.
+        const memberSession = opts?.memberSession;
+        const singleDesktop = !memberSession && await companyHost.seatIdentity().then(seat => seat === null, () => false);
+        assertDispatch();
         integrations.workflowSettings = bindWorkflowSettings({ maintenance: maintenanceReview, inspection: inspectionRules,
           agency: { read: () => agencySetup.getConfiguration(), save: async body => {
             const previous = (await agencySetup.getConfiguration()).revision;
@@ -2087,7 +2119,11 @@ async function startSeatTurn(
           // Workflow clocks through the same door as PATCH /api/loops/:id, which pins weekly bills to its reviewed setup.
           loops: { listLoops: () => loops!.listLoops(), patchClock: async (id, patch) => loops!.patchClock(id, id === 'weekly-bills' ? { ...patch, timezone: (await authorizeBillWorkflow()).settings.timeZone } : patch) },
           writable: () => desk.recovery.active || privateRestoreLocked ? 'Recover the private book before changing working rules. Nothing was changed.'
-            : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null });
+            : desk.memberKeyForWorker() !== reminderMember ? 'The RealBud member changed, so nothing was changed.' : null,
+          // Approval settings through the same GET and PUT as Workspace → Approvals, which check edit rights on every call.
+          // A single desktop needs no session; an office member's own session, sent with their message, proves who they are.
+          // Without one (a phone, a loop, a queued follow-up) Bud says to change them in Workspace → Approvals.
+          ...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {}) });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
         const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
         integrations.bankSource = {
@@ -2249,6 +2285,40 @@ bindRemoteDecisions({
   commit: commitDesk,
   channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
   storeDir: DATA_DIR,
+});
+
+/** The stored card while its request still waits in this process. */
+function liveRequestCard(threadId: string, requestId: string) {
+  const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
+  const card = messageId ? store.messagesFor(threadId).find((message) => message.id === messageId)?.card : undefined;
+  return card && !card.answered && !card.dismissed ? card : null;
+}
+// Live action cards on a paired phone. A tap answers through answerLiveRequest,
+// exactly like the desktop; quiet hours follow the book's timezone.
+void bindRemoteToolCards({
+  channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
+  file: join(DATA_DIR, "remote-tool-decisions.json"),
+  quiet: () => isQuietHours(Date.now(), desk.snapshot().timezone || "Australia/Sydney"),
+  timeZone: () => desk.snapshot().timezone || "Australia/Sydney",
+  liveCard: liveRequestCard,
+  noteCard: (threadId, requestId, phoneNote) => {
+    const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
+    const card = liveRequestCard(threadId, requestId);
+    if (!messageId || !card) return;
+    const patched = store.patchMessage(threadId, messageId, { card: { ...card, phoneNote } });
+    if (patched) broadcast({ kind: "message.patch", threadId, message: patched });
+  },
+  answer: async (threadId, requestId, choice, by, line) => {
+    try {
+      const parsed = parseRequestDecision({ requestId, behavior: choice === "deny" ? "deny" : "allow", ...(choice === "task" ? { scope: "task" } : {}) });
+      return await answerLiveRequest(threadId, parsed, null, () => {
+        const group = store.groupByThread(threadId);
+        return group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+      }, { by, line });
+    } catch (error) {
+      return { status: (error as { status?: number } | null)?.status ?? 500 };
+    }
+  },
 });
 
 // Desk, Schedule, and a fast double-click all reach the same Recheck door.
@@ -2875,6 +2945,10 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
 // Approval settings: this computer's own, or the office departments that govern its member.
 const approvals = createApprovalSettings({ dataDir: DATA_DIR, seatIdentity: () => companyHost.seatIdentity(),
   company: (path, req, body) => companyHost.handle(path, 'POST', req, body) });
+// The brokers the worker driver starts, and the job fence below, read the same settings. After a person
+// approves a card on an office desktop that still could not check them, they verify once more with the
+// member session the last turn used; still unchecked, the step is refused.
+governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null, verify: () => approvals.verifyAgain() });
 
 // Vendor provisioning arrives with the pairing redeem: the connector credential
 // goes to config, the model key to the private vault, and the worker sees it
@@ -3022,6 +3096,67 @@ const workerAutoSetup = createWorkerAutoSetup({
 
 /** Work an update must not cut short: a turn, a browser task, a held workspace operation. */
 function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0; }
+/** The one way a waiting card is answered (both respond routes). The request
+ * must still be waiting in this process: a persisted card from another client
+ * or an earlier process is never a grant. Client scope, rules and read grants
+ * never broaden a once-only request (guardPermissionDecision); a refusal
+ * before answering leaves the card live, so Allow once still works. `owner`
+ * names the bot whose provider holds the request. */
+async function answerLiveRequest(threadId: string, parsed: ParsedRequestDecision, req: IncomingMessage | null,
+  owner: () => ReturnType<typeof store.bot> | undefined, phone?: PhoneAnswer): Promise<{ status: number; body: unknown }> {
+  const live = `${threadId}:${parsed.requestId}`;
+  const gone = { status: 409, body: { error: "This request is no longer waiting. Refresh the conversation to see its result." } };
+  // Check the live request before saving a rule or grant, or calling the provider.
+  if (!askMessageByRequest.has(live)) return gone;
+  const card = store.messagesFor(threadId).find((message) => message.id === askMessageByRequest.get(live))?.card;
+  let decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
+  const fence = fenceContextFor(threadId);
+  // A session grant tells the worker to stop asking for that tool, and the
+  // fence only sees what the worker asks. During an attended run every
+  // browser action stays a one-time allow; a site rule is the safe
+  // "don't ask again" because the fence re-checks it per request.
+  if (fence && card?.fence && decision.behavior === "allow" && decision.scope === "session") {
+    decision = { ...decision, scope: "once" };
+  }
+  if (parsed.rule) {
+    const ruleError = portalRespondRuleError(parsed.rule, { behavior: decision.behavior, tool: card?.tool, allowedOrigins: fence?.allowedOrigins });
+    if (ruleError) return { status: 400, body: { error: ruleError } };
+    if (!req) return { status: 403, body: { error: "Saved rules are changed on this computer." } };
+    const editor = await approvals.editor(req);
+    if (!editor.ok) return { status: editor.status, body: { error: editor.error } };
+    if (!askMessageByRequest.has(live)) return gone;
+    addPortalRule(parsed.rule.surface, parsed.rule.origin);
+  }
+  if (parsed.readGrant) {
+    // Only the card's own read offer; the broker re-checks the settings and the allowlist on every later call.
+    const refused = readGrantError(card, parsed.readGrant);
+    if (refused || !card?.readOffer) return { status: 400, body: { error: refused } };
+    if (parsed.readGrant === "always-reads") {
+      if (!req) return { status: 403, body: { error: "Approval settings are changed on this computer." } };
+      const saved = await saveAlwaysReads(approvals, req, card.readOffer.group);
+      if (saved) return saved;
+      void governingApprovals().catch(() => {});
+      if (!askMessageByRequest.has(live)) return gone;
+    } else taskReadGrants.add(threadId, card.readOffer.group);
+  }
+  // A running portal recipe task's ask is answered by its runner's channel, never a provider.
+  if (answerPortalRecipeAsk(threadId, parsed.requestId, decision.behavior === "allow")) return { status: 200, body: { ok: true } };
+  const bot = owner();
+  if (!bot) return { status: 404, body: { error: "nothing is waiting on an answer in this conversation" } };
+  const instance = registry.get(bot.modelSelection.instanceId);
+  if (!instance) return { status: 409, body: { error: "provider unavailable" } };
+  if (phone) {
+    // Read back when the request resolves (the card's answeredBy) and by the app broker (its receipt).
+    phoneAnswers.set(live, phone);
+    if (card?.tool === CONNECTED_APP_APPROVAL && card.reviewId) recordConnectedAppApproval(threadId, card.reviewId, phone.line);
+  }
+  try { await instance.adapter.respondToRequest(threadId, parsed.requestId, decision); }
+  catch (error) { phoneAnswers.delete(live); throw error; }
+  return { status: 200, body: { ok: true } };
+}
+/** A turn started by the person's own message carries the office member session the renderer sent with it
+ * (`MEMBER_SESSION_PATHS` in src/state/store.tsx), for Bud's approval_policy only. */
+const personTurn = (req: IncomingMessage): { memberSession?: string } => { const session = companyMemberToken(req); return session ? { memberSession: session } : {}; };
 let localSessionPublished = false;
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -3383,6 +3518,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const reply = await approvals.handle(path, method, req, url.searchParams, method === "PUT" ? await readBody(req, 32_768) : undefined);
+      // A decision that cannot wait (the job fence) uses the last read: refresh it now.
+      if (method === "PUT") void governingApprovals().catch(() => {});
       return json(res, reply.status, reply.body);
     }
 
@@ -5069,7 +5206,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (!text) return json(res, 400, { error: "text required" });
       const sizeError = askMessageSizeError(text);
       if (sizeError) return json(res, 413, { error: sizeError });
-      await startTurn(m[1], text);
+      await startTurn(m[1], text, personTurn(req));
       return json(res, 202, { ok: true });
     }
 
@@ -5089,7 +5226,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
-        await startTurn(bot.id, text);
+        await startTurn(bot.id, text, personTurn(req));
         return json(res, 202, { ok: true, started: true });
       }
       const queued = store.setQueuedMessage(bot.id, text, bot.threadId);
@@ -5126,7 +5263,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
-        await startTurn(bot.id, text);
+        await startTurn(bot.id, text, personTurn(req));
         return json(res, 202, { ok: true, started: true });
       }
       if (steeringBots.has(bot.id)) return json(res, 409, { error: "Bud is already applying another steer" });
@@ -5139,7 +5276,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (connectionOperations.has(bot.id)) {
           connectionOperations.delete(bot.id);
           store.patchBot(bot.id, { busy: false });
-          await startTurn(bot.id, text, { threadId });
+          await startTurn(bot.id, text, { threadId, ...personTurn(req) });
           return json(res, 202, { ok: true, steered: true });
         }
         const instance = registry.get(bot.modelSelection.instanceId);
@@ -5157,7 +5294,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const current = store.bot(bot.id);
         if (!current) return json(res, 404, { error: "no such bot" });
         store.patchBot(current.id, { busy: false });
-        await startTurn(current.id, text, { threadId });
+        await startTurn(current.id, text, { threadId, ...personTurn(req) });
         return json(res, 202, { ok: true, steered: true });
       } finally {
         steeringBots.delete(bot.id);
@@ -5194,7 +5331,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       store.patchBot(bot.id, { rewound: true });
       broadcast({ kind: "message", threadId: bot.threadId, message });
       broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
-      await startTurn(bot.id, text, { userMessage: message });
+      await startTurn(bot.id, text, { userMessage: message, ...personTurn(req) });
       return json(res, 202, { ok: true });
     }
 
@@ -5216,19 +5353,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const parsed = parseRequestDecision(await readBody(req));
-      const { requestId } = parsed;
-      if (!askMessageByRequest.has(`${bot.threadId}:${requestId}`)) {
-        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-      }
-      const liveMessageId = askMessageByRequest.get(`${bot.threadId}:${requestId}`);
-      const card = store.messagesFor(bot.threadId).find(message => message.id === liveMessageId)?.card;
-      const decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
-      if (answerPortalRecipeAsk(bot.threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
-      const instance = registry.get(bot.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
-      return json(res, 200, { ok: true });
+      const reply = await answerLiveRequest(bot.threadId, parseRequestDecision(await readBody(req)), req, () => bot);
+      return json(res, reply.status, reply.body);
     }
     // Answer by THREAD, so a request raised inside a room can be answered
     // too: a member's turn runs on the room's thread, and the bot that
@@ -5236,50 +5362,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const threadId = m[1];
-      const parsed = parseRequestDecision(await readBody(req));
-      const { requestId } = parsed;
-      let { decision } = parsed;
-      // Check the live request before saving a rule or calling the provider.
-      // Persisted cards from another client or an earlier process are not grants.
-      if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
-        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-      }
-      const card = store
-        .messagesFor(threadId)
-        .find((message) => message.id === askMessageByRequest.get(`${threadId}:${requestId}`));
-      decision = guardPermissionDecision(card?.card, decision, parsed.rule);
-      const fence = fenceContextFor(threadId);
-      // A session grant tells the worker to stop asking for that tool, and the
-      // fence only sees what the worker asks. During an attended run every
-      // browser action stays a one-time allow; a site rule is the safe
-      // "don't ask again" because the fence re-checks it per request.
-      if (fence && card?.card?.fence && decision.behavior === "allow" && decision.scope === "session") {
-        decision = { ...decision, scope: "once" };
-      }
-      if (parsed.rule) {
-        const ruleError = portalRespondRuleError(parsed.rule, {
-          behavior: decision.behavior,
-          tool: card?.card?.tool,
-          allowedOrigins: fence?.allowedOrigins,
-        });
-        if (ruleError) return json(res, 400, { error: ruleError });
-        // Refused before answering: the card stays live, so Allow once still works.
-        const editor = await approvals.editor(req);
-        if (!editor.ok) return json(res, editor.status, { error: editor.error });
-        if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
-          return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
-        }
-        addPortalRule(parsed.rule.surface, parsed.rule.origin);
-      }
-      // A running portal recipe task's ask is answered by its runner's channel, never a provider.
-      if (answerPortalRecipeAsk(threadId, requestId, decision.behavior === "allow")) return json(res, 200, { ok: true });
-      const group = store.groupByThread(threadId);
-      const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
-      if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const instance = registry.get(owner.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(threadId, requestId, decision);
-      return json(res, 200, { ok: true });
+      const reply = await answerLiveRequest(threadId, parseRequestDecision(await readBody(req)), req, () => {
+        const group = store.groupByThread(threadId);
+        return group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+      });
+      return json(res, reply.status, reply.body);
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
     if (m && method === "POST") {

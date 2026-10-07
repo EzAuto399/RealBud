@@ -752,6 +752,83 @@ describe("harness HTTP API", () => {
     expect(history.body.entries[0]).toMatchObject({ by: "This computer", department: null, after: next });
   });
 
+  it("answers every card through one live-request helper on both respond routes", async () => {
+    // Source contract: both routes hand their parsed answer to answerLiveRequest, which keeps the
+    // live-card check, guardPermissionDecision, the site-rule checks and the read grants in one place.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const route = (pattern: string) => source.slice(source.indexOf(pattern), source.indexOf("return json(res, reply.status, reply.body);", source.indexOf(pattern)));
+    for (const pattern of ["m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond$/);", "m = path.match(/^\\/api\\/threads\\/([\\w-]+)\\/respond$/);"]) {
+      expect(source).toContain(pattern);
+      expect(route(pattern)).toContain("await answerLiveRequest(");
+      expect(route(pattern)).not.toMatch(/respondToRequest|addPortalRule|guardPermissionDecision/);
+    }
+    const helper = source.slice(source.indexOf("async function answerLiveRequest("), source.indexOf("let localSessionPublished"));
+    for (const check of ["askMessageByRequest.has(live)", "guardPermissionDecision(card, parsed.decision, parsed.rule)", "portalRespondRuleError(", "approvals.editor(req)",
+      "readGrantError(card, parsed.readGrant)", "saveAlwaysReads(approvals, req, card.readOffer.group)", "taskReadGrants.add(threadId, card.readOffer.group)", "instance.adapter.respondToRequest("]) {
+      expect(helper, check).toContain(check);
+    }
+    // Over HTTP: nothing is waiting, so both routes refuse before saving any grant.
+    const bot = (await api("GET", "/api/bots")).body.bots[0];
+    for (const path of [`/api/bots/${bot.id}/respond`, `/api/threads/${bot.threadId}/respond`]) {
+      expect(await api("POST", path, { requestId: "fictional-request", behavior: "allow", scope: "always-reads" }))
+        .toEqual({ status: 409, body: { error: "This request is no longer waiting. Refresh the conversation to see its result." } });
+      expect((await api("POST", path, { requestId: "fictional-request", behavior: "deny", scope: "task" })).status).toBe(400);
+    }
+    expect((await api("GET", "/api/approvals/history")).body.entries).toHaveLength(1);
+  });
+
+  it("binds Bud's approval_policy to the Workspace → Approvals store, as the person who sent the message", () => {
+    // Source contract (a turn needs a real worker): a single desktop binds with no session; an office member's
+    // turn binds only with the member session their own request carried; anything else stays unbound.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const binding = source.slice(source.indexOf("const memberSession = opts?.memberSession;"), source.indexOf("integrations.bankSource = {"));
+    expect(binding).toContain("const singleDesktop = !memberSession && await companyHost.seatIdentity().then(seat => seat === null, () => false);");
+    expect(binding).toContain("...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {})");
+    expect(source).toContain("const personTurn = (req: IncomingMessage): { memberSession?: string } => { const session = companyMemberToken(req); return session ? { memberSession: session } : {}; };");
+    expect(source.match(/memberSession: session/g)).toHaveLength(1);
+    expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
+  });
+
+  it("keeps a website's Ask every time once-only, so neither a site rule nor a generic rule answers it", () => {
+    // Source contract (needs a live ACP permission request): the fence's settings ask keeps provider-once,
+    // and the generic rule evaluation skips that request.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("function attachFenceToOpened(");
+    const attach = source.slice(start, source.indexOf("bus.subscribe(", start));
+    expect(attach).toContain("!decision.siteAsks && canUseReviewedPortalRules(event, decision)");
+    expect(source).toContain("siteAsks = decision.siteAsks === true;");
+    expect(source).toContain("if (permission && !onceApproval && !fromBroker && !siteAsks && asker && event.requestId");
+  });
+
+  it("verifies an office desktop's department settings with the person's own session before a turn's first governed step", () => {
+    // Source contract (a turn needs a real worker): the check runs before the worker gets any broker.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const verify = "if (opts?.memberSession) { await approvals.verifyIfMissing({ headers: { 'x-realbud-member-session': opts.memberSession } }).catch(() => {}); await governingApprovals().catch(() => {}); assertDispatch(); }";
+    expect(source).toContain(verify);
+    expect(source.indexOf(verify)).toBeLessThan(source.indexOf("const access = !opts?.systemExtra ? await refreshOfficeSources() : null;"));
+    expect(source.indexOf(verify)).toBeGreaterThan(source.indexOf("store.patchBot(bot.id, { busy: true, unread: false });\n  expectedStoppedThreads.delete(threadId);"));
+    // After a card on a still-unchecked desktop, the brokers verify once more through the same store.
+    expect(source).toContain("governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null, verify: () => approvals.verifyAgain() });");
+  });
+
+  it("answers a phone tap on a live action card through the same live-request helper", () => {
+    // Source contract: the phone path is answerLiveRequest with no request (so no saved rule or
+    // always-reads), and the card's answeredBy and the app receipt come from that one helper.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("void bindRemoteToolCards({");
+    const binding = source.slice(start, source.indexOf("// Desk, Schedule", start));
+    expect(binding).toContain("await answerLiveRequest(threadId, parsed, null,");
+    expect(binding).toContain("parseRequestDecision(");
+    expect(binding).not.toMatch(/respondToRequest|guardPermissionDecision|taskReadGrants|addPortalRule/);
+    const helper = source.slice(source.indexOf("async function answerLiveRequest("), source.indexOf("let localSessionPublished"));
+    for (const check of ["if (!req) return { status: 403", "phoneAnswers.set(live, phone)", "recordConnectedAppApproval(threadId, card.reviewId, phone.line)"]) expect(helper, check).toContain(check);
+    expect(source).toContain("void remoteToolCardOpened(event.threadId, event.requestId)");
+    // The phone line is its own quiet field; a real hold keeps the card's `held`.
+    expect(binding).toContain("store.patchMessage(threadId, messageId, { card: { ...card, phoneNote } })");
+    expect(source).toContain("...(permission && event.reviewId ? { reviewId: event.reviewId } : {})");
+    expect(source).toContain("answeredBy: byPhone.by, resolution: \"phone\" as const");
+  });
+
   it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
     const empty = await api("GET", "/api/law-watch");
     expect(empty.status).toBe(200);

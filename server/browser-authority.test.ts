@@ -23,9 +23,11 @@ import {
   pageOrigin,
   withPageOrigin,
   portalAccountName,
+  effectiveRules,
   type BrowserObservation,
   type BrowserPortalControls,
 } from "./browser-authority.ts";
+import { defaultApprovalSettings, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -1076,5 +1078,134 @@ describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
     expect(consequentialKind("Pay:")).toBe("pay");
     // Folding only adds matches: "Pay\u200bAll" is pay as shown, though its canonical "PayAll" alone would not be.
     expect(consequentialKind("Pay\u200bAll")).toBe("pay");
+  });
+});
+
+describe("approval settings for websites (Workspace \u2192 Approvals)", () => {
+  const settings = (groups: Record<string, ApprovalChoice>): ApprovalSettings => ({ version: 1, purpose: "approval-settings", groups, reviewedReads: [] });
+  const RULES = [{ key: "portal:read:portal.example", decision: "allow" as const }, { key: "portal:prefill:portal.example", decision: "allow" as const }];
+  const ask = (actions: BrowserActionClass[] = ["read", "navigate", "click", "fill", "keys", "download", "upload", "submit"]) =>
+    explicitTask({ route: "ask", browser: { id: "fictional-work", accountMarker: null }, actions, uploads: [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }], expiresAt: 2_000_000, budget: 50 });
+  const scope = (task: BrowserTaskGrant) => ({ grantId: task.id, runId: task.runId, requestHash: task.request.sha256, browserId: "fictional-work", tabId: 1,
+    origin: "https://portal.example", accountMarker: null, readOnly: true as const });
+  const loop = () => explicitTask({ route: "loop-read", actions: ["read", "navigate", "click", "fill", "keys"], uploads: [] });
+  const FORM = page('@e1 textbox "Property code"\n@e2 button "Show details"\n@e3 button "Save"\n@e4 link "Download report"\n@e5 button "Choose file"\n@e6 textbox "Password"');
+  type Case = [string, BrowserTaskGrant, BrowserObservation | null, string, Record<string, unknown>, { rules?: typeof RULES; taskScope?: ReturnType<typeof scope> }];
+  const CASES: Case[] = [
+    ["list tabs", ask(), null, "browser_tabs", {}, {}],
+    ["read, no rule", grant(), page(""), "browser_read", { tab_id: 1 }, {}],
+    ["read, reading rule", grant(), page(""), "browser_read", { tab_id: 1 }, { rules: RULES }],
+    ["borrow, reading rule", grant(), page(""), "browser_borrow", { tab_id: 1 }, { rules: RULES }],
+    ["same-site open, reading rule", grant(), page(""), "browser_navigate", { url: "https://portal.example/reports" }, { rules: RULES }],
+    ["same-site open, no rule", grant(), page(""), "browser_navigate", { url: "https://portal.example/reports" }, {}],
+    ["prefill, prefill rule", grant(), FORM, "browser_fill", { ref: "@e1", value: "FICT-1" }, { rules: RULES }],
+    ["password field", grant(), FORM, "browser_fill", { ref: "@e6", value: "x" }, { rules: RULES }],
+    ["ordinary click", grant(), FORM, "browser_click_semantic", { ref: "@e2" }, { rules: RULES }],
+    ["submit", grant(), FORM, "browser_click_semantic", { ref: "@e3" }, { rules: RULES }],
+    ["payment", grant(), PAY_PAGE, "browser_click_semantic", { ref: "@e1" }, { rules: RULES }],
+    ["other site", grant(), page("", "https://other.example/"), "browser_read", { tab_id: 1 }, { rules: RULES }],
+    ["task-scope read", ask(), page(""), "browser_read", { tab_id: 1 }, { taskScope: scope(ask()) }],
+    ["task-scope submit", ask(), FORM, "browser_click_semantic", { tab_id: 1, ref: "@e3" }, { taskScope: scope(ask()) }],
+    ["download, reading rule", ask(), FORM, "browser_download", { tab_id: 1, ref: "@e4" }, { rules: RULES }],
+    ["upload", ask(), FORM, "browser_upload", { tab_id: 1, ref: "@e5", file: "fictional-lease.pdf" }, { rules: RULES }],
+    ["schedule read", loop(), page(""), "browser_read", { tab_id: 1 }, { rules: RULES }],
+    ["schedule open", loop(), page(""), "browser_navigate", { url: "https://portal.example/reports" }, { rules: RULES }],
+  ];
+  const authorize = ([, task, observation, tool, args, options]: Case, approvals?: readonly ApprovalSettings[] | null) =>
+    authorizeBrowserAction(task, observation, tool, { ...args }, { ...options, now: 1_000_000, ...(approvals !== undefined ? { approvals } : {}) });
+
+  it.each(CASES)("with nothing saved, decides exactly as today: %s", (...row) => {
+    const today = authorize(row);
+    for (const approvals of [[], [defaultApprovalSettings()], [settings({ "site:other.example": "deny", "app:gmail": "ask" })]]) expect(authorize(row, approvals)).toEqual(today);
+  });
+
+  it("Don't use refuses every step on the site with one plain line, whatever a rule, a task or a schedule allows", () => {
+    for (const row of CASES.filter(([name]) => !["list tabs", "other site", "password field"].includes(name))) {
+      for (const approvals of [[settings({ "site:portal.example": "deny" })], [settings({ "site:portal.example": "read-without-asking" }), settings({ "site:portal.example": "deny" })]]) {
+        expect(authorize(row, approvals), row[0]).toEqual(expect.objectContaining({ decision: "deny", reason: "portal.example is set to Don't use in Workspace \u2192 Approvals, so Bud did nothing there." }));
+      }
+    }
+    // A subdomain page is the same site; listing tabs is not a step on any site.
+    expect(authorizeBrowserAction(grant(), page("", "https://app.portal.example/x"), "browser_read", { tab_id: 1 }, { approvals: [settings({ "site:portal.example": "deny" })] }).decision).toBe("deny");
+    expect(authorize(CASES[0], [settings({ "site:portal.example": "deny" })]).decision).toBe("allow");
+  });
+
+  it("Ask every time overrides a standing allow rule and the task's own scope and offers no rule, but not an approved workflow's unattended read", () => {
+    const approvals = [settings({ "site:portal.example": "ask" })];
+    const read = authorize(CASES[2], approvals);
+    expect(authorize(CASES[2])).toMatchObject({ decision: "allow" });
+    expect(read).toMatchObject({ decision: "ask", fence: { surface: "portal-read", ruleOffer: null } });
+    expect(authorize(CASES[6], approvals)).toMatchObject({ decision: "ask", fence: { ruleOffer: null } });
+    expect(authorize(CASES[12])).toMatchObject({ decision: "allow" });
+    expect(authorize(CASES[12], approvals)).toMatchObject({ decision: "ask" });
+    expect(authorize(CASES[16], approvals)).toEqual(authorize(CASES[16]));
+    expect(authorize(CASES[17], approvals)).toEqual(authorize(CASES[17]));
+    // Consequential steps keep their once-only card with verified facts.
+    expect(authorize(CASES[10], approvals)).toMatchObject({ decision: "ask", once: true, draft: expect.objectContaining({ kind: "pay" }) });
+  });
+
+  it("Read without asking runs reading and a same-site open only, like a reading rule", () => {
+    const approvals = [settings({ "site:portal.example": "read-without-asking" })];
+    expect(authorize(CASES[1], approvals)).toMatchObject({ decision: "allow", note: "allowed by approval settings \u00b7 Reading on portal.example" });
+    expect(authorize(CASES[5], approvals)).toMatchObject({ decision: "allow" });
+    for (const row of CASES.filter(([name]) => ["ordinary click", "submit", "payment", "upload", "task-scope submit"].includes(name))) {
+      expect(authorize(row, approvals), row[0]).toEqual(authorize(row));
+    }
+    // Not the borrow, a download or a field: those keep today's answer (here without rules).
+    for (const [tool, args] of [["browser_borrow", { tab_id: 1 }], ["browser_download", { tab_id: 1, ref: "@e4" }], ["browser_fill", { ref: "@e1", value: "x" }]] as const) {
+      expect(authorizeBrowserAction(ask(), FORM, tool, { ...args }, { now: 1_000_000, approvals }), tool).toMatchObject({ decision: "ask" });
+    }
+    // It never widens a schedule's read, a password field or an off-site read.
+    expect(authorize(CASES[16], approvals)).toEqual(authorize(CASES[16]));
+    expect(authorize(CASES[7], approvals)).toMatchObject({ decision: "deny" });
+    expect(authorize(CASES[11], approvals)).toMatchObject({ decision: "deny" });
+  });
+
+  it("Read without asking never opens an address that may change records, and a locked submit row refuses such an open", () => {
+    const approvals = [settings({ "site:portal.example": "read-without-asking" })];
+    for (const url of ["https://portal.example/submit?record=7", "https://portal.example/api/tickets?operation=update"]) {
+      const open: Case = ["write route", grant(), page(""), "browser_navigate", { url }, {}];
+      expect(authorize(open), url).toMatchObject({ decision: "ask" });
+      expect(authorize(open, approvals), url).toEqual(authorize(open));
+      // A standing reading rule keeps today's answer, but a locked submit row refuses it.
+      const ruled: Case = [open[0], open[1], open[2], open[3], open[4], { rules: RULES }];
+      expect(authorize(ruled, [settings({ "class:submit": "deny" })]), url).toMatchObject({ decision: "deny", reason: "This kind of step is set to Don't use in Workspace → Approvals, so Bud did nothing on portal.example." });
+    }
+    expect(authorize(CASES[5], [settings({ "class:submit": "deny" })])).toEqual(authorize(CASES[5]));
+  });
+
+  it("on an office desktop whose settings could not be checked, no rule or task scope runs a step, and a schedule's read stops", () => {
+    const approvals = [settings({}), uncheckedOfficeSettings()];
+    for (const index of [2, 3, 4, 12]) {
+      expect(authorize(CASES[index]), CASES[index][0]).toMatchObject({ decision: "allow" });
+      expect(authorize(CASES[index], approvals), CASES[index][0]).toMatchObject({ decision: "ask" });
+    }
+    expect(authorize(CASES[16], approvals)).toMatchObject({ decision: "deny", reason: expect.stringContaining("Office approval settings could not be checked") });
+    expect(authorize(CASES[2], [settings({ "site:portal.example": "deny" }), uncheckedOfficeSettings()])).toMatchObject({ decision: "deny" });
+  });
+
+  it("refuses a locked kind of step set to Don't use, and every step while the settings need recovery", () => {
+    expect(authorize(CASES[10], [settings({ "class:pay": "deny" })])).toMatchObject({ decision: "deny", reason: "This kind of step is set to Don't use in Workspace \u2192 Approvals, so Bud did nothing on portal.example." });
+    expect(authorize(CASES[15], [settings({ "class:upload": "deny" })])).toMatchObject({ decision: "deny" });
+    expect(authorize(CASES[2], [settings({ "class:upload": "deny" })])).toMatchObject({ decision: "allow" });
+    expect(authorize(CASES[2], null)).toMatchObject({ decision: "deny", reason: expect.stringContaining("need recovery") });
+  });
+
+  it("an approved workflow's unattended read (the REI morning refresh's loop-read grant) runs under Ask every time and stops at Don't use", () => {
+    const rei = explicitTask({ route: "loop-read", sites: ["rei-mock.fictional.test"], actions: ["read", "navigate", "click", "fill", "keys"], uploads: [] });
+    const tenants = page("", "https://rei-mock.fictional.test/tenants");
+    const steps: Array<[string, Record<string, unknown>]> = [["browser_read", { tab_id: 1 }], ["browser_navigate", { url: "https://rei-mock.fictional.test/arrears" }]];
+    for (const [tool, args] of steps) {
+      const today = authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000 });
+      expect(today, tool).toMatchObject({ decision: "allow", note: "read-only loop" });
+      expect(authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000, approvals: [settings({ "site:rei-mock.fictional.test": "ask" })] }), tool).toEqual(today);
+      expect(authorizeBrowserAction(rei, tenants, tool, { ...args }, { now: 1_000_000, approvals: [settings({ "site:rei-mock.fictional.test": "deny" })] }), tool)
+        .toMatchObject({ decision: "deny", reason: "rei-mock.fictional.test is set to Don't use in Workspace \u2192 Approvals, so Bud did nothing there." });
+    }
+  });
+
+  it("bundles standing rules with the settings for one decision", () => {
+    expect(effectiveRules([], RULES)).toEqual({ rules: RULES, approvals: [] });
+    expect(effectiveRules(null, [])).toEqual({ rules: [], approvals: null });
   });
 });

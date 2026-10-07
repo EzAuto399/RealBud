@@ -23,6 +23,7 @@ import { managedService } from "../../managed-service.ts";
 import { createAskModelRelayLease, type AskModelRelayLease } from "../../ask-model-relay.ts";
 
 import type {
+  ApprovalCardDetails,
   DriverCreateInput,
   EngineInstall,
   ProviderDriver,
@@ -153,6 +154,8 @@ const WARM_SESSION_IDLE_MS = 10 * 60_000;
  * the worker no longer waits for, or let a broker act after Hermes reported
  * the call failed; the margin lets the deny arrive first. */
 export const WORKER_APPROVAL_CARD_MS = 285_000;
+/** When a card opened now stops waiting. */
+const approvalDeadline = () => new Date(Date.now() + WORKER_APPROVAL_CARD_MS).toISOString();
 const MAX_WARM_SESSIONS = 8;
 
 type AcpStdioMcpServer = {
@@ -781,7 +784,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             rawInput?.command ?? rawInput?.url ?? rawInput?.label ?? toolCall.title ?? tool,
           ).slice(0, 200);
           const requestId = newId();
-          const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+          const finish = (decision: { behavior: string; scope?: "once" | "session" }, resolution: "user" | "timeout" = "user") => {
             if (!run.asks.delete(requestId)) return;
             clearTimeout(timer);
             const want = decision.behavior === "allow" ? "allow" : "reject";
@@ -804,12 +807,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               type: "request.resolved",
               requestId,
               behavior: optionId && decision.behavior === "allow" ? "allow" : "deny",
-              source: optionId ? "user" : "system",
+              source: optionId && resolution === "user" ? "user" : "system",
+              resolution: resolution === "timeout" ? "timeout" : optionId ? "user" : "stopped",
             });
           };
           const timer = setTimeout(() => {
             emit({ ...eventBase(run), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
-            finish({ behavior: "deny" });
+            finish({ behavior: "deny" }, "timeout");
           }, WORKER_APPROVAL_CARD_MS);
           timer.unref?.();
           run.asks.set(requestId, finish);
@@ -818,6 +822,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             type: "request.opened",
             requestId,
             requestType: "permission",
+            deadline: approvalDeadline(),
             tool,
             summary: singleApproval ? `${summary.slice(0, 165)} (approval applies once)` : summary,
             ...(singleApproval ? { approvalPolicy: providerOnce ? "provider-once" as const : "once" as const } : {}),
@@ -956,26 +961,31 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         /** RealBud's one-time review card for an external action (connected apps
-         * and Hermios CRM writes): one explicit allow, never a session grant. */
-        const reviewOnce = (summary: string, signal: AbortSignal) => new Promise<boolean>((resolve) => {
+         * and Hermios CRM writes): one explicit allow, never a session grant.
+         * `card` is the broker's plain-line additions (exact request, phone
+         * class, read offer, review id); the card also carries its deadline. A timeout or
+         * a stop is never reported as the person's answer. */
+        const reviewOnce = (summary: string, signal: AbortSignal, card: ApprovalCardDetails = {}) => new Promise<boolean>((resolve) => {
           const run = current;
           if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
           const requestId = newId();
-          const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+          const finish = (decision: { behavior: string; scope?: "once" | "session" }, resolution: "user" | "timeout" | "stopped" = "user") => {
             if (!run.asks.delete(requestId)) return;
             clearTimeout(timer);
             signal.removeEventListener("abort", aborted);
             // Broad/session grants cannot authorize an external action.
-            const allowed = decision.behavior === "allow" && decision.scope !== "session" &&
+            const allowed = resolution === "user" && decision.behavior === "allow" && decision.scope !== "session" &&
               !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
-            emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" });
+            emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: resolution === "user" ? "user" : "system", resolution });
             resolve(allowed);
           };
-          const aborted = () => finish({ behavior: "deny" });
-          const timer = setTimeout(aborted, WORKER_APPROVAL_CARD_MS); timer.unref();
+          const aborted = () => finish({ behavior: "deny" }, "stopped");
+          const timer = setTimeout(() => finish({ behavior: "deny" }, "timeout"), WORKER_APPROVAL_CARD_MS); timer.unref();
           run.asks.set(requestId, finish);
           signal.addEventListener("abort", aborted, { once: true });
-          emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary });
+          emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary, deadline: approvalDeadline(),
+            ...(card.remote ? { remote: card.remote } : {}), ...(card.detail ? { detail: card.detail } : {}), ...(card.readOffer ? { readOffer: { ...card.readOffer } } : {}),
+            ...(card.reviewId ? { reviewId: card.reviewId } : {}) });
         });
         const ready = (async () => {
           if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {
@@ -1030,16 +1040,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 let browserApproval: BrowserApprovalCard | undefined;
                 try { browserApproval = browserApprovalCardFrom(params); } catch { resolve(false); return; }
                 const requestId = newId();
-                const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+                const finish = (decision: { behavior: string; scope?: "once" | "session" }, resolution: "user" | "timeout" | "stopped" = "user") => {
                   if (!run.asks.delete(requestId)) return;
                   clearTimeout(timer); signal.removeEventListener("abort", aborted);
-                  const allowed = decision.behavior === "allow" && decision.scope !== "session" && !run.settled && !run.cancellationRequested && !closed && !signal.aborted;
-                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" }); resolve(allowed);
+                  const allowed = resolution === "user" && decision.behavior === "allow" && decision.scope !== "session" && !run.settled && !run.cancellationRequested && !closed && !signal.aborted;
+                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: resolution === "user" ? "user" : "system", resolution }); resolve(allowed);
                 };
-                const aborted = () => finish({ behavior: "deny" });
-                const timer = setTimeout(aborted, WORKER_APPROVAL_CARD_MS); timer.unref();
+                const aborted = () => finish({ behavior: "deny" }, "stopped");
+                const timer = setTimeout(() => finish({ behavior: "deny" }, "timeout"), WORKER_APPROVAL_CARD_MS); timer.unref();
                 run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
-                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary,
+                // A phone may answer only a repeatable read or open of a page; everything else stays on the desktop.
+                const phoneRead = !browserApproval && projection?.fence.surface === "portal-read" && !projection.approvalPolicy && (tool === "browser_read" || tool === "browser_navigate");
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary, deadline: approvalDeadline(), remote: phoneRead ? "read" : "desktop-only",
                   ...(projection ? { fence: projection.fence, ...(projection.approvalPolicy ? { approvalPolicy: projection.approvalPolicy } : {}) } : {}),
                   ...(browserApproval ? { browserApproval, approvalPolicy: "once" as const } : {}) });
               }),
