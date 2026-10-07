@@ -4,7 +4,7 @@
 // the real broker against the FICTIONAL REI-style portal. No network, no REI
 // account, no credentials: this proves the wiring, never REI Cloud behaviour.
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +14,10 @@ import { addBrowserTaskUpload, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { answerPortalRecipeAsk, holdPortalRecipeGrant, releasePortalRecipeGrant, loadPortalRecipePack, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, runPortalRecipeTask, type PortalRecipeAsk } from "./portal-recipe-task.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
-import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { DATA_DIR } from "./config.ts";
+import { LEARNED_RECIPES_DAMAGED } from "./learned-recipes.ts";
+import type { PortalPathStore } from "./portal-path-overrides.ts";
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -168,6 +171,27 @@ describe("running a started recipe task", () => {
     await expect(runPortalRecipeTask({ ...base, record: started, grant: { ...started.grant, id: "0f0f0f0f-0000-4000-8000-000000000000" } })).rejects.toMatchObject({ status: 409 });
     await expect(runPortalRecipeTask({ ...base, record: { ...started, status: "stopped" }, grant: started.grant })).rejects.toMatchObject({ status: 409 });
     expect(f.mock.calls.some(args => args[0] === "session")).toBe(false);
+  });
+
+  it("says in the reply when the learned recipes file is damaged, and still runs the shipped recipes", async () => {
+    const file = join(DATA_DIR, "learned-recipes.json");
+    expect(file.startsWith(process.env.HOME!)).toBe(true); // the test home, never ~/.realbud
+    plantPrivateFile(file, "{not json"); cleanup.push(() => rmSync(file, { force: true }));
+    // The real loader (learned merge included) over the fictional pack, so the run can reach the mock.
+    const load = (portal: string) => loadPortalRecipePack(portal, { apply: async () => fictionalReiPack() } as unknown as PortalPathStore);
+    const f = await fixture();
+    const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT }, fictional), NOW);
+    const started = await f.store.start(card.id, { threadId: "thread-ask", browserId: "work" }, NOW);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {}); cleanup.push(() => warn.mockRestore());
+    const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load, ...f.stores });
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(portalRecipeTaskReply(result)).toContain(`${LEARNED_RECIPES_DAMAGED} Only the shipped portal recipes were available.`);
+    // An intact (or missing) file adds nothing to the reply.
+    rmSync(file);
+    const again = await f.store.start((await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask-2", messageId: "m2", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT }, fictional), NOW)).id, { threadId: "thread-ask-2", browserId: "work" }, NOW);
+    const clean = await runPortalRecipeTask({ record: again, grant: again.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load, ...f.stores });
+    expect(clean.outcome, clean.detail).toBe("completed");
+    expect(portalRecipeTaskReply(clean)).not.toContain("need recovery");
   });
 
   it("ends at once when the task is stopped mid-run", async () => {

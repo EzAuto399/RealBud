@@ -51,6 +51,7 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
   private owner: string | null = null;
   private revoked = new Set<string>();
   private claimed = new Set<number>();
+  private learning: () => boolean = () => false;
   private makeController: (options: { root: string; endpoint: string; bundle: HermesEngineBundle }) => Controller;
   constructor(options: { root?: string; host?: NativeWorkBrowserHost; controller?: NativeBrowserRuntime["makeController"] } = {}) {
     this.root = options.root ?? join(DATA_DIR, "browser");
@@ -66,6 +67,8 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
     for (const candidate of candidates) { try { if ((await lstat(join(candidate, "runtime.json"))).isFile()) { bundleRoot = candidate; break; } } catch { /* Missing bundle is shown in status. */ } }
     return this.host ??= new WorkBrowserHost({ root: join(this.root, "work-browser"), bundleRoot });
   }
+  /** Watch and learn (server/learn-recorder.ts): while a recording watches a tab, no task may take the browser. */
+  setLearning(isRecording: () => boolean): void { this.learning = isRecording; }
   private exclusive<T>(fn: () => Promise<T>): Promise<T> { const next = this.serial.then(fn, fn); this.serial = next.catch(() => {}); return next; }
   private async saved(): Promise<Saved> {
     if (this.state) return this.state;
@@ -89,15 +92,16 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
     } catch { return { ...base, state: "recovery_required", detail: "Work browser settings or its connection need recovery. No browser work has started." }; }
   }
   async connect(): Promise<BrowserStatus> {
-    await this.exclusive(async () => {
-      const saved = await this.saved(); if (saved.lease) throw fail("Release the previous browser task first.");
-      const host = await this.browserHost();
-      let opened: Awaited<ReturnType<NativeWorkBrowserHost["ensureOpen"]>>;
-      try { opened = await host.ensureOpen(); }
-      catch (error) { await host.disconnect().catch(() => {}); throw error; }
-      if (!id(opened.profileId)) throw fail("The work browser profile could not be confirmed.");
-      await this.save({ ...saved, enabled: true, browserId: opened.profileId });
-    }); return this.status();
+    await this.exclusive(() => this.connectNow()); return this.status();
+  }
+  private async connectNow(): Promise<void> {
+    const saved = await this.saved(); if (saved.lease) throw fail("Release the previous browser task first.");
+    const host = await this.browserHost();
+    let opened: Awaited<ReturnType<NativeWorkBrowserHost["ensureOpen"]>>;
+    try { opened = await host.ensureOpen(); }
+    catch (error) { await host.disconnect().catch(() => {}); throw error; }
+    if (!id(opened.profileId)) throw fail("The work browser profile could not be confirmed.");
+    await this.save({ ...saved, enabled: true, browserId: opened.profileId });
   }
   async select(browserId: string): Promise<BrowserStatus> {
     const saved = await this.saved(); const status = await this.status();
@@ -107,6 +111,7 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
   async acquire(owner: string): Promise<string> {
     return this.exclusive(async () => {
       if (!id(owner) || this.revoked.has(owner)) throw fail("This browser request has stopped.");
+      if (this.learning()) throw fail("Finish or discard the recording in Show Bud first.");
       const saved = await this.saved(); if (saved.lease) throw fail("Another browser task is active or needs recovery.");
       if ((await this.status()).state !== "ready") throw fail("The work browser is not open. Bud opens it on the site's sign-in page when it needs you to sign in.");
       // Only a host already verified ready may supply its endpoint here.
@@ -225,6 +230,20 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
     const host = await this.browserHost();
     if (!host.navigateTab) throw fail("This work browser cannot refresh a sign-in page.");
     await host.navigateTab(targetId, url);
+  }
+  /** Watch and learn (server/learn-recorder.ts): opens the portal in a new
+   * work-browser tab and hands the recorder the owned endpoint and that tab.
+   * Refused while a task holds the browser, so a recording never watches Bud. */
+  async learnTarget(url: string): Promise<{ endpoint: string; targetId: string }> {
+    // Serialised with acquire, so a task can't take the lease between this check and the new tab.
+    return this.exclusive(async () => {
+      if ((await this.saved()).lease) throw fail("Bud is using the work browser for a task. Let it finish or stop it, then show Bud the task.");
+      const host = await this.browserHost();
+      if (!host.openTab) throw fail("This work browser cannot open a page to record.");
+      if ((await this.status()).state !== "ready") await this.connectNow();
+      const { endpoint } = await host.ensureOpen();
+      return { endpoint, targetId: await host.openTab(url) };
+    });
   }
   /** No window at RealBud start: a browser task or a sign-in handover opens
    * the work browser when it is actually needed (an empty window otherwise). */

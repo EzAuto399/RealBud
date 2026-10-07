@@ -1,5 +1,7 @@
 # RealBud end state
 
+Latest continuation, 7 October: [Watch and learn](WATCH-AND-LEARN-2026-10-07.md) lets staff show Bud a portal task once in the work browser; it becomes a reviewed draft read recipe that replays through the existing runner, broker and Start card. Typed values are never kept, risky labels can never be confirmed, and drafts never publish themselves. Source, local tests and a local real-Chrome recording pass; no packaged, installed or live REI run yet.
+
 Showcase target, 5 October: [Austin Windows showcase, Friday 9 Oct](AUSTIN-WINDOWS-SHOWCASE-2026-10-09.md). Installs on Austin's Windows PC and demos W1–W5 on fictional data first. Plan and status only; it records no installed or customer acceptance.
 
 Owner priority update, 4 October: [Kevin's and Sherry's workflows](KEVIN-SHERRY-WORKFLOWS-2026-10-04.md). Invoice review is the first promise; Kevin W2 and Sherry W4 build work proceeds in parallel with the core gates, while installed runs and customer acceptance still wait for them. W5 inspections follow W4. Plan only; no workflow acceptance is claimed.
@@ -10,7 +12,7 @@ Windows test log, 6 October: [Windows test issues](WINDOWS-TEST-ISSUES-2026-10-0
 
 Windows QA harness, 7 October: the [Windows QA runbook](WINDOWS-QA-RUNBOOK.md) is the procedure before a customer install. `scripts/windows-qa.ps1` (one pasted line) checks the computer, installs, and records Bud readiness, health latency, log flags and runtime clean-up in a JSON receipt. Procedure only; it records no result.
 
-Latest product continuation: [Department workflow configuration](DEPARTMENT-CONFIGURATION-2026-10-03.md) records reusable Accounts/admin and Property Management settings, five reviewed case plans and the completed Opus 5.5 source review (xhigh requested). The post-review fixes have focused API, cross-workspace, PostgreSQL/TLS, restore, HTTP and source-bound UI evidence; exact counts and limits are in the checkpoint. This remains an uninstalled source candidate. Worker Stop still blocks release.
+Previous continuation: [Department workflow configuration](DEPARTMENT-CONFIGURATION-2026-10-03.md) records reusable Accounts/admin and Property Management settings, five reviewed case plans and the completed Opus 5.5 source review (xhigh requested). The post-review fixes have focused API, cross-workspace, PostgreSQL/TLS, restore, HTTP and source-bound UI evidence; exact counts and limits are in the checkpoint. This remains an uninstalled source candidate. Worker Stop still blocks release.
 
 Previous continuation: [W1–W3 implementation and verification](W1-W3-OPERATIONAL-2026-10-02.md) records the paused weekly/every-few-days clocks, 08:00 morning defaults, dedicated W2 runner, source-stable W3 preparation, saved results and notifications, and fictional HTTP/UI/native tests. W1 remains incomplete pending bank/REI qualification and recovery implementation. Follow its exact build/package and live-acceptance boundaries; no customer schedule was enabled.
 
