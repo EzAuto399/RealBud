@@ -1,6 +1,4 @@
-import { connectOwnerPage } from './local-service-browser.mjs';
-import { createLocalServiceFetch, readOwnerSession } from './local-service-client.mjs';
-const fetch = createLocalServiceFetch(() => data);
+import { readSessionToken, primeBrowserSession } from './local-session.mjs';
 // "Show Bud a task" drawer (Schedule header button and #schedule-learn): built renderer + real isolated
 // source service with seeded fictional learned-recipe drafts. Never presses
 // "Start showing" (it opens a real work browser). No worker, no portal.
@@ -53,7 +51,7 @@ writeFileSync(file, JSON.stringify({ version: 1, purpose: 'realbud-learned-recip
 try {
   const listener = createServer().listen(0, '127.0.0.1'); await once(listener, 'listening');
   const port = listener.address().port; await new Promise(resolve => listener.close(resolve));
-  base = `https://127.0.0.1:${port}`;
+  base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(root, 'server/bootstrap.ts')], { cwd: root, env: {
     ...serviceSmokeEnv({ executable: process.execPath, home: scratch, data, scratch, port }),
     REALBUD_MANAGED_SERVICE: '0', REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: ui,
@@ -65,7 +63,7 @@ try {
     ready = health?.pid === child.pid; if (!ready) await wait(100);
   }
   assert.ok(ready, 'service starts');
-  token = await readOwnerSession(data);
+  token = await readSessionToken(data);
   const seeded = await call('/api/learn');
   assert.equal(seeded.status, 200);
   assert.deepEqual(seeded.body.recipes.map(r => [r.id, r.state]), [[DRAFT, 'draft'], [PUBLISHED, 'published']]);
@@ -73,7 +71,8 @@ try {
   pass('Service accepts the seeded learned-recipes file (one draft, one published)');
 
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
-  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1365, height: 1000 }, reducedMotion: 'reduce' });
+  const context = await browser.newContext({ viewport: { width: 1365, height: 1000 }, reducedMotion: 'reduce' });
+  await primeBrowserSession(context, base, token);
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   page = await context.newPage(); page.setDefaultTimeout(15_000);
   page.on('pageerror', error => errors.push(error.message));
@@ -81,7 +80,7 @@ try {
   page.on('response', response => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`); });
   const learnPosts = [];
   page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/learn')) learnPosts.push(new URL(request.url()).pathname); });
-  await page.goto(base + '/'); await connectOwnerPage(page, data);
+  await page.goto(base + '/');
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Learn Person');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readSessionToken } from "./local-session.mjs";
+import { LOOP_CATALOG } from "../server/routines.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18881);
@@ -91,7 +92,7 @@ try {
 
   const catalog = (await api("GET", "/api/loops")).body;
   const ids = (catalog?.loops ?? []).map((l) => l.id);
-  check("eight named routines", ids.join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review,rei-supplier-check,inspection-draft");
+  check("every catalogue routine in order", ids.join(",") === LOOP_CATALOG.map((l) => l.id).join(","), ids.join(","));
   const morning = catalog.loops.find((l) => l.id === "morning-arrears");
   const letter = catalog.loops.find((l) => l.id === "owner-letter");
   const inbound = catalog.loops.find((l) => l.id === "inbound-triage");
