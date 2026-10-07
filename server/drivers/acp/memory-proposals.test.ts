@@ -8,7 +8,7 @@ import { recordEvents, type EventRecorder } from '../../testing/events.ts';
 import { removeFixture } from '../../testing/private-fixture.ts';
 import { ServiceEntitlementError } from '../../service-entitlement.ts';
 import { HermesAgentDriver } from './hermes.ts';
-import { GrokAgentDriver } from './grok.ts';
+import { FakeAcpDriver } from '../../testing/fake-acp-driver.ts';
 import type { AcpConfig } from './core.ts';
 import { MEMORY_PROPOSAL_REVIEW_LOCATION, type MemoryProposalInput, type MemoryProposalResult } from '../../../shared/hermes-memory-proposal.ts';
 
@@ -238,7 +238,7 @@ describe('Hermes typed memory proposal ACP capability', () => {
   });
 
   it('never mounts the Hermes proposal capability on another ACP driver', async () => {
-    const propose = vi.fn().mockResolvedValue(saved()); await create(GrokAgentDriver);
+    const propose = vi.fn().mockResolvedValue(saved()); await create(FakeAcpDriver);
     const turn = await start({ scope: 'profile', propose }); expect(state().servers).toEqual([]);
     expect(propose).not.toHaveBeenCalled(); await finish(turn.turnId);
   });

@@ -8,7 +8,7 @@ paths:
 
 Authority
 - Routes are one flat `if (path === … && method === …)` chain in `server/index.ts` (no router); place a new route after the gates it depends on. Add every new `/api/*` prefix to `needsSession` in `server/session-auth.ts`, otherwise it is reachable without the per-boot session token.
-- Non-GET `/api/*` must be `application/json`; `/api/company/*` responses are `no-store`. `productDenied` in `server/product-mode.ts` is a hard route denylist in PRODUCT_MODE.
+- Non-GET `/api/*` must be `application/json`; `/api/company/*` responses are `no-store`. `productDenied` in `server/product-mode.ts` is a hard route denylist.
 - Company reads/writes go through `authenticated()` and `authorizedScope()` in `server/company/index.ts`: advisory locks in fixed order (lifecycle → member → session → scope), the session re-checked after locking, RLS context set. Department permission is the SQL `scope_allowed()`; do not reimplement it in TypeScript. Member sessions (`x-realbud-member-session`) and execution grants (`x-realbud-execution-grant`) are different credentials and never convert into each other.
 - Re-verify identity and permission after every `await` that crosses a lock or host boundary (pattern: `server/company-execution-client.ts`). A UI filter or an enqueue-time check alone is not access control. Never hand a `pg` Pool or its credentials to a worker.
 
@@ -23,7 +23,7 @@ Durable execution
 - Case claims are fence + lease + token-hash; every admit/renew/settle bumps the fence and re-asserts liveness after the write; settlement lands in `recovery_required` and is never silently reopened.
 
 Secrets
-- Everything persisted or shown passes `redactSecretsInText` (`server/redact.ts`); redaction is deliberately high-precision, so do not add generic hex/base64 heuristics. Child processes get `serviceSafeChildEnv()` (`server/service-child-env.ts`); model adapters strip their own provider keys. Credential-shaped input is rejected in PRODUCT_MODE, not redacted.
+- Everything persisted or shown passes `redactSecretsInText` (`server/redact.ts`); redaction is deliberately high-precision, so do not add generic hex/base64 heuristics. Child processes get `serviceSafeChildEnv()` (`server/service-child-env.ts`); model adapters strip their own provider keys. Credential-shaped input is rejected, not redacted.
 - Fixtures use obviously synthetic values (`fictional-*`, `/synthetic/...`): no real keys, mailboxes, customer names or machine paths.
 
 Hermes boundary

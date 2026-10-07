@@ -5,7 +5,7 @@
 // session/prompt, and streams session/update notifications for a scripted
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
-//   FAKE_ACP_MODE   happy (default) | slow | exit-early | hang | no-auth | permission
+//   FAKE_ACP_MODE   happy (default) | slow (FAKE_ACP_SLOW_MS, default 350) | exit-early | hang | no-auth | permission
 //                   | permission-once-only | mode-error
 //                   | wrap-up | wrap-up-refuse (stream FAKE_ACP_TOOL_CALLS tool calls,
 //                     then hold the prompt until a `/steer` prompt arrives or
@@ -344,7 +344,7 @@ function handle(msg: any) {
         return;
       }
       if (mode === "slow") {
-        setTimeout(complete, 350);
+        setTimeout(complete, Number(process.env.FAKE_ACP_SLOW_MS ?? "350"));
         return;
       }
       complete();
