@@ -116,7 +116,8 @@ export async function startMcpConnectorBroker(options: {
         const summary = (toolClass === "consequential"
           ? `${CONSEQUENTIAL_LABEL} · ${label(binding.label)} · ${binding.tool}\n${CONSEQUENTIAL_WARNING}\n${exact}`
           : `${label(binding.label)} · ${binding.tool}\n${exact}`) + (settings.some(item => item.unchecked) ? `\n${OFFICE_UNCHECKED}` : "");
-        const remote = toolClass === "read" ? "read" as const : toolClass === "write" ? "write" as const : "desktop-only" as const;
+        // An office connector's write can do anything its service allows, so only its reads go to the phone.
+        const remote = toolClass === "read" ? "read" as const : "desktop-only" as const;
         if (!await options.approve(summary, signal, { remote })) { receipt("declined"); return toolError("The person did not allow this. Nothing was sent."); }
         if (!live()) { receipt("refused"); return stopped(); }
         // A Don't use saved while the card waited still refuses it.

@@ -49,7 +49,7 @@ describe("office connector broker", () => {
     const approve = vi.fn(async () => false);
     const { connectors, receipts } = await start({}, approve);
     expect((await call("fictional-books__create_book", { title: "Fictional Title" })).isError).toBe(true);
-    expect(approve).toHaveBeenCalledWith(`Fictional Books · create_book\n${JSON.stringify({ title: "Fictional Title" }, null, 2)}`, expect.anything(), { remote: "write" });
+    expect(approve).toHaveBeenCalledWith(`Fictional Books · create_book\n${JSON.stringify({ title: "Fictional Title" }, null, 2)}`, expect.anything(), { remote: "desktop-only" });
     expect(connectors.invoke).not.toHaveBeenCalled();
     expect(receipts).toEqual([{ connector: "fictional-books", tool: "create_book", outcome: "declined" }]);
     approve.mockResolvedValueOnce(true);
