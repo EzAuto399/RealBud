@@ -10,6 +10,9 @@ import {
   browserApprovalDraft,
   browserKey,
   classifyBrowserAction,
+  browserReadOnlyAction,
+  accessibleName,
+  learnedPressable,
   consequentialKind,
   accountMarkerShown,
   legacyBrowserGrant,
@@ -980,5 +983,73 @@ describe("a loop's read-only grant (route loop-read)", () => {
     expect(() => loop({ actions: ["read", "submit"] })).toThrow(/incomplete or damaged/);
     expect(() => loop({ uploads: [{ name: "fictional-bank.csv", sha256: "c".repeat(64) }] })).toThrow(/incomplete or damaged/);
     expect(loop().route).toBe("loop-read");
+  });
+});
+
+describe("labels confirmed while teaching Bud (learnedReadSafe)", () => {
+  const task = explicitTask({ route: "ask", actions: ["read", "navigate", "click", "fill", "keys"] });
+  const loop = explicitTask({ route: "loop-read", actions: ["read", "navigate", "click", "fill", "keys"], uploads: [] });
+  const SHIPPED: BrowserPortalControls = { origin: "https://portal.example", readSafe: ["Search", "Expand row"], menu: [], pagination: [], consequential: [], signInHosts: [] };
+  /** Each control alone in its own region, so nothing beside it changes records. */
+  const PAGE = (controls: string[], extra: string[] = []) => page(["@vom 1", "L1 page", '  RootWebArea "Tenants"', "    main", ...extra,
+    ...controls.flatMap((control, index) => [`      region "Part ${index}"`, `        @e${index + 1} ${control.startsWith("textbox ") ? control : `button ${JSON.stringify(control)}`}`])].join("\n"),
+  "https://portal.example/customers/tenant");
+  const click = (portal: BrowserPortalControls, observation: BrowserObservation, ref: string, grant = task) => ({
+    classified: classifyBrowserAction(grant, observation, "browser_click_semantic", { tab_id: 1, ref }, portal),
+    readOnly: browserReadOnlyAction(grant, observation, "browser_click_semantic", { tab_id: 1, ref }, portal),
+  });
+
+  it("normalises zero-width, trailing-space and fullwidth spellings of Save, and refuses each when confirmed only as learned", () => {
+    const spellings = ["Sa​ve", "Save ", "Ｓａｖｅ"];
+    for (const spelling of spellings) {
+      expect(accessibleName(spelling), JSON.stringify(spelling)).toBe("Save");
+      expect(learnedPressable(`button ${JSON.stringify(spelling)}`), JSON.stringify(spelling)).toBe(false);
+    }
+    expect(accessibleName(" Search: ")).toBe("Search");
+    const observation = PAGE(spellings);
+    for (const ref of ["@e1", "@e2", "@e3"]) {
+      const { classified, readOnly } = click({ ...SHIPPED, learnedReadSafe: ["Save"] }, observation, ref);
+      expect(classified.class, ref).toBe("unknown");
+      expect(readOnly, ref).toBe(false);
+    }
+  });
+
+  it("pressControl refuses a learned \"Submit:\" or \"Pay now\", by click or Enter", () => {
+    const observation = PAGE(["Submit:", "Pay now", "Pa​y now"]);
+    const portal = { ...SHIPPED, learnedReadSafe: ["Submit:", "Pay now", "Pa​y now"] };
+    expect(click(portal, observation, "@e1").classified).toMatchObject({ class: "unknown" });
+    expect(click(portal, observation, "@e2").classified).toMatchObject({ class: "consequential", kind: "pay" });
+    expect(click(portal, observation, "@e3").classified).toMatchObject({ class: "unknown" });
+    for (const ref of ["@e1", "@e2", "@e3"]) {
+      expect(click(portal, observation, ref).readOnly, ref).toBe(false);
+      expect(classifyBrowserAction(task, observation, "browser_press", { tab_id: 1, ref, key: "Enter" }, portal).class, ref).not.toBe("routine");
+      expect(authorizeBrowserAction(task, observation, "browser_click_semantic", { tab_id: 1, ref }, { portal }).decision, ref).not.toBe("allow");
+    }
+  });
+
+  it("allows a learned harmless label like \"Show details\", but never with readSafe's pass on a financial page", () => {
+    const portal = { ...SHIPPED, learnedReadSafe: ["Show details", "Expand row", "Open row"] };
+    expect(learnedPressable('button "Show details"')).toBe(true);
+    expect(click(portal, PAGE(["Show details"]), "@e1")).toMatchObject({ classified: { class: "routine", action: "click" }, readOnly: true });
+    // On a bank page a shipped read-safe name still reads; a learned-only one is classified like any control there.
+    const bank = PAGE(["Expand row", "Open row"], ['      StaticText "Fictional bank statement"']);
+    expect(click(portal, bank, "@e1").classified).toMatchObject({ class: "routine", action: "click" });
+    expect(click(portal, bank, "@e2").classified).toMatchObject({ class: "unknown" });
+  });
+
+  it("keeps a shipped \"Search:\" exactly as before, on a money-word page and in a loop's read, and a loop never uses a learned label", () => {
+    const observation = PAGE(['textbox "Search:" value=""', "Show details"], ['      StaticText "Statement balance: 1,185.00"']);
+    const learned = { ...SHIPPED, learnedReadSafe: ["Search", "Show details"] };
+    for (const grant of [task, loop]) {
+      for (const [tool, args] of [["browser_fill", { tab_id: 1, ref: "@e1", value: "Bravo" }], ["browser_press", { tab_id: 1, ref: "@e1", key: "Tab" }]] as const) {
+        const shipped = authorizeBrowserAction(grant, observation, tool, { ...args }, { portal: SHIPPED });
+        expect(authorizeBrowserAction(grant, observation, tool, { ...args }, { portal: learned }), `${grant.route} ${tool}`).toEqual(shipped);
+        expect(browserReadOnlyAction(grant, observation, tool, { ...args }, learned)).toBe(browserReadOnlyAction(grant, observation, tool, { ...args }, SHIPPED));
+      }
+    }
+    expect(authorizeBrowserAction(loop, observation, "browser_fill", { tab_id: 1, ref: "@e1", value: "Bravo" }, { portal: learned })).toMatchObject({ decision: "allow" });
+    // The same harmless learned label reads for an Ask task, never in a loop's unattended read.
+    expect(browserReadOnlyAction(task, observation, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, learned)).toBe(true);
+    expect(authorizeBrowserAction(loop, observation, "browser_click_semantic", { tab_id: 1, ref: "@e2" }, { portal: learned })).toMatchObject({ decision: "deny" });
   });
 });

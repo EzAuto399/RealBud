@@ -277,6 +277,10 @@ export function browserStep(tool: string): BrowserStep | null {
 export interface BrowserPortalControls {
   origin: string;
   readSafe: readonly string[];
+  /** Labels a person confirmed while teaching Bud, for the tasks that run that learned recipe only (never a loop's read).
+   * One that is not also in readSafe reads only when its name neither submits, confirms nor names a consequential
+   * action (learnedPressable), and never gets readSafe's routine pass or its read on a financial page. */
+  learnedReadSafe?: readonly string[];
   /** Menu link names, read-safe only inside the page's navigation landmark. */
   menu: readonly string[];
   /** Pager names (Next, Previous): read-safe only in a pager group beside a table or grid. */
@@ -296,6 +300,7 @@ export interface BrowserPortalControls {
   readRoutes?: readonly string[];
 }
 const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
+const LEARNED_ASKS = "This control was confirmed while teaching Bud, but its name submits, confirms or pays, so Bud asks each time.";
 const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";
 function portalControlsFor(grant: BrowserTaskGrant, portal: BrowserPortalControls | undefined, current: URL): BrowserPortalControls | null {
   if (!portal) return null;
@@ -364,10 +369,21 @@ const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.
  *   account-change form;
  * - with no form or dialog around it (Chromium shows an unnamed form as a plain
  *   generic node), the whole page shows none of those either. */
-/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's
- * DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
-export const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
+/** One spelling for an accessible name: compatibility-folded (fullwidth "Ｓａｖｅ" is "Save"), format characters such as
+ * zero-width spaces dropped, every run of spaces or control characters one space, trimmed, and a single trailing ":"
+ * dropped (live REI's DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
+export const accessibleName = (name: string | null) =>
+  (name ?? "").normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/[\p{Cc}\s]+/gu, " ").trim().replace(/\s*:$/, "");
 const sameName = (names: readonly string[], name: string) => names.some(item => accessibleName(item) === accessibleName(name));
+/** A label confirmed only while teaching Bud: in the task's learnedReadSafe and not in the pack's own readSafe. */
+const learnedOnly = (portal: BrowserPortalControls | null, name: string) =>
+  portal !== null && sameName(portal.learnedReadSafe ?? [], name) && !sameName(portal.readSafe, name);
+/** A learned label can be pressed only when its name neither submits, confirms nor names a consequential action
+ * (defence in depth over learn-compile's own check): a learned "Save", "Sa​ve", "Submit:" or "Pay now" never is. */
+export function learnedPressable(label: string): boolean {
+  const name = accessibleName(controlName(label));
+  return !SUBMIT_CONTROL.test(name) && !AFFIRMATIVE.test(name) && consequentialKind(name) === null;
+}
 function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
   const name = controlName(label);
   if (sameName(portal.consequential, name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
@@ -400,7 +416,8 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
   // the pack's own list, and the record-changing verbs a same-site address is refused for ("Process", "Approve").
   // A menu name above is a destination in the navigation landmark, as before.
   // "Search:" is the pack's "Search"; a pager name with a colon is still a pager name, never read-safe outside the pager.
-  } else allowed = sameName(portal.readSafe, name) && !sameName(portal.pagination, name) && !WRITE_ROUTE.test(name);
+  // A learned-only label must also pass learnedPressable.
+  } else allowed = (sameName(portal.readSafe, name) || learnedOnly(portal, name) && learnedPressable(label)) && !sameName(portal.pagination, name) && !WRITE_ROUTE.test(name);
   if (!allowed) return false;
   // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
   // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
@@ -431,6 +448,7 @@ export function browserReadOnlyAction(grant: BrowserTaskGrant, observation: Brow
   const current = jobBrowserUrl(observation.url, grant.sites); if (!current) return false;
   const declared = portalControlsFor(grant, portal, current);
   const label = controlName(classified.label);
+  if (learnedOnly(declared, label) && !learnedPressable(label)) return false;
   // A plain link opens another page of the granted site, so it reads on the same
   // proof as a reviewed read-safe control (nothing in its form, group, landmark or
   // page changes records). Never a button, a confirming name ("Continue", "Next")
@@ -559,8 +577,10 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
     return { class: "out-of-scope", step, reason: "The verified account label is no longer visible. Check the account and page before continuing." };
   }
   if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
-  // A declared read-safe control reads on its portal, even on a page that mentions a bank.
-  const readSafe = portal !== null && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
+  // A declared read-safe control reads on its portal, even on a page that mentions a bank. A learned-only label never
+  // does: it is classified like any other control, and pressControl refuses one whose name submits, confirms or pays.
+  const learned = learnedOnly(portal, controlName(label));
+  const readSafe = portal !== null && !learned && !observed.whole && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
   const financial = !readSafe && (FINANCIAL_PAGE.test(`${withoutMenuLinks(text, portal)} ${observation.url}`) || financialRoute(String(observation.url ?? ""), portal));
   const kind = consequentialKind(label);
   if (step === "fill") {
@@ -569,7 +589,7 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
     if (financial) return { class: "consequential", step, kind: "pay", label, reason: FINANCIAL_FILL };
     return { class: "routine", step, action: "fill", label };
   }
-  const control: Control = { step, label, text, financial, kind, readSafe };
+  const control: Control = { step, label, text, financial, kind, readSafe, learned };
   if (step === "press") {
     const key = browserKey(args.key);
     return key ? pressKey(control, key) : { class: "out-of-scope", step, reason: KEY_SPEC };
@@ -589,11 +609,13 @@ function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, 
   return pressControl(control);
 }
 
-type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null; readSafe?: boolean };
+type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null; readSafe?: boolean; learned?: boolean };
 const roleOf = (label: string) => label.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
 /** A control being pressed: a click, or Enter or Space on a button or link. */
-function pressControl({ step, label, text, financial, kind, readSafe }: Control): BrowserClassification {
+function pressControl({ step, label, text, financial, kind, readSafe, learned }: Control): BrowserClassification {
   if (kind) return { class: "consequential", step, kind, label, reason: ASK_ONCE };
+  // A label confirmed while teaching Bud never makes a submitting, confirming or paying control pressable: it asks each time.
+  if (learned && !learnedPressable(label)) return { class: "unknown", step, label, reason: LEARNED_ASKS };
   // A portal's declared read-safe control (Next, Search) reads: it is not a confirming step.
   if (readSafe) return { class: "routine", step, action: "click", label };
   const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
@@ -1085,6 +1107,11 @@ function ruleAllows(rules: BrowserAuthorityOptions["rules"], surface: PortalRule
   const keys = new Set([portalRuleKey(surface, site), portalRuleKey(surface, hostOf(url))]);
   return (rules ?? []).some(rule => rule.decision === "allow" && keys.has(rule.key));
 }
+/** A loop's unattended read never uses labels confirmed while teaching Bud: only the pack's own read-safe list. */
+function shippedOnly(portal: BrowserPortalControls): BrowserPortalControls {
+  const { learnedReadSafe: _learned, ...shipped } = portal;
+  return shipped;
+}
 const LEGACY_JOB_TOOL = "This browser tool or its arguments are not available.";
 const missingAction = (action: BrowserActionClass) =>
   action === "fill" ? READ_ONLY : action === "submit" ? SUBMIT_JOB_DENY : "This task does not include that browser step. Ask again with the step you need.";
@@ -1114,7 +1141,7 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" && (!scrollsGrid || !!options.portal?.readRoutes?.includes(url.pathname)) ||
       routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
       (routine.step === "click" || routine.step === "fill" || routine.step === "select" || routine.step === "press") && tab && !!options.portal &&
-        browserReadOnlyAction(grant, observation!, tool, args, options.portal));
+        browserReadOnlyAction(grant, observation!, tool, args, shippedOnly(options.portal)));
     return readOnly ? { decision: "allow", classification, fence: { surface: "portal-read", origin: site, ruleOffer: null }, note: "read-only loop" } : deny(LOOP_READ_ONLY);
   }
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.
