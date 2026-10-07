@@ -2945,8 +2945,10 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
 // Approval settings: this computer's own, or the office departments that govern its member.
 const approvals = createApprovalSettings({ dataDir: DATA_DIR, seatIdentity: () => companyHost.seatIdentity(),
   company: (path, req, body) => companyHost.handle(path, 'POST', req, body) });
-// The brokers the worker driver starts, and the job fence below, read the same settings.
-governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null });
+// The brokers the worker driver starts, and the job fence below, read the same settings. After a person
+// approves a card on an office desktop that still could not check them, they verify once more with the
+// member session the last turn used; still unchecked, the step is refused.
+governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null, verify: () => approvals.verifyAgain() });
 
 // Vendor provisioning arrives with the pairing redeem: the connector credential
 // goes to config, the model key to the private vault, and the worker sees it

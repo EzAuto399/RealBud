@@ -14,7 +14,7 @@
 // the upstream call. The connection's credential stays with the host.
 import { CONSEQUENTIAL_WARNING, stripSchemaProse } from "../shared/mcp-connector.ts";
 import { approvalGroupKey, decide, OFFICE_UNCHECKED, type ApprovalSettings } from "../shared/approval-settings.ts";
-import { governingApprovals } from "./approval-settings.ts";
+import { governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import type { Approval, ToolClass } from "./mcp-connector-core.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -122,8 +122,9 @@ export async function startMcpConnectorBroker(options: {
         if (!live()) { receipt("refused"); return stopped(); }
         // A Don't use saved while the card waited still refuses it.
         let now: ApprovalSettings[];
-        try { now = await (options.approvalSettings ?? governingApprovals)(); } catch { return recovery(); }
+        try { now = await settingsAfterCard(options.approvalSettings ?? governingApprovals); } catch { return recovery(); }
         if (!live()) { receipt("refused"); return stopped(); }
+        if (now.some(item => item.unchecked)) { receipt("refused"); return toolError(OFFICE_NOT_CHECKED); }
         if (decideWith(now) === "refuse") { receipt("refused"); return toolError(`Approval settings changed to Don't use for ${label(binding.label)}; Bud did not do it.`); }
         // A read carded by Ask every time still runs as a read: the registry's own class decides the call.
         approval = toolClass === "read" ? undefined : toolClass;

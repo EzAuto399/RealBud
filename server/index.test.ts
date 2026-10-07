@@ -807,6 +807,8 @@ describe("harness HTTP API", () => {
     expect(source).toContain(verify);
     expect(source.indexOf(verify)).toBeLessThan(source.indexOf("const access = !opts?.systemExtra ? await refreshOfficeSources() : null;"));
     expect(source.indexOf(verify)).toBeGreaterThan(source.indexOf("store.patchBot(bot.id, { busy: true, unread: false });\n  expectedStoppedThreads.delete(threadId);"));
+    // After a card on a still-unchecked desktop, the brokers verify once more through the same store.
+    expect(source).toContain("governApprovals({ effective: () => approvals.effective(), singleDesktop: async () => await companyHost.seatIdentity() === null, verify: () => approvals.verifyAgain() });");
   });
 
   it("answers a phone tap on a live action card through the same live-request helper", () => {

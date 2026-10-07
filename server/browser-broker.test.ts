@@ -21,6 +21,7 @@ import type { Store } from "./store.ts";
 import { websiteRunReceipt } from "./website-work-adapters.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { OFFICE_UNCHECKED, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
+import { createApprovalSettings, governApprovals, OFFICE_NOT_CHECKED } from "./approval-settings.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
@@ -141,9 +142,75 @@ describe("approval settings, read on every step", () => {
   it("asks before every step on an office desktop whose settings could not be checked, and says why", async () => {
     const f = await fixture(undefined, { rules: [{ key: "portal:read:portal.example", decision: "allow" }],
       approvalSettings: async () => [{ version: 1, purpose: "approval-settings", groups: {}, reviewedReads: [] }, uncheckedOfficeSettings()] });
-    await f.request("browser_borrow", { tab_id: 1 });
+    // Approved, but still unchecked after one more try: refused, with nothing borrowed.
+    expect((await f.request("browser_borrow", { tab_id: 1 })).content[0].text).toBe(OFFICE_NOT_CHECKED);
     expect(f.approve).toHaveBeenCalledOnce();
     expect(f.approve.mock.calls[0][2]).toContain(OFFICE_UNCHECKED);
+    expect(f.calls.some(call => call[0] === "tab" && call[1] === "borrow")).toBe(false);
+  });
+});
+
+describe("a fresh office desktop whose department settings cannot be checked", () => {
+  // The host's real store and registration: Accounts governs this member, and the office answers
+  // /api/company/approvals/mine in order ("down" is a 503); the turn's own check comes first.
+  const SESSION = "synthetic-member-session-0000000000000000000";
+  let answers: Array<"down" | ApprovalChoice>;
+  const company = async (path: string, request: { headers: Record<string, unknown> }) => {
+    const answer = answers.shift() ?? "down";
+    if (path !== "/api/company/approvals/mine" || request.headers["x-realbud-member-session"] !== SESSION || answer === "down") return { status: 503, body: null };
+    return { status: 200, body: { member: { id: "fictional-member-0001", displayName: "Fictional Sam", role: "member" }, departments: [{ id: "00000000-0000-4000-8000-0000000000a1",
+      name: "Accounts", canEdit: false, governs: true, revision: "0", settings: { version: 1, purpose: "approval-settings", groups: { "site:portal.example": answer }, reviewedReads: [] } }] } };
+  };
+  const desktop = async (seat: string | null, office: Array<"down" | ApprovalChoice>) => {
+    answers = [...office];
+    const dataDir = privateTempRoot(join(tmpdir(), "rb-browser-approvals-")); cleanup.push(() => removeFixture(dataDir));
+    const store = createApprovalSettings({ dataDir, seatIdentity: async () => seat, company });
+    governApprovals({ effective: () => store.effective(), singleDesktop: async () => seat === null, verify: () => store.verifyAgain() });
+    await store.verifyIfMissing({ headers: { "x-realbud-member-session": SESSION } });
+    return fixture();
+  };
+  afterEach(() => governApprovals({ effective: async () => [], singleDesktop: async () => true }));
+  const borrowed = (f: Awaited<ReturnType<typeof fixture>>) => f.calls.some(call => call[0] === "tab" && call[1] === "borrow");
+
+  it("cards the step with its reason and, still unverified after approval, refuses it with nothing done", async () => {
+    const f = await desktop("fictional-member-0001", ["down", "down"]);
+    expect((await f.request("browser_borrow", { tab_id: 1 })).content[0].text).toBe(OFFICE_NOT_CHECKED);
+    expect(f.approve).toHaveBeenCalledOnce();
+    expect(f.approve.mock.calls[0][2]).toContain(OFFICE_UNCHECKED);
+    expect(answers).toEqual([]); // verification was tried once more after the card
+    expect(borrowed(f)).toBe(false);
+    expect((await f.operations.list()).map(row => [row.toolName, row.status])).toEqual([["browser_borrow", "denied"]]);
+  });
+
+  it("applies the department's settings when verification succeeds after approval", async () => {
+    const denied = await desktop("fictional-member-0001", ["down", "deny"]);
+    expect((await denied.request("browser_borrow", { tab_id: 1 })).content[0].text).toBe("Approval settings changed to Don't use for portal.example; Bud did not do it.");
+    expect(borrowed(denied)).toBe(false);
+    const allowed = await desktop("fictional-member-0001", ["down", "read-without-asking"]);
+    expect((await allowed.request("browser_borrow", { tab_id: 1 })).isError).not.toBe(true);
+    expect(borrowed(allowed)).toBe(true);
+  });
+
+  it("leaves a single desktop alone: no office call, and an approved step runs", async () => {
+    const f = await desktop(null, ["deny"]);
+    expect((await f.request("browser_borrow", { tab_id: 1 })).isError).not.toBe(true);
+    expect(f.approve.mock.calls[0][2]).not.toContain(OFFICE_UNCHECKED);
+    expect(answers).toEqual(["deny"]);
+    expect(borrowed(f)).toBe(true);
+  });
+
+  it("refuses an approved payment while the settings are still unverified, and presses nothing", async () => {
+    let current: ApprovalSettings[] = [];
+    const f = await fixture(undefined, { task: { actions: ["read", "navigate", "click", "fill", "keys", "submit"], browserId: "work", expiresAt: 1_100_000, budget: 100 }, ownsProfile: true,
+      approvalSettings: async () => current });
+    f.page(['@vom 1', 'L1 page', '  main', '    heading "Pay invoice"', '    form "Pay invoice"', '      @e1 textbox "Payee" value="Fictional Plumbing Pty Ltd"',
+      '      @e2 textbox "Amount" value="A$480.00"', '      @e3 button "Submit"'].join("\n"));
+    await f.ready();
+    current = [uncheckedOfficeSettings()];
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e3" })).content[0].text).toBe(OFFICE_NOT_CHECKED);
+    expect(f.approve).toHaveBeenCalledOnce();
+    expect(f.calls.some(call => call[0] === "click")).toBe(false);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "denied", kind: "pay" }]);
   });
 });
 

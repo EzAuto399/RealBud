@@ -63,7 +63,9 @@ function lapsed(settings: ApprovalSettings): ApprovalSettings {
 // ── The settings that govern this desktop, for enforcement points the host
 // does not construct (brokers started by the worker driver). index.ts
 // registers its store once at boot.
-let governing: { effective: () => Promise<ApprovalSettings[]>; singleDesktop: () => Promise<boolean> } | null = null;
+let governing: { effective: () => Promise<ApprovalSettings[]>; singleDesktop: () => Promise<boolean>;
+  /** One more verification with the person's own member session (the store's `verifyAgain`). */
+  verify?: () => Promise<void> } | null = null;
 let known: ApprovalSettings[] | null = null;
 /** Register this desktop's store. Starts a first read so a decision that cannot wait has settings to use. */
 export function governApprovals(source: NonNullable<typeof governing>): void {
@@ -84,6 +86,16 @@ export function lastGoverningApprovals(): ApprovalSettings[] | null {
   void governingApprovals().catch(() => {});
   return known;
 }
+export const OFFICE_NOT_CHECKED = 'Office approval settings could not be checked, so Bud did not do this. Try again when RealBud is connected to your office.';
+/** The settings after a person approved a card. An office desktop whose settings are still
+ * unchecked verifies once more, then reads again; still unchecked, the caller refuses with
+ * OFFICE_NOT_CHECKED, so nothing a department governs runs on unverified settings. */
+export async function settingsAfterCard(read: () => Promise<ApprovalSettings[]>): Promise<ApprovalSettings[]> {
+  const list = await read();
+  if (!list.some(settings => settings.unchecked)) return list;
+  await governing?.verify?.().catch(() => {});
+  return read();
+}
 /** True on a single desktop, whose person may always change its settings. An
  * office member changes theirs in Workspace → Approvals, where edit rights are proven. */
 export const approvalsEditableHere = (): Promise<boolean> => governing ? governing.singleDesktop().catch(() => false) : Promise.resolve(true);
@@ -100,6 +112,8 @@ export function createApprovalSettings(options: {
   const file = join(options.dataDir, 'approval-settings.json');
   const copyFile = join(options.dataDir, 'approval-settings-office.json');
   let queue: Promise<unknown> = Promise.resolve();
+  // The member session the last turn verified with, for one more try after a card (`verifyAgain`).
+  let turnRequest: Request | null = null;
   const serial = <T>(work: () => Promise<T>): Promise<T> => { const next = queue.then(work, work); queue = next.catch(() => {}); return next; };
   const load = async (): Promise<LocalFile> => {
     let raw: unknown;
@@ -210,8 +224,17 @@ export function createApprovalSettings(options: {
      * fetches one with the person's own member session. Nothing is fetched without one; it stays closed. */
     async verifyIfMissing(request: Request): Promise<void> {
       const seat = await options.seatIdentity();
-      if (seat === null || (await loadCopy())?.memberId === seat) return;
+      if (seat === null) return;
+      turnRequest = request;
+      if ((await loadCopy())?.memberId === seat) return;
       await verify(request, seat);
+    },
+
+    /** After a person approves a card on an unchecked office desktop: verify once more with the
+     * session the last turn used. Without one nothing is fetched, and it stays closed. */
+    async verifyAgain(): Promise<void> {
+      const seat = await options.seatIdentity();
+      if (seat !== null && turnRequest) await verify(turnRequest, seat);
     },
 
     /** `/api/approvals` (GET, PUT) and `/api/approvals/history` (GET). */

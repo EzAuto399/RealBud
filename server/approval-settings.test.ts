@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createApprovalSettings, onlyEditors, SIGN_IN_TO_CHANGE, type DepartmentApprovals } from './approval-settings.ts';
+import { createApprovalSettings, governApprovals, onlyEditors, settingsAfterCard, SIGN_IN_TO_CHANGE, type DepartmentApprovals } from './approval-settings.ts';
 import { decide, defaultApprovalSettings, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from '../shared/approval-settings.ts';
 import { connectedAppPolicy } from './connected-apps-broker.ts';
 import { MAIL_SENDS } from '../shared/app-tool-policy.ts';
@@ -196,5 +196,29 @@ describe('approval settings in an office', () => {
     const single = createApprovalSettings({ dataDir: directory(), seatIdentity: async () => null, company: host.company });
     expect(await single.effective()).toEqual([settings()]);
     expect(decide(await single.effective(), read)).toBe('run');
+  });
+
+  it('after a card, verifies once more with the session the last turn used, and only while unchecked', async () => {
+    let up = false;
+    const host = office([dept(ACCOUNTS, 'Accounts', false, settings({ 'app:gmail': 'deny' }))]);
+    const store = createApprovalSettings({ dataDir: directory(), seatIdentity: async () => MEMBER,
+      company: async (path, request, body) => up ? host.company(path, request as { headers: Record<string, unknown> }, body) : { status: 503, body: null } });
+    governApprovals({ effective: () => store.effective(), singleDesktop: async () => false, verify: () => store.verifyAgain() });
+    try {
+      // No turn has offered a session yet: nothing is fetched, and it stays closed.
+      up = true;
+      expect(await settingsAfterCard(() => store.effective())).toEqual([settings(), uncheckedOfficeSettings()]);
+      expect(host.calls).toEqual([]);
+      // The turn's own check finds the office down; one more try after the card uses that turn's session.
+      up = false;
+      await store.verifyIfMissing(signedIn);
+      expect(await settingsAfterCard(() => store.effective())).toEqual([settings(), uncheckedOfficeSettings()]);
+      up = true;
+      expect(await settingsAfterCard(() => store.effective())).toEqual([settings({ 'app:gmail': 'deny' })]);
+      // Verified settings are read once, with no further office call.
+      const fetched = host.calls.length;
+      expect(await settingsAfterCard(() => store.effective())).toEqual([settings({ 'app:gmail': 'deny' })]);
+      expect(host.calls.length).toBe(fetched);
+    } finally { governApprovals({ effective: async () => [], singleDesktop: async () => true }); }
   });
 });

@@ -7,6 +7,7 @@ import { appVerdict, asksForOfficeMailbox, connectedAppPolicy, officeMailboxName
 import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { defaultApprovalSettings, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, uncheckedOfficeSettings, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
+import { createApprovalSettings, governApprovals, OFFICE_NOT_CHECKED } from "./approval-settings.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
 import * as atomic from "./atomic.ts";
@@ -1015,6 +1016,59 @@ describe("connected app authoritative broker", () => {
       expect((await invoke("tools/call", { name: "COMPOSIO_REMOTE_WORKBENCH", arguments: {} })).body.result.content[0].text).toContain("outside Bud's connected-app boundary");
       expect(review).not.toHaveBeenCalled();
       expect(received.filter(row => row.method === "tools/call" && row.params.name !== "COMPOSIO_SEARCH_TOOLS")).toHaveLength(0);
+    });
+  });
+
+  describe("a fresh office desktop whose department settings cannot be checked", () => {
+    // The host's real store and registration: Accounts governs this member, and the office answers
+    // /api/company/approvals/mine in order ("down" is a 503); the turn's own check comes first.
+    const SESSION = "synthetic-member-session-0000000000000000000";
+    let answers: Array<"down" | ApprovalChoice>;
+    let review: ReturnType<typeof vi.fn<(summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => Promise<boolean>>>;
+    const company = async (path: string, request: { headers: Record<string, unknown> }) => {
+      const answer = answers.shift() ?? "down";
+      if (path !== "/api/company/approvals/mine" || request.headers["x-realbud-member-session"] !== SESSION || answer === "down") return { status: 503, body: null };
+      return { status: 200, body: { member: { id: "fictional-member-0001", displayName: "Fictional Sam", role: "member" }, departments: [{ id: "00000000-0000-4000-8000-0000000000a1",
+        name: "Accounts", canEdit: false, governs: true, revision: "0", settings: { version: 1, purpose: "approval-settings", groups: { "app:gmail": answer }, reviewedReads: [] } }] } };
+    };
+    const desktop = async (seat: string | null, office: Array<"down" | ApprovalChoice>) => {
+      answers = [...office]; review = vi.fn(async () => true);
+      const store = createApprovalSettings({ dataDir: mkdtempSync(join(scratch, "approvals-")), seatIdentity: async () => seat, company });
+      governApprovals({ effective: () => store.effective(), singleDesktop: async () => seat === null, verify: () => store.verifyAgain() });
+      await store.verifyIfMissing({ headers: { "x-realbud-member-session": SESSION } });
+      broker.close();
+      broker = await startConnectedAppsBroker({ threadId: "fixture-office-thread", key, url, operations, managed: true, isActive: () => active, approve: (summary, signal, card) => review(summary, signal, card) });
+    };
+    afterEach(() => governApprovals({ effective: async () => [], singleDesktop: async () => true }));
+    const listThreads = { name: "GMAIL_LIST_THREADS", arguments: { query: "from:fictional@example.test" } };
+    const dispatched = () => received.filter(row => row.method === "tools/call").length;
+
+    it("cards the call with its reason and, still unverified after approval, refuses it with nothing sent", async () => {
+      await desktop("fictional-member-0001", ["down", "down"]);
+      const result = await invoke("tools/call", listThreads);
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][0]).toContain(OFFICE_UNCHECKED);
+      expect(result.body.result.content[0].text).toBe(OFFICE_NOT_CHECKED);
+      expect(answers).toEqual([]); // verification was tried once more after the card
+      expect(dispatched()).toBe(0);
+      expect(operations.list()).toEqual([expect.objectContaining({ toolName: "GMAIL_LIST_THREADS", status: "denied" })]);
+    });
+
+    it("applies the department's settings when verification succeeds after approval", async () => {
+      await desktop("fictional-member-0001", ["down", "deny"]);
+      expect((await invoke("tools/call", listThreads)).body.result.content[0].text).toBe("Approval settings changed to Don't use for Gmail; Bud did not do it.");
+      expect(dispatched()).toBe(0);
+      await desktop("fictional-member-0001", ["down", "read-without-asking"]);
+      expect((await invoke("tools/call", listThreads)).body.result.isError).not.toBe(true);
+      expect(dispatched()).toBe(1);
+    });
+
+    it("leaves a single desktop alone: no office call, and its reads run", async () => {
+      await desktop(null, ["deny"]);
+      expect((await invoke("tools/call", listThreads)).body.result.isError).not.toBe(true);
+      expect(review).not.toHaveBeenCalled();
+      expect(answers).toEqual(["deny"]);
+      expect(dispatched()).toBe(1);
     });
   });
 });

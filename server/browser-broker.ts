@@ -40,7 +40,7 @@ import {
   type BrowserFenceProjection,
 } from "./browser-authority.ts";
 import { loadRules } from "./rules.ts";
-import { governingApprovals } from "./approval-settings.ts";
+import { governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
 import { OFFICE_UNCHECKED, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { signInHandoverBlocks } from "./browser-sign-in.ts";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, saveAskAttachment } from "./ask-attach.ts";
@@ -270,7 +270,12 @@ export async function startBrowserBroker(options: {
   // Standing rules are read on every decision; the approval settings once per step and again after each wait for a person.
   const standing = options.rules ?? (() => context.rules ?? loadRules());
   let approvalsNow: BrowserApprovals = null;
-  const readApprovals = async () => { approvalsNow = await (options.approvalSettings ?? governingApprovals)().catch(() => null); };
+  const readApprovals = async (afterCard = false) => {
+    const read = options.approvalSettings ?? governingApprovals;
+    approvalsNow = await (afterCard ? settingsAfterCard(read) : read()).catch(() => null);
+  };
+  /** After a card, settings this office desktop still could not check refuse the step. */
+  const unverified = () => approvalsNow?.some(settings => settings.unchecked) === true;
   const rules = () => effectiveRules(approvalsNow, standing());
   let closed = false; let session: string | null = null; let busy = false;
   // A task continuing after sign-in keeps what it already spent.
@@ -323,10 +328,11 @@ export async function startBrowserBroker(options: {
     publish("asked", fenceEvidenceLine({ tool }, { kind: "ask" }));
     const summary = approvalsNow?.some(settings => settings.unchecked) ? `${auth.summary} ${OFFICE_UNCHECKED}` : auth.summary;
     if (!await options.approve(presentAs, params, summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
-    await readApprovals();
+    await readApprovals(true);
     check(signal);
     // The step is authorized again with the settings read after the wait: a Don't use saved meanwhile refuses it.
-    const now = again?.();
+    // Settings this office desktop still could not check refuse it too.
+    const now = unverified() ? { decision: "deny" as const, reason: OFFICE_NOT_CHECKED, refusedBy: undefined } : again?.();
     if (now?.decision === "deny") {
       const reason = now.refusedBy ? settingsChanged(now.refusedBy) : now.reason;
       operations.deny({ threadId: options.threadId, toolName: tool, toolSlugs: [] });
@@ -458,8 +464,9 @@ export async function startBrowserBroker(options: {
     // A Stop (broker close, turn interrupt, browser stop) is recorded as a stop, never as the person's refusal.
     if (closed || signal.aborted || !options.isActive()) return refuse("stopped", STOPPED);
     if (!approved) return refuse("denied", NOT_APPROVED);
-    await readApprovals();
+    await readApprovals(true);
     try { check(signal); } catch (error) { return refuse("stopped", STOPPED, error); }
+    if (unverified()) return refuse("denied", OFFICE_NOT_CHECKED);
     // The approval is for the page, control and facts the person saw, not whatever replaced them.
     try { await observe(tabId, signal); } catch (error) { return refuse("changed", "The page changed after approval. Nothing was pressed.", error); }
     const again = snapshots.get(tabId);

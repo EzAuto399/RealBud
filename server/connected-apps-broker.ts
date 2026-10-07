@@ -9,7 +9,7 @@ import { redactSecrets, redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, validAppToolName, validAppToolSlug, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { appToolOperations, classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { approvalGroupKey, decide, defaultApprovalSettings, lockedOff, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
-import { approvalsEditableHere, governingApprovals } from "./approval-settings.ts";
+import { approvalsEditableHere, governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
 import type { ApprovalCardDetails } from "./contracts.ts";
 import { managedMailboxAccess } from "./managed-connectors.ts";
 
@@ -334,7 +334,8 @@ export async function startConnectedAppsBroker(options: {
               // A Don't use saved while the card waited still refuses it.
               if (rows.length) {
                 let now: ApprovalSettings[];
-                try { now = await readSettings(); } catch { return refused(APPROVALS_RECOVERY); }
+                try { now = await settingsAfterCard(readSettings); } catch { return refused(APPROVALS_RECOVERY); }
+                if (now.some(item => item.unchecked)) return refused(OFFICE_NOT_CHECKED);
                 const again = appVerdict(rows, now, how);
                 if (again.decision === "refuse") return refused(`Approval settings changed to Don't use for ${again.label}; Bud did not do it.`);
               }
