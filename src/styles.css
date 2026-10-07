@@ -270,7 +270,7 @@ label > input[type="checkbox"] {
   }
 }
 
-/* Compact window (see COMPACT_WINDOW_QUERY): the Desk header gives its
+/* Compact window: the Desk header gives its
    explanatory lines back to the case so the wording under decision is visible
    at the 900×600 floor. Controls and counts stay. */
 @media (max-height: 759px) {
