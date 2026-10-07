@@ -17,6 +17,8 @@ export interface RoutineResult {
   /** Cumulative Gmail interval bookkeeping since startAt for this account and
    * binding. Uncovered intervals persist until a later window checks them. */
   coverage?: RoutineCoverage;
+  /** Jev's pre-screen of morning mail, when it answered: conversations saved as noise and its model id. */
+  screen?: { screened: number; model: string };
 }
 export interface RoutineCoverage { startAt: number; endAt: number; uncovered: MailInterval[] }
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -26,7 +28,7 @@ const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) 
 export function readRoutineResult(v: unknown): RoutineResult {
   const bad = (): never => { throw new Error('The saved routine result needs recovery. Its evidence has been kept.'); };
   const keys = 'version,workflow,runId,accountId,bindingRevision,sourceReceiptId,windowStartAt,windowEndAt,finishedAt,status,counts,findings,draftIds,gaps,resultKey,detail,metrics';
-  if (!object(v) || !exact(v, Object.hasOwn(v, 'coverage') ? `${keys},coverage` : keys) ||
+  if (!object(v) || !exact(v, [keys, ...['coverage', 'screen'].filter(k => Object.hasOwn(v, k))].join(',')) ||
       v.version !== 1 || !['weekly-bills', 'inbound-triage'].includes(String(v.workflow)) ||
       !text(v.runId, 100) || !/^[\w-]+$/.test(v.runId) || !text(v.accountId, 200) || !v.accountId ||
       !text(v.sourceReceiptId, 100) || !v.sourceReceiptId || !text(v.bindingRevision, 200) || !v.bindingRevision ||
@@ -43,6 +45,8 @@ export function readRoutineResult(v: unknown): RoutineResult {
     if (!object(c) || !exact(c, 'startAt,endAt,uncovered') || !count(c.startAt) || !count(c.endAt) || c.endAt <= c.startAt ||
         !validMailIntervals(c.uncovered) || c.uncovered.some(i => i.startAt < Number(c.startAt) || i.endAt > Number(c.endAt))) return bad();
   }
+  if (Object.hasOwn(v, 'screen') && (!object(v.screen) || !exact(v.screen, 'screened,model') || !count(v.screen.screened) ||
+      !text(v.screen.model, 100) || !/^[\w.:/-]+$/.test(v.screen.model))) return bad();
   for (const f of v.findings) if (!object(f) || !exact(f, 'id,propertyId,label,state,from,to,reason') ||
       !text(f.id, 250) || !text(f.propertyId, 200) || !text(f.label, 300) || !text(f.reason, 500) ||
       !['missing-review', 'coverage-hold', 'review-hold'].includes(String(f.state)) ||

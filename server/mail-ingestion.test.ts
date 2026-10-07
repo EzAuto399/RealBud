@@ -26,7 +26,7 @@ function createMailIngestionService(options: Parameters<typeof createNormalizedM
     collect: async (...args: Parameters<typeof service.collect>) => { await service.collect(...args); return service.getLegacySnapshot(); },
     update: async (...args: Parameters<typeof service.update>) => { await service.update(...args); return service.getLegacySnapshot(); },
     applyReview: async (...args: Parameters<typeof service.applyReview>) => { await service.applyReview(...args); return service.getLegacySnapshot(); },
-    page: service.page,
+    page: service.page, screenNoise: service.screenNoise,
   };
 }
 vi.mock('./recipes.ts', () => ({ getRecipe: (id: string) => ({ id, capabilities: ['read-files'] }) }));
@@ -102,6 +102,37 @@ describe('durable private mail acquisition and work list', () => {
     const saved = await f.service.applyReview(await reviewRun(f));
     expect(saved.latestReview).not.toBeNull();
     expect(saved.items).toHaveLength(10);
+  });
+  it('keeps Jev-screened noise out of the review batches, listed, and undoable by staff', async () => {
+    const f = await fixture();
+    f.data.threads = Array.from({ length: 25 }, (_, n) => thread((0xb00 + n).toString(16), (0xc00 + n).toString(16)));
+    const receipt = (await f.service.collect()).latestScan!, noisy = f.data.threads.slice(0, 10).map(t => t.id);
+    const edited = f.data.threads[24]!.id;
+    const classify = vi.fn(async (threads: MailThread[]): Promise<{ noise: string[]; model: string } | null> => {
+      // A staff edit while Jev is answering keeps that edit.
+      const item = (await f.service.get()).items.find(i => i.threadId === edited)!;
+      await f.service.update(item.id, { expectedRevision: item.revision, note: 'Fictional staff note' });
+      return { noise: [...noisy, edited].filter(id => threads.some(t => t.id === id)), model: 'typesafe/jev-1.13-20260917' };
+    });
+    expect(await f.service.screenNoise(receipt, classify)).toEqual({ screened: 10, model: 'typesafe/jev-1.13-20260917' });
+    expect(classify.mock.calls[0]![0]).toHaveLength(25);
+    // Unscreened, 25 conversations need two batches (20 + 5); the 14 left fit one.
+    expect(await f.service.prepareInput(receipt)).toMatchObject({ batchThreadCount: 14 });
+    const input = JSON.parse(await readFile(join(f.options.workroomDirectory, 'workflow-inputs', 'accounts-inbox.json'), 'utf8'));
+    expect(input.reviewBatch).toMatchObject({ selectedThreadCount: 14, pendingThreadCount: 14 });
+    expect(input.threads.some((t: { threadId: string }) => noisy.includes(t.threadId))).toBe(false);
+    const listed = await f.service.page({ group: 'reference' });
+    expect(listed.items.map(i => i.threadId).sort()).toEqual([...noisy].sort());
+    for (const item of listed.items) expect(item).toMatchObject({ disposition: 'noise', priority: 'low', reason: 'Screened as noise', screenedBy: 'jev', reviewed: false, newEvidence: false, status: 'open' });
+    expect((await f.service.get()).items.find(i => i.threadId === edited)).toMatchObject({ disposition: 'hold', reviewed: true, note: 'Fictional staff note' });
+    const undo = listed.items[0]!;
+    const saved = (await f.service.update(undo.id, { expectedRevision: undo.revision, disposition: 'action-review', priority: 'normal' })).items.find(i => i.id === undo.id)!;
+    expect(saved).toMatchObject({ disposition: 'action-review', priority: 'normal', reviewed: true }); expect(saved).not.toHaveProperty('screenedBy');
+    expect((await f.service.page({ group: 'open' })).items.map(i => i.id)).toContain(undo.id);
+    // Neither screened nor staff-reviewed conversations are offered again.
+    classify.mockClear(); classify.mockResolvedValueOnce(null);
+    expect(await f.service.screenNoise(receipt, classify)).toBeNull();
+    expect(classify.mock.calls[0]![0].map(t => t.id).sort()).toEqual(f.data.threads.slice(10, 24).map(t => t.id).sort());
   });
   it('uses the explicitly selected collection purpose without falling back to morning authority', async () => {
     const f = await fixture();
