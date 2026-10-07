@@ -234,12 +234,12 @@ describe("model access readiness", () => {
     setWorkerModelGrant({ state: "withdrawn" });
     const status = await hermesStatus({ root: home, cli: PINNED_HERMES });
     expect(status.modelAccess).toMatchObject({ managed: false, withdrawn: true, attached: false });
-    expect(status.detail).toMatch(/withdrawn/i);
-    expect(status.detail).toMatch(/records are kept/i);
+    expect(status.detail).toMatch(/office access ended/i);
+    expect(status.detail).toMatch(/Everything saved stays/i);
     expect(status.detail).not.toMatch(/not attached|connect a model/i);
     const ready = applyHandsReadiness(status, { at: 1, kind: "ping", ok: true, detail: "OK", workerFingerprint: status.workerFingerprint });
     expect(ready.ready).toBe(false);
-    expect(ready.detail).toMatch(/withdrawn/i);
+    expect(ready.detail).toMatch(/office access ended/i);
   });
 });
 

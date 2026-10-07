@@ -1166,6 +1166,12 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
     setScheduleContinueOpen(false);
     openWorkspaceSetup("bud");
   }, [availability.target, dispatch]);
+  // The banner's own action goes where its fix lives (Reconnect → Website account);
+  // "Bud status" keeps opening Bud status.
+  const goAvailabilityAction = useCallback(() => {
+    if (availability.target === "you-website") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
+    goYouSetup();
+  }, [availability.target, dispatch, goYouSetup]);
   const askNext = useMemo(
     () => askNextActions({
       miss: askMiss,
@@ -1714,8 +1720,8 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         askBlockedDetail={productAsk ? availability.detail : undefined}
         askRecheckPending={productAsk && Boolean(budAutoSetupView(state.hermes)?.working)}
         askSetupLabel={availability.action ?? undefined}
-        onAskSetup={productAsk && availability.action ? goYouSetup : undefined}
-        readiness={productAsk ? <><AskReadiness onSetup={goYouSetup} officeLink={officeLink} /><RecoveryCards /></> : undefined}
+        onAskSetup={productAsk && availability.action ? goAvailabilityAction : undefined}
+        readiness={productAsk ? <><AskReadiness onSetup={goAvailabilityAction} officeLink={officeLink} /><RecoveryCards /></> : undefined}
         starter={productAsk ? composerStarter : undefined}
         onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}

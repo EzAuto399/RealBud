@@ -43,13 +43,18 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const codePending = status?.state === "pending" && !status.browser;
   const problem = phase.kind === "unreachable" || phase.kind === "failed" ? phase.message : "";
   // The service also keeps its last failure; never show the same sentence twice.
-  const failure = error || (status?.error !== problem ? status?.error : "");
+  // An inactive office is explained by its own notice, not as a red failure.
+  const failure = error || (status?.error !== problem && !(linked && status?.officeInactive) ? status?.error : "");
   // Just linked in the browser: always name the office it joined, with a way out.
   const joined = phase.kind === "linked";
   // Access is a saved service fact, not a transient browser-approval phase.
   const access = modelAccessState(status);
   const accessMessage = modelAccessMessage(status);
   const message = browserLinkMessage(phase);
+  // The office stopped accepting this computer (or withdrew its service).
+  // Relinking is the way back, so the card leads with it.
+  const ended = !linked && !request && !joined && (status?.state === "revoked" || status?.serviceWithdrawn === true);
+  const endedOn = status?.revokedAt && !Number.isNaN(Date.parse(status.revokedAt)) ? ` on ${new Date(status.revokedAt).toLocaleDateString(undefined, { day: "numeric", month: "long" })}` : "";
   // Redeem and the first report wait on the account's provisioning chain
   // (health, readiness, then the vendor mint): say so rather than sit still.
   const waiting = action === "link" ? "Linking… this can take up to a minute." : action === "report" ? "Updating… this can take up to a minute." : "";
@@ -62,7 +67,13 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
     <p>Linking also enables status reporting. Review workspace access settings before accepting selected work requests.</p>
   </>}>
     <div className="space-y-3 text-sm">
-      {status?.serviceWithdrawn ? <p role="status" className="rounded border border-line p-3">Service access was withdrawn; your records are kept. Everything saved on this computer stays readable and exportable. Ask service support to add this computer again to restore connected accounts and Bud’s model.</p> : null}
+      {ended ? <div role="status" className="rounded border border-hold/30 bg-hold/10 p-3">
+        <p className="font-medium text-ink">This computer was disconnected from {status?.agencyLabel || "your office"}{endedOn}.</p>
+        <p className="mt-1 text-ink-secondary">Everything saved here is kept. Reconnect to bring back Bud and your connected accounts. Your office owner approves it on realbud.app.</p>
+      </div> : linked && status?.officeInactive ? <div role="status" className="rounded border border-hold/30 bg-hold/10 p-3">
+        <p className="font-medium text-ink">{status.agencyLabel || "Your office"}’s RealBud account is inactive.</p>
+        <p className="mt-1 text-ink-secondary">This computer can’t check in until the office owner reactivates the account on <a className="text-agency underline" href="https://realbud.app/account" target="_blank" rel="noreferrer">realbud.app</a>. Nothing was removed, and it reconnects by itself once the account is active.</p>
+      </div> : status?.serviceWithdrawn && linked ? <p role="status" className="rounded border border-line p-3">Your office stopped Bud’s access for this computer. Everything saved here is kept. Ask your office owner to restore it on realbud.app.</p> : null}
       {/* One polite live region, always in the page, announces every approval change. */}
       <p role="status" aria-live="polite" className="sr-only">{[message, accessMessage ?? "", waiting].filter(Boolean).join(" ")}</p>
       {message ? <p className={request || joined ? "font-medium text-ink" : "text-ink-secondary"}>{message}</p> : null}
@@ -92,13 +103,12 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
           <button type="button" className={secondary} disabled={phase.kind === "cancelling"} aria-busy={phase.kind === "cancelling" || undefined} onClick={() => props.onCancel(request)}>{phase.kind === "cancelling" ? "Cancelling…" : "Cancel"}</button>
         </div>
       </> : phase.kind === "linked" ? null : <>
-        {status?.state === "revoked" ? <p>This website link was revoked. Link again to reconnect.</p> : null}
         {codePending ? <div><p>Linking with a code was interrupted. Paste the same code to retry safely.</p><button type="button" disabled={busy} className="mt-1 underline" onClick={props.onDisconnect}>Cancel pending link</button></div> : <>
           {nameField}
           <button type="button" className={primary} disabled={!status || phase.kind === "starting" || !label.trim()} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
-            {phase.kind === "starting" ? "Opening your browser…" : phase.kind === "declined" || phase.kind === "expired" ? "Start again" : phase.kind === "unreachable" ? "Try again" : "Link with your RealBud account"}
+            {phase.kind === "starting" ? "Opening your browser…" : phase.kind === "declined" || phase.kind === "expired" ? "Start again" : phase.kind === "unreachable" ? "Try again" : ended ? "Reconnect this computer" : "Link with your RealBud account"}
           </button>
-          <p className="text-ink-muted">Your browser opens your RealBud account. Check the code matches this screen, then approve this computer.</p>
+          <p className="text-ink-muted">Your browser opens your RealBud account. Check the code matches this screen, then approve this computer.{ended ? <> Not expecting the disconnect? Your office owner can check <a className="text-agency underline" href="https://realbud.app/account/installations" target="_blank" rel="noreferrer">Account → Computers</a>.</> : null}</p>
         </>}
         <details open={codePending || undefined} className="rounded border border-line px-3 py-2">
           <summary className="pm-control flex cursor-pointer items-center">Have a link code instead?</summary>
@@ -123,8 +133,8 @@ export function WebsiteLinkCard() {
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<WebsiteLinkCardViewProps["action"]>(undefined);
   const [confirm, setConfirm] = useState(false);
-  // A resumed approval keeps the computer name it was started with.
-  const resumedLabel = status?.state === "pending" && status.browser ? status.label : undefined;
+  // A resumed approval or a reconnect keeps the computer's earlier name.
+  const resumedLabel = (status?.state === "pending" && status.browser) || status?.state === "revoked" ? status.label : undefined;
   useEffect(() => { if (resumedLabel) setLabel(current => current || resumedLabel); }, [resumedLabel]);
 
   const act = async (action: "link" | "report" | "disconnect") => {

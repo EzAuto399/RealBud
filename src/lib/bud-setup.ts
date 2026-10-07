@@ -189,9 +189,10 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   if (recovering) return unavailable("Recovery needed", "Restoring the property book when its saved key is available. Your draft stays here.", "Unlock book", "you-recovery");
   if (!status) return unavailable("Checking Bud", "Checking Bud's setup. You can prepare your request while this finishes.");
   // A withdrawn service grant is its own hold: nothing on this computer is
-  // broken, no key can fix it, and every saved record stays readable.
+  // broken and no key can fix it. Relinking on the Website account card is
+  // the one way back; every saved record stays readable meanwhile.
   if (status.modelAccess?.withdrawn) {
-    return unavailable("Model access withdrawn", status.modelAccess.detail, null);
+    return unavailable("Disconnected from your office", status.modelAccess.detail, "Reconnect", "you-website");
   }
   // Automatic setup after an approved link comes first: an unsupported
   // personal worker's probe miss is not a dead end while it runs.

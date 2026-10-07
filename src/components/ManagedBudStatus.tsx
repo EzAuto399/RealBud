@@ -95,7 +95,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
     ...status, ready: false, autoSetup: undefined, lastPing: null, lastTest: null,
     ...(status.model ? { model: { ...status.model, attached: false } } : {}),
     modelAccess: { ...status.modelAccess, managed: false, withdrawn, attached: false,
-      detail: withdrawn ? "Model access was withdrawn for this computer. Your records are kept. Contact RealBud support." : status.modelAccess.detail },
+      detail: withdrawn ? "This computer's office access ended, so Bud can't answer here. Everything saved stays on this computer. Reconnect it in Workspace → Website account." : status.modelAccess.detail },
   } : status;
   const availability = budAvailability(displayStatus, connected, recovering, { canAdminister: false });
   const known = connected && !error && !!status && status.cli.probeState !== "timeout" && status.cli.probeState !== "error";
@@ -242,6 +242,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
       {serviceNote && <p role={serviceNote.ok ? "status" : "alert"} className={`mt-3 text-sm ${serviceNote.ok ? "text-ink-secondary" : "text-danger"}`}>{serviceNote.text}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {recovering && connected && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-recovery")}>Unlock book</button>}
+        {withdrawn && connected && !recovering && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" onClick={() => openYou("you-website")}>Reconnect this computer</button>}
         {onShowAsk && <button type="button" className={ready || automatic?.working ? "pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover" : secondaryButton} onClick={onShowAsk}>{backLabel}</button>}
         {needsRestart && canRestart && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover disabled:opacity-50"
           disabled={serviceWorking !== null} aria-busy={serviceWorking === "restart"} onClick={() => { void serviceAction("restart"); }}>

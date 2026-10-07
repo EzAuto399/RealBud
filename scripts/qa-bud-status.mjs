@@ -71,7 +71,7 @@ const setupPhases = {
   'managed-model': { state: 'verifying', code: 'model', step: 3, total: 4, detail: 'Connecting Bud’s model' },
   'managed-readiness': { state: 'verifying', code: 'readiness', step: 4, total: 4, detail: 'Testing Bud on this computer' },
 };
-const scenarioNames = ['unlinked-missing-worker', 'linked-pending', 'linked-local-recovery', 'linked-preflight-recovery', 'relink-pending-old-withdrawal', 'managed-installing', ...Object.keys(setupPhases), 'held-retry-error', 'held-retry-success', 'recovery', 'withdrawn', 'ready'];
+const scenarioNames = ['unlinked-missing-worker', 'linked-pending', 'linked-local-recovery', 'linked-preflight-recovery', 'relink-pending-old-withdrawal', 'managed-installing', ...Object.keys(setupPhases), 'held-retry-error', 'held-retry-success', 'recovery', 'withdrawn', 'revoked', 'ready'];
 const qaState = () => ({ status: fixture, connected: qaConnected, recovering: qaRecovering });
 function selectScenario(name) {
   assert.ok(scenarioNames.includes(name), 'Unknown fictional scenario.');
@@ -90,6 +90,7 @@ function selectScenario(name) {
   if (name === 'held-retry-error' || name === 'held-retry-success') { fixture = structuredClone(held); retryFailure = name === 'held-retry-error'; retryDelay = 1200; }
   if (name === 'recovery') { fixture = structuredClone(held); qaRecovering = true; }
   if (name === 'withdrawn') { fixture = { ...structuredClone(held), modelAccess: { ...ready.modelAccess, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } }; officeFixture.serviceWithdrawn = true; }
+  if (name === 'revoked') { fixture = { ...structuredClone(held), modelAccess: { ...ready.modelAccess, withdrawn: true, attached: false, detail: 'Fictional withdrawn detail.' } }; officeFixture = { state: 'revoked', label: 'Fictional Front Desk', agencyLabel: 'Fictional Harbour Agency', revokedAt: '2026-10-04T14:25:39.101Z', serviceWithdrawn: true }; }
   if (name === 'ready') fixture = structuredClone(ready);
   for (const response of qaSubscribers) response.write(`data: ${JSON.stringify(qaState())}\n\n`);
 }
@@ -250,7 +251,7 @@ try {
     await setState({ ...ready, ready: false, lastPing: null, model: { attached: false, provider: null, model: null }, modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' } });
     await panel.getByRole('button', { name: 'Connect with this code', exact: true }).waitFor(); await shot('bud-model-needed');
     await setState({ ...ready, ready: false, model: { ...ready.model, attached: false }, modelAccess: { managed: true, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } });
-    await panel.getByText('Model access withdrawn', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect with this code', exact: true }).count(), 0); await shot('bud-withdrawn');
+    await panel.getByText('Disconnected from your office', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect with this code', exact: true }).count(), 0); await shot('bud-withdrawn');
     await setState(ready, { recovering: true }); await panel.getByText('Recovery needed', { exact: true }).waitFor(); assert.notEqual((await readRows()).at(-1).state, 'Ready'); await shot('bud-recovery');
     await setState(ready, { connected: false }); await panel.getByText('Reconnecting', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); assert.equal(await panel.getByRole('button', { name: 'Check again', exact: true }).isDisabled(), true); await shot('bud-offline');
     await setState({ ...safeguards, cli: { ...ready.cli, matchesPin: false, compatible: false }, installerAvailable: true });

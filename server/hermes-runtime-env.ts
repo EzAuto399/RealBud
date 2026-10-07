@@ -27,7 +27,7 @@ export function applyWorkerModelAccessEnv(env: NodeJS.ProcessEnv, access: Record
 
 /** Office copy for a worker launch that has no usable managed model access. */
 export const MANAGED_ACCESS_UNPAIRED = "Bud has no AI access on this computer yet. Connect this computer to your office on realbud.app, then try again.";
-export const MANAGED_ACCESS_WITHDRAWN = "This computer's AI access was withdrawn. Your records are kept. Ask RealBud support to restore access.";
+export const MANAGED_ACCESS_WITHDRAWN = "This computer's office access ended, so Bud can't answer here. Everything saved stays on this computer. Reconnect it in Workspace → Website account.";
 export const MANAGED_ACCESS_MISMATCH = "Bud's private setup does not match this computer's AI access. Open Bud setup and choose Repair Bud, then try again.";
 export const MANAGED_ACCESS_RECOVERY = "This computer's saved AI access could not be loaded. Your records are kept. Ask RealBud support to recover access, then try again.";
 /** Ask's loopback model relay (server/ask-model-relay.ts) is not running for this worker's Hermes home. */

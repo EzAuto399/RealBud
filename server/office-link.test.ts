@@ -68,6 +68,33 @@ describe("website installation link", () => {
     expect((await app.status()).state).toBe("linked");
     expect(calls.filter(call => call.route === "redeem").at(-1)!.body.id).not.toBe(refused.body.id);
   });
+  it("pauses on an inactive office instead of revoking, and resumes on the next accepted report", async () => {
+    let inactive = true;
+    const { app } = fixture(vi.fn(async (url, init) => {
+      if (String(url).endsWith("redeem")) { const body = JSON.parse(String(init?.body)); return Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" }); }
+      return inactive ? Response.json({ error: "office_inactive" }, { status: 423 }) : Response.json({});
+    }));
+    await app.link({ code, label: "Desk" });
+    await expect(app.report()).rejects.toThrow(/inactive/);
+    expect(await app.status()).toMatchObject({ state: "linked", officeInactive: true });
+    expect((await app.status()).revokedAt).toBeUndefined();
+    inactive = false;
+    await app.report();
+    const resumed = await app.status();
+    expect(resumed.state).toBe("linked");
+    expect(resumed.officeInactive).toBeUndefined();
+  });
+  it("records when a revocation was learned", async () => {
+    const { app } = fixture(vi.fn(async (url, init) => {
+      if (String(url).endsWith("redeem")) { const body = JSON.parse(String(init?.body)); return Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" }); }
+      return Response.json({}, { status: 401 });
+    }));
+    await app.link({ code, label: "Desk" });
+    await app.report();
+    const status = await app.status();
+    expect(status).toMatchObject({ state: "revoked", label: "Desk", agencyLabel: "Synthetic Office" });
+    expect(Number.isNaN(Date.parse(status.revokedAt ?? ""))).toBe(false);
+  });
   it("sends only installation metadata, stops on revocation, and cannot silently move offices", async () => {
     const calls: any[] = [];
     const { app, report } = fixture(vi.fn(async (url, init) => {

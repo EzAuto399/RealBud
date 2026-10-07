@@ -462,7 +462,7 @@ export function JobWorkspace({
             {availability.action ? (
               <button type="button" className={buttonClass} onClick={() => {
                 if (onSetup) { onSetup(); return; }
-                if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); }
+                if (availability.target === "you-recovery" || availability.target === "you-website") { location.hash = availability.target; dispatch({ type: "showYou" }); }
                 else openWorkspaceSetup("bud");
               }}>{availability.action}</button>
             ) : null}

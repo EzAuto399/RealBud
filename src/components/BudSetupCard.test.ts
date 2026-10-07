@@ -40,7 +40,7 @@ const managed = (attached: boolean, model: string | null) => hermes(
 
 const withdrawn = () => hermes(
   { managed: false, withdrawn: true, attached: false,
-    detail: "Model access was withdrawn for this computer. Your records are kept. Ask service support to restore access." },
+    detail: "This computer's office access ended, so Bud can't answer here. Everything saved stays on this computer. Reconnect it in Workspace → Website account." },
   { attached: false, provider: "custom:realbud", model: "deepseek-v4.1-flash", choice: "flash-high" },
 );
 
@@ -112,15 +112,15 @@ describe("provisioned installations never ask for a provider key", () => {
   it("names a withdrawn grant as a hold everywhere it is reported", () => {
     store.state.hermes = withdrawn();
     const html = administration();
-    expect(html).toMatch(/withdrawn/i);
-    expect(html).toMatch(/records are kept/i);
+    expect(html).toMatch(/office access ended/i);
+    expect(html).toMatch(/Everything saved stays/i);
     expect(html).not.toMatch(/Connect a model|Provider API key/);
 
     const managedSurface = renderToStaticMarkup(createElement(ManagedBudStatus, {
       id: "you-worker", status: store.state.hermes, connected: true, onRefresh: async () => {},
     }));
-    expect(managedSurface).toMatch(/Model access withdrawn/);
-    expect(managedSurface).toMatch(/records are kept/i);
+    expect(managedSurface).toMatch(/Disconnected from your office/);
+    expect(managedSurface).toMatch(/Everything saved stays/i);
   });
 });
 
@@ -163,10 +163,10 @@ describe("budAvailability for managed access", () => {
     expect(render(withdrawn())).not.toMatch(connect);
     expect(render({ ...missing, ready: true, model: { attached: true, provider: "fictional", model: "fictional" } })).not.toMatch(connect);
   });
-  it("holds on a withdrawn grant with no action that could fix it", () => {
+  it("holds on a withdrawn grant and sends the person to reconnect", () => {
     const view = budAvailability(withdrawn(), true);
-    expect(view).toMatchObject({ ready: false, label: "Model access withdrawn", action: null });
-    expect(view.detail).toMatch(/records are kept/i);
+    expect(view).toMatchObject({ ready: false, label: "Disconnected from your office", action: "Reconnect", target: "you-website" });
+    expect(view.detail).toMatch(/Everything saved stays/i);
   });
 
   it("asks for a model choice, not a key, while a managed grant has none", () => {
