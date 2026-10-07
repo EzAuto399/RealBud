@@ -9,10 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime } from "./browser-runtime.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import type { PersonApprove } from "./portal-recipe-runner.ts";
+import type { PersonApprove, PortalRunResult } from "./portal-recipe-runner.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
-import { awaitPosting, captureBaseline, nextReiStep, preview, readback, w1ArtifactSha256, w1ImportProof, w1ReadbackEvent, w1ReiGrantNeeds, w1ReiPreviewProposal, type W1ReiBatch, type W1ReiContext, type W1ReiEvent } from "./w1-rei-workflow.ts";
+import { awaitPosting, captureBaseline, nextReiStep, preview, readback, w1ArtifactSha256, w1ImportProof, w1ReadbackEvent, w1RegisterEvidence, w1ReiGrantNeeds, w1ReiPreviewProposal, type W1ReiBatch, type W1ReiContext, type W1ReiEvent } from "./w1-rei-workflow.ts";
 import { parseBrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
 
 const cleanup: Array<() => Promise<unknown> | unknown> = [];
@@ -251,5 +251,21 @@ describe("W1 REI readback", () => {
     expect(await readback(batchFor(CSV), declined.ctx, WINDOW)).toMatchObject({ status: "not-read" });
     expect(await captureBaseline(batchFor(CSV), declined.ctx, WINDOW)).toMatchObject({ status: "not-read" });
     await expect(readback(batchFor(CSV), declined.ctx, { from: "2026-10-02", to: "2026-09-25" })).rejects.toThrow(/dates/);
+  });
+});
+
+describe("W1 register evidence from the run receipt", () => {
+  const run = (steps: Array<[string, string, string | undefined, boolean]>): PortalRunResult => ({ outcome: "completed", results: [],
+    receipt: { portal: "rei-cloud", origin: "https://fictional.invalid", grantId: "g", runId: "r", startedAt: 0, endedAt: 0, tools: {}, approvals: { recipe: 0, person: 0 }, accountChecks: 0, flags: [],
+      steps: steps.map(([recipe, verb, target, ok], index) => ({ recipe, index, verb, ...(target ? { target } : {}), ok, ms: 0 })) } });
+  const batch = batchFor(CSV);
+  it("counts only the readback recipe's own account checks on each side of a completed download", () => {
+    const both = run([["open-session", "check", "account", true], ["receipt-register", "check", "account", true], ["receipt-register", "download", "Export", true], ["receipt-register", "check", "account", true]]);
+    expect(w1RegisterEvidence(batch, both, WINDOW)).toEqual({ pageScope: { marker: FICTIONAL_BUSINESS, checkedBefore: true, checkedAfter: true }, exportPeriod: WINDOW });
+    // The session recipe's check is not the export page's, and a check that did not finish is no check.
+    const sessionOnly = run([["open-session", "check", "account", true], ["receipt-register", "download", "Export", true], ["receipt-register", "check", "account", false]]);
+    expect(w1RegisterEvidence(batch, sessionOnly, WINDOW).pageScope).toEqual({ marker: FICTIONAL_BUSINESS, checkedBefore: false, checkedAfter: false });
+    const noDownload = run([["receipt-register", "check", "account", true], ["receipt-register", "check", "account", true]]);
+    expect(w1RegisterEvidence(batch, noDownload, WINDOW).pageScope).toMatchObject({ checkedBefore: false, checkedAfter: false });
   });
 });

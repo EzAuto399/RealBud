@@ -6,21 +6,24 @@ import { loadAustinPack } from './austin-pack.ts';
 
 const workflows = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'workflows');
 const directory = join(workflows, 'austin-accounts');
+/** Shipped text read with LF line endings, so a CRLF checkout or editor save
+ * yields the same pack bytes and digest on Windows as on macOS. */
+const readText = (path: string) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const sourceProvenance = 'Call this a synthetic rehearsal only when input.synthetic=true; otherwise call it saved-source evidence. This does not verify live freshness or complete coverage.';
 
 /** The REI recipes and site map shipped with the app, read at call time so
  * reviewed changes to them need no hash pin here. */
 export function austinReiFiles(): { 'rei/recipes.json': string; 'rei/site-map.json': string } {
   const rei = join(directory, 'support/rei-cloud-navigation');
-  return { 'rei/recipes.json': readFileSync(join(rei, 'recipes.json'), 'utf8'), 'rei/site-map.json': readFileSync(join(rei, 'site-map.json'), 'utf8') };
+  return { 'rei/recipes.json': readText(join(rei, 'recipes.json')), 'rei/site-map.json': readText(join(rei, 'site-map.json')) };
 }
 
 /** Distributed plans contain no customer records, sign-ins, clocks or approvals. */
 export function austinCustomerPack(): CustomerPack {
   const source = JSON.parse(readFileSync(join(directory, 'workflows.json'), 'utf8')) as { recipes: CustomerPack['recipes'] };
-  const skills: CustomerPack['skills'] = [{ id: 'email-inbox-triage', name: 'Email inbox triage', description: 'Review supplied inbox evidence and prepare an internal priority list.', instructions: readFileSync(join(directory, 'support/email-inbox-triage/SKILL.md'), 'utf8'), license: readFileSync(join(directory, 'support/LICENSE.upstream'), 'utf8') },
+  const skills: CustomerPack['skills'] = [{ id: 'email-inbox-triage', name: 'Email inbox triage', description: 'Review supplied inbox evidence and prepare an internal priority list.', instructions: readText(join(directory, 'support/email-inbox-triage/SKILL.md')), license: readText(join(directory, 'support/LICENSE.upstream')) },
     // Auston Realty add-on content, never office-core: REI Cloud navigation grants no browser authority; the portal fence decides.
-    { id: 'rei-cloud-navigation', name: 'REI Cloud navigation', description: 'Find pages, stable selectors and risk classes in the signed-in REI Cloud session. Grants no authority; the RealBud portal fence approves every consequential action.', instructions: readFileSync(join(directory, 'support/rei-cloud-navigation/SKILL.md'), 'utf8'), license: readFileSync(join(directory, 'support/rei-cloud-navigation/LICENSE'), 'utf8') }];
+    { id: 'rei-cloud-navigation', name: 'REI Cloud navigation', description: 'Find pages, stable selectors and risk classes in the signed-in REI Cloud session. Grants no authority; the RealBud portal fence approves every consequential action.', instructions: readText(join(directory, 'support/rei-cloud-navigation/SKILL.md')), license: readText(join(directory, 'support/rei-cloud-navigation/LICENSE')) }];
   // Ids keep the historical `austin` spelling; the customer is Auston Realty.
   // Revision 5 adds the connected-Gmail operating model as preparation guidance;
   // weekly W2 orchestration, calendar updates and notifications still need host receipts.

@@ -123,7 +123,8 @@ try {
   assert.equal(exported.signature, undefined);
   assert.ok(JSON.parse(exported.files['office/settings.json']).loops.every(loop => loop.enabled === false));
   assert.ok(!JSON.stringify(exported).includes(token) && !JSON.stringify(exported).includes(temp));
-  const unsigned = "This pack isn't signed by RealBud, so it wasn't installed.";
+  // An unsigned export keeps the built-in id but not its bytes.
+  const unsigned = 'This pack differs from the copy built into this version of RealBud.';
   const refused = await fetch(origin + '/api/customer-packs/preview', { method: 'POST', headers: { 'x-realbud-session': token, 'content-type': 'application/json' }, body: JSON.stringify({ pack: exported }) });
   assert.equal(refused.status, 400); assert.equal((await refused.json()).error, unsigned);
   await openMore(); await card.getByLabel('Preview a pack file', { exact: true }).setInputFiles({ name: 'realbud-austin-office-client.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported)) });

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { validateCustomerPack } from './customer-packs.ts';
@@ -59,7 +59,7 @@ describe('Austin office pack definition', () => {
     const provenance = JSON.parse(readFileSync(join(support, 'provenance.json'), 'utf8'));
     const digest = (file: string) => createHash('sha256').update(readFileSync(join(support, file))).digest('hex');
     // This is the skill's original publication provenance, not the current pack version.
-    expect(provenance).toMatchObject({ name: 'rei-cloud-navigation', pack: 'austin-office', packRevision: 3, firstParty: true, sha256: digest('SKILL.md'), siteMapSha256: digest('site-map.json') });
+    expect(provenance).toMatchObject({ name: 'rei-cloud-navigation', pack: 'austin-office', packRevision: 3, firstParty: true, sha256: digest('SKILL.md'), siteMapSha256: digest('site-map.json'), recipesSha256: digest('recipes.json') });
     const map = JSON.parse(readFileSync(join(support, 'site-map.json'), 'utf8'));
     expect(map).toMatchObject({ portal: 'rei-cloud', pack: 'austin-office', skill: 'rei-cloud-navigation' });
     expect(JSON.stringify(map)).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})/);
@@ -80,6 +80,25 @@ describe('Austin office pack definition', () => {
     expect(websiteMap).toMatch(/recipe: receipt-register[\s\S]*?grant_needs: \[download\][\s\S]*?- select: \{field: Output, option: Export Only\}/);
     expect(websiteMap).toMatch(/recipe: open-session[\s\S]*?- check: account/);
     expect(JSON.stringify(austinCustomerPack())).not.toMatch(/task-recipes|website-map/);
+  });
+
+  it('reads shipped skill text with LF endings, so a CRLF checkout keeps the built-in digest (Windows #20)', async () => {
+    const digest = (pack: unknown) => createHash('sha256').update(JSON.stringify(validateCustomerPack(pack))).digest('hex');
+    const expected = digest(austinCustomerPack());
+    vi.resetModules();
+    vi.doMock('node:fs', async original => {
+      const fs = await original<typeof import('node:fs')>();
+      const readFileSync = ((path: string, options?: unknown) => {
+        const value = fs.readFileSync(path, options as BufferEncoding);
+        return /SKILL\.md$|LICENSE/.test(String(path)) && typeof value === 'string' ? value.replace(/\n/g, '\r\n') : value;
+      }) as typeof fs.readFileSync;
+      return { ...fs, readFileSync, default: { ...fs, readFileSync } };
+    });
+    try {
+      const crlf = (await import('./customer-pack-definition.ts')).austinCustomerPack();
+      expect(crlf.skills.every(skill => skill.instructions.includes('\n') && !skill.instructions.includes('\r'))).toBe(true);
+      expect(digest(crlf)).toBe(expected);
+    } finally { vi.doUnmock('node:fs'); vi.resetModules(); }
   });
 
   it('points the REI map simulation at the Austin reference, never at the core Hermes profile', () => {

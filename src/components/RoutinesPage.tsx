@@ -21,7 +21,7 @@ import { filterScheduleRows, scheduleRowSection, type ScheduleFilter } from "@/l
 import { acknowledgeActivity, JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import { AustinPlanDetail } from "./schedule/AustinPackCard";
-import { parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
+import { hiddenAustinLoopIds, parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
 import { JobRunFeed } from "./desk/JobRunFeed";
 import { ExecutionHistory } from "./schedule/ExecutionHistory";
 import { FlaggedReceipt, JobDrawer, LoopDetail, type LoopTimingChange } from "./schedule/JobDrawer";
@@ -247,8 +247,11 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   };
 
   const deskCounts = producedByRunId([...(state.desk?.book?.cases ?? []), ...(state.desk?.workItems ?? [])]);
+  // Auston jobs this PC's role packs never set stay out of the list until they are on or have run.
+  const hiddenLoops = useMemo(() => hiddenAustinLoopIds(austin, state.loops,
+    new Set([...state.loopRuns.map((run) => run.loopId), ...Object.keys(pendingRequests)])), [austin, state.loops, state.loopRuns, pendingRequests]);
   const rows = useMemo(() => buildScheduleRows({
-    loops: state.loops,
+    loops: state.loops.filter((loop) => !hiddenLoops.has(loop.id)),
     recipes,
     loopRuns: state.loopRuns,
     jobRuns: state.jobRuns,
@@ -257,7 +260,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
     recovery,
     nowMs,
     timeZone: timezone,
-  }), [state.loops, recipes, state.loopRuns, state.jobRuns, pendingRequests, pendingJobs, recovery, nowMs, timezone]);
+  }), [state.loops, hiddenLoops, recipes, state.loopRuns, state.jobRuns, pendingRequests, pendingJobs, recovery, nowMs, timezone]);
   // Keep the order stable while someone is reading or acting on the list.
   const frozen = Boolean(drawer) || interacting;
   const keys = frozen ? stableOrder(order.current, rows.map((row) => row.key)) : rows.map((row) => row.key);

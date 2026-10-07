@@ -16,8 +16,12 @@ export const PACK_PUBLISHER_KEYS: readonly PackPublisherKey[] = [
   { keyId: 'realbud-2026-10', publicKey: 'MCowBQYDK2VwAyEAV2xTNNnqf4GpjlAo0zBqHXqlTUOcD9d+dJbVdSNYyQQ=' },
 ];
 
+/** The generic refusal: no usable RealBud signature. Specific causes have their own sentence below. */
 export const UNSIGNED_PACK_MESSAGE = "This pack isn't signed by RealBud, so it wasn't installed.";
-const refuse = (): never => { throw Object.assign(new Error(UNSIGNED_PACK_MESSAGE), { status: 400 }); };
+export const CHANGED_PACK_MESSAGE = 'This pack was changed after RealBud signed it.';
+export const UNTRUSTED_KEY_MESSAGE = "This pack is signed with a key this version of RealBud doesn't trust. Update RealBud and try again.";
+export const BUILT_IN_MISMATCH_MESSAGE = 'This pack differs from the copy built into this version of RealBud.';
+const refusePack = (message = UNSIGNED_PACK_MESSAGE): never => { throw Object.assign(new Error(message), { status: 400 }); };
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /** Sorted-key JSON; the same value always yields the same bytes. */
@@ -50,11 +54,11 @@ export const publicKeyEntry = (keyId: string, key: KeyObject | string): PackPubl
 /** Returns the signing key id, or refuses an unsigned, tampered or unknown-key pack. */
 export function verifyPackSignature(pack: { files?: Record<string, string>; signature?: PackSignature }, keys: readonly PackPublisherKey[] = PACK_PUBLISHER_KEYS): string {
   const signature = pack.signature;
-  if (!signature || signature.algorithm !== 'ed25519' || typeof signature.value !== 'string') return refuse();
+  if (!signature || signature.algorithm !== 'ed25519' || typeof signature.value !== 'string') return refusePack();
   const pinned = keys.find(key => key.keyId === signature.keyId);
-  if (!pinned) return refuse();
+  if (!pinned) return refusePack(UNTRUSTED_KEY_MESSAGE);
   let ok = false;
   try { ok = verify(null, packSigningBytes(pack), createPublicKey({ key: Buffer.from(pinned.publicKey, 'base64'), format: 'der', type: 'spki' }), Buffer.from(signature.value, 'base64')); }
   catch { ok = false; }
-  return ok ? signature.keyId : refuse();
+  return ok ? signature.keyId : refusePack(CHANGED_PACK_MESSAGE);
 }
