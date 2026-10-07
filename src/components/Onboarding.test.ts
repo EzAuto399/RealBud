@@ -212,7 +212,7 @@ describe('welcome backup restore', () => {
     button(tree, 'Restore a private backup').props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1); expect(fixture.api.mock.calls[0][0]).toBe('/api/config');
     response.resolve({ profile: { name: 'Sample PM', email: '' } });
-    await vi.waitFor(() => expect(text(render())).toContain('Step 2 of 3'));
+    await vi.waitFor(() => expect(text(render())).toContain('Step 1 of 5'));
     expect(fixture.api).toHaveBeenCalledTimes(2); expect(fixture.onDone).not.toHaveBeenCalled();
     expect(location.hash).toBe('#welcome');
   });
@@ -245,7 +245,7 @@ describe('connect this computer to your office', () => {
     fixture.config.profile.name = 'Fictional Draft';
     fixture.connect = connection({ state: 'unlinked' });
     const markup = html();
-    expect(markup).toContain('Step 2 of 3');
+    expect(markup).toContain('Step 1 of 5');
     expect(markup).toMatch(/<h1[^>]*>Connect this computer to your office<\/h1>/);
     expect(markup.match(/class="pm-decision/g)).toHaveLength(1);
     expect(markup).toContain('Paste the link code your office owner sent you.');
@@ -283,7 +283,8 @@ describe('connect this computer to your office', () => {
     expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showAsk' });
   });
 
-  it('counts the first step as one of three', () => {
-    expect(renderToStaticMarkup(render())).toContain('Step 1 of 3');
+  it('numbers connecting as Get started step 1 of 5, with the name page before it', () => {
+    expect(renderToStaticMarkup(render())).toContain('Before you start');
+    expect(renderToStaticMarkup(render())).not.toMatch(/Step \d of/);
   });
 });

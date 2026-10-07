@@ -54,7 +54,7 @@ describe('app discovery uses observed connection authority', () => {
     const status = snapshot(); status.services.gmail.status = 'PENDING'; status.services.slack = service(true); status.services.xero = service(); status.excludedApps = ['xero'];
     const catalog = connectedAppCatalog(status, options);
     for (const slug of ['gmail', 'slack', 'xero']) expect(catalog.find(app => app.slug === slug)?.action).toBeNull();
-    expect(catalog.find(app => app.slug === 'xero')?.status).toBe('Off in Ask');
+    expect(catalog.find(app => app.slug === 'xero')?.status).toBe('Off in Work');
   });
 
   it('preserves Gmail-only mode and holds all actions when service setup is missing', () => {
