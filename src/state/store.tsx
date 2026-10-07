@@ -911,8 +911,10 @@ const initialState: AppState = {
  * starts Bud's turn carries it too, so Bud's approval settings card acts as
  * this person (server `personTurn`). */
 const MEMBER_SESSION_PATHS = /^\/api\/(?:approvals(?:\/history)?|rules(?:\/[\w-]+)?|(?:threads|bots)\/[\w-]+\/respond|bots\/[\w-]+\/(?:messages|steer|queued-message|messages\/[\w-]+\/edit))(?:\?|$)/;
-const memberSessionHeaders = async (): Promise<Record<string, string>> =>
-  import("@/lib/company-api").then(module => module.companyApi.memberSessionHeaders(), () => ({}));
+// Never lets a missing or failing office session stop the request itself.
+const memberSessionHeaders = async (): Promise<Record<string, string>> => {
+  try { return (await import("@/lib/company-api")).companyApi.memberSessionHeaders(); } catch { return {}; }
+};
 
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;
