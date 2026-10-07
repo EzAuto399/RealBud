@@ -13,6 +13,7 @@ import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { HERMES_MEMORY_APPROVAL, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from '../shared/approval-policy.ts';
 import type { BrowserApprovalCard } from '../shared/browser-approval-card.ts';
+import type { ApprovalCardMeta } from '../shared/approval-settings.ts';
 import { sanitizeBrowserApprovalCard } from './browser-approval-card.ts';
 
 export type MausColor =
@@ -34,7 +35,8 @@ export type MausColor =
  */
 export type MausExpression = string;
 
-export interface OptionCardData {
+/** `ApprovalCardMeta` adds deadline, resolution, answeredBy and remote (types only so far). */
+export interface OptionCardData extends ApprovalCardMeta {
   /** Bud's loop-result card: "Open" goes to Desk instead of replying in chat. */
   opens?: "desk";
   approvalPolicy?: ApprovalPolicy;

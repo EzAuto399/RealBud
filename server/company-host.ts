@@ -335,6 +335,18 @@ export function createCompanyHost(options: {
           const input = fields(body, ['departmentId', 'requestId', 'expectedRevision', 'retired', 'note']);
           return { status: 200, body: await kernel.setDepartmentLifecycle(memberToken, input as unknown as Parameters<typeof kernel.setDepartmentLifecycle>[1]) };
         }
+        if (path === '/api/company/approvals/mine' && method === 'POST') {
+          fields(body, []);
+          return { status: 200, body: await kernel.approvalSettingsOverview(memberToken) };
+        }
+        if (path === '/api/company/approvals/history' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'limit']);
+          return { status: 200, body: await kernel.approvalSettingsHistory(memberToken, input as Parameters<typeof kernel.approvalSettingsHistory>[1]) };
+        }
+        if (path === '/api/company/approvals/save' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'expectedRevision', 'settings']);
+          return { status: 200, body: await kernel.saveApprovalSettings(memberToken, input as Parameters<typeof kernel.saveApprovalSettings>[1]) };
+        }
         if (path === "/api/company/scopes" && method === "GET") return { status: 200, body: { scopes: await kernel.listScopes(memberToken) } };
         if (path === "/api/company/scopes" && method === "POST") {
           const input = fields(body, ["kind", "name"]);

@@ -177,6 +177,8 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
   };
   return {
     sessionVersion: () => epoch,
+    /** The same header `call` sends, for local routes that check this member's department rights. */
+    memberSessionHeaders: (): Record<string, string> => token ? { "x-realbud-member-session": token } : {},
     notifyDepartmentChange,
     subscribeDepartmentChanges(listener: () => void): () => void {
       departmentListeners.add(listener);
