@@ -343,7 +343,7 @@ async function relayModelListing(response: ServerResponse, url: string, key: str
 
 /** The AI service's 401/403 for the office key is recorded for the website
  * check-in (office-link.ts); any success clears it. Nothing re-provisions here. */
-function noteKeyAnswer(keyId: string, status: number): void {
+export function noteKeyAnswer(keyId: string, status: number): void {
   if (status === 401 || status === 403) noteModelKeyAnswer(keyId, false);
   else if (status >= 200 && status < 300) noteModelKeyAnswer(keyId, true);
 }

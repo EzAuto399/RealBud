@@ -1,8 +1,10 @@
 // Named product loops on the RealBud clock. The injected executor resolves
 // a code-owned evaluator and writes proposals through Desk. A loop never
-// launches Cua or approves anything itself. The Supplier list check is the one
-// loop that reads a portal: through the work browser's read-only grant, waiting
-// for the person at sign-in and at every per-run ask (server/rei-directory-sync.ts).
+// launches Cua or approves anything itself. Two loops read a portal: the Supplier
+// list check, through the work browser's read-only grant, waiting for the person
+// at sign-in and at every per-run ask (server/rei-directory-sync.ts); and the REI
+// morning refresh, through a loop-read grant in an already signed-in session that
+// asks nobody and records a miss when REI is signed out (server/rei-morning-refresh.ts).
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,6 +21,8 @@ import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
+import { ownerLetterWeekStart } from "./owner-letter.ts";
 import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
@@ -87,7 +91,8 @@ export const EMPTY_BOOK_DETAIL = "Nothing to check yet — add properties to the
 
 /** What a morning money check reports from the Desk snapshot its Recheck produced. */
 export function morningCheckResult(
-  snapshot: Pick<DeskSnapshot, "properties" | "hands" | "handsDetail" | "mode" | "results">,
+  snapshot: Pick<DeskSnapshot, "properties" | "hands" | "handsDetail" | "mode" | "results" | "sources">,
+  now = Date.now(),
 ): LoopExecuteResult {
   // Desk did not ask Bud: nothing ran, nothing is held, nothing to read.
   if (snapshot.properties.length === 0) return { ok: true, detail: EMPTY_BOOK_DETAIL, quiet: true };
@@ -98,14 +103,35 @@ export function morningCheckResult(
   if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
   // "held" returned above; Bud and CSV facts are live, demo and fixture facts are not.
   const live = snapshot.hands !== "demo" && snapshot.hands !== "fixture";
-  return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
+  const detail = snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts");
+  // Desk held proposals that would have used REI facts while REI was not fresh (server/desk.ts evaluateBook).
+  const staleRei = snapshot.results.filter((row) => row.outcome === "hold" && row.reason === "stale-source").length;
+  if (!staleRei) return { ok: live, detail };
+  const why = reiMoneyStaleReason(snapshot.sources, now) ?? "REI was not fresh: run the REI morning refresh or sign in to REI.";
+  return { ok: false, detail: `${detail} ${staleRei} propert${staleRei === 1 ? "y" : "ies"} held: ${why}`, covered: snapshot.results.length - staleRei, uncovered: staleRei };
+}
+
+/** What the owner-letter loop reports after Desk drafted this week's letters. A property with no letter
+ * this week was held because its REI owner or arrears facts were not fresh (server/desk.ts draftOwnerLetters). */
+export function ownerLetterResult(
+  snapshot: Pick<DeskSnapshot, "properties" | "drafts" | "sources">,
+  lettersBefore: number,
+  now = Date.now(),
+): LoopExecuteResult {
+  const letters = snapshot.drafts.filter((d) => d.kind === "owner-letter");
+  const detail = `Owner letters on Desk: ${letters.length} (${letters.length - lettersBefore} new this week).`;
+  const weekStart = ownerLetterWeekStart(now);
+  const held = snapshot.properties.filter((p) => !letters.some((d) => d.propertyId === p.id && d.periodDueAt === weekStart)).length;
+  if (!held) return { ok: true, detail };
+  const why = reiOwnerLetterStaleReason(snapshot.sources, now) ?? "REI was not fresh: run the REI morning refresh or sign in to REI.";
+  return { ok: false, detail: `${detail} ${held} propert${held === 1 ? "y" : "ies"} held: ${why}`, covered: snapshot.properties.length - held, uncovered: held };
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
 /** A run a restart interrupted whose REI sign-in wait a new run carried on (markResumed). */
 export const RESUMED_DETAIL = "Resumed after restart: Bud carried on with this in a new run.";
 /** Off until an office turns them on, and runnable from Schedule while off. */
-const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'];
+const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
 /** Ceiling on one run. Generous next to the worker's own 20s timeout — this
@@ -208,6 +234,14 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     // Fortnightly, Mondays 08:15, from the first Monday after the owner's 6 October design.
     schedule: { type: 'daily', time: '08:15', weekdays: [0,1,2,3,4,5,6], intervalDays: 14, anchorDate: '2026-10-12' },
     evaluatorId: 'rei-supplier-check', evaluatorVersion: 1,
+  },
+  {
+    // Off until an office enables it. Reads REI in the person's signed-in session with a read-only loop grant and
+    // applies the rows to Desk (server/rei-morning-refresh.ts). Signed out: "Missed: sign in to REI"; it never signs in.
+    id: 'rei-morning-refresh', name: 'REI morning refresh', available: true,
+    description: "Reads REI's tenants, arrears, owners and tasks due in your signed-in REI session and updates Desk. Read only: nothing in REI changes. If REI isn't signed in it records a miss and Desk stays marked not fresh.",
+    schedule: { type: 'daily', time: '07:00', weekdays: WEEKDAYS },
+    evaluatorId: 'rei-morning-refresh', evaluatorVersion: 1,
   },
   {
     // Off until an office enables it. Refreshes the saved draft only; nothing is booked (server/inspection-bookings.ts).

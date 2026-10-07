@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectedAppPolicy, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, connectedAppPolicy, officeMailboxName, connectedAppResultStatus, revokeConnectedAppsBrokers, startConnectedAppsBroker, type ConnectedAppsBroker, type ConnectedAppsLocalTransport } from "./connected-apps-broker.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { ServiceEntitlementError } from "./service-entitlement.ts";
 import * as atomic from "./atomic.ts";
@@ -326,10 +326,10 @@ describe("connected app authoritative broker", () => {
     let sessions: number;
     /** Per-tool fixture answers for mailbox reads made while preparing a card. */
     let toolAnswers: Record<string, (args: any) => unknown | Promise<unknown>>;
-    const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number } = {}) => {
+    const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number; mailbox?: "office"; officeAddress?: string } = {}) => {
       const address = gateway.address(); if (!address || typeof address === "string") throw Error("fixture unavailable");
       return startConnectedAppsBroker({ threadId: extra.threadId ?? "fixture-managed", key, url: `http://127.0.0.1:${address.port}/v1/connectors/mcp`, operations, ...(managed ? { managed: true } : {}),
-        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
+        ...(extra.mailDrainMs !== undefined ? { mailDrainMs: extra.mailDrainMs } : {}), ...(extra.mailbox ? { mailbox: extra.mailbox } : {}), ...(extra.officeAddress ? { officeAddress: extra.officeAddress } : {}), isActive: () => active, approve: (summary, signal) => approve(summary, signal) });
     };
     const startManaged = async (managed: boolean, extra: { mailDrainMs?: number } = {}) => {
       broker.close();
@@ -649,6 +649,30 @@ describe("connected app authoritative broker", () => {
         expect((await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } })).body.result.isError).not.toBe(true);
         expect(approve).toHaveBeenCalledOnce();
       });
+      it("an office-mail session is its own server and is held by the office mailbox's scope, not the person's", async () => {
+        broker.close(); broker = await managedBroker(true, { mailbox: "office" });
+        expect(broker.descriptor.name).toBe("office-mail");
+        mailboxAccess.mockImplementation((_credential: string, mailbox?: string) => mailbox === "office" ? "read_only" : "full");
+        const result = await invoke("tools/call", { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } });
+        expect(result.body.result.content[0].text).toContain("office owner to turn on full access");
+        expect(approve).not.toHaveBeenCalled();
+      });
+      it("an office-mail card names the office shared Gmail and its address, never 'the connected mailbox'", async () => {
+        mailboxAccess.mockReturnValue("full");
+        const send = { name: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "tenant@example.test", body: "Hi" } };
+        await invoke("tools/call", send);
+        const personal = approve.mock.calls[0]![0];
+        expect(personal).toContain("from the connected mailbox"); expect(personal).toContain("From: the connected account"); expect(personal).not.toContain("Office shared Gmail");
+        broker.close(); broker = await managedBroker(true, { mailbox: "office", officeAddress: "office@example.invalid" }); approve.mockClear();
+        await invoke("tools/call", send);
+        await invoke("tools/call", { name: "GMAIL_MOVE_TO_TRASH", arguments: { message_id: "abc" } });
+        const [card, trash] = approve.mock.calls.map(call => call[0]);
+        expect(card).toContain("Bud wants to send an email from the Office shared Gmail (office@example.invalid), not your own Gmail.");
+        expect(card).toContain("From: the Office shared Gmail (office@example.invalid), not your own Gmail");
+        expect(card).not.toContain("the connected mailbox"); expect(card).not.toContain("the connected account");
+        expect(trash).toContain("Bud wants to use the Office shared Gmail (office@example.invalid), not your own Gmail.");
+        expect(officeMailboxName("bad address\u202e@x")).toBe("Office shared Gmail, not your own Gmail");
+      });
       it("runs drafts, labels and archive without a card, and moves to Trash only after one", async () => {
         for (const params of [{ name: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { recipient_email: "a@example.test", body: "Draft" } },
           { name: "GMAIL_ADD_LABEL_TO_EMAIL", arguments: { message_id: "abc", remove_label_ids: ["INBOX", "UNREAD"] } }]) expect((await invoke("tools/call", params)).body.result.isError).not.toBe(true);
@@ -779,5 +803,14 @@ describe("connected app authoritative broker", () => {
       expect(JSON.stringify(result.body)).not.toContain(projectKey);
       expect(operations.list()[0].status).toBe("failed");
     });
+  });
+});
+
+describe("office mailbox request matcher", () => {
+  it("mounts the office mailbox only when the person's own words ask for it", () => {
+    for (const text of ["Check the office inbox for new leases", "reply from the shared mailbox", "Send it from the office's Gmail", "anything in the team email today?", "use the office shared mail"])
+      expect(asksForOfficeMailbox(text)).toBe(true);
+    for (const text of ["Check my inbox", "email the owner about the office lease", "What's in my Gmail?", "Book the office cleaner", "shared the file with the team"])
+      expect(asksForOfficeMailbox(text)).toBe(false);
   });
 });

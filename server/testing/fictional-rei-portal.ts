@@ -45,6 +45,10 @@ const pendingRecipe = { kind: "read", tier: ["C", "S"], inputs: [], grantNeeds: 
   success: "FICTIONAL: the pending bank file's rows listed, or none; nothing selected, uploaded or pressed" };
 
 const RECIPES_FILE = join(dirname(fileURLToPath(import.meta.url)), "../../pack/workflows/austin-accounts/support/rei-cloud-navigation/recipes.json");
+/** The pack's recipes still drive the old Arrears/Tasks filters ("From day", "Hide vacated tenants", Tasks' From/To).
+ * ponytail: compatibility default while main's recipes and the recipes rewrite overlap; once no recipe names
+ * "From day", the live shape is the default with no test edits. Delete this and `legacyFilters` after that PR lands. */
+const RECIPES_USE_OLD_FILTERS = readFileSync(RECIPES_FILE, "utf8").includes('"From day"');
 /** FICTIONAL tenant and supplier export reports on the Reports page, for Ask tasks that explore it. The pack's
  * directory recipes read the lists' own grids and never open them. */
 const TENANT_DEFAULT = "Tenant list export (fictional)", SUPPLIER_DEFAULT = "Supplier list export (fictional)";
@@ -74,6 +78,8 @@ const CHILDREN: Record<string, Array<[string, string]>> = {
   Process: [["Arrears", "/customers/arrears/"], ["Bank Reconciliation", "/customers/reconciliation/bankreconciliation"], ["Pending Transactions", "/customers/transaction/pendingtransactions"]],
   Settings: [["Integrations", "/RequesterIntegrations"]],
 };
+/** The arrears grid names each tenant as the Tenants grid does ("Firstname Surname"), except Juliet: REI's
+ * arrears row drops "Tenant" (FICTIONAL), the one deliberate mismatch that rehearses the held-row path. */
 const TENANTS = [
   ["Fictional Tenant Alpha", "Active", "2026-09-20", "0.00", "0", "0.00"],
   ["Fictional Tenant Bravo", "Active", "2026-09-12", "0.00", "9", "540.00"],
@@ -84,7 +90,7 @@ const TENANTS = [
   ["Fictional Tenant Golf", "Active", "2026-09-08", "0.00", "13", "780.00"],
   ["Fictional Tenant Hotel", "Active", "2026-09-05", "0.00", "16", "960.00"],
   ["Fictional Tenant India", "Vacated", "2026-08-30", "0.00", "22", "1320.00"],
-  ["Fictional Tenant Juliet", "Active", "2026-09-11", "0.00", "10", "600.00"],
+  ["Fictional Juliet", "Active", "2026-09-11", "0.00", "10", "600.00"],
   ["Fictional Tenant Bravo-Two", "Active", "2026-09-21", "0.00", "0", "0.00"],
 ];
 /** FICTIONAL linked identities: tenant → property → owner, with a REI tenant reference
@@ -103,9 +109,12 @@ export const FICTIONAL_TENANCIES: readonly FictionalTenancy[] = [
 /** FICTIONAL Tenants grid, in live REI's columns (seen 6 Oct 2026); `status` is the Status filter, not a column.
  * FT-KILO has no Property (an import rejects it); Golf and Hotel share one BPay reference. */
 export const FICTIONAL_TENANT_COLUMNS = ["Reference", "Surname", "Firstname", "Property", "Rent", "Paid To", "Rent Credit", "Days +/-", "Amount Owing", "Lease Expiry", "Vacating", "Owner", "BPay/Ref No.", "Email", "Mobile", "Home Phone", "Work Phone", "Fax"] as const;
-const tenantRow = (ref: string, surname: string, property: string, rent: string, paidTo: string, days: string, owing: string, owner: string, bpay: string, status = "Active") =>
-  ({ status, cells: [ref, surname, "Fictional", property, rent, paidTo, "0.00", days, owing, "2027-03-31", "", owner, bpay, `${surname.toLowerCase()}@fictional-tenant.test`, "0400 000 000", "", "", ""] });
-export const FICTIONAL_TENANT_LIST = [
+export interface FictionalListRow { status: string; cells: string[] }
+/** Firstname "Fictional Tenant": the name reads "Fictional Tenant Bravo" in the Tenants and arrears grids and in the tenancies above. */
+export const fictionalTenantRow = (ref: string, surname: string, property: string, rent: string, paidTo: string, days: string, owing: string, owner: string, bpay: string, status = "Active"): FictionalListRow =>
+  ({ status, cells: [ref, surname, "Fictional Tenant", property, rent, paidTo, "0.00", days, owing, "2027-03-31", "", owner, bpay, `${surname.toLowerCase()}@fictional-tenant.test`, "0400 000 000", "", "", ""] });
+const tenantRow = fictionalTenantRow;
+export const FICTIONAL_TENANT_LIST: FictionalListRow[] = [
   tenantRow("FT-ALPHA", "Alpha", "FP-01", "$500.00 per week", "2026-09-20", "0", "0.00", "Fictional Owner One", "4470001"),
   tenantRow("FT-BRAVO", "Bravo", "FP-02", "$540.00 per week", "2026-09-12", "-9", "540.00", "Fictional Owner One", "4470002"),
   tenantRow("FT-CHARLIE", "Charlie", "FP-03", "$360.00 per week", "2026-09-15", "-6", "360.00", "Fictional Owner One", "4470003"),
@@ -128,6 +137,16 @@ export const FICTIONAL_SUPPLIER_LIST = [
   { status: "Active", cells: ["FS-LOCK", "Fictional Locksmiths", "07 0000 0004", "", "", "", "not-an-email", "4 Fictional St, Brisbane", "Locksmith"] },
   { status: "Active", cells: ["FS-ROOF", "Fictional Roofing", "07 0000 0005", "07 0000 0055", "", "", "roof@fictional-roofing.test", "5 Fictional St, Brisbane", "Roofer"] },
 ];
+/** A FICTIONAL large book: `count` tenancies on properties FB-0001…, every fifth one in arrears, owners holding up to eight each. */
+export function fictionalBook(count: number): { tenants: FictionalListRow[]; arrears: string[][]; owners: string[][] } {
+  const id = (i: number) => String(i + 1).padStart(4, "0");
+  const owner = (i: number) => `Fictional Owner B${String(Math.floor(i / 8) + 1).padStart(3, "0")}`;
+  const tenants = Array.from({ length: count }, (_, i) => fictionalTenantRow(`FT-B${id(i)}`, `Book${id(i)}`, `FB-${id(i)}`, `$${400 + (i % 300)}.00 per week`, "2026-09-20",
+    i % 5 === 0 ? "-8" : "0", i % 5 === 0 ? `${400 + (i % 300)}.00` : "0.00", owner(i), `447${id(i)}`));
+  const arrears = tenants.filter((_, i) => i % 5 === 0).map(row => [`Fictional Tenant ${row.cells[1]}`, "Active", "2026-09-20", "0.00", "8", row.cells[8]]);
+  const owners = [...new Set(tenants.map(row => row.cells[11]))].map(name => [name, "Active", "8"]);
+  return { tenants, arrears, owners };
+}
 /** Quoted only where needed, as a spreadsheet export writes it. */
 const csvLine = (cells: readonly string[]) => cells.map(cell => /[",\r\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell).join(",");
 
@@ -206,16 +225,17 @@ const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(
 
 const TABLES: Record<string, { cols: string[]; rows: string[][] }> = {
   /** The arrears page (filters on Status and Days). */
-  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days", "Amount owing"], rows: TENANTS },
+  arrears: { cols: ["Name", "Status", "Paid to", "Rent credit", "Days Arrears", "Amount owing"], rows: TENANTS },
   owners: { cols: ["Name", "Status", "Properties"], rows: [["Fictional Owner One", "Active", "2"], ["Fictional Owner Two", "Active", "1"]] },
   rentals: { cols: ["Property", "Status", "Lease expiry", "Smoke due"], rows: Array.from({ length: 7 }, (_, i) => [`${i + 1} Fictional St`, "Active", `2026-1${i % 3}-0${i + 1}`, `2026-10-1${i}`]) },
-  tasks: { cols: ["Task", "Status", "Due date", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
+  tasks: { cols: ["Task", "Status", "Date Due", "Priority", "Assigned to"], rows: [["Fictional inspection", "Open", "2026-09-25", "High", "Staff A"], ["Fictional lease renewal", "Open", "2026-09-26", "Normal", "Staff B"], ["Fictional closed task", "Closed", "2026-09-25", "Low", "Staff A"]] },
   reconciliation: { cols: ["Date", "Description", "Debit", "Credit", "Reconciled"], rows: [["2026-09-24", "Fictional deposit", "", "1200.00", "No"], ["2026-09-24", "Fictional fee", "15.00", "", "No"]] },
   /** Pending payments/levies/invoices: not bank imports. */
   pendingPayments: { cols: ["Owner/Business", "Description", "Amount", "Sufficient Funds"], rows: [["Fictional Owner One", "Fictional levy", "120.00", "Yes"], ["Fictional Owner Two", "Fictional invoice", "80.00", "No"]] },
   empty: { cols: ["Name"], rows: [] },
 };
-type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[] };
+/** `label`: the accessible name shown, when it differs from the field's own name. */
+type Field = { kind: "textbox" | "combobox" | "radio"; name: string; value: string; options?: string[]; label?: string };
 type Control = { role: string; name: string; action: string; disabled?: boolean; options?: string[]; value?: string };
 
 export interface FictionalReiOptions {
@@ -243,19 +263,52 @@ export interface FictionalReiOptions {
   directoryRows?: (rows: string[][]) => string[][];
   /** Rows the Tenants grid renders at first and adds per scroll of its own content (live REI renders 90; default 4). */
   gridBlock?: number;
+  /** The grid stops loading at this many rows, however far its content scrolls. */
+  gridStallsAt?: number;
   /** Report names for the fictional tenant and supplier exports on the Reports page (rehearses a path learned in the portal). */
   reports?: { tenants?: string; suppliers?: string };
   /** The Suppliers grid and export instead of FICTIONAL_SUPPLIER_LIST (rehearses REI's list changing between checks). */
   suppliers?: Array<{ status: string; cells: string[] }>;
   /** Receipts already in REI before this run; defaults to FICTIONAL_HISTORY. */
   receipts?: FictionalReceipt[];
+  /** The Tenants grid and export, arrears grid and owners grid instead of the defaults, read at each use (REI changing between refreshes). */
+  tenants?: FictionalListRow[];
+  arrears?: string[][];
+  owners?: string[][];
+  /** REI is slow: every helper command waits this long first. */
+  delayMs?: number;
+  /** REI is down: every page read fails. */
+  down?: boolean;
+  /** The REI session expires after this many page-changing commands: the next page load shows the sign-in page. */
+  signOutAfterSteps?: number;
+  /** An observation longer than this many characters comes back cut and marked truncated, as the live helper's token cap does. */
+  observeChars?: number;
+  /** Path → path: REI sends an address somewhere else (a record page, another list). */
+  redirects?: Record<string, string>;
+  /** A dialog is open as soon as this path loads. */
+  dialogOn?: string;
+  /** The person has a second REI tab open. */
+  secondReiTab?: boolean;
+  /** The Search box's accessible name (live REI's DataTables boxes read "Search:"). */
+  searchLabel?: string;
+  /** The Tenants and Suppliers grids in live REI's Syncfusion shape (7 Oct 2026): rows in rowgroups, a hidden empty-named
+   * first column, and template cells whose names end " is template cell column header <Col>". */
+  syncfusionGrid?: boolean;
+  /** Bank Reconciliation as live REI shows it: an editable form above the grid. */
+  bankReconciliationForm?: boolean;
+  /** Path → the addresses the page moves itself to, one during each read after loading (rehearses a page that settles its address late). */
+  addressSettles?: Record<string, string[]>;
+  /** Arrears and Tasks with their old named filters (From day, Hide vacated tenants; Status, From, To) instead of live
+   * REI's "Show entries" and "Search:" only. Defaults to whatever the pack's recipes still drive. */
+  legacyFilters?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   const calls: string[][] = [];
   /** Effects a consequential control would have had. Tests expect none, apart from an approved upload. */
   const effects: string[] = [];
-  const pageSize = options.pageSize ?? 5;
+  /** Rows per page, read at each use (a test can change it between refreshes). */
+  const size = () => options.pageSize ?? 5;
   let session = false; let scope = "user"; let signedIn = !options.signedOut; let steps = 0;
   let url = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
   /** The page was opened by address rather than a menu click. */
@@ -264,7 +317,10 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
   if (!signedIn) url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`;
   // Per-page state, reset on each load.
   let fields: Field[] = []; let page = 0; let loading = 0; let modal = false; let reportsListed = false; let uploadError: string | null = null;
+  /** Addresses this page's own script still moves to, one per read (addressSettles). */
+  let settle: string[] = [];
   const block = options.gridBlock ?? 4;
+  const legacy = options.legacyFilters ?? RECIPES_USE_OLD_FILTERS;
   /** Rows the Tenants grid has rendered: one block until its content scrolls. */
   let rendered = block;
   /** The report whose parameters popup is open. */
@@ -286,29 +342,42 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (options.switchBusinessAfterSteps !== undefined && steps > options.switchBusinessAfterSteps) return "FICT2";
     return (direct ? options.directBusiness : undefined) ?? options.business ?? FICTIONAL_BUSINESS;
   };
-  const load = (next: string) => {
+  const load = (requested: string) => {
+    const redirect = options.redirects?.[new URL(requested).pathname];
+    const next = redirect ? new URL(redirect, FICTIONAL_REI_ORIGIN).href : requested;
     const at = new URL(next);
     if (at.origin === FICTIONAL_REI_ORIGIN && !signedIn) { returnUrl = next; url = `${FICTIONAL_REI_SIGNIN}/b2c_1_signin/authorize`; }
     else url = next;
-    page = 0; loading = 1; modal = false; reportsListed = false; uploadError = null; report = ""; rendered = block;
+    page = 0; loading = 1; modal = options.dialogOn === new URL(url).pathname; reportsListed = false; uploadError = null; report = ""; rendered = block;
+    settle = [...(options.addressSettles?.[new URL(url).pathname] ?? [])];
     fields = initialFields(new URL(url).pathname);
   };
   const initialFields = (path: string): Field[] => {
     const status = (value: string): Field => ({ kind: "combobox", name: "Status", value, options: ["Active", "Inactive", "Open", "Closed", "All"] });
-    const search: Field = { kind: "textbox", name: "Search", value: "" };
+    const search: Field = { kind: "textbox", name: "Search", value: "", ...(options.searchLabel ? { label: options.searchLabel } : {}) };
     if (path === "/customers/tenant" || path === "/customers/owner" || path === "/customers/supplier") return [search, status("Active")];
     if (path === "/customers/property") return [search, status("Active"), { kind: "combobox", name: "View", value: "Default", options: ["Default", "lease expiry", "smoke", "pool"] }];
-    if (path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
-    if (path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
-    if (path === "/customers/reconciliation/bankreconciliation") return [{ kind: "textbox", name: "Statement balance", value: "" }];
+    if (legacy && path === "/customers/task") return [status("All"), { kind: "textbox", name: "From", value: "" }, { kind: "textbox", name: "To", value: "" }];
+    if (legacy && path === "/customers/arrears/") return [search, { kind: "textbox", name: "From day", value: "" }, { kind: "combobox", name: "Hide vacated tenants", value: "No", options: ["No", "Yes"] }];
+    // Live DataTables pages (7 Oct 2026): only "Show entries" and the "Search:" box are named; the day, status and date
+    // filters have no accessible name, so the fictional page shows none. FICTIONAL: rows per page stay `pageSize`, so paging stays exercised.
+    const entries = (value: string, choices: string[]): Field => ({ kind: "combobox", name: "Show entries", value, options: choices });
+    if (path === "/customers/task") return [entries("15", ["15", "30", "45", "100"]), { ...search, label: "Search:" }];
+    if (path === "/customers/arrears/") return [entries("10", ["10", "15", "All"]), { ...search, label: "Search:" }];
+    // Live REI (7 Oct 2026): an editable form (a one-option business select, statement balance, reconciled date) above an unnamed DataTables search.
+    if (path === "/customers/reconciliation/bankreconciliation") return options.bankReconciliationForm
+      ? [{ kind: "combobox", name: "Business", value: AGENCY, options: [AGENCY] }, { kind: "textbox", name: "Statement Balance", value: "1185.00" },
+        { kind: "textbox", name: "Reconciled", value: "30/09/2026" }, { kind: "textbox", name: "Search", value: "", label: "" }]
+      : [{ kind: "textbox", name: "Statement balance", value: "" }];
     if (path === "/report/reportlist") return [search];
     if (path === "/customers/importbanklink/index") return [{ kind: "combobox", name: "File Format", value: FICTIONAL_DEFAULT_FILE_FORMAT, options: [...FICTIONAL_FILE_FORMATS] }];
     return [search];
   };
   const field = (name: string) => fields.find(item => item.name === name)?.value ?? "";
-  const tableFor = (path: string): { cols: string[]; rows: string[][] } | null => {
+  /** `searched: false` leaves the Search box out (a DataTable's "filtered from N total entries"). */
+  const tableFor = (path: string, searched = true): { cols: string[]; rows: string[][] } | null => {
     const filter = (key: string, keep: (row: string[]) => boolean, statusDefault = true) => {
-      const base = TABLES[key]; const status = field("Status"); const query = field("Search").toLowerCase();
+      const base = key === "arrears" && options.arrears ? { cols: TABLES.arrears.cols, rows: options.arrears } : key === "owners" && options.owners ? { cols: TABLES.owners.cols, rows: options.owners } : TABLES[key]; const status = field("Status"); const query = searched ? field("Search").toLowerCase() : "";
       return { cols: base.cols, rows: base.rows.filter(row => (!statusDefault || !status || status === "All" || row[1] === status) && (!query || row[0].toLowerCase().includes(query)) && keep(row)) };
     };
     // Tenants and Suppliers: Status filters a field that is not a column; Search matches the name columns.
@@ -316,7 +385,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
       const status = field("Status"), query = field("Search").toLowerCase();
       return { cols: [...cols], rows: rows.filter(row => (!status || status === "All" || row.status === status) && (!query || names.some(i => row.cells[i].toLowerCase().includes(query)))).map(row => row.cells) };
     };
-    if (path === "/customers/tenant") return list(FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, [0, 1, 2]);
+    if (path === "/customers/tenant") return list(FICTIONAL_TENANT_COLUMNS, options.tenants ?? FICTIONAL_TENANT_LIST, [0, 1, 2]);
     if (path === "/customers/supplier") return list(FICTIONAL_SUPPLIER_COLUMNS, options.suppliers ?? FICTIONAL_SUPPLIER_LIST, [0, 1]);
     if (path === "/customers/owner") return filter("owners", () => true);
     if (path === "/customers/property") return filter("rentals", () => true);
@@ -363,11 +432,13 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     }
     lines.push("    main", `      heading ${q(title)}`);
     {
+      // The page's fields sit in their own region, apart from its record-changing buttons (FICTIONAL layout).
+      if (fields.length) lines.push('      region "Filters"');
       for (const item of fields) {
-        if (item.kind === "textbox") lines.push(`      ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.name)} value=${q(item.value)}`);
+        if (item.kind === "textbox") lines.push(`        ${ref({ role: "textbox", name: item.name, action: `field:${item.name}` })} textbox ${q(item.label ?? item.name)} value=${q(item.value)}`);
         else if (item.kind === "combobox") {
-          lines.push(`      ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
-          for (const option of item.options ?? []) lines.push(`        option ${q(option)}`);
+          lines.push(`        ${ref({ role: "combobox", name: item.name, action: `field:${item.name}`, options: item.options })} combobox ${q(item.name)} value=${q(item.value)}`);
+          for (const option of item.options ?? []) lines.push(`          option ${q(option)}`);
         }
       }
       if (path === "/customers/importbanklink/index") lines.push(`      ${ref({ role: "button", name: "Load File", action: "file" })} button "Load File"`, ...(uploadError ? [`      alert ${q(uploadError)}`] : []));
@@ -382,21 +453,33 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         // The grid, its footer and pager sit in their own region; the page's record-changing buttons are outside it.
         // The tenants grid scrolls (no pages) and shows "No records to display" before it fills, as live REI does.
         const scrolls = path === "/customers/tenant" || path === "/customers/supplier";
-        const grid = ['table "Results"'];
-        if (loading > 0 && scrolls) grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`), "  row", '    cell "No records to display"');
-        else if (loading > 0) grid.push("  row", '    cell "Loading…"');
+        // Syncfusion-shaped (syncfusionGrid): role grid, header and rows each in a rowgroup, a hidden first column whose
+        // header has an empty name, and every cell named "<text> is template cell column header <Col>".
+        const sf = scrolls && options.syncfusionGrid === true;
+        const header = sf ? ["  rowgroup", "    row", '      columnheader ""', ...table.cols.map(col => `      columnheader ${q(col)}`)] : ["  row", ...table.cols.map(col => `    columnheader ${q(col)}`)];
+        const note = (text: string) => sf ? ["  rowgroup", "    row", `      gridcell ${q(text)}`] : ["  row", `    cell ${q(text)}`];
+        const body = (rows: string[][]) => sf
+          ? ["  rowgroup", ...rows.flatMap(row => ["    row", '      gridcell ""', ...row.map((cell, i) => `      gridcell ${q(`${cell} is template cell column header ${table.cols[i]}`)}`)])]
+          : rows.flatMap(row => ["  row", ...row.map(cell => `    cell ${q(cell)}`)]);
+        const grid = [sf ? "grid" : 'table "Results"'];
+        if (loading > 0 && scrolls) grid.push(...header, ...note("No records to display"));
+        else if (loading > 0) grid.push(...note("Loading…"));
         else {
           // A short grid (directoryRows) still counts every row in its footer; Tenants shows only what has loaded.
           const listed = scrolls && options.directoryRows ? options.directoryRows(table.rows.map(row => [...row])) : table.rows;
-          const shown = !scrolls ? table.rows.slice(page * pageSize, page * pageSize + pageSize) : path === "/customers/tenant" ? listed.slice(0, rendered) : listed;
-          grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`));
-          if (!shown.length) grid.push("  row", `    cell ${q(scrolls ? "No records to display" : "No records found")}`);
-          for (const row of shown) grid.push("  row", ...row.map(cell => `    cell ${q(cell)}`));
+          const shown = !scrolls ? table.rows.slice(page * size(), page * size() + size()) : path === "/customers/tenant" ? listed.slice(0, rendered) : listed;
+          grid.push(...header);
+          if (!shown.length) grid.push(...note(scrolls ? "No records to display" : "No records found"));
+          grid.push(...body(shown));
         }
-        if (loading === 0) grid.push(`StaticText ${q(`${table.rows.length} records · 0 row(s) selected`)}`);
+        // Live Arrears and Tasks are DataTables: "Showing 1 to 10 of N entries", "(filtered from M total entries)" while searched.
+        const dataTable = !legacy && (path === "/customers/arrears/" || path === "/customers/task");
+        const n = table.rows.length, total = field("Search") ? tableFor(path, false)!.rows.length : null;
+        const info = `Showing ${n ? page * size() + 1 : 0} to ${Math.min((page + 1) * size(), n)} of ${n} entries${total !== null ? ` (filtered from ${total} total entries)` : ""}`;
+        if (loading === 0) grid.push(`StaticText ${q(dataTable ? info : `${n} records · 0 row(s) selected`)}`);
         if (!scrolls) {
-          const last = (page + 1) * pageSize >= table.rows.length;
-          const pages = Math.max(1, Math.min(20, Math.ceil(table.rows.length / pageSize)));
+          const last = (page + 1) * size() >= table.rows.length;
+          const pages = Math.max(1, Math.min(20, Math.ceil(table.rows.length / size())));
           grid.push('navigation "Pagination"', `  ${ref({ role: "button", name: "Previous", action: "prev", disabled: page === 0 })} button "Previous"${page === 0 ? " [disabled]" : ""}`,
             ...Array.from({ length: pages }, (_, index) => `  ${ref({ role: "link", name: String(index + 1), action: "none" })} link ${q(String(index + 1))}`),
             `  ${ref({ role: "button", name: "Next", action: "next", disabled: last })} button "Next"${last ? " [disabled]" : ""}`);
@@ -434,16 +517,32 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     page = 0; loading = 1; rendered = block;
   };
 
-  const command = async (args: string[]): Promise<BrowserJson> => {
+  const command = async (args: string[], signal?: AbortSignal): Promise<BrowserJson> => {
     calls.push([...args]);
+    // A slow REI answers late, unless the caller gives up first (Stop, a timeout).
+    if (options.delayMs) await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, options.delayMs);
+      signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("The browser request stopped.")); }, { once: true });
+    });
+    if (options.down && args[0] === "observe") throw new Error("REI Cloud is not responding (fictional outage).");
     if (["navigate", "click", "fill", "press", "select", "upload", "download"].includes(args[0])) steps += 1;
+    // The session ends part-way: the next page load (a direct route or a menu click) shows the sign-in page.
+    if (options.signOutAfterSteps !== undefined && steps > options.signOutAfterSteps) signedIn = false;
     const interaction = { borrow_confirmation: "always", request_help: "enabled" };
     if (args[0] === "status") return { daemon_version: BROWSER_VERSION, protocol_version: BROWSER_PROTOCOL, browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: BROWSER_VERSION, extension_protocol_version: BROWSER_PROTOCOL }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "owned", browser_instance_id: "work", interaction }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; return { stopped: ["owned"], failed: [], return_failures: [] }; }
-    if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" }] };
+    if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" },
+      ...(options.secondReiTab ? [{ tab_id: 3, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard`, title: "REI", scope: "user" }] : [])] };
     if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
-    if (args[0] === "observe") { const text = render(); if (loading > 0) loading -= 1; return { text, tab_id: 1, truncated: false }; }
+    if (args[0] === "observe") {
+      const text = render(); if (loading > 0) loading -= 1;
+      // The page's own script moves its address while the read is under way (a redirect or history.replaceState).
+      const moved = settle.shift(); if (moved) url = new URL(moved, FICTIONAL_REI_ORIGIN).href;
+      // The live helper caps an observation (--max-tokens): a long page comes back cut, and says so.
+      const cut = options.observeChars !== undefined && text.length > options.observeChars;
+      return { text: cut ? text.slice(0, options.observeChars) : text, tab_id: 1, truncated: cut };
+    }
     if (args[0] === "request-help") {
       if (options.helpOutcome !== "cancelled") { signedIn = true; load(returnUrl); }
       return { ok: true, outcome: options.helpOutcome ?? "completed" };
@@ -453,7 +552,8 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "scroll") {
       const path = new URL(url).pathname;
       if (args[args.indexOf("--selector") + 1] !== GRID_CONTENT || !["/customers/tenant", "/customers/supplier"].includes(path)) throw new Error("No such element");
-      rendered += block; return { ok: true };
+      // A grid that stops loading (gridStallsAt) scrolls but renders nothing more.
+      rendered = options.gridStallsAt !== undefined ? Math.max(rendered, Math.min(rendered + block, options.gridStallsAt)) : rendered + block; return { ok: true };
     }
     if (args[0] === "fill") { const target = control(args); if (!target.action.startsWith("field:")) throw new Error("Not a field"); setField(target.name, args[args.indexOf("--value") + 1]); return { ok: true }; }
     if (args[0] === "press") { control(args); return { ok: true }; }
@@ -489,7 +589,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "download") {
       control(args);
       // A directory export: the list's Active rows (what its grid shows by default), every column.
-      const directory = report === tenantReport() ? { cols: FICTIONAL_TENANT_COLUMNS, rows: FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
+      const directory = report === tenantReport() ? { cols: FICTIONAL_TENANT_COLUMNS, rows: options.tenants ?? FICTIONAL_TENANT_LIST, file: "fictional-tenant-list.csv" }
         : report === supplierReport() ? { cols: FICTIONAL_SUPPLIER_COLUMNS, rows: options.suppliers ?? FICTIONAL_SUPPLIER_LIST, file: "fictional-supplier-list.csv" } : null;
       if (directory) {
         const rows = (options.directoryRows ?? (rows => rows))(directory.rows.filter(row => row.status === "Active").map(row => [...row.cells]));

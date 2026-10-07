@@ -402,6 +402,24 @@ describe("ACP turns (fake CLI)", () => {
     expect(native).toContain("redacted");
   });
 
+  it("mounts the office shared mailbox as its own local broker beside the person's own, without its credential", async () => {
+    const dump = join(scratch, "office-mail.json");
+    const key = `rbc_${"officemailsecret".repeat(4)}`;
+    process.env.FAKE_ACP_DUMP = dump;
+    await create();
+    const headers = { authorization: `Bearer ${key}`, "x-realbud-profile": "property", "x-realbud-mailbox": "office" };
+    await instance.adapter.sendTurn({ threadId: "t-office-mail", text: "read the office inbox",
+      integrations: { composio: { key, url: "http://127.0.0.1:1/mcp", headers: { authorization: `Bearer ${key}` }, managed: true }, officeMail: { key, url: "http://127.0.0.1:1/mcp", headers } } });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const names = seen.mcpServers.map((row: { name: string }) => row.name);
+    expect(names).toEqual(expect.arrayContaining(["connected-apps", "office-mail"]));
+    const office = seen.mcpServers.find((row: { name: string }) => row.name === "office-mail");
+    expect(office).toEqual({ type: "http", name: "office-mail", url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/), headers: [{ name: "authorization", value: expect.stringMatching(/^Bearer /) }] });
+    expect(JSON.stringify(seen.mcpServers)).not.toContain(key);
+    expect(JSON.stringify(seen.mcpServers)).not.toContain("x-realbud-mailbox");
+  });
+
   it("requires exact app review even in fullAuto and rejects a session-wide grant", async () => {
     const dump = join(scratch, "app-approval.json");
     process.env.FAKE_ACP_DUMP = dump;

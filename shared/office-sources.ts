@@ -10,6 +10,11 @@ export interface ConnectedService {
 export interface ConnectedAppsStatus {
   sourceKind?: "personal" | "office_shared";
   policyRevision?: number;
+  /** The office's Gmail mode. In `both`, `services.gmail` is the person's own
+   * mailbox and `officeShared` the office mailbox beside it (connected only on a
+   * computer the owner allowed). */
+  mailboxMode?: "personal" | "shared" | "both";
+  officeShared?: ConnectedService;
   configured: boolean;
   checkedAt: string;
   services: Record<string, ConnectedService>;

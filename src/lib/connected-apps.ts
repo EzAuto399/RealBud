@@ -19,6 +19,20 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 const label = (value: unknown, max = 300) => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
 const timestamp = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : "";
 
+function readService(service: unknown): ConnectedService {
+  if (!record(service) || typeof service.connected !== "boolean" || !Array.isArray(service.accounts) ||
+    typeof service.accountSelectionRequired !== "boolean" || service.accounts.length > 500) throw new Error("Account status was incomplete. Check access again.");
+  const seen = new Set<string>();
+  const accounts = service.accounts.map((account): ConnectedAccount => {
+    if (!record(account) || typeof account.id !== "string" || !account.id.trim() || account.id.length > 300 ||
+      /[\u0000-\u001f\u007f]/.test(account.id) || seen.has(account.id)) throw new Error("Account identity was unclear. Check access again.");
+    const id = account.id;
+    seen.add(id);
+    return { id, ...(label(account.label) ? { label: label(account.label) } : {}), status: label(account.status, 80) || "unknown" };
+  });
+  return { ...(typeof service.selectedAccountId === "string" && accounts.some(account => account.id === service.selectedAccountId) ? { selectedAccountId: service.selectedAccountId } : {}), connected: service.connected, status: label(service.status, 80) || "unknown", accounts, accountSelectionRequired: service.accountSelectionRequired };
+}
+
 /** Project only the product status contract; never retain provider payloads. */
 export function readConnectedAppsStatus(value: unknown): ConnectedAppsStatus {
   if (!record(value) || typeof value.configured !== "boolean" || !record(value.services) || !record(value.tools) ||
@@ -30,21 +44,13 @@ export function readConnectedAppsStatus(value: unknown): ConnectedAppsStatus {
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(slug)) continue;
     const service = value.services[slug];
     if (service === undefined) continue;
-    if (!record(service) || typeof service.connected !== "boolean" || !Array.isArray(service.accounts) ||
-      typeof service.accountSelectionRequired !== "boolean" || service.accounts.length > 500) throw new Error("Account status was incomplete. Check access again.");
-    const seen = new Set<string>();
-    const accounts = service.accounts.map((account): ConnectedAccount => {
-      if (!record(account) || typeof account.id !== "string" || !account.id.trim() || account.id.length > 300 ||
-        /[\u0000-\u001f\u007f]/.test(account.id) || seen.has(account.id)) throw new Error("Account identity was unclear. Check access again.");
-      const id = account.id;
-      seen.add(id);
-      return { id, ...(label(account.label) ? { label: label(account.label) } : {}), status: label(account.status, 80) || "unknown" };
-    });
-    services[slug] = { ...(typeof service.selectedAccountId === "string" && accounts.some(account => account.id === service.selectedAccountId) ? { selectedAccountId: service.selectedAccountId } : {}), connected: service.connected, status: label(service.status, 80) || "unknown", accounts, accountSelectionRequired: service.accountSelectionRequired };
+    services[slug] = readService(service);
   }
   return {
     excludedApps: Array.isArray(value.excludedApps) ? value.excludedApps.filter((slug): slug is string => typeof slug === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(slug)).slice(0, 100) : [],
     ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
+    ...(value.mailboxMode === 'personal' || value.mailboxMode === 'shared' || value.mailboxMode === 'both' ? { mailboxMode: value.mailboxMode } : {}),
+    ...(value.mailboxMode === 'both' && record(value.officeShared) ? { officeShared: readService(value.officeShared) } : {}),
     configured: value.configured, checkedAt: timestamp(value.checkedAt), services,
     tools: { available: value.tools.available, names: [...new Set(value.tools.names.map(name => label(name, 160)).filter(Boolean))].slice(0, 200) },
     ...(label(value.error, 600) ? { error: label(value.error, 600) } : {}),

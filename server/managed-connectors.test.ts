@@ -77,6 +77,27 @@ describe('managed connector client',()=>{
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
     expect(managedMailboxAccess('rbc_' + 'b'.repeat(64))).toBeUndefined();
   });
+  it('mailbox mode both: projects the office mailbox beside the own one, keeps its scope separately, and selects it only by header', async () => {
+    const credential = cfg.composio.managed.credential;
+    const office = { connected: true, status: 'ACTIVE', accounts: [{ id: 'office-account', status: 'ACTIVE' }], accountSelectionRequired: false, debug: 'never' };
+    const answer = (extra: Record<string, unknown>) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...access(), ...extra })));
+    answer({ sourceKind: 'personal', policyRevision: 5, mailboxMode: 'both', mailboxAccess: 'full', officeShared: office, officeMailboxAccess: 'read_only' });
+    const status = await managedConnectorAccess(cfg);
+    expect(status).toMatchObject({ mailboxMode: 'both', services: { gmail: { accounts: [{ id: 'account-one' }] } } });
+    expect(status.officeShared).toEqual({ connected: true, status: 'ACTIVE', accounts: [{ id: 'office-account', status: 'ACTIVE' }], accountSelectionRequired: false });
+    expect(managedMailboxAccess(credential)).toBe('full'); expect(managedMailboxAccess(credential, 'office')).toBe('read_only');
+    // No office mailbox outside `both`, and a malformed one is refused.
+    answer({ sourceKind: 'office_shared', policyRevision: 6, mailboxMode: 'shared', officeShared: office });
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    answer({ sourceKind: 'personal', policyRevision: 6, mailboxMode: 'both', officeShared: { ...office, connected: false } });
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    answer({ sourceKind: 'personal', policyRevision: 6, mailboxMode: 'everyone' });
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
+    answer({ sourceKind: 'personal', policyRevision: 7, mailboxMode: 'both' });
+    expect((await managedConnectorAccess(cfg)).officeShared).toBeUndefined(); expect(managedMailboxAccess(credential, 'office')).toBeUndefined();
+    expect(managedConnectorSettings(cfg as never, 7, 'office').headers['x-realbud-mailbox']).toBe('office');
+    expect(managedConnectorSettings(cfg as never, 7).headers).not.toHaveProperty('x-realbud-mailbox');
+  });
   it('accepts a bounded disconnected response without tools or accounts', async () => {
     const value = { ...access(), services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));

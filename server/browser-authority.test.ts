@@ -874,3 +874,111 @@ describe("the account marker reads only the page's own chrome", () => {
     }
   });
 });
+
+describe("a loop's read-only grant (route loop-read)", () => {
+  // Nobody is at the screen: a step is plainly read-only and allowed, or refused. It never asks.
+  const loop = (overrides: Partial<BrowserTaskGrant> = {}) => explicitTask({ route: "loop-read", actions: ["read", "navigate", "click", "fill", "keys"], uploads: [], ...overrides });
+  const PORTAL: BrowserPortalControls = { origin: "https://portal.example", readSafe: ["Search", "Status", "Next"], menu: ["Tenants"], pagination: ["Next"],
+    consequential: ["Notice", "Send", "Process Receipts", "Save"], signInHosts: [] };
+  const LIST = page([
+    "@vom 1", "L1 page", '  RootWebArea "Tenants"', '    navigation "Main"', '      @e1 link "Tenants"', "    main",
+    '      @e2 textbox "Search" value=""', '      @e3 combobox "Status" value="Active"', '        option "All"', '      @e4 textbox "From day" value=""',
+    '      @e5 button "Notice"', '      @e6 button "Send"', '      @e7 button "Process Receipts"', '      @e8 button "Export"', '      @e9 button "Load File"', '      @e10 button "Save"',
+  ].join("\n"), "https://portal.example/customers/tenant");
+  const RULES = [{ key: "portal:read:portal.example", decision: "allow" as const }, { key: "portal:prefill:portal.example", decision: "allow" as const }];
+  const decide = (tool: string, args: Record<string, unknown>, grant = loop(), observation = LIST) => authorizeBrowserAction(grant, observation, tool, args, { portal: { ...PORTAL, readSafe: [...PORTAL.readSafe, "From day"] }, rules: RULES });
+  /** A list page whose declared filters sit in their own region, apart from the page's record-changing buttons. */
+  const FILTERS = page([
+    "@vom 1", "L1 page", '  RootWebArea "Arrears"', '    navigation "Main"', '      @e1 link "Tenants"', "    main",
+    '      region "Filters"', '        @e2 textbox "Search" value=""', '        @e3 combobox "Status" value="Active"', '          option "All"', '        @e4 textbox "From day" value=""',
+    '      region "Results"', '        table "Results"', "          row", '            cell "Fictional"', '      @e5 button "Notice"',
+  ].join("\n"), "https://portal.example/customers/arrears/");
+  /** A record's edit form: nothing on it is a filter, whatever its fields are called. */
+  const EDIT = page([
+    "@vom 1", "L1 page", '  RootWebArea "Edit tenant"', "    main", '      form "Edit tenant"',
+    '        @e1 textbox "Search notes" value=""', '        @e2 combobox "Tenancy status" value="Active"', '          option "Active"', '          option "Vacated"',
+    '        @e3 textbox "Rent" value="540"', '        @e4 combobox "Frequency" value="Weekly"', '          option "Weekly"', '          option "Monthly"',
+    '        @e5 textbox "Search" value=""', '        @e6 button "Save"',
+  ].join("\n"), "https://portal.example/customers/tenant/details");
+
+  it("allows only reading, same-site read-only navigation, declared filters and declared read-safe controls", () => {
+    for (const [tool, args] of [["browser_borrow", { tab_id: 1 }], ["browser_read", { tab_id: 1 }], ["browser_navigate", { tab_id: 1, url: "https://portal.example/customers/arrears/" }],
+      ["browser_fill", { tab_id: 1, ref: "@e2", value: "" }], ["browser_fill", { tab_id: 1, ref: "@e4", value: "1" }], ["browser_press", { tab_id: 1, ref: "@e4", key: "Tab" }],
+      ["browser_select", { tab_id: 1, ref: "@e3", values: ["All"] }]] as const) {
+      expect(decide(tool, { ...args }, loop(), FILTERS), tool).toMatchObject({ decision: "allow" });
+    }
+  });
+
+  it("matches a read-safe name with one trailing colon (\"Search:\"), on a money-word page too, and nothing that only resembles one", () => {
+    const COLON = page([
+      "@vom 1", "L1 page", '  RootWebArea "Arrears"', '    navigation "Main"', '      @e1 link "Tenants"', "    main",
+      '      region "Filters"', '        @e2 textbox "Search:" value=""',
+      '      region "Results"', '        table "Results"', "          row", '            cell "Fictional"', '        StaticText "Statement balance: 1,185.00"',
+      '      region "Other"', '        @e3 textbox "Search: and pay" value=""', '        @e4 textbox "Searching:" value=""', '        @e5 button "Pay:"', '        @e6 button "Next:"', '        @e7 button "Search::"',
+    ].join("\n"), "https://portal.example/customers/arrears/");
+    const allowed = decide("browser_fill", { tab_id: 1, ref: "@e2", value: "Bravo" }, loop(), COLON);
+    expect(allowed).toMatchObject({ decision: "allow", classification: { class: "routine", action: "fill" } });
+    expect(decide("browser_press", { tab_id: 1, ref: "@e2", key: "Tab" }, loop(), COLON)).toMatchObject({ decision: "allow" });
+    for (const [tool, args] of [["browser_fill", { ref: "@e3", value: "x" }], ["browser_fill", { ref: "@e4", value: "x" }],
+      ["browser_click_semantic", { ref: "@e5" }], ["browser_click_semantic", { ref: "@e6" }], ["browser_click_semantic", { ref: "@e7" }]] as const) {
+      expect(decide(tool, { tab_id: 1, ...args }, loop(), COLON).decision, `${tool} ${args.ref}`).toBe("deny");
+    }
+  });
+
+  it("refuses typing, choosing and keys anywhere but a declared filter, and Enter even there", () => {
+    for (const [tool, args, observation] of [
+      ["browser_press", { tab_id: 1, ref: "@e1", key: "Enter" }, EDIT], // Enter in a field named like a search
+      ["browser_select", { tab_id: 1, ref: "@e2", values: ["Vacated"] }, EDIT], // an undeclared dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e3", value: "1" }, EDIT], // a record field
+      ["browser_press", { tab_id: 1, ref: "@e4", key: "ArrowDown" }, EDIT], // an arrow changing a dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e5", value: "x" }, EDIT], // a declared name inside a form with Save
+      ["browser_press", { tab_id: 1, ref: "@e2", key: "Enter" }, FILTERS], // Enter on a declared Search filter
+      ["browser_press", { tab_id: 1, ref: "@e3", key: "ArrowDown" }, FILTERS], // an arrow on a declared dropdown
+      ["browser_fill", { tab_id: 1, ref: "@e2", value: "" }, LIST], // a declared name beside Notice, Send and Save
+    ] as const) {
+      expect(decide(tool, { ...args }, loop(), observation).decision, `${tool} ${JSON.stringify(args)} on ${observation.url}`).toBe("deny");
+    }
+  });
+
+  it("refuses every upload, export, money, send, notice or submit step, and never asks, whatever the grant, rule or recipe", () => {
+    // A grant widened by hand (never parsed) still gets nothing more.
+    const wide = { ...loop(), actions: ["read", "navigate", "click", "fill", "keys", "download", "upload", "submit"] as BrowserActionClass[], uploads: [{ name: "fictional-bank.csv", sha256: "c".repeat(64) }] };
+    for (const grant of [loop(), wide]) {
+      for (const [tool, args] of [
+        ["browser_click_semantic", { tab_id: 1, ref: "@e5" }], // Notice
+        ["browser_click_semantic", { tab_id: 1, ref: "@e6" }], // Send
+        ["browser_click_semantic", { tab_id: 1, ref: "@e7" }], // Process Receipts (money)
+        ["browser_click_semantic", { tab_id: 1, ref: "@e10" }], // Save (submit)
+        ["browser_click_semantic", { tab_id: 1, ref: "@e8" }], // a control the map does not call read-safe
+        ["browser_download", { tab_id: 1, ref: "@e8" }], // export
+        ["browser_upload", { tab_id: 1, ref: "@e9", file: "fictional-bank.csv" }],
+        ["browser_press", { tab_id: 1, ref: "@e4", key: "Enter" }], // Enter in a field submits its form
+        ["browser_navigate", { tab_id: 1, url: "https://portal.example/customers/transaction/payment" }],
+        ["browser_navigate", { tab_id: 1, url: "https://portal.example/customers/tenant/save" }],
+      ] as const) {
+        const decision = decide(tool, { ...args }, grant as BrowserTaskGrant);
+        expect(decision.decision, `${tool} ${JSON.stringify(args)}`).toBe("deny");
+        // An upload of a file the grant never listed is out of scope before the loop rule is reached.
+        expect(decision).toMatchObject({ reason: expect.stringMatching(/only reads|Only files given to this task/) });
+      }
+    }
+  });
+
+  it("lets a loop scroll a list's grid (browser_read all_rows) only on a page the site map calls read-class", () => {
+    const portal = { ...PORTAL, gridScroll: ".e-gridcontent .e-content", readRoutes: ["/customers/tenant"] };
+    const read = (url: string, args: Record<string, unknown>, controls: BrowserPortalControls = portal) =>
+      authorizeBrowserAction(loop(), page("@vom 1\nL1 page", url), "browser_read", { tab_id: 1, ...args }, { portal: controls, rules: RULES }).decision;
+    expect(read("https://portal.example/customers/tenant", { all_rows: true })).toBe("allow");
+    expect(read("https://portal.example/customers/transaction/tenantreceipt", { all_rows: true })).toBe("deny"); // a money page
+    expect(read("https://portal.example/customers/tenant/details", { all_rows: true })).toBe("deny"); // a record page the map does not list as read
+    expect(read("https://portal.example/customers/tenant", { all_rows: true }, PORTAL)).toBe("deny"); // no read routes declared
+    expect(read("https://portal.example/customers/transaction/tenantreceipt", {})).toBe("allow"); // a plain read scrolls nothing
+  });
+
+  it("is a narrow route: its grant cannot carry uploads, downloads or submits", () => {
+    expect(() => loop({ actions: ["read", "navigate", "download"] })).toThrow(/incomplete or damaged/);
+    expect(() => loop({ actions: ["read", "submit"] })).toThrow(/incomplete or damaged/);
+    expect(() => loop({ uploads: [{ name: "fictional-bank.csv", sha256: "c".repeat(64) }] })).toThrow(/incomplete or damaged/);
+    expect(loop().route).toBe("loop-read");
+  });
+});

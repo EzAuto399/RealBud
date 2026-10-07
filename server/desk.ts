@@ -55,7 +55,7 @@ import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type Br
 import type { RoutineOrigin } from "../shared/contracts.ts";
 import { emptyOffice, parseJurisdictions, parseOfficePatch } from "../shared/office.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
-import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
+import { CSV_FRESH_MS, isFresh, reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
 import {
   appendAllowedLine,
   appendAllowedLines,
@@ -133,6 +133,14 @@ export interface ReiDeskApplied { updated: number; differs: number; proposed: nu
 
 /** The source a REI read stamps for one part, e.g. src-rei-tenants. */
 export const reiSourceId = (part: string) => `src-rei-${part}`;
+/** One Needs-you item per REI part whose page no longer matches the shipped recipe (src/lib/desk-queue.ts). */
+export const REI_PAGE_CHANGED_KEY = "rei-page-changed:";
+export const reiPageChangedNote = (part: string) =>
+  `REI's page changed, so Bud couldn't read ${part}. Desk stays marked not fresh. RealBud needs a recipe update; nothing in REI was changed.`;
+/** Fields a money proposal reads that REI may own. */
+const REI_MONEY_FIELDS: readonly ReiField[] = ["tenantName", "weeklyRentCents", "amountOwingCents", "paidTo"];
+/** Owner and arrears fields an owner letter speaks to that REI may own. */
+const REI_OWNER_LETTER_FIELDS: readonly ReiField[] = ["ownerName", "ownerContact", "amountOwingCents", "paidTo"];
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const tidy = (text: string) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 function readField(property: Property, field: ReiField): ReiFieldValue | undefined {
@@ -623,7 +631,17 @@ export class Desk {
       items = parsed.items;
       unparsed = parsed.unparsed;
     }
-    if ((items?.length ?? 0) > MAX_BOOK_PROPERTIES) {
+    const { created, skipped } = this.stageBookProposals(items ?? [], origin);
+    if (created || skipped) {
+      this.store.persistWithoutBump();
+      this.emit();
+    }
+    return { created, skipped, unparsed };
+  }
+
+  /** Adds book cards in memory only; the caller persists. Throws before any change when there are too many. */
+  private stageBookProposals(items: Array<IntakeItem & { ownerName?: string; rei?: ReiRefs }>, origin: "ask" | "manual" | "rei"): { created: number; skipped: number } {
+    if (items.length > MAX_BOOK_PROPERTIES) {
       throw Object.assign(new Error(`Stage at most ${MAX_BOOK_PROPERTIES} properties at a time.`), { status: 400 });
     }
     const now = this.now();
@@ -665,11 +683,7 @@ export class Desk {
       proposalKeys.add(key);
       created++;
     }
-    if (created || skipped) {
-      this.store.persistWithoutBump();
-      this.emit();
-    }
-    return { created, skipped, unparsed };
+    return { created, skipped };
   }
 
   allowBookProposal(id: string): DeskSnapshot {
@@ -1031,6 +1045,10 @@ export class Desk {
    */
   applyReiRead(read: ReiDeskRead): ReiDeskApplied {
     this.assertWritable();
+    // Checked before anything changes, so a refused read leaves Desk exactly as it was.
+    if (read.proposals.length > MAX_BOOK_PROPERTIES) {
+      throw Object.assign(new Error(`REI shows more than ${MAX_BOOK_PROPERTIES} properties Desk doesn't have; stage at most ${MAX_BOOK_PROPERTIES} at a time. Nothing from this read was applied.`), { status: 400 });
+    }
     const applied: ReiDeskApplied = { updated: 0, differs: 0, proposed: 0, held: 0, fresh: [] };
     const changed = new Set<string>();
     for (const update of read.updates) {
@@ -1069,17 +1087,56 @@ export class Desk {
     for (const part of read.fresh) {
       this.stampSource(reiSourceId(part), "portal", `REI Cloud ${part}`, read.observedAt);
       applied.fresh.push(part);
+      // A part read whole again clears its "REI's page changed" item.
+      for (const work of this.store.data.workItems) {
+        if (work.occurrenceKey === `${REI_PAGE_CHANGED_KEY}${part}` && work.state === "held") {
+          work.state = "superseded";
+          work.updatedAt = this.now();
+        }
+      }
     }
     for (const id of changed) this.invalidateCapabilities({ propertyId: id });
+    if (read.proposals.length) {
+      applied.proposed = this.stageBookProposals(read.proposals.map((item) => ({ ...item, tenantPhone: "" })), "rei").created;
+    }
+    // One write for the whole read: stamps, updates, holds and cards land together or not at all.
     // An unchanged value still records when REI last showed it.
-    if (read.updates.length || applied.held || applied.fresh.length) {
+    if (read.updates.length || applied.held || applied.fresh.length || read.proposals.length) {
       this.store.persist();
       this.emit();
     }
-    if (read.proposals.length) {
-      applied.proposed = this.proposeBook({ items: read.proposals.map((item) => ({ ...item, tenantPhone: "" })) }, "rei").created;
-    }
     return applied;
+  }
+
+  /** REI's page for one part no longer matches the recipe: one Needs-you item for that part, updated in place
+   * on later mornings and cleared when the part next reads whole (applyReiRead). Freshness stamps are untouched. */
+  noteReiPageChanged(part: string): void {
+    this.assertWritable();
+    const key = `${REI_PAGE_CHANGED_KEY}${part}`;
+    const now = this.now();
+    const open = this.store.data.workItems.find((w) => w.occurrenceKey === key && w.state === "held");
+    if (open) {
+      open.observedAt = now;
+      open.updatedAt = now;
+    } else {
+      this.store.data.workItems.push({
+        id: `work-${randomUUID()}`,
+        kind: "money-arrears",
+        state: "held",
+        propertyId: "",
+        occurrenceKey: key,
+        periodDueAt: 0,
+        recipient: { name: "", phone: "" },
+        sourceIds: [reiSourceId(part)],
+        observedAt: now,
+        proposalHash: key,
+        createdAt: now,
+        updatedAt: now,
+        holdReason: reiPageChangedNote(part),
+      });
+    }
+    this.store.persist();
+    this.emit();
   }
 
   /** "set": REI's value stands. "held": a Desk value differs and waits for a person. "same": nothing changed. */
@@ -1211,12 +1268,18 @@ export class Desk {
     this.assertWritable();
     const now = this.now();
     const weekStart = ownerLetterWeekStart(now);
+    // Same gate as the morning money check: REI's owner and arrears facts back a letter only while REI is fresh.
+    const reiStale = reiOwnerLetterStaleReason(this.store.data.sources, now);
     for (const property of this.store.data.properties) {
       const exists = this.store.data.drafts.some(
         (d) => d.propertyId === property.id && d.kind === "owner-letter" && d.periodDueAt === weekStart,
       );
       if (exists) continue;
       const facts = this.facts(property.id);
+      if (reiStale && REI_OWNER_LETTER_FIELDS.some((field) => property.origins?.[field]?.source === "rei")) {
+        this.holdWork({ propertyId: property.id, reason: "stale-source", daysLate: facts.daysSinceDue, observedAt: now, sourceId: "src-rei", detail: reiStale }, "owner-letter");
+        continue;
+      }
       const note = readPropertyNote(property.id, this.vaultRoot);
       const draft = composeOwnerLetter(property, facts, note, now);
       const work = this.newWork(property, draft, now, "proposed", ["src-desk"]);
@@ -1346,6 +1409,8 @@ export class Desk {
   ): DeskSnapshot {
     const now = this.now();
     const results = [];
+    // REI's tenant, rent and arrears facts back a proposal only while REI's tenants and arrears are fresh.
+    const reiStale = reiMoneyStaleReason(this.store.data.sources, now);
     for (const property of this.store.data.properties) {
       if (skipIds?.has(property.id)) {
         results.push({ propertyId: property.id, outcome: "hold" as const, reason: "uncovered-by-worker" as const, daysLate: this.facts(property.id).daysSinceDue });
@@ -1353,6 +1418,11 @@ export class Desk {
       }
       const facts = this.facts(property.id);
       const classified = classifyMoneyRow(property, facts, now, hands === "csv" ? "src-csv" : hands === "hermes" ? "src-hermes" : "src-demo");
+      if (classified.outcome === "draft" && reiStale && REI_MONEY_FIELDS.some((field) => property.origins?.[field]?.source === "rei")) {
+        this.holdWork({ ...classified, reason: "stale-source", sourceId: "src-rei", detail: reiStale });
+        results.push({ propertyId: property.id, outcome: "hold" as const, reason: "stale-source" as const, daysLate: classified.daysLate });
+        continue;
+      }
       results.push({ propertyId: classified.propertyId, outcome: classified.outcome, reason: classified.reason, daysLate: classified.daysLate });
       const periodDueAt = dueDate(now, facts.daysSinceDue);
       if (classified.outcome === "hold") {
@@ -1412,13 +1482,13 @@ export class Desk {
     this.emit();
   }
 
-  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string; detail?: string }): void {
-    const key = occurrenceKey(exception.propertyId, `hold:${exception.reason}`, 0);
+  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string; detail?: string }, kind: "money-arrears" | "owner-letter" = "money-arrears"): void {
+    const key = occurrenceKey(exception.propertyId, kind === "owner-letter" ? `hold:owner-letter:${exception.reason}` : `hold:${exception.reason}`, 0);
     if (this.store.data.workItems.some((w) => w.occurrenceKey === key && w.state === "held")) return;
     const property = this.store.data.properties.find((p) => p.id === exception.propertyId);
     this.store.data.workItems.push({
       id: `work-${randomUUID()}`,
-      kind: "money-arrears",
+      kind,
       state: "held",
       propertyId: exception.propertyId,
       occurrenceKey: key,

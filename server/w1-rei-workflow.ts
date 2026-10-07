@@ -57,7 +57,7 @@ import type { BrowserSessionRuntime } from "./browser-session.ts";
 import type { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunResult, type PortalRunRequest } from "./portal-recipe-runner.ts";
-import { loadPortalRecipePack, portalRecipeTaskProposal, type PackLoader } from "./portal-recipe-task.ts";
+import { loadPortalRecipePackWithPaths, portalRecipeTaskProposal, type PackLoader } from "./portal-recipe-task.ts";
 import { assertExpectedRows, classifyReadback, isoDate, reconcilePreview, registerBaseline, type W1DateWindow, type W1Destination, type W1ExpectedRow, type W1PreviewReconciliation, type W1Readback, type W1RegisterBaseline } from "./w1-rei-reconciliation.ts";
 import { browserTaskUploadName, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -166,7 +166,7 @@ function previewRuns(batch: W1ReiBatch): PortalRunRequest[] {
 }
 
 /** The Ask card for this batch's upload-and-preview task. */
-export async function w1ReiPreviewProposal(batch: W1ReiBatch, input: { threadId: string; messageId: string }, load?: PackLoader): Promise<BrowserTaskProposal & { recipe: BrowserTaskRecipe }> {
+export async function w1ReiPreviewProposal(batch: W1ReiBatch, input: { threadId: string; messageId: string }, load: PackLoader = loadPortalRecipePackWithPaths): Promise<BrowserTaskProposal & { recipe: BrowserTaskRecipe }> {
   assertW1ReiBatch(batch);
   const inputs = previewRuns(batch)[1].inputs!;
   return portalRecipeTaskProposal({ ...input, portal: W1_REI_PORTAL, target: W1_PREVIEW_RECIPE, inputs, account: account(batch.destination),
@@ -174,7 +174,7 @@ export async function w1ReiPreviewProposal(batch: W1ReiBatch, input: { threadId:
 }
 
 /** The sites and action classes a grant needs for the preview or the readback. */
-export async function w1ReiGrantNeeds(stage: "preview" | "readback", load: PackLoader = loadPortalRecipePack): Promise<{ sites: string[]; actions: BrowserActionClass[] }> {
+export async function w1ReiGrantNeeds(stage: "preview" | "readback", load: PackLoader = loadPortalRecipePackWithPaths): Promise<{ sites: string[]; actions: BrowserActionClass[] }> {
   const pack = await load(W1_REI_PORTAL);
   return portalRecipeGrantNeeds(pack, stage === "preview" ? [{ recipe: "open-session" }, { recipe: W1_PREVIEW_RECIPE }] : [{ recipe: "open-session" }, { recipe: W1_READBACK_RECIPE }]);
 }
@@ -201,7 +201,7 @@ export async function preview(batch: W1ReiBatch, ctx: W1ReiContext): Promise<W1P
   assertW1ReiBatch(batch);
   const base = { kind: "w1-rei-preview" as const, batchId: batch.batchId, version: batch.version, artifactSha256: batch.artifact.sha256, stopBefore: [] as string[] };
   const held = (status: W1PreviewStatus, reason: string, detail: string, run?: PortalRunResult): W1PreviewOutcome => ({ ...base, status, reason, detail, ...(run ? { run: summary(run) } : {}) });
-  const pack = await (ctx.load ?? loadPortalRecipePack)(W1_REI_PORTAL);
+  const pack = await (ctx.load ?? loadPortalRecipePackWithPaths)(W1_REI_PORTAL);
   const problem = bindingProblem(batch, ctx, pack);
   if (problem) return held("not-uploaded", "destination-not-bound", problem);
   // Exact artifact binding, checked again here and by the runner and broker at upload.
@@ -226,7 +226,7 @@ export async function preview(batch: W1ReiBatch, ctx: W1ReiContext): Promise<W1P
 }
 
 /** The person's posting step. Bud prepares and verifies; it never presses these controls. */
-export async function awaitPosting(batch: W1ReiBatch, outcome: W1PreviewOutcome, load: PackLoader = loadPortalRecipePack): Promise<W1PostingHandoff> {
+export async function awaitPosting(batch: W1ReiBatch, outcome: W1PreviewOutcome, load: PackLoader = loadPortalRecipePackWithPaths): Promise<W1PostingHandoff> {
   assertW1ReiBatch(batch);
   if (outcome.kind !== "w1-rei-preview" || outcome.batchId !== batch.batchId || outcome.version !== batch.version || outcome.artifactSha256 !== batch.artifact.sha256) {
     throw fail("This preview is for a different batch or file. Preview the reviewed batch again.");
@@ -245,7 +245,7 @@ export async function awaitPosting(batch: W1ReiBatch, outcome: W1PreviewOutcome,
 type RegisterRead = { ok: true; lines: string[][]; run: PortalRunResult } | { ok: false; reason: string; detail: string; run?: PortalRunResult };
 async function readRegister(batch: W1ReiBatch, ctx: W1ReiContext, range: W1DateWindow): Promise<RegisterRead> {
   if (isoDate(range.from) !== range.from || isoDate(range.to) !== range.to || range.from > range.to) throw fail("Choose the Receipt Register dates to read back.");
-  const pack = await (ctx.load ?? loadPortalRecipePack)(W1_REI_PORTAL);
+  const pack = await (ctx.load ?? loadPortalRecipePackWithPaths)(W1_REI_PORTAL);
   const problem = bindingProblem(batch, ctx, pack);
   if (problem) return { ok: false, reason: "destination-not-bound", detail: problem };
   const run = await runWith(batch, ctx, pack, [{ recipe: "open-session" }, { recipe: W1_READBACK_RECIPE, inputs: { date_from: range.from, date_to: range.to } }]);

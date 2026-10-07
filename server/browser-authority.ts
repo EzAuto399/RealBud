@@ -16,6 +16,7 @@ import {
   BROWSER_LEGACY_JOB_ORIGIN,
   BROWSER_TASK_GRANT_PURPOSE,
   BROWSER_TASK_GRANT_VERSION,
+  LOOP_READ_ACTIONS,
   browserTaskSite,
   legacyBrowserActions,
   parseBrowserTaskGrant,
@@ -57,10 +58,10 @@ function financialRoute(address: string, portal: BrowserPortalControls | null): 
   } catch { return false; }
 }
 export const SUBMIT_CONTROL = /\b(submit|save|continue|next|confirm|lodge|create|update)\b/i;
-const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
+export const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
 const READ_AFFORDANCE = /\b(view|show|statement|transaction|history|download|export|search|filter|previous|next page)\b/i;
 /** Words that say a control delivers a file rather than acting on something. */
-const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
+export const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
 const TEXT_ROLE = /^(textbox|searchbox|textarea|editable|textfield)$/;
 const CHOICE_ROLE = /^(combobox|listbox|option|radio|radiogroup|slider|spinbutton|menuitemradio)$/;
 /** An amount field on a form, even before it shows a currency. */
@@ -90,6 +91,7 @@ const KEY_SPEC = "Use one key, such as Enter, Tab, Escape or an arrow key, with 
 const CHOICES = "Choose one to twenty option values from the observed list.";
 const UPLOAD_NOT_GRANTED = "Only files given to this task can be uploaded. Ask the person to add the file to the task.";
 const ASK_ONCE = "Bud asks before this step, once, with the details shown on the page.";
+export const LOOP_READ_ONLY = "This scheduled refresh only reads. It never downloads, uploads, submits, pays, sends or changes anything, and nobody is at the screen to ask.";
 export const UNUSUAL_NAME = "This control's name had unusual text, which is not shown here. Check the page before allowing.";
 
 // ── page and URL helpers (shared with the broker) ────────────────────────
@@ -289,6 +291,9 @@ export interface BrowserPortalControls {
   signInHosts: readonly string[];
   /** CSS selector of the portal's lazy grid scroll container: browser_read's all_rows scrolls it on this origin only. */
   gridScroll?: string;
+  /** Paths (no query) the pack's site map calls read-class. Under a loop's read-only grant, browser_read's all_rows
+   * scroll is allowed only on one of them; without the list, a loop never scrolls. */
+  readRoutes?: readonly string[];
 }
 const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
 const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";
@@ -359,9 +364,13 @@ const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.
  *   account-change form;
  * - with no form or dialog around it (Chromium shows an unnamed form as a plain
  *   generic node), the whole page shows none of those either. */
+/** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's
+ * DataTables box reads "Search:"). Shared with the recipe runner (server/portal-recipe-runner.ts). */
+export const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
+const sameName = (names: readonly string[], name: string) => names.some(item => accessibleName(item) === accessibleName(name));
 function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
   const name = controlName(label);
-  if (portal.consequential.includes(name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
+  if (sameName(portal.consequential, name) || consequentialKind(label) || !isStructuredBrowserObservation(text)) return false;
   const { nodes } = parseVom(text);
   const targets = nodes.filter(node => node.ref === ref);
   if (targets.length !== 1 || targets[0].name !== name) return false;
@@ -390,7 +399,8 @@ function readSafeControl(portal: BrowserPortalControls, text: string, ref: strin
   // A read-safe name (a pack's, or a plain link's) never outranks the consequential classifiers: the global table,
   // the pack's own list, and the record-changing verbs a same-site address is refused for ("Process", "Approve").
   // A menu name above is a destination in the navigation landmark, as before.
-  } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name) && !WRITE_ROUTE.test(name);
+  // "Search:" is the pack's "Search"; a pager name with a colon is still a pager name, never read-safe outside the pager.
+  } else allowed = sameName(portal.readSafe, name) && !sameName(portal.pagination, name) && !WRITE_ROUTE.test(name);
   if (!allowed) return false;
   // A menu link only navigates: the menu's other links (REI's top menu lists "Process") are destinations, not
   // actions, so they do not make it unsafe. Buttons, forms and dialogs in the menu still do.
@@ -1091,6 +1101,22 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const site = siteFor(grant, url);
   const host = hostOf(url);
   const label = "label" in classification && classification.label ? controlName(classification.label) : "";
+  // A loop's unattended read (route loop-read): nobody is at the screen to ask, so a step is plainly read-only or
+  // refused. Reading, a same-site read-only address, and a control the pack declares read-safe that browserReadOnlyAction
+  // proves sits apart from anything that changes records; a key is only Tab, never Enter or an arrow that changes a
+  // choice. Never a download, upload, submit, consequential or unclassified step, whatever the grant, a rule or the recipe says.
+  if (grant.route === "loop-read") {
+    const routine = classification.class === "routine" && !classification.unusualName && (LOOP_READ_ACTIONS as readonly string[]).includes(classification.action) &&
+      grant.actions.includes(classification.action) ? classification : null;
+    const tab = routine?.step !== "press" || /^(Shift\+)?Tab$/.test(browserKey(args.key)?.spec ?? "");
+    // browser_read's all_rows scrolls the portal's declared grid container (and nothing else): only on a read-class page.
+    const scrollsGrid = routine?.step === "read" && args.all_rows === true;
+    const readOnly = routine !== null && (routine.step === "borrow" || routine.step === "read" && (!scrollsGrid || !!options.portal?.readRoutes?.includes(url.pathname)) ||
+      routine.step === "navigate" && readOnlyAddress(jobBrowserUrl(args.url, grant.sites), url) ||
+      (routine.step === "click" || routine.step === "fill" || routine.step === "select" || routine.step === "press") && tab && !!options.portal &&
+        browserReadOnlyAction(grant, observation!, tool, args, options.portal));
+    return readOnly ? { decision: "allow", classification, fence: { surface: "portal-read", origin: site, ruleOffer: null }, note: "read-only loop" } : deny(LOOP_READ_ONLY);
+  }
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.
   const toolAction = classification.step ? TOOL_ACTIONS[classification.step] : undefined;
   if (toolAction && !grant.actions.includes(toolAction)) return deny(missingAction(toolAction));

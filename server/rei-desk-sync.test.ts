@@ -18,6 +18,7 @@ import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import type { PortalRecipeResult, PortalRunRequest } from "./portal-recipe-runner.ts";
 import { portalRecipeTaskProposal, runPortalRecipeTask } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
+import { morningCheckResult, ownerLetterResult } from "./routines.ts";
 import { REI_FRESH_MS, reiPartsFreshness } from "./source-gate.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, fictionalReiPack, fictionalReiPortal } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
@@ -121,6 +122,35 @@ describe("new properties", () => {
   });
 });
 
+describe("one write per read", () => {
+  it("a read with more new properties than one staging allows changes nothing: no stamps, updates or cards", () => {
+    const { desk, file, tick } = liveDesk();
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
+    const many = Array.from({ length: 1001 }, (_, i) => tenantRow([`FT-N${i}`, `New${i}`, "Fictional Tenant", `FN-${i}`, "$400.00 per week", "2026-09-20", "0.00", "0", "0.00"]));
+    const before = desk.snapshot();
+    expect(() => readTenants(desk, [bravo("$540.00 per week", "Fictional Owner One"), ...many], tick(1000))).toThrow(/at most 1000/);
+    const after = new Desk({ file, now: () => T0, key: KEY }).snapshot();
+    expect(after.sources.filter((source) => source.id.startsWith("src-rei-"))).toEqual([]);
+    expect(after.properties).toEqual(before.properties);
+    expect(after.book?.bookProposals ?? []).toEqual([]);
+    expect(desk.snapshot().properties).toEqual(before.properties);
+  });
+});
+
+describe("only parts read whole are applied", () => {
+  it("a partial owners or arrears read changes nothing and holds nothing", () => {
+    const { desk, tick } = liveDesk();
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 54_000 });
+    const before = desk.snapshot().properties;
+    const partialOwners = done("find-record", [{ Name: "Fictional Owner Nobody", Reference: "FO-9", Email: "x" }], { footer: 40 });
+    const partialArrears = done("arrears-review", [{ Name: "Fictional Tenant Bravo", "Paid to": "2026-09-01", "Amount owing": "999.00" }, { Name: "Nobody On Desk", "Paid to": "2026-09-01", "Amount owing": "1.00" }], { footer: 12 });
+    const sync = syncReiReadIntoDesk(desk, { runs: [OWNERS, ARREARS], results: [partialOwners, partialArrears], observedAt: tick(1000) })!;
+    expect(sync).toMatchObject({ held: 0, updated: 0, fresh: [] });
+    expect(desk.snapshot().book?.importIssues ?? []).toEqual([]);
+    expect(desk.snapshot().properties).toEqual(before);
+  });
+});
+
 describe("rows Desk cannot place", () => {
   it("holds unmatched and ambiguous rows as held work and changes nothing for them", () => {
     const { desk, tick } = liveDesk();
@@ -169,6 +199,10 @@ describe("freshness per part", () => {
     expect(snap.sources.some((source) => source.id === "src-rei-arrears")).toBe(false);
     // A grid footer above the rows read is also partial, even when the recipe finished.
     expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [], { footer: 3 })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    // Without the grid's own record count nothing proves the read whole: a footerless empty grid, or page 1 of 2.
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [], { footer: undefined })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    expect(syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [{ Name: "Fictional Tenant Bravo", "Paid to": "2026-09-12", "Amount owing": "540.00" }], { footer: undefined, pages: 1 })], observedAt: tick(1000) })!.fresh).toEqual([]);
+    expect(desk.snapshot().sources.some((source) => source.id === "src-rei-arrears")).toBe(false);
     // A search reads some tenants, never the list.
     expect(syncReiReadIntoDesk(desk, { runs: [{ recipe: "find-record", inputs: { list: "Tenants", query: "Bravo" } }], results: [done("find-record", [bravo()])], observedAt: tick(1000) })!.fresh).toEqual([]);
     // A complete part goes stale a day later.
@@ -229,7 +263,7 @@ describe("REI read through the fictional portal into Desk", () => {
     expect(result.outcome, result.detail).toBe("completed");
     expect(mock.effects).toEqual([]);
     const { desk, tick } = liveDesk();
-    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Tenant Bravo", tenantPhone: "1", weeklyRentCents: 50_000 });
     const sync = syncReiReadIntoDesk(desk, { runs, results: result.results, observedAt: tick(1000) })!;
     expect(sync.fresh).toEqual(["tenants", "arrears", "owners"]);
     expect(sync.stale).toEqual([]);
@@ -239,10 +273,11 @@ describe("REI read through the fictional portal into Desk", () => {
     expect(snap.properties).toHaveLength(1);
     expect(snap.book!.bookProposals.map((card) => card.address).sort()).toEqual(["FP-01", "FP-03", "FP-05", "FP-06", "FP-07", "FP-08", "FP-09", "FP-10"]);
     expect(snap.book!.bookProposals.find((card) => card.address === "FP-10")).toMatchObject({ weeklyRentCents: 55_385, ownerName: "Fictional Owner One" });
-    // FT-KILO has no property, FP-04 shows two tenancies, and the arrears grid names tenants
-    // differently from the tenants grid in this fictional portal, so its rows are held.
+    // FT-KILO has no property and FP-04 shows two tenancies. The arrears grid names tenants as the tenants grid
+    // does, so Bravo's arrears row lands; Juliet's (spelled differently by REI, deliberately) is held.
     const issues = snap.book!.importIssues.map((issue) => `${issue.kind} ${issue.rawIdentity}`);
-    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "ambiguous REI property FP-04", "unmatched REI arrears Fictional Tenant Bravo"]));
+    expect(issues).toEqual(expect.arrayContaining(["unmatched REI tenant FT-KILO", "ambiguous REI property FP-04", "unmatched REI arrears Fictional Juliet"]));
+    expect(issues.some((issue) => issue.includes("Fictional Tenant Bravo"))).toBe(false);
     expect(issues.some((issue) => issue.includes("REI owner"))).toBe(false);
     expect(snap.lastRunAt).toBeNull();
   });
@@ -255,5 +290,89 @@ describe("REI read through the fictional portal into Desk", () => {
     const sync = syncReiReadIntoDesk(desk, { runs, results: result.results, observedAt: tick(1000) })!;
     expect(sync.fresh).toEqual(["tenants"]);
     expect(sync.stale).toEqual(["arrears", "owners"]);
+  });
+});
+
+describe("morning money check on REI facts", () => {
+  it("holds a proposal built on REI facts while REI tenants or arrears are not fresh; Desk-only properties still draft", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-rei-money-"));
+    dirs.push(dir);
+    let now = T0;
+    // Every property is 3 days late with no rent landed: a courtesy draft unless something holds it.
+    const desk = new Desk({ file: join(dir, "desk.json"), now: () => now, key: KEY,
+      hermes: async (ids) => ({ rows: ids.map((propertyId) => ({ propertyId, daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null })), detail: "Worker answered." }) });
+    desk.startLiveBook();
+    desk.addProperty({ address: "1 Desk Only St", tenantName: "Fictional Desk", tenantPhone: "0400 000 001", weeklyRentCents: 40_000 });
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Bravo", tenantPhone: "0400 000 002", weeklyRentCents: 50_000 });
+    const deskOnly = desk.snapshot().properties.find((property) => property.propertyCode !== "FP-02")!.id;
+    const bravoId = bravoProperty(desk).id;
+    const outcome = (snap: Awaited<ReturnType<Desk["runMorningCheckLive"]>>, id: string) => snap.results.find((row) => row.propertyId === id);
+
+    // A Desk-only book with REI never read: nothing is gated.
+    let snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, deskOnly)).toMatchObject({ outcome: "draft" });
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "draft" });
+    expect(morningCheckResult(snap, now)).toEqual({ ok: true, detail: "Worker answered." });
+
+    // Tenants read whole (REI now owns Bravo's tenant name), arrears never read: Bravo is held with a plain reason.
+    now += 1000;
+    readTenants(desk, [bravo()], now);
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, deskOnly)).toMatchObject({ outcome: "draft" });
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "hold", reason: "stale-source" });
+    expect(snap.workItems.find((item) => item.propertyId === bravoId && item.state === "held")?.holdReason)
+      .toBe("stale-source: REI arrears not fresh: run the REI morning refresh or sign in to REI.");
+    expect(morningCheckResult(snap, now)).toEqual({ ok: false, covered: 1, uncovered: 1,
+      detail: "Worker answered. 1 property held: REI arrears not fresh: run the REI morning refresh or sign in to REI." });
+
+    // Arrears read whole too: Bravo's proposal goes ahead.
+    now += 1000;
+    syncReiReadIntoDesk(desk, { runs: [ARREARS], results: [done("arrears-review", [])], observedAt: now });
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "draft" });
+    expect(morningCheckResult(snap, now).ok).toBe(true);
+
+    // A day later both parts are stale again.
+    now += REI_FRESH_MS + 1;
+    snap = await desk.runMorningCheckLive();
+    expect(outcome(snap, bravoId)).toMatchObject({ outcome: "hold", reason: "stale-source" });
+    expect(morningCheckResult(snap, now).detail).toMatch(/1 property held: REI tenants and arrears not fresh/);
+  });
+});
+
+describe("owner letters on REI facts", () => {
+  it("holds a letter built on REI owner or arrears facts while REI is not fresh; Desk-only properties still get one", () => {
+    const { desk, tick, now } = liveDesk();
+    desk.addProperty({ address: "1 Desk Only St", tenantName: "Fictional Desk", tenantPhone: "0400 000 001", weeklyRentCents: 40_000 });
+    desk.addProperty({ address: "2 Fictional St", propertyCode: "FP-02", tenantName: "Fictional Bravo", tenantPhone: "0400 000 002", weeklyRentCents: 50_000 });
+    const bravoId = bravoProperty(desk).id;
+    const letters = () => desk.snapshot().drafts.filter((d) => d.kind === "owner-letter");
+    const lettersFor = (id: string) => letters().filter((d) => d.propertyId === id).length;
+    const letterHolds = () => desk.snapshot().workItems.filter((w) => w.kind === "owner-letter" && w.state === "held");
+
+    // A Desk-only book with REI never read: every property gets its letter, as before.
+    let snap = desk.draftOwnerLetters();
+    expect(letters()).toHaveLength(2);
+    expect(ownerLetterResult(snap, 0, now())).toEqual({ ok: true, detail: "Owner letters on Desk: 2 (2 new this week)." });
+
+    // Next week: tenants read whole (REI now owns Bravo's owner, amount owing and paid-to), arrears and owners never read.
+    tick(7 * 24 * 60 * 60_000);
+    readTenants(desk, [bravo()], tick(1000));
+    snap = desk.draftOwnerLetters();
+    desk.draftOwnerLetters(); // a second run the same week stacks nothing
+    snap = desk.snapshot();
+    expect(lettersFor(bravoId)).toBe(1);
+    expect(letters()).toHaveLength(3);
+    expect(letterHolds()).toHaveLength(1);
+    expect(letterHolds()[0]).toMatchObject({ propertyId: bravoId,
+      holdReason: "stale-source: REI arrears and owners not fresh: run the REI morning refresh or sign in to REI." });
+    expect(ownerLetterResult(snap, 2, now())).toEqual({ ok: false, covered: 1, uncovered: 1,
+      detail: "Owner letters on Desk: 3 (1 new this week). 1 property held: REI arrears and owners not fresh: run the REI morning refresh or sign in to REI." });
+
+    // Arrears and owners read whole too: Bravo's letter goes ahead.
+    syncReiReadIntoDesk(desk, { runs: [ARREARS, OWNERS], results: [done("arrears-review", []), done("find-record", [])], observedAt: tick(1000) });
+    snap = desk.draftOwnerLetters();
+    expect(lettersFor(bravoId)).toBe(2);
+    expect(ownerLetterResult(snap, 3, now())).toEqual({ ok: true, detail: "Owner letters on Desk: 4 (1 new this week)." });
   });
 });

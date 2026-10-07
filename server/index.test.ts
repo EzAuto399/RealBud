@@ -429,6 +429,7 @@ describe("harness HTTP API", () => {
       "weekly-bills",
       "maintenance-review",
       "rei-supplier-check",
+      "rei-morning-refresh",
       "inspection-draft",
     ]);
     const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");

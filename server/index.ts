@@ -119,7 +119,7 @@ import {
   browserTasks,
   type BrowserTaskEnd,
 } from "./browser-grants.ts";
-import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask } from "./portal-recipe-task.ts";
+import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask, loadPortalRecipePack, loadShippedPortalRecipePack, PORTAL_RECIPE_PACKS } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
@@ -165,7 +165,7 @@ import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
 import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
+import { asksForOfficeMailbox, revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import {
   containerComputerAction,
@@ -232,7 +232,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { hostTimezone, morningCheckResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -284,6 +284,17 @@ import {
   stopRemoteDecisionFlush,
 } from "./remote-decisions.ts";
 import { buildSupportBundle, supportBundleRequest } from "./support-bundle.ts";
+import { createLearnedRecipeStore, parseLearnTitle, type LearnedRecipeStore } from "./learned-recipes.ts";
+import { compileLearnedSteps } from "./learn-compile.ts";
+import { LearnRecorder } from "./learn-recorder.ts";
+
+// Watch and learn (docs/decisions/2026-10-07-watch-and-learn.md): one recorder on the work browser, one drafts file.
+let learnRecorderInstance: LearnRecorder | null = null;
+const learnRecorder = () => learnRecorderInstance ??= new LearnRecorder({ open: (url: string) => browserRuntime.learnTarget(url) });
+// While a recording watches a tab, no browser task may start (and learnTarget refuses while a task holds the browser).
+browserRuntime.setLearning(() => learnRecorderInstance?.recording() ?? false);
+let learnedRecipeStore: LearnedRecipeStore | null = null;
+const learnedRecipes = () => learnedRecipeStore ??= createLearnedRecipeStore(join(DATA_DIR, "learned-recipes.json"));
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -2117,6 +2128,15 @@ async function startSeatTurn(
         const mcp = await composio.resolveConnectedAppsMcp(cfg, currentWorkerProfile().memberKey, access?.policyRevision);
         assertDispatch();
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers, ...(managedConnectorConfigured(cfg) ? { managed: true } : {}) };
+        // Mailbox mode `both` on a computer the owner allowed: the office mailbox
+        // is its own session beside the person's, mounted only when the person's
+        // own message asks for it (never a bot-to-bot relay), so the model alone
+        // never chooses to read the office mailbox.
+        if (managedConnectorConfigured(cfg) && access?.mailboxMode === 'both' && access.officeShared?.connected && allowedApps.includes('gmail') && !opts?.commsDepth && asksForOfficeMailbox(text)) {
+          const office = managedConnectorSettings(cfg, access.policyRevision, 'office');
+          const address = access.officeShared.accounts[0]?.label;
+          integrations.officeMail = { key: office.key, url: office.url, headers: office.headers, ...(address ? { address } : {}) };
+        }
       }
       if (PRODUCT_MODE) {
         if (instance.driverKind === 'hermesAgent' && !opts?.systemExtra) {
@@ -2499,7 +2519,7 @@ function emitLoopAndPulse(payload: unknown) {
   void loopChatCard(rec.run as LoopRun).catch(() => {});
   // Gmail routines carry their own source-specific results in the app. The
   // older Desk digest must not describe them using unrelated rent counts.
-  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'].includes(rec.run.loopId)) return;
+  if (['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'].includes(rec.run.loopId)) return;
   const status = rec.run.status;
   if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
   void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
@@ -2539,6 +2559,8 @@ loops = new LoopManager({
     })));
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
     if (loop.id === 'rei-supplier-check') return (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail));
+    // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
+    if (loop.id === 'rei-morning-refresh') { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); return result; }
     // W4: reads saved reviewed bills only; no mail, model or browser call.
     // W5: refreshes the saved inspection draft monthly; nothing is booked.
     if (loop.id === 'inspection-draft') return runInspectionDraft({ bookings: inspectionBookings, history: inspectionHistory, rules: inspectionRules,
@@ -2600,8 +2622,7 @@ loops = new LoopManager({
         const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
         const snapshot = desk.draftOwnerLetters();
         commitDesk(snapshot);
-        const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
-        return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
+        return ownerLetterResult(snapshot, before);
       });
     }
     if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
@@ -2676,6 +2697,19 @@ function reiDirectorySync() {
   })().catch(error => { reiDirectoryPromise = undefined; throw error; });
 }
 // ---- END REI directory refresh ----
+let reiRefreshPromise: Promise<import("./rei-morning-refresh.ts").ReiMorningRefresh> | undefined;
+function reiMorningRefresh() {
+  return reiRefreshPromise ??= (async () => {
+    const [{ createReiMorningRefresh }, { readW1Settings }, { localDate }] = await Promise.all([import("./rei-morning-refresh.ts"), import("./w1-host.ts"), import("./redbark-source.ts")]);
+    const lab = w1Lab ? await w1Lab : null;
+    const now = lab?.now ?? Date.now;
+    return createReiMorningRefresh({ desk, runtime: lab?.runtime ?? browserRuntime, now, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+      // Only a work browser that is already open: the clock never launches one.
+      browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
+      account: async () => (await readW1Settings(DATA_DIR))?.rei ?? null,
+      today: async () => localDate(new Date(now()), await reiWaitTimeZone()) });
+  })().catch(error => { reiRefreshPromise = undefined; throw error; });
+}
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -3518,7 +3552,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
-      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
+      if(['inbound-triage','weekly-bills','bank-references','maintenance-review','rei-supplier-check','rei-morning-refresh','inspection-draft'].includes(loopMatch[1]) && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'This workflow requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {
@@ -3780,7 +3814,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       const banks = bankReferenceStore();
       if (path === "/api/bank-reference/settings" && method === "GET") return json(res, 200, { settings: banks.settings() });
       if (path === "/api/bank-reference" && method === "GET") return json(res, 200, banks.page(bankQuery));
-      if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 2_000_000)));
+      if (path === "/api/bank-reference" && method === "POST") {
+        const { review: batch, created } = banks.upload(await readBody(req, 2_000_000));
+        // Jev payer hints (suggestions only) are asked only for a record this upload made, and never fail
+        // or hold up the upload; reply with the revision after them. A re-upload reuses the record as it is.
+        return json(res, 200, created ? await banks.addJevHints(batch.id).catch(() => batch) : batch);
+      }
       const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64}(?::r(?:[2-9]|[1-9][0-9]{1,5}))?)(?:\/(review|export|original|amend))?$/);
       if (!match) return json(res, 404, { error: "Unknown bank review." });
       const [, id, action] = match;
@@ -4683,6 +4722,56 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         "content-length": String(body.length),
       });
       return res.end(body);
+    }
+
+    // ── Watch and learn: record a portal task in the work browser, review the draft, publish it ──
+    // A published recipe runs only through POST /api/browser/tasks/recipe (Start grant, broker, fence).
+    if (path === "/api/learn" && method === "GET") {
+      const portals = Object.keys(PORTAL_RECIPE_PACKS);
+      // Shipped labels (before learned merge): what review compares click labels against.
+      const labels = Object.fromEntries(await Promise.all(portals.map(async portal => {
+        const { readSafe, consequential } = (await loadShippedPortalRecipePack(portal)).labels;
+        return [portal, { readSafe, consequential }] as const;
+      })));
+      return json(res, 200, { session: learnRecorder().view(), recipes: await learnedRecipes().list(), portals, labels });
+    }
+    if (path === "/api/learn/start" && method === "POST") {
+      const body = await readBody(req);
+      const portal = typeof body.portal === "string" ? body.portal : "";
+      if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) return json(res, 404, { error: "RealBud has no recipes for that portal." });
+      const pack = await loadPortalRecipePack(portal);
+      return json(res, 200, { session: await learnRecorder().start(portal, pack.origin) });
+    }
+    if (path === "/api/learn/stop" && method === "POST") {
+      const body = await readBody(req);
+      const portal = learnRecorder().view().portal;
+      if (!portal) return json(res, 409, { error: "Bud isn't watching a task right now." });
+      // Check the name and load the shipped pack and the drafts file before stopping; the recorder
+      // keeps the events until the draft is saved, so a failed save is retried with Stop again.
+      const title = parseLearnTitle((typeof body.title === "string" ? body.title.trim().slice(0, 80) : "") || "Learned task");
+      const pack = await loadShippedPortalRecipePack(portal);
+      await learnedRecipes().list();
+      const recipe = await learnRecorder().finish((events, recorded) => {
+        if (recorded !== portal) throw Object.assign(new Error("The recording changed. Press Stop again."), { status: 409 });
+        return learnedRecipes().create({ portal, title, ...compileLearnedSteps(events, pack) });
+      });
+      return json(res, 200, { recipe });
+    }
+    if (path === "/api/learn/cancel" && method === "POST") {
+      await learnRecorder().cancel();
+      return json(res, 200, { session: learnRecorder().view() });
+    }
+    const learnRoute = path.match(/^\/api\/learn\/recipes\/(lr_[0-9a-f]{24})(?:\/(publish|unpublish|delete))?$/);
+    if (learnRoute && method === "POST") {
+      const [, recipeId, action] = learnRoute;
+      const body = await readBody(req);
+      if (action === "delete") { await learnedRecipes().remove(recipeId, body.expectedRevision); return json(res, 200, { ok: true }); }
+      if (action === "unpublish") return json(res, 200, { recipe: await learnedRecipes().unpublish(recipeId, body.expectedRevision) });
+      const recipe = (await learnedRecipes().list()).find(item => item.id === recipeId);
+      if (!recipe) return json(res, 404, { error: "That learned recipe no longer exists." });
+      if (action === "publish") return json(res, 200, { recipe: await learnedRecipes().publish(recipeId, body.expectedRevision, await loadShippedPortalRecipePack(recipe.portal)) });
+      const { labels } = await loadShippedPortalRecipePack(recipe.portal);
+      return json(res, 200, { recipe: await learnedRecipes().update(recipeId, body.expectedRevision, { title: body.title, steps: body.steps, confirmedLabels: body.confirmedLabels, flags: body.flags }, labels) });
     }
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────

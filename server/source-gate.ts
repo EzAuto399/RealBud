@@ -23,6 +23,29 @@ export function reiPartsFreshness<P extends string>(
   })) as Record<P, boolean>;
 }
 
+type ReiSources = ReadonlyArray<{ id: string; lastCheckedAt?: number | null }>;
+/** Why facts read from these REI parts can't back a proposal now, or null when every part is fresh. */
+function reiStaleReason(parts: readonly string[], sources: ReiSources, now: number): string | null {
+  const fresh = reiPartsFreshness(parts, sources, now);
+  const stale = parts.filter((part) => !fresh[part]);
+  if (!stale.length) return null;
+  const named = stale.length === 1 ? stale[0] : `${stale.slice(0, -1).join(", ")} and ${stale[stale.length - 1]}`;
+  return `REI ${named} not fresh: run the REI morning refresh or sign in to REI.`;
+}
+/** The REI parts the morning money check's REI facts come from (tenant, rent, amount owing, paid to). */
+const REI_MONEY_PARTS = ["tenants", "arrears"] as const;
+/** Why REI-sourced money facts can't back a proposal now, or null when both parts are fresh. */
+export function reiMoneyStaleReason(sources: ReiSources, now: number): string | null {
+  return reiStaleReason(REI_MONEY_PARTS, sources, now);
+}
+/** An owner letter's owner and arrears facts: the tenants list and arrears carry the owner name,
+ * amount owing and paid-to date; the owners list carries the owner's contact. */
+const REI_OWNER_LETTER_PARTS = ["tenants", "arrears", "owners"] as const;
+/** Why REI-sourced owner or arrears facts can't back an owner letter now, or null when every part is fresh. */
+export function reiOwnerLetterStaleReason(sources: ReiSources, now: number): string | null {
+  return reiStaleReason(REI_OWNER_LETTER_PARTS, sources, now);
+}
+
 export function sourceReady(input: {
   sourceId: string;
   stableKey: string;

@@ -13,8 +13,11 @@ export { managedConnectorApps };
 export interface ManagedConnectorConfig { endpoint: string; credential: string; profile: string }
 import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { validateSourceAttachmentBytes } from './source-attachments.ts';
+type Service = {connected: boolean; status: string; accounts: {id: string;label?:string;status:string}[];accountSelectionRequired:boolean};
 type Status = { sourceKind?: 'personal' | 'office_shared'; policyRevision?: number; checkedAt: string; managed: true; serviceExpiresAt: number;
-  services: Record<string, {connected: boolean; status: string; accounts: {id: string;label?:string;status:string}[];accountSelectionRequired:boolean}>;
+  /** `both`: `services.gmail` is the person's own mailbox and `officeShared` the office one beside it. */
+  mailboxMode?: 'personal' | 'shared' | 'both'; officeShared?: Service;
+  services: Record<string, Service>;
   tools: {available:boolean;names:string[]} };
 
 export const managedConnectorConfigured = (cfg: AppConfig): boolean => cfg.composio?.managed !== undefined;
@@ -24,8 +27,10 @@ export const managedConnectorConfigured = (cfg: AppConfig): boolean => cfg.compo
  * no status was read yet: the gateway still enforces. */
 const mailboxAccessByCredential = new Map<string, MailboxAccess>();
 const credentialKey = (credential: string) => createHash('sha256').update(credential).digest('hex');
-export const managedMailboxAccess = (credential: string): MailboxAccess | undefined => mailboxAccessByCredential.get(credentialKey(credential));
-export function managedConnectorSettings(cfg: AppConfig, expectedPolicyRevision?: number): {key:string;url:string;headers:Record<string,string>} {
+/** The office mailbox's scope is kept under its own key: in `both` it differs from the person's own. */
+export const managedMailboxAccess = (credential: string, mailbox: 'personal' | 'office' = 'personal'): MailboxAccess | undefined => mailboxAccessByCredential.get(credentialKey(credential) + (mailbox === 'office' ? ':office' : ''));
+/** `mailbox: 'office'` selects the office shared mailbox for this session; the gateway still checks this computer's grant. */
+export function managedConnectorSettings(cfg: AppConfig, expectedPolicyRevision?: number, mailbox?: 'office'): {key:string;url:string;headers:Record<string,string>} {
   if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error('The reviewed mail policy needs checking.');
   const managed = cfg.composio?.managed;
   const fail = (): never => { throw Object.assign(new Error('Managed connections need service setup for this private workspace.'), {status:403}); };
@@ -35,7 +40,7 @@ export function managedConnectorSettings(cfg: AppConfig, expectedPolicyRevision?
   let url: URL; try { url = new URL(managed.endpoint); } catch { return fail(); }
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
     (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1','[::1]'].includes(url.hostname)))) return fail();
-  return {key:managed.credential,url:`${url.origin}/v1/connectors/mcp`,headers:{authorization:`Bearer ${managed.credential}`,'x-realbud-profile':managed.profile,...(expectedPolicyRevision === undefined ? {} : {'x-realbud-policy-revision':String(expectedPolicyRevision)})}};
+  return {key:managed.credential,url:`${url.origin}/v1/connectors/mcp`,headers:{authorization:`Bearer ${managed.credential}`,'x-realbud-profile':managed.profile,...(expectedPolicyRevision === undefined ? {} : {'x-realbud-policy-revision':String(expectedPolicyRevision)}),...(mailbox === 'office' ? {'x-realbud-mailbox':'office'} : {})}};
 }
 async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal?: AbortSignal, expectedPolicyRevision?: number): Promise<unknown> {
   if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error('The reviewed mail policy needs checking.');
@@ -112,9 +117,9 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   const tools = value.tools;
   if (typeof tools.available !== 'boolean' || !Array.isArray(tools.names) || tools.names.length > MAX_TOOLS_PER_APP * granted.length ||
     new Set(tools.names).size !== tools.names.length || tools.names.some(name => !toolNameAllowed(name, granted))) return invalid();
-  const services: Status['services'] = {};
-  let anyConnected = false;
-  for (const [slug, input] of Object.entries(value.services)) {
+  if (value.mailboxMode !== undefined && !['personal', 'shared', 'both'].includes(String(value.mailboxMode))) return invalid();
+  if (value.officeMailboxAccess !== undefined && value.officeMailboxAccess !== 'full' && value.officeMailboxAccess !== 'read_only') return invalid();
+  const service = (input: unknown): Service => {
   if (!record(input) || typeof input.connected !== 'boolean' || !status(input.status) || input.accountSelectionRequired !== false ||
     !Array.isArray(input.accounts) || input.accounts.length > 1) return invalid();
   const accounts = input.accounts.map((account: unknown) => {
@@ -123,11 +128,16 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
     return { id: account.id, status: account.status, ...(typeof account.label === 'string' ? { label: account.label } : {}) };
   });
   if (input.connected !== (accounts[0]?.status === 'ACTIVE') || (input.connected && input.status !== 'ACTIVE')) return invalid();
-  anyConnected ||= input.connected;
   // Project every level. A new gateway diagnostic or credential field must not
   // silently become part of the desktop's cached status or renderer response.
-  services[slug] = { connected: input.connected, status: input.status, accounts, accountSelectionRequired: false };
-  }
+  return { connected: input.connected, status: input.status, accounts, accountSelectionRequired: false };
+  };
+  const services: Status['services'] = {};
+  let anyConnected = false;
+  for (const [slug, input] of Object.entries(value.services)) { services[slug] = service(input); anyConnected ||= services[slug].connected; }
+  // The office mailbox beside the person's own exists only in `both`, only with Gmail admitted.
+  if (value.officeShared !== undefined && (value.mailboxMode !== 'both' || !granted.includes('gmail'))) return invalid();
+  const officeShared = value.officeShared === undefined ? undefined : service(value.officeShared);
   // Tools exist only for a connected app; a connected app may still expose none.
   if (tools.available !== (tools.names.length > 0) || (tools.names.length > 0 && !anyConnected)) return invalid();
   // A shared office mailbox without a reported grant is read-only; an older
@@ -136,9 +146,14 @@ export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   const access: MailboxAccess | undefined = value.mailboxAccess === 'full' || value.mailboxAccess === 'read_only' ? value.mailboxAccess
     : value.sourceKind === 'office_shared' ? 'read_only' : undefined;
   if (access) mailboxAccessByCredential.set(credentialKey(credential), access); else mailboxAccessByCredential.delete(credentialKey(credential));
+  // An office mailbox without a reported grant is read-only.
+  if (officeShared) mailboxAccessByCredential.set(credentialKey(credential) + ':office', value.officeMailboxAccess === 'full' ? 'full' : 'read_only');
+  else mailboxAccessByCredential.delete(credentialKey(credential) + ':office');
   return {
     checkedAt: new Date(value.checkedAt).toISOString(), managed: true, serviceExpiresAt: Number(value.serviceExpiresAt),
     ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
+    ...(value.mailboxMode !== undefined ? { mailboxMode: value.mailboxMode as 'personal' | 'shared' | 'both' } : {}),
+    ...(officeShared ? { officeShared } : {}),
     services, tools: { available: tools.available, names: [...tools.names] as string[] },
   };
 }
