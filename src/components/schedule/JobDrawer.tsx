@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, CircleAlert, Hourglass, Loader2, Pause, Play, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { api } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import { useDialogKeyboard } from "@/lib/use-dialog-keyboard";
 import { useScheduleTiming } from "@/lib/workspace-view-state";
@@ -271,6 +272,64 @@ export function LoopTiming({
   );
 }
 
+export type NewMailState = { enabled: boolean; available: boolean; reason?: string };
+/** A malformed answer is an error, never a switch state. */
+export function readNewMailState(value: unknown): NewMailState | null {
+  const data = value as Record<string, unknown> | null;
+  if (!data || typeof data.enabled !== "boolean" || typeof data.available !== "boolean" || (data.reason !== undefined && (typeof data.reason !== "string" || data.reason.length > 300))) return null;
+  return { enabled: data.enabled, available: data.available, ...(typeof data.reason === "string" ? { reason: data.reason } : {}) };
+}
+
+/** Morning priorities only: new mail also wakes the job. The clock run stays. */
+export function NewMailSwitch({ loopId, initial }: { loopId: string; initial?: NewMailState }) {
+  const [state, setState] = useState<NewMailState | null>(initial ?? null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const path = `/api/loops/${encodeURIComponent(loopId)}/new-mail`;
+  const read = async () => {
+    const next = readNewMailState(await api(path, undefined, { timeoutMs: 30_000 }));
+    if (!next) throw new Error("This setting could not be read. Open the job again.");
+    return next;
+  };
+  useEffect(() => {
+    if (initial) return;
+    let live = true;
+    read().then((next) => { if (live) setState(next); }, (cause) => { if (live) setError(cause instanceof Error ? cause.message : "This setting could not be read. Open the job again."); });
+    return () => { live = false; };
+  }, [path, initial]);
+  const change = async (enabled: boolean) => {
+    setBusy(true); setError("");
+    try {
+      const next = readNewMailState(await api(path, { method: "POST", body: JSON.stringify({ enabled }) }, { timeoutMs: 30_000 }));
+      if (!next) throw new Error("The change could not be confirmed.");
+      setState(next);
+    } catch (cause) {
+      // The change may have saved before the reply was lost: show what is saved now.
+      setError(cause instanceof Error ? cause.message : "The change could not be confirmed.");
+      await read().then(setState, () => {});
+    } finally { setBusy(false); }
+  };
+  const on = state?.enabled === true;
+  // Unavailable still lets a saved "on" be turned off.
+  const disabled = busy || !state || (!state.available && !on);
+  return (
+    <section aria-label="New mail" aria-busy={busy || !state} className="border-t border-line pt-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p id={`${loopId}-new-mail-label`} className="text-[14px] font-medium text-ink">Also check when new mail arrives</p>
+          <p className="text-[13px] text-ink-muted">Usually within 15 minutes. The morning run still happens.</p>
+        </div>
+        <button type="button" role="switch" aria-checked={on} aria-labelledby={`${loopId}-new-mail-label`} disabled={disabled} onClick={() => void change(!on)}
+          className={cn("relative min-h-11 min-w-16 shrink-0 rounded-full border border-line px-1 transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-agency disabled:cursor-not-allowed disabled:opacity-50", on ? "bg-agency" : "bg-raised")}>
+          <span aria-hidden="true" className={cn("absolute top-1/2 left-1 size-8 -translate-y-1/2 rounded-full bg-sheet transition-transform motion-reduce:transition-none", on && "translate-x-6")} />
+        </button>
+      </div>
+      {state?.reason ? <p className="mt-1 text-[13px] text-hold">{state.reason}</p> : null}
+      {error ? <p role="alert" className="mt-1 text-[13px] text-danger">{error}</p> : null}
+    </section>
+  );
+}
+
 /** Detail for a built-in scheduled job (not a saved plan). */
 export function LoopDetail({
   loop,
@@ -398,6 +457,7 @@ export function LoopDetail({
       ) : (
         <LoopTiming loop={loop} busy={busy} controlsDisabled={controlsDisabled} open={timingOpen} onOpen={onTimingOpen} onRetune={onRetune} />
       )}
+      {loop.id === "inbound-triage" && !manualOnly ? <NewMailSwitch loopId={loop.id} /> : null}
 
       <section aria-label="Latest result" className="border-t border-line pt-3">
         <h3 className="mb-2 text-[14px] font-medium text-ink">Latest result</h3>

@@ -100,6 +100,7 @@ function stubChannel(id: "telegram" | "discord", sent: string[], paired = true):
     id,
     label: id === "telegram" ? "Telegram" : "Discord",
     pairedKey: () => (paired ? "chat-1" : null),
+    pairedSender: () => (paired ? "user-1" : null),
     async sendDecision() {},
     async sendDigest(text) {
       sent.push(text);

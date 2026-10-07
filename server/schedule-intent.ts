@@ -1,5 +1,8 @@
 /** Short-circuit Ask replies for "every Wednesday / weekly … check" asks.
- * Ask cannot flip RealBud's clock; point the PM at Schedule in one step. */
+ * Bud never edits RealBud's clock directly. A new check is set up in Schedule,
+ * so that ask gets a one-step pointer here. Moving the built Morning money check
+ * goes to Bud, who offers the change on RealBud's approval card (loop_schedule in
+ * server/workflow-settings-broker.ts); only Allow on that card saves it. */
 import { askBookIntent } from "./ask-book.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
 import { parsePortalJobIntent } from "./portal-job-intent.ts";
@@ -54,10 +57,11 @@ function cadenceLine(weekdayHint: string | null): string {
   return weekdayHint;
 }
 
-/** The existing schedule editor opens inside Ask and owns the save/approval. */
+/** A new check: the existing schedule editor opens inside Ask and owns the save/approval.
+ * Morning money already exists, so Bud answers that one with its approval card. */
 export function scheduleIntentReply(text: string): string | null {
   const intent = parseScheduleIntent(text);
-  if (!intent) return null;
+  if (!intent || intent.kind === "morning-money") return null;
   const when = cadenceLine(intent.weekdayHint);
-  return `Let’s review the ${intent.kind === "morning-money" ? "Morning money" : "payment"} check for ${when}. Open **Schedule work** here to choose the time and approve the plan. Nothing is scheduled yet.`;
+  return `Let’s review the payment check for ${when}. Open **Schedule work** here to choose the time and approve the plan. Nothing is scheduled yet.`;
 }

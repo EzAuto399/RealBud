@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { StartTurnFn, TelegramDeps, TelegramFetch } from "./channels/telegram.ts";
+import type { ChannelRecord, StartTurnFn, TelegramDeps, TelegramFetch } from "./channels/telegram.ts";
 import { WorkspaceActivityGate } from './workspace-activity.ts';
 
 const dataDir = vi.hoisted(() => {
@@ -64,8 +64,8 @@ function stubFetch(opts?: {
   };
 }
 
-function update(id: number, chatId: number, text: string, name = "Sam") {
-  return { update_id: id, message: { chat: { id: chatId }, from: { first_name: name }, text } };
+function update(id: number, chatId: number, text: string, name = "Sam", chat: { type?: string; fromId?: number } = {}) {
+  return { update_id: id, message: { chat: { id: chatId, type: chat.type ?? "private" }, from: { id: chat.fromId ?? chatId, first_name: name }, text } };
 }
 
 function deps(store: InstanceType<typeof Store>, startTurn: StartTurnFn, fetchFn: TelegramFetch): TelegramDeps {
@@ -366,13 +366,13 @@ describe("pairing and relay", () => {
   });
 });
 
-function callbackUpdate(id: number, chatId: number, data: string, name = "Sam") {
+function callbackUpdate(id: number, chatId: number, data: string, name = "Sam", chat: { type?: string; fromId?: number } = {}) {
   return {
     update_id: id,
     callback_query: {
       id: `cb-${id}`,
-      from: { first_name: name },
-      message: { message_id: 9, chat: { id: chatId } },
+      from: { id: chat.fromId ?? chatId, first_name: name },
+      message: { message_id: 9, chat: { id: chatId, type: chat.type ?? "private" } },
       data,
     },
   };
@@ -381,6 +381,7 @@ function callbackUpdate(id: number, chatId: number, data: string, name = "Sam") 
 async function bindPairedDesk(
   decided: Array<{ id: string; via?: string; status: string; reason?: string }>,
   fetchFn: TelegramFetch,
+  pairing: Partial<ChannelRecord> = { pairedUserId: 111, pairedChatType: "private" },
 ) {
   telegram.saveChannel({
     botToken: TOKEN,
@@ -390,6 +391,7 @@ async function bindPairedDesk(
     offset: 0,
     connectedAt: 1,
     lastMessageAt: null,
+    ...pairing,
   });
   const drafts: Draft[] = [
     {
@@ -581,17 +583,25 @@ describe("remote decisions", () => {
     expect(startTurn).not.toHaveBeenCalled();
   });
 
-  it("ignores a callback from an unpaired chat", async () => {
+  it.each([
+    { label: "another chat", chatId: 222, fromId: 222, type: "private" },
+    { label: "another sender in the paired chat", chatId: 111, fromId: 222, type: "private" },
+    { label: "the paired chat id seen as a group", chatId: 111, fromId: 111, type: "group" },
+  ])("refuses a tap from $label and changes nothing", async ({ chatId, fromId, type }) => {
     const decided: Array<{ id: string; via?: string; status: string }> = [];
-    const answered: string[] = [];
-    const fetchFn = stubFetch({ onAnswer: (id) => answered.push(id) });
+    const answered: Array<{ id: string; text?: string }> = [];
+    const edited: string[] = [];
+    const fetchFn = stubFetch({ onAnswer: (id, text) => answered.push({ id, text }), onEdit: (_c, _m, text) => edited.push(text) });
     const store = await bindPairedDesk(decided, fetchFn);
+    const id = remote.pendingDecisionId("telegram")!;
     await telegram.handleTelegramUpdates(
-      [callbackUpdate(31, 222, `d:${remote.pendingDecisionId("telegram")}:allow`, "Other")],
+      [callbackUpdate(31, chatId, `d:${id}:allow`, "Other", { fromId, type })],
       deps(store, async () => {}, fetchFn),
     );
-    expect(answered).toEqual([]);
+    expect(answered).toEqual([{ id: "cb-31", text: "Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat." }]);
     expect(decided).toEqual([]);
+    expect(edited).toEqual([]);
+    expect(remote.pendingDecisionId("telegram")).toBe(id);
   });
 
   it("uses a card-specific reply for the pending decision and keeps other text on the Bud relay", async () => {
@@ -616,6 +626,44 @@ describe("remote decisions", () => {
     expect(startTurn).toHaveBeenCalled();
     const last = store.messagesFor(store.bot("bud")!.threadId).at(-1);
     expect(last).toMatchObject({ text: "[Telegram · Sam] what's late?" });
+  });
+
+  it("records chat type and sender at pairing; a group pairing still chats but is not for decisions", async () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.seedIfEmpty();
+    telegram.saveChannel({ botToken: TOKEN, botUsername: "realbud_bot", pairedChatId: null, pairedName: null, offset: 0, connectedAt: 1, lastMessageAt: null });
+    const startTurn = vi.fn(async () => {});
+    const wired = deps(store, startTurn, stubFetch());
+    await telegram.handleTelegramUpdates([update(1, -500, createPairingCode("telegram").command, "Sam", { type: "group", fromId: 111 })], wired);
+    expect(telegram.loadChannel()).toMatchObject({ pairedChatId: -500, pairedUserId: 111, pairedChatType: "group" });
+    expect(telegram.telegramStatus().telegram).toMatchObject({ paired: true, decisions: false });
+    await telegram.handleTelegramUpdates([update(2, -500, "what's late?", "Kim", { type: "group", fromId: 222 })], wired);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+
+    telegram.disconnectTelegram();
+    telegram.saveChannel({ botToken: TOKEN, botUsername: "realbud_bot", pairedChatId: null, pairedName: null, offset: 0, connectedAt: 1, lastMessageAt: null });
+    await telegram.handleTelegramUpdates([update(3, 111, createPairingCode("telegram").command, "Sam")], wired);
+    expect(telegram.loadChannel()).toMatchObject({ pairedChatId: 111, pairedUserId: 111, pairedChatType: "private" });
+    expect(telegram.telegramStatus().telegram).toMatchObject({ paired: true, decisions: true });
+  });
+
+  it.each([
+    { label: "group", pairing: { pairedChatId: -500, pairedUserId: 111, pairedChatType: "group" }, chatId: -500, type: "group" },
+    { label: "legacy (no sender id)", pairing: {}, chatId: 111, type: "private" },
+  ])("sends a $label pairing no buttons, recipient or wording, and refuses its taps", async ({ pairing, chatId, type }) => {
+    const decided: Array<{ id: string; via?: string; status: string }> = [];
+    const bodies: Array<Record<string, unknown>> = [];
+    const answered: Array<string | undefined> = [];
+    const fetchFn = stubFetch({ onSend: (_c, _t, body) => bodies.push(body!), onAnswer: (_id, text) => answered.push(text) });
+    const store = await bindPairedDesk(decided, fetchFn, pairing);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty("reply_markup");
+    expect(bodies[0]!.text).toBe("Courtesy SMS wording is ready. Open Desk to review and decide. To approve from your phone, re-pair from a private chat.");
+    expect(remote.pendingDecisionId("telegram")).toBeNull();
+    expect(telegram.telegramStatus().telegram).toMatchObject({ paired: true, decisions: false });
+    await telegram.handleTelegramUpdates([callbackUpdate(5, chatId, "d:abcdef123456:allow", "Sam", { fromId: 111, type })], deps(store, async () => {}, fetchFn));
+    expect(answered).toEqual(["Only the person who paired this Bud can decide, from a private chat. If that's you, re-pair from a private chat."]);
+    expect(decided).toEqual([]);
   });
 });
 

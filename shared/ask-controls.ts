@@ -88,7 +88,8 @@ export function parseAskControlIntent(text: string): "schedule-status" | "schedu
   if (!value || value.length > 400 || /[\r\n]/.test(value)) return null;
   if (isBankFeedRequest(value)) return "bank-feed";
   if (/^(?:what(?:'s| is| have (?:we|i))|show(?: me)?|list)(?: (?:my|our|the))? (?:scheduled(?: jobs| work)?|schedule|routines|recurring jobs)(?: (?:for today|today|this week))?$/i.test(value)) return "schedule-status";
-  if (/^(?:please )?(?:schedule|remind me|set up (?:a |an )?(?:schedule|reminder|recurring)|(?:can you |help me )?(?:add|create|make|change|pause|stop|reschedule) (?:a |an |my |our |the |this )?(?:schedule|reminder|recurring job))\b/i.test(value)) return "schedule-edit";
+  // "change"/"reschedule" reach Bud, who offers a before → after schedule card (loop_schedule).
+  if (/^(?:please )?(?:schedule|remind me|set up (?:a |an )?(?:schedule|reminder|recurring)|(?:can you |help me )?(?:add|create|make|pause|stop) (?:a |an |my |our |the |this )?(?:schedule|reminder|recurring job))\b/i.test(value)) return "schedule-edit";
   // Any one app, named in one or two words: "how do I connect Xero?" is the same
   // question as for Gmail. Bud itself is setup below; a longer phrase ("link the
   // lease to the property") is property work and stays an ordinary turn.

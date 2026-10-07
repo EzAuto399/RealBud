@@ -19,6 +19,10 @@ describe("product intent routing and PM copy", () => {
     for (const text of ["how do i link the lease to the property", "how do I connect the tenant with the plumber", "how do i set up a rent increase for 14 Sample Street"]) expect(parseAskControlIntent(text)).toBeNull();
     expect(parseAskControlIntent("Set up Bud")).toBe("setup");
     expect(parseAskControlIntent("Schedule the arrears check every Wednesday")).toBe("schedule-edit");
+    expect(parseAskControlIntent("Pause the schedule")).toBe("schedule-edit");
+    // Changing an existing workflow's time reaches Bud, which offers a before → after card.
+    expect(parseAskControlIntent("Change the schedule for weekly bills to Thursdays")).toBeNull();
+    expect(parseAskControlIntent("Reschedule the owner letters")).toBeNull();
     expect(parseAskControlIntent("what is scheduled?")).toBe("schedule-status");
     const text = askControlReply("schedule-status", [{ name: "Morning money", enabled: true, schedule: { weekdays: [3], time: "09:00" } }]);
     expect(text).toContain("Wed at 09:00");
