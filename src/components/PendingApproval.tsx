@@ -17,6 +17,51 @@ import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, validMemoryApprovalReview
 import { readBrowserApprovalCard, type BrowserApprovalCard } from "@shared/browser-approval-card";
 import { BROWSER_ACCOUNT_CONFIRM_TOOL } from "@shared/browser-task";
 import { BrowserPendingActions, BrowserPendingPanel, browserApprovalBlocked } from "./BrowserApprovalCard";
+import { fmtTimeOfDay } from "@/lib/au";
+import { officeAppLabel } from "@shared/office-sources";
+
+/** An eligible read card's offer: this task's reads, or (`always`) every read of this app. */
+export interface ReadOffer { app: string; always: boolean }
+/** Who answered a card, and where. */
+export interface AnsweredBy { name: string; via: "desktop" | "telegram" | "discord" | "slack"; at?: number }
+const VIA: Record<AnsweredBy["via"], string> = { desktop: "desktop", telegram: "Telegram", discord: "Discord", slack: "Slack" };
+const plain = (value: unknown, max: number) => typeof value === "string" && value.trim() && value.length <= max ? value.trim() : null;
+
+/** The card's read offer, read defensively: absent or malformed offers nothing. */
+export function readReadOffer(value: unknown): ReadOffer | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const offer = value as Record<string, unknown>;
+  const slug = plain(offer.app, 64);
+  const app = plain(offer.label, 80) ?? (slug ? officeAppLabel(slug) : null);
+  return app ? { app, always: offer.always === true } : null;
+}
+export function readAnsweredBy(value: unknown): AnsweredBy | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>, name = plain(row.name, 120);
+  if (!name || typeof row.via !== "string" || !Object.hasOwn(VIA, row.via)) return null;
+  const at = typeof row.at === "number" ? row.at : typeof row.at === "string" ? Date.parse(row.at) : NaN;
+  return { name, via: row.via as AnsweredBy["via"], ...(Number.isFinite(at) ? { at } : {}) };
+}
+/** "Allowed once by Sam via Telegram · 2:16 pm". */
+export function answeredByLine(answeredBy: AnsweredBy, answer?: string): string {
+  const verb = /^deny$/i.test(answer ?? "") ? "Denied" : "Allowed once";
+  return `${verb} by ${answeredBy.name} via ${VIA[answeredBy.via]}${answeredBy.at !== undefined ? ` · ${fmtTimeOfDay(answeredBy.at)}` : ""}`;
+}
+/** "2 min left" from the card's deadline, or null without one. */
+export function timeLeft(deadline: string | undefined, now: number): string | null {
+  const end = deadline ? Date.parse(deadline) : NaN;
+  if (!Number.isFinite(end)) return null;
+  const left = end - now;
+  return left <= 0 ? "time is up" : left < 60_000 ? "under 1 min left" : `${Math.ceil(left / 60_000)} min left`;
+}
+/** One side-panel row: "Gmail · Send email · 2 min left". The app and action come
+ * from the read offer or the exact request's tool name, else the card's headline. */
+export function waitingLine(pending: Pending, now: number): string {
+  const slug = /"name":\s*"([A-Z][A-Z0-9]*)_([A-Z0-9_]+)"/.exec(pending.detail);
+  const app = pending.readOffer?.app ?? (slug ? officeAppLabel(slug[1]!.toLowerCase()) : null);
+  const words = slug ? slug[2]!.toLowerCase().replace(/_/g, " ") : approvalHeadline(pending.tool, pending.detail);
+  return [app, words.charAt(0).toUpperCase() + words.slice(1), timeLeft(pending.deadline, now)].filter(Boolean).join(" · ");
+}
 
 export interface Pending {
   message: Message;
@@ -31,7 +76,14 @@ export interface Pending {
   memoryReview?: MemoryApprovalReview;
   /** A consequential browser step; null when its details did not validate. */
   browserApproval?: BrowserApprovalCard | null;
+  readOffer?: ReadOffer | null;
+  /** ISO time the request stops waiting. */
+  deadline?: string;
+  /** Answered on the phone or another desktop: the card collapses to one line. */
+  answeredBy?: AnsweredBy | null;
 }
+
+const optional = <K extends string, V>(key: K, value: V | null) => (value === null ? {} : { [key]: value }) as Partial<Record<K, V>>;
 
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
 export function pendingApprovals(messages: Message[]): Pending[] {
@@ -48,6 +100,10 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       approvalPolicy: m.card!.approvalPolicy,
       memoryReview: m.card!.memoryReview,
       ...(m.card!.browserApproval !== undefined ? { browserApproval: readBrowserApprovalCard(m.card!.browserApproval) } : {}),
+      // Card metadata from the approval packets, read defensively until each lands.
+      ...optional("readOffer", readReadOffer((m.card as { readOffer?: unknown }).readOffer)),
+      ...optional("deadline", typeof m.card!.deadline === "string" ? m.card!.deadline : null),
+      ...optional("answeredBy", readAnsweredBy(m.card!.answeredBy)),
     }));
 }
 
@@ -90,6 +146,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   now?: number;
 }) {
   const { state } = useStore();
+  if (pending.answeredBy) return <p role="status" className="rounded-t-2xl border-b border-line bg-sheet px-4 py-3 text-[13px] text-ink-secondary">{answeredByLine(pending.answeredBy, pending.message.card?.answered)}</p>;
   if (pending.browserApproval !== undefined) return <BrowserPendingPanel approval={pending.browserApproval} count={count} index={index} now={now} />;
   const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
   const memoryReview = isMemory && validMemoryApprovalReview(pending.memoryReview) ? pending.memoryReview : null;
@@ -166,9 +223,10 @@ export function PendingApprovalActions({
   const productBud = productAsk || bot?.id === "bud" || bot?.name === "Bud";
   const isSubmit = !isMemory && pending.fence?.surface === "portal-submit";
   const ruleOffer = isSubmit || onceOnly ? null : pending.fence?.ruleOffer ?? null;
+  const readOffer = onceOnly || pending.fence || pending.browserApproval !== undefined ? null : pending.readOffer ?? null;
   const decide = (
     behavior: "allow" | "deny",
-    options?: { always?: boolean; scope?: "once" | "session"; rule?: { surface: "portal-read" | "portal-prefill"; origin: string } },
+    options?: { always?: boolean; scope?: "once" | "session" | "task" | "always-reads"; rule?: { surface: "portal-read" | "portal-prefill"; origin: string } },
   ) => {
     if (behavior === "allow" && !memoryReviewAvailable) return;
     return dispatch({
@@ -199,6 +257,24 @@ export function PendingApprovalActions({
   }
 
   const base = "pm-control rounded-full px-3.5 text-[13.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+  // Answered on the phone or another desktop: the line above says who, and nothing is left to decide here.
+  if (pending.answeredBy) return null;
+  if (readOffer) {
+    return (
+      <div className="flex flex-col items-end gap-2 px-2 py-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={() => decide("allow", { scope: "once" })} className={cn(base, "bg-agency font-medium text-white hover:bg-agency-hover")}>Allow once</button>
+          <button type="button" onClick={() => decide("allow", { scope: "task" })} className={cn(base, "border border-line text-ink hover:bg-raised")}>Allow for this task</button>
+          {readOffer.always ? (
+            <button type="button" onClick={() => decide("allow", { scope: "always-reads" })} className={cn(base, "border border-line text-ink hover:bg-raised")}>Always allow reading {readOffer.app}</button>
+          ) : null}
+          <button type="button" onClick={() => decide("deny")} className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}>Deny</button>
+          <button type="button" onClick={onCancelTurn} className={cn(base, "text-ink-muted hover:bg-raised hover:text-ink")}>Stop this turn</button>
+        </div>
+        <p className="text-[12px] text-ink-muted">Change future approvals in Workspace → Approvals.</p>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col items-end gap-2 px-2 py-2">
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -269,9 +345,7 @@ export function PendingApprovalActions({
           >
             {alwaysAllowOfferLabel(ruleOffer.label)}
           </button>
-          <p className="text-[12px] text-ink-muted">
-            Saved as a standing rule. Revoke it any time in Workspace → Settings & help → Advanced.
-          </p>
+          <p className="text-[12px] text-ink-muted">Change future approvals in Workspace → Approvals.</p>
         </div>
       ) : null}
     </div>
