@@ -287,6 +287,9 @@ export interface FictionalReiOptions {
   secondReiTab?: boolean;
   /** The Search box's accessible name (live REI's DataTables boxes read "Search:"). */
   searchLabel?: string;
+  /** The Tenants and Suppliers grids in live REI's Syncfusion shape (7 Oct 2026): rows in rowgroups, a hidden empty-named
+   * first column, and template cells whose names end " is template cell column header <Col>". */
+  syncfusionGrid?: boolean;
 }
 
 export function fictionalReiPortal(options: FictionalReiOptions = {}) {
@@ -425,16 +428,24 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
         // The grid, its footer and pager sit in their own region; the page's record-changing buttons are outside it.
         // The tenants grid scrolls (no pages) and shows "No records to display" before it fills, as live REI does.
         const scrolls = path === "/customers/tenant" || path === "/customers/supplier";
-        const grid = ['table "Results"'];
-        if (loading > 0 && scrolls) grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`), "  row", '    cell "No records to display"');
-        else if (loading > 0) grid.push("  row", '    cell "Loading…"');
+        // Syncfusion-shaped (syncfusionGrid): role grid, header and rows each in a rowgroup, a hidden first column whose
+        // header has an empty name, and every cell named "<text> is template cell column header <Col>".
+        const sf = scrolls && options.syncfusionGrid === true;
+        const header = sf ? ["  rowgroup", "    row", '      columnheader ""', ...table.cols.map(col => `      columnheader ${q(col)}`)] : ["  row", ...table.cols.map(col => `    columnheader ${q(col)}`)];
+        const note = (text: string) => sf ? ["  rowgroup", "    row", `      gridcell ${q(text)}`] : ["  row", `    cell ${q(text)}`];
+        const body = (rows: string[][]) => sf
+          ? ["  rowgroup", ...rows.flatMap(row => ["    row", '      gridcell ""', ...row.map((cell, i) => `      gridcell ${q(`${cell} is template cell column header ${table.cols[i]}`)}`)])]
+          : rows.flatMap(row => ["  row", ...row.map(cell => `    cell ${q(cell)}`)]);
+        const grid = [sf ? "grid" : 'table "Results"'];
+        if (loading > 0 && scrolls) grid.push(...header, ...note("No records to display"));
+        else if (loading > 0) grid.push(...note("Loading…"));
         else {
           // A short grid (directoryRows) still counts every row in its footer; Tenants shows only what has loaded.
           const listed = scrolls && options.directoryRows ? options.directoryRows(table.rows.map(row => [...row])) : table.rows;
           const shown = !scrolls ? table.rows.slice(page * size(), page * size() + size()) : path === "/customers/tenant" ? listed.slice(0, rendered) : listed;
-          grid.push("  row", ...table.cols.map(col => `    columnheader ${q(col)}`));
-          if (!shown.length) grid.push("  row", `    cell ${q(scrolls ? "No records to display" : "No records found")}`);
-          for (const row of shown) grid.push("  row", ...row.map(cell => `    cell ${q(cell)}`));
+          grid.push(...header);
+          if (!shown.length) grid.push(...note(scrolls ? "No records to display" : "No records found"));
+          grid.push(...body(shown));
         }
         if (loading === 0) grid.push(`StaticText ${q(`${table.rows.length} records · 0 row(s) selected`)}`);
         if (!scrolls) {

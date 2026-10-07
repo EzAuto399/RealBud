@@ -14,7 +14,7 @@ import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
-import { FICTIONAL_BUSINESS, FICTIONAL_REICID, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
+import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
 
@@ -117,6 +117,19 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.mock.calls.some(args => args[0] === "fill" && args.includes("Two"))).toBe(true);
     expect(f.mock.effects).toEqual([]);
     expect(((await f.mock.command(["observe"])) as { text: string }).text).toContain('textbox "Search:" value="Two"');
+  });
+  it("reads live REI's Syncfusion grid: rows inside rowgroups, a hidden empty-named first column, template cell names", async () => {
+    const f = await fixture({ syncfusionGrid: true });
+    const row = (ref: string) => Object.fromEntries(FICTIONAL_TENANT_COLUMNS.map((col, i) => [col, FICTIONAL_TENANT_LIST.find(item => item.cells[0] === ref)!.cells[i]]));
+    const one = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }));
+    expect(one.outcome, `${one.reason} ${one.detail}`).toBe("completed");
+    // Each cell keyed by its column with the template suffix gone; the hidden column is not a field.
+    expect(one.results[1].rows).toEqual([row("FT-DELTA")]);
+    const whole = await f.start(withOpen("find-record", { list: "Tenants", query: "" }));
+    expect(whole.outcome, whole.detail).toBe("completed");
+    expect(whole.results[1].rows).toEqual(FICTIONAL_TENANT_LIST.map(item => row(item.cells[0])));
+    expect(whole.results[1].footer).toBe(FICTIONAL_TENANT_LIST.length);
+    expect(f.mock.effects).toEqual([]);
   });
   it("waits for the tenants grid to fill: \"No records to display\" before its record count is not an empty result", async () => {
     const f = await fixture();

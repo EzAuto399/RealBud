@@ -176,6 +176,7 @@ const first = (node: Node, test: (n: Node) => boolean) => all(node, test)[0];
 const texts = (node: Node): string => [node.name ?? "", ...node.children.map(texts)].join(" ");
 const controlName = (label: unknown) => typeof label === "string" ? unquote(label.match(/^\S+\s+"((?:[^"\\]|\\.)*)"/)?.[1] ?? "") : "";
 /** One spelling for an accessible name: surrounding whitespace and a single trailing ":" dropped (live REI's DataTables names its box "Search:"). */
+const TEMPLATE_CELL = /(?:^|\s+)is template cell column header (.*)$/s;
 const accessibleName = (name: string | null) => (name ?? "").trim().replace(/\s*:$/, "");
 interface PageView { text: string; root: Node; url: string | null }
 const FIELD = new Set(["textbox", "searchbox", "textarea", "combobox"]);
@@ -330,13 +331,20 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
   const tableOf = (page: PageView) => {
     const table = first(scope(page), node => node.role === "table" || node.role === "grid");
     if (!table) return null;
-    const rows = table.children.filter(node => node.role === "row");
+    // A grid's rows may sit inside rowgroups (Syncfusion's header and body; any thead/tbody), never inside another row.
+    const rowsOf = (node: Node): Node[] => node.children.flatMap(child => child.role === "row" ? [child] : rowsOf(child));
+    const rows = rowsOf(table);
     const header = rows.find(row => row.children.some(cell => cell.role === "columnheader"));
     const cols = header ? header.children.filter(cell => cell.role === "columnheader").map(cell => cell.name ?? "") : [];
-    const data = rows.filter(row => row !== header).map(row => row.children.filter(cell => cell.role === "cell" || cell.role === "gridcell" || cell.ref !== null).map(cell => (cell.name ?? texts(cell)).trim()));
-    const loading = data.length === 1 && data[0].length === 1 && /^loading/i.test(data[0][0]);
-    const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0]);
-    const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cols[index] ?? String(index), cell])));
+    // A Syncfusion template cell is named "<text> is template cell column header <Col>": the text, keyed by that column.
+    const data = rows.filter(row => row !== header).map(row => row.children.filter(cell => cell.role === "cell" || cell.role === "gridcell" || cell.ref !== null).map(cell => {
+      const shown = (cell.name ?? texts(cell)).trim(); const template = TEMPLATE_CELL.exec(shown);
+      return template ? { text: shown.slice(0, template.index).trim(), col: template[1].trim() } : { text: shown, col: undefined };
+    }));
+    const loading = data.length === 1 && data[0].length === 1 && /^loading/i.test(data[0][0].text);
+    const empty = data.length === 1 && data[0].length === 1 && /no (?:records|matching|data)/i.test(data[0][0].text);
+    // A column with no header name (Syncfusion's hidden first column) is not a field.
+    const records = loading || empty ? [] : data.map(cells => Object.fromEntries(cells.map((cell, index) => [cell.col ?? cols[index] ?? String(index), cell.text]).filter(([key]) => key !== "")));
     // A grid footer such as "N records · 0 row(s) selected" is the load-complete marker.
     const footer = all(table.parent ?? scope(page), node => /^\d[\d,]* records?\b/i.test(node.name ?? ""))[0];
     const count = footer ? Number(footer.name!.match(/^[\d,]+/)![0].replaceAll(",", "")) : null;
