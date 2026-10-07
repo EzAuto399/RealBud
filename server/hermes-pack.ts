@@ -244,14 +244,6 @@ export function yamlBlock(raw: string, key: string): string | null {
   return block.join("\n");
 }
 
-export function withYamlBlock(raw: string, key: string, block: string | null): string {
-  const cleaned = raw.replace(/\s+$/, "\n");
-  const existing = new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m");
-  if (!block) return cleaned.replace(existing, "");
-  const next = block.endsWith("\n") ? block : `${block}\n`;
-  return existing.test(cleaned) ? cleaned.replace(existing, next) : cleaned + next;
-}
-
 function readIf(path: string): string {
   try {
     return readFileSync(path, "utf8");

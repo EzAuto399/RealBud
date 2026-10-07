@@ -258,6 +258,8 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     // Complete only when the rows read equal REI's own "N records": a short read, or none to compare, is never saved.
     run.preview = { file: { name: SOURCE[run.kind], size: Buffer.byteLength(text), sha256: sha256(text) }, footer, countMatches: footer === preview.rows, ...preview };
     run.phase = "preview";
+    // A complete read that shows the saved tenant list unchanged still renews its freshness for bank imports (W1).
+    if (run.kind === "tenants" && run.preview.countMatches && parsed?.kind === "tenants") deps.tenants.markChecked(parsed.tenants);
     run.message = footer === null ? `REI's record count could not be read, so Bud cannot tell the whole ${LIST[run.kind]} was read. Nothing can be saved from it; refresh again.`
       : !run.preview.countMatches ? `Bud read ${preview.rows} rows but REI's list shows ${footer} records. Nothing can be saved from it; refresh again.` : null;
   }

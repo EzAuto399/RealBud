@@ -117,9 +117,6 @@
 .desk-secondary-button { background: var(--color-sheet); color: var(--color-ink); }
 .desk-secondary-button:hover:not(:disabled) { background: var(--color-raised); }
 .desk-secondary-button:disabled { background: var(--color-raised); }
-/* A licensee case is decided by a licensed person, so the rail must not offer a
-   draft as the headline action. This note carries the reason. */
-.desk-bud-hold { margin: 2px 0 4px; font-size: 12.5px; line-height: 1.45; color: var(--color-hold); }
 .desk-chat-button { color: var(--color-agency); }
 .desk-activity-feed { padding-bottom: 4px; }
 /* Customize desk opens above the Desk so the saved layout underneath stays put. */
@@ -134,18 +131,6 @@
 .desk-wording { border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-sheet); padding: 14px 18px 18px; box-shadow: 0 2px 5px rgb(37 35 31 / 3%); }
 .desk-wording-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .desk-wording textarea { min-height: 180px; }
-.desk-bud { display: flex; flex-direction: column; gap: 12px; padding: 22px 18px; overflow-y: auto; }
-.desk-bud-heading { display: flex; align-items: center; gap: 10px; }
-.desk-bud-heading h2 { font-size: 16px; font-weight: 600; }
-.desk-bud-heading p { font-size: 11px; color: var(--color-ink-muted); }
-.desk-bud-intro { margin-top: 6px; font-size: 19px; font-weight: 500; line-height: 1.35; letter-spacing: -.025em; }
-.desk-bud-description { font-size: 13px; line-height: 1.6; color: var(--color-ink-muted); }
-.desk-bud-context { padding: 12px; margin: 4px 0; border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-sheet); font-size: 12px; color: var(--color-ink-muted); }
-.desk-bud-context > span { display: block; margin-bottom: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
-.desk-bud-context > strong { display: block; font-size: 13px; font-weight: 500; color: var(--color-ink); }
-.desk-bud-context > p { margin-top: 5px; }
-.desk-bud-caption { font-size: 11px; line-height: 1.5; color: var(--color-ink-muted); }
-.desk-bud-footer { margin-top: 10px; padding-top: 16px; border-top: 1px solid var(--color-line); font-size: 11px; line-height: 1.5; color: var(--color-ink-muted); }
 .desk-icon-button { display: flex; align-items: center; justify-content: center; min-width: 34px; min-height: 34px; margin-left: auto; border-radius: 5px; }
 .desk-icon-button:hover { background: var(--color-raised); }
 /* Below 960px the queue becomes the Tasks drawer. While it is open it is the

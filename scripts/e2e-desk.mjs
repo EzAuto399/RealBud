@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readSessionToken } from "./local-session.mjs";
+import { LOOP_CATALOG } from "../server/routines.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18879);
@@ -143,8 +144,8 @@ try {
   const loops = (await api("GET", "/api/loops")).body;
   const inbound = loops?.loops?.find((l) => l.id === "inbound-triage");
   check(
-    "five named loops; inbound is available but disabled until agency setup enables it",
-    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage,bank-references,weekly-bills,maintenance-review,rei-supplier-check,inspection-draft" &&
+    "every catalogue loop in order; inbound is available but disabled until agency setup enables it",
+    loops?.loops?.map((l) => l.id).join(",") === LOOP_CATALOG.map((l) => l.id).join(",") &&
       loops.loops[0].available === true && loops.loops[1].available === true &&
       inbound?.available === true && inbound?.enabled === false && inbound?.nextRunAt === null,
     `inbound available=${inbound?.available} enabled=${inbound?.enabled} nextRunAt=${inbound?.nextRunAt}`,

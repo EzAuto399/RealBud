@@ -27,12 +27,6 @@ export function assertTransition(from: WorkState, to: WorkState): void {
   }
 }
 
-export function draftStatusFor(state: WorkState): "pending" | "allowed" | "denied" {
-  if (state === "denied") return "denied";
-  if (state === "proposed" || state === "held") return "pending";
-  return "allowed";
-}
-
 export function workStateFromV1Draft(status: "pending" | "allowed" | "denied"): WorkState {
   if (status === "pending") return "proposed";
   if (status === "denied") return "denied";

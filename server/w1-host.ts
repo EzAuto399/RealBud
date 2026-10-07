@@ -41,6 +41,7 @@ import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { answerPortalRecipeAsk, loadPortalRecipePackWithPaths, portalRecipeApprovalChannel, type PackLoader } from "./portal-recipe-task.ts";
 import { portalRecipeGrantNeeds, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { isFresh, REI_FRESH_MS } from "./source-gate.ts";
 import { pullRedbarkReview } from "./redbark-source.ts";
 import { amountCents, isoDate, reconcilePreview, type W1PreviewReconciliation, type W1RegisterBaseline } from "./w1-rei-reconciliation.ts";
 import { assertW1ReiBatch, awaitPosting, captureBaseline, preview, readback, W1_REI_PORTAL, w1ImportProof, w1ReiAccountKey, w1ReiGrantNeeds, type W1ImportProof, type W1PreviewOutcome, type W1ReiBatch, type W1ReiContext } from "./w1-rei-workflow.ts";
@@ -91,6 +92,8 @@ export interface W1HostDeps {
   store: () => BankReferenceStore;
   /** Office-local calendar date. */
   today: () => Promise<string>;
+  /** The saved REI tenant directory (server/tenant-directory.ts) a batch's tenants come from, or null before the first save. */
+  tenantDirectory: () => { checkedAt?: number; savedAt?: number; hash?: string } | null;
   /** index.ts passes the shared browserRuntime, whose connect() opens the work browser at a cold start. */
   runtime: BrowserSessionRuntime & { connect?: () => Promise<unknown> };
   /** The selected browser when it is ready, else null. */
@@ -121,6 +124,7 @@ const PENDING_RECIPE = "bulk-receipting-pending";
 const BULK_RECEIPTING_ROUTE = "/customers/importbanklink/index";
 const PENDING_HANDOFF = "Your earlier upload is waiting in REI. Process or delete it there.";
 const STOPPED = "Stopped. Bud did nothing more in REI. Check the import before continuing.";
+const LIST_CHANGED = "The REI tenant list changed since this batch was prepared. Prepare it again.";
 const SIGN_IN_HOLD = "Finish the saved sign-in handover before starting more browser work.";
 const WAIT_COPY = (until: string): ReiWaitCopy => ({
   first: `Sign in to REI Cloud so Bud can finish the bank import. REI's sign-in page is open in the work browser; Bud carries on by itself once you're signed in (waiting until ${until}).`,
@@ -144,13 +148,13 @@ export function createW1Host(deps: W1HostDeps) {
   const readbacks = new Map<string, { accepted: number; rejected: number; pending: number; warnings: string[] }>();
   const handoffs = new Map<string, string>();
   const previews = new Map<string, { batch: W1ReiBatch; outcome: W1PreviewOutcome }>();
-  /** Attempts proven never to have dispatched an upload (this process only). */
-  const notUploaded = new Set<string>();
   const working = new Map<string, Promise<void>>();
   /** The Stop for each advance in flight. */
   const stops = new Map<string, AbortController>();
   /** Attempts whose file REI shows pending and unposted (found by inspect). */
   const pendingFound = new Set<string>();
+  /** Attempts refused before sending because the saved REI tenant list changed since the batch was built (this process only). */
+  const listChanged = new Set<string>();
   /** Runs waiting for the person to sign in to REI → the handover's thread (GET /api/browser/sign-in?threadId=…). */
   const signingIn = new Map<string, string>();
   const signInHolding = deps.signInHolding ?? (() => new HumanHandoffs(workflowDatabase(), NO_HANDOFF_HOST).isHolding());
@@ -163,11 +167,14 @@ export function createW1Host(deps: W1HostDeps) {
   // attributed readback (w1ImportProof); confirm-import refuses without it.
   const saved_ = (() => {
     const path = join(deps.dataDir, "w1", "evidence.json");
-    type Evidence = { version: 1; kind: "w1-evidence"; baselines: Record<string, W1RegisterBaseline>; proofs: Record<string, W1ImportProof> };
+    /** `notSent`: attempts refused before the upload stage started (no upload grant used, no upload step run). Files written
+     * before it existed have none: those attempts keep the readback rule. */
+    type Evidence = { version: 1; kind: "w1-evidence"; baselines: Record<string, W1RegisterBaseline>; proofs: Record<string, W1ImportProof>; notSent?: Record<string, { at: string; reason: string }> };
     const read = async (): Promise<Evidence> => {
       const value = await readPrivateJson(path, 4_000_000);
-      if (value === undefined) return { version: 1, kind: "w1-evidence", baselines: {}, proofs: {} };
-      if (!keys(value, ["version", "kind", "baselines", "proofs"]) || value.version !== 1 || value.kind !== "w1-evidence" || !object(value.baselines) || !object(value.proofs))
+      if (value === undefined) return { version: 1, kind: "w1-evidence", baselines: {}, proofs: {}, notSent: {} };
+      if (!(keys(value, ["version", "kind", "baselines", "proofs"]) || keys(value, ["version", "kind", "baselines", "proofs", "notSent"])) || value.version !== 1 || value.kind !== "w1-evidence" ||
+          !object(value.baselines) || !object(value.proofs) || (value.notSent !== undefined && !object(value.notSent)))
         return fail(503, "The saved bank import evidence needs recovery. Nothing was changed.");
       return value as unknown as Evidence;
     };
@@ -177,6 +184,8 @@ export function createW1Host(deps: W1HostDeps) {
       proof: async (batchId: string) => (await read()).proofs[batchId] ?? null,
       saveBaseline: (attemptId: string, baseline: W1RegisterBaseline) => write(file => { file.baselines[attemptId] = baseline; }),
       saveProof: (proof: W1ImportProof) => write(file => { file.proofs[proof.batchId] = proof; }),
+      notSent: async (attemptId: string) => Boolean((await read()).notSent?.[attemptId]),
+      saveNotSent: (attemptId: string, reason: string) => write(file => { (file.notSent ??= {})[attemptId] = { at: new Date().toISOString(), reason: reason.slice(0, 300) }; }),
     };
   })();
   /** A batch's proof, only while it names the saved REI account (same business code and reicid or none). */
@@ -196,11 +205,17 @@ export function createW1Host(deps: W1HostDeps) {
     for (let guard = 0; saved.value.supersededBy && guard < 1000; guard++) saved = bank.get(saved.value.supersededBy.id);
     return saved;
   };
+  /** Batch ids held by a W1 import that is not abandoned: the store never rebuilds those (createFromRedbark). */
+  const openImport = async () => {
+    const held = new Set((await store.list()).filter(run => !(run.step === "done" && run.outcome === "abandoned"))
+      .flatMap(run => [run.fetch?.batchId, run.review?.batchId, run.upload?.batchId]));
+    return (batchId: string) => held.has(batchId);
+  };
   const source: W1BankSource = {
     async pull({ account, today: day }) {
       const bank = deps.store();
       try {
-        const summary = await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account, today: day, rules: bank.settings()?.rules ?? [] });
+        const summary = await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account, today: day, rules: bank.settings()?.rules ?? [], openImport: await openImport() });
         return { window: summary.window, coverageRevision: summary.coverage.revision,
           batch: summary.batch ? { id: summary.batch.id, transactionIds: provenanceIds(bank, summary.batch.id) } : null };
       } catch (error) { note(message(error)); throw error; }
@@ -224,11 +239,25 @@ export function createW1Host(deps: W1HostDeps) {
   // ── REI over the portal recipe runner ──
   const settings = async () => (await readW1Settings(deps.dataDir)) ?? fail(409, "Choose the bank account and REI account for bank imports first.");
   const runFor = async (attemptId: string) => (await store.list()).find(run => run.upload?.attemptId === attemptId) ?? fail(404, "That upload is not part of a saved bank import.");
-  /** The REI import file and its rows, exactly as reviewed. Throws a sentence when REI receipting cannot take it. */
-  async function batchFor(batchId: string, artifactDigest: string, destination: string): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
+  /** The REI import file and its rows, exactly as reviewed. Throws a sentence when REI receipting cannot take it.
+   * `sending`: the file is about to go to REI, so its tenants must still be the saved list's. */
+  async function batchFor(batchId: string, artifactDigest: string, destination: string, sending = false): Promise<{ batch: W1ReiBatch; bytes: Buffer }> {
     const office = await settings();
     if (destinationOf(office) !== destination) fail(409, "The saved REI account changed since this import started. Close it and start again.");
     const bank = deps.store(), file = bank.importArtifact(batchId);
+    // Gate on the list W1 actually reads (recorded when the batch was made): any import row whose tenant came from the saved
+    // REI tenant list (alone or mixed with the office's rules), or an unrecorded source, needs that list under a day old.
+    // A batch whose tenants all come from the office's own rules is not gated on REI. No stamp is stale. The current list's
+    // last complete REI check (else its save) is used, so a refresh, even one that finds no change, unblocks a run.
+    // Before sending, the list must also be the one the batch was built from (old batches carry no hash).
+    // (Desk's src-rei-tenants is stamped by a different read.)
+    const source = bank.tenantSource(batchId);
+    const fromDirectory = !source || (source.source === "rei-directory" && file.rows.some(row => row.disposition === "import" && row.propertyId !== undefined && source.propertyIds.includes(row.propertyId)));
+    if (fromDirectory) {
+      const list = deps.tenantDirectory(), checkedAt = list?.checkedAt ?? list?.savedAt;
+      if (typeof checkedAt !== "number" || !isFresh(checkedAt, REI_FRESH_MS, now())) fail(409, "Refresh REI tenants first.");
+      if (sending && source?.source === "rei-directory" && source.hash !== undefined && list?.hash !== source.hash) fail(409, LIST_CHANGED);
+    }
     if (!file.artifact || file.artifact.digest !== artifactDigest) fail(409, "The reviewed import file changed. Nothing was uploaded.");
     const problems: string[] = [];
     const rows = file.rows.flatMap(row => {
@@ -367,15 +396,21 @@ export function createW1Host(deps: W1HostDeps) {
     async uploadPreview({ attemptId, destination, batchId, artifactDigest }) {
       let prepared: Awaited<ReturnType<typeof batchFor>>, ctx: W1ReiContext;
       try {
-        prepared = await batchFor(batchId, artifactDigest, destination);
+        prepared = await batchFor(batchId, artifactDigest, destination, true);
         // The register as it stands before anything is uploaded, so a later readback counts only new receipts.
         const before = await captureBaseline(prepared.batch, await context_("readback", prepared.batch.destination.marker), windowFor(prepared.batch));
         if (before.status !== "read") fail(409, `REI's Receipt Register could not be read before the upload, so nothing was uploaded${before.detail ? `: ${before.detail}` : "."}`);
         else await saved_.saveBaseline(attemptId, before.baseline);
         ctx = await context_("preview", prepared.batch.destination.marker, { name: prepared.batch.artifact.name, bytes: prepared.bytes });
-      } catch (error) { notUploaded.add(attemptId); note(message(error)); throw error; }
+      } catch (error) {
+        if (message(error) === LIST_CHANGED) listChanged.add(attemptId);
+        // Refused before the upload stage started: the preview grant (if issued) was never used and no upload step ran.
+        // Saved durably so the person may close this import directly. If the save fails, the readback rule stays.
+        await saved_.saveNotSent(attemptId, message(error)).catch(() => undefined);
+        note(message(error)); throw error;
+      }
+      // From here the upload stage may run: a lost reply or unknown result is never "not sent".
       const outcome = await preview(prepared.batch, ctx);
-      if (outcome.status === "not-uploaded") notUploaded.add(attemptId);
       if (outcome.status === "not-uploaded" || outcome.status === "unknown-upload") {
         note(outcome.status === "not-uploaded" ? `Nothing was uploaded${outcome.detail ? `: ${outcome.detail}` : "."}` : "The upload may have reached REI, but its preview was not confirmed.");
         throw new Error(outcome.reason ?? outcome.status);
@@ -395,8 +430,11 @@ export function createW1Host(deps: W1HostDeps) {
       catch (error) { note(message(error)); throw error; }
     },
     async inspect({ attemptId, destination, artifactDigest }): Promise<W1Inspection> {
-      if (notUploaded.has(attemptId)) return { kind: "nothing" };
-      // Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
+      // A refusal (stale tenants, account scope, an unverified recipe, an incomplete register, Stop) is never "nothing":
+      // only a complete, verified register that shows nothing of the batch, and no pending import, may offer a re-upload.
+      // The refusal's own sentence is the note. A batch refused because the tenant list changed stays unknown (no REI read can
+      // clear it, and a later readback is never blocked by the list): prepare it again. Nothing receipted is not yet nothing: the file may sit pending in Bulk receipting, where a second upload is refused.
+      if (listChanged.has(attemptId)) { note(LIST_CHANGED); return { kind: "unknown" }; }
       try { const found = await register(attemptId, destination, artifactDigest); return found ? { kind: "posted", readback: found } : await pendingImport(attemptId, destination, artifactDigest); }
       // An unreadable or unattributed register proves nothing either way.
       catch (error) { note(message(error)); return { kind: "unknown" }; }
@@ -436,7 +474,9 @@ export function createW1Host(deps: W1HostDeps) {
     // Read "working" before the run, so a run read while work was going on is never shown as settled.
     const busy = new Set(working.keys());
     const run = await latest(), office = await readW1Settings(deps.dataDir);
-    return { settings: office, run, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
+    // "Close and prepare again" without a readback: only an upload attempt the evidence proves never started.
+    const closable = !!run && !busy.has(run.id) && run.step === "check_outcome" && run.uncertain?.kind === "upload" && !!run.upload && !run.upload.preview && await saved_.notSent(run.upload.attemptId);
+    return { settings: office, run, closable, working: run ? busy.has(run.id) : false, ask: run ? asks.get(run.id) ?? null : null, note: run ? notes.get(run.id) ?? null : null,
       readback: run ? readbacks.get(run.id) ?? null : null, handoff: run ? handoffs.get(run.id) ?? null : null, signIn: run ? signingIn.get(run.id) ?? null : null };
   }
   const revisionOf = (body: unknown) => keys(body, ["expectedRevision"]) && Number.isSafeInteger(body.expectedRevision) ? Number(body.expectedRevision) : fail(400, "Send the bank import's current revision.");
@@ -476,7 +516,7 @@ export function createW1Host(deps: W1HostDeps) {
       const body = await readBody();
       if (!keys(body, ["account"]) || typeof body.account !== "string") return { status: 400, body: { error: "Choose the bank account to pull." } };
       const bank = deps.store();
-      return { status: 200, body: await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account: body.account, today: await deps.today(), rules: bank.settings()?.rules ?? [] }) };
+      return { status: 200, body: await pullRedbarkReview({ client: providerClient(provider()), store: bank, coverage: deps.coverage, account: body.account, today: await deps.today(), rules: bank.settings()?.rules ?? [], openImport: await openImport() }) };
     }
     if (path === "/api/w1/runs/start" && method === "POST") {
       await ready;
@@ -497,7 +537,7 @@ export function createW1Host(deps: W1HostDeps) {
       kick(id);
     }
     if (action === "retry-upload") { await workflow.retryUpload(id, revisionOf(body)); kick(id); }
-    if (action === "abandon") await workflow.abandon(id, revisionOf(body));
+    if (action === "abandon") await workflow.abandon(id, revisionOf(body), saved_.notSent);
     // Stop is always allowed: it ends the browser stage in flight (and its open ask) and starts nothing.
     if (action === "stop") {
       const stop = stops.get(id);

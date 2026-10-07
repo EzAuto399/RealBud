@@ -8,11 +8,12 @@
   "derivedFrom": "docs/REI-CLOUD-MAP-2026-09-24.md and site-map.json: read-only structural map of REI Cloud v26.0922.0 observed 2026-09-24, plus the 6 October 2026 live read-only crawl (site-map.json live2026_10_06: menu tree, 48 screens, Action menus, report catalogue). Structure only; account values are placeholders. references/task-recipes.md folds task recipes, traps and coverage gaps from the 25 September study notes (placeholders only; no simulation tier claimed). references/website-map.md is the task-first source map v2, safety revised 2026-09-25: account checks bind both URL reicid and header business code, report Preview is unverified, Receipt Register uses Export Only with per-instance download approval, and no categorical legal clock is stated. Its tier S means recipes passed scripts/qa-rei-map-sim.mjs against a fictional local mock, never that REI behaves this way or that a live register readback occurred.",
   "sha256": "7c584e53667536e98d10233e671c31dd9155a7444c2319596eab1e5acc91c74b",
   "siteMapSha256": "ca27e0dd727258ce8248ba3ca875b1a01acd787b84a13e540b8b6b84db804d58",
+  "recipesSha256": "64c27ae4d2bdf9de69408f21c5270fa958d9e158610fa631e737d92f3a0e124f",
   "referencesSha256": {
     "references/task-recipes.md": "457a33cc77aa6480a0a61873aa25f9df0eb6cd97583c8d8b153df5be1669b92b",
     "references/website-map.md": "968d7df5295a1d9931b812a1d13d7424c9ec2bf8ef007a00e0f184e54b0d77ec"
   },
   "bindingPath": "workflow-support/rei-cloud-navigation/SKILL.md",
   "allowedReuse": "Navigation guidance for browser tasks in the person's selected signed-in REI Cloud session. Grants no authority: the RealBud portal fence (server/portal-fence.ts, server/browser-runtime.ts) decides account scope, task permission, per-instance approval and Stop.",
-  "importLimitation": "The customer pack carries SKILL.md and LICENSE only. site-map.json and references/ are source references and are not part of the published pack."
+  "importLimitation": "The customer pack carries SKILL.md and LICENSE as skill text. Client exports also carry rei/recipes.json and rei/site-map.json, but the runtime still reads the copies built into the app, never the pack's. references/ are source references and are not part of any pack."
 }

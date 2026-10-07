@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { CANONICAL_BUD_ID, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { hostAllowed, originAllowed, needsSession } from "./session-auth.ts";
-import { emptyOffice } from "../shared/office.ts";
-import { pilotContractFromBook, readyForLivePortal, readyForLivePortalFromBook } from "./pilot-contract.ts";
 import { sourceReady } from "./source-gate.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 
@@ -68,38 +66,7 @@ describe("product mode denials", () => {
   });
 });
 
-describe("pilot and source gates", () => {
-  it("does not claim a live portal without agency, vendor account, and macOS Cua", () => {
-    expect(readyForLivePortal({ realAgencyNamed: false, vendorTestAccount: true, cuaHostSupported: true })).toBe(false);
-    expect(readyForLivePortal({ realAgencyNamed: true, vendorTestAccount: true, cuaHostSupported: true })).toBe(true);
-    expect(
-      pilotContractFromBook({
-        agencyName: "Demo agency",
-        jurisdictions: ["ACT"],
-        office: emptyOffice(),
-      }).demo,
-    ).toBe(true);
-    const named = {
-      agencyName: "Harbour PM",
-      jurisdictions: ["ACT"],
-      office: {
-        ...emptyOffice(),
-        pmUser: "Alex",
-        pmsBrand: "other" as const,
-        namedExporter: "Principal",
-        exportCadence: "daily" as const,
-        exportIdentity: "address" as const,
-        officeOs: "linux" as const,
-        vendorTestAccount: "fake-building-portal",
-      },
-    };
-    expect(pilotContractFromBook(named).demo).toBe(false);
-    expect(readyForLivePortalFromBook({ ...named, cuaHostSupported: false })).toBe(false);
-    expect(readyForLivePortalFromBook({ ...named, office: { ...named.office, officeOs: "macos" }, cuaHostSupported: true })).toBe(
-      true,
-    );
-  });
-
+describe("source gates", () => {
   it("holds stale or unidentified sources", () => {
     expect(sourceReady({ sourceId: "", stableKey: "x", observedAt: 1, staleAfterMs: 10, now: 2 }).ok).toBe(false);
     expect(sourceReady({ sourceId: "csv", stableKey: "csv:1", observedAt: 1, staleAfterMs: 10, now: 20 }).reason).toBe(

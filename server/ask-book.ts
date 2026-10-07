@@ -4,6 +4,7 @@ import { BUD_IDENTITY, budModelAnswerLine } from "../shared/bud-identity.ts";
 import { RENT_EVIDENCE_REVIEW_RULES } from "../shared/rent-workflow.ts";
 import { modelServiceFailure } from "./model-service-failure.ts";
 import { MANAGED_ACCESS_REFUSALS } from "./hermes-runtime-env.ts";
+import { normalizeAddress } from "./csv-ledger.ts";
 
 import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 import { morningBrief, shortStreet } from "../src/lib/morning-brief.ts";
@@ -38,15 +39,11 @@ function addressLines(snap: DeskSnapshot, attention?: string): string {
   return rows.map((row) => `• ${shortStreet(row.address)} — ${row.label}`).join("\n");
 }
 
-function normaliseAddress(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function propertyNamedIn(text: string, snap: DeskSnapshot): DeskSnapshot["properties"][number] | undefined {
-  const request = ` ${normaliseAddress(text)} `;
+  const request = ` ${normalizeAddress(text)} `;
   return snap.properties.find((property) => {
-    const full = normaliseAddress(property.address);
-    const street = normaliseAddress(shortStreet(property.address));
+    const full = normalizeAddress(property.address);
+    const street = normalizeAddress(shortStreet(property.address));
     return request.includes(` ${full} `) || request.includes(` ${street} `);
   });
 }

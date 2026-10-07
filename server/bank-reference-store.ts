@@ -4,12 +4,18 @@ import { join } from "node:path";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { WorkflowDatabase, workflowConflict } from "./workflow-database.ts";
 import type { BankBatchSummary, BankHistoryPage, BankHistoryQuery } from '../shared/bank-reference-history.ts';
-import { validateSavedBankBatch, validateBankReviewLinks } from './bank-reference-validation.ts';
+import { validateSavedBankBatch, validateBankReviewLinks, BANK_TENANT_SOURCE_KIND } from './bank-reference-validation.ts';
 import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankReviewSuccessor } from '../shared/bank-review.ts';
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass, jevPayerHints } from './bank-reference-match.ts';
 import type { JevRequest, JevResult } from './jev-client.ts';
-import { savedTenantDirectoryCsv } from './tenant-directory.ts';
+import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash } from './tenant-directory.ts';
+
+/** Where a batch's REI tenants came from, recorded when the batch is created: the office's saved REI tenant list
+ * (its savedAt, and the property ids whose rules it supplied) or only the office's own rules. */
+export type BankTenantSource = { source: 'bank-rules' } | { source: 'rei-directory'; savedAt: number; propertyIds: string[]; /** tenantListHash of the list used. */ hash?: string };
+const TENANT_SOURCE = BANK_TENANT_SOURCE_KIND;
+const OLDER_TENANT_LIST = 'This review was made with an older REI tenant list. Correct the mapping before preparing it again.';
 
 const invalidPage = (): never => { throw Object.assign(new Error('The bank history page is invalid. Refresh the history and try again.'), { status: 400 }); };
 type Cursor = { version: 1; kind: 'bank-history'; high: number; before: number };
@@ -144,22 +150,34 @@ export class BankReferenceStore {
     if (input && typeof input === "object" && "source" in input && input.source && typeof input.source === "object" && "provenance" in input.source) {
       throw Object.assign(new Error("Choose the original bank CSV. A bank source record cannot be uploaded."), { status: 400 });
     }
-    const { record, created } = this.save(this.withSavedTenants(input));
+    // An uploaded file is never a W1 import (W1 imports only Redbark batches), so no import holds it.
+    const { record, created } = this.save(...this.withSavedTenants(input), () => false);
     return { review: this.view(record), created };
   }
   /** Without a tenant list in the request, the office's saved REI tenant list (server/tenant-directory.ts)
    * is the batch's directory, with the given rules as the fallback, exactly as an uploaded list would be. */
-  private withSavedTenants<T extends { rules: BankReferenceInput['rules'] }>(input: T & { tenantList?: unknown }): T {
+  private withSavedTenants<T extends { rules: BankReferenceInput['rules'] }>(input: T & { tenantList?: unknown }): [T, BankTenantSource | null] {
     if (input && typeof input === 'object' && !('tenantList' in input) && Array.isArray(input.rules)) {
-      const saved = savedTenantDirectoryCsv(this.db);
-      if (saved) return withTenantDirectory({ ...input, tenantList: saved });
+      const saved = createTenantDirectoryStore(this.db).read().directory;
+      if (saved) {
+        const merged = withTenantDirectory({ ...input, tenantList: tenantDirectoryCsv(saved.tenants) }), references = new Set(saved.tenants.map(tenant => tenant.reference));
+        return [merged, { source: 'rei-directory', savedAt: saved.savedAt, propertyIds: merged.rules.filter(rule => references.has(rule.reference)).map(rule => rule.propertyId), hash: tenantListHash(saved.tenants) }];
+      }
+      return [input, { source: 'bank-rules' }];
     }
-    return withTenantDirectory(input);
+    // A tenant list sent with the request has no saved date: recorded as unknown, which W1 gates like a stale list.
+    return [withTenantDirectory(input), null];
   }
-  /** Internal: a batch generated from validated Redbark rows; `created` as in `upload`. */
-  createFromRedbark(input: BankReferenceUpload) {
+  /** The tenant source recorded when this batch was created; null for a batch created before sources were recorded. */
+  tenantSource(id: string): BankTenantSource | null {
+    return this.db.get<BankTenantSource>(TENANT_SOURCE, `${TENANT_SOURCE}:${id}`)?.value ?? null;
+  }
+  /** Internal: a batch generated from validated Redbark rows; `created` as in `upload`. `openImport`: whether a
+   * W1 import that is not abandoned holds this batch id (a caller that can't tell is treated as yes). */
+  createFromRedbark(input: BankReferenceUpload, openImport: (batchId: string) => boolean = () => true) {
     if (!input?.source?.provenance) throw Object.assign(new Error("The bank source record failed its integrity check."), { status: 400 });
-    const { record, created } = this.save(this.withSavedTenants(input));
+    const [merged, tenantSource] = this.withSavedTenants(input);
+    const { record, created } = this.save(merged, tenantSource, openImport);
     return { ...record, created };
   }
   /** The REI import file of a reviewed batch: only its import rows, with every source row's disposition. */
@@ -200,7 +218,7 @@ export class BankReferenceStore {
     value.batch.rows.forEach((row, index) => { if (file.rows[index].disposition === "hold") held[provenance.transactionIds[index]] = { date: row.date, amount: row.amount, narrative: row.narrative, reference: row.reference, heldSince: provenance.runDate }; });
     return coverage.confirm({ ...provenance, transactionIds: settled.map(index => provenance.transactionIds[index]) }, id, settled.map(index => value.batch.rows[index].date), expectedRevision, held);
   }
-  private save(input: BankReferenceInput | BankReferenceUpload) {
+  private save(input: BankReferenceInput | BankReferenceUpload, tenantSource: BankTenantSource | null, openImport: (batchId: string) => boolean) {
     const batch = createBankReferenceBatch(input);
     // Repeated downloads of the exact same file reuse the existing review.
     const id = `bank:${batch.originalDigest}`;
@@ -208,9 +226,25 @@ export class BankReferenceStore {
       // `created`: this call made the record (only then may the caller run the Jev hint pass).
       const created = !this.db.get("bank", id);
       const saved = this.validated(this.db.create<SavedBankBatch>("bank", id, { version: 2, createdAt: Date.now(), batch }, null));
+      const recorded = created ? null : this.db.get<BankTenantSource>(TENANT_SOURCE, `${TENANT_SOURCE}:${id}`);
+      if (recorded?.value.source === "rei-directory" && recorded.value.hash !== undefined && tenantSource?.source === "rei-directory" && tenantSource.hash !== undefined && recorded.value.hash !== tenantSource.hash) {
+        // The saved review was built from an older REI tenant list. A person's correction (a newer review) stands as it is.
+        if (saved.value.supersededBy) return { record: saved, created: false };
+        const value = saved.value;
+        if (value.decisions || value.result || value.reviewedAt || openImport(id)) throw Object.assign(new Error(OLDER_TENANT_LIST), { status: 409 });
+        // Untouched by a person and held by no open import: rebuilt from the current list as a new revision of the same
+        // record. The id stays the source file's digest, so a later pull of the same rows finds it again; the revision move
+        // refuses a racing writer; nobody holds the old revision. Not a new record, so Jev is not asked again (old hints
+        // named the old matching and are dropped).
+        const rebuilt = this.validated(this.db.update<SavedBankBatch>("bank", id, saved.revision, ({ jevHints: _, ...rest }) => ({ ...rest, batch })));
+        this.db.update<BankTenantSource>(TENANT_SOURCE, recorded.id, recorded.revision, () => tenantSource);
+        return { record: rebuilt, created: false };
+      }
       // Compare the winning record after the database's atomic create-or-read;
       // another process can create this digest with different rules concurrently.
       if (bankDigest(JSON.stringify(saved.value.batch.input)) !== bankDigest(JSON.stringify(batch.input))) throw Object.assign(new Error("This file already has a saved review with a different mapping. Open that review and choose Correct mapping or decisions."), { status: 409 });
+      // First write wins, like the batch itself: a repeat download keeps the source its review was built from.
+      if (tenantSource) this.db.create<BankTenantSource>(TENANT_SOURCE, `${TENANT_SOURCE}:${id}`, tenantSource, null);
       return { record: saved, created };
     });
   }

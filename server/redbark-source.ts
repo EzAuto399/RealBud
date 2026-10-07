@@ -290,6 +290,8 @@ export interface RedbarkPullSummary {
 export async function pullRedbarkReview(deps: {
   client: RedbarkClient; store: BankReferenceStore; coverage: RedbarkCoverage;
   account: unknown; today: string; rules: BankReferenceRule[]; now?: () => Date;
+  /** Whether a W1 import that is not abandoned holds a batch id (see BankReferenceStore.createFromRedbark). */
+  openImport?: (batchId: string) => boolean;
 }): Promise<RedbarkPullSummary> {
   if (typeof deps.account !== "string" || !REDBARK_ACCOUNT_ID.test(deps.account)) throw new RedbarkError("Choose a Redbark bank account.", "redbark_request", 400);
   const accountId = deps.account;
@@ -309,7 +311,7 @@ export async function pullRedbarkReview(deps: {
   const summary = { window: { from: window.from, to: window.to, firstRun: !state }, pending: built.pending, alreadyConfirmed: built.alreadyConfirmed, carried: built.carried,
     returned: pull.transactions.length, coverage: { coveredThrough: state?.coveredThrough ?? null, revision: state?.revision ?? 0 } };
   if (!built.source) return { batch: null, ...summary };
-  const { created, ...made } = deps.store.createFromRedbark({ source: built.source, columns: { ...REDBARK_CSV_COLUMNS }, dateFormat: "YYYY-MM-DD", rules: deps.rules });
+  const { created, ...made } = deps.store.createFromRedbark({ source: built.source, columns: { ...REDBARK_CSV_COLUMNS }, dateFormat: "YYYY-MM-DD", rules: deps.rules }, deps.openImport);
   // Jev payer hints are asked once here, only for a record this pull made, before anyone
   // has its revision. A failed hint pass never fails the pull: the batch as created.
   const saved = created ? await deps.store.addJevHints(made.id).catch(() => made) : made;

@@ -60,11 +60,10 @@ function stepInputs(steps: LearnStep[]): string[] {
   if (keys.some(key => !LEARN_INPUT.test(key))) throw fail(400, "Input names use lowercase letters, digits and underscores, starting with a letter.");
   return [...new Set(keys)];
 }
-/** The one spelling of a learned label (recorder, compiler, store, risk check): NFKC, invisible format characters
- * (zero-width, bidi, soft hyphen) dropped, control characters and every kind of space one space, then the broker's
- * accessibleName (trimmed, one trailing ":" dropped). */
+/** The one spelling of a learned label (recorder, compiler, store, risk check): the broker's own accessibleName
+ * (NFKC, format characters dropped, spaces collapsed, trimmed, one trailing ":" dropped), so both read a label alike. */
 export function learnLabel(value: string): string {
-  return accessibleName(value.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/[\p{Cc}\s]+/gu, " "));
+  return accessibleName(value);
 }
 /** Printable ASCII and common Latin-1 punctuation (REI is English): anything else, a Cyrillic "а" in "Ѕаvе" or
  * an accent, could hide a risk word, so Bud can't check it. */

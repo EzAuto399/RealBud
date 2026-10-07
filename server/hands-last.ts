@@ -1,6 +1,6 @@
 // Last worker ping or Recheck. Desk and You read the same file so the
 // GUI and the worker stay on one clock.
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
@@ -38,10 +38,6 @@ export function readHandsLast(dir: string): HandsLast | null {
 
 export function writeHandsLast(dir: string, record: HandsLast): void {
   writeFileAtomic(handsLastPath(dir), JSON.stringify(record));
-}
-
-export function handsLastExists(dir: string): boolean {
-  return existsSync(handsLastPath(dir));
 }
 
 /** Last Test-hands ping only. Recheck overwrites hands-last.json and must not

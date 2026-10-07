@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Packaged macOS smoke — same hook as Linux CI (OMB_SMOKE_TEST=1).
+// Packaged macOS smoke (OMB_SMOKE_TEST=1).
 // Validates renderer preload, embedded harness, capabilities, clean exit.
 //
 //   node scripts/smoke-mac-package.mjs

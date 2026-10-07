@@ -42,7 +42,7 @@ await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${reservation.address().port}`;
 const port = reservation.address().port;
 await new Promise(resolve => reservation.close(resolve));
-let child, browser, page, mobile, workBrowser, session = "", logs = "";
+let child, browser, context, page, mobile, workBrowser, session = "", logs = "";
 const checks = [], gaps = [], runReceipts = [];
 const record = (label, details = {}) => { checks.push({ label, ...details }); console.log(`PASS ${label}`); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -77,7 +77,9 @@ const boot = async () => {
     if (child.exitCode !== null) throw new Error(`Fixture server exited ${child.exitCode}`);
     return fetch(`${base}/api/health`).then(res => res.ok, () => false);
   }, "server startup");
+  // The token rotates on every boot; a restarted service must re-prime the open tabs.
   session = await readSessionToken(data);
+  if (context) await primeBrowserSession(context, base, session);
 };
 const finishFirstRun = async () => {
   let state = (await api("GET", "/api/onboarding")).body;
@@ -131,7 +133,7 @@ const screenshot = async name => page.screenshot({ path: join(out, `${name}.png`
 try {
   await boot();
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+  context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
   await primeBrowserSession(context, base, session);
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   const errors = [];
