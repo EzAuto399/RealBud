@@ -25,6 +25,7 @@ import { parsePortalRecipePack, type PortalRecipePack } from "./portal-recipe.ts
 import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
+import { createLearnedRecipeStore, mergeLearnedRecipes } from "./learned-recipes.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -35,12 +36,25 @@ export const PORTAL_RECIPE_PACKS: Readonly<Record<string, string>> = {
 };
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 
-/** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them. */
-export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+/** The pack as shipped in the repo, without learned paths or recipes: what watch-and-learn review compares click labels against. */
+export async function loadShippedPortalRecipePack(portal: string): Promise<PortalRecipePack> {
   if (!Object.hasOwn(PORTAL_RECIPE_PACKS, portal)) throw fail(404, "RealBud has no recipes for that portal.");
   const pack = parsePortalRecipePack(JSON.parse(await readFile(join(ROOT, PORTAL_RECIPE_PACKS[portal]), "utf8")));
   if (pack.portal !== portal) throw fail(409, "These portal recipes are damaged or from another version. Regenerate them from the pack's website map.");
-  return paths.apply(pack);
+  return pack;
+}
+
+/** The pack's recipes from the repo, with any path Bud learned and the person allowed (server/portal-path-overrides.ts) over them. */
+export async function loadPortalRecipePack(portal: string, paths: PortalPathStore = portalPaths()): Promise<PortalRecipePack> {
+  const pack = await paths.apply(await loadShippedPortalRecipePack(portal));
+  // Published watch-and-learn recipes join as read recipes; a damaged learned file never breaks the shipped ones.
+  try {
+    const { DATA_DIR } = await import("./config.ts");
+    return mergeLearnedRecipes(pack, await createLearnedRecipeStore(join(DATA_DIR, "learned-recipes.json")).list());
+  } catch {
+    console.warn("[learn] Learned recipes could not be added; using the shipped portal recipes only.");
+    return pack;
+  }
 }
 export type PackLoader = (portal: string) => Promise<PortalRecipePack>;
 
