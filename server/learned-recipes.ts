@@ -7,13 +7,13 @@ import { randomUUID } from "node:crypto";
 import { PrivateStorageError, readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { parsePortalRecipePack, type PortalRecipePack, type PortalRecipeStep } from "./portal-recipe.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { AFFIRMATIVE, consequentialKind, CREDENTIAL_FIELD, SIGN_IN_CONTROL, SUBMIT_CONTROL } from "./browser-authority.ts";
+import { AFFIRMATIVE, consequentialKind, CREDENTIAL_FIELD, DOWNLOAD_AFFORDANCE, SIGN_IN_CONTROL, SUBMIT_CONTROL } from "./browser-authority.ts";
 import { LEARN_INPUT, LEARN_MAX_EVENTS, LEARN_MAX_TEXT, LEARN_NAME, learnBlockers, type LearnedRecipe, type LearnFlag, type LearnStep } from "../shared/learned-recipes.ts";
 
 const MAX_BYTES = 2_000_000;
 const PURPOSE = "realbud-learned-recipes";
 const FLAG_CODES = ["needs-confirm", "outside-main", "forbidden-area", "unsupported", "off-portal"];
-const DAMAGED = "Learned recipes need recovery: the saved file is damaged. RealBud kept it and won't change it until it is repaired.";
+export const LEARNED_RECIPES_DAMAGED = "Learned recipes need recovery: the saved file is damaged. RealBud kept it and won't change it until it is repaired.";
 const CHANGED = "This recipe changed elsewhere. Reload and try again.";
 interface LearnedRecipeDocument { version: 1; purpose: typeof PURPOSE; revision: number; recipes: LearnedRecipe[] }
 
@@ -62,13 +62,13 @@ function stepInputs(steps: LearnStep[]): string[] {
 const wordIn = (word: string, label: string) => new RegExp(`(?<!\\w)${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`, "i").test(label);
 /** A click label Bud must never press on a reviewer's say-so: it names (even inside a longer
  * label, any case) one of the shipped pack's consequential labels, or it would confirm, submit,
- * pay, sign, send, delete or sign in by the browser broker's own words. Once confirmed, a label
+ * pay, sign, send, delete, sign in or download/export by the browser broker's own words. Once confirmed, a label
  * joins read-safe, and pressControl lets read-safe labels through before its submit checks.
  * An exact shipped read-safe label (Next, Search) is already allowed and is not risky. */
 export function learnLabelRisky(labels: { readSafe: string[]; consequential: string[] }, label: string): boolean {
   if (labels.readSafe.includes(label)) return false;
   return labels.consequential.some(word => wordIn(word, label)) || consequentialKind(label) !== null ||
-    SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label) || CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label);
+    SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label) || CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label) || DOWNLOAD_AFFORDANCE.test(label);
 }
 /** learnBlockers plus what only the server knows: a confirmed risky label, or a stop label the shipped pack doesn't list.
  * `labels` is always the SHIPPED pack's, never a merged pack whose read-safe list grew. */
@@ -90,7 +90,7 @@ function validRecipe(value: unknown): value is LearnedRecipe {
   } catch { return false; }
 }
 function validateDocument(value: unknown): asserts value is LearnedRecipeDocument {
-  if (!object(value) || value.version !== 1 || value.purpose !== PURPOSE || !Number.isInteger(value.revision) || !Array.isArray(value.recipes) || !value.recipes.every(validRecipe)) throw fail(409, DAMAGED);
+  if (!object(value) || value.version !== 1 || value.purpose !== PURPOSE || !Number.isInteger(value.revision) || !Array.isArray(value.recipes) || !value.recipes.every(validRecipe)) throw fail(409, LEARNED_RECIPES_DAMAGED);
 }
 
 export function createLearnedRecipeStore(file: string) {
@@ -98,7 +98,7 @@ export function createLearnedRecipeStore(file: string) {
   const load = async (): Promise<LearnedRecipeDocument> => {
     let value: unknown;
     try { value = await readPrivateJson(file, MAX_BYTES); }
-    catch (error) { throw error instanceof PrivateStorageError ? error : fail(409, DAMAGED); }
+    catch (error) { throw error instanceof PrivateStorageError ? error : fail(409, LEARNED_RECIPES_DAMAGED); }
     if (value === undefined) return { version: 1, purpose: PURPOSE, revision: 0, recipes: [] };
     validateDocument(value);
     return value;
@@ -146,7 +146,7 @@ export function createLearnedRecipeStore(file: string) {
       });
     },
 
-    /** Review edits: steps may only be removed or have a typed value changed; other flags may only
+    /** Review edits: steps may only be removed or have a typed value or chosen option changed; other flags may only
      * be acknowledged; confirmed labels are any clicked label that is not consequential.
      * needs-confirm flags are derived from `labels` (the shipped pack's) whenever steps or confirmations change. */
     update(id: string, expectedRevision: unknown, patch: { title?: unknown; steps?: unknown; confirmedLabels?: unknown; flags?: unknown }, labels: { readSafe: string[]; consequential: string[] }): Promise<LearnedRecipe> {
@@ -160,11 +160,13 @@ export function createLearnedRecipeStore(file: string) {
           // Each kept step must match the next unused recorded step by verb and target, in order.
           let at = 0;
           for (const step of steps) {
-            const match = (old: LearnStep) => "type" in step && "type" in old ? step.type.field === old.type.field : same(step, old);
+            const match = (old: LearnStep) => "type" in step && "type" in old ? step.type.field === old.type.field
+              : "select" in step && "select" in old ? step.select.field === old.select.field : same(step, old);
             while (at < recipe.steps.length && !match(recipe.steps[at])) at++;
-            if (at++ >= recipe.steps.length) throw fail(400, "Steps can only be removed or have a typed value changed.");
-            if ("type" in step) {
-              const value = step.type.value;
+            if (at++ >= recipe.steps.length) throw fail(400, "Steps can only be removed or have a typed value or chosen option changed.");
+            // A typed value or chosen option is an input ({key}) or fixed text a reviewer pinned (such as "All").
+            const value = "type" in step ? step.type.value : "select" in step ? step.select.option : null;
+            if (value !== null) {
               if (/[{}]/.test(value) && !/^\{[a-z][a-z0-9_]{0,31}\}$/.test(value)) throw fail(400, "A typed value is either an input like {date_from} or plain text.");
               if (redactSecretsInText(value) !== value) throw fail(400, "A typed value looks like a password or key. Use an input instead.");
             }

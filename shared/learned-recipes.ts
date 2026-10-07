@@ -3,15 +3,17 @@
 // staff review and publish it, and the existing portal recipe runner replays it.
 // Decision: docs/decisions/2026-10-07-watch-and-learn.md.
 //
-// Dependency-free. The recorder never keeps a typed value: every typed field
-// becomes a `{key}` input the person fills when they run the recipe.
+// Dependency-free. The recorder never keeps a typed value or a chosen option:
+// every typed field and select becomes a `{key}` input the person fills when
+// they run the recipe (review may pin fixed text instead).
 
 /** One event the in-page listener reports. Page script is untrusted: the host validates every field. */
 export type LearnLandmark = "navigation" | "main" | "dialog" | "other";
 export type LearnEvent =
   | { kind: "click"; role: string; name: string; landmark: LearnLandmark }
   | { kind: "type"; field: string; landmark: LearnLandmark }
-  | { kind: "select"; field: string; option: string; landmark: LearnLandmark }
+  /** A select changed: the field only, never the option chosen. */
+  | { kind: "select"; field: string; landmark: LearnLandmark }
   | { kind: "radio"; name: string; landmark: LearnLandmark }
   /** A password or one-time-code field: recorded only as "the person signed in here". */
   | { kind: "secret"; landmark: LearnLandmark }
@@ -78,6 +80,8 @@ export const LEARN_MAX_EVENTS = 400;
 export const LEARN_MAX_TEXT = 120;
 export const LEARN_NAME = /^learned-[a-z0-9][a-z0-9-]{0,47}$/;
 export const LEARN_INPUT = /^[a-z][a-z0-9_]{0,31}$/;
+/** The `unsupported` flag label for a click on a table row's data; the data itself is never kept. */
+export const LEARN_ROW_VALUE = "a value in a table row";
 
 /** Field label → input key: "Date from" → "date_from". Never empty. */
 export function learnInputKey(field: string): string {

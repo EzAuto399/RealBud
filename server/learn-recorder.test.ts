@@ -103,7 +103,7 @@ describe("LearnRecorder", () => {
     cdp.call(click("   "));
     cdp.call({ kind: "page", url: `${ORIGIN}/fake`, table: true });
     cdp.call({ kind: "type", field: "Search", value: "fictional typed value", landmark: "main" });
-    cdp.call({ kind: "select", field: "Status", option: "", landmark: "main" });
+    cdp.call({ kind: "select", field: "Status", option: "Vacated", landmark: "main" }); // a chosen option is never accepted
     cdp.call({ kind: "unsupported", control: "Bad Control", name: "x", landmark: "main" });
     cdp.call({ kind: "tables", present: "yes" });
     cdp.call(click("View"), "rbLearn_000000000000000000");
@@ -112,12 +112,15 @@ describe("LearnRecorder", () => {
     cdp.call(click("x".repeat(500)));
     cdp.call({ kind: "radio", name: "Use Bearer fictionalTOKENvalue000000", landmark: "dialog" });
     cdp.call({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: "main" });
+    cdp.call({ kind: "select", field: "Status", landmark: "main" });
     const events = await recorder.stop();
     expect(events.slice(1, 3)).toEqual([click("Save now"), click("x".repeat(LEARN_MAX_TEXT))]);
     expect(events[3]).toMatchObject({ kind: "radio", landmark: "dialog" });
     expect(JSON.stringify(events[3])).not.toContain("fictionalTOKENvalue000000");
     expect(events[4]).toEqual({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: "main" });
-    expect(events).toHaveLength(5);
+    expect(events[5]).toEqual({ kind: "select", field: "Status", landmark: "main" });
+    expect(events).toHaveLength(6);
+    expect(JSON.stringify(events)).not.toContain("Vacated");
   });
 
   it("lets the page set only the current page's table flag", async () => {
@@ -245,8 +248,8 @@ function fakeDom() {
         return null;
       },
       labels: spec.label ? [{ cloneNode: () => ({ querySelectorAll: () => [], textContent: spec.label }) }] : [],
-      selectedOptions: spec.options ? [{ text: spec.options[0] }] : undefined,
     };
+    Object.defineProperty(self, "selectedOptions", { get() { valueReads.push(`${spec.tag} option`); return spec.options ? [{ text: spec.options[0] }] : undefined; } });
     Object.defineProperty(self, "value", { get() { valueReads.push(spec.tag); return "fictional typed value"; } });
     return self;
   };
@@ -258,7 +261,7 @@ function fakeDom() {
 }
 
 describe("LEARN_LISTENER", () => {
-  it("reports role, name and landmark for clicks and field labels for typing, never a typed value", () => {
+  it("reports role, name and landmark for clicks and field labels for typing and selects, never a typed value or chosen option", () => {
     const dom = fakeDom();
     dom.handlers.click({ target: dom.element({ tag: "A", attrs: {}, text: "  Bulk\n receipting ", landmark: "navigation" }) });
     dom.handlers.click({ target: dom.element({ tag: "BUTTON", attrs: { "aria-label": "View" }, landmark: "dialog" }) });
@@ -273,7 +276,7 @@ describe("LEARN_LISTENER", () => {
       { kind: "click", role: "button", name: "View", landmark: "dialog" },
       { kind: "type", field: "Search", landmark: "main" },
       { kind: "secret", landmark: "main" },
-      { kind: "select", field: "Status", option: "Pending", landmark: "main" },
+      { kind: "select", field: "Status", landmark: "main" },
       { kind: "unsupported", control: "checkbox", name: "Include vacated", landmark: "main" },
     ]);
     expect(dom.valueReads).toEqual([]);

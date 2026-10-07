@@ -36,7 +36,7 @@ const RECORDING: LearnEvent[] = [
   { kind: "click", role: "link", name: "Arrears", landmark: "navigation" },
   { kind: "page", url: `${FICTIONAL_REI_ORIGIN}/customers/arrears/`, table: true },
   { kind: "type", field: "From day", landmark: "main" },
-  { kind: "select", field: "Hide vacated tenants", option: "Yes", landmark: "main" },
+  { kind: "select", field: "Hide vacated tenants", landmark: "main" },
   // The pager is a navigation landmark, so the recorder reports its Next there.
   { kind: "click", role: "button", name: "Next", landmark: "navigation" },
   { kind: "click", role: "button", name: "Notice", landmark: "main" },
@@ -47,8 +47,9 @@ async function publishLearned(pack: PortalRecipePack) {
   const store = createLearnedRecipeStore(join(tempRoot("rb-learn-replay-store-"), "learned-recipes.json"));
   const compiled = compileLearnedSteps(RECORDING, pack);
   const draft = await store.create({ portal: PORTAL, title: "Arrears from day", ...compiled });
-  // Review: nothing to acknowledge or confirm (Next became a paged read).
-  const reviewed = await store.update(draft.id, draft.revision, { flags: [], confirmedLabels: [] }, pack.labels);
+  // Review: nothing to acknowledge or confirm (Next became a paged read); the select is pinned to a fixed option.
+  const steps = draft.steps.map(step => "select" in step ? { select: { ...step.select, option: "Yes" } } : step);
+  const reviewed = await store.update(draft.id, draft.revision, { steps, flags: [], confirmedLabels: [] }, pack.labels);
   const published = await store.publish(reviewed.id, reviewed.revision, pack);
   return { compiled, published, merged: mergeLearnedRecipes(pack, await store.list()) };
 }
@@ -59,11 +60,13 @@ describe("learned recipe: recorded → published → replayed (fictional REI moc
     const { compiled, published, merged } = await publishLearned(pack);
     expect(compiled).toEqual({
       steps: [{ nav: ["Process", "Arrears"] }, { wait: "table" }, { type: { field: "From day", value: "{from_day}" } },
-        { select: { field: "Hide vacated tenants", option: "Yes" } }, { wait: "table" }, { read: "table" }, { paginate: true }],
-      inputs: ["from_day"], stopBefore: ["Notice"], flags: [],
+        { select: { field: "Hide vacated tenants", option: "{hide_vacated_tenants}" } }, { wait: "table" }, { read: "table" }, { paginate: true }],
+      inputs: ["from_day", "hide_vacated_tenants"], stopBefore: ["Notice"], flags: [],
     });
+    // The reviewer pinned the option, so it is no longer asked each run.
     expect(published).toMatchObject({ state: "published", name: "learned-arrears-from-day", inputs: ["from_day"], stopBefore: ["Notice"], flags: [] });
-    expect(merged.recipes[published.name]).toMatchObject({ kind: "read", steps: compiled.steps, stopBefore: ["Notice"] });
+    expect(merged.recipes[published.name]).toMatchObject({ kind: "read", steps: published.steps, stopBefore: ["Notice"] });
+    expect(published.steps).toContainEqual({ select: { field: "Hide vacated tenants", option: "Yes" } });
 
     // The runner test's harness: real runtime, broker, grant, fence and approvals over the mock.
     const root = tempRoot("rb-learn-replay-run-");

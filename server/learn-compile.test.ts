@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compileLearnedSteps } from "./learn-compile.ts";
 import { parsePortalRecipePack } from "./portal-recipe.ts";
 import { fictionalReiPack, FICTIONAL_REI_ORIGIN, FICTIONAL_REI_SIGNIN } from "./testing/fictional-rei-portal.ts";
-import { LEARN_INPUT, learnBlockers, type LearnEvent } from "../shared/learned-recipes.ts";
+import { LEARN_INPUT, LEARN_ROW_VALUE, learnBlockers, type LearnEvent } from "../shared/learned-recipes.ts";
 
 const pack = fictionalReiPack();
 const page = (path: string, table = false): LearnEvent => ({ kind: "page", url: `${FICTIONAL_REI_ORIGIN}${path}`, table });
@@ -17,7 +17,7 @@ describe("compileLearnedSteps", () => {
       menu("Receipts"), menu("Bulk receipting"),
       page("/receipts/bulk", true),
       typed("Search"), typed("Search"),
-      { kind: "select", field: "Status", option: "Pending", landmark: "main" },
+      { kind: "select", field: "Status", landmark: "main" },
       button("View"),
       button("Open details", "dialog"),
       { kind: "radio", name: "This month", landmark: "dialog" },
@@ -29,7 +29,7 @@ describe("compileLearnedSteps", () => {
       { nav: ["Receipts", "Bulk receipting"] },
       { wait: "table" },
       { type: { field: "Search", value: "{search}" } },
-      { select: { field: "Status", option: "Pending" } },
+      { select: { field: "Status", option: "{status}" } },
       { click: "View" },
       { wait: "modal" },
       { click: "Open details" },
@@ -37,7 +37,7 @@ describe("compileLearnedSteps", () => {
       { wait: "table" },
       { read: "table" },
     ]);
-    expect(out.inputs).toEqual(["search"]);
+    expect(out.inputs).toEqual(["search", "status"]);
     expect(out.stopBefore).toEqual(["Process Receipts"]);
     expect(out.flags).toEqual([{ code: "needs-confirm", label: "Open details" }]);
     // Merged as a read recipe, the shipped pack still validates.
@@ -152,6 +152,23 @@ describe("compileLearnedSteps", () => {
       { wait: "table" }, { type: { field: "From day", value: "{from_day}" } }, { wait: "table" }, { read: "table" }, { paginate: true },
       { nav: ["Tenants", "List"] }, { read: "controls" },
     ]);
+  });
+
+  it("turns a chosen option into an input: the option is never part of the recording or the recipe", () => {
+    const out = compileLearnedSteps([page("/tenants", true), { kind: "select", field: "Status", landmark: "main" }, { kind: "select", field: "Status", landmark: "main" }, typed("Status")], pack);
+    expect(out.steps).toEqual([{ wait: "table" }, { select: { field: "Status", option: "{status}" } }, { type: { field: "Status", value: "{status}" } }, { wait: "table" }, { read: "table" }]);
+    expect(out.inputs).toEqual(["status"]);
+  });
+
+  it("adds no step for a click on a row's data and never keeps its text, while pack and risky labels keep their handling", () => {
+    const rows = ["A6103 MCKI", "$1,050.00", "1,050.00 AUD", "Fictional Tenant Bravo, 2 Fictional Street, Fictional Town, a cell longer than sixty"];
+    const out = compileLearnedSteps([page("/customers/tenant", true), ...rows.map(name => ({ kind: "click", role: "link", name, landmark: "main" }) as LearnEvent), button("View")], pack);
+    expect(out.steps).toEqual([{ wait: "table" }, { click: "View" }, { wait: "table" }, { read: "table" }]);
+    expect(out.flags).toEqual([{ code: "unsupported", label: LEARN_ROW_VALUE }]);
+    expect(JSON.stringify(out)).not.toMatch(/A6103|1,050|Bravo/);
+    // A consequential label with a digit still stops the recipe; a risky one still ends it.
+    expect(compileLearnedSteps([button("Form 9")], pack).stopBefore).toEqual(["Form 9"]);
+    expect(compileLearnedSteps([button("Pay $10"), button("View")], pack)).toMatchObject({ steps: [{ read: "controls" }], flags: [{ code: "unsupported", label: "Pay $10" }] });
   });
 
   it("ends with a controls read when the last page showed no table", () => {

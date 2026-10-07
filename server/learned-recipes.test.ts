@@ -113,6 +113,34 @@ describe("learned recipe store", () => {
     expect(learnLabelRisky(labels, "Processed list")).toBe(false); // "Process" only as a whole word
   });
 
+  it("refuses to confirm a download or export, which would merge with no download grant", async () => {
+    const { store: s } = store();
+    const { labels } = fictionalReiPack();
+    const files = ["Export CSV", "Download", "Export"];
+    const r = await s.create({ ...draft, steps: [...files.map(click => ({ click })), { read: "controls" }], flags: [] });
+    for (const label of files) {
+      expect(learnLabelRisky(labels, label), label).toBe(true);
+      await expect(s.update(r.id, 1, { confirmedLabels: [label] }, labels)).rejects.toMatchObject({ status: 400 });
+    }
+    expect(learnLabelRisky(labels, "Receipt Register")).toBe(false); // an exact shipped read-safe label
+  });
+
+  it("lets review pin a chosen option as fixed text or ask it each run, like a typed value", async () => {
+    const { store: s } = store();
+    const { labels } = fictionalReiPack();
+    const steps = [{ select: { field: "Status", option: "{status}" } }, { read: "table" }] as LearnStep[];
+    const r = await s.create({ ...draft, steps, flags: [] });
+    expect(r.inputs).toEqual(["status"]);
+    const pinned = await s.update(r.id, 1, { steps: [{ select: { field: "Status", option: "All" } }, steps[1]] }, labels);
+    expect(pinned).toMatchObject({ inputs: [], steps: [{ select: { field: "Status", option: "All" } }, { read: "table" }] });
+    const asked = await s.update(r.id, 2, { steps: [{ select: { field: "Status", option: "{status}" } }, steps[1]] }, labels);
+    expect(asked.inputs).toEqual(["status"]);
+    // Another field, a malformed input or a secret-looking option is refused.
+    await expect(s.update(r.id, 3, { steps: [{ select: { field: "Type", option: "All" } }] }, labels)).rejects.toMatchObject({ status: 400 });
+    await expect(s.update(r.id, 3, { steps: [{ select: { field: "Status", option: "{Bad Key}" } }] }, labels)).rejects.toMatchObject({ status: 400 });
+    await expect(s.update(r.id, 3, { steps: [{ select: { field: "Status", option: "Bearer fictionalTOKENvalue000000" } }] }, labels)).rejects.toMatchObject({ status: 400 });
+  });
+
   it("blocks publishing a stored risky confirmation and accepts a paged read", async () => {
     const { file, store: s } = store();
     const pack = fictionalReiPack();

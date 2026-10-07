@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { LearnedRecipe } from "@shared/learned-recipes";
+import { LEARN_ROW_VALUE, type LearnedRecipe } from "@shared/learned-recipes";
 import { LearnedRecipeItem, LearnedRecipesCard, learnFlagText, learnInputLabel, learnPublishReason, learnStepText, parseLearnList } from "./LearnedRecipesCard";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: { bots: [] }, dispatch: vi.fn() }) }));
@@ -24,11 +24,14 @@ describe("learned recipe copy", () => {
     expect(learnStepText({ wait: "modal" })).toBe("Wait for the window to open");
     expect(learnStepText({ paginate: true })).toBe("Read every page");
     expect(learnInputLabel("date_from")).toBe("Date from");
+    expect(learnStepText({ select: { field: "Status", option: "{status}" } })).toBe("Choose an option in Status (asked each run)");
+    expect(learnStepText({ select: { field: "Status", option: "All" } })).toBe("Choose “All” in Status");
   });
 
   it("explains each flag without jargon", () => {
     expect(learnFlagText({ code: "unsupported", label: "Include closed" })).toContain("can't repeat yet");
     expect(learnFlagText({ code: "needs-confirm", label: "View" })).toContain("Only opens or shows something");
+    expect(learnFlagText({ code: "unsupported", label: LEARN_ROW_VALUE })).toBe("You clicked a value in a table row. Bud doesn't keep row values, so it can't repeat that click.");
   });
 });
 
@@ -66,6 +69,10 @@ describe("LearnedRecipeItem", () => {
     expect(html).not.toContain("min-h-11"); // compact inline step controls
     const fixed = render({ ...draft, steps: [{ type: { field: "Status", value: "Open" } }] });
     expect(fixed).toContain('aria-label="Ask for Status each run"');
+    // A chosen option is asked each run until a reviewer pins one, like a typed value.
+    expect(render({ ...draft, steps: [{ select: { field: "Status", option: "{status}" } }] })).toContain('aria-label="Use fixed text for Status"');
+    expect(render({ ...draft, steps: [{ select: { field: "Status", option: "All" } }] })).toContain('aria-label="Ask for Status each run"');
+    expect(render({ ...draft, state: "published", steps: [{ select: { field: "Status", option: "{status}" } }] })).not.toContain("Use fixed text");
     const published = render({ ...draft, state: "published", flags: [], confirmedLabels: ["View"] });
     expect(published).toContain('aria-label="Run Arrears check"');
     expect(published).toContain('aria-label="Unpublish Arrears check"');

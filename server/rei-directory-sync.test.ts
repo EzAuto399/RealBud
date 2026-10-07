@@ -6,7 +6,10 @@ import { privateTempRoot } from "./testing/private-fixture.ts";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DATA_DIR } from "./config.ts";
+import { createLearnedRecipeStore } from "./learned-recipes.ts";
+import { loadPortalRecipePack, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
@@ -15,16 +18,22 @@ import { FICTIONAL_BUSINESS, fictionalReiPack } from "./testing/fictional-rei-po
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { matchSender } from "../shared/supplier-directory.ts";
 
+// The real loaders, wrapped so a test can see which one the refresh used and what it got.
+vi.mock("./portal-recipe-task.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
+  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack) };
+});
+
 const dirs: string[] = [], dbs: WorkflowDatabase[] = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-async function fixture(options: { account?: boolean; load?: () => ReturnType<typeof fictionalReiPack> } = {}) {
+async function fixture(options: { account?: boolean; load?: (() => ReturnType<typeof fictionalReiPack>) | null } = {}) {
   const dir = privateTempRoot(join(tmpdir(), "realbud-rei-dir-")); dirs.push(dir);
   const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 5) }); dbs.push(db);
   const lab = await createW1Lab(dir, { fetch: (async () => new Response("{}", { status: 404 })) as never });
   const tenants = createTenantDirectoryStore(db), suppliers = createSupplierDirectory({ file: join(dir, "suppliers.json") });
   const sync = createReiDirectorySync({ runtime: lab.runtime, browserId: lab.browserId, account: async () => options.account === false ? null : { marker: FICTIONAL_BUSINESS },
-    tenants, suppliers, load: async () => (options.load ?? fictionalReiPack)(), signIn: () => lab.openForSignIn, signInHolding: () => false, pollMs: 0 });
+    tenants, suppliers, ...(options.load === null ? {} : { load: async () => (options.load ?? fictionalReiPack)() }), signIn: () => lab.openForSignIn, signInHolding: () => false, pollMs: 0 });
   const call = async (path: string, body?: unknown) => {
     const result = await sync.handle(path, path.endsWith("/status") ? "GET" : "POST", async () => body);
     if (result.status !== 200) throw Object.assign(new Error(JSON.stringify(result.body)), { status: result.status });
@@ -231,5 +240,34 @@ describe("scheduled Supplier list check (fictional portal)", () => {
     expect(await f.sync.checkSuppliers(() => {})).toMatchObject({ ok: false, status: "failed", detail: expect.stringMatching(/already running/) });
     expect((await f.suppliers.read()).revision).toBe(0);
     await f.call(`/api/rei-directory/runs/${(await f.sync.status()).run!.id}/stop`, {});
+  });
+});
+
+describe("refresh from REI and watch-and-learn recipes", () => {
+  it("runs on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
+    // A published learned recipe in this test's own data folder (never ~/.realbud), with a confirmed label.
+    const file = join(DATA_DIR, "learned-recipes.json");
+    expect(file.startsWith(process.env.HOME!)).toBe(true);
+    const store = createLearnedRecipeStore(file);
+    const shipped = await loadShippedPortalRecipePack("rei-cloud");
+    const draft = await store.create({ portal: "rei-cloud", title: "Loop leak check", steps: [{ click: "Show fictional detail" }, { read: "controls" }], stopBefore: [], flags: [] });
+    const confirmed = await store.update(draft.id, draft.revision, { confirmedLabels: ["Show fictional detail"] }, shipped.labels);
+    await store.publish(confirmed.id, confirmed.revision, shipped);
+    try {
+      const merged = await loadPortalRecipePack("rei-cloud");
+      expect(merged.recipes["learned-loop-leak-check"]).toBeDefined();
+      expect(merged.labels.readSafe).toContain("Show fictional detail");
+      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
+
+      // No injected `load`: the refresh picks its own loader.
+      const f = await fixture({ load: null });
+      await f.start("tenants");
+      expect(loadPortalRecipePack).not.toHaveBeenCalled();
+      expect(loadShippedPortalRecipePack).toHaveBeenCalledWith("rei-cloud");
+      const used = await vi.mocked(loadShippedPortalRecipePack).mock.results[0].value;
+      expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
+      expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
+      expect(used.labels.readSafe).not.toContain("Show fictional detail");
+    } finally { rmSync(file, { force: true }); }
   });
 });

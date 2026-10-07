@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 
-import { learnBlockers, learnInputKey, type LearnedRecipe, type LearnFlag, type LearnListView, type LearnStep } from "@shared/learned-recipes";
+import { LEARN_ROW_VALUE, learnBlockers, learnInputKey, type LearnedRecipe, type LearnFlag, type LearnListView, type LearnStep } from "@shared/learned-recipes";
 import { resolveProductBud } from "@/lib/product-bud";
 import { api, useStore } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
@@ -18,13 +18,16 @@ const inline = "inline-flex min-h-6 select-none items-center rounded px-1 text-[
 
 const quoted = (label: string) => `“${label}”`;
 const askedEachRun = (value: string) => /^\{[a-z][a-z0-9_]*\}$/.test(value);
+/** A step whose value review may change: a typed value or a chosen option. */
+const valued = (step: LearnStep): { field: string; value: string } | null =>
+  "type" in step ? { field: step.type.field, value: step.type.value } : "select" in step ? { field: step.select.field, value: step.select.option } : null;
 
-/** One recipe step in plain words. Typed values the recorder turned into inputs read "asked each run". */
+/** One recipe step in plain words. Typed values and chosen options the recorder turned into inputs read "asked each run". */
 export function learnStepText(step: LearnStep): string {
   if ("nav" in step) return `Open ${step.nav.join(" › ")}`;
   if ("click" in step) return `Press ${step.click}`;
   if ("type" in step) return askedEachRun(step.type.value) ? `Type into ${step.type.field} (asked each run)` : `Type ${quoted(step.type.value)} into ${step.type.field}`;
-  if ("select" in step) return `Choose ${step.select.option} in ${step.select.field}`;
+  if ("select" in step) return askedEachRun(step.select.option) ? `Choose an option in ${step.select.field} (asked each run)` : `Choose ${quoted(step.select.option)} in ${step.select.field}`;
   if ("radio" in step) return `Pick ${step.radio}`;
   if ("paginate" in step) return "Read every page";
   if ("wait" in step) return step.wait === "modal" ? "Wait for the window to open" : "Wait for the table";
@@ -36,7 +39,8 @@ export function learnFlagText(flag: LearnFlag): string {
     case "needs-confirm": return `Bud hasn't seen ${quoted(flag.label)} before. Tick “Only opens or shows something” on that step if that's all it does, or remove the step.`;
     case "outside-main": return `${quoted(flag.label)} sits outside the main page, so Bud can't repeat it.`;
     case "forbidden-area": return `${quoted(flag.label)} goes into an area Bud must stay out of.`;
-    case "unsupported": return `${quoted(flag.label)} is a control Bud can't repeat yet, such as a tick box or file picker.`;
+    case "unsupported": return flag.label === LEARN_ROW_VALUE ? "You clicked a value in a table row. Bud doesn't keep row values, so it can't repeat that click."
+      : `${quoted(flag.label)} is a control Bud can't repeat yet, such as a tick box or file picker.`;
     case "off-portal": return `You left the portal at ${flag.label}.`;
   }
 }
@@ -211,8 +215,9 @@ export function LearnedRecipeItem({ recipe, labels, busy, onChange, onRun }: Ite
   const confirm = (label: string, on: boolean) => on
     ? onChange(recipe, "update", { confirmedLabels: [...recipe.confirmedLabels, label] }, `${quoted(label)} marked as only opening or showing something.`)
     : onChange(recipe, "update", { confirmedLabels: recipe.confirmedLabels.filter(item => item !== label) }, `${quoted(label)} is no longer confirmed.`);
-  const setTypeValue = (index: number, value: string, done: string) =>
-    onChange(recipe, "update", { steps: recipe.steps.map((step, at) => at === index && "type" in step ? { type: { ...step.type, value } } : step) }, done);
+  // A typed value or a chosen option: asked each run ({key}) or fixed text the reviewer pins.
+  const setValue = (index: number, value: string, done: string) =>
+    onChange(recipe, "update", { steps: recipe.steps.map((step, at) => at !== index ? step : "type" in step ? { type: { ...step.type, value } } : "select" in step ? { select: { ...step.select, option: value } } : step) }, done);
   const warnings = recipe.flags.filter(flag => flag.code !== "needs-confirm");
   const publishReason = learnPublishReason(recipe, labels);
   const ready = recipe.inputs.every(key => values[key]?.trim()) && marker.trim();
@@ -230,7 +235,7 @@ export function LearnedRecipeItem({ recipe, labels, busy, onChange, onRun }: Ite
         <span className="text-[12px] text-ink-muted">{recipe.portal}</span>
       </div>
       <ol className="mt-2 space-y-1 text-[13px] text-ink-secondary">
-        {recipe.steps.map((step, index) => (
+        {recipe.steps.map((step, index) => { const editable = draft ? valued(step) : null; return (
           <li key={index} className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
             <span>{index + 1}. {learnStepText(step)}</span>
             {draft && "click" in step && confirmable(step.click) ? (
@@ -239,16 +244,16 @@ export function LearnedRecipeItem({ recipe, labels, busy, onChange, onRun }: Ite
                 Only opens or shows something
               </label>
             ) : null}
-            {draft && "type" in step ? (
-              askedEachRun(step.type.value) ? (
+            {editable ? (
+              askedEachRun(editable.value) ? (
                 fixed?.index === index ? (
                   <span className="inline-flex flex-wrap items-center gap-1.5">
-                    <input className={`${input} w-48`} aria-label={`Fixed text for ${step.type.field}`} value={fixed.text} maxLength={120} disabled={busy} onChange={event => setFixed({ index, text: event.target.value })} />
-                    <button type="button" className={button} aria-label={`Save fixed text for ${step.type.field}`} disabled={busy || !fixed.text.trim()} onClick={() => void setTypeValue(index, fixed.text.trim(), `${step.type.field} now uses fixed text.`).then(ok => ok && setFixed(null))}>Save</button>
-                    <button type="button" className={button} aria-label={`Cancel fixed text for ${step.type.field}`} disabled={busy} onClick={() => setFixed(null)}>Cancel</button>
+                    <input className={`${input} w-48`} aria-label={`Fixed text for ${editable.field}`} value={fixed.text} maxLength={120} disabled={busy} onChange={event => setFixed({ index, text: event.target.value })} />
+                    <button type="button" className={button} aria-label={`Save fixed text for ${editable.field}`} disabled={busy || !fixed.text.trim()} onClick={() => void setValue(index, fixed.text.trim(), `${editable.field} now uses fixed text.`).then(ok => ok && setFixed(null))}>Save</button>
+                    <button type="button" className={button} aria-label={`Cancel fixed text for ${editable.field}`} disabled={busy} onClick={() => setFixed(null)}>Cancel</button>
                   </span>
-                ) : <button type="button" className={inline} aria-label={`Use fixed text for ${step.type.field}`} disabled={busy} onClick={() => setFixed({ index, text: "" })}>Use fixed text</button>
-              ) : <button type="button" className={inline} aria-label={`Ask for ${step.type.field} each run`} disabled={busy} onClick={() => void setTypeValue(index, `{${learnInputKey(step.type.field)}}`, `${step.type.field} is asked each run.`)}>Ask each run</button>
+                ) : <button type="button" className={inline} aria-label={`Use fixed text for ${editable.field}`} disabled={busy} onClick={() => setFixed({ index, text: "" })}>Use fixed text</button>
+              ) : <button type="button" className={inline} aria-label={`Ask for ${editable.field} each run`} disabled={busy} onClick={() => void setValue(index, `{${learnInputKey(editable.field)}}`, `${editable.field} is asked each run.`)}>Ask each run</button>
             ) : null}
             {draft ? (
               <button type="button" className={inline} disabled={busy}
@@ -258,7 +263,7 @@ export function LearnedRecipeItem({ recipe, labels, busy, onChange, onRun }: Ite
               </button>
             ) : null}
           </li>
-        ))}
+        ); })}
       </ol>
       {recipe.stopBefore.length ? <p className="mt-2 text-[12.5px] text-ink-secondary">Stops before: {recipe.stopBefore.join(", ")}</p> : null}
       {warnings.length ? (

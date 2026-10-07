@@ -4,7 +4,7 @@
 // untrusted: every payload is validated to an exact LearnEvent shape, capped
 // and redacted, and accepted only while the tab's main frame is on the
 // portal's origin. Page changes come from CDP, never from the page. No typed
-// value is ever read: the listener reports field labels only.
+// value or chosen option is ever read: the listener reports field labels only.
 import { randomBytes } from "node:crypto";
 import { LEARN_MAX_EVENTS, LEARN_MAX_TEXT, type LearnEvent, type LearnLandmark, type LearnSessionView } from "../shared/learned-recipes.ts";
 import { ownedBrowserEndpoint } from "./hermes-browser-transport.ts";
@@ -16,8 +16,8 @@ const record = (value: unknown): value is Json => !!value && typeof value === "o
 const COMMAND_MS = 5000;
 
 /** In-page listener: a function expression called with the binding name. It
- * never throws into the page and never reads an input's value (a select's
- * chosen option text is the only control state it reports). */
+ * never throws into the page and never reads an input's value or a select's
+ * chosen option: only that a labelled field changed. */
 export const LEARN_LISTENER = `function (binding) {
   try {
     var mark = "__rbLearn_" + binding;
@@ -75,7 +75,7 @@ export const LEARN_LISTENER = `function (binding) {
         if (type === "checkbox" || type === "file") { send({ kind: "unsupported", control: type, name: field, landmark: where }); return; }
         if (!field) { send({ kind: "unsupported", control: "unlabelled-field", name: "", landmark: where }); return; }
         tables();
-        if (tag === "SELECT") { var chosen = el.selectedOptions && el.selectedOptions[0]; send({ kind: "select", field: field, option: chosen ? squash(chosen.text) : "", landmark: where }); return; }
+        if (tag === "SELECT") { send({ kind: "select", field: field, landmark: where }); return; }
         if (tag === "TEXTAREA" || TYPED.indexOf(type) >= 0) send({ kind: "type", field: field, landmark: where });
         else send({ kind: "unsupported", control: "field", name: field, landmark: where });
       } catch (e) {}
@@ -110,10 +110,7 @@ function parsePayload(payload: unknown): Payload | null {
       return keys === "kind,landmark,name,role" && landmark && typeof raw.role === "string" && CLICK_ROLES.includes(raw.role) && name ? { kind: "click", role: raw.role, name, landmark } : null;
     }
     case "type": { const field = clean(raw.field); return keys === "field,kind,landmark" && landmark && field ? { kind: "type", field, landmark } : null; }
-    case "select": {
-      const field = clean(raw.field); const option = clean(raw.option);
-      return keys === "field,kind,landmark,option" && landmark && field && option ? { kind: "select", field, option, landmark } : null;
-    }
+    case "select": { const field = clean(raw.field); return keys === "field,kind,landmark" && landmark && field ? { kind: "select", field, landmark } : null; }
     case "radio": { const name = clean(raw.name); return keys === "kind,landmark,name" && landmark && name ? { kind: "radio", name, landmark } : null; }
     case "secret": return keys === "kind,landmark" && landmark ? { kind: "secret", landmark } : null;
     case "unsupported": {

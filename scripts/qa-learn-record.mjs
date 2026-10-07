@@ -169,7 +169,7 @@ try {
   const events = await recorder.stop();
   const compiled = compileLearnedSteps(events, pack);
   const rawJson = JSON.stringify(events); const compiledJson = JSON.stringify(compiled);
-  for (const [label, value] of [["typed query", TYPED_QUERY], ["password", TYPED_PASSWORD]]) {
+  for (const [label, value] of [["typed query", TYPED_QUERY], ["password", TYPED_PASSWORD], ["chosen option", "Vacated"]]) {
     check(`${label} absent from raw events`, !rawJson.includes(value));
     check(`${label} absent from compiled output`, !compiledJson.includes(value));
   }
@@ -183,7 +183,7 @@ try {
   const typed = steps.find(step => step.type);
   check("type step uses a {placeholder}", typed?.type.field === "Search" && /^\{[a-z][a-z0-9_]*\}$/.test(typed.type.value), typed);
   check("inputs list the placeholder", compiled.inputs.includes("search"), compiled.inputs);
-  check("select recorded", steps.some(step => step.select?.field === "Status" && step.select.option === "Vacated"), steps);
+  check("select recorded as an input, never its option", steps.some(step => step.select?.field === "Status" && step.select.option === "{status}") && compiled.inputs.includes("status"), steps);
   const modal = at(step => step.wait === "modal"); const dialogClick = at(step => step.click === "Close");
   check("wait:modal before the dialog click", modal >= 0 && dialogClick === modal + 1, { modal, dialogClick });
   check("stopBefore has the consequential label", compiled.stopBefore.includes("Process Receipts"), compiled.stopBefore);

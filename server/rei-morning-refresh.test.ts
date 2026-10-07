@@ -3,20 +3,28 @@
 // one Desk apply after the read, one refresh at a time. Runs RealBud's real runtime, broker, runner,
 // Desk and clock against the FICTIONAL REI portal only: proof of RealBud's wiring and guards, never
 // of REI Cloud.
-import { copyFileSync, cpSync, existsSync, mkdtempSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { releaseBrowserBrokers, startBrowserBroker } from "./browser-broker.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
+import { DATA_DIR } from "./config.ts";
 import { Desk } from "./desk.ts";
+import { createLearnedRecipeStore } from "./learned-recipes.ts";
 import { portalRecipeGrantNeeds, type PortalRunRequest } from "./portal-recipe-runner.ts";
-import { loadPortalSiteMap, loopReadRefusal, runPortalReadLoop } from "./portal-recipe-task.ts";
+import { loadPortalRecipePack, loadPortalSiteMap, loadShippedPortalRecipePack, loopReadRefusal, runPortalReadLoop } from "./portal-recipe-task.ts";
 import { createReiMorningRefresh, REI_SIGN_IN_MISSED, reiMorningRuns } from "./rei-morning-refresh.ts";
 import { LoopManager } from "./routines.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictionalBook, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+
+// The real loaders, wrapped so a test can see which one an unattended loop used and what it got.
+vi.mock("./portal-recipe-task.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
+  return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack) };
+});
 
 const dirs: string[] = [];
 const managers: LoopManager[] = [];
@@ -320,3 +328,34 @@ async function runtimeFor(root: string, options: FictionalReiOptions) {
   await runtime.connect(); await runtime.select("work");
   return runtime;
 }
+
+describe("an unattended refresh and watch-and-learn recipes", () => {
+  it("runs on the shipped pack only: no learned recipe and no read-safe label a reviewer confirmed", async () => {
+    // A published learned recipe in this test's own data folder (never ~/.realbud), with a confirmed label.
+    const file = join(DATA_DIR, "learned-recipes.json");
+    expect(file.startsWith(process.env.HOME!)).toBe(true);
+    const store = createLearnedRecipeStore(file);
+    const shipped = await loadShippedPortalRecipePack("rei-cloud");
+    const draft = await store.create({ portal: "rei-cloud", title: "Loop leak check", steps: [{ click: "Show fictional detail" }, { read: "controls" }], stopBefore: [], flags: [] });
+    const confirmed = await store.update(draft.id, draft.revision, { confirmedLabels: ["Show fictional detail"] }, shipped.labels);
+    await store.publish(confirmed.id, confirmed.revision, shipped);
+    try {
+      // The Ask loader merges it.
+      const merged = await loadPortalRecipePack("rei-cloud");
+      expect(merged.recipes["learned-loop-leak-check"]).toBeDefined();
+      expect(merged.labels.readSafe).toContain("Show fictional detail");
+      vi.mocked(loadPortalRecipePack).mockClear(); vi.mocked(loadShippedPortalRecipePack).mockClear();
+
+      // No injected `load`: the loop picks its own loader.
+      const f = await fixture();
+      const { load: _load, ...deps } = f.deps;
+      await createReiMorningRefresh(deps).run();
+      expect(loadPortalRecipePack).not.toHaveBeenCalled();
+      expect(loadShippedPortalRecipePack).toHaveBeenCalledWith("rei-cloud");
+      const used = await vi.mocked(loadShippedPortalRecipePack).mock.results[0].value;
+      expect(Object.keys(used.recipes).filter(name => name.startsWith("learned-"))).toEqual([]);
+      expect(used.labels.readSafe).toEqual(shipped.labels.readSafe);
+      expect(used.labels.readSafe).not.toContain("Show fictional detail");
+    } finally { rmSync(file, { force: true }); }
+  });
+});

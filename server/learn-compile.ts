@@ -3,7 +3,7 @@
 // the portal recipe grammar that server/portal-recipe-runner.ts replays.
 // Pure and deterministic. It never decides publish: the flags and stopBefore
 // labels it returns are what staff review (learnBlockers in the contract).
-import { learnInputKey, type LearnEvent, type LearnFlag, type LearnStep } from "../shared/learned-recipes.ts";
+import { LEARN_ROW_VALUE, learnInputKey, type LearnEvent, type LearnFlag, type LearnStep } from "../shared/learned-recipes.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import { learnLabelRisky } from "./learned-recipes.ts";
 
@@ -12,6 +12,8 @@ const CLICK_ROLES = new Set(["button", "link", "tab", "menuitem"]);
 /** The roles a menu path is made of (the runner's menu clicks are links in the navigation landmark). */
 const MENU_ROLES = new Set(["link", "menuitem"]);
 const ACTS_IN = new Set(["main", "dialog"]);
+/** A click label that reads like a table row's data (a code, a name with digits, an amount) or a long cell, not a control. */
+const ROW_VALUE = (label: string) => label.length > 60 || /[\d$]|\bAUD\b/.test(label);
 
 export function compileLearnedSteps(events: LearnEvent[], pack: PortalRecipePack): { steps: LearnStep[]; inputs: string[]; stopBefore: string[]; flags: LearnFlag[] } {
   const steps: LearnStep[] = []; const flags: LearnFlag[] = []; const stopBefore: string[] = []; const inputs: string[] = [];
@@ -75,10 +77,14 @@ export function compileLearnedSteps(events: LearnEvent[], pack: PortalRecipePack
       tableWait = event.table; lastTable = event.table; inDialog = false;
       continue;
     }
-    // The runner fills {word} placeholders in labels too, so a label with braces can't replay.
-    if (Object.values(event).some(value => typeof value === "string" && /[{}]/.test(value))) { flushMenu(); flag("unsupported", "name" in event ? event.name : "field" in event ? event.field : event.kind); continue; }
     // A pager click (Next, Previous or a page number) in any landmark is no step: the table is paged at replay.
     if (event.kind === "click" && (pager.has(event.name) || /^\d{1,4}$/.test(event.name))) { paged = true; continue; }
+    // A click on a row's data adds no step and its text is never kept, not even as a flag label. Menu links, pack
+    // labels and risky controls (Form 9, Pay $10) keep their own handling, so Bud still stops before them.
+    if (event.kind === "click" && ROW_VALUE(event.name) && !(event.landmark === "navigation" && MENU_ROLES.has(event.role)) &&
+      !readSafe.has(event.name) && !consequential.has(event.name) && !learnLabelRisky(pack.labels, event.name)) { flushMenu(); flag("unsupported", LEARN_ROW_VALUE); continue; }
+    // The runner fills {word} placeholders in labels too, so a label with braces can't replay.
+    if (Object.values(event).some(value => typeof value === "string" && /[{}]/.test(value))) { flushMenu(); flag("unsupported", "name" in event ? event.name : "field" in event ? event.field : event.kind); continue; }
     if (event.kind === "click" && event.landmark === "navigation" && MENU_ROLES.has(event.role)) { menu.push(event.name); continue; }
     flushMenu();
     if (event.landmark !== "dialog") inDialog = false;
@@ -103,7 +109,13 @@ export function compileLearnedSteps(events: LearnEvent[], pack: PortalRecipePack
         push({ type: { field: event.field, value: `{${keyFor(event.field)}}` } }, event.landmark);
         break;
       }
-      case "select": push({ select: { field: event.field, option: event.option } }, event.landmark); break;
+      // The chosen option is a value too: it becomes an input (review can pin a harmless one such as "All").
+      case "select": {
+        const last = steps.at(-1);
+        if (last && "select" in last && last.select.field === event.field) break; // changed again in one field
+        push({ select: { field: event.field, option: `{${keyFor(event.field)}}` } }, event.landmark);
+        break;
+      }
       case "radio": push({ radio: event.name }, event.landmark); break;
     }
   }
