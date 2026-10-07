@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Kevin's and Sherry's day on macOS, one fresh office each: link the computer
-// through the office link (link code) in the built UI, then the person's own
-// daily flow on FICTIONAL data, with a PASS/FAIL receipt per step and
-// screenshots at desktop widths 1280 and 1024.
+// through the office link (link code) in the built UI, import the person's
+// built-in role pack from Desk Get started, then the person's own daily flow
+// on FICTIONAL data, with a PASS/FAIL receipt per step and screenshots at
+// desktop widths 1280 and 1024.
 //   Sherry (MacBook): morning priorities, supplier directory, maintenance
 //     findings, inspection plan, REI supplier refresh (read, then Discard), rule change card.
 //   Kevin (Windows PC; this proves the logic on macOS): arrears on Desk, weekly
@@ -58,6 +59,12 @@ const until = async (check, label, ms = 30_000) => {
 };
 // A bank row whose reference names no tenant: the review must hold it, never guess.
 const AMBIGUOUS = { id: 'txn_fk_demo-0042', daysAgo: 1, amountCents: 41000, reference: 'FICTIONAL BOND TOP UP' };
+// Each person's built-in role pack (as scripts/seed-austin-demo.mjs ROLE_PACKS): the workflows it sets and their Schedule jobs.
+// Morning priorities (inbound-triage) is a core job and always listed.
+const ROLE_PACK = {
+  kevin: { id: 'austin-accounts', title: 'Auston accounts — Kevin', loops: ['bank-references', 'weekly-bills', 'inbound-triage'], jobs: ['Bank reference review', 'Weekly bills review'] },
+  sherry: { id: 'austin-property', title: 'Auston property management — Sherry', loops: ['maintenance-review', 'rei-supplier-check', 'inspection-draft'], jobs: ['Maintenance checks', 'Supplier list check', 'Inspection draft'] },
+};
 
 /** One person, one fresh temp home, one office link, one service. */
 async function runPerson(who) {
@@ -102,6 +109,8 @@ async function runPerson(who) {
           model: { provider: 'modelvia', baseUrl: 'https://model.fictional.invalid/v1', projectId: 'fictional-qa-project', keyId: 'fictional-qa-key', key: `rbk_${'f'.repeat(40)}`, spendCapLabel: 'Fictional deterministic worker only' } } }));
         return;
       }
+      // The office has uploaded no signed role packs yet: the screens offer the built-in ones.
+      if (req.method === 'GET' && path === '/api/installations/packs') { res.end(JSON.stringify({ version: 1, packs: [] })); return; }
       res.end('{}'); return;
     }
     if (req.headers.authorization !== `Bearer ${credential}` || req.headers['x-realbud-profile'] !== 'property') { res.writeHead(403); res.end('{"error":"fixture_denied"}'); return; }
@@ -240,9 +249,17 @@ async function runPerson(who) {
   const rail = name => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true });
   const loops = async () => (await ok('/api/loops')).runs ?? [];
   const latestRun = async id => (await loops()).filter(r => r.loopId === id).sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
-  async function openJob(name) {
+  const jobButton = name => page.getByRole('button', { name: `Open job: ${name}`, exact: true });
+  const otherRole = ROLE_PACK[who === 'kevin' ? 'sherry' : 'kevin'];
+  /** Schedule lists every job until this PC's role-pack view loads, then drops the Auston jobs no role pack here set
+   * (#114), moving the rows below them. Wait for the other role's job to leave before clicking a row. */
+  async function settledSchedule() {
     await rail('Schedule').click();
-    await page.getByRole('button', { name: `Open job: ${name}`, exact: true }).click();
+    await until(async () => await jobButton('Morning money check').isVisible() && await jobButton(otherRole.jobs[0]).count() === 0, 'the Schedule list settles', 15_000);
+  }
+  async function openJob(name) {
+    await settledSchedule();
+    await jobButton(name).click();
   }
   /** Schedule → job → (Resume) → Run now, by keyboard; waits for the run to settle. */
   async function runJob(name, id) {
@@ -270,8 +287,13 @@ async function runPerson(who) {
     const notes = [];
     await completeFictionalOnboarding(ok);
     await ok('/api/hermes/apply-pack', 'POST', {});
-    const pack = await ok(`/api/customer-packs/${seed.office.workflowPackId}/export`), preview = await ok('/api/customer-packs/preview', 'POST', { pack });
-    await ok('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
+    // The role pack came in through the screens (step 2); Kevin's chose itself as the agency workflow pack.
+    // Sherry's role pack carries no mail plans, so her PC also takes the office's whole pack for morning priorities.
+    if (who === 'sherry') {
+      const pack = await ok(`/api/customer-packs/${seed.office.workflowPackId}/export`), preview = await ok('/api/customer-packs/preview', 'POST', { pack });
+      await ok('/api/customer-packs/install', 'POST', { pack, expectedDigest: preview.digest });
+      notes.push(`office's ${seed.office.workflowPackId} pack for morning priorities (Sherry's role pack has no mail plans)`);
+    }
     const recipes = (await ok('/api/recipes')).recipes;
     for (const id of ['wf-austin-accounts-inbox-triage', 'wf-austin-accounts-invoice-review', 'wf-austin-accounts-bill-exceptions']) {
       const recipe = recipes.find(r => r.id === id); assert.ok(recipe, `pack recipe ${id}`);
@@ -280,7 +302,7 @@ async function runPerson(who) {
     const status = await ok('/api/hermes'); assert.ok(status.workerFingerprint, 'worker fingerprint');
     writeFileSync(join(data, 'hands-ping.json'), JSON.stringify({ at: Date.now(), ok: true, detail: 'Fictional demo worker readiness; not a live model test', kind: 'ping', workerFingerprint: status.workerFingerprint }), { mode: 0o600 });
     let setup = await ok('/api/agency-setup');
-    setup = await ok('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, agencyName: seed.office.agencyName, workflowPackId: seed.office.workflowPackId, timeZone: seed.office.timeZone } });
+    setup = await ok('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, agencyName: seed.office.agencyName, ...(who === 'sherry' ? { workflowPackId: seed.office.workflowPackId } : {}), timeZone: seed.office.timeZone } });
     const ids = {}; let snap;
     for (const p of seed.properties) {
       snap = await ok('/api/desk/properties', 'POST', { address: p.address, tenantName: p.tenant.name, tenantPhone: p.tenant.phone, weeklyRentCents: p.weeklyRentCents, propertyCode: p.code, ...(p.options ? { options: p.options } : {}) }, 201);
@@ -313,7 +335,10 @@ async function runPerson(who) {
       notes.push(`${await seedMaintenanceHistory(ids)} reviewed maintenance invoices from last month (register, as in seed-austin-demo)`);
       const ruleState = await ok('/api/inspection-rules');
       await ok('/api/inspection-rules', 'PUT', { rules: seed.sherryRules.inspectionRules, expectedRevision: ruleState.revision });
-      notes.push("Sherry's inspection rules");
+      // Her role pack set the pack's month rule (date received); the office's own rule is invoice date until she asks Bud (step 10).
+      const review = await ok('/api/maintenance-review');
+      await ok('/api/maintenance-review/rule', 'PUT', { rule: seed.sherryRules.maintenanceRule, expectedRevision: review.ruleRevision });
+      notes.push(`Sherry's inspection rules and maintenance month rule (${review.rule.basis} from her role pack → ${seed.sherryRules.maintenanceRule.basis}, as decided in the seed)`);
     }
     const tabs = await ok('/api/workspace-tabs');
     if (tabs.state) await ok('/api/workspace-tabs', 'PUT', { version: 2, tabs: tabs.state.tabs, desk: { sections: tabs.state.desk.sections.map(s => ({ ...s, visible: true })) }, expectedRevision: tabs.state.revision });
@@ -385,7 +410,37 @@ async function runPerson(who) {
       c('Keyboard: Continue to Bud setup, Escape back to Work');
     });
 
-    await step(2, 'Empty state before any work', async c => {
+    await step(2, 'Import my role pack: Get started → built-in role pack → review → import', async c => {
+      const role = ROLE_PACK[who];
+      await settledSchedule();
+      for (const job of role.jobs) assert.equal(await jobButton(job).count(), 0, `${job} stays off Schedule before the role pack`);
+      c(`Before the import Schedule lists none of ${role.jobs.join(', ')}`);
+      await railByKeyboard('Desk', '#/desk');
+      // Get started shows its actions once its checks load; Tab only reaches what is already on the page.
+      await page.getByRole('button', { name: 'Open packs from your office', exact: true }).waitFor();
+      await pressByKeyboard('Open packs from your office');
+      const setup = page.getByRole('region', { name: 'Customer workflow pack setup', exact: true });
+      await setup.getByRole('region', { name: 'Packs from your office', exact: true }).getByText(/Until then, preview a built-in role pack under More setup options below\.$/).waitFor({ timeout: 30_000 });
+      c('Keyboard: Desk Get started → "Open packs from your office"; the office has shared no packs yet, so it points to the built-in role packs');
+      await setup.getByText('More setup options (office owner)', { exact: true }).click();
+      await setup.getByRole('button', { name: `Preview built-in ${role.title}`, exact: true }).click();
+      const review = setup.getByRole('group', { name: 'Review customer pack import', exact: true });
+      await review.waitFor();
+      await widths(`${who}-role-pack-preview`, review);
+      await review.getByRole('button', { name: 'Import reviewed pack', exact: true }).click();
+      await setup.getByRole('status').filter({ hasText: /^Pack installed locally\./ }).waitFor({ timeout: 30_000 });
+      assert.ok((await ok('/api/customer-packs')).installations.some(p => p.id === role.id), `${role.id} installed`);
+      assert.deepEqual((await ok('/api/austin-pack')).installed?.loopIds, role.loops, 'the role pack records its own workflows only');
+      c(`Previewed and imported the built-in ${role.id} pack (${role.title}); it set ${role.loops.join(', ')}`);
+      if (who === 'kevin') { assert.equal((await ok('/api/agency-setup')).state.settings.workflowPackId, role.id, 'importing the role pack chooses the agency workflow pack'); c(`The import chose ${role.id} as the agency workflow pack`); }
+      await closeDrawer(page);
+      await settledSchedule();
+      for (const job of role.jobs) await jobButton(job).waitFor();
+      for (const job of otherRole.jobs) assert.equal(await jobButton(job).count(), 0, `${job} belongs to the other role pack`);
+      c(`Schedule now lists ${role.jobs.join(', ')} and not ${otherRole.jobs.join(', ')}`);
+    });
+
+    await step(3, 'Empty state before any work', async c => {
       await railByKeyboard('Desk', '#/desk');
       await page.getByRole('heading', { name: 'Start your office book', exact: true }).waitFor();
       c('Desk: empty office book ("Start your office book")');
@@ -394,7 +449,7 @@ async function runPerson(who) {
     });
 
     let book;
-    await step(3, 'Harness: fictional book, mail plans and settings for this office', async c => {
+    await step(4, 'Harness: fictional book, mail plans and settings for this office', async c => {
       book = await seedBook();
       for (const note of book.notes) c(note);
       await page.reload(); await reconnects();
@@ -402,7 +457,7 @@ async function runPerson(who) {
     });
     if (steps.at(-1).status !== 'PASS') throw new Error('Seeding failed; the daily flow cannot run.');
 
-    let n = 4;
+    let n = 5;
     for (const [name, fn] of flows[who].steps) await step(n++, name, c => fn({ ...shared, ids: book.ids }, c));
 
     await step(n++, 'Service blip: down, Reconnecting, back, work continues', async c => {
@@ -442,9 +497,9 @@ async function runPerson(who) {
       limits: [
         'Fictional office, people, properties, suppliers, bank rows and REI portal only; not customer acceptance.',
         'Source service plus built renderer in headless Chrome, not the packaged or installed app; Kevin\'s real machine is Windows and is covered separately.',
-        'realbud.app is a loopback lab website (link-code redeem and status report). Gmail is a loopback fixture connector behind the office link\'s connector credential; Redbark is a loopback fake; REI is server/testing/fictional-rei-portal.ts through the real browser runtime, broker and recipe runner (w1-lab).',
+        'realbud.app is a loopback lab website (link-code redeem, status report and an empty office packs list). Gmail is a loopback fixture connector behind the office link\'s connector credential; Redbark is a loopback fake; REI is server/testing/fictional-rei-portal.ts through the real browser runtime, broker and recipe runner (w1-lab).',
         'Bud is the deterministic Austin showcase worker (no model). Its readiness receipt is written by the harness, as in seed-austin-demo.',
-        'Office data (book, mail plans, W1 settings, maintenance history, inspection rules) is seeded over HTTP after the link; the supplier list and inspection history go through the screens.',
+        'Office data (book, mail plans, W1 settings, maintenance history, inspection and maintenance rules) is seeded over HTTP after the link; the role pack, supplier list and inspection history go through the screens. Sherry\'s PC also gets the office\'s austin-office pack over HTTP for morning priorities.',
         'The person is simulated: REI sign-in and "processed in REI" are played on the fictional portal by the script.',
         'Desktop widths 1280 and 1024 only (no phone layouts by product direction).',
       ],
