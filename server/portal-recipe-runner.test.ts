@@ -12,7 +12,7 @@ import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type Browser
 import { onBrowserSignIn } from "./browser-broker.ts";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
-import { parsePortalRecipePack, type PortalPackRecipe, type PortalRecipePack } from "./portal-recipe.ts";
+import { filterPortalRunRows, parsePortalRecipePack, type PortalPackRecipe, type PortalRecipePack } from "./portal-recipe.ts";
 import { portalRecipeControls, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunRequest } from "./portal-recipe-runner.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REICID, FICTIONAL_TENANT_COLUMNS, FICTIONAL_TENANT_LIST, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
@@ -72,11 +72,14 @@ describe("recipes.json stays generated from the website map", () => {
 });
 
 describe("portal recipe runner through the real broker (fictional REI mock)", () => {
+  // Recipes read the default grid through named controls only; the row filter (server/portal-recipe.ts) applies after.
   const S_READS: Array<[string, Record<string, string>, (rows: Array<Record<string, string>>) => void]> = [
-    ["find-record", { list: "Tenants", query: "Delta" }, rows => { expect(rows).toHaveLength(1); expect(rows[0].Surname).toBe("Delta"); }],
-    ["arrears-review", { min_days: "1" }, rows => { expect(rows).toHaveLength(6); expect(rows.some(row => row.Status === "Vacated")).toBe(false); }],
-    ["tasks-due", { date_from: "2026-09-25", date_to: "2026-09-30" }, rows => { expect(rows).toHaveLength(2); expect(rows.every(row => row.Status === "Open")).toBe(true); }],
-    ["compliance-expiry", { view: "lease expiry" }, rows => expect(rows).toHaveLength(7)],
+    ["find-record", { list: "Tenants", query: "Charlie" }, rows => { expect(rows).toHaveLength(1); expect(rows[0].Surname).toBe("Charlie"); }],
+    // The default grid shows 7 arrears rows (vacated tenants are not hidden): 5 have Days Arrears of 10 or more.
+    ["arrears-review", { min_days: "10" }, rows => expect(rows.map(row => row.Name)).toEqual(["Fictional Tenant Echo", "Fictional Tenant Golf", "Fictional Tenant Hotel", "Fictional Tenant India", "Fictional Juliet"])],
+    // Every status shows; only the Date Due range filters.
+    ["tasks-due", { date_from: "2026-09-26", date_to: "2026-09-30" }, rows => expect(rows.map(row => row.Task)).toEqual(["Fictional lease renewal"])],
+    ["compliance-expiry", {}, rows => expect(rows).toHaveLength(7)],
     ["bank-reconciliation-read", {}, rows => expect(rows.map(row => row.Description)).toEqual(["Fictional deposit", "Fictional fee"])],
   ];
   for (const [recipe, inputs, check] of S_READS) {
@@ -84,7 +87,7 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
       const f = await fixture();
       const run = await f.start(withOpen(recipe, inputs));
       expect(run.outcome, run.detail).toBe("completed");
-      check(run.results[1].rows);
+      check(filterPortalRunRows(f.pack, withOpen(recipe, inputs), run.results)[1].rows);
       expect(run.receipt.approvals.person).toBe(0);
       expect(f.person).not.toHaveBeenCalled();
       expect(f.mock.effects).toEqual([]);
@@ -98,13 +101,13 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
   }
   it("scopes by the top-bar business code alone when no reicid was saved: addresses carry none, a different code stops", async () => {
     const f = await fixture();
-    const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } });
+    const run = await f.start(withOpen("find-record", { list: "Tenants", query: "Charlie" }), { account: { marker: FICTIONAL_BUSINESS } });
     expect(run.outcome, run.detail).toBe("completed");
-    expect(run.results[1].rows.map(row => row.Reference)).toEqual(["FT-DELTA"]);
+    expect(run.results[1].rows.map(row => row.Reference)).toEqual(["FT-CHARLIE"]);
     expect(f.mock.calls.filter(args => args[0] === "navigate").every(args => !new URL(args[1]).searchParams.has("reicid"))).toBe(true);
     expect(run.receipt.accountChecks).toBeGreaterThanOrEqual(f.dispatched().length);
     const other = await fixture({ business: "FICT2" });
-    expect(await other.start(withOpen("find-record", { list: "Tenants", query: "Delta" }), { account: { marker: FICTIONAL_BUSINESS } })).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
+    expect(await other.start(withOpen("find-record", { list: "Tenants", query: "Charlie" }), { account: { marker: FICTIONAL_BUSINESS } })).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
     expect(other.dispatched()).toEqual([]);
   });
   it("finds a field whose accessible name ends in a colon (live REI's DataTables box reads \"Search:\") and still checks the search applied", async () => {
@@ -118,22 +121,24 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.mock.effects).toEqual([]);
     expect(((await f.mock.command(["observe"])) as { text: string }).text).toContain('textbox "Search:" value="Two"');
     // Tenants carries a money word (its BPay column): the pack's "Search" still covers "Search:" there.
-    const tenants = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }));
+    const tenants = await f.start(withOpen("find-record", { list: "Tenants", query: "Charlie" }));
     expect(tenants.outcome, `${tenants.reason} ${tenants.detail}`).toBe("completed");
-    expect(tenants.results[1].rows.map(row => row.Reference)).toEqual(["FT-DELTA"]);
+    expect(tenants.results[1].rows.map(row => row.Reference)).toEqual(["FT-CHARLIE"]);
     expect(tenants.receipt.approvals.person).toBe(0);
   });
   it("reads live REI's Syncfusion grid: rows inside rowgroups, a hidden empty-named first column, template cell names", async () => {
     const f = await fixture({ syncfusionGrid: true });
     const row = (ref: string) => Object.fromEntries(FICTIONAL_TENANT_COLUMNS.map((col, i) => [col, FICTIONAL_TENANT_LIST.find(item => item.cells[0] === ref)!.cells[i]]));
-    const one = await f.start(withOpen("find-record", { list: "Tenants", query: "Delta" }));
+    const one = await f.start(withOpen("find-record", { list: "Tenants", query: "Charlie" }));
     expect(one.outcome, `${one.reason} ${one.detail}`).toBe("completed");
     // Each cell keyed by its column with the template suffix gone; the hidden column is not a field.
-    expect(one.results[1].rows).toEqual([row("FT-DELTA")]);
+    expect(one.results[1].rows).toEqual([row("FT-CHARLIE")]);
     const whole = await f.start(withOpen("find-record", { list: "Tenants", query: "" }));
     expect(whole.outcome, whole.detail).toBe("completed");
-    expect(whole.results[1].rows).toEqual(FICTIONAL_TENANT_LIST.map(item => row(item.cells[0])));
-    expect(whole.results[1].footer).toBe(FICTIONAL_TENANT_LIST.length);
+    // The grid's default Status filter (Active) stands: the recipe changes no unnamed or filter control.
+    const active = FICTIONAL_TENANT_LIST.filter(item => item.status === "Active");
+    expect(whole.results[1].rows).toEqual(active.map(item => row(item.cells[0])));
+    expect(whole.results[1].footer).toBe(active.length);
     expect(f.mock.effects).toEqual([]);
   });
   it("reads Bank Reconciliation's editable form page, also when the page moves its own address while loading, and touches no field", async () => {
@@ -156,7 +161,7 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(moving.mock.effects).toEqual([]);
   });
   it("counts a DataTables \"Showing 1 to N of N entries\" line as the record count; a filtered table counts its unfiltered total", async () => {
-    const f = await fixture({ legacyFilters: false }, { actions: ["read", "click", "navigate", "fill", "keys"] });
+    const f = await fixture({}, { actions: ["read", "click", "navigate", "fill", "keys"] });
     const arrears = (steps: PortalPackRecipe["steps"]) => ({ pack: { ...f.pack, recipes: { ...f.pack.recipes, "arrears-live": { ...f.pack.recipes["arrears-review"], inputs: [], steps } } } });
     const open = [{ nav: ["Process", "Arrears"] }, { check: "account" }, { wait: "table" }];
     const whole = await f.start(withOpen("arrears-live"), arrears([...open, { read: "table" }, { paginate: true }]));
@@ -230,7 +235,7 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     const run = await f.start(withOpen("arrears-review", { min_days: "1" }));
     expect(run.results[1].stopBefore).toEqual(["Notice"]);
     expect(run.results[1].pages).toBe(2);
-    expect(run.results[1].filters).toMatchObject({ "From day": "1", "Hide vacated tenants": "Yes" });
+    expect(run.results[1].filters).toMatchObject({ "Show entries": "All" });
     expect(f.mock.effects).toEqual([]);
   });
   it("a recipe that tries to press a consequential label ends before it; a label outside read-safe is refused", async () => {
@@ -251,7 +256,8 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     const run = await f.start(MORNING(f.pack));
     expect(run.outcome, run.detail).toBe("completed");
     expect(run.results.map(result => [result.recipe, result.outcome])).toEqual([["open-session", "completed"], ["arrears-review", "completed"], ["tasks-due", "completed"], ["bank-reconciliation-read", "completed"]]);
-    expect(run.results.map(result => result.rows.length)).toEqual([0, 6, 2, 2]);
+    expect(run.results.map(result => result.rows.length)).toEqual([0, 7, 3, 2]);
+    expect(filterPortalRunRows(f.pack, MORNING(f.pack), run.results).map(result => result.rows.length)).toEqual([0, 7, 3, 2]);
     expect(f.mock.calls.filter(args => args[0] === "tab" && args[1] === "borrow")).toHaveLength(1);
     expect(f.mock.calls.filter(args => args[0] === "session" && args[1] === "start")).toHaveLength(1);
     expect(run.receipt.steps.every(step => step.ok)).toBe(true);
@@ -270,7 +276,8 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(bank.pages).toBe(2);
     expect(bank.rows.map(row => row.Description)).toEqual(["Fictional deposit", "Fictional fee"]);
     expect(bank.stopBefore).toEqual(["Reconcile"]);
-    expect(run.results.map(result => result.rows.length)).toEqual([0, 6, 2, 2]);
+    expect(run.results.map(result => result.rows.length)).toEqual([0, 7, 3, 2]);
+    expect(filterPortalRunRows(f.pack, MORNING(f.pack), run.results).map(result => result.rows.length)).toEqual([0, 7, 3, 2]);
     expect(run.receipt.approvals.person).toBe(0);
     expect(f.person).not.toHaveBeenCalled();
     expect(f.mock.effects).toEqual([]);
@@ -290,7 +297,7 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     // Nothing was typed into the sign-in page: the first dispatch happens after the resume.
     const help = f.mock.calls.findIndex(args => args[0] === "request-help");
     expect(f.mock.calls.slice(0, help).some(args => DISPATCH.has(args[0]))).toBe(false);
-    expect(run.results[1].rows).toHaveLength(2);
+    expect(run.results[1].rows).toHaveLength(3);
   });
   it("hands over when the person does not finish sign-in", async () => {
     const cancelled = await fixture({ signedOut: true, helpOutcome: "cancelled" });
@@ -305,12 +312,12 @@ describe("portal recipe runner through the real broker (fictional REI mock)", ()
     expect(f.dispatched()).toEqual([]);
   });
   it("stops when the business changes mid-task, before any further step", async () => {
-    // The header changes once four page-changing commands have run (navigate, navigate, fill, press):
-    // the read after the fourth stops the run before the dropdown choice.
+    // The header changes once four page-changing commands have run (navigate, navigate, Show entries, Next):
+    // the read after the fourth stops the run before that page's rows are counted.
     const f = await fixture({ switchBusinessAfterSteps: 3 });
     const run = await f.start(MORNING(f.pack));
     expect(run).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
-    expect(f.dispatched().map(args => args[0])).toEqual(["navigate", "navigate", "fill", "press"]);
+    expect(f.dispatched().map(args => args[0])).toEqual(["navigate", "navigate", "select", "click"]);
     expect(run.results.map(result => result.outcome)).toEqual(["completed", "handover", "not-run", "not-run"]);
     expect(f.mock.effects).toEqual([]);
   });

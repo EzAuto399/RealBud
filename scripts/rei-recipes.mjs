@@ -57,9 +57,9 @@ export function buildReiRecipes(mapText, siteMapText) {
   if (dashboard && !routes.Dashboard) routes.Dashboard = dashboard.path;
   const recipes = {};
   for (const block of blocks.filter(item => item?.recipe)) {
-    const { recipe, kind, tier, inputs, grant_needs, steps, stop_before, on_unknown, success } = block;
+    const { recipe, kind, tier, inputs, grant_needs, steps, row_filter, stop_before, on_unknown, success } = block;
     recipes[recipe] = {
-      kind, tier, inputs: inputs ?? [], grantNeeds: grant_needs ?? [], steps: steps ?? [], stopBefore: stop_before ?? [],
+      kind, tier, inputs: inputs ?? [], grantNeeds: grant_needs ?? [], steps: steps ?? [], ...(row_filter ? { rowFilter: row_filter } : {}), stopBefore: stop_before ?? [],
       ...(on_unknown ? { onUnknown: on_unknown } : {}), ...(success ? { success } : {}),
     };
   }
