@@ -7,8 +7,8 @@ import type { LoopRun } from '../shared/contracts.ts';
 import { reiWaitNotice } from '../shared/rei-sign-in-wait.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import type { Message, OptionCardData, Store } from './store.ts';
+import { evaluatorForLoop } from '../shared/workflow-catalog.ts';
 
-const LOOPS = ['weekly-bills', 'inbound-triage', 'maintenance-review', 'rei-supplier-check', 'inspection-draft'];
 const SETTLED = ['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'];
 const HOLDS = ['failed', 'missed', 'interrupted'];
 const KEEP = 200;
@@ -20,7 +20,7 @@ export interface LoopChatState { delivered: string[]; holds: Record<string, stri
 export function loopChatCardDecision(run: LoopRun, state: LoopChatState): LoopChatState | null {
   // A run waiting at REI sign-in posts while it runs, as a hold (shared/rei-sign-in-wait.ts).
   const rei = reiWaitNotice(run), waiting = rei === 'waiting';
-  if (!(LOOPS.includes(run.loopId) && SETTLED.includes(run.status) || rei) || run.seenAt || state.delivered.includes(run.id)) return null;
+  if (!(evaluatorForLoop(run.loopId)?.notify && SETTLED.includes(run.status) || rei) || run.seenAt || state.delivered.includes(run.id)) return null;
   const hold = waiting || HOLDS.includes(run.status), signature = `${run.status}:${run.detail ?? ''}`;
   if (hold && state.holds[run.loopId] === signature) return null;
   const holds = { ...state.holds };

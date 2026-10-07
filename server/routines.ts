@@ -20,7 +20,7 @@ import { cadenceIncludesDay, validCalendarCadence, type CalendarCadence } from '
 import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
-import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
 import { reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
 import { ownerLetterWeekStart } from "./owner-letter.ts";
 import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
@@ -130,8 +130,8 @@ export function ownerLetterResult(
 const WEEKDAYS = [1, 2, 3, 4, 5];
 /** A run a restart interrupted whose REI sign-in wait a new run carried on (markResumed). */
 export const RESUMED_DETAIL = "Resumed after restart: Bud carried on with this in a new run.";
-/** Off until an office turns them on, and runnable from Schedule while off. */
-const OPT_IN_LOOPS: readonly string[] = ['inbound-triage', 'weekly-bills', 'bank-references', 'maintenance-review', 'rei-supplier-check', 'rei-morning-refresh', 'inspection-draft'];
+/** Off until an office turns them on, and runnable from Schedule while off (server/workflow-catalog.ts). */
+const optIn = (id: LoopId) => evaluatorForLoop(id)?.optIn === true;
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
 /** Ceiling on one run. Generous next to the worker's own 20s timeout — this
@@ -389,7 +389,7 @@ export class LoopManager {
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
       // First-run inbox access must be deliberately enabled after scope review.
-      const enabled = loop.available && (OPT_IN_LOOPS.includes(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
+      const enabled = loop.available && (optIn(loop.id) ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -605,7 +605,7 @@ export class LoopManager {
     if (request && loop && request.expectedRevision !== loop.revision) {
       throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
     }
-    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !OPT_IN_LOOPS.includes(id))) return null;
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !optIn(id))) return null;
     if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     let run!: LoopRun;
     this.commit(() => {
@@ -726,7 +726,7 @@ export class LoopManager {
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(OPT_IN_LOOPS.includes(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(optIn(loop.id) && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
           this.commit(() => {
             run.status = "interrupted";
             run.finishedAt = this.now();

@@ -17,6 +17,7 @@ import type { PendingLoopRequest } from "@/lib/manual-loop-request";
 import { StatusLabel } from "../pm";
 import { BankReferenceReview } from "./BankReferenceReview";
 import { ExecutionHistory } from "./ExecutionHistory";
+import { evaluatorForLoop } from "@shared/workflow-catalog";
 
 export type CloseGuardRegistrar = (guard: () => boolean) => () => void;
 export type LoopTimingChange = { time: string; weekdays: number[]; intervalDays?: number | null; anchorDate?: string };
@@ -204,7 +205,7 @@ export function LoopTiming({
   const [interval, setIntervalDays] = useState(loop.schedule.intervalDays ?? 0);
   const [anchor, setAnchor] = useState(loop.schedule.anchorDate ?? '');
   useEffect(() => { setIntervalDays(loop.schedule.intervalDays ?? 0); setAnchor(loop.schedule.anchorDate ?? ''); }, [loop.schedule.intervalDays, loop.schedule.anchorDate]);
-  const cadenceEditable = ['weekly-bills', 'bank-references', 'rei-supplier-check'].includes(loop.id);
+  const cadenceEditable = evaluatorForLoop(loop.id)?.cadenceEditable === true;
   const dirty = time !== loop.schedule.time || days.join(",") !== savedDays || interval !== (loop.schedule.intervalDays ?? 0) || anchor !== (loop.schedule.anchorDate ?? '');
   const toggleDay = (day: number) =>
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
@@ -332,7 +333,8 @@ export function LoopDetail({
     : null;
   const controlsDisabled = busy || disabled;
   // Morning priorities adopts the reviewed agency time; it never uses the generic timing change.
-  const agencyTimed = loop.id === "inbound-triage";
+  const spec = evaluatorForLoop(loop.id);
+  const agencyTimed = spec?.agencyTimed === true;
 
   return (
     <article id={`routine-${loop.id}`} tabIndex={-1} aria-label={`${loop.name} details`} className="space-y-4 outline-none">
@@ -350,7 +352,7 @@ export function LoopDetail({
           type="button"
           key={pendingRequest?.requestId ?? "new-run"}
           onClick={onRun}
-          disabled={controlsDisabled || (!pendingRequest && !loop.enabled && !loop.waitingForPlan && !['weekly-bills', 'inbound-triage'].includes(loop.id)) || (!pendingRequest && Boolean(activeRun))}
+          disabled={controlsDisabled || (!pendingRequest && !loop.enabled && !loop.waitingForPlan && !spec?.runWhileOff) || (!pendingRequest && Boolean(activeRun))}
           className="pm-decision inline-flex items-center gap-1.5 rounded-lg bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
         >
           {busy ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden /> : <Play size={13} aria-hidden />}

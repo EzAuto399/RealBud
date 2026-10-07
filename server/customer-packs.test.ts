@@ -5,9 +5,13 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Recipe } from '../shared/contracts.ts';
+import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
+import { DATA_DIR } from './config.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
-import { withFictionalPublisher } from './testing/pack-publisher.ts';
+import { getRecipe } from './recipes.ts';
+import { LoopManager } from './routines.ts';
+import { FICTIONAL_PACK_KEYS, withFictionalPublisher } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 const createCustomerPackService = withFictionalPublisher(createPackService);
 
@@ -173,7 +177,9 @@ describe('portable customer pack lifecycle', () => {
     const duplicate = austinCustomerPack(); duplicate.recipes.push(duplicate.recipes[0]); expect(() => validateCustomerPack(duplicate)).toThrow(/Duplicate/);
     const secret = austinCustomerPack(); secret.skills[0].instructions += '\napi_key=not-a-real-secret-123456789'; expect(() => validateCustomerPack(secret)).toThrow(/credentials/);
     const executable = austinCustomerPack(); Object.assign(executable.skills[0], { path: '../../config.yaml', command: 'execute' }); expect(() => validateCustomerPack(executable)).toThrow(/Unsupported/);
-    const clock = austinCustomerPack(); clock.recipes[0].schedule = { time: '09:00', weekdays: [1] }; expect(() => validateCustomerPack(clock)).toThrow(/on-demand/);
+    // A plan's own clock installs paused for plan review ('pack plan clocks' below); a loop that arrives switched on is refused.
+    const clock = austinCustomerPack(); clock.files = { 'office/settings.json': JSON.stringify({ version: 1, kind: 'office-settings', loops: [{ id: 'weekly-bills', enabled: true, schedule: { type: 'daily', time: '09:00', weekdays: [1] } }] }) };
+    expect(() => validateCustomerPack(clock)).toThrow(/arrive switched off/);
   });
   it.each([`rbc_${'a'.repeat(64)}`, `ak_${'A1'.repeat(16)}`, `ck_${'B2'.repeat(16)}`])('rejects a scoped or vendor credential in imported text: %s', credential => {
     const pack = austinCustomerPack(); pack.skills[0].instructions += `\n${credential}\n`;
@@ -344,5 +350,70 @@ describe('planted entries in pending/skills', () => {
     expect((await lstat(join(folder, 'aaaa1111.json'))).isSymbolicLink()).toBe(true);
     expect((await lstat(join(folder, 'bbbb2222.json'))).nlink).toBe(2);
     await expect(lstat(join(folder, '1234abcd.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('pack plan clocks', () => {
+  const clockedPack = (revision = 1): CustomerPack => ({ format: 'realbud-customer-pack', version: 1, id: 'fixture-clock', revision, title: 'Fictional clocked office',
+    recipes: [{ id: 'wf-fixture-clock-weekly', title: 'Weekly review', description: 'Review the supplied fictional sources each week.', steps: ['Read the supplied fictional sources.'], evidence: 'Source references.',
+      capabilities: ['read-files', 'analyse', 'draft'], limits: { maxRuntimeMinutes: 2, maxTurns: 6 }, siteNotes: null, schedule: { time: '08:00', weekdays: [1] }, allowedOrigins: [] }],
+    workflows: [{ id: 'weekly', title: 'Weekly review', recipeIds: ['wf-fixture-clock-weekly'], checks: ['input-coverage'] }],
+    skills: [{ id: 'fixture-guidance', name: 'Fictional guidance', description: 'Review fictional supplied sources.', instructions: '# Fictional guidance\nRead the source first.\n', license: 'Fictional test license.' }],
+    dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' } });
+  const loopId = 'recipe-wf-fixture-clock-weekly';
+
+  it('imports a signed plan with its clock as a shadow that waits for plan approval', async () => {
+    const f = await fixture(), pack = clockedPack();
+    // A clock rides only on a RealBud-signed pack.
+    await expect(createPackService({ ...f.options, trustedKeys: FICTIONAL_PACK_KEYS }).preview(pack)).rejects.toThrow(/isn't signed by RealBud/);
+    await f.service.install(pack, (await f.service.preview(pack)).digest);
+    const saved = f.recipes()[0];
+    expect(saved).toMatchObject({ id: 'wf-fixture-clock-weekly', status: 'shadow', schedule: { time: '08:00', weekdays: [1] }, planApprovedAt: null, approvedRevision: null });
+    const now = Date.UTC(2026, 9, 7, 0, 0), calls: string[] = [];
+    const clock = new LoopManager({ file: join(f.root, 'loops.json'), now: () => now, hostTimezone: 'Australia/Brisbane', listRecipes: () => f.recipes(),
+      execute: async loop => { calls.push(loop.id); return { ok: true, detail: 'done' }; } });
+    try {
+      const loop = () => clock.listLoops().find(item => item.id === loopId);
+      expect(loop()).toMatchObject({ waitingForPlan: true, enabled: false, nextRunAt: null, evaluatorId: 'recipe', schedule: { time: '08:00', weekdays: [1] } });
+      await clock.tick();
+      expect(calls).toEqual([]);
+      // Only a person's plan approval puts it on the clock.
+      Object.assign(saved, { status: 'active', planApprovedAt: now, approvedRevision: saved.revision });
+      expect(loop()).toMatchObject({ waitingForPlan: false, enabled: true, nextRunAt: expect.any(Number) });
+    } finally { clock.close(); }
+  });
+
+  it('refuses a malformed plan clock, and a clocked plan keeps the file-preparation capability limit', () => {
+    const variant = (schedule: unknown, capabilities: string[] = ['read-files', 'analyse', 'draft']) => () => {
+      const pack = clockedPack(); Object.assign(pack.recipes[0], { schedule, capabilities }); return validateCustomerPack(pack);
+    };
+    expect(variant({ time: '25:00', weekdays: [1] })).toThrow(/plan schedule in this pack is not valid/);
+    expect(variant({ time: '08:00', weekdays: [] })).toThrow(/plan schedule in this pack is not valid/);
+    expect(variant({ time: '08:00', weekdays: [1], timezone: 'UTC' })).toThrow(/Unsupported pack fields/);
+    expect(variant(undefined)).toThrow();
+    expect(variant({ time: '08:00', weekdays: [1] }, ['read-files', 'read-book'])).toThrow(/without website or external-action access/);
+    expect(validateCustomerPack(clockedPack()).recipes[0].schedule).toEqual({ time: '08:00', weekdays: [1] });
+  });
+
+  it('clears the plan clock on a reviewed upgrade and on rollback', async () => {
+    await rm(join(DATA_DIR, 'recipes.json'), { force: true });
+    const root = privateTempRoot(join(realpathSync(tmpdir()), 'rb-customer-pack-clock-')); roots.push(root);
+    // The real recipe store, so approval resets and pack writes are the production ones.
+    const service = createCustomerPackService({ directory: root, profileDirectory: () => join(root, 'profile'), workroomDirectory: () => join(root, 'vault'),
+      activeRecipeIds: () => [], learningStatus: () => ({ supported: true, policyReady: true, enabled: true }) });
+    const initial = clockedPack(), id = initial.recipes[0].id;
+    await service.install(initial, (await service.preview(initial)).digest);
+    expect(getRecipe(id)).toMatchObject({ status: 'shadow', schedule: { time: '08:00', weekdays: [1] } });
+    const request = (preview: CustomerPackChangePreview) => ({ pack: preview.pack, expectedInstalledDigest: preview.installedDigest,
+      expectedInstalledRevision: preview.installedRevision, expectedDigest: preview.digest, expectedPreviewDigest: preview.previewDigest });
+    const next = clockedPack(2); next.recipes[0].steps = ['Read the sources and name missing facts.'];
+    await service.upgrade(request(await service.previewUpgrade(next)));
+    expect(getRecipe(id)).toMatchObject({ status: 'shadow', schedule: null, steps: next.recipes[0].steps, approvedRevision: null });
+    // The saved configuration remembers the clock; rolling back to it still arrives without one.
+    const rollback = (await service.handle(`/api/customer-packs/${initial.id}/rollback-preview`, 'POST', { installationRevision: 1 }))!.body as CustomerPackChangePreview;
+    expect(rollback.canApply).toBe(true);
+    const { pack: _pack, ...expected } = request(rollback);
+    await service.rollback({ ...expected, packId: initial.id, installationRevision: 1 });
+    expect(getRecipe(id)).toMatchObject({ status: 'shadow', schedule: null, steps: initial.recipes[0].steps, approvedRevision: null });
   });
 });

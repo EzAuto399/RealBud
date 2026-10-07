@@ -9,6 +9,7 @@ export interface CustomerPack {
   recipes: CustomerPackRecipe[];
   /** Text-only native skill instructions. Paths and executable assets are never accepted. */
   skills: { id: string; name: string; description: string; instructions: string; license: string }[];
+  /** `schedules: 'off'`: every clock arrives off. A plan's own `schedule` waits for plan review; office loops arrive switched off. */
   dependencies: { runtime: 'hermes-property'; mode: 'supplied-source-preparation'; schedules: 'off'; permissions: 'local-review-required' };
   /** Optional data files, by allowlisted path (CUSTOMER_PACK_FILES). Text only. */
   files?: Partial<Record<CustomerPackFile, string>>;
