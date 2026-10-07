@@ -789,6 +789,21 @@ describe("harness HTTP API", () => {
     expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
   });
 
+  it("answers a phone tap on a live action card through the same live-request helper", () => {
+    // Source contract: the phone path is answerLiveRequest with no request (so no saved rule or
+    // always-reads), and the card's answeredBy and the app receipt come from that one helper.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("void bindRemoteToolCards({");
+    const binding = source.slice(start, source.indexOf("// Desk, Schedule", start));
+    expect(binding).toContain("await answerLiveRequest(threadId, parsed, null,");
+    expect(binding).toContain("parseRequestDecision(");
+    expect(binding).not.toMatch(/respondToRequest|guardPermissionDecision|taskReadGrants|addPortalRule/);
+    const helper = source.slice(source.indexOf("async function answerLiveRequest("), source.indexOf("let localSessionPublished"));
+    for (const check of ["if (!req) return { status: 403", "phoneAnswers.set(live, phone)", "recordConnectedAppApproval(threadId, card.detail, phone.line)"]) expect(helper, check).toContain(check);
+    expect(source).toContain("void remoteToolCardOpened(event.threadId, event.requestId)");
+    expect(source).toContain("answeredBy: byPhone.by, resolution: \"phone\" as const");
+  });
+
   it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
     const empty = await api("GET", "/api/law-watch");
     expect(empty.status).toBe(200);

@@ -22,6 +22,7 @@ import {
   parseDecisionCallback,
   decideRemoteText,
   remoteSenderMayDecide,
+  type DecisionButtons,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -310,7 +311,12 @@ export async function sendDecisionMessage(
   chatId: number,
   text: string,
   draftId: string,
+  buttons: DecisionButtons = { allow: "Allow", deny: "Deny" },
 ): Promise<void> {
+  const allow = { text: buttons.allow, callback_data: `d:${draftId}:allow` };
+  const deny = { text: buttons.deny, callback_data: `d:${draftId}:deny` };
+  // A third button stacks the row so "Allow for this task" is not cut short on a phone.
+  const inline_keyboard = buttons.task ? [[allow], [{ text: buttons.task, callback_data: `d:${draftId}:task` }], [deny]] : [[allow, deny]];
   const res = await fetchFn(telegramMethodUrl(token, "sendMessage"), {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
@@ -319,14 +325,7 @@ export async function sendDecisionMessage(
       chat_id: chatId,
       text: formatTelegramHtmlMessage(text),
       parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Allow", callback_data: `d:${draftId}:allow` },
-            { text: "Deny", callback_data: `d:${draftId}:deny` },
-          ],
-        ],
-      },
+      reply_markup: { inline_keyboard },
     }),
   });
   if (!res.ok || (await res.json() as { ok?: boolean }).ok !== true) throw new Error("Telegram did not accept that message");
@@ -806,11 +805,11 @@ export function telegramDecisionAdapter(): RemoteChannelAdapter {
     pairedSender() {
       return decisionSender(loadChannel());
     },
-    async sendDecision(text, draftId) {
+    async sendDecision(text, draftId, buttons) {
       const rec = loadChannel();
       if (!rec?.botToken || rec.pairedChatId == null) throw new Error("Phone connection changed");
       try {
-        await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChatId, text, draftId);
+        await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChatId, text, draftId, buttons);
       } catch (error) {
         const raw = error instanceof Error ? error.message : String(error);
         logQuiet(raw, rec.botToken);

@@ -298,8 +298,8 @@ describe("decideRemotely", () => {
     const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda", "user-1");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.draft.status).toBe("allowed");
-    expect(result.draft.via).toBe("via Telegram · Yoda");
+    expect(result.draft?.status).toBe("allowed");
+    expect(result.draft?.via).toBe("via Telegram · Yoda");
     expect(result.stamp).toMatch(/^Allowed via Telegram · Yoda · /);
     expect(sent).toHaveLength(2);
     expect(pendingDraftId("telegram")).toBe("d-2");
@@ -319,8 +319,8 @@ describe("decideRemotely", () => {
     const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "deny", "too soon", "Sam", "user-1");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.draft.status).toBe("denied");
-    expect(result.draft.via).toBe("via Telegram · Sam");
+    expect(result.draft?.status).toBe("denied");
+    expect(result.draft?.via).toBe("via Telegram · Sam");
     expect(desk.notes).toBe("too soon");
   });
 
@@ -405,6 +405,8 @@ describe("parseRemoteDecisionText", () => {
     expect(parseRemoteDecisionText("no")).toEqual({ decision: "deny" });
     expect(parseRemoteDecisionText("no - too soon")).toEqual({ decision: "deny", reason: "too soon" });
     expect(parseRemoteDecisionText("what's late?")).toBeNull();
+    expect(parseRemoteDecisionText("task ABCDEF123456")).toEqual({ decision: "task", decisionId: "abcdef123456" });
+    expect(parseRemoteDecisionText("task")).toBeNull();
   });
 });
 

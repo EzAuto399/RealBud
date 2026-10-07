@@ -19,6 +19,7 @@ import {
   parseDecisionCallback,
   decideRemoteText,
   remoteSenderMayDecide,
+  type DecisionButtons,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -223,6 +224,7 @@ export async function sendDecisionMessage(
   channelId: string,
   text: string,
   draftId: string,
+  buttons: DecisionButtons = { allow: "Allow", deny: "Deny" },
 ): Promise<void> {
   const res = await fetchFn(`${discordApiBase()}/api/v10/channels/${channelId}/messages`, {
     method: "POST",
@@ -234,8 +236,9 @@ export async function sendDecisionMessage(
         {
           type: 1,
           components: [
-            { type: 2, style: 1, custom_id: `d:${draftId}:allow`, label: "Allow" },
-            { type: 2, style: 4, custom_id: `d:${draftId}:deny`, label: "Deny" },
+            { type: 2, style: 1, custom_id: `d:${draftId}:allow`, label: buttons.allow },
+            ...(buttons.task ? [{ type: 2, style: 2, custom_id: `d:${draftId}:task`, label: buttons.task }] : []),
+            { type: 2, style: 4, custom_id: `d:${draftId}:deny`, label: buttons.deny },
           ],
         },
       ],
@@ -740,11 +743,11 @@ export function discordDecisionAdapter(): RemoteChannelAdapter {
     pairedSender() {
       return decisionSender(loadChannel());
     },
-    async sendDecision(text, draftId) {
+    async sendDecision(text, draftId, buttons) {
       const rec = loadChannel();
       if (!rec?.botToken || rec.pairedChannelId == null) throw new Error("Phone connection changed");
       try {
-        await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChannelId, text, draftId);
+        await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChannelId, text, draftId, buttons);
       } catch (error) {
         const raw = error instanceof Error ? error.message : String(error);
         logQuiet(raw, rec.botToken);
