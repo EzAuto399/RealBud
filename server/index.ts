@@ -3241,7 +3241,7 @@ const workerAutoSetup = createWorkerAutoSetup({
   active: officeServiceActive,
   status: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
   installOrRepair: async () => {
-    keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
+    await prepareProfileRepair();
     const outcome = await installOrRepairWorker();
     if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
     // Same receipts as the administrator route: no stale "ready" survives.
@@ -5112,8 +5112,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       try {
-        // An office SOUL edit RealBud could not keep is renamed aside before Repair resets SOUL.md.
-        keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
+        await prepareProfileRepair();
         applyPropertyPack();
         // Repair resets SOUL.md to the shipped copy on purpose; the office's edit is retired, not re-projected.
         await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
@@ -5140,7 +5139,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       // Same decision automatic setup uses (`installOrRepairWorker`).
+      await prepareProfileRepair();
       const outcome = await installOrRepairWorker();
+      if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
       if (outcome.kind === "running") return json(res, 202, { install: outcome.install });
       if (outcome.kind === "awaiting_restart") {
         return json(res, 200, { install: { state: "done", lines: ["Bud’s update is installed. Restart RealBud to use it."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, restartRequired: true });
@@ -6139,6 +6140,10 @@ const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: w
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
 // Bud's memory, learning and office edits live in RealBud (D/worker-state); the
 // worker profile is a projection, so deleting or replacing the worker loses nothing.
+/** Every path that resets SOUL.md to the pack (Repair, Install, apply-pack,
+ * automatic repair) goes through here first: an office edit RealBud could not
+ * keep is renamed aside, so it is never overwritten. */
+const prepareProfileRepair = async () => keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
 const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
 const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
 // Each seat imports inside its own profile, so helper-era proposal identities and
