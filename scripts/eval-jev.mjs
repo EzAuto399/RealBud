@@ -50,6 +50,8 @@ delete process.env.REALBUD_EVAL_MODEL_KEY; // nothing imported below reads it
 const jevModelEnv = process.env.REALBUD_JEV_MODEL?.trim();
 if (jevModelEnv === 'off') refuse('REALBUD_JEV_MODEL is off, so jev-client refuses every call. Nothing was sent.');
 const MODEL = jevModelEnv || 'jev-1.13-decisions';
+// One model for every use: jev-client otherwise picks a primary per use (Luna for w1 and ledger) and falls back to the other.
+process.env.REALBUD_JEV_MODEL = MODEL; process.env.REALBUD_JEV_FALLBACK_MODEL ||= 'off';
 const secret = live?.key;
 const sanitize = value => { const s = String(value ?? ''); return secret ? s.replaceAll(secret, '[redacted]') : s; };
 

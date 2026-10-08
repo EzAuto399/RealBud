@@ -40,7 +40,7 @@ export interface SavedBankBatch {
   jevUsage?: RunUsage;
 }
 export interface BankJevHint { rowId: string; propertyId: string; suggestion: string }
-type JevDecide = (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>;
+type JevDecide = (request: JevRequest, options?: { signal?: AbortSignal; prefer?: "jev" | "luna" }) => Promise<JevResult>;
 /** The whole hint pass, every row included; rows Jev has not answered by then stay unhinted. */
 const JEV_HINTS_MS = 15_000;
 export class BankReferenceStore {
@@ -133,7 +133,7 @@ export class BankReferenceStore {
       if (!decide || !pass) return this.view(record);
       const signal = AbortSignal.timeout(options.timeoutMs ?? JEV_HINTS_MS);
       let answered = 0; const usage = emptyRunUsage();
-      await jevPayerHints(value.batch, pass, countJevUsage(usage, async (request: JevRequest, asked?: { signal?: AbortSignal }) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }), { signal });
+      await jevPayerHints(value.batch, pass, countJevUsage(usage, async (request: JevRequest, asked?: Parameters<JevDecide>[1]) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }), { signal });
       if (!answered) return this.view(record);
       const jevHints = pass.rows.flatMap((row): BankJevHint[] => row.hintSource === "jev" ? [{ rowId: row.rowId, propertyId: row.propertyId!, suggestion: row.suggestion! }] : []);
       return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, record.revision, value => ({ ...value, jevHints, jevUsage: usage }))));

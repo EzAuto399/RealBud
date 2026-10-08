@@ -217,7 +217,7 @@ const HINT_ROWS_PER_CALL = 8, HINT_CALLS_IN_FLIGHT = 3, HINT_STATE_BYTES = 15_00
  * fails or throws leaves only its own rows unhinted.
  */
 export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
-  decide: (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<FirstPass> {
+  decide: (request: JevRequest, options?: { signal?: AbortSignal; prefer?: "jev" | "luna" }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<FirstPass> {
   const table = parseBankCsv(batch.input.csv), rules = batch.input.rules;
   const named = (rule: BankReferenceRule) => [...new Set([rule.tenant ?? "", ...rule.aliases].map(text => text.trim()).filter(text => text && !/\d/.test(text)))];
   type Ask = { row: FirstPassRow; payer: string; candidates: BankReferenceRule[] };
@@ -261,7 +261,8 @@ export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
         return [`p${n}`, { type: "choice", instructions: `Payment p${n} in the state: which tenant most likely made this rent payment, judged by the payer name? Choose none unless one tenant clearly fits.`, criteria }];
       }));
       let result: JevResult | null = null;
-      try { result = await decide({ state: stateOf(group), questions }, { signal: options.signal }); } catch { /* this call's rows stay unhinted */ }
+      // Luna first: the 8 Oct eval's only safe arm here (Jev made 2 wrong accepts at these thresholds).
+      try { result = await decide({ state: stateOf(group), questions }, { signal: options.signal, prefer: "luna" }); } catch { /* this call's rows stay unhinted */ }
       if (result?.ok) group.forEach((ask, n) => hint(ask, result.answers[`p${n}`]));
     }
   };
