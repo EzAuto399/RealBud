@@ -34,11 +34,14 @@ export function sourceKindLabel(kind: string): string {
   return kind;
 }
 
-export type MissAction = { label: string; hash: "attach-model" | "you-worker" };
+export type MissAction = { label: string; hash: "attach-model" | "you-worker" } | { ownerRequest: "modelAccess" };
 
-/** One recovery door from a Recheck miss detail. Null when the line has no implied next step. */
-export function missAction(detail: string): MissAction | null {
+/** One recovery door from a Recheck miss detail. Null when the line has no implied next step.
+ * `canAdminister` is whether this person can open Bud's model settings. Managed staff
+ * can't, and a key or billing fix is the office owner's, so they get the owner hand-off. */
+export function missAction(detail: string, canAdminister = true): MissAction | null {
   const text = detail.toLowerCase();
+  if (!canAdminister && /key|billing|credits/.test(text)) return { ownerRequest: "modelAccess" };
   if (/key|model connection|billing|credits|no model/.test(text)) {
     return { label: "Open model connection", hash: "attach-model" };
   }
