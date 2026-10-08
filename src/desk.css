@@ -58,7 +58,6 @@
 /* Review actions stay in view at the bottom of the one scroll region. */
 .desk-case-column .desk-decision { position: sticky; bottom: 0; z-index: 1; background: var(--color-sheet); }
 .desk-other-work-surface { padding: 24px; }
-.desk-other-work-surface > .desk-back-to-tasks { display: inline-flex; align-items: center; margin-bottom: 10px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-sheet); font-size: 13px; font-weight: 500; color: var(--color-agency); }
 /* Reminders: collapsed shows only the heading (with its due count) and alerts. */
 .desk-reminders-disclosure .desk-reminders { margin-top: 0; }
 .desk-reminders-toggle { flex: 0 0 auto; min-height: 44px; padding: 0 6px; font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--color-agency); }
@@ -74,7 +73,6 @@
 .desk-workspace-tabs > button { display: flex; align-items: center; gap: 8px; min-height: 48px; border-bottom: 3px solid transparent; font-size: 14px; color: var(--color-ink-muted); font-weight: 500; white-space: nowrap; }
 .desk-workspace-tabs > button[aria-pressed="true"] { border-color: var(--color-agency); color: var(--color-agency); }
 .desk-workspace-tabs > button > span { padding: 1px 7px; border-radius: 5px; background: var(--color-selected); font-size: 11px; }
-.desk-workspace-tabs > button.desk-workspace-back { border-bottom-color: transparent; color: var(--color-agency); font-weight: 600; }
 .desk-more { position: relative; }
 .desk-more > summary { cursor: pointer; list-style: none; }
 .desk-more > summary::-webkit-details-marker { display: none; }
