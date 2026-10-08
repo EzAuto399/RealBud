@@ -15,10 +15,6 @@ export const NOTIFY_LABELS: Record<NotifyChannel, string> = {
   desk: "Desk only",
 };
 
-export function sourceLabel(source: RentSource): string {
-  return RENT_SOURCE_LABELS[source];
-}
-
 export { CASE_KIND_LABELS } from "@/lib/desk-queue";
 
 export const CONTACT_ROLE_LABELS: Record<string, string> = {

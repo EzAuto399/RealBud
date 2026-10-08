@@ -1,20 +1,9 @@
 import { useSyncExternalStore } from "react";
 import { api } from "@/state/store";
 import { createOfficeSourceStore } from "./office-source-store";
-import { OFFICE_SOURCE_LABELS, officeAppLabel, officeSourceState, type ConnectedAppsStatus } from "@shared/office-sources";
 
 export const officeSources = createOfficeSourceStore((path, init) => api(path, init));
 export const useOfficeSources = () => useSyncExternalStore(officeSources.subscribe, officeSources.getSnapshot, officeSources.getSnapshot);
-export async function refreshConnectedApps(): Promise<ConnectedAppsStatus> {
-  const result = await officeSources.refresh();
-  if (!result) throw new Error(officeSources.getSnapshot().error || "App settings changed. Checking again…");
-  return result;
-}
-export function summarizeConnectedApps(snapshot: ConnectedAppsStatus): string {
-  if (!snapshot.configured) return "Add an office app to use it with Bud.";
-  if (snapshot.error) return "Office apps need attention. Open Add to try again.";
-  return Object.keys(snapshot.services).map(slug => `${officeAppLabel(slug)}: ${OFFICE_SOURCE_LABELS[officeSourceState(snapshot, slug)]}`).join(" · ") || "No office accounts connected yet.";
-}
 
 /** Mounted by the app, so signing in survives changing pages. Only status reads retry. */
 export function watchOfficeSources(): () => void {

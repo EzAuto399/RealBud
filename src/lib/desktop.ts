@@ -26,10 +26,6 @@ const browserCapabilities: DesktopCapabilities = {
 
 let cached: DesktopCapabilities | null = null;
 
-export function browserDesktopCapabilities(): DesktopCapabilities {
-  return browserCapabilities;
-}
-
 export function initialDesktopCapabilities(): DesktopCapabilities {
   const platform = window.ogb?.platform;
   if (!platform) return browserCapabilities;
