@@ -297,7 +297,8 @@ const USE = {
         const before = calls.length;
         const route = await askJevRoute(c.text, { person: true, ready: () => true, decide: recorder(calls) });
         const call = calls.length > before ? calls.at(-1) : null;
-        if (!call) { unasked.push(c.id); continue; }
+        // A Bud case the word gate sends straight to Bud is right without a call; a control it skips is a loss.
+        if (!call) { if (c.gold || route !== null) unasked.push(c.id); continue; }
         records.push(choiceRecord(c.id, c.gold, call.answers?.route, choice => choice === 'bud' ? null : choice));
         module.push(route);
       }
