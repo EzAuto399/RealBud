@@ -33,6 +33,8 @@ import { canUseTaskStarter } from "@/lib/pm-task-starters";
 import { PmTaskStarters } from "../PmTaskStarters";
 import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
 import { beginManualJobRequest, confirmManualJobReceipt, pendingManualJobRequest, resumeManualJobRequest } from "@/lib/manual-job-request";
+import { useOfficeSources } from "@/lib/connected-apps-refresh";
+import { activeConnectedAccounts, EMAIL_APPS } from "@/lib/connected-apps";
 
 const REVIEW_STATUSES = ["failed", "missed", "interrupted", "partial", "awaiting-approval"];
 
@@ -60,6 +62,26 @@ const buttonClass =
   "pm-control inline-flex items-center justify-center gap-2 rounded border border-line px-3 text-[13px] text-ink hover:bg-selected disabled:opacity-40";
 const primaryClass =
   "pm-decision inline-flex items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40";
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+export type RepeatUnit = "minutes" | "hours";
+/** First timing problem, shown beside its field; Save stays off with the same reason. */
+export function timingIssue(
+  fields: Pick<JobPlanFields, "scheduled" | "time" | "weekdays" | "everyMinutes" | "until">,
+  unit: RepeatUnit,
+): { field: "every" | "time" | "until" | "days"; message: string } | null {
+  if (!fields.scheduled) return null;
+  const every = fields.everyMinutes;
+  if (every != null && (!Number.isInteger(every / (unit === "hours" ? 60 : 1)) || every < 1 || every > 1440)) {
+    return { field: "every", message: unit === "hours" ? "Choose a whole number of hours from 1 to 24." : "Choose a whole number of minutes from 1 to 1440." };
+  }
+  if (!CLOCK.test(fields.time)) return { field: "time", message: every != null ? "Choose a start time." : "Choose a time." };
+  if (every != null && fields.until != null && (!CLOCK.test(fields.until) || fields.until <= fields.time)) {
+    return { field: "until", message: "Until must be later than From." };
+  }
+  if (!fields.weekdays.length) return { field: "days", message: "Choose at least one day." };
+  return null;
+}
 
 export function JobWorkspace({
   recipes,
@@ -115,6 +137,20 @@ export function JobWorkspace({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const setDraft = (next: JobDraftState) => dispatch({ type: "jobDraft", draft: next });
   const change = (patch: Partial<JobPlanFields>) => fields && setDraft({ ...draft, fields: { ...fields, ...patch } });
+  const [repeatUnit, setRepeatUnit] = useState<RepeatUnit | null>(null);
+  const unit: RepeatUnit = repeatUnit ?? (fields?.everyMinutes && fields.everyMinutes % 60 === 0 ? "hours" : "minutes");
+  const timing = fields ? timingIssue(fields, unit) : null;
+  const [stop, setStop] = useState<{ runId: string; error: string } | null>(null);
+  const stopError = activeRun && stop?.runId === activeRun.id ? stop.error : "";
+  const stopping = Boolean(activeRun && stop?.runId === activeRun.id && !stop.error);
+  const { snapshot: officeApps } = useOfficeSources();
+  // Unknown until the office apps check answers; only a known absence holds the ability.
+  const mailboxConnected = officeApps && !officeApps.error
+    ? EMAIL_APPS.some((app) => !officeApps.excludedApps?.includes(app.slug) && activeConnectedAccounts(officeApps.services[app.slug]).length > 0) ||
+      activeConnectedAccounts(officeApps.officeShared).length > 0
+    : null;
+
+  useEffect(() => setRepeatUnit(null), [plan?.id]);
 
   useEffect(() => {
     if (!plan) {
@@ -360,6 +396,27 @@ export function JobWorkspace({
       if (!next.includes(ability)) next = next.filter((item) => item !== "portal-submit");
     }
     change({ capabilities: next });
+  };
+
+  // Stop is a safety control: it stays available while another step is in flight.
+  const stopRun = async () => {
+    if (!plan || !activeRun || stopping || DESIGN_PREVIEW_REASON) return;
+    const runId = activeRun.id;
+    setStop({ runId, error: "" });
+    try {
+      const body = (await api(`/api/loops/${encodeURIComponent(`recipe-${plan.id}`)}/stop`, { method: "POST" }, { timeoutMs: 15_000 })) as { run?: JobRun } | undefined;
+      if (body?.run?.id === runId && typeof body.run.status === "string") dispatch({ type: "jobRun", run: body.run });
+      void onRefresh().catch(() => {});
+    } catch (cause) {
+      // A lost reply may hide a stop that worked, so it is never called failed.
+      const status = (cause as { status?: unknown } | null)?.status;
+      setStop({
+        runId,
+        error: typeof status === "number"
+          ? budFacingCopy(cause, "Bud could not stop this run.")
+          : "The stop could not be confirmed. If this run still shows as running, press Stop now again.",
+      });
+    }
   };
 
   const togglePaused = () => perform("Updating this job…", async () => {
@@ -627,16 +684,36 @@ export function JobWorkspace({
                 <div className="mt-2 grid gap-1 sm:grid-cols-2">
                   {(Object.keys(JOB_ABILITY_LABELS) as JobCapability[])
                     .filter((ability) => ability !== "portal-submit" || plan.capabilities.includes(ability))
-                    .map((ability) => (
-                      <label key={ability} className="flex min-h-10 items-center gap-2 text-[14px] text-ink">
-                        <input
-                          type="checkbox"
-                          checked={fields.capabilities.includes(ability)}
-                          onChange={() => toggleAbility(ability)}
-                        />
-                        {JOB_ABILITY_LABELS[ability]}
-                      </label>
-                    ))}
+                    .map((ability) => {
+                      const mail = ability === "read-mail";
+                      // A saved grant can always be removed, even without a mailbox.
+                      const needsMailbox = mail && mailboxConnected === false && !fields.capabilities.includes(ability);
+                      return (
+                        <div key={ability} className={mail ? "sm:col-span-2" : undefined}>
+                          <label className={cn("flex items-center gap-2 text-[14px] text-ink", mail ? "min-h-11" : "min-h-10")}>
+                            <input
+                              type="checkbox"
+                              checked={fields.capabilities.includes(ability)}
+                              disabled={needsMailbox || undefined}
+                              aria-describedby={mail ? "job-read-mail-help" : undefined}
+                              onChange={() => toggleAbility(ability)}
+                            />
+                            {JOB_ABILITY_LABELS[ability]}
+                          </label>
+                          {mail ? (
+                            <div id="job-read-mail-help" className="pl-6 text-[13px] text-ink-muted">
+                              <p>Bud reads your connected mailbox when this job runs; it never sends.</p>
+                              {needsMailbox ? (
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                  <p className="text-hold">Connect your mailbox in Workspace → Connected apps first.</p>
+                                  <button type="button" className={buttonClass} onClick={() => openWorkspaceSetup("apps")}>Open connected apps</button>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                 </div>
                 <label className="mt-3 block text-[14px] text-ink">
                   Allowed websites — one hostname per line
@@ -658,7 +735,7 @@ export function JobWorkspace({
             {recipeNeedsPlanApproval(plan) && !portal ? <ApprovalScope kind="plan" /> : null}
             <div id="job-plan-decisions" tabIndex={-1} aria-label="Next step" className="sticky bottom-0 -mx-4 mt-4 flex flex-wrap items-center gap-2 border-t border-line bg-sheet px-4 py-3">
               {dirty ? <>
-                <button type="button" disabled={actionBlocked} onClick={() => void save()} className={primaryClass}>Save changes</button>
+                <button type="button" disabled={actionBlocked || Boolean(timing)} aria-describedby={timing ? "job-save-blocked" : undefined} onClick={() => void save()} className={primaryClass}>Save changes</button>
                 <button type="button" disabled={busy} onClick={() => {
                   setDraft(draft.saved ? { ...draft, fields: jobPlanFields(plan) } : { ...EMPTY_JOB_DRAFT, text: draft.text });
                   setError(""); setEditing(false);
@@ -678,6 +755,13 @@ export function JobWorkspace({
                   : !portal && recipeClockRunnable(plan) ? <button type="button" className={primaryClass} disabled={actionBlocked || !availability.ready} onClick={() => void run("prepare")}><Play size={16} />Try once</button> : null}
                 {!recipeNeedsPlanApproval(plan) && plan.status === "active" ? <button type="button" disabled={actionBlocked || running} className={buttonClass} onClick={() => void togglePaused()}>Pause job</button> : null}
               </>}
+              {running && !portal ? (
+                <button type="button" className={buttonClass} disabled={stopping || !state.connected || Boolean(DESIGN_PREVIEW_REASON)} aria-describedby={stopError ? "job-stop-error" : undefined} onClick={() => void stopRun()}>
+                  {stopping ? "Stopping…" : "Stop now"}
+                </button>
+              ) : null}
+              {stopError ? <p id="job-stop-error" role="alert" className="w-full text-[13px] text-danger">{stopError}</p> : null}
+              {dirty && timing ? <p id="job-save-blocked" className="w-full text-[13px] text-danger">Fix the timing before saving: {timing.message}</p> : null}
             </div>
             {!dirty && !stale && !portal && recipeNeedsPlanApproval(plan) && !plan.schedule ? <p className="mt-2 text-[13px] text-ink-muted">This approves the saved steps for preparation and starts one run. No repeat schedule is enabled.</p> : null}
             {portal && !dirty && !stale && !blocked && !DESIGN_PREVIEW_REASON ? (
@@ -725,18 +809,87 @@ export function JobWorkspace({
                   </label>
                 </div>
                 {fields.scheduled ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <div className="mt-2 flex flex-wrap items-start gap-3">
                     <label className="text-[13px] text-ink">
-                      Time
-                      <input
-                        type="time"
-                        value={fields.time}
-                        onInput={(event) => change({ time: event.currentTarget.value })}
-                        onChange={(event) => change({ time: event.target.value })}
-                        className={inputClass}
-                      />
+                      Repeat
+                      <select
+                        value={fields.everyMinutes == null ? "daily" : unit}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (value === "daily") { change({ everyMinutes: null, until: null }); return; }
+                          const next: RepeatUnit = value === "hours" ? "hours" : "minutes";
+                          setRepeatUnit(next);
+                          change({
+                            everyMinutes: next === "hours" ? 60 : 15,
+                            // Coming from once a day, start with office hours rather than all evening.
+                            ...(fields.everyMinutes == null ? { until: fields.time < "17:00" ? "17:00" : null } : {}),
+                          });
+                        }}
+                        className={`${inputClass} pm-control`}
+                      >
+                        <option value="daily">Once a day at a set time</option>
+                        <option value="minutes">Every few minutes</option>
+                        <option value="hours">Every few hours</option>
+                      </select>
                     </label>
-                    <div role="group" aria-label="Days to run" className="flex flex-wrap gap-1">
+                    {fields.everyMinutes != null ? (
+                      <div>
+                        <label className="text-[13px] text-ink">
+                          {unit === "hours" ? "Hours between runs" : "Minutes between runs"}
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={unit === "hours" ? 24 : 1440}
+                            step={1}
+                            value={fields.everyMinutes ? fields.everyMinutes / (unit === "hours" ? 60 : 1) : ""}
+                            aria-invalid={timing?.field === "every" || undefined}
+                            aria-describedby={timing?.field === "every" ? "job-timing-issue" : undefined}
+                            onChange={(event) => {
+                              const count = Number(event.target.value);
+                              change({ everyMinutes: Number.isFinite(count) ? count * (unit === "hours" ? 60 : 1) : 0 });
+                            }}
+                            className={`${inputClass} pm-control`}
+                          />
+                        </label>
+                        {timing?.field === "every" ? <p id="job-timing-issue" className="mt-1 text-[13px] text-danger">{timing.message}</p> : null}
+                      </div>
+                    ) : null}
+                    <div>
+                      <label className="text-[13px] text-ink">
+                        {fields.everyMinutes != null ? "From" : "Time"}
+                        <input
+                          type="time"
+                          value={fields.time}
+                          aria-invalid={timing?.field === "time" || undefined}
+                          aria-describedby={timing?.field === "time" ? "job-timing-issue" : undefined}
+                          onInput={(event) => change({ time: event.currentTarget.value })}
+                          onChange={(event) => change({ time: event.target.value })}
+                          className={`${inputClass} pm-control`}
+                        />
+                      </label>
+                      {timing?.field === "time" ? <p id="job-timing-issue" className="mt-1 text-[13px] text-danger">{timing.message}</p> : null}
+                    </div>
+                    {fields.everyMinutes != null ? (
+                      <div>
+                        <label className="text-[13px] text-ink">
+                          Until (optional)
+                          <input
+                            type="time"
+                            value={fields.until ?? ""}
+                            aria-invalid={timing?.field === "until" || undefined}
+                            aria-describedby={timing?.field === "until" ? "job-timing-issue" : "job-until-help"}
+                            onInput={(event) => change({ until: event.currentTarget.value || null })}
+                            onChange={(event) => change({ until: event.target.value || null })}
+                            className={`${inputClass} pm-control`}
+                          />
+                        </label>
+                        {timing?.field === "until"
+                          ? <p id="job-timing-issue" className="mt-1 text-[13px] text-danger">{timing.message}</p>
+                          : <p id="job-until-help" className="mt-1 text-[13px] text-ink-muted">Leave empty to repeat until midnight.</p>}
+                      </div>
+                    ) : null}
+                    <div role="group" aria-label="Days to run" aria-describedby={timing?.field === "days" ? "job-timing-issue" : undefined} className="flex flex-wrap gap-1">
                       {WEEKDAYS_MON_FIRST.map((day) => (
                         <button
                           key={day}
@@ -758,6 +911,8 @@ export function JobWorkspace({
                         </button>
                       ))}
                     </div>
+                    {timing?.field === "days" ? <p id="job-timing-issue" className="w-full text-[13px] text-danger">{timing.message}</p> : null}
+                    {fields.everyMinutes != null ? <p className="w-full text-[13px] text-ink-muted">Each run counts toward your office's monthly AI limit.</p> : null}
                     <p className="w-full text-[13px] text-ink-muted">
                       {timezone || "This computer's timezone"} · Keep RealBud running for scheduled work. Changes need
                       approval again.
