@@ -87,6 +87,8 @@ describe("Hermes child stream watchdog", () => {
       HERMES_ACP_SKIP_CONFIGURED_MCP: "0",
       HERMES_SAFE_MODE: "0",
       HERMES_EXEC_ASK: "0",
+      // An ambient switch never turns on upstream's unpinned tirith download.
+      TIRITH_ENABLED: "1",
     };
     hardenHermesChildEnv(env);
     expect(env).toEqual({
@@ -94,6 +96,7 @@ describe("Hermes child stream watchdog", () => {
       HERMES_ACP_SKIP_CONFIGURED_MCP: "1",
       HERMES_SAFE_MODE: "1",
       HERMES_EXEC_ASK: "1",
+      TIRITH_ENABLED: "0",
       COPILOT_GH_HOST: "realbud.invalid",
       HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60",
     });

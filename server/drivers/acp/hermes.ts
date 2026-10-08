@@ -85,6 +85,13 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   // can otherwise spawn arbitrary local Python without asking ACP. Upstream ask-mode routes whole-script approval through ACP's
   // existing callback; a missing callback keeps the script blocked.
   env.HERMES_EXEC_ASK = "1";
+  // No tirith scanner: with none on PATH, upstream downloads tirith's unpinned
+  // "latest" GitHub release at run time (0.21.5 tools/tirith_security.py
+  // `_install_tirith`), which no reviewed runtime pins. The macOS sandbox
+  // refuses that download and Windows has no build, so command checks were
+  // already Hermes' pattern guards plus RealBud's approvals; this stops the
+  // attempt. The env switch outranks config and any ambient TIRITH_BIN.
+  env.TIRITH_ENABLED = "0";
   // Hermes defaults small Codex requests to a 12-second SSE idle cutoff.
   // Allow a slower response within RealBud's existing overall run deadline;
   // retain an explicitly configured watchdog (including 0 to disable it).
@@ -177,6 +184,11 @@ export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args:
   // nothing RealBud later reads there can be planted or replaced.
   const writable = job === "diagnostic" ? [] : [join(workroom, BUD_WORK_FOLDER), ...(hasProfile ? PROFILE_STATE_DIRS.map(name => join(profile, name)) : [])];
   const writablePatterns = job === "diagnostic" || !hasProfile ? [] : [`^${trustedPath(profile).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.?\\.?(${PROFILE_STATE_FILES.join("|")})[^/]*$`];
+  // Hermes 0.21.5 refuses to open state.db (so session_search has no index)
+  // unless `access(profile, W_OK)` passes (hermes_state_repair.py
+  // `preflight_db_writability`). The profile folder's own node answers
+  // writable; only the state files above can still be made in it.
+  const writableFolderNodes = job === "diagnostic" || !hasProfile ? [] : [profile];
   // Test-only roots come from the explicit hook alone (server/testing/setup.ts
   // fills it); production never sets it and grants nothing beyond the above.
   if (job !== "diagnostic") writable.push(...SANDBOX_TEST_WRITABLE);
@@ -190,7 +202,7 @@ export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args:
   const relay = overlay ? askModelRelayPort() : null;
   return sandboxedLaunch(command, args, env, {
     loopbackPorts: relay ? [...loopbackPorts, relay] : [...loopbackPorts],
-    writable, writablePatterns, executable: [join(profile, "bin")], reads,
+    writable, writablePatterns, writableFolderNodes, executable: [join(profile, "bin")], reads,
   }, deps);
 }
 
