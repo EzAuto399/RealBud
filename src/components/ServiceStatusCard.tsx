@@ -3,6 +3,7 @@ import { api } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import { serviceActionFeedback, serviceLifecycleCopy, serviceStatusCopy, type ServiceLifecycle } from "@/lib/service-status";
 import { Card } from "./SettingsPrimitives";
+import { CONTACT_SUPPORT_INLINE } from "@shared/support";
 
 /**
  * Copy for the main process's automatic restarts of the office service,
@@ -17,7 +18,7 @@ export function autoRestartCopy(value: unknown): { running: string | null; stopp
   return {
     running: count ? `Restarted automatically ${count === 1 ? "once" : `${count} times`} today. Check recent work before retrying an interrupted job; its last action may already have completed.` : null,
     stopped: exhausted === true
-      ? "Automatic restarts have paused after five attempts in the last hour. Start it below; if it stops again, contact RealBud support."
+      ? `Automatic restarts have paused after five attempts in the last hour. Start it below; if it stops again, ${CONTACT_SUPPORT_INLINE}.`
       : pending === true ? "RealBud will try to restart it automatically shortly. You can also start it now." : null,
   };
 }

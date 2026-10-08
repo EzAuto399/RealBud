@@ -15,6 +15,7 @@ import { agencyIsNamed } from "./office-setup";
 import { AGENCY_WORKFLOWS, AGENCY_WORKFLOW_NAMES, type AgencyWorkflowId } from "../../shared/agency-setup";
 import type { AustinPackView } from "../../shared/austin-pack";
 import { officeAppLabel, officeSourceState, type ConnectedAppsStatus } from "../../shared/office-sources";
+import type { OwnerRequestKind } from "./owner-request";
 
 export const SETUP_STEP_COUNT = 5;
 
@@ -31,11 +32,12 @@ export type SetupStepId = "link" | "bud" | "pack" | "gmail" | "workflows";
 export type SetupStepState = "done" | "current" | "working" | "later" | "unknown" | "skipped";
 
 /**
- * Where this step's single action goes: the link-code entry in Workspace, Bud's
- * setup progress, the packs from the office on Schedule, Agency workflow setup
- * on Schedule, Connections in Workspace, or one Schedule job (`job-<loop id>`).
+ * Where this step's single action goes: the link-code field in Workspace (its
+ * disclosure opened), Bud's setup progress, the packs from the office on
+ * Schedule, Agency workflow setup on Schedule, Connections in Workspace, or one
+ * Schedule job (`job-<loop id>`).
  */
-export type SetupJumpTarget = "you-website" | "bud-setup" | "schedule-packs" | "schedule-agency" | "you-connected-apps" | `job-${string}`;
+export type SetupJumpTarget = "you-website-code" | "bud-setup" | "schedule-packs" | "schedule-agency" | "you-connected-apps" | `job-${string}`;
 
 export interface SetupStep {
   id: SetupStepId;
@@ -48,6 +50,10 @@ export interface SetupStep {
   target: SetupJumpTarget;
   /** The accessible name of this step's single action control. */
   actionLabel: string;
+  /** Only the office owner can unblock this step: offer "Copy request for your owner". */
+  ownerRequest?: OwnerRequestKind;
+  /** The owner request replaces the action, which would only lead back here. */
+  ownerOnly?: boolean;
 }
 
 /** A single readiness check as `/api/agency-setup` reports it. */
@@ -186,7 +192,7 @@ export const WORKFLOW_LOOP_IDS: Record<AgencyWorkflowId, string | null> = {
 };
 
 /** What the host's facts say about one step, before ordering is applied. */
-type Fact = { fact: "done" | "todo" | "unknown"; status: string; actionLabel?: string; target?: SetupJumpTarget };
+type Fact = { fact: "done" | "todo" | "unknown"; status: string; actionLabel?: string; target?: SetupJumpTarget; ownerRequest?: OwnerRequestKind; ownerOnly?: boolean };
 
 const NOT_CHECKED = "Not checked yet.";
 
@@ -246,7 +252,7 @@ const said = (check: AgencySetupCheckFacts): string => check.detail.trim() || ch
 /** Step 1: this computer's link with its office. */
 function linkFact(link: WebsiteLinkRead): Fact {
   if (link === "linked") return { fact: "done", status: "This computer is connected to your office." };
-  if (link === "not-linked") return { fact: "todo", status: "Your office owner sends this code. Ask them if you don’t have one yet." };
+  if (link === "not-linked") return { fact: "todo", status: "Your office owner sends this code. Ask them if you don’t have one yet.", ownerRequest: "linkCode" };
   return {
     fact: "unknown",
     status: link === undefined ? `${NOT_CHECKED} Reading this computer’s office link…` : `${NOT_CHECKED} This computer’s office link could not be read.`,
@@ -308,7 +314,7 @@ function checkRollup(
 
 const NO_GMAIL = "No Gmail is needed for the work you chose.";
 const SIGN_IN_GMAIL = "Sign in to the office Gmail in your browser.";
-const ASK_OWNER: Fact = { fact: "todo", status: "Ask the office owner to allow this computer on realbud.app.", actionLabel: "Open connected apps" };
+const ASK_OWNER: Fact = { fact: "todo", status: "Ask the office owner to allow this computer on realbud.app.", ownerRequest: "sharedGmail", ownerOnly: true };
 const REVIEW_EACH = "Open each workflow, read what it does, then switch it on.";
 
 /**
@@ -401,6 +407,18 @@ function approveFact(setup: AgencySetupFacts, schedule: ScheduleRead | undefined
 const AGENCY_GATED_LOOPS: Record<string, AgencyWorkflowId> = { "weekly-bills": "bills-calendar", "inbound-triage": "morning-priorities" };
 
 /**
+ * Why the host would refuse to switch this job on: mail work whose agency
+ * workflow is not ready to run (the host's `assertWorkflowReady`). Only a
+ * reported fact holds; Schedule holds the job's switch with this sentence.
+ */
+export function switchOnBlocker(setup: AgencySetupRead, loopId: string, name: string): Omit<Fact, "fact"> | null {
+  const agency = setup && setup !== "unavailable" ? setup.workflows.find((row) => row.id === AGENCY_GATED_LOOPS[loopId]) : undefined;
+  return agency && !agency.readyForRun
+    ? { status: `Before ${name} can switch on, finish Agency workflow setup and approve it there.`, actionLabel: "Open Agency workflow setup", target: "schedule-agency" }
+    : null;
+}
+
+/**
  * What stands before the next workflow: its first unmet need on the pack's own
  * checklist (REI sign-in, Redbark, the tenant or supplier list), then for mail
  * work the agency setup the host requires. Only a reported fact blocks.
@@ -410,11 +428,7 @@ function nextBlocker(pack: AustinPackView, setup: AgencySetupRead, loopId: strin
   // Gmail is step 4's own; this names what only this workflow still needs.
   const need = pack.checklist.find((item) => item.id !== "gmail" && needs.includes(item.id) && !item.done);
   if (need) return { status: `Before ${name}: ${need.detail}` };
-  const agency = setup && setup !== "unavailable" ? setup.workflows.find((row) => row.id === AGENCY_GATED_LOOPS[loopId]) : undefined;
-  if (agency && !agency.readyForRun) {
-    return { status: `Before ${name} can switch on, finish Agency workflow setup and approve it there.`, actionLabel: "Open Agency workflow setup", target: "schedule-agency" };
-  }
-  return null;
+  return switchOnBlocker(setup, loopId, name);
 }
 
 /**
@@ -461,7 +475,7 @@ function workflowsFact(pack: AustinPackRead, setup: AgencySetupRead, schedule: S
 }
 
 const ORDER: { id: SetupStepId; title: string; target: SetupJumpTarget; actionLabel: string }[] = [
-  { id: "link", title: "Paste the link code your office sent you", target: "you-website", actionLabel: "Enter link code" },
+  { id: "link", title: "Paste the link code your office sent you", target: "you-website-code", actionLabel: "Enter link code" },
   { id: "bud", title: "Bud is setting itself up", target: "bud-setup", actionLabel: "See progress" },
   { id: "pack", title: "Import your office’s pack", target: "schedule-packs", actionLabel: "Open packs from your office" },
   { id: "gmail", title: "Connect the office Gmail", target: "you-connected-apps", actionLabel: "Connect Gmail" },
@@ -484,7 +498,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
       const bud = budStep(input.bud, input.websiteLink);
       return { ...step, number, ...bud, title: bud.state === "done" ? "Bud is set up" : step.title };
     }
-    const { fact, status, actionLabel, target } = facts[step.id];
+    const { fact, status, actionLabel, target, ownerRequest, ownerOnly } = facts[step.id];
     let state: SetupStepState;
     if (fact === "done") state = "done";
     else if (input.skipped?.includes(step.id)) state = "skipped";
@@ -492,7 +506,8 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
       state = "current";
       currentTaken = true;
     } else state = fact === "unknown" ? "unknown" : "later";
-    return { ...step, number, state, status, target: target ?? step.target, actionLabel: actionLabel ?? step.actionLabel };
+    return { ...step, number, state, status, target: target ?? step.target, actionLabel: actionLabel ?? step.actionLabel,
+      ...(fact !== "done" && ownerRequest ? { ownerRequest, ...(ownerOnly ? { ownerOnly } : {}) } : {}) };
   });
 }
 

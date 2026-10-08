@@ -28,6 +28,7 @@ import { PortalJobActions } from "./PortalJobActions";
 import { routineRunsForActivity, type WorkActivity } from "@/lib/work-activity";
 import type { LoopRun } from "@/lib/routines";
 import { budAvailability, budFacingCopy } from "@/lib/bud-setup";
+import { useOfficeLinkRead } from "@/lib/use-office-link";
 import { canUseTaskStarter } from "@/lib/pm-task-starters";
 import { PmTaskStarters } from "../PmTaskStarters";
 import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
@@ -92,7 +93,9 @@ export function JobWorkspace({
   const [pendingRequests, setPendingRequests] = useState<{ shadow: string | null; prepare: string | null }>({ shadow: null, prepare: null });
   const busy = state.jobDraftBusy;
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
-  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister });
+  // Staff on an unlinked computer are told to connect it, as Work tells them.
+  const officeLink = useOfficeLinkRead(state.connected && !canAdminister);
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, officeLink });
   // Recovery holds every change until the saved schedule is trustworthy again.
   const blocked = !state.connected || Boolean(state.desk?.recovery?.active) || Boolean(state.scheduleRecovery?.active) || loading || Boolean(loadError);
   const dirty = Boolean(plan && fields && (!draft.saved || jobPlanChanged(plan, fields)));

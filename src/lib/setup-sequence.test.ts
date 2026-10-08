@@ -10,6 +10,7 @@ import {
   setupSequence,
   setupSequenceComplete,
   sharedGmailNotAllowed,
+  switchOnBlocker,
   type AgencySetupFacts,
   type AgencySetupWorkflowFacts,
   WORKFLOW_LOOP_IDS,
@@ -81,7 +82,8 @@ describe("Get started: five steps in Kevin's order", () => {
   it("starts a fresh install at step 1 with nothing done and unread steps not checked yet", () => {
     const steps = onlyOneCurrent(base);
     expect(steps.map((item) => item.id)).toEqual(["link", "bud", "pack", "gmail", "workflows"]);
-    expect(currentSetupStep(steps)).toMatchObject({ number: 1, id: "link", target: "you-website", actionLabel: "Enter link code" });
+    // The action opens the link-code field itself, not the owner's browser approval.
+    expect(currentSetupStep(steps)).toMatchObject({ number: 1, id: "link", target: "you-website-code", actionLabel: "Enter link code" });
     expect(steps.some((item) => item.state === "done")).toBe(false);
     expect(steps.filter((item) => item.state === "unknown").map((item) => item.id)).toEqual(["bud", "pack", "gmail", "workflows"]);
     for (const item of steps.slice(1)) expect(item.status).toMatch(/^Not checked yet\. /);
@@ -90,7 +92,10 @@ describe("Get started: five steps in Kevin's order", () => {
 
   it("ticks step 1 only on a host-reported link", () => {
     expect(step({ ...base, websiteLink: "linked" }, "link")).toMatchObject({ state: "done" });
-    expect(step({ ...base, websiteLink: "not-linked" }, "link")).toMatchObject({ state: "current", status: "Your office owner sends this code. Ask them if you don’t have one yet." });
+    expect(step({ ...base, websiteLink: "not-linked" }, "link")).toMatchObject({ state: "current", status: "Your office owner sends this code. Ask them if you don’t have one yet.", ownerRequest: "linkCode" });
+    // The code can be entered and the ask copied: the owner request sits beside the action.
+    expect(step({ ...base, websiteLink: "not-linked" }, "link").ownerOnly).toBeUndefined();
+    expect(step({ ...base, websiteLink: "linked" }, "link").ownerRequest).toBeUndefined();
     expect(step({ ...base, websiteLink: undefined }, "link").status).toMatch(/Reading this computer’s office link/);
     expect(step({ ...base, websiteLink: "unavailable" }, "link").status).toMatch(/could not be read/);
   });
@@ -210,7 +215,8 @@ describe("step 4: the office Gmail", () => {
     expect(sharedGmailNotAllowed({ ...shared, error: "unreachable" }, true)).toBe(false);
     expect(sharedGmailNotAllowed({ ...shared, checkedAt: "2020-01-01T00:00:00.000Z" }, true)).toBe(false);
     expect(sharedGmailNotAllowed({ ...shared, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } }, true)).toBe(false);
-    const ask = { state: "current", status: "Ask the office owner to allow this computer on realbud.app.", actionLabel: "Open connected apps", target: "you-connected-apps" };
+    // Only the owner can allow it: the step offers the owner request instead of an action that loops back here.
+    const ask = { state: "current", status: "Ask the office owner to allow this computer on realbud.app.", ownerRequest: "sharedGmail", ownerOnly: true };
     expect(step({ ...linked, austinPack: pack(), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({}, false), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({ gmail: true }), sharedGmailBlocked: true }, "gmail").state).toBe("done");
@@ -295,6 +301,16 @@ describe("step 5: review and switch on the workflows", () => {
       for (const agencySetup of [undefined, "unavailable" as const, facts()]) {
         expect(step({ ...ahead, agencySetup, austinPack: kevin(done), schedule: loops(["bank-references"]) }, "workflows").target).toBe("job-weekly-bills");
       }
+    });
+
+    it("gives Schedule the host's own reason to hold a job's switch, and only that", () => {
+      expect(switchOnBlocker(agency(false), "weekly-bills", "Weekly bills review")).toEqual({
+        status: "Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.", actionLabel: "Open Agency workflow setup", target: "schedule-agency" });
+      expect(switchOnBlocker(agency(true), "weekly-bills", "Weekly bills review")).toBeNull();
+      // The host switches a job on without its pack needs (REI, Redbark, lists); only the agency gate refuses.
+      expect(switchOnBlocker(agency(false), "bank-references", "Bank reference review")).toBeNull();
+      // Nothing reported against it: nothing holds.
+      for (const setup of [undefined, "unavailable" as const, facts()]) expect(switchOnBlocker(setup, "weekly-bills", "Weekly bills review")).toBeNull();
     });
   });
 

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { LINK_POLL_INTERVAL_MS, isLinkRequestIssued } from "@shared/installation-link";
 import { isProvisioningSkipReason, type ProvisioningSkipReason } from "@shared/office-link";
+import { CONTACT_SUPPORT, CONTACT_SUPPORT_INLINE } from "@shared/support";
+import { browserApprovalTimeLeft } from "../BrowserApprovalCard";
 import type { BrowserLinkRequest, BrowserLinkView, OfficeLinkStatus } from "../../../server/office-link";
 
 // One browser-approval protocol for every surface that links this computer to
@@ -81,11 +83,11 @@ export function modelAccessState(status: OfficeLinkStatus | null): ModelAccessSt
 const START_AGAIN_STEP = "remove this computer under Account → Computers on realbud.app, then link it again";
 const START_AGAIN = `To start again, ${START_AGAIN_STEP}.`;
 const CHECKS_AGAIN = "RealBud checks again with each status update.";
-const SERVICE_NOT_SET_UP = `RealBud’s AI service isn’t set up yet. Contact RealBud support; ${CHECKS_AGAIN}`;
+const SERVICE_NOT_SET_UP = `RealBud’s AI service isn’t set up yet. ${CONTACT_SUPPORT}; ${CHECKS_AGAIN}`;
 const SKIPPED: Record<ProvisioningSkipReason, string> = {
   no_platform_customer: `Bud’s model access is waiting on your office’s AI account, which RealBud support sets up. ${CHECKS_AGAIN}`,
   service_not_entitled: `AI isn’t turned on for your office yet. RealBud support turns it on; ${CHECKS_AGAIN}`,
-  service_not_active: `Your office’s AI service isn’t active right now. Check your subscription on realbud.app or contact RealBud support; ${CHECKS_AGAIN}`,
+  service_not_active: `Your office’s AI service isn’t active right now. Check your subscription on realbud.app or ${CONTACT_SUPPORT_INLINE}; ${CHECKS_AGAIN}`,
   modelvia_customer_not_ready: `Your office’s AI account isn’t ready yet. RealBud support finishes it; ${CHECKS_AGAIN}`,
   provisioning_gateway_unconfigured: SERVICE_NOT_SET_UP,
   provisioning_gateway_same_as_platform: SERVICE_NOT_SET_UP,
@@ -105,16 +107,16 @@ export function officeLinkRecoveryMessage(status: OfficeLinkStatus | null): stri
   const error = status?.error;
   if (typeof error !== "string") return null;
   if (/^Saved settings need recovery\b/i.test(error)) {
-    return "Saved settings on this computer need recovery. Your original settings are kept. Contact RealBud support before trying setup again.";
+    return `Saved settings on this computer need recovery. Your original settings are kept. ${CONTACT_SUPPORT} before trying setup again.`;
   }
   if (/^This computer[’']s service setup needs local storage recovery\b/i.test(error)) {
-    return "Bud’s service setup needs local storage recovery. Existing settings are kept. Contact RealBud support before trying setup again.";
+    return `Bud’s service setup needs local storage recovery. Existing settings are kept. ${CONTACT_SUPPORT} before trying setup again.`;
   }
   if (/^This computer[’']s saved settings or private service storage need recovery\b/i.test(error)) {
-    return "This computer’s saved settings or private service storage need recovery. Your work is kept. Contact RealBud support before trying office setup again.";
+    return `This computer’s saved settings or private service storage need recovery. Your work is kept. ${CONTACT_SUPPORT} before trying office setup again.`;
   }
   if (/^(?:The saved website link needs (?:private-file )?recovery|The model access for this computer needs recovery|This computer[’']s service setup needs recovery|Service withdrawal needs recovery)\b/i.test(error)) {
-    return "This computer’s saved service setup needs recovery. Your work is kept. Contact RealBud support before linking again.";
+    return `This computer’s saved service setup needs recovery. Your work is kept. ${CONTACT_SUPPORT} before linking again.`;
   }
   return null;
 }
@@ -126,12 +128,23 @@ export function modelAccessMessage(status: OfficeLinkStatus | null, options: { p
   if (!access) return null;
   const recovery = officeLinkRecoveryMessage(status);
   if (recovery && access !== "ready") return recovery;
-  if (options.passive && access === "failed") return "Bud’s model access is not set up yet. Your office connection is saved. Contact RealBud support if setup stays stopped.";
-  if (options.passive && access === "not-yet") return "Bud’s model access has not arrived from your account yet. Keep RealBud open. Contact RealBud support if setup stays pending.";
+  if (options.passive && access === "failed") return `Bud’s model access is not set up yet. Your office connection is saved. ${CONTACT_SUPPORT} if setup stays stopped.`;
+  if (options.passive && access === "not-yet") return `Bud’s model access has not arrived from your account yet. Keep RealBud open. ${CONTACT_SUPPORT} if setup stays pending.`;
   if (access !== "skipped") return MODEL_ACCESS[access];
   const reason = status?.provisioningSkipped ?? "";
   return isProvisioningSkipReason(reason) ? SKIPPED[reason]
-    : `Bud’s model access was not set up by your account (it reported “${reason}”). Contact RealBud support; ${CHECKS_AGAIN}`;
+    : `Bud’s model access was not set up by your account (it reported “${reason}”). ${CONTACT_SUPPORT}; ${CHECKS_AGAIN}`;
+}
+
+/** The access message asks the owner to remove this computer (the one way out). */
+export const asksToRemoveComputer = (message: string | null | undefined): boolean => Boolean(message?.includes(START_AGAIN_STEP));
+/** The website refused a link code because the office is at its computer limit (server/office-link.ts keeps the code). */
+export const computerLimitReached = (message: string | null | undefined): boolean => /\balready has \d+ computers\b/.test(message ?? "");
+
+export const APPROVAL_PAGE_EXPIRED = "The approval page expired before this computer was approved. Nothing was linked.";
+/** "Expires in m:ss" for a waiting browser approval, from the expiry the service saved. */
+export function approvalTimeLeft(request: BrowserLinkRequest, now: number): string {
+  return browserApprovalTimeLeft(Date.parse(request.expiresAt), now);
 }
 
 /** The sentences the live region announces for a phase. */
@@ -139,7 +152,7 @@ export function browserLinkMessage(phase: BrowserLinkPhase): string {
   switch (phase.kind) {
     case "waiting": case "cancelling": return `Approve this computer in your browser. The page shows code ${phase.request.displayCode}.`;
     case "declined": return "This computer was declined in your browser. Nothing was linked.";
-    case "expired": return "The approval page expired before this computer was approved. Nothing was linked.";
+    case "expired": return APPROVAL_PAGE_EXPIRED;
     case "linked": return `Linked to ${phase.agencyLabel}.`;
     default: return "";
   }

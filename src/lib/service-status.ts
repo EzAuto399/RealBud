@@ -1,4 +1,5 @@
 import type { ServiceEntitlementStatus } from "../../shared/service-entitlement";
+import { CONTACT_SUPPORT, CONTACT_SUPPORT_INLINE, SUPPORT_EMAIL } from "@shared/support";
 
 const LABELS = {
   unmanaged: "Development service",
@@ -21,9 +22,9 @@ export function serviceStatusCopy(value: unknown): { title: string; detail: stri
   return {
     title: LABELS[status.state], available, expiresAt: status.expiresAt,
     detail: status.state === "unmanaged" ? "This development checkout is not enrolled in managed service."
-      : status.state === "not-required" ? "This installation is not enforcing paid service access. Contact RealBud support before office use."
+      : status.state === "not-required" ? `This installation is not enforcing paid service access. ${CONTACT_SUPPORT} before office use.`
       : available ? "Service access is checked separately from your work accounts and administrator sign-in."
-      : "Contact RealBud support to restore managed assistance. Your saved work remains available; you can still stop running work and review results.",
+      : `${CONTACT_SUPPORT} to restore managed assistance. Your saved work remains available; you can still stop running work and review results.`,
   };
 }
 
@@ -68,7 +69,7 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
   if (status.running === true) {
     if (status.manageable !== true || status.external === true) return {
       title: "This window cannot stop the running service",
-      detail: "It may have been started by another RealBud window or an older installation. Use the app that started it, or ask RealBud support to identify it before stopping anything. This window has no verified permission to stop it.",
+      detail: `It may have been started by another RealBud window or an older installation. Use the app that started it, or ask RealBud support at ${SUPPORT_EMAIL} to identify it before stopping anything. This window has no verified permission to stop it.`,
       canRetry: false,
     };
     return null;
@@ -78,7 +79,7 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
   if (status.running === false && status.external === true) {
     return {
       title: "The office service connection needs checking",
-      detail: "Another RealBud service may be using this computer. This window cannot manage it. Ask RealBud support to identify the running service before starting another one.",
+      detail: `Another RealBud service may be using this computer. This window cannot manage it. Ask RealBud support at ${SUPPORT_EMAIL} to identify the running service before starting another one.`,
       canRetry: false,
     };
   }
@@ -96,13 +97,13 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
     case "exhausted":
       return {
         title: "The office service has stopped",
-        detail: "Automatic restart attempts have stopped. Review recent work and the connected system before retrying interrupted jobs to avoid duplicates. Start the service below; if it stops again, contact RealBud support.",
+        detail: `Automatic restart attempts have stopped. Review recent work and the connected system before retrying interrupted jobs to avoid duplicates. Start the service below; if it stops again, ${CONTACT_SUPPORT_INLINE}.`,
         canRetry: true,
       };
     case "failed":
       return {
         title: "The office service did not start",
-        detail: `The start was not confirmed${restarts ? ` after retrying ${attempts}` : ""}. Start it below; if it fails again, contact RealBud support. Review recent work before retrying interrupted jobs.`,
+        detail: `The start was not confirmed${restarts ? ` after retrying ${attempts}` : ""}. Start it below; if it fails again, ${CONTACT_SUPPORT_INLINE}. Review recent work before retrying interrupted jobs.`,
         canRetry: true,
       };
     case "restarting":
@@ -122,7 +123,7 @@ export function serviceActionFeedback(action: "start" | "stop", result: unknown)
     ok: false,
     message: action === "stop"
       ? "The service stop was not confirmed. It may still be running. Check its status before closing this computer; review interrupted work before retrying it."
-      : "The service start was not confirmed. Check its status again. If it remains unavailable, contact RealBud support before retrying interrupted work.",
+      : `The service start was not confirmed. Check its status again. If it remains unavailable, ${CONTACT_SUPPORT_INLINE} before retrying interrupted work.`,
   };
   return { ok: true, message: action === "stop"
     ? "The office service has stopped. Review recent work before restarting interrupted jobs; their last result may be unknown."

@@ -5,20 +5,48 @@ import type { ConnectedAppsStatus } from '@shared/office-sources';
 import type { HermiosConnectionState } from '@shared/hermios-connection';
 import type { HermiosConnectionView } from '@/lib/hermios-connection-api';
 import { connectedAppCatalog, HERMIOS_APP_SLUG } from '@/lib/connected-app-catalog';
-const fixture = vi.hoisted(() => ({ snapshot: null as ConnectedAppsStatus | null, preview: null as string | null, dispatch: vi.fn(), api: vi.fn() }));
+const fixture = vi.hoisted(() => ({ snapshot: null as ConnectedAppsStatus | null, preview: null as string | null, dispatch: vi.fn(), api: vi.fn(),
+  budReady: true, bots: [{ id: 'bud', busy: false }] as { id: string; busy: boolean }[], configured: true, link: 'linked' as string | undefined }));
 vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
-vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: { composio: { managed: true } }, bots: [{ id: 'bud', busy: false }], connected: true }, dispatch: fixture.dispatch }) }));
+vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: { composio: { managed: true } }, bots: fixture.bots, connected: true, hermes: { ready: fixture.budReady } }, dispatch: fixture.dispatch }) }));
+vi.mock('@/lib/use-office-link', () => ({ useOfficeLinkRead: () => fixture.link }));
 vi.mock('@/lib/connected-apps-refresh', () => ({ officeSources: { refresh: vi.fn() }, useOfficeSources: () => ({ snapshot: fixture.snapshot, loading: false, error: '' }) }));
-vi.mock('./GmailReadOnlySetup', () => ({ connectedAppsMode: () => 'consumer', selectedConnectedAppsConfigured: () => true, useConnectionSettingsPending: () => false, hasUnconfirmedGmailSettingsChange: () => false }));
-import { BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile } from './ConnectedAppsCard';
+vi.mock('./GmailReadOnlySetup', () => ({ connectedAppsMode: () => 'consumer', selectedConnectedAppsConfigured: () => fixture.configured, useConnectionSettingsPending: () => false, hasUnconfirmedGmailSettingsChange: () => false }));
+import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile } from './ConnectedAppsCard';
 import type { ConnectorState } from '@shared/mcp-connector';
 import type { ConnectorView } from '@/lib/redbark-connection-api';
 import { REDBARK_APP_SLUG } from '@/lib/connected-app-catalog';
-beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.snapshot = { configured: true, checkedAt: new Date().toISOString(), sourceKind: 'office_shared', policyRevision: 3, services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } }; });
+beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.budReady = true; fixture.bots = [{ id: 'bud', busy: false }]; fixture.configured = true; fixture.link = 'linked'; fixture.snapshot = { configured: true, checkedAt: new Date().toISOString(), sourceKind: 'office_shared', policyRevision: 3, services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } }; });
 const html = () => renderToStaticMarkup(createElement(ConnectedAppsCard));
-it('shows owner setup instead of desktop OAuth for an unconnected shared mailbox', () => {
+it('shows owner setup instead of desktop OAuth for an unconnected shared mailbox, with a request to copy for the owner', () => {
   expect(html()).toContain('realbud.app → Computers → Gmail for this office');
   expect(html()).not.toContain('Connect Gmail');
+  expect(html()).toContain('aria-label="Copy request for your owner"');
+});
+it('sends an unlinked computer to connect to its office first, not to a service administrator', () => {
+  fixture.configured = false; fixture.link = 'not-linked';
+  const markup = html();
+  expect(markup).toContain('Connect this computer to your office first.');
+  expect(markup).toContain('>Connect this computer</button>');
+  expect(markup).not.toContain('service administrator');
+  // A linked computer that still lacks connections keeps the administrator sentence.
+  fixture.link = 'linked';
+  expect(html()).toContain('Your service administrator needs to activate connections on this computer.');
+});
+it('holds Connect with its reason until Bud is set up, and offers Bud setup', () => {
+  fixture.budReady = false;
+  const connect = appControls().find(element => element.props['aria-label'] === 'Find Google Sheets connection')!;
+  expect(connect.props.disabled).toBe(true);
+  const markup = html();
+  expect(markup).toContain('Connecting apps is available once Bud is set up.');
+  expect(markup).toContain('>See Bud setup</button>');
+});
+it('offers Open Work when Bud is not on this desk yet', () => {
+  fixture.bots = [];
+  const markup = html();
+  expect(markup).toContain('Open Work once, then try Connect again.');
+  expect(markup).toContain('>Open Work</button>');
+  expect(markup).not.toContain('Open Ask');
 });
 it('uses an already connected shared mailbox without another sign-in prompt', () => {
   fixture.snapshot!.services.gmail = { connected: true, status: 'ACTIVE', accounts: [{ id: 'office-mail', status: 'ACTIVE' }], accountSelectionRequired: false };
@@ -203,7 +231,7 @@ describe('bank feed tile', () => {
 
   it.each([
     ['not_connected', true, 'Not connected', ['Connect bank feed for the bank feed']],
-    ['not_connected', false, 'Not connected. The office owner can connect it.', []],
+    ['not_connected', false, 'Not connected. The office owner can connect it. Until then, choose the bank CSV in the bank reference review on Schedule.', ['Copy request for your owner']],
     ['connecting', true, 'Finish signing in to Redbark in your browser', ['Check again for the bank feed']],
     ['connected', true, 'Connected as Fictional Bank · 1 account', ['Check for the bank feed', 'Disconnect for the bank feed']],
     ['connected', false, 'Connected as Fictional Bank · 1 account', ['Check for the bank feed']],
@@ -216,6 +244,14 @@ describe('bank feed tile', () => {
     expect(markup).not.toMatch(/\bHermes\b|\bMCP\b|\bbroker\b/i);
     expect(markup).not.toMatch(/#[0-9a-f]{3,6}\b/i);
     for (const button of markup.match(/<button [^>]*>/g) ?? []) expect(button).toContain('class="pm-control ');
+  });
+
+  it('in Work, names the CSV fallback and the owner request when only the owner can connect', () => {
+    const controls = { view: { state: feed('not_connected', false), loading: false, readError: null, busy: null, notice: null }, connect: vi.fn(async () => {}), check: vi.fn(async () => {}), refresh: vi.fn(async () => {}) };
+    const markup = renderToStaticMarkup(createElement(BankFeedConnect, { controls }));
+    expect(markup).toContain('Only the office owner or an administrator can connect the bank feed. Until then, choose the bank CSV in the bank reference review on Schedule.');
+    expect(buttons(markup)).toEqual(['Copy request for your owner']);
+    expect(buttons(renderToStaticMarkup(createElement(BankFeedConnect, { controls: { ...controls, view: { ...controls.view, state: feed('not_connected', true) } } })))).toEqual(['Connect bank feed']);
   });
 
   it('asks before disconnecting', () => {

@@ -11,7 +11,10 @@ import {
   type ConnectedAppOperation, type EmailApp,
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
-import { appConnectionPrompt, connectedAppCatalog, filterConnectedAppCatalog, OFFICE_GMAIL_SLUG, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
+import { appConnectionPrompt, BANK_CSV_FALLBACK, connectedAppCatalog, filterConnectedAppCatalog, OFFICE_GMAIL_SLUG, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
+import { useOfficeLinkRead } from "@/lib/use-office-link";
+import { openWorkspaceSetup } from "@/lib/workspace-setup";
+import { OwnerRequestButton } from "./OwnerRequestButton";
 import { useHermiosConnection, type HermiosConnectionControls } from "@/lib/hermios-connection-api";
 import { useConnector, type ConnectorControls } from "@/lib/redbark-connection-api";
 import { useConnectorRegistry } from "@/lib/mcp-connector-api";
@@ -114,7 +117,7 @@ export function BankFeedConnect({ controls }: { controls?: Pick<ConnectorControl
   const line = !state ? (loading ? "Checking the bank feed…" : readError)
     : status === "connected" ? `Bank feed connected${state.account?.label ? ` (${state.account.label})` : ""}.`
     : status === "connecting" ? "Finish the Redbark sign-in in your browser, then check here."
-    : !state.canManage ? "Only the office owner or an administrator can connect the bank feed."
+    : !state.canManage ? `Only the office owner or an administrator can connect the bank feed. ${BANK_CSV_FALLBACK}`
     : null;
   const action = !state ? (loading ? null : <button type="button" className={control} disabled={busy !== null} onClick={() => void refresh()}>Check again</button>)
     : status === "connected" ? null
@@ -125,6 +128,7 @@ export function BankFeedConnect({ controls }: { controls?: Pick<ConnectorControl
     <span className="my-1 flex flex-wrap items-center gap-2">
       {action}
       {line ? <span role="status" className={`text-[12.5px] ${status === "connected" ? "text-agency" : "text-ink-secondary"}`}>{line}</span> : null}
+      {state && !state.canManage && status === "not_connected" ? <OwnerRequestButton request="bankFeed" /> : null}
       {notice ? <span role={notice.problem ? "alert" : "status"} className={`text-[12px] ${notice.problem ? "text-hold" : "text-ink-secondary"}`}>{notice.text}</span> : null}
     </span>
   );
@@ -178,7 +182,7 @@ export function BankFeedTile({ app, controls, disabled }: { app: ConnectedAppCat
       <p className="mt-2 text-[12.5px] text-ink-secondary">{app.purpose}</p>
       <p role="status" className={`mt-2 break-words text-[12px] font-medium ${state?.status === "connected" ? "text-agency" : "text-ink"}`}>{status}</p>
       <p className="mt-1 text-[11.5px] text-ink-muted">{app.detail}</p>
-      {actions ? <div className="mt-3 flex flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions || app.ownerRequest ? <div className="mt-3 flex flex-wrap items-center gap-2">{actions}{app.ownerRequest ? <OwnerRequestButton request={app.ownerRequest} /> : null}</div> : null}
       {notice || (readError && state) ? (
         <p role={notice && !notice.problem ? "status" : "alert"} className={`mt-2 text-[12px] ${notice && !notice.problem ? "text-ink-secondary" : "text-hold"}`}>{notice?.text ?? readError}</p>
       ) : null}
@@ -284,7 +288,11 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const sharedMail = snapshot?.sourceKind === "office_shared";
   const catalog = connectedAppCatalog(snapshot, { configured, readOnly, managed, hermios: hermios.view.state, bankFeed: bankFeed.view.state });
   const visibleApps = filterConnectedAppCatalog(catalog, appQuery, appFilter);
-  const canConnect = !DESIGN_PREVIEW_REASON && configured && Boolean(budId) && !budBusy && state.connected && !loading && !settingsPending && !connecting;
+  // Connecting asks Bud in Work, so it waits for the server's own readiness verdict, said before the click.
+  const budReady = state.hermes?.ready === true;
+  const canConnect = !DESIGN_PREVIEW_REASON && configured && Boolean(budId) && budReady && !budBusy && state.connected && !loading && !settingsPending && !connecting;
+  // Before an office link nothing here can be activated; connecting the computer is the step.
+  const officeLink = useOfficeLinkRead(state.connected && !configured);
   const customConnect = () => {
     if (askConnect(customApp)) setCustomApp('');
   };
@@ -306,10 +314,20 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
         {configured ? readOnly ? 'Gmail read-only configured' : managed ? 'Office connection service configured' : 'Connection service configured' : 'Connection setup needed'}
         {' · '}{loading ? 'Checking…' : snapshot?.checkedAt ? `Checked ${fmtDateTime(Date.parse(snapshot.checkedAt))}` : 'Access not checked yet'}
       </p>
-      {!configured && <p className="mt-2 text-[13px] text-ink-secondary">Your service administrator needs to activate connections on this computer. You can then connect your work accounts here.</p>}
+      {!configured && officeLink === "not-linked" ? <div className="mt-2 flex flex-wrap items-center gap-2">
+        <p className="text-[13px] text-ink-secondary">Connect this computer to your office first. You can then connect your work accounts here.</p>
+        <button type="button" className={primary} onClick={() => openWorkspaceSetup("bud")}>Connect this computer</button>
+      </div> : !configured ? <p className="mt-2 text-[13px] text-ink-secondary">Your service administrator needs to activate connections on this computer. You can then connect your work accounts here.</p> : null}
+      {configured && budId && !budReady && state.connected && !DESIGN_PREVIEW_REASON ? <div className="mt-2 flex flex-wrap items-center gap-2">
+        <p role="status" className="text-[13px] text-hold">Connecting apps is available once Bud is set up.</p>
+        <button type="button" className={control} onClick={() => openWorkspaceSetup("bud")}>See Bud setup</button>
+      </div> : null}
 
       {error ? <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p> : null}
-      {!budId ? <p role="alert" className="mt-2 text-[13px] text-danger">Bud is not ready on this desk yet. Open Ask once, then try Connect again.</p> : null}
+      {!budId ? <div className="mt-2 flex flex-wrap items-center gap-2">
+        <p role="alert" className="text-[13px] text-danger">Bud is not ready on this desk yet. Open Work once, then try Connect again.</p>
+        <button type="button" className={control} onClick={() => { onAsk?.(); dispatch({ type: "showAsk" }); }}>Open Work</button>
+      </div> : null}
       {!state.connected ? <p role="status" className="mt-2 text-[13px] text-hold">Reconnecting to RealBud…</p> : null}
 
       <section aria-labelledby={`${id}-catalog`} className="mt-3 space-y-3">
@@ -344,6 +362,7 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
               {app.action && <button type="button" className={`${control} mt-3 self-start`} disabled={!canConnect} aria-label={app.action === 'find' ? `Find ${app.label} connection` : `Connect ${app.label}`} onClick={() => askConnect(app.label)}>
                 {connecting === app.label ? 'Starting…' : app.action === 'find' ? 'Find connection' : `Connect ${app.label}`}
               </button>}
+              {app.ownerRequest ? <div className="mt-3"><OwnerRequestButton request={app.ownerRequest} /></div> : null}
             </li>;
           })}
         </ul>

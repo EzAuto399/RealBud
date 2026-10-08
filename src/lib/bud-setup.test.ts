@@ -143,7 +143,7 @@ describe("automatic Bud setup status", () => {
     const held = { ...status, autoSetup: { state: "held", step: 1, total: 4, detail: "Hermes setup record could not be read." } } as HermesStatus;
     const availability = budAvailability(held, true, false, { canAdminister: false });
     expect(availability.label).toBe("Bud setup stopped");
-    expect(availability.detail).toBe("Bud’s setup could not finish. Contact RealBud support.");
+    expect(availability.detail).toBe("Bud’s setup could not finish. Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file).");
     expect(availability.action).toBe("View Bud status");
   });
 
@@ -198,7 +198,7 @@ describe("holds staff can clear themselves", () => {
 
   it("names one next step for each hold, never only 'contact support' or a reopen that cannot restart the service", () => {
     expect(held("held_restart")).toBe("Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.");
-    expect(held("held_recovery")).toBe("Bud’s setup record needs recovery. Your files are kept. Save a support file and send it to RealBud support.");
+    expect(held("held_recovery")).toBe("Bud’s setup record needs recovery. Your files are kept. Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file).");
     expect(held("held_unavailable")).toBe("Bud can’t be set up automatically on this kind of computer. Use RealBud on a Mac or Windows computer for Bud’s work; your files are kept.");
     for (const code of ["held_restart", "held_recovery", "held_unavailable"] as const) {
       expect(held(code)).not.toMatch(/Restart RealBud to|Quit and reopen|; contact RealBud support\.$|not available on this computer yet|private\/path/);

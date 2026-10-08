@@ -16,8 +16,10 @@ vi.mock("react", async original => ({ ...await original<typeof import("react")>(
     return [fixture.values[index] as T, (next: SetStateAction<T>) => { fixture.values[index] = typeof next === "function" ? (next as (value: T) => T)(fixture.values[index] as T) : next; }]; },
 }));
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: fixture.state, dispatch: fixture.dispatch }) }));
-vi.mock("@/lib/use-service-admin-access", () => ({ useServiceAdminAccess: () => true }));
-vi.mock("@/lib/bud-setup", () => ({ budAvailability: () => ({ ready: true }), budFacingCopy: (value: unknown, fallback: string) => value instanceof Error ? value.message : fallback }));
+const access = vi.hoisted(() => ({ admin: true, link: "linked" as string | undefined, availability: vi.fn((..._args: unknown[]) => ({ ready: true })) }));
+vi.mock("@/lib/use-service-admin-access", () => ({ useServiceAdminAccess: () => access.admin }));
+vi.mock("@/lib/use-office-link", () => ({ useOfficeLinkRead: () => access.link }));
+vi.mock("@/lib/bud-setup", () => ({ budAvailability: access.availability, budFacingCopy: (value: unknown, fallback: string) => value instanceof Error ? value.message : fallback }));
 vi.mock("@/lib/design-preview", () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
 vi.mock("../desk/JobRunFeed", () => ({ JobRunFeed: () => null }));
 vi.mock("./ExecutionHistory", () => ({ ExecutionHistory: () => null }));
@@ -121,6 +123,15 @@ describe("guided job trial", () => {
     const nodes = elements(view());
     expect(nodes.filter(node => node.type === PortalJobActions || node.type === JobRunFeed)).toEqual([]);
     expect(api).not.toHaveBeenCalled();
+  });
+});
+
+describe("Bud availability on a job", () => {
+  afterEach(() => { access.admin = true; access.link = "linked"; });
+  it("reads this computer's office link, as Work does, so unlinked staff are told to connect it", () => {
+    access.admin = false; access.link = "not-linked";
+    view();
+    expect(access.availability).toHaveBeenLastCalledWith(null, true, false, { canAdminister: false, officeLink: "not-linked" });
   });
 });
 

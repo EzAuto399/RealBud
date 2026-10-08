@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { SettingsCard } from "./SettingsCard";
 import type { BrowserLinkRequest, OfficeLinkStatus } from "../../../server/office-link";
-import { browserLinkMessage, modelAccessMessage, modelAccessState, openApproval, pendingRequest, useBrowserLink, type BrowserLinkPhase } from "./browser-link";
+import {
+  approvalTimeLeft, asksToRemoveComputer, browserLinkMessage, computerLimitReached, modelAccessMessage, modelAccessState, openApproval, pendingRequest, useBrowserLink,
+  APPROVAL_PAGE_EXPIRED, type BrowserLinkPhase,
+} from "./browser-link";
+import { useApprovalClock } from "../BrowserApprovalCard";
+import { OwnerRequestButton } from "../OwnerRequestButton";
 
 // The protocol lives in ./browser-link; these re-exports keep existing imports working.
 export { browserLinkMessage, modelAccessMessage, modelAccessState, readBrowserLinkView, savedBrowserRequest } from "./browser-link";
@@ -34,7 +39,12 @@ export interface WebsiteLinkCardViewProps {
   onDisconnect: () => void;
   onConfirm: (open: boolean) => void;
   onRefresh: () => void;
+  /** Fixed clock for tests; live, the time left ticks every second. */
+  now?: number;
 }
+
+/** Get started's "Enter link code" lands here (src/lib/you-navigation.ts opens the disclosure). */
+export const LINK_CODE_FIELD_ID = "you-website-code";
 
 export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const { status, phase, label, code, busy, action, error, confirm } = props;
@@ -51,6 +61,10 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const access = modelAccessState(status);
   const accessMessage = modelAccessMessage(status);
   const message = browserLinkMessage(phase);
+  const expiresAt = request ? Date.parse(request.expiresAt) : null;
+  const now = useApprovalClock(expiresAt, props.now);
+  // The page expired while this computer waited: say so and start again here.
+  const lapsed = request !== null && expiresAt !== null && now >= expiresAt && phase.kind !== "cancelling";
   // The office stopped accepting this computer (or withdrew its service).
   // Relinking is the way back, so the card leads with it.
   const ended = !linked && !request && !joined && (status?.state === "revoked" || status?.serviceWithdrawn === true);
@@ -82,6 +96,7 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
         <span className="block font-mono text-[22px] font-semibold tracking-[0.12em] text-ink">{request.displayCode}</span>
       </p> : null}
       {accessMessage ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{accessMessage}</p> : null}
+      {asksToRemoveComputer(accessMessage) ? <OwnerRequestButton request="removeComputer" /> : null}
       {waiting ? <p className="text-ink-secondary" aria-busy="true">{waiting}</p> : null}
       {joined ? <>
         <button type="button" className={secondary} disabled={busy} onClick={props.onDisconnect}>Not your office? Disconnect</button>
@@ -95,9 +110,11 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
           <button className={secondary} disabled={busy} onClick={() => props.onConfirm(true)}>Disconnect website</button>
         </div>
       </> : request ? <>
-        {phase.kind === "waiting" ? <p className="text-ink-muted">Waiting…</p> : null}
+        {lapsed ? <p role="alert" className="text-danger">{APPROVAL_PAGE_EXPIRED}</p>
+          : phase.kind === "waiting" ? <p className="text-ink-muted">Waiting for approval · <span className="tabular-nums">{approvalTimeLeft(request, now)}</span></p> : null}
         <div className="flex flex-wrap gap-3">
-          {phase.kind === "unreachable"
+          {lapsed ? <button type="button" className={secondary} disabled={!label.trim()} onClick={props.onStart}>Start a new request</button>
+            : phase.kind === "unreachable"
             ? <button type="button" className={secondary} onClick={() => props.onRetry(request)}>Try again</button>
             : <button type="button" className={secondary} disabled={phase.kind === "cancelling"} onClick={() => props.onOpenAgain(request)}>Open the page again</button>}
           <button type="button" className={secondary} disabled={phase.kind === "cancelling"} aria-busy={phase.kind === "cancelling" || undefined} onClick={() => props.onCancel(request)}>{phase.kind === "cancelling" ? "Cancelling…" : "Cancel"}</button>
@@ -106,7 +123,7 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
         {codePending ? <div><p>Linking with a code was interrupted. Paste the same code to retry safely.</p><button type="button" disabled={busy} className="mt-1 underline" onClick={props.onDisconnect}>Cancel pending link</button></div> : <>
           {nameField}
           <button type="button" className={primary} disabled={!status || phase.kind === "starting" || !label.trim()} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
-            {phase.kind === "starting" ? "Opening your browser…" : phase.kind === "declined" || phase.kind === "expired" ? "Start again" : phase.kind === "unreachable" ? "Try again" : ended ? "Reconnect this computer" : "Link with your RealBud account"}
+            {phase.kind === "starting" ? "Opening your browser…" : phase.kind === "declined" || phase.kind === "expired" ? "Start a new request" : phase.kind === "unreachable" ? "Try again" : ended ? "Reconnect this computer" : "Link with your RealBud account"}
           </button>
           <p className="text-ink-muted">Your browser opens your RealBud account. Check the code matches this screen, then approve this computer.{ended ? <> Not expecting the disconnect? Your office owner can check <a className="text-agency underline" href="https://realbud.app/account/installations" target="_blank" rel="noreferrer">Account → Computers</a>.</> : null}</p>
         </>}
@@ -115,8 +132,11 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
           <form onSubmit={event => { event.preventDefault(); props.onLinkCode(); }} className="mt-2 space-y-3">
             <p>Open <a className="text-agency underline" href="https://realbud.app/account/installations" target="_blank" rel="noreferrer">Account → Computers</a>, create a link code, then paste it below.</p>
             {codePending ? nameField : null}
-            <label className="block">Link code<input required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="rb1_…" className={`${field} font-mono`} /></label>
+            <label className="block">Link code<input id={LINK_CODE_FIELD_ID} required autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="rb1_…" className={`${field} font-mono`} /></label>
             <button disabled={busy || !status || !code.trim() || !label.trim()} className={secondary}>{busy ? "Linking…" : "Link this computer"}</button>
+            <div className="flex flex-wrap items-center gap-2 text-ink-muted">
+              {computerLimitReached(failure) ? <OwnerRequestButton request="freePlace" /> : <><span>No code yet?</span><OwnerRequestButton request="linkCode" /></>}
+            </div>
           </form>
         </details>
       </>}

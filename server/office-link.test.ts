@@ -68,6 +68,42 @@ describe("website installation link", () => {
     expect((await app.status()).state).toBe("linked");
     expect(calls.filter(call => call.route === "redeem").at(-1)!.body.id).not.toBe(refused.body.id);
   });
+  it("shows the website's computer-limit reason and keeps the code, so the same code works once the owner frees a place", async () => {
+    const limit = "This office already has 5 computers. Disconnect one to pair another.";
+    let full = true;
+    const calls: { route: string; method: string; body?: any }[] = [];
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const route = String(url).slice("https://realbud.app/api/installations/".length);
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ route, method: init.method, body });
+      if (route === "redeem") return full ? Response.json({ error: limit }, { status: 409 }) : Response.json({ installationId: body.id, companyId: "office-a", agencyLabel: "Synthetic Office" });
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const { app } = fixture(fetcher);
+    const refused = await app.link({ code, label: "Reception Mac" }).catch((error: unknown) => error as Error & { status?: number; code?: string });
+    expect(refused).toBeInstanceOf(Error);
+    expect(refused?.message).toContain(limit);
+    expect(refused?.message).toContain("Your code is kept");
+    expect(refused).toMatchObject({ status: 409, code: "installation_limit" });
+    // Nothing was created on the website, so nothing is revoked and the code stays.
+    expect(calls.some(call => call.route === "report" && call.method === "DELETE")).toBe(false);
+    expect(await app.status()).toMatchObject({ state: "pending", error: refused?.message });
+    full = false;
+    await app.link({ code, label: "Reception Mac" });
+    expect((await app.status()).state).toBe("linked");
+    const redeems = calls.filter(call => call.route === "redeem");
+    expect(redeems[1].body.id).toBe(redeems[0].body.id);
+    expect(redeems[1].body.token).toBe(redeems[0].body.token);
+  });
+  it("shows the website's own refusal sentence for an expired code, and never arbitrary website text", async () => {
+    const expired = "The code is expired, already used, or unavailable. Ask your account owner for a new code.";
+    let reply: unknown = { error: expired };
+    const { app } = fixture(vi.fn(async (url: any) => String(url).endsWith("redeem") ? Response.json(reply, { status: 409 }) : Response.json({}, { status: 401 })) as unknown as typeof fetch);
+    await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow(expired);
+    expect((await app.status()).state).toBe("unlinked");
+    reply = { error: "<b>internal detail</b>" };
+    await expect(app.link({ code, label: "Reception Mac" })).rejects.toThrow("This code is expired or already used. Get a new code from your account owner, then paste it here.");
+  });
   it("pauses on an inactive office instead of revoking, and resumes on the next accepted report", async () => {
     let inactive = true;
     const { app } = fixture(vi.fn(async (url, init) => {

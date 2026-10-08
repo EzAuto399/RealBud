@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SettingsCard } from "./SettingsCard";
+import { SUPPORT_EMAIL } from "@shared/support";
 
 export const SUPPORT_CONTENTS =
   "The support file contains RealBud’s version, this computer’s system type, how long the office service has run and its recent logs with keys and passwords masked; it never contains your documents, mail or saved credentials.";
-export const SUPPORT_SAVED = "Saved. Attach it to your message to RealBud support.";
+export const SUPPORT_SAVED = `Saved. Attach it to your email to RealBud support at ${SUPPORT_EMAIL}.`;
 export const SUPPORT_DESKTOP_ONLY = "The office service did not answer, so the file has only the desktop app’s own log.";
 export const SUPPORT_FAILED = "The support file could not be saved. Try again, or choose another folder.";
 

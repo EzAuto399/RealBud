@@ -2,6 +2,7 @@ import { OFFICE_SOURCE_LABELS, officeAppLabel, officeSourceState, type Connected
 import type { HermiosConnectionState } from '@shared/hermios-connection';
 import type { ConnectorState } from '@shared/mcp-connector';
 import { REDBARK_LABEL } from '@shared/redbark-connection';
+import type { OwnerRequestKind } from './owner-request';
 
 type AppSuggestion = { slug: string; label: string; category: string; purpose: string; aliases?: string };
 // Suggestions help people find an app. Only the service response establishes
@@ -27,12 +28,16 @@ export interface ConnectedAppCatalogEntry extends AppSuggestion {
   status: string;
   detail: string;
   action: 'connect' | 'find' | null;
+  /** Only the office owner can make this available here: offer "Copy request for your owner". */
+  ownerRequest?: OwnerRequestKind;
 }
 
 export const HERMIOS_APP_SLUG = 'hermios-native';
 /** The office shared mailbox beside the person's own Gmail (mailbox mode `both`). */
 export const OFFICE_GMAIL_SLUG = 'gmail-office';
 export const REDBARK_APP_SLUG = 'redbark-native';
+/** The bank work the pack already supports without the feed (server/austin-pack.ts). */
+export const BANK_CSV_FALLBACK = 'Until then, choose the bank CSV in the bank reference review on Schedule.';
 
 /** What the Hermios tile says, from Bud's own Hermios connection state only. A
  *  generic connection-service app named "hermios" never counts. */
@@ -51,7 +56,7 @@ export function hermiosCatalogStatus(state: HermiosConnectionState | null): stri
 export function bankFeedCatalogStatus(state: ConnectorState | null): string {
   if (!state) return 'Connection not checked yet';
   switch (state.status) {
-    case 'not_connected': return state.canManage ? 'Not connected' : 'Not connected. The office owner can connect it.';
+    case 'not_connected': return state.canManage ? 'Not connected' : `Not connected. The office owner can connect it. ${BANK_CSV_FALLBACK}`;
     case 'connecting': return 'Finish signing in to Redbark in your browser';
     case 'connected': return state.account ? `Connected as ${state.account.label}` : 'Connection not checked yet';
     case 'needs_reconnect': return state.reason ?? 'The bank feed needs the office to sign in to Redbark again.';
@@ -77,14 +82,16 @@ export function connectedAppCatalog(snapshot: ConnectedAppsStatus | null, option
     return { ...app, ...(ownGmail ? { label: 'Your Gmail', purpose: 'Your own work mail on this computer' } : {}), origin: service ? 'reported' : 'suggested', connected, status,
       detail: ownGmail ? 'Only you use this mailbox. Bud uses it unless you ask for the office mailbox.' : sharedGmail ? connected ? 'Office shared account' : 'Owner: realbud.app → Computers → Gmail for this office, then allow this computer. Then check access. For your own Gmail too, the owner sets Gmail to Both there.'
         : service ? 'Reported by your connection service' : 'Bud will check whether your service offers this connection.',
-      action: !options.configured || connected || excluded || sharedGmail || gmailUnchecked || state === 'signing-in' ? null : service ? 'connect' : 'find' };
+      action: !options.configured || connected || excluded || sharedGmail || gmailUnchecked || state === 'signing-in' ? null : service ? 'connect' : 'find',
+      ...(sharedGmail && !connected && options.configured ? { ownerRequest: 'sharedGmail' as const } : {}) };
   });
   if (snapshot?.mailboxMode === 'both' && !options.readOnly) {
     // Read-only here: the office owner connects it on the website and allows computers.
     const office = snapshot.officeShared, connected = office?.connected === true;
     entries.push({ slug: OFFICE_GMAIL_SLUG, label: 'Office shared Gmail', category: 'Email', purpose: 'The office mailbox the owner connected', aliases: 'gmail shared office mailbox inbox',
       origin: 'reported', connected, status: !options.configured ? 'Setup needed' : connected ? 'Ready' : 'Not allowed on this computer',
-      detail: connected ? 'Bud uses it only when you ask for the office mailbox.' : 'The office owner connects it and chooses which computers may use it.', action: null });
+      detail: connected ? 'Bud uses it only when you ask for the office mailbox.' : 'The office owner connects it and chooses which computers may use it.', action: null,
+      ...(!connected && options.configured ? { ownerRequest: 'sharedGmail' as const } : {}) });
   }
   const hermios = options.hermios ?? null;
   entries.push({ slug: HERMIOS_APP_SLUG, label: 'Hermios CRM', category: 'CRM', purpose: 'Customer records for your office', aliases: 'contacts customers pipeline crm',
@@ -93,7 +100,8 @@ export function connectedAppCatalog(snapshot: ConnectedAppsStatus | null, option
   const bankFeed = options.bankFeed ?? null;
   entries.push({ slug: REDBARK_APP_SLUG, label: REDBARK_LABEL, category: 'Banking', purpose: 'Office bank accounts and transactions', aliases: 'bank feed redbark accounts transactions reconciliation',
     origin: 'native', connected: bankFeed?.status === 'connected' && bankFeed.account !== null, status: bankFeedCatalogStatus(bankFeed),
-    detail: 'Bud can read accounts and transactions only. It cannot move money or change anything.', action: null });
+    detail: 'Bud can read accounts and transactions only. It cannot move money or change anything.', action: null,
+    ...(bankFeed?.status === 'not_connected' && !bankFeed.canManage ? { ownerRequest: 'bankFeed' as const } : {}) });
   return entries.sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)) || Number(b.connected) - Number(a.connected));
 }
 

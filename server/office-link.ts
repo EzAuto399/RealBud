@@ -60,6 +60,16 @@ export function websiteOrigin(env: NodeJS.ProcessEnv = process.env, note: (detai
   return url.origin;
 }
 
+/** The website's own words for a refused link code, when they are one of the
+ * sentences its redeem route sends (website app/api/installations/redeem).
+ * Anything else is not shown, so arbitrary upstream text never reaches the screen. */
+function websiteRedeemRefusal(body: unknown): { kind: "limit" | "refused"; message: string } | null {
+  const message = typeof (body as { error?: unknown } | null)?.error === "string" ? (body as { error: string }).error.trim() : "";
+  if (/^This office already has \d{1,3} computers\. Disconnect one to pair another\.$/.test(message)) return { kind: "limit", message };
+  if (message === "The code is expired, already used, or unavailable. Ask your account owner for a new code.") return { kind: "refused", message };
+  return null;
+}
+
 /** A saved pending approval has exactly the issued shape. Its own origin is
  * used here; which website it must match was checked when it was issued. */
 function savedBrowserRequest(value: unknown): boolean {
@@ -397,14 +407,19 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       } else await preflightProvisioning(saved.id);
       const response = await request("redeem", { method: "POST", body: JSON.stringify({ code, id: saved.id, token: saved.token, label: saved.label, platform: options.platform ?? process.platform, appVersion: options.appVersion }) }, PROVISIONING_TIMEOUT_MS);
       if (response.status === 409) {
-        // The website refused this code for good: expired, or used (elsewhere,
-        // or here by a reply lost past its replay window). Revoke the token in
-        // case that lost reply created an installation, then forget the code so
-        // a fresh code or the browser link can start. Any other failure keeps it.
-        await response.body?.cancel().catch(() => {});
+        const said = websiteRedeemRefusal(await response.json().catch(() => null));
+        // The office is at its computer limit: nothing was created, so the code
+        // and this computer's identity are kept for a retry once the owner
+        // frees a place.
+        if (said?.kind === "limit") throw Object.assign(new Error(`${said.message} Your code is kept: once your account owner disconnects a computer under Account → Computers on realbud.app, try this same code again.`), { status: 409, code: "installation_limit" });
+        // Otherwise the website refused this code for good: expired, or used
+        // (elsewhere, or here by a reply lost past its replay window). Revoke
+        // the token in case that lost reply created an installation, then
+        // forget the code so a fresh code or the browser link can start. Any
+        // other failure keeps it.
         await revokeQuietly(saved.token);
         unlinkSync(path);
-        throw new Error("This code is expired or already used. Get a new code from your account owner, then paste it here.");
+        throw Object.assign(new Error(said?.message ?? "This code is expired or already used. Get a new code from your account owner, then paste it here."), { status: 409, code: "link_code_refused" });
       }
       if (!response.ok) throw new Error("The website could not finish linking this computer. Try again shortly.");
       const result = await response.json().catch(() => null) as { companyId?: unknown; agencyLabel?: unknown; installationId?: unknown; provisioning?: unknown } | null;

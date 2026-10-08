@@ -25,7 +25,7 @@ describe("help and support card", () => {
     expect(saving).toMatch(/<button[^>]*disabled=""[^>]*aria-busy="true"/);
 
     const saved = view({ kind: "saved", officeReport: true });
-    expect(saved).toContain("Saved. Attach it to your message to RealBud support.");
+    expect(saved).toContain("Saved. Attach it to your email to RealBud support at hello@realbud.app.");
     expect(saved).not.toContain(SUPPORT_DESKTOP_ONLY);
     expect(view({ kind: "saved", officeReport: false })).toContain(SUPPORT_DESKTOP_ONLY);
 

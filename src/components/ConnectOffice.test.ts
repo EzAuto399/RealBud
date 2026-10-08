@@ -20,9 +20,11 @@ import { defaultComputerName } from "./you/browser-link";
 
 const request = { approvalUrl: `https://realbud.app/link/${"A".repeat(43)}`, displayCode: "ABCD-EFGH", expiresAt: "2026-09-30T10:00:00.000Z" };
 const noop = () => {};
+// Four minutes and five seconds before the saved approval expires.
+const beforeExpiry = Date.parse(request.expiresAt) - 245_000;
 const view = (status: OfficeLinkStatus | null, phase: ConnectOfficeViewProps["phase"] = { kind: "idle" }, extra: Partial<ConnectOfficeViewProps> = {}) =>
   renderToStaticMarkup(createElement(ConnectOfficeView, { status, phase, error: "", code: "", codeBusy: false,
-    onStart: noop, onOpenAgain: noop, onCancel: noop, onRetry: noop, onCode: noop, onLinkCode: noop, onRefresh: noop, ...extra }));
+    onStart: noop, onOpenAgain: noop, onCancel: noop, onRetry: noop, onCode: noop, onLinkCode: noop, onRefresh: noop, now: beforeExpiry, ...extra }));
 const live = (html: string) => /<p role="status" aria-live="polite" class="sr-only">([^<]*)<\/p>/.exec(html)?.[1];
 
 beforeEach(() => { vi.clearAllMocks(); link.status = { state: "unlinked" }; link.phase = { kind: "idle" }; });
@@ -57,7 +59,7 @@ describe("connect this computer to your office", () => {
     const html = view({ state: "pending", browser: request }, { kind: "waiting", request });
     expect(html).toContain("Your browser opened realbud.app. Sign in with the email RealBud invited, check the page shows code ABCD-EFGH, then approve.");
     expect(live(html)).toBe("Approve this computer in your browser. The page shows code ABCD-EFGH.");
-    expect(html).toContain("Waiting for your approval…");
+    expect(html).toContain("Waiting for your approval… <span class=\"tabular-nums\">Expires in 4:05</span>");
     expect(html).toContain("Open the page again</button>");
     expect(html).toContain(">Cancel</button>");
     expect(html).not.toContain("approve in my browser</button>");
@@ -85,7 +87,7 @@ describe("connect this computer to your office", () => {
   it("uses passive guidance when linked provisioning failed, without naming an absent Update status button", () => {
     const html = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: false, error: "The website could not be reached." });
     expect(html).toContain("Your office connection is saved");
-    expect(html).toContain("Contact RealBud support if setup stays stopped");
+    expect(html).toContain("Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings &amp; help → Save support file) if setup stays stopped");
     expect(html).not.toContain("Update status");
     expect(html).not.toContain("has not arrived after the next update");
   });
@@ -94,15 +96,42 @@ describe("connect this computer to your office", () => {
     const html = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: false,
       error: "Saved settings need recovery. /private/customer/config.json token=fictional-secret" });
     expect(html).toContain("Saved settings on this computer need recovery");
-    expect(html).toContain("Contact RealBud support before trying setup again");
+    expect(html).toContain("Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings &amp; help → Save support file) before trying setup again");
     expect(html).not.toMatch(/Update status|next update|private\/customer|fictional-secret/);
     const storage = view({ state: "linked", provisioned: false, error: "This computer’s service setup needs local storage recovery. Existing settings are kept." });
     expect(storage).toContain("Bud’s service setup needs local storage recovery");
     const preflight = view({ state: "linked", provisioned: false,
       error: "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup." });
     expect(preflight).toContain("This computer’s saved settings or private service storage need recovery");
-    expect(preflight).toContain("Contact RealBud support before trying office setup again");
+    expect(preflight).toContain("Save support file) before trying office setup again");
     expect(preflight).not.toMatch(/Update status|next update|Keep RealBud open/);
+  });
+
+  it("says when the approval page expired while waiting and starts a new request in place", () => {
+    const html = view({ state: "pending", browser: request }, { kind: "waiting", request }, { now: Date.parse(request.expiresAt) });
+    expect(html).toContain('role="alert" class="text-danger">The approval page expired before this computer was approved. Nothing was linked.');
+    expect(html).toContain(">Start a new request</button>");
+    expect(html).not.toContain("Waiting for your approval");
+    expect(html).not.toContain("Open the page again");
+    // Declined or expired on the website: the reason, then the same way forward.
+    for (const kind of ["declined", "expired"] as const) {
+      const ended = view({ state: "unlinked" }, { kind });
+      expect(ended).toContain("Nothing was linked.");
+      expect(ended).toMatch(/<button type="button" class="pm-control[^"]*"[^>]*>.*Start a new request<\/button>/);
+      expect(ended).not.toContain("approve in my browser</button>");
+    }
+  });
+
+  it("offers staff without a code, or at the office's computer limit, a request to copy for their owner", () => {
+    const html = view({ state: "unlinked" });
+    expect(html).toContain('No code yet?</span><span class="workspace-copy"><button type="button"');
+    expect(html).toContain('aria-label="Copy request for your owner">');
+    const limit = "This office already has 5 computers. Disconnect one to pair another. Your code is kept: once your account owner disconnects a computer under Account → Computers on realbud.app, try this same code again.";
+    const full = view({ state: "pending", error: limit });
+    expect(full).toContain('role="alert" class="text-danger">This office already has 5 computers.');
+    expect(full).toContain("Paste the same code below to finish safely.");
+    expect(full).toContain('aria-label="Copy request for your owner"');
+    expect(full).not.toContain("No code yet?");
   });
 
   it("opens an interrupted pasted-code link so it can be finished", () => {

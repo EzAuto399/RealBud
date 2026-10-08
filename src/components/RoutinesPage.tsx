@@ -29,6 +29,7 @@ import { FlaggedReceipt, JobDrawer, LoopDetail, type LoopTimingChange } from "./
 import { isAttendedMode } from "@/lib/job-run";
 import { JobList } from "./schedule/JobList";
 import { beginLoopRequest, pendingLoopRequest, resumeLoopRequest, confirmLoopReceipt, rejectLoopRequest, type PendingLoopRequest } from "@/lib/manual-loop-request";
+import { readAgencySetupFacts, switchOnBlocker, type AgencySetupRead } from "@/lib/setup-sequence";
 
 /** `flagged` pins the receipt that needed review when the job was opened, so it
  * is shown directly and acknowledging it does not swap it out of the detail. */
@@ -50,6 +51,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   // "unread" until the first /api/austin-pack answer; null when it could not be read.
   const [austin, setAustin] = useState<AustinPackView | null | "unread">("unread");
+  // What the host requires before a mail job may switch on; unread blocks nothing here.
+  const [agencySetup, setAgencySetup] = useState<AgencySetupRead>(undefined);
   const [busy, setBusy] = useState<LoopId | null>(null);
   const [error, setError] = useState("");
   const [pauseNotice, setPauseNotice] = useState("");
@@ -89,6 +92,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
       void api("/api/austin-pack", undefined, { timeoutMs: 15_000 }).then(parseAustinPackView).then(
         (view) => { if (mounted.current && request === refreshFlight.current) setAustin(view); },
         () => { if (mounted.current && request === refreshFlight.current) setAustin(null); });
+      void api("/api/agency-setup", undefined, { timeoutMs: 15_000 }).then(readAgencySetupFacts, () => "unavailable" as const).then(
+        (facts) => { if (mounted.current && request === refreshFlight.current) setAgencySetup(facts); });
     } catch (cause) {
       if (!mounted.current || request !== refreshFlight.current) return;
       setAustin((current) => current === "unread" ? null : current); // nothing more is loading: show every job
@@ -569,6 +574,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           onOpenDesk={openDesk}
           registerCloseGuard={registerCloseGuard}
           about={<AustinPlanDetail view={austin === "unread" ? null : austin} loopId={loop.id} />}
+          blocker={switchOnBlocker(agencySetup, loop.id, loop.name)}
         />
         </>
       );

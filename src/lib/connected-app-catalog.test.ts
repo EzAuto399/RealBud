@@ -138,7 +138,8 @@ describe('Redbark bank feed entry', () => {
 
   it('reflects the office connector state only', () => {
     expect(entry(feed('connected'))).toMatchObject({ connected: true, status: 'Connected as Fictional Bank · 1 account' });
-    expect(entry(feed('not_connected', false)).status).toBe('Not connected. The office owner can connect it.');
+    expect(entry(feed('not_connected', false))).toMatchObject({ status: 'Not connected. The office owner can connect it. Until then, choose the bank CSV in the bank reference review on Schedule.', ownerRequest: 'bankFeed' });
+    expect(entry(feed('not_connected', true)).ownerRequest).toBeUndefined();
     expect(entry(feed('connecting')).status).toBe('Finish signing in to Redbark in your browser');
     expect(filterConnectedAppCatalog(connectedAppCatalog(snapshot(), options), 'bank feed', 'all').map(app => app.slug)).toEqual([REDBARK_APP_SLUG]);
   });

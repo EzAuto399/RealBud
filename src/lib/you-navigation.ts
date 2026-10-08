@@ -14,6 +14,8 @@ export function youHashTarget(hash: string): string | null {
     case "you-phone": return "you-phone";
     case "you-office": return "you-office";
     case "you-website": return "you-website";
+    // The link-code field itself, inside its disclosure (WebsiteLinkCard).
+    case "you-website-code": return "you-website-code";
     case "you-browser": return "you-browser";
     case "you-profile": return "you-profile";
     case "you-advanced": return "you-advanced";
@@ -41,7 +43,8 @@ export function revealSettingsTarget(target: HTMLElement): void {
 
 /** Scroll a Workspace section into view, opening any parent disclosures first. */
 export function scrollYouTarget(id: string): void {
-  const target = document.getElementById(id);
+  // A linked or waiting computer shows no link-code field: land on its card instead.
+  const target = document.getElementById(id) ?? (id === "you-website-code" ? document.getElementById("you-website") : null);
   const scroller = document.querySelector<HTMLElement>("[data-you-scroll]");
   if (!target || !scroller) return;
   revealSettingsTarget(target);
@@ -51,5 +54,5 @@ export function scrollYouTarget(id: string): void {
     top: Math.max(0, top),
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
-  if (id === "you-website" || id === "you-private-backup") target.focus({ preventScroll: true });
+  if (id === "you-website" || id === "you-website-code" || id === "you-private-backup") target.focus({ preventScroll: true });
 }

@@ -5,6 +5,7 @@ import type { ServiceAdminLogin, ServiceAdminStatus } from "../../shared/service
 import { clearServiceAdminSession, refreshServiceAdminSession, serviceAdminHeaders, SERVICE_ADMIN_CHANGED, setServiceAdminSession } from "@/lib/service-admin-session";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { Card } from "./SettingsPrimitives";
+import { CONTACT_SUPPORT } from "@shared/support";
 
 /** Service administration is independent of company ownership and staff login. */
 export function CareUnlockCard() {
@@ -98,7 +99,7 @@ export function CareUnlockCard() {
             </form>
           ) : (
             <p className="mt-2 text-[12.5px] text-hold">
-              {administration.configurationError ? "Administrator setup needs repair. Contact RealBud support; service settings remain locked." : "Administrator access has not been provisioned for this installation. Contact RealBud support to finish service setup."}
+              {administration.configurationError ? `Administrator setup needs repair. ${CONTACT_SUPPORT}; service settings remain locked.` : `Administrator access has not been provisioned for this installation. ${CONTACT_SUPPORT} to finish service setup.`}
             </p>
           )}
         </>
