@@ -60,7 +60,7 @@ describe("ACP decodeConfig", () => {
       SAFE_VALUE: "kept",
     };
     hardenHermesChildEnv(env);
-    expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_HOME: join(homedir(), ".realbud", "hermes"), HERMES_ACP_SKIP_CONFIGURED_MCP: "1", HERMES_SAFE_MODE: "1", HERMES_EXEC_ASK: "1", HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60", COPILOT_GH_HOST: "realbud.invalid" });
+    expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_HOME: join(homedir(), ".realbud", "hermes"), HERMES_ACP_SKIP_CONFIGURED_MCP: "1", HERMES_SAFE_MODE: "1", HERMES_EXEC_ASK: "1", HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60", COPILOT_GH_HOST: "realbud.invalid", TIRITH_ENABLED: "0" });
   });
   it("names only Hermes' own browser and vault tools, never RealBud's fenced browser", () => {
     expect(hermesNativeBrowserTool("browser_navigate: https://example.invalid")).toBe("browser_navigate");
