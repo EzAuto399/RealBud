@@ -309,12 +309,12 @@ describe("repeats Bud proposes (repeat_propose)", () => {
     headers: { "content-type": "application/json", ...Object.fromEntries(broker!.descriptor.headers.map(row => [row.name, row.value])) },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json()) as any).result;
   /** The real job store and clock, bound the way the host binds them; Tuesday 6 Oct 2026, 9:00 am UTC. */
-  async function office(newMail: { available: boolean; reason?: string } = { available: true }) {
+  async function office(newMail: { available: boolean; reason?: string } = { available: true }, host: { readMail?: boolean; approve?: (id: string, expectedRevision: number) => unknown } = {}) {
     const mailSwitch = vi.fn(async (_loopId: string, enabled: boolean) => ({ enabled }));
     let repeats!: RepeatJobs;
     const fixture = await stores(listRecipes, undefined, loops => repeats = bindRepeatJobs({
-      recipes: { get: getRecipe, save: saveRecipe, approve: (id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision }) },
-      loops, newMail: { available: async () => newMail, set: mailSwitch }, now: () => Date.parse("2026-10-06T09:00:00Z") }));
+      recipes: { get: getRecipe, save: saveRecipe, approve: host.approve ?? ((id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision })) },
+      loops, newMail: { available: async () => newMail, set: mailSwitch }, readMail: host.readMail ?? true, now: () => Date.parse("2026-10-06T09:00:00Z") }));
     let turn = "turn-1";
     const cards: string[] = [];
     const open = (approve: () => boolean | Promise<boolean>) => startWorkflowSettingsBroker({ turnId: () => turn, settings: () => fixture.settings,
@@ -379,7 +379,9 @@ describe("repeats Bud proposes (repeat_propose)", () => {
     await open(() => true);
     const result = await call("repeat_propose", inbox("Fictional inbox check C", { cadence: { time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], newMail: true } }));
     expect(result.isError).toBeUndefined();
-    expect(cards[0]).toContain("When: Every day 8:00 am, and when new mail arrives\n");
+    // A new-mail run reads the latest collection, which may not hold the mail that woke it: the card says so.
+    expect(cards[0]).toContain("When: Every day 8:00 am, and checks your latest collected mail when new mail arrives\n");
+    expect(result.content[0].text).toContain("Every day 8:00 am, and checks your latest collected mail when new mail arrives. First run");
     expect(cards[0]).toContain("About 1 run a day;");
     expect(mailSwitch).toHaveBeenCalledExactlyOnceWith(`recipe-${saved("Fictional inbox check C")[0]!.id}`, true);
     expect(result.structuredContent).toMatchObject({ newMail: true });
@@ -399,8 +401,35 @@ describe("repeats Bud proposes (repeat_propose)", () => {
     await refused({ abilities: ["analyse"], cadence: { time: "09:00", weekdays: [1], newMail: true } }, "add read-mail");
     await refused({ steps: ["Log in with sk-ant-api03-fictionalfictionalfictionalfictional"] }, "no passwords, keys or codes");
     await refused({ cadence: { time: "09:00", weekdays: [1], newMail: true } }, "New mail can't start this repeat yet: Connect Gmail in Connected apps first.");
+    // Its worker gets no file tools, so mail and workroom files never share a job.
+    await refused({ abilities: ["read-mail", "read-files", "draft"] }, "can't also read workroom files");
     expect(cards).toEqual([]);
     expect(saved("Fictional inbox check D")).toEqual([]);
+  });
+
+  it("reads mail only when this turn may (the person's own message, Gmail allowed for them), before any card and again at save", async () => {
+    const { open, cards, repeats } = await office({ available: true }, { readMail: false });
+    await open(() => true);
+    expect(await call("repeat_propose", inbox("Fictional inbox check E"))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("needs Gmail allowed for you in Connected apps") }] });
+    expect(cards).toEqual([]);
+    await expect(repeats.create("repeat-fictional-e", { title: "Fictional inbox check E", request: "x", steps: ["x"], abilities: ["read-mail"], cadence: { time: "09:00", weekdays: [1] } }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(saved("Fictional inbox check E")).toEqual([]);
+    // A repeat that doesn't read mail is still offered.
+    expect((await call("repeat_propose", inbox("Fictional book check E", { abilities: ["read-book", "analyse"] }))).isError).toBeUndefined();
+    expect(saved("Fictional book check E")).toHaveLength(1);
+  });
+
+  it("saved but not approved: says it waits on Schedule with its id, so asking again never saves a second job", async () => {
+    const { open, loop } = await office({ available: true }, { approve: () => { throw new Error("fictional disk failure"); } });
+    await open(() => true);
+    const result = await call("repeat_propose", inbox("Fictional inbox check F"));
+    const [job] = saved("Fictional inbox check F");
+    expect(saved("Fictional inbox check F")).toHaveLength(1);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('Saved as "Fictional inbox check F", waiting for plan approval on Schedule. Approve its plan there to start it; don\'t propose it again.');
+    expect(result.structuredContent).toEqual({ loopId: `recipe-${job!.id}`, recipeId: job!.id, waitingForPlan: true });
+    expect(loop(`recipe-${job!.id}`)).toMatchObject({ enabled: false, waitingForPlan: true });
   });
 });
 

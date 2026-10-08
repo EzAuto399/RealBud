@@ -244,7 +244,7 @@ import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
-import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
+import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, recipeIdFromLoopId, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
 import { containsCredential, redactSecretsInText } from "./redact.ts";
@@ -2262,8 +2262,11 @@ async function startSeatTurn(
           reiAccount: { read: () => readReiAccount(DATA_DIR), save: (account, expectedRevision) => saveReiAccount(DATA_DIR, account, expectedRevision) },
           // "Repeat this every …": Allow on Bud's card saves one approved job on RealBud's clock (never Hermes cron),
           // through the same saves as Schedule's plan editor; new mail wakes it only when asked and Gmail is connected.
-          ...(loops ? { repeats: bindRepeatJobs({ recipes: { get: getRecipe, save: saveRecipe, approve: (id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision }) },
-            loops, newMail: { available: () => connectorEvents.available(), set: (loopId, enabled) => connectorEvents.setNewMail(loopId, enabled) } }) } : {}) });
+          // Only on the person's own message, from this desktop or with their member session (like approvals); a job
+          // that reads mail also needs Gmail allowed for them and no bot relay (like the office mailbox above).
+          ...(loops && personAskTurn(opts) && (memberSession || singleDesktop) ? { repeats: bindRepeatJobs({ recipes: { get: getRecipe, save: saveRecipe, approve: (id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision }) },
+            loops, newMail: { available: () => connectorEvents.available(), set: (loopId, enabled) => connectorEvents.setNewMail(loopId, enabled) },
+            readMail: allowedApps.includes('gmail') && !opts?.commsDepth }) } : {}) });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
         const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
         integrations.bankSource = {
@@ -2610,9 +2613,9 @@ loops = new LoopManager({
         return { ok: false, detail: "Waiting for plan approval" };
       }
       const mode = recipeClockRunnable(recipe) ? "prepare" : "shadow";
-      // A mail repeat reads the newest saved collection (read only); while mail is being collected it waits for its next slot.
+      // A mail repeat reads the newest saved collection (read only); while mail is being collected it skips, with a receipt.
       if (mode === "prepare" && recipe.capabilities.includes("read-mail") && mailWorkspace.busy) {
-        return { ok: true, detail: "Mail was being collected, so this run waits for the next one.", quiet: true };
+        return { ok: false, status: "missed", detail: "Skipped: mail collection was running. The next run checks the latest collected mail." };
       }
       const previous = jobRuns.list(recipe.id)[0];
       // Stop on Schedule (POST /api/loops/:id/stop) aborts this run's worker.
@@ -2652,6 +2655,8 @@ loops = new LoopManager({
 });
 // "Also check when new mail arrives": gateway event ids wake a loop through runNow; the clock still runs.
 const connectorEvents = new ConnectorEvents({ cfg: () => cfg, company: () => workspaceIdentity.id, loops: loops,
+  // A saved job is woken by new mail only while its current plan reads mail.
+  readsMail: loopId => getRecipe(recipeIdFromLoopId(loopId as LoopId) ?? '')?.capabilities.includes('read-mail') === true,
   runContext: work => workspaceActivity.run(() => withWorkerProfile(desk.memberKeyForWorker(), work)) });
 
 // ---- BEGIN W1 host (bank → reviewed file → REI preview → person posts → readback). Logic in server/w1-host.ts. ----
@@ -3665,15 +3670,16 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       try { return json(res, 200, method === 'GET' ? await connectorEvents.status(newMail[1]) : await connectorEvents.setNewMail(newMail[1], (await readBody(req)).enabled)); }
       catch (error) { return json(res, (error as { status?: number }).status ?? 500, { error: error instanceof Error ? error.message : 'New-mail checks could not be changed.' }); }
     }
-    // Stop a saved job: pause it first, so the clock starts nothing new, then abort its running worker.
+    // Stop a saved job: abort its running worker first (a pause can refuse in recovery), then pause it so the
+    // clock starts nothing new. Both happen in one synchronous step, so no tick runs between them.
     const loopStop = path.match(/^\/api\/loops\/(recipe-[\w-]+)\/stop$/);
     if (loopStop && method === 'POST') {
       if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
       try {
         await readBody(req, 1_000);
         const id = loopStop[1] as LoopId, active = loops!.activeRun(id);
-        const loop = loops!.setEnabled(id, false);
         recipeRunStops.get(id)?.abort();
+        const loop = loops!.setEnabled(id, false);
         // An aborted worker settles within moments: wait briefly so Schedule shows the stopped run straight away.
         for (let waited = 0; active && loops!.activeRun(id)?.id === active.id && waited < 3_000; waited += 50) await new Promise(resolve => setTimeout(resolve, 50));
         const run = active ? loops!.listRuns().find(item => item.id === active.id) ?? active : null;

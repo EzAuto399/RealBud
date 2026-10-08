@@ -333,6 +333,20 @@ describe("recipe store", () => {
     ).toEqual(["portal-read", "portal-prefill"]);
   });
 
+  it("refuses to save a job that reads mail with portal work or workroom files (POST /api/recipes saves through here)", () => {
+    for (const capabilities of [["read-mail", "portal-read"], ["read-mail", "portal-prefill"], ["read-mail", "read-files"]]) {
+      let error: unknown;
+      try { saveRecipe({ ...card, id: "fictional-mail-portal", capabilities }); } catch (caught) { error = caught; }
+      expect(statusOf(error)).toBe(400);
+      expect((error as Error).message).toMatch(/reads mail can't also open portal sites or read workroom files/);
+    }
+    expect(getRecipe("fictional-mail-portal")).toBeUndefined();
+    // A mail job stays a mail job: Ask's portal-site patch can't add portal work to it either.
+    saveRecipe({ ...card, id: "fictional-mail", allowedOrigins: [], capabilities: ["read-mail", "draft"] });
+    expect(() => patchRecipe("fictional-mail", { allowedOrigins: ["propertyme.com.au"], ensurePortal: true })).toThrow(/reads mail/);
+    expect(getRecipe("fictional-mail")).toMatchObject({ capabilities: ["read-mail", "draft"], allowedOrigins: [] });
+  });
+
   it("requires prefill and a site for portal-submit, and clears acknowledgement on edit", () => {
     expect(() =>
       validateRecipe({ ...card, capabilities: ["portal-submit"], allowedOrigins: ["propertyme.com.au"] }),

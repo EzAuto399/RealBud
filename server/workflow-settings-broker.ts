@@ -70,8 +70,11 @@ export interface RepeatJobs {
   clock(): { timeZone: string; now: number };
   /** Whether new mail can wake a job on this computer now, with the plain reason when not. */
   newMail(): Promise<{ available: boolean; reason?: string }>;
-  /** Saves one approved job under `id`; the same id returns the job already saved. */
-  create(id: string, proposal: RepeatProposal): Promise<{ loopId: string; nextRunAt: number | null; newMail?: { enabled: boolean; reason?: string } }>;
+  /** Whether this turn may set up a job that reads mail: the person's own message, with Gmail allowed for them. */
+  readonly readMail: boolean;
+  /** Saves one approved job under `id`; the same id returns the job already saved. `waitingForPlan`: saved, but
+   * its plan approval or clock did not finish, so it waits on Schedule (never saved a second time). */
+  create(id: string, proposal: RepeatProposal): Promise<{ loopId: string; nextRunAt: number | null; waitingForPlan?: true; newMail?: { enabled: boolean; reason?: string } }>;
 }
 export interface LoopScheduleSnapshot { loopId: string; name: string; enabled: boolean; revision: number; schedule: LoopClock; waitingForPlan: boolean; agencyTimed: boolean }
 export interface WorkflowSettingsSnapshot {
@@ -188,7 +191,7 @@ const TOOLS = [
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
-  { name: "repeat_propose", description: "Propose repeating work for the person on RealBud's Schedule, at any cadence: every N minutes or hours (everyMinutes 1-1440 from time, until an optional end time), once a day at time, on chosen weekdays (0=Sun..6=Sat), and optionally also when new mail arrives (newMail, which needs read-mail). title (up to 80 characters), request (the person's ask in their words, up to 1000), steps (1-12, each up to 200 characters, what every run does), abilities from read-book, read-mail (the newest saved mail from the reviewed Gmail), read-files, analyse and draft. Website and portal work cannot repeat from here. Runs only prepare: sending, replying, paying, signing and submitting always wait for the person's approval of that exact item. The person approves it once on a card; it is saved only when this tool says so.",
+  { name: "repeat_propose", description: "Propose repeating work for the person on RealBud's Schedule, at any cadence: every N minutes or hours (everyMinutes 1-1440 from time, until an optional end time), once a day at time, on chosen weekdays (0=Sun..6=Sat), and optionally also when new mail arrives (newMail, which needs read-mail; that run checks the latest collected mail, which may not yet hold the new message). title (up to 80 characters), request (the person's ask in their words, up to 1000), steps (1-12, each up to 200 characters, what every run does), abilities from read-book, read-mail (the newest saved mail from the reviewed Gmail; never with read-files), read-files, analyse and draft. Website and portal work cannot repeat from here. Runs only prepare: sending, replying, paying, signing and submitting always wait for the person's approval of that exact item. The person approves it once on a card; it is saved only when this tool says so.",
     inputSchema: { type: "object", additionalProperties: false, required: ["title", "request", "steps", "abilities", "cadence", "reason"], properties: {
       title: { type: "string", minLength: 1, maxLength: 80 }, request: { type: "string", minLength: 1, maxLength: 1000 },
       steps: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 200 } },
@@ -229,6 +232,8 @@ function repeatProposal(args: Values): RepeatProposal | string {
     return `A repeat may only ${REPEAT_ABILITIES.join(", ")}. Website and portal work repeats from Schedule, beside the person (Run beside me).`;
   }
   const abilities = [...new Set(args.abilities as RepeatAbility[])];
+  // Its worker gets no file tools (job-executor jobWorkerToolsets); recipes.ts refuses the pair too.
+  if (abilities.includes("read-mail") && abilities.includes("read-files")) return "A repeat that reads mail can't also read workroom files: propose them as two repeats.";
   const cadence = args.cadence;
   if (!object(cadence) || Object.keys(cadence).some(key => !CADENCE_FIELDS.includes(key))) return `cadence holds ${CADENCE_FIELDS.join(", ")}.`;
   const time = parseClockTime(cadence.time), weekdays = parseWeekdays(cadence.weekdays);
@@ -248,29 +253,40 @@ const runLabel = (at: number, timeZone: string) =>
   new Intl.DateTimeFormat("en-AU", { timeZone, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(at);
 const NEW_MAIL_UNBOUND = "New-mail checks are not available in this conversation.";
 const REPEATS_UNBOUND = "Repeating work can't be set up from this conversation. Ask again in Work on this computer. Nothing was saved.";
+const READ_MAIL_UNBOUND = "A repeat that reads mail needs Gmail allowed for you in Connected apps, asked in your own message in Work.";
+/** The card and reply: a new-mail run reads the latest collection, which may not hold the mail that woke it. */
+const NEW_MAIL_WORDS = ", and checks your latest collected mail when new mail arrives";
 
 /** Saves an Allowed repeat as one approved job on RealBud's clock (never Hermes cron) through the doors
  * Schedule uses: save the job (active, waiting for its plan), approve its plan at revision 1, adopt the
- * plan's clock, then new mail when asked. A crash between writes leaves at worst a job waiting for plan approval. */
+ * plan's clock, then new mail when asked. Once saved, a later failure reports the job waiting on Schedule
+ * (`waitingForPlan`) rather than an error, so asking again never saves a second job. */
 export function bindRepeatJobs(host: {
   recipes: { get(id: string): Recipe | undefined; save(input: unknown): unknown; approve(id: string, expectedRevision: number): unknown };
   loops: { readonly timezone: string; readonly recovery: { active: boolean; detail: string }; listLoops(): Loop[]; adoptRecipePlan(recipeId: string): void };
   newMail?: { available(): Promise<{ available: boolean; reason?: string }>; set(loopId: string, enabled: boolean): Promise<{ enabled: boolean; reason?: string }> };
+  /** The person's own unrelayed message with Gmail allowed for them (server/index.ts); otherwise no job reads mail. */
+  readMail?: boolean;
   now?: () => number;
 }): RepeatJobs {
   return {
     clock: () => ({ timeZone: host.loops.timezone, now: (host.now ?? Date.now)() }),
     newMail: async () => host.newMail ? host.newMail.available() : { available: false, reason: NEW_MAIL_UNBOUND },
+    readMail: host.readMail === true,
     async create(id, proposal) {
       const loopId = `recipe-${id}`, { newMail, ...schedule } = proposal.cadence;
+      if (proposal.abilities.includes("read-mail") && host.readMail !== true) throw Object.assign(new Error(`${READ_MAIL_UNBOUND} Nothing was saved.`), { status: 403 });
       if (host.loops.recovery.active) throw Object.assign(new Error(`${host.loops.recovery.detail} Nothing was saved.`), { status: 503 });
       if (!host.recipes.get(id)) {
         host.recipes.save({ id, title: proposal.title, description: proposal.request, steps: proposal.steps, allowedOrigins: [], evidence: "",
           capabilities: proposal.abilities, schedule, status: "active" });
-        host.recipes.approve(id, 1);
-        host.loops.adoptRecipePlan(id);
+        try {
+          host.recipes.approve(id, 1);
+          host.loops.adoptRecipePlan(id);
+        } catch { return { loopId, nextRunAt: null, waitingForPlan: true }; }
       }
-      const mail = newMail ? await (host.newMail?.set(loopId, true) ?? { enabled: false, reason: NEW_MAIL_UNBOUND }) : undefined;
+      const mail = newMail ? await (host.newMail?.set(loopId, true).catch((error: unknown) => ({ enabled: false, reason: message(error, "Gmail could not be checked.") }))
+        ?? { enabled: false, reason: NEW_MAIL_UNBOUND }) : undefined;
       return { loopId, nextRunAt: host.loops.listLoops().find(loop => loop.id === loopId)?.nextRunAt ?? null, ...(mail ? { newMail: { enabled: mail.enabled, ...(mail.reason ? { reason: mail.reason } : {}) } } : {}) };
     },
   };
@@ -298,7 +314,7 @@ export function bindWorkflowSettings(host: {
   const rei = () => host.reiAccount ?? (() => { throw Object.assign(new Error(REI_ACCOUNT_UNBOUND), { unbound: true }); })();
   return {
     ...(approvals ? { approvals: { read: () => approvals.read(), save: async (view: ApprovalPolicyView, next: ApprovalSettings) => { guard(); await approvals.save(view, next); } } } : {}),
-    ...(repeats ? { repeats: { clock: () => repeats.clock(), newMail: () => repeats.newMail(), create: async (id: string, proposal: RepeatProposal) => { guard(); return repeats.create(id, proposal); } } } : {}),
+    ...(repeats ? { repeats: { clock: () => repeats.clock(), newMail: () => repeats.newMail(), readMail: repeats.readMail, create: async (id: string, proposal: RepeatProposal) => { guard(); return repeats.create(id, proposal); } } } : {}),
     async read(target) {
       if (target === "rei_account") {
         const account = await rei().read();
@@ -552,6 +568,10 @@ export async function startWorkflowSettingsBroker(options: {
         const proposal = repeatProposal(args);
         if (typeof proposal === "string") { note({ tool: name, outcome: "refused" }); return toolError(`${proposal} Nothing was saved.`); }
         const { cadence } = proposal;
+        if (proposal.abilities.includes("read-mail") && !repeats.readMail) {
+          note({ tool: name, outcome: "refused" });
+          return toolError(`${READ_MAIL_UNBOUND} Propose it without read-mail, or ask the person to ask in Work. Nothing was saved.`);
+        }
         if (cadence.newMail) {
           const mail = await repeats.newMail();
           if (!mail.available) { note({ tool: name, outcome: "refused" }); return toolError(`New mail can't start this repeat yet: ${mail.reason ?? NEW_MAIL_UNBOUND} Propose it without newMail, or connect Gmail first. Nothing was saved.`); }
@@ -565,7 +585,7 @@ export async function startWorkflowSettingsBroker(options: {
         const id = `repeat-${randomUUID()}`;
         const card = ["Repeat this for you", `What: ${proposal.title} — ${proposal.request}`,
           `Steps: ${proposal.steps.map((step, index) => `${index + 1}. ${step}`).join("; ")}`,
-          `When: ${scheduleWords(clockOf(schedule))}${cadence.newMail ? ", and when new mail arrives" : ""}`,
+          `When: ${scheduleWords(clockOf(schedule))}${cadence.newMail ? NEW_MAIL_WORDS : ""}`,
           `Next runs: ${next.length ? next.map(at => runLabel(at, timeZone)).join("; ") : "none in the next week"}`,
           `About ${perDay} run${perDay === 1 ? "" : "s"} a day; each counts toward the office's monthly AI limit.`,
           `May: ${proposal.abilities.map(ability => ABILITY_WORDS[ability]).join(", ")}`,
@@ -574,8 +594,12 @@ export async function startWorkflowSettingsBroker(options: {
           `Why: ${reason}`].join("\n");
         return review(card, async () => {
           const saved = await repeats.create(id, proposal);
+          if (saved.waitingForPlan) {
+            return text(`Saved as "${proposal.title}", waiting for plan approval on Schedule. Approve its plan there to start it; don't propose it again.`,
+              { loopId: saved.loopId, recipeId: id, waitingForPlan: true });
+          }
           const mail = saved.newMail && !saved.newMail.enabled ? ` New-mail checks did not turn on: ${saved.newMail.reason ?? "Gmail could not be checked."} The clock still runs.` : "";
-          return text(`Saved "${proposal.title}" on Schedule: ${scheduleWords(clockOf(schedule))}${saved.newMail?.enabled ? ", and when new mail arrives" : ""}. ` +
+          return text(`Saved "${proposal.title}" on Schedule: ${scheduleWords(clockOf(schedule))}${saved.newMail?.enabled ? NEW_MAIL_WORDS : ""}. ` +
             `${saved.nextRunAt != null ? `First run ${runLabel(saved.nextRunAt, timeZone)}.` : "It has no run in the next week."}${mail} Its results arrive in Updates from Bud; Pause, Run now or Stop it on Schedule.`,
           { loopId: saved.loopId, recipeId: id, nextRunAt: saved.nextRunAt, ...(saved.newMail ? { newMail: saved.newMail.enabled } : {}) });
         }, "", {}, "repeat");

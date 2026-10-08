@@ -503,6 +503,13 @@ describe("harness HTTP API", () => {
     expect(badTime.status).toBe(400);
     const badDays = await api("PATCH", "/api/loops/morning-arrears", { weekdays: [0, 9] });
     expect(badDays.status).toBe(400);
+    // Only a saved job repeats within a day: a source workflow can't be made to run every minute.
+    for (const body of [{ everyMinutes: 1 }, { until: "17:00" }, { intervalDays: null, everyMinutes: 1 }]) {
+      const minutely = await api("PATCH", "/api/loops/morning-arrears", body);
+      expect(minutely.status).toBe(400);
+      expect(String(minutely.body.error)).toBe("Only a saved job can repeat every few minutes or hours.");
+    }
+    expect((await api("GET", "/api/loops")).body.loops.find((loop: { id: string }) => loop.id === "morning-arrears").schedule.everyMinutes).toBeUndefined();
 
     // put the clock back for the rest of the suite
     await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
@@ -807,6 +814,28 @@ describe("harness HTTP API", () => {
     expect(source).toContain("const personTurn = (req: IncomingMessage): { memberSession?: string } => { const session = companyMemberToken(req); return session ? { memberSession: session } : {}; };");
     expect(source.match(/memberSession: session/g)).toHaveLength(1);
     expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
+  });
+
+  it("binds repeat_propose only to the person's own message, and lets a repeat read mail only with Gmail allowed for them", () => {
+    // Source contract (a turn needs a real worker): like approvals, a phone, loop, relay or queued follow-up gets no repeats.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const binding = source.slice(source.indexOf("const memberSession = opts?.memberSession;"), source.indexOf("integrations.bankSource = {"));
+    expect(binding).toContain("...(loops && personAskTurn(opts) && (memberSession || singleDesktop) ? { repeats: bindRepeatJobs({");
+    expect(binding).toContain("readMail: allowedApps.includes('gmail') && !opts?.commsDepth })");
+    expect(binding.match(/bindRepeatJobs\(/g)).toHaveLength(1);
+    // New mail wakes a saved job only while its plan reads mail.
+    expect(source).toContain("readsMail: loopId => getRecipe(recipeIdFromLoopId(loopId as LoopId) ?? '')?.capabilities.includes('read-mail') === true,");
+  });
+
+  it("stops a saved job's worker before pausing it, and leaves a receipt when mail collection makes a run skip", () => {
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const stop = source.slice(source.indexOf("const loopStop = path.match("), source.indexOf("loopMatch = path.match(/^\\/api\\/loops\\/([\\w-]+)$/);"));
+    // In recovery the pause refuses (503); the abort has already happened, so the worker never keeps running.
+    expect(stop.indexOf("recipeRunStops.get(id)?.abort();")).toBeGreaterThan(0);
+    expect(stop.indexOf("recipeRunStops.get(id)?.abort();")).toBeLessThan(stop.indexOf("loops!.setEnabled(id, false)"));
+    const skip = source.slice(source.indexOf('recipe.capabilities.includes("read-mail") && mailWorkspace.busy'), source.indexOf("const previous = jobRuns.list(recipe.id)[0];"));
+    expect(skip).toContain('return { ok: false, status: "missed", detail: "Skipped: mail collection was running. The next run checks the latest collected mail." };');
+    expect(skip).not.toContain("quiet");
   });
 
   it("queues a second message that arrives while Jev routes the first, instead of answering it 409", () => {

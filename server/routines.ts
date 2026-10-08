@@ -524,6 +524,10 @@ export class LoopManager {
     this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
+    // Only a saved job repeats within a day; a source workflow (REI, bank, bills) keeps its reviewed cadence.
+    if ((patch.everyMinutes !== undefined || patch.until !== undefined) && !recipeIdFromLoopId(id)) {
+      throw Object.assign(new Error("Only a saved job can repeat every few minutes or hours."), { status: 400 });
+    }
     if (patch.expectedRevision !== undefined && (!Number.isSafeInteger(patch.expectedRevision) || patch.expectedRevision < 1)) {
       throw Object.assign(new Error("A saved schedule revision is required."), { status: 400 });
     }

@@ -217,7 +217,8 @@ describe('durable private mail acquisition and work list', () => {
     const f = await fixture();
     expect(await f.service.headlines()).toBeNull();
     const later = thread('abd', 'ab');
-    later.messages[0]!.at = initialTime - 500; later.messages[0]!.subject = 'Fictional\nleak quote'; later.messages[0]!.body = 'x'.repeat(400);
+    // Line breaks, a direction override and zero-width marks never reach a job's prompt (they become spaces).
+    later.messages[0]!.at = initialTime - 500; later.messages[0]!.subject = 'Fictional\n‮leak​ quote⁦'; later.messages[0]!.body = 'x'.repeat(400);
     f.data.threads = [thread(), later];
     const saved = await f.service.collect();
     const recordBytes = () => { const raw = new DatabaseSync(f.workspaceFile); try { return raw.prepare('SELECT id,revision,payload FROM workflow_records ORDER BY id').all(); } finally { raw.close(); } };

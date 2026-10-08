@@ -81,6 +81,14 @@ export function recipeHasPortalCapability(capabilities: readonly JobCapability[]
   );
 }
 
+/** Mail is anyone's text: a job that reads it neither opens portal sites nor reads workroom files (its
+ * worker gets no file tools, job-executor jobWorkerToolsets). Checked when a job is saved, never on load. */
+function assertMailJobScope(capabilities: readonly JobCapability[]): void {
+  if (capabilities.includes("read-mail") && (recipeHasPortalCapability(capabilities) || capabilities.includes("read-files"))) {
+    bad("A job that reads mail can't also open portal sites or read workroom files. Make that its own job.");
+  }
+}
+
 export function fenceCapabilitiesFor(recipe: Pick<Recipe, "capabilities" | "submitAcknowledgedAt">): JobCapability[] {
   if (recipe.submitAcknowledgedAt != null) return [...recipe.capabilities];
   return recipe.capabilities.filter((capability) => capability !== "portal-submit");
@@ -323,6 +331,7 @@ function upsertRecipe(recipes: Recipe[], input: unknown): Recipe[] {
     limits: row.limits === undefined && existing ? existing.limits : fields.limits,
     siteNotes: row.siteNotes === undefined && existing ? existing.siteNotes ?? null : fields.siteNotes,
   };
+  assertMailJobScope(effective.capabilities);
   const material = (recipe: Pick<Recipe, "title" | "description" | "steps" | "allowedOrigins" | "evidence" | "capabilities" | "limits" | "siteNotes" | "schedule">) =>
     JSON.stringify({
       title: recipe.title,
@@ -481,6 +490,7 @@ export function patchRecipe(
       status: 409,
     });
   }
+  if (materialChanged) assertMailJobScope(capabilities);
 
   const now = Date.now();
   recipes[idx] = {

@@ -85,6 +85,10 @@ describe('Austin loop defaults on the Brisbane clock', () => {
 // "Repeat at any cadence", packet A: the clock only. Brisbane keeps no daylight saving; Sydney's starts 4 Oct 2026 at 02:00.
 const repeat = { type: 'daily' as const, time: '09:00', until: '17:00', everyMinutes: 2, weekdays: [1, 2, 3, 4, 5] };
 const ok = async () => ({ ok: true, detail: 'Fictional internal review.' });
+/** An approved saved job: only these repeat within a day (PATCH /api/loops/:id refuses source workflows). */
+const savedJob = { id: 'fictional-repeat', title: 'Fictional queue check', status: 'active' as const, planApprovedAt: 1, revision: 1, approvedRevision: 1,
+  schedule: { time: '09:00', weekdays: [1, 2, 3, 4, 5] } };
+const REPEAT_ID = 'recipe-fictional-repeat' as const;
 describe('minute repeats on the RealBud clock', () => {
   it('repeats inside its weekday window and skips a nonexistent DST minute', () => {
     expect(nextOccurrence(repeat, bne('2026-10-09T10:01:30'), 'Australia/Brisbane')).toBe(bne('2026-10-09T10:02:00'));
@@ -110,28 +114,41 @@ describe('minute repeats on the RealBud clock', () => {
     }
     expect(nextOccurrence({ ...repeat, everyMinutes: 0 }, 0, 'UTC')).toBeNull();
     const dir = mkdtempSync(join(tmpdir(), 'rb-repeat-bad-')); clean.push(() => removeFixture(dir));
-    const manager = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => bne('2026-10-09T08:00:00'), execute: ok });
+    const manager = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => bne('2026-10-09T08:00:00'), execute: ok, listRecipes: () => [savedJob] });
     clean.push(async () => manager.close());
     for (const patch of [{ everyMinutes: 0 }, { everyMinutes: 1441 }, { time: '09:00', everyMinutes: 2, until: '08:59' }, { until: '17:00' }]) {
-      expect(() => manager.patchClock('weekly-bills', patch)).toThrow('Choose a repeat');
+      expect(() => manager.patchClock(REPEAT_ID, patch)).toThrow('Choose a repeat');
     }
-    expect(() => manager.patchClock('bank-references', { everyMinutes: 5 })).toThrow('no day interval');
-    const switched = manager.patchClock('bank-references', { intervalDays: null, everyMinutes: 5 }).schedule;
+    manager.patchClock(REPEAT_ID, { intervalDays: 2, anchorDate: '2026-10-09' });
+    expect(() => manager.patchClock(REPEAT_ID, { everyMinutes: 5 })).toThrow('no day interval');
+    const switched = manager.patchClock(REPEAT_ID, { intervalDays: null, everyMinutes: 5 }).schedule;
     expect(switched.everyMinutes).toBe(5);
     expect(switched.intervalDays).toBeUndefined();
   });
 
+  it('repeats only a saved job within a day; REI, bank and bills workflows keep their reviewed cadence', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rb-repeat-source-')); clean.push(() => removeFixture(dir));
+    const manager = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'UTC', now: () => bne('2026-10-09T08:00:00'), execute: ok, listRecipes: () => [savedJob] });
+    clean.push(async () => manager.close());
+    for (const id of ['weekly-bills', 'bank-references', 'rei-morning-refresh', 'morning-arrears'] as const) {
+      for (const patch of [{ everyMinutes: 1 }, { intervalDays: null, everyMinutes: 1 }, { until: '17:00' }, { everyMinutes: null }]) {
+        expect(() => manager.patchClock(id, patch)).toThrow(expect.objectContaining({ status: 400, message: 'Only a saved job can repeat every few minutes or hours.' }));
+      }
+      expect(manager.listLoops().find(l => l.id === id)!.schedule.everyMinutes).toBeUndefined();
+    }
+    expect(manager.patchClock(REPEAT_ID, { everyMinutes: 1 }).schedule.everyMinutes).toBe(1);
+  });
+
   it('keeps the repeat through a restart and from a saved job, and clears it on request', () => {
     const dir = mkdtempSync(join(tmpdir(), 'rb-repeat-restart-')); clean.push(() => removeFixture(dir));
-    const recipe = { id: 'fictional-repeat', title: 'Fictional queue check', status: 'active' as const, planApprovedAt: 1, revision: 1, approvedRevision: 1,
-      schedule: { time: '09:00', weekdays: [1, 2, 3, 4, 5], everyMinutes: 5, until: '12:00' } };
+    const recipe = { ...savedJob, schedule: { time: '09:00', weekdays: [1, 2, 3, 4, 5], everyMinutes: 5, until: '12:00' } };
     const options = { file: join(dir, 'loops.json'), hostTimezone: 'Australia/Brisbane', now: () => bne('2026-10-09T10:00:30'), execute: ok, listRecipes: () => [recipe] };
     let manager = new LoopManager(options);
-    manager.patchClock('weekly-bills', { time: '09:00', until: '17:00', everyMinutes: 2, weekdays: [1, 2, 3, 4, 5], enabled: true, timezone: 'Australia/Brisbane' });
+    expect(manager.listLoops().find(l => l.id === REPEAT_ID)).toMatchObject({ schedule: { everyMinutes: 5, until: '12:00' }, nextRunAt: bne('2026-10-09T10:05:00') });
+    manager.patchClock(REPEAT_ID, { time: '09:00', until: '17:00', everyMinutes: 2, weekdays: [1, 2, 3, 4, 5], enabled: true, timezone: 'Australia/Brisbane' });
     manager.close(); manager = new LoopManager(options); clean.push(async () => manager.close());
-    expect(manager.listLoops().find(l => l.id === 'weekly-bills')).toMatchObject({ schedule: { time: '09:00', everyMinutes: 2, until: '17:00' }, nextRunAt: bne('2026-10-09T10:02:00') });
-    expect(manager.listLoops().find(l => l.id === 'recipe-fictional-repeat')).toMatchObject({ schedule: { everyMinutes: 5, until: '12:00' }, nextRunAt: bne('2026-10-09T10:05:00') });
-    const cleared = manager.patchClock('weekly-bills', { everyMinutes: null }).schedule;
+    expect(manager.listLoops().find(l => l.id === REPEAT_ID)).toMatchObject({ schedule: { time: '09:00', everyMinutes: 2, until: '17:00' }, nextRunAt: bne('2026-10-09T10:02:00') });
+    const cleared = manager.patchClock(REPEAT_ID, { everyMinutes: null }).schedule;
     expect(cleared.everyMinutes).toBeUndefined();
     expect(cleared.until).toBeUndefined();
   });
@@ -139,10 +156,10 @@ describe('minute repeats on the RealBud clock', () => {
   function repeatClock(name: string, start: number, execute: (loop: { id: string }) => Promise<{ ok: boolean; detail: string }>, runDeadlineMs = 20) {
     const dir = mkdtempSync(join(tmpdir(), `rb-${name}-`)); clean.push(() => removeFixture(dir));
     const clock = { now: start };
-    const manager = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'Australia/Brisbane', now: () => clock.now, runDeadlineMs, execute });
+    const manager = new LoopManager({ file: join(dir, 'loops.json'), hostTimezone: 'Australia/Brisbane', now: () => clock.now, runDeadlineMs, execute, listRecipes: () => [savedJob] });
     clean.push(async () => manager.close());
     manager.setEnabled('morning-arrears', false); manager.setEnabled('owner-letter', false);
-    const runs = () => manager.listRuns().filter(run => run.loopId === 'weekly-bills');
+    const runs = () => manager.listRuns().filter(run => run.loopId === REPEAT_ID);
     return { manager, clock, runs };
   }
   const brisbaneRepeat = { time: '09:00', until: '17:00', everyMinutes: 2, weekdays: [1, 2, 3, 4, 5], enabled: true, timezone: 'Australia/Brisbane' };
@@ -151,7 +168,7 @@ describe('minute repeats on the RealBud clock', () => {
     let calls = 0, release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const { manager, clock, runs } = repeatClock('repeat-overlap', bne('2026-10-09T10:00:00'), async () => { calls++; await gate; return { ok: true, detail: 'Fictional.' }; });
-    manager.patchClock('weekly-bills', brisbaneRepeat);
+    manager.patchClock(REPEAT_ID, brisbaneRepeat);
     for (const at of ['10:02:01', '10:04:01', '10:06:01', '10:08:01']) { clock.now = bne(`2026-10-09T${at}`); await manager.tick(); }
     expect(calls).toBe(1);
     expect(runs()).toHaveLength(1);
@@ -167,20 +184,20 @@ describe('minute repeats on the RealBud clock', () => {
   it('after 3 hours asleep runs once for the latest slot and writes one skipped receipt', async () => {
     let calls = 0;
     const { manager, clock, runs } = repeatClock('repeat-sleep', bne('2026-10-09T10:00:00'), async () => { calls++; return { ok: true, detail: 'Fictional.' }; });
-    manager.patchClock('weekly-bills', brisbaneRepeat);
+    manager.patchClock(REPEAT_ID, brisbaneRepeat);
     clock.now = bne('2026-10-09T13:00:05'); await manager.tick();
     await vi.waitFor(() => expect(manager.busy).toBe(false));
     expect(calls).toBe(1);
     expect(runs()).toHaveLength(2);
     expect(runs().find(run => run.status === 'completed')!.scheduledFor).toBe(bne('2026-10-09T13:00:00'));
     expect(runs().find(run => run.status === 'missed')).toMatchObject({ scheduledFor: bne('2026-10-09T10:02:00'), detail: expect.stringMatching(/^Skipped 89 times while this computer was asleep\./) });
-    expect(manager.listLoops().find(l => l.id === 'weekly-bills')!.nextRunAt).toBe(bne('2026-10-09T13:02:00'));
+    expect(manager.listLoops().find(l => l.id === REPEAT_ID)!.nextRunAt).toBe(bne('2026-10-09T13:02:00'));
   });
 
   it('after 13 hours asleep writes only the 12-hour receipt and runs once', async () => {
     let calls = 0;
     const { manager, clock, runs } = repeatClock('repeat-long-sleep', bne('2026-10-09T10:00:00'), async () => { calls++; return { ok: true, detail: 'Fictional.' }; });
-    manager.patchClock('weekly-bills', { ...brisbaneRepeat, time: '00:00', until: null, weekdays: [0, 1, 2, 3, 4, 5, 6] });
+    manager.patchClock(REPEAT_ID, { ...brisbaneRepeat, time: '00:00', until: null, weekdays: [0, 1, 2, 3, 4, 5, 6] });
     clock.now = bne('2026-10-09T23:00:05'); await manager.tick();
     await vi.waitFor(() => expect(manager.busy).toBe(false));
     expect(calls).toBe(1);
@@ -194,15 +211,15 @@ describe('minute repeats on the RealBud clock', () => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     // A one-minute deadline: a tick that awaited the repeat would sit on it that long.
-    const { manager, clock } = repeatClock('repeat-slow', bne('2026-10-09T06:59:00'), async loop => { calls.push(loop.id); if (loop.id === 'weekly-bills') await gate; return { ok: true, detail: 'Fictional.' }; }, 60_000);
+    const { manager, clock } = repeatClock('repeat-slow', bne('2026-10-09T06:59:00'), async loop => { calls.push(loop.id); if (loop.id === REPEAT_ID) await gate; return { ok: true, detail: 'Fictional.' }; }, 60_000);
     manager.setEnabled('morning-arrears', true);
-    manager.patchClock('weekly-bills', { ...brisbaneRepeat, time: '07:00', until: null, everyMinutes: 30, weekdays: [0, 1, 2, 3, 4, 5, 6] });
+    manager.patchClock(REPEAT_ID, { ...brisbaneRepeat, time: '07:00', until: null, everyMinutes: 30, weekdays: [0, 1, 2, 3, 4, 5, 6] });
     const within = (tick: Promise<void>) => Promise.race([tick.then(() => 'done'), new Promise(resolve => setTimeout(() => resolve('held'), 500))]);
     clock.now = bne('2026-10-09T07:00:01');
     expect(await within(manager.tick())).toBe('done');
     clock.now = bne('2026-10-09T07:30:01');
     expect(await within(manager.tick())).toBe('done');
-    expect(calls).toEqual(['weekly-bills', 'morning-arrears']);
+    expect(calls).toEqual([REPEAT_ID, 'morning-arrears']);
     release();
     await vi.waitFor(() => expect(manager.busy).toBe(false));
   });

@@ -880,7 +880,8 @@ export function createMailIngestionService(options: Options) {
                 const raw = receipt && storage.source(receipt.id);
                 if (!receipt || !raw) return null;
                 const source = validateMailSource(raw, receipt, options.workspaceId);
-                const plain = (value: string, max: number) => redactSecretsInText(value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, max);
+                // Controls, zero-width marks and direction overrides become spaces (the broker's jobLine class).
+                const plain = (value: string, max: number) => redactSecretsInText(value.replace(/[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, max);
                 const latest = source.data.threads.flatMap(thread => thread.messages.slice(-1)).sort((a, b) => b.at - a.at).slice(0, limit);
                 return { receiptId: receipt.id, collectedAt: receipt.completedAt ?? receipt.windowEndAt,
                     lines: latest.map(m => `${new Date(m.at).toISOString()} | ${m.direction} | from ${plain(m.from, 120)} | ${plain(m.subject, 160)} | ${plain(m.body, 300)}`) };

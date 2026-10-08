@@ -448,7 +448,9 @@ export const JOB_CAPABILITIES = [
   "portal-read",
   "portal-prefill",
   "portal-submit",
-  /** Reserved for reviewed mailbox reads; no run grants it yet. */
+  /** A prepare run reads the newest saved collection of the reviewed Gmail, inline as untrusted lines
+   * (server/job-executor.ts); such a job gets no file tools and opens no portal (server/recipes.ts).
+   * Published packs may not grant it. */
   "read-mail",
 ] as const;
 export type JobCapability = (typeof JOB_CAPABILITIES)[number];

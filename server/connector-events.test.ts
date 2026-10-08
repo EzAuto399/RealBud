@@ -56,9 +56,9 @@ function loopManager(patch: Partial<Loop> = {}) {
 
 const tmp = () => join(mkdtempSync(join(tmpdir(), 'connector-events-')), 'connector-events.json');
 const created: ConnectorEvents[] = [];
-async function events(loops: ReturnType<typeof loopManager>, options: { file?: string; cfg?: object; flag?: boolean } = {}) {
+async function events(loops: ReturnType<typeof loopManager>, options: { file?: string; cfg?: object; flag?: boolean; readsMail?: (loopId: string) => boolean } = {}) {
   const file = options.file ?? tmp();
-  const service = new ConnectorEvents({ cfg: () => (options.cfg ?? managed) as never, company: () => 'fictional-workspace', loops, file });
+  const service = new ConnectorEvents({ cfg: () => (options.cfg ?? managed) as never, company: () => 'fictional-workspace', loops, file, readsMail: options.readsMail });
   created.push(service);
   if (options.flag !== false) await service.setNewMail('inbound-triage', true);
   service.start();
@@ -126,11 +126,29 @@ describe('new mail wakes a loop', () => {
     for (const enabled of [true, false]) {
       gateway({ pages: [{ events: [mail(4)], cursor: 4, gap: false, more: false }] });
       const loops = loopManager({ ...repeat, enabled });
-      const { service } = await events(loops, { flag: false });
+      const { service } = await events(loops, { flag: false, readsMail: id => id === repeat.id });
       await service.setNewMail(repeat.id, true);
       await service.tick();
       expect(loops.started).toEqual(enabled ? [eventRequestId('fictional-workspace:recipe-fictional-repeat:4:event:4')] : []);
     }
+  });
+
+  it('never wakes a saved job whose plan does not read mail, and refuses to turn it on', async () => {
+    const repeat = { id: 'recipe-fictional-repeat' as LoopId, name: 'Fictional book check', evaluatorId: 'recipe' };
+    gateway({ pages: [{ events: [mail(4)], cursor: 4, gap: false, more: false }] });
+    let reads = true;
+    const loops = loopManager(repeat);
+    const { service } = await events(loops, { flag: false, readsMail: () => reads });
+    await service.setNewMail(repeat.id, true);
+    // Its plan was edited to stop reading mail: the saved switch no longer wakes it.
+    reads = false;
+    await service.tick();
+    expect(loops.runNow).not.toHaveBeenCalled();
+    await expect(service.setNewMail(repeat.id, true)).rejects.toMatchObject({ status: 400, message: expect.stringContaining('Only a saved job that reads mail') });
+    expect(await service.setNewMail(repeat.id, false)).toMatchObject({ enabled: false });
+    // Without the plan lookup bound, no saved job can be switched on.
+    const unbound = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file: tmp() });
+    await expect(unbound.setNewMail(repeat.id, true)).rejects.toMatchObject({ status: 400 });
   });
 
   it('does nothing without the flag or without managed connections', async () => {
@@ -222,7 +240,7 @@ describe('the new-mail switch', () => {
 
   it('keeps the shared Gmail trigger on while another loop still wants new mail', async () => {
     const net = gateway();
-    const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file: tmp() });
+    const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file: tmp(), readsMail: () => true });
     await service.setNewMail('inbound-triage', true);
     await service.setNewMail('recipe-fictional-repeat', true);
     const toggles = () => net.calls.filter(call => call.path === '/v1/connectors/triggers').map(call => call.body!.enabled);

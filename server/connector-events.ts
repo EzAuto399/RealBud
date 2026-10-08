@@ -12,8 +12,10 @@ import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings, managedConnectorTriggers, pullConnectorEvents, setConnectorTrigger, type ManagedTrigger } from './managed-connectors.ts';
 import type { Loop, LoopId, LoopRun } from './routines.ts';
 
-/** Morning priorities and saved jobs (recipe-*, such as a repeat Bud proposed) may be woken by new mail. */
+/** Morning priorities and saved jobs (recipe-*, such as a repeat Bud proposed) have the switch; new mail
+ * wakes a saved job only while its plan reads mail (`readsMail`), and turning it off always works. */
 const eligible = (loopId: string) => loopId === 'inbound-triage' || /^recipe-[\w-]+$/.test(loopId);
+const NEEDS_MAIL = 'Only a saved job that reads mail can also check when new mail arrives. Add "Read the reviewed mailbox" to its plan first.';
 const NOT_MANAGED = 'Available when Gmail is connected through your RealBud service.';
 const CONNECT_GMAIL = 'Connect Gmail in Connected apps first.';
 const RECONNECT_GMAIL = 'Reconnect Gmail in Connected apps. The morning run still happens.';
@@ -34,6 +36,8 @@ export interface ConnectorEventsOptions {
   /** Namespaces the derived run request ids (the workspace id). */
   company: () => string;
   loops: { listLoops(): Loop[]; runNow(id: LoopId, request: { requestId: string; expectedRevision: number }): LoopRun | null };
+  /** Whether a saved job's (recipe-*) current plan has the read-mail ability. Without it no saved job wakes. */
+  readsMail?: (loopId: string) => boolean;
   /** Background work runs in the member's worker profile and the workspace activity gate. */
   runContext?: <T>(work: () => Promise<T>) => Promise<T>;
   file?: string;
@@ -120,7 +124,7 @@ export class ConnectorEvents {
     if (!managedConnectorConfigured(cfg)) return;
     const state = await this.load();
     // A paused loop does nothing: no pull, no run, the cursor stays for when it resumes.
-    const wake = () => this.options.loops.listLoops().filter(loop => eligible(loop.id) && state.newMail[loop.id] === true && loop.enabled && loop.available);
+    const wake = () => this.options.loops.listLoops().filter(loop => this.wakes(loop.id) && state.newMail[loop.id] === true && loop.enabled && loop.available);
     if (!wake().length) return;
     // A cursor saved under another endpoint or credential starts over at 0, which acknowledges nothing.
     const binding = cursorBinding(cfg);
@@ -142,6 +146,10 @@ export class ConnectorEvents {
 
   private assertEligible(loopId: string) {
     if (!eligible(loopId)) throw Object.assign(new Error('Only Morning priorities and saved jobs can also check when new mail arrives.'), { status: 400 });
+  }
+
+  private wakes(loopId: string) {
+    return loopId === 'inbound-triage' || (eligible(loopId) && this.options.readsMail?.(loopId) === true);
   }
 
   /** Managed Gmail, connected, and the gateway trigger's last known state. */
@@ -182,6 +190,7 @@ export class ConnectorEvents {
   async setNewMail(loopId: string, enabled: unknown): Promise<NewMailState> {
     this.assertEligible(loopId);
     if (typeof enabled !== 'boolean') throw Object.assign(new Error('Send enabled as true or false.'), { status: 400 });
+    if (enabled && !this.wakes(loopId)) throw Object.assign(new Error(NEEDS_MAIL), { status: 400 });
     const saved = (await this.load()).newMail[loopId] === true;
     const cfg = this.options.cfg(), access = await this.availability(cfg);
     const result = { loopId, available: access.available, ...(access.reason ? { reason: access.reason } : {}) };
