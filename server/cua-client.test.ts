@@ -40,6 +40,9 @@ describe("cua client", () => {
     const pending = client.call("click", { pid: 1001, window_id: 2001 }, { signal: stop.signal });
     stop.abort();
     await expect(pending).rejects.toThrow("Stopped.");
+    // The proxy handles lines in order, so once a later read answers, both clicks
+    // (and any retry, which would have been sent first) are recorded.
+    await client.call("get_window_state", { pid: 1001, window_id: 2001 });
     expect(calls(file).filter(row => row.name === "click")).toHaveLength(2);
     expect(client.closed).toBe(false);
   });
