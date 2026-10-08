@@ -200,6 +200,8 @@ test('toolkitAuth: managed sign-in first, else a key scheme the person completes
     // Password sign-in and OAuth without Composio's app are not key schemes.
     [{ composio_managed_auth_schemes: [], auth_config_details: [keyDetail('BASIC'), keyDetail('OAUTH2')] }, null],
     [{ composio_managed_auth_schemes: [] }, null],
+    // A missing or malformed field list fails closed.
+    [{ composio_managed_auth_schemes: [], auth_config_details: [{ mode: 'API_KEY' }, { mode: 'API_KEY', fields: { auth_config_creation: {} } }] }, null],
     [{ no_auth: true, composio_managed_auth_schemes: ['OAUTH2'] }, null],
     [null, null],
   ];
@@ -227,4 +229,7 @@ test('a key config is created with empty credentials under its own name, then re
   // Gmail never takes the key path.
   const gmail = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [key({ name: 'realbud-gmail-key-v1', toolkit: { slug: 'gmail' } })] }); } });
   await assert.rejects(gmail.resolveAuthConfig!({ slug: 'gmail', ...args, allowCreate: false, keyScheme: 'API_KEY' }), /connector_auth_config_create_unconfirmed/);
+  // A toolkit on RealBud's own OAuth client never takes a key config, before any call.
+  const own = composioAuthConfigClient({ fetch: async () => { throw new Error('no call expected'); }, oauthApps: () => ({ clientId: 'fictional-id', clientSecret: 'fictional-secret' }) });
+  await assert.rejects(own.resolveAuthConfig!({ slug: 'googlesheets', ...args, keyScheme: 'API_KEY' }), /connector_app_unavailable/);
 });

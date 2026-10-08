@@ -133,6 +133,8 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
     // Read per call so the secret is never captured into the client.
     const app = provider ? options.oauthApps?.(provider) : undefined;
     const own = !!app;
+    // RealBud's own OAuth client never becomes a key config (it would carry the operator's secret).
+    requireThat(!(own && keyScheme), 'connector_app_unavailable', 404);
     const name = own ? ownAuthConfigName(slug) : keyScheme && slug !== 'gmail' ? keyAuthConfigName(slug) : managedAuthConfigName(slug);
     // A held create is reconciled by find only, without the scheme: either non-own name counts.
     const names = own || slug === 'gmail' ? [name] : [managedAuthConfigName(slug), keyAuthConfigName(slug)];
@@ -194,8 +196,9 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
       if (!Array.isArray(v.auth_config_details)) return null;
       const details = v.auth_config_details;
       // Only a scheme whose config needs nothing from RealBud: every field is the person's, on Composio's page.
+      // A missing or malformed field list fails closed.
       const usable = (scheme: KeyScheme) => details.some(d => record(d) && d.mode === scheme &&
-        !(record(d.fields) && record(d.fields.auth_config_creation) && Array.isArray(d.fields.auth_config_creation.required) && d.fields.auth_config_creation.required.length > 0));
+        record(d.fields) && record(d.fields.auth_config_creation) && Array.isArray(d.fields.auth_config_creation.required) && d.fields.auth_config_creation.required.length === 0);
       return KEY_SCHEMES.find(usable) ?? null;
     },
   };
