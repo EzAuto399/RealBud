@@ -70,7 +70,7 @@ test('default access creates the customer at version 0 under this client with A$
   assert.deepEqual(await m.client.setCustomerAccess(CUSTOMER, { name: ' Fictional Office ', access: { mode: 'default' } }),
     { active: true, monthlyCapNanoAud: '200000000000', created: true });
   assert.deepEqual(m.posts().map(call => call.body), [{ id: CUSTOMER, name: 'Fictional Office', active: true, monthlyCapNanoAud: '200000000000',
-    maxConcurrent: 2, allowedModels: ['auto'], version: 0, clientId: 'realbud' }]);
+    maxConcurrent: 8, allowedModels: ['auto'], version: 0, clientId: 'realbud' }]);
 });
 
 test('a custom cap updates the full record at its stored version and keeps name, concurrency and bindings', async () => {
@@ -207,7 +207,7 @@ test('default and custom set the customer, push the cap to ready projects and au
   // No terms policy is configured for this office, so none is written (see modelvia-live-contract.test.ts).
   assert.deepEqual(created, { status: 200, body: { customer: { active: true, monthlyCapNanoAud: '200000000000', created: true }, projects: [{ installationId: 'install-one', state: 'applied' }], terms: { state: 'unconfigured' } } });
   assert.equal(r.m.projects.get('rb-install-one')!.monthlyCapNanoAud, '200000000000');
-  assert.equal(r.m.projects.get('rb-install-one')!.maxConcurrent, 2);
+  assert.equal(r.m.projects.get('rb-install-one')!.maxConcurrent, 8);
   const custom = await r.post(ROUTE, operatorToken(), officeBody({ mode: 'custom', monthlyCapNanoAud: '350000000000' }));
   assert.deepEqual(custom.body, { customer: { active: true, monthlyCapNanoAud: '350000000000', created: false }, projects: [{ installationId: 'install-one', state: 'applied' }], terms: { state: 'unconfigured' } });
   assert.equal(r.m.projects.get('rb-install-one')!.monthlyCapNanoAud, '350000000000');

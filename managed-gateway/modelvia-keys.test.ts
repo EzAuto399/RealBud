@@ -356,7 +356,7 @@ test('a new office customer carries the billing binding its client billing mode 
     const result = await client(t).setCustomerAccess('realbud-office-c', { name: 'Fictional Office C', access: { mode: 'default' }, ...(billingCompanyId ? { billingCompanyId } : {}) });
     return { result, written: t.seen.filter(call => call.method === 'POST').map(call => call.body) };
   };
-  const base = { id: 'realbud-office-c', name: 'Fictional Office C', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: ['auto'], version: 0, clientId: 'realbud' };
+  const base = { id: 'realbud-office-c', name: 'Fictional Office C', active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 8, allowedModels: ['auto'], version: 0, clientId: 'realbud' };
   assert.deepEqual((await create('client', 'office-c')).written, [base]);
   assert.deepEqual((await create('customer', 'office-c')).written, [{ ...base, billingCompanyId: 'office-c' }]);
   assert.deepEqual((await create('mixed', 'office-c')).written, [{ ...base, payer: 'customer', billingCompanyId: 'office-c' }]);
