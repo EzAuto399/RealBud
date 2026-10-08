@@ -836,7 +836,7 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
 
   it("declares image input only for the choices whose model takes images, and drops it on a switch to Flash", () => {
     const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
-    expect(Object.fromEntries(MANAGED_MODEL_CHOICES.map(choice => [choice.id, choice.supportsVision]))).toEqual({ "flash-high": false, "sonnet-high": true, "sonnet-xhigh": true });
+    expect(Object.fromEntries(MANAGED_MODEL_CHOICES.map(choice => [choice.id, choice.supportsVision]))).toEqual({ "flash-high": false, "sonnet-medium": true, "sonnet-high": true, "sonnet-xhigh": true });
     for (const choice of MANAGED_MODEL_CHOICES) {
       const model = parse(managedModelConfig(pack, GATEWAY, choice.id), { version: "1.1" }).model;
       expect(model).toEqual({ default: choice.model, provider: MANAGED_MODEL_PROVIDER, ...(choice.supportsVision ? { supports_vision: true } : {}) });
@@ -892,7 +892,7 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(parse(mergePropertyPolicy(chosen.replace("reasoning_effort: xhigh", "reasoning_effort: max"), pack)).agent.reasoning_effort).toBeUndefined();
   });
 
-  it("survives a pack reinstall, and a fresh apply migrates auto to the default (Sonnet · High) while dropping shadowing keys", () => {
+  it("survives a pack reinstall, and a fresh apply migrates auto to the default (Sonnet · Medium) while dropping shadowing keys", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(home);
     applyPropertyPack(home);
     const profile = propertyProfileDir(home);
@@ -900,7 +900,7 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       `model:\n  default: auto\n  provider: openai-api\n  base_url: "${GATEWAY}"\n  api_mode: chat_completions\n`);
     writeFileSync(join(profile, ".env"), "KEEP=fictional\nexport OPENAI_API_KEY=fictional-stale\nREALBUD_MODEL_API_KEY=fictional-shadow\n");
     expect(managedModelProfile(home)).toMatchObject({ choice: null, envKeyPresent: true });
-    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-high", envKeyRemoved: true });
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-medium", envKeyRemoved: true });
     expect(readFileSync(join(profile, ".env"), "utf8")).toBe("KEEP=fictional\n");
     applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-xhigh" });
     applyPropertyPack(home);

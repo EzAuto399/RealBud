@@ -135,7 +135,7 @@ describe("after a managed profile write", () => {
     setWorkerModelGrant({ state: "active", baseUrl: FICTIONAL_GATEWAY, keyId: "fictional-key-id", spendCapLabel: "cap" });
     const receipt = () => JSON.parse(readFileSync(join(data, "service-provisioning.json"), "utf8")).modelProfile;
     expect(await reconcileManagedModelProfile(root, { dataDir: data })).toBe(true);
-    expect(receipt()).toMatchObject({ provider: "custom:realbud", model: "claude-sonnet-5.5", choice: "sonnet-high" });
+    expect(receipt()).toMatchObject({ provider: "custom:realbud", model: "claude-sonnet-5.5", choice: "sonnet-medium" });
     await setManagedModelChoice({ choice: "sonnet-xhigh" }, { root, dataDir: data });
     expect(receipt()).toMatchObject({ provider: "custom:realbud", model: "claude-sonnet-5.5", choice: "sonnet-xhigh" });
     expect(JSON.stringify(receipt())).not.toContain("fictional-granted-key");
@@ -151,7 +151,7 @@ describe("after a managed profile write", () => {
     const approved = () => ({ instanceId: "fictional-hermes", model: modelStatus(root).model || "default" });
     expect(productSelectionApproved(bud.modelSelection, approved())).toBe(true); // before the upgrade move
     expect(await reconcileManagedModelProfile(root)).toBe(true);
-    // The profile moved to the default (Sonnet · High); the stale `auto` selection would now be refused.
+    // The profile moved to the default (Sonnet · Medium); the stale `auto` selection would now be refused.
     expect(productSelectionApproved(bud.modelSelection, approved())).toBe(false);
     rebindProductBud(store, approved());
     expect(store.bot(bud.id)!.modelSelection).toEqual({ instanceId: "fictional-hermes", model: "claude-sonnet-5.5" });

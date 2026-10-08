@@ -12,7 +12,7 @@
  * images through `MANAGED_VISION_CHOICE` instead.
  *
  * Dependency-free: the server writes the worker profile from this table and
- * the renderer draws the three radio options from it.
+ * the renderer draws the four radio options from it.
  */
 
 export const MANAGED_MODEL_CHOICES = [
@@ -25,12 +25,20 @@ export const MANAGED_MODEL_CHOICES = [
     detail: "Fast and economical for everyday office work.",
   },
   {
+    id: "sonnet-medium",
+    model: "claude-sonnet-5.5",
+    effort: "medium",
+    supportsVision: true,
+    label: "Claude Sonnet 5.5 · Medium",
+    detail: "Quick, careful Claude for everyday office work. The default.",
+  },
+  {
     id: "sonnet-high",
     model: "claude-sonnet-5.5",
     effort: "high",
     supportsVision: true,
     label: "Claude Sonnet 5.5 · High",
-    detail: "Stronger reasoning for involved letters, comparisons and plans.",
+    detail: "Deeper reasoning when Medium is not enough: involved letters, comparisons and plans.",
   },
   {
     id: "sonnet-xhigh",
@@ -46,8 +54,10 @@ export type ManagedModelChoice = (typeof MANAGED_MODEL_CHOICES)[number];
 export type ManagedModelChoiceId = ManagedModelChoice["id"];
 export type ManagedReasoningEffort = ManagedModelChoice["effort"];
 
-// Owner decision 30 Sep 2026: new and migrated offices start on Sonnet · High.
-export const DEFAULT_MANAGED_MODEL_CHOICE: ManagedModelChoiceId = "sonnet-high";
+// Owner decision 8 Oct 2026 (was Sonnet · High from 30 Sep): new and migrated
+// offices start on Sonnet · Medium, about half High's cost per task and ~3x faster
+// to first token; Sonnet · High stays the step up. An office's saved choice is kept.
+export const DEFAULT_MANAGED_MODEL_CHOICE: ManagedModelChoiceId = "sonnet-medium";
 
 // Owner decision 7 Oct 2026: an office on a text-only choice reads images with
 // this choice's model and effort, through the same managed access. Its plan
@@ -83,13 +93,13 @@ export function managedModelChoiceFor(model: unknown, effort: unknown): ManagedM
  * A provider, key, base URL or free-text model is refused, not ignored. */
 export function normalizeManagedModelChoiceRequest(value: unknown): ManagedModelChoiceId {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Choose one of the three RealBud models.");
+    throw new Error("Choose one of the four RealBud models.");
   }
   const keys = Object.keys(value);
   if (keys.length !== 1 || keys[0] !== "choice") {
-    throw new Error("RealBud uses this office's managed AI access. Choose one of the three RealBud models; a provider, key or model name cannot be set here.");
+    throw new Error("RealBud uses this office's managed AI access. Choose one of the four RealBud models; a provider, key or model name cannot be set here.");
   }
   const choice = (value as { choice: unknown }).choice;
-  if (!isManagedModelChoice(choice)) throw new Error("Choose one of the three RealBud models.");
+  if (!isManagedModelChoice(choice)) throw new Error("Choose one of the four RealBud models.");
   return choice;
 }

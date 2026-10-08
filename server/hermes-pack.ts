@@ -333,7 +333,7 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   const keys = ["approvals", "agent", "toolsets", "security", "delegation", "terminal", "file_read_max_chars", "tool_output", "tool_loop_guardrails"];
   // The office's managed model choice is the one `agent` key that is not
   // policy. Carry it through the policy rewrite only while it still pairs with
-  // the saved model as one of the three choices (never Flash with `xhigh`).
+  // the saved model as one of the four choices (never Flash with `xhigh`).
   const savedEffort = result.getIn(["agent", "reasoning_effort"]);
   const keepEffort = managedModelChoiceFor(result.getIn(["model", "default"]), savedEffort) ? savedEffort : null;
   for (const key of keys) {
@@ -698,7 +698,7 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
 // ── managed model attach (provisioned installations) ─────────────────────────
 //
 // RealBud is managed-only: every office reasons through its paired Modelvia
-// grant, with one of the three choices in `shared/managed-model-choices.ts`.
+// grant, with one of the four choices in `shared/managed-model-choices.ts`.
 // The profile SELECTS the gateway and never holds the key. One-shot CLI workers
 // receive the key through their launch environment; Ask (ACP) receives only a
 // token for RealBud's loopback model relay, which holds the key, is pointed to
@@ -771,7 +771,7 @@ export interface ManagedModelProfile {
   apiMode: string | null;
   keyEnv: string | null;
   reasoningEffort: string | null;
-  /** The saved (model, effort) pair as one of the three choices, else null. */
+  /** The saved (model, effort) pair as one of the four choices, else null. */
   choice: ManagedModelChoiceId | null;
   /** True while a `.env` line could still shadow the granted key. */
   envKeyPresent: boolean;

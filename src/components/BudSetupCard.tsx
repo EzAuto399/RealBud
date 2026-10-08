@@ -51,7 +51,7 @@ function choiceLabel(choice: ManagedModelChoiceId | null | undefined): string | 
 }
 
 /**
- * The three managed model choices as one radio group. RealBud is managed-only:
+ * The four managed model choices as one radio group. RealBud is managed-only:
  * there is no provider picker, key field, sign-in or free-text model.
  */
 export function ManagedModelChoices({ value, disabled, onChange }: {
@@ -451,7 +451,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     setError("");
     setFeedback(null);
     try {
-      // The only thing this computer sends: one of the three choices.
+      // The only thing this computer sends: one of the four choices.
       const res = await api("/api/hermes/model", {
         method: "POST",
         body: JSON.stringify({ choice: selectedChoice }),
@@ -860,7 +860,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
                 {status?.modelAccess?.withdrawn
                   ? status.modelAccess.detail
-                  : "Bud uses your office's managed AI access. Connect this computer to your office on realbud.app, then choose one of three RealBud models here. No provider key is collected on this computer."}
+                  : "Bud uses your office's managed AI access. Connect this computer to your office on realbud.app, then choose one of four RealBud models here. No provider key is collected on this computer."}
               </p>
             )}
             {!managedAccess && !status?.modelAccess?.withdrawn ? <div className="mt-4 max-w-[32rem]"><ConnectOffice /></div> : null}

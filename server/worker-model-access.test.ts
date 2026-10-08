@@ -277,16 +277,16 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     expect(config).toContain('    base_url: https://api.modelvia.dev/v1\n');
     expect(config).toContain(`    key_env: ${MANAGED_MODEL_KEY_ENV}\n`);
     expect(config).toContain(`    api_mode: ${MANAGED_MODEL_API_MODE}\n`);
-    // A model outside the three managed choices moves to the default choice.
+    // A model outside the four managed choices moves to the default choice.
     expect(config).toContain('  default: claude-sonnet-5.5\n');
-    expect(config).toContain('  reasoning_effort: high\n');
+    expect(config).toContain('  reasoning_effort: medium\n');
     // Unrelated profile policy is untouched.
     expect(config).toContain('approvals:\n  mode: manual\n');
     expect(config).not.toContain(MODEL_KEY);
     expect(managedModelProfile(hermesRoot)).toEqual({
       provider: MANAGED_MODEL_PROVIDER, model: 'claude-sonnet-5.5',
       baseUrl: 'https://api.modelvia.dev/v1', apiMode: MANAGED_MODEL_API_MODE, keyEnv: MANAGED_MODEL_KEY_ENV,
-      reasoningEffort: 'high', choice: 'sonnet-high', envKeyPresent: false, visionReady: true,
+      reasoningEffort: 'medium', choice: 'sonnet-medium', envKeyPresent: false, visionReady: true,
     });
     expect(workerModelGrant()).toEqual({ state: 'active', baseUrl: 'https://api.modelvia.dev/v1', keyId: 'rbkkey-01', spendCapLabel: 'AU$40 per month' });
   });
@@ -310,7 +310,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     const record = JSON.parse(readFileSync(join(root, 'service-provisioning.json'), 'utf8'));
     expect(record.modelProfile).toMatchObject({
       provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE,
-      baseUrl: 'https://api.modelvia.dev/v1', model: 'claude-sonnet-5.5', choice: 'sonnet-high', envKeyRemoved: true,
+      baseUrl: 'https://api.modelvia.dev/v1', model: 'claude-sonnet-5.5', choice: 'sonnet-medium', envKeyRemoved: true,
     });
     expect(JSON.stringify(record)).not.toContain(MODEL_KEY);
     // A re-apply has nothing left to remove and says so.
@@ -318,17 +318,17 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     expect(JSON.parse(readFileSync(join(root, 'service-provisioning.json'), 'utf8')).modelProfile.envKeyRemoved).toBe(false);
   });
 
-  it('leaves a fresh computer on the default (Sonnet · High), migrates auto, and keeps a saved managed choice', async () => {
+  it('leaves a fresh computer on the default (Sonnet · Medium), migrates auto, and keeps a saved managed choice', async () => {
     // No prior model on this computer: the default choice, so setup finishes
     // without a second step.
     const fresh = fixture();
     await fresh.access.apply(fresh.provisioning, 'installation-a');
-    expect(managedModelProfile(fresh.hermesRoot)).toMatchObject({ model: 'claude-sonnet-5.5', choice: 'sonnet-high', provider: MANAGED_MODEL_PROVIDER });
+    expect(managedModelProfile(fresh.hermesRoot)).toMatchObject({ model: 'claude-sonnet-5.5', choice: 'sonnet-medium', provider: MANAGED_MODEL_PROVIDER });
 
     // The earlier gateway router entry `auto` is not a choice: it migrates.
     const legacy = fixture({ 'SOUL.md': '# RealBud\n', 'config.yaml': "model:\n  default: auto\n  provider: openai-api\n  base_url: \"https://api.modelvia.dev/v1\"\n  api_mode: chat_completions\n" });
     await legacy.access.apply(legacy.provisioning, 'installation-a');
-    expect(managedModelProfile(legacy.hermesRoot)).toMatchObject({ choice: 'sonnet-high', provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE });
+    expect(managedModelProfile(legacy.hermesRoot)).toMatchObject({ choice: 'sonnet-medium', provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE });
     expect(readFileSync(join(legacy.profileDir, 'config.yaml'), 'utf8')).not.toContain('openai-api');
 
     // An office that already holds a managed choice keeps it on re-enrolment.
