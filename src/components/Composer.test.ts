@@ -2,6 +2,9 @@ import { createElement, type ComponentProps, type ReactElement, type ReactNode, 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot } from "@/state/store";
+import type { DeskSnapshot } from "@/lib/desk";
+import { buildDeskQueue } from "@/lib/desk-queue";
+import { deskCaseInstruction } from "@/lib/desk-ask-context";
 import { Composer } from "./Composer";
 
 const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null, store: {} as Record<string, unknown> }));
@@ -300,5 +303,58 @@ describe("Ask work action labels", () => {
     expect(html).toContain("Enter to update current work");
     expect(html).not.toContain("Enter to start");
     expect(html).not.toContain("Steer now");
+  });
+});
+
+describe("attached Desk case next step", () => {
+  const attach = (caseId: string, draft?: string) => vi.stubGlobal("localStorage", {
+    getItem: (key: string) => key === "omb-draft-attachments"
+      ? JSON.stringify({ "bot:bud": [{ kind: "paste", id: `desk-case-${caseId}`, label: "Money · 12 Oak St", text: "Selected RealBud case.", size: 22, lines: 1 }] })
+      : key === "omb-drafts" && draft ? JSON.stringify({ "bot:bud": draft }) : null,
+    setItem: () => {},
+  });
+  const desk = {
+    properties: [{ id: "p1", address: "12 Oak St" }], sources: [], ledger: [],
+    workItems: [{ id: "w1", propertyId: "p1", kind: "arrears-reminder", state: "proposed", occurrenceKey: "p1:week", sourceIds: [] }],
+    drafts: [{ id: "d1", propertyId: "p1", workItemId: "w1", kind: "friendly-reminder", status: "pending", to: "Tenant", body: "Hi", createdAt: 1 }],
+    escalations: [{ id: "e1", propertyId: "p1", reason: "dispute", detail: "Tenant disputes the amount", createdAt: 2 }],
+  };
+
+  it("offers one step from the case's current Desk state before Back to this case, without sending", () => {
+    attach("draft:d1");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).toContain('aria-label="Next step: Review draft"');
+    expect(html.indexOf("Next step")).toBeLessThan(html.indexOf("Back to this case"));
+    expect(fixture.api).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("never offers a draft on a licensee case", () => {
+    attach("esc:e1");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).toContain('aria-label="Next step: Summarise for licensee"');
+    expect(html).not.toContain("Review draft");
+  });
+
+  it("offers nothing for a decided case or one no longer on Desk", () => {
+    attach("draft:d1");
+    fixture.store = { desk: { ...desk, drafts: [{ ...desk.drafts[0], status: "allowed" }] } };
+    expect(render()).not.toContain("Next step");
+    attach("draft:gone");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).not.toContain("Next step");
+    expect(html).toContain("Back to this case");
+  });
+
+  it("does not offer the step the composer already holds", () => {
+    fixture.store = { desk };
+    const item = buildDeskQueue(desk as unknown as DeskSnapshot).find(row => row.id === "draft:d1")!;
+    attach("draft:d1", deskCaseInstruction(item, "refine"));
+    expect(render()).not.toContain("Next step");
+    attach("draft:d1", deskCaseInstruction(item, "next"));
+    expect(render()).toContain('aria-label="Next step: Review draft"');
   });
 });

@@ -37,6 +37,8 @@ type AskNextInput = {
   composioConfigured?: boolean;
   /** Job the PM just acted on in Ask — keep the next verb on this screen. */
   focusRecipeId?: string | null;
+  /** Address of the Desk case attached in Work. Its card already offers the next step. */
+  caseAddress?: string | null;
 };
 
 type AskSavedJob = {
@@ -326,7 +328,9 @@ export function askNextActions(input: AskNextInput): AskNext[] {
   }
 
   const focusAddr = licensee ?? prepared ?? held;
-  if (focusAddr) {
+  if (focusAddr && focusAddr.address === input.caseAddress) {
+    // Same case as the attached card's next step: one offer, not two.
+  } else if (focusAddr) {
     const street = shortAddress(focusAddr.address);
     if (focusAddr.attention === "licensee") {
       next.push({
