@@ -96,11 +96,18 @@ function sharedRead<T>(path: string, parse: (body: unknown) => T) {
       };
     },
     snapshot: () => value,
+    /** Read again now, for the surfaces already watching. */
+    refresh: () => read?.refresh(),
   };
 }
 
 const agencyRead = sharedRead("/api/agency-setup", readAgencySetupFacts);
 const packRead = sharedRead("/api/austin-pack", parseAustinPackView);
+/** A pack import or agency save changed what setup reads: every watching surface reads it again. */
+export function refreshSetupReads() {
+  agencyRead.refresh();
+  packRead.refresh();
+}
 const idle = () => () => {};
 const unread = () => undefined;
 
