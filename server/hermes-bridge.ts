@@ -6,12 +6,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { normalizeManagedModelChoiceRequest, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
+import { managedModelChoice, normalizeManagedModelChoiceRequest, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
 import { verifyProfileDirectory } from "./hermes-profile-storage.ts";
 import { resetPathCache } from "./env-path.ts";
 import { hermesCli } from "./hermes-pin.ts";
 import { applyManagedModelProfile, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir } from "./hermes-pack.ts";
-import { recordManagedModelReceipt, workerModelGrant } from "./worker-model-access.ts";
+import { canonicalModelChoice, recordManagedModelReceipt, workerModelGrant } from "./worker-model-access.ts";
+import { commitModelChoice, storedModelChoice } from "./worker-control.ts";
+import { currentWorkerProfile } from "./hermes-profile.ts";
 import { normalizedGatewayUrl } from "./hermes-runtime-env.ts";
 import { clearHermesVersionCache, probeHermesVersion } from "./hermes-status.ts";
 import { BootstrapError, bootstrapFailureKind, finishWorkerBootstrap, runWorkerBootstrap } from "./worker-bootstrap.ts";
@@ -36,7 +38,7 @@ let bootstrapAbort: AbortController | null = null;
 let bootstrapCompletion: Promise<void> = Promise.resolve();
 export function waitForBootstrapStop() { return bootstrapCompletion; }
 
-export function startBootstrapInstall(opts?: { timeoutMs?: number; onSuccess?: () => void | Promise<void>; commit?: () => void; release?: HermesRelease; run?: typeof runWorkerBootstrap; verify?: () => Promise<string | null> }): InstallJob {
+export function startBootstrapInstall(opts?: { timeoutMs?: number; onSuccess?: () => void | Promise<void>; commit?: () => void | Promise<void>; release?: HermesRelease; run?: typeof runWorkerBootstrap; verify?: () => Promise<string | null> }): InstallJob {
   if (installInFlight()) return installStatus();
   // Resolve once, here. Previously an omitted `release` fell through to
   // `runWorkerBootstrap`'s default (the 0.20.3 compatibility floor) while
@@ -68,9 +70,9 @@ export function startBootstrapInstall(opts?: { timeoutMs?: number; onSuccess?: (
         catch { throw new BootstrapError("Bud is installed, but its private property setup could not be saved. Check available space and try setup again."); }
         controller.signal.throwIfAborted();
         if (!opts?.run) finishWorkerBootstrap(hermesHome());
-        // Promote while the installer still holds its cross-process lock.
-        // No await separates the last cancellation check and selection write.
-        opts?.commit?.();
+        // Promote while the installer still holds its cross-process lock. The
+        // last cancellation check is above: once started, a promotion finishes.
+        await opts?.commit?.();
         finalized = true;
       } });
       if (!finalized) {
@@ -139,8 +141,12 @@ export interface ModelStatus {
 export const MANAGED_MODEL_LABEL = "RealBud service (Modelvia)";
 
 export function modelStatus(root?: string): ModelStatus {
-  const profile = managedModelProfile(root);
-  const base = { provider: profile.provider, model: profile.model, choice: profile.choice };
+  // The saved choice is RealBud's own record, readable with no worker at all.
+  // Without one (before it is first seeded) the profile is reported as it is.
+  const saved = storedModelChoice(hermesHome(root), currentWorkerProfile().profile);
+  const profile = saved ? null : managedModelProfile(root);
+  const base = profile ? { provider: profile.provider, model: profile.model, choice: profile.choice }
+    : { provider: MANAGED_MODEL_PROVIDER, model: managedModelChoice(saved!).model, choice: saved };
   const grant = workerModelGrant();
   if (grant.state === "active") {
     return { ...base, keyPresent: true, keyHint: `Model access: managed by ${MANAGED_MODEL_LABEL}`, managed: true };
@@ -169,6 +175,9 @@ export async function setManagedModelChoice(body: unknown, opts?: { root?: strin
     throw Object.assign(new Error("Bud's workroom is not set up yet. Finish the earlier setup step first."), { status: 409 });
   }
   verifyProfileDirectory(profileDir);
+  // Committed before the worker profile is written: a failed or later-deleted
+  // profile is rebuilt from this choice by reconcile.
+  await commitModelChoice(hermesHome(opts?.root), currentWorkerProfile().profile, choice, "office");
   const applied = applyManagedModelProfile(grant.baseUrl, { root: opts?.root, choice });
   // The operator receipt follows the profile, never a stale earlier apply.
   await recordManagedModelReceipt(applied, opts?.dataDir);
@@ -179,8 +188,9 @@ export async function setManagedModelChoice(body: unknown, opts?: { root?: strin
  * Bring an installed profile onto the active grant when it does not select it
  * yet: an upgrade from the pre-29-Sep `openai-api` profile, the old `auto`
  * router model, a retired model id, a stale `.env` key, or a Flash profile
- * from before it read images through Sonnet (`auxiliary.vision`). The office's saved
- * choice is kept; anything else becomes `flash-high`. Returns whether it wrote.
+ * from before it read images through Sonnet (`auxiliary.vision`), or a profile
+ * recreated after the worker was deleted. The office's saved choice
+ * (`D/worker-control`) is projected; returns whether it wrote.
  * No grant, a withdrawn grant or no installed pack changes nothing: an
  * unpaired computer is refused at launch instead (`managedModelLaunchRefusal`),
  * and its own files are left alone. The operator receipt is rewritten too.
@@ -188,10 +198,12 @@ export async function setManagedModelChoice(body: unknown, opts?: { root?: strin
 export async function reconcileManagedModelProfile(root?: string, opts?: { dataDir?: string }): Promise<boolean> {
   const grant = workerModelGrant();
   if (grant.state !== "active" || !packInstalled(root)) return false;
+  // Seeded once from this profile, then the provisioning receipt, then the default.
+  const choice = await canonicalModelChoice({ root, dataDir: opts?.dataDir });
   const profile = managedModelProfile(root);
   if (profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl !== null && normalizedGatewayUrl(profile.baseUrl) === normalizedGatewayUrl(grant.baseUrl) &&
-    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice && !profile.envKeyPresent &&
+    profile.keyEnv === MANAGED_MODEL_KEY_ENV && profile.apiMode === MANAGED_MODEL_API_MODE && profile.choice === choice && !profile.envKeyPresent &&
     profile.visionReady) return false;
-  await recordManagedModelReceipt(applyManagedModelProfile(grant.baseUrl, { root }), opts?.dataDir);
+  await recordManagedModelReceipt(applyManagedModelProfile(grant.baseUrl, { root, choice }), opts?.dataDir);
   return true;
 }

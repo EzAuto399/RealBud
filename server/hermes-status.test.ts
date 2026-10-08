@@ -11,6 +11,7 @@ import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { OFF_SCOPE_BUNDLED_SKILLS, WORKER_ACP_TOOLSETS, WORKER_DEFERRED_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS } from "./hermes-pack.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
+import { controlPath, workerControlDir } from "./worker-control.ts";
 
 let home: string;
 let OLD_HERMES: string;
@@ -184,6 +185,18 @@ it("binds readiness and setup to the same member profile", async () => {
   expect(member.workerFingerprint).not.toBe(base.workerFingerprint);
   expect(member.signInCommand).toContain("property-new-member");
   expect(applyHandsReadiness(member, { at: 1, kind: "ping", ok: true, detail: "OK", workerFingerprint: base.workerFingerprint }).ready).toBe(false);
+});
+
+it("reports a held worker without probing it, fingerprinting it or throwing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omb-hermes-held-"));
+  try {
+    mkdirSync(workerControlDir(root), { recursive: true, mode: 0o700 });
+    writeFileSync(controlPath(root, "runtime-selection"), "broken", { mode: 0o600 });
+    const status = await hermesStatus({ root, cli: PINNED_HERMES });
+    expect(status).toMatchObject({ ready: false, hold: "selection_needs_recovery", cli: { installed: true, compatible: false, versionText: null } });
+    expect(status.workerFingerprint).toBeUndefined();
+    expect(applyHandsReadiness(status, { at: 1, kind: "ping", ok: true, detail: "OK" }).ready).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(workerControlDir(root), { recursive: true, force: true }); }
 });
 
 describe("model access readiness", () => {

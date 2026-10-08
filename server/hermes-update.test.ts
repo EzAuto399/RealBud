@@ -9,6 +9,7 @@ import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { readRuntimeSelection, releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
+import { controlPath } from "./worker-control.ts";
 import { acquireWorkerSetupLock, bootstrapPlan, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import * as profileStorage from "./hermes-profile-storage.ts";
 import * as filePrivacy from "./windows-file-privacy.ts";
@@ -119,7 +120,7 @@ it("makes a verified first install available without a restart or a false rollba
   expect(installStatus().state).toBe("done");
   expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
   expect(runtimeUpdateStatus()).toMatchObject({ restartRequired: false, canRestorePrevious: false });
-  expect(() => restorePreviousRuntime()).toThrow(/No previous/);
+  await expect(restorePreviousRuntime()).rejects.toThrow(/No previous/);
 });
 
 const workerStatus = (cli: Partial<HermesStatus["cli"]>) => async () => ({ cli: { installed: true, versionText: "Hermes Agent v0.20.6 (fixture)", matchesPin: false, compatible: false, probeState: "ok", ...cli } }) as HermesStatus;
@@ -155,10 +156,46 @@ it("repairs a compatible worker in place instead of downloading, and keeps an up
   expect(await installOrRepairWorker({ home, run, status: workerStatus({}) })).toEqual({ kind: "awaiting_restart" });
 });
 
+it("stages and adopts a replacement for a damaged runtime at once, keeping the damaged one on disk", async () => {
+  start({ firstInstall: true }); await waitForBootstrapStop();
+  const damaged = readRuntimeSelection(home).selected!;
+  const status = async () => ({ cli: { installed: true, versionText: version, matchesPin: false, compatible: false, probeState: "ok" }, runtimeIntegrity: "damaged" }) as HermesStatus;
+  const repairExisting = vi.fn(async () => null);
+  expect((await installOrRepairWorker({ home, run, verify: async () => version, status, repairExisting })).kind).toBe("started");
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  expect(repairExisting).not.toHaveBeenCalled();
+  const replacement = readRuntimeSelection(home);
+  expect(replacement).toMatchObject({ previous: damaged, previousAvailable: false });
+  expect(replacement.selected).not.toBe(damaged);
+  expect(existsSync(runtimeCli(releaseHome(home, damaged)))).toBe(true);
+  expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, replacement.selected!)));
+});
+
+it("keeps its records when the worker folder is deleted and installs fresh instead of reusing a vanished download", async () => {
+  start({ firstInstall: true }); await waitForBootstrapStop();
+  const first = readRuntimeSelection(home).selected!;
+  start({ repair: true, verify: async () => { throw new Error("fictional verification refusal"); } }); await waitForBootstrapStop();
+  const receipt = JSON.parse(readFileSync(controlPath(home, "completed-runtime"), "utf8"));
+  expect(receipt.candidateId).not.toBe(first);
+  for (const entry of readdirSync(home)) rmSync(join(home, entry), { recursive: true, force: true });
+  expect(readRuntimeSelection(home).selected).toBe(first);
+  expect(JSON.parse(readFileSync(controlPath(home, "completed-runtime"), "utf8"))).toEqual(receipt);
+  resetRuntimeSelectionForTests();
+  const runner = vi.fn(run);
+  const outcome = await installOrRepairWorker({ home, run: runner, verify: async () => version, status: workerStatus({ installed: false, versionText: null, probeState: "missing" }) });
+  expect(outcome.kind).toBe("started");
+  await waitForBootstrapStop();
+  expect(installStatus()).toMatchObject({ state: "done", error: null });
+  expect(runner).toHaveBeenCalledOnce();
+  expect(readRuntimeSelection(home)).toMatchObject({ previous: first, previousAvailable: false });
+  expect(selectedHermesCli()).toBe(runtimeCli(releaseHome(home, readRuntimeSelection(home).selected!)));
+});
+
 it("restores the previous selection on the next launch without touching profile data", async () => {
   start(); await waitForBootstrapStop(); resetRuntimeSelectionForTests();
   const cli = selectedHermesCli();
-  expect(restorePreviousRuntime()).toEqual({ restartRequired: true });
+  expect(await restorePreviousRuntime()).toEqual({ restartRequired: true });
   expect(selectedHermesCli()).toBe(cli);
   expect(runtimeUpdateStatus().restartRequired).toBe(true);
   resetRuntimeSelectionForTests(); expect(selectedHermesCli()).toBe("hermes");
@@ -167,7 +204,7 @@ it("restores the previous selection on the next launch without touching profile 
 it("rejects concurrent installs and rollback while setup is active", async () => {
   start({ run: async opts => { await new Promise<void>(resolve => opts.signal.addEventListener("abort", () => resolve(), { once: true })); } });
   expect(() => start()).toThrow(/already running/);
-  expect(() => restorePreviousRuntime()).toThrow(/Wait/);
+  await expect(restorePreviousRuntime()).rejects.toThrow(/Wait/);
   cancelBootstrapInstall(); await waitForBootstrapStop();
   expect(installStatus().state).toBe("failed");
   expect(readRuntimeSelection(home).selected).toBeNull();
@@ -217,10 +254,10 @@ it("blocks rollback while another process owns the installer lock or child", asy
   const before = readRuntimeSelection(home);
   const lockHome = join(home, ".runtime-install");
   const release = acquireWorkerSetupLock(lockHome);
-  try { expect(() => restorePreviousRuntime()).toThrow(/already running/); }
+  try { await expect(restorePreviousRuntime()).rejects.toThrow(/already running/); }
   finally { release(); }
   writeFileSync(join(lockHome, ".realbud-bootstrap.json"), JSON.stringify({ version: 1, pending: true, childPid: process.pid }));
-  expect(() => restorePreviousRuntime()).toThrow(/earlier agent setup/);
+  await expect(restorePreviousRuntime()).rejects.toThrow(/earlier agent setup/);
   expect(readRuntimeSelection(home)).toEqual(before);
 });
 
@@ -244,7 +281,7 @@ it("keeps a receipted candidate when verification fails after all stages, and th
   await waitForBootstrapStop();
   expect(installStatus().state).toBe("failed");
   expect(stages).toHaveBeenCalled();
-  const receipt = JSON.parse(readFileSync(join(home, ".runtime-install", "completed-runtime.json"), "utf8"));
+  const receipt = JSON.parse(readFileSync(controlPath(home, "completed-runtime"), "utf8"));
   expect(receipt.candidateId).toBe(candidate.split(/[\\/]/).at(-1));
   expect(existsSync(runtimeCli(candidate))).toBe(true);
   const calls = stages.mock.calls.length;
@@ -290,7 +327,7 @@ it("rechecks a completed private download after verification failed without down
   start({ run: runner, verify: async candidate => { checked.push(candidate); throw new Error("fictional verification refusal"); } });
   await waitForBootstrapStop();
   expect(installStatus().state).toBe("failed");
-  const receipt = JSON.parse(readFileSync(join(home, ".runtime-install", "completed-runtime.json"), "utf8"));
+  const receipt = JSON.parse(readFileSync(controlPath(home, "completed-runtime"), "utf8"));
   expect(receipt).toMatchObject({ version: 1, candidateId: checked[0]!.split(/[\\/]/).at(-1), commit: HERMES_RECOMMENDED.commit });
   expect(readRuntimeSelection(home).selected).toBeNull();
 

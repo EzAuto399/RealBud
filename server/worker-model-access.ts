@@ -13,9 +13,10 @@ import { readPrivateJson, removePrivateJson, writePrivateJson } from "./private-
 import { createPrivateVault } from "./private-vault.ts";
 import { currentWorkerProfile } from "./hermes-profile.ts";
 import { writeServiceInstallation, removeServiceInstallation, serviceInstallationPresent, serviceInstallationBinding } from "./managed-service.ts";
-import { applyManagedModelProfile, managedModelConfig, propertyProfileDir, MANAGED_MODEL_KEY_ENV, type ManagedModelApply } from "./hermes-pack.ts";
+import { applyManagedModelProfile, hermesHome, managedModelConfig, managedModelProfile, propertyProfileDir, MANAGED_MODEL_KEY_ENV, type ManagedModelApply } from "./hermes-pack.ts";
 import { ensureProfileDirectory, readProfileFile } from "./hermes-profile-storage.ts";
-import { DEFAULT_MANAGED_MODEL_CHOICE, isManagedModelChoice, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
+import { DEFAULT_MANAGED_MODEL_CHOICE, isManagedModelChoice, managedModelChoiceKeepingModel, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
+import { commitModelChoice, storedModelChoice } from "./worker-control.ts";
 import { DEFAULT_MANAGED_APPS, type InstallationProvisioning } from "../shared/office-link.ts";
 
 /** Vault entry name. Must match `^[a-z0-9-]{1,80}$` for the vault's own check. */
@@ -143,6 +144,26 @@ export async function recordManagedModelReceipt(profile: ManagedModelApply, dire
     await writePrivateJson(provisioningPath(directory), { ...record, modelProfile: managedModelReceipt(profile) });
     return true;
   });
+}
+
+/**
+ * The office's model choice for the current worker profile, from RealBud's
+ * own record. Seeded once, in order: what a valid current profile selects,
+ * the provisioning receipt, the default. Committed before any projection, so
+ * a deleted or recreated worker profile gets the same choice back.
+ */
+export async function canonicalModelChoice(opts: { root?: string; dataDir?: string } = {}): Promise<ManagedModelChoiceId> {
+  const home = hermesHome(opts.root), profileName = currentWorkerProfile().profile;
+  const saved = storedModelChoice(home, profileName);
+  if (saved) return saved;
+  const profile = managedModelProfile(opts.root);
+  const fromProfile = profile.choice ?? managedModelChoiceKeepingModel(profile.model);
+  if (fromProfile) return commitModelChoice(home, profileName, fromProfile, "profile", { ifAbsent: true });
+  let receipt: ManagedModelChoiceId | undefined;
+  try { const record = await readServiceProvisioning(opts.dataDir ?? DATA_DIR); receipt = record?.state === "active" ? record.modelProfile?.choice : undefined; }
+  catch { receipt = undefined; }
+  if (receipt) return commitModelChoice(home, profileName, receipt, "provisioning", { ifAbsent: true });
+  return commitModelChoice(home, profileName, DEFAULT_MANAGED_MODEL_CHOICE, "default", { ifAbsent: true });
 }
 
 /** Managed connections beyond Gmail are whatever this installation was granted.
@@ -274,6 +295,9 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
       throw Object.assign(new Error("This service setup is for a different private workspace on this computer. Contact service support."), { status: 403 });
     }
 
+    // The office's choice is settled before anything is written, so a record
+    // that needs recovery refuses the enrolment with nothing half-applied.
+    const choice = await canonicalModelChoice({ root: options.hermesRoot, dataDir: options.directory });
     const currentHash = connectorHash(readConfig().composio?.managed);
     const ownedHashes = existing?.state === "applying" ? existing.connectorHashes : existing?.state === "active"
       ? [existing.connectorHash ?? currentHash].filter((hash): hash is string => hash !== undefined) : [];
@@ -292,7 +316,7 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
     // (`MANAGED_MODEL_ENV_KEYS`): upstream prefers that dotenv over the launch
     // environment, so a stale line there would silently shadow the granted
     // key. The granted key itself is never written to the profile.
-    const profile: ManagedModelApply = applyManagedModelProfile(provisioning.model.baseUrl, { root: options.hermesRoot });
+    const profile: ManagedModelApply = applyManagedModelProfile(provisioning.model.baseUrl, { root: options.hermesRoot, choice });
     await writeServiceInstallation(options.directory, provisioning.service);
     const record: ServiceProvisioningRecord = {
       version: 1, state: "active", installationId,

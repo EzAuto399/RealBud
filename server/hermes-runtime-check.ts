@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { execCli, killCliTree, spawnCli } from "./procs.ts";
-import { runtimeCli } from "./hermes-paths.ts";
-import type { HermesRelease } from "./hermes-releases.ts";
+import { hermesHome, runtimeCli } from "./hermes-paths.ts";
+import { HERMES_RELEASES, type HermesRelease } from "./hermes-releases.ts";
+import { runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { BootstrapError } from "./worker-bootstrap.ts";
 import { windowsHermesGit, windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { documentToolsStatus, type DocumentToolsStatus } from "./hermes-document-deps.ts";
@@ -99,3 +100,90 @@ export async function verifyRuntime(home: string, release: HermesRelease, option
     return version;
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
+
+// ── Runtime integrity for readiness (M3) ─────────────────────────────────
+// The same source and ACP checks as installation, run against the runtime
+// this process launches: at boot, at Repair and before generation admission.
+// A damaged runtime that still answers --version stays not ready, and is kept
+// on disk while a replacement is staged.
+
+export type RuntimeIntegrity = "ok" | "damaged" | "unknown" | "not_applicable";
+export const RUNTIME_DAMAGED = "Bud’s private runtime failed its safety check, so Bud is paused. Your files are kept. Repair Bud to replace it.";
+/** ponytail: a failed check is retried after this long, so a slow first start
+ * (antivirus, a busy disk) heals itself; in-place edits between checks are
+ * found at the next boot, Repair or replaced runtime, not on every turn. */
+const DAMAGED_RECHECK_MS = 10 * 60_000;
+const integrityResults = new Map<string, { state: "ok" | "damaged"; at: number }>();
+const integrityChecks = new Map<string, Promise<RuntimeIntegrity>>();
+let integrityGeneration = 0;
+
+/** Which runtime on disk this CLI is: a replaced folder or executable,
+ * including one of the same version, reads as a different runtime. */
+export function runtimeIdentity(cli: string): string {
+  try {
+    const file = lstatSync(cli), folder = lstatSync(dirname(dirname(dirname(dirname(cli)))));
+    return [cli, file.dev, file.ino, file.size, file.mtimeMs, folder.ino, folder.birthtimeMs].join(":");
+  } catch { return `${cli}:missing`; }
+}
+
+/** The RealBud-selected runtime behind `cli`, with the release it must match.
+ * A custom, personal or legacy worker has no reviewed source to compare. */
+function ownedRuntime(cli: string, home: string): { runtime: string; release: HermesRelease } | null {
+  const runtime = dirname(dirname(dirname(dirname(cli))));
+  if (dirname(runtime) !== join(home, "runtimes") || runtimeCli(runtime) !== cli || !/^[a-f0-9]{40}(?:-[a-f0-9]{12})?$/.test(basename(runtime))) return null;
+  const release = HERMES_RELEASES.find(entry => entry.commit === runtimeCommit(basename(runtime)));
+  return release ? { runtime, release } : null;
+}
+
+type IntegrityOptions = { cli?: string; root?: string; verify?: typeof verifyRuntime };
+const target = (opts: IntegrityOptions) => {
+  if (process.env.REALBUD_HERMES_CLI?.trim() && !opts.cli) return null;
+  const home = hermesHome(opts.root), cli = opts.cli ?? selectedHermesCli(home);
+  const owned = ownedRuntime(cli, home), key = runtimeIdentity(cli);
+  // A runtime that is not there reads as missing (status), not as damaged.
+  return owned && !key.endsWith(":missing") ? { ...owned, key } : null;
+};
+const fresh = (known: { state: "ok" | "damaged"; at: number } | undefined) =>
+  known && (known.state === "ok" || Date.now() - known.at < DAMAGED_RECHECK_MS) ? known.state : undefined;
+
+/** Cached state for status polls; an unchecked runtime starts its check in the background. */
+export function runtimeIntegrity(opts: IntegrityOptions = {}): RuntimeIntegrity {
+  const owned = target(opts);
+  if (!owned) return "not_applicable";
+  const known = integrityResults.get(owned.key);
+  if (fresh(known)) return known!.state;
+  // A failed runtime stays failed while its re-check runs.
+  void checkRuntimeIntegrity(opts);
+  return known?.state ?? "unknown";
+}
+
+/** Runs the check (once at a time per runtime) unless a current result exists. */
+export function checkRuntimeIntegrity(opts: IntegrityOptions & { force?: boolean } = {}): Promise<RuntimeIntegrity> {
+  const owned = target(opts);
+  if (!owned) return Promise.resolve("not_applicable");
+  const known = opts.force ? undefined : fresh(integrityResults.get(owned.key));
+  if (known) return Promise.resolve(known);
+  const pending = integrityChecks.get(owned.key);
+  if (pending) return pending;
+  const generation = integrityGeneration;
+  const check = (opts.verify ?? verifyRuntime)(owned.runtime, owned.release)
+    .then((): "ok" => "ok", (): "damaged" => {
+      console.warn(`[${new Date().toISOString()}] Bud runtime check: the selected runtime failed its integrity check; it is kept and Bud is paused.`);
+      return "damaged";
+    })
+    .then(state => {
+      if (generation === integrityGeneration) integrityResults.set(owned.key, { state, at: Date.now() });
+      return state;
+    })
+    .finally(() => { if (integrityChecks.get(owned.key) === check) integrityChecks.delete(owned.key); });
+  integrityChecks.set(owned.key, check);
+  return check;
+}
+
+/** Generation admission: refuse a turn on a runtime that failed its check. */
+export async function assertRuntimeIntegrity(opts: IntegrityOptions = {}): Promise<void> {
+  if (await checkRuntimeIntegrity(opts) === "damaged") throw Object.assign(new Error(RUNTIME_DAMAGED), { status: 409, code: "worker_runtime_damaged" });
+}
+
+/** Repair and removal start from a fresh check. */
+export function clearRuntimeIntegrity(): void { integrityGeneration++; integrityResults.clear(); integrityChecks.clear(); }
