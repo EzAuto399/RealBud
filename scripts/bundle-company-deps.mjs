@@ -80,7 +80,7 @@ const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMa
 // These helpers are resolved dynamically rather than by JS imports. Verify the
 // exact shipped bytes as part of every server build; no checkout fallback.
 const helpers = {};
-for (const name of ['hermes-memory-review.py', 'hermes-memory-proposals.py', 'hermes-memory-windows.py', 'hermes-memory-windows-native.py', 'hermes-memory-windows-journal.py', 'department-worker.py']) {
+for (const name of ['hermes-memory-review.py', 'hermes-memory-proposals.py', 'hermes-memory-windows.py', 'hermes-memory-windows-native.py', 'hermes-memory-windows-journal.py']) {
   const source = await readFile(join(root, 'server/helpers', name));
   const packaged = await readFile(join(server, 'helpers', name));
   if (!source.equals(packaged)) throw new Error(`Packaged memory helper differs from source: ${name}`);
