@@ -1,25 +1,17 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, ChevronDown, Circle, CircleDashed, CircleHelp, LoaderCircle } from "lucide-react";
 
-import { parseAustinPackView } from "@shared/austin-pack";
-import { budAutoSetupView } from "@/lib/bud-setup";
 import {
   SETUP_STEP_COUNT,
-  gmailReadyHere,
-  officeAppsToConnect,
-  readAgencySetupFacts,
-  readWebsiteLinkState,
-  setupSequence,
   setupSequenceComplete,
-  sharedGmailNotAllowed,
   type AgencySetupRead,
   type AustinPackRead,
-  type ScheduleRead,
   type SetupStep,
   type WebsiteLinkRead,
 } from "@/lib/setup-sequence";
-import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { SET_UP_DISMISSED, firstDayContext, firstDayItems, readGetStartedLocal, saveGetStartedLocal, type FirstDayItem, type GetStartedLocal } from "@/lib/first-day";
+import { startReiSignIn } from "@/lib/rei-sign-in";
+import { useSetupState } from "@/lib/use-setup-state";
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { api, useStore } from "@/state/store";
 import { OwnerRequestButton } from "../OwnerRequestButton";
@@ -32,65 +24,6 @@ const STATE_LABEL: Record<SetupStep["state"], string> = {
   unknown: "Not checked yet",
   skipped: "Skipped",
 };
-
-type Read<T> = T | "unavailable" | undefined;
-const READ_TIMEOUT_MS = 15_000;
-/** A busy PC can miss one 15 s window (Windows issues #15), so a failed read tries again a few times. */
-export const READ_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
-
-/**
- * Bounded reads of one path: a hung or failed read becomes "unavailable",
- * never a permanent "Reading…"; a failed read tries again a few times.
- */
-export function boundedRead<T>(path: string, parse: (body: unknown) => T, set: (update: (previous: Read<T>) => Read<T>) => void) {
-  let alive = true;
-  let controller: AbortController | undefined;
-  let retry: ReturnType<typeof setTimeout> | undefined;
-  const load = (attempt: number) => {
-    controller?.abort();
-    clearTimeout(retry);
-    const current = new AbortController();
-    controller = current;
-    const timer = setTimeout(() => current.abort(), READ_TIMEOUT_MS);
-    void api(path, { signal: current.signal })
-      .then((body: unknown) => {
-        if (!alive || controller !== current) return;
-        const next = parse(body);
-        set(() => next);
-      })
-      .catch(() => {
-        if (!alive || controller !== current) return;
-        // Absent evidence is never evidence: a failed read is unknown, never the last good value.
-        set(() => "unavailable");
-        if (attempt < READ_RETRY_DELAYS_MS.length) retry = setTimeout(() => load(attempt + 1), READ_RETRY_DELAYS_MS[attempt]);
-      })
-      .finally(() => clearTimeout(timer));
-  };
-  return {
-    refresh: () => load(0),
-    stop: () => {
-      alive = false;
-      controller?.abort();
-      clearTimeout(retry);
-    },
-  };
-}
-
-function useBoundedRead<T>(path: string, parse: (body: unknown) => T, skip: boolean, refreshEvent?: string): Read<T> {
-  const [value, setValue] = useState<Read<T>>(undefined);
-  useEffect(() => {
-    if (skip) return;
-    const read = boundedRead(path, parse, setValue);
-    read.refresh();
-    if (refreshEvent) window.addEventListener(refreshEvent, read.refresh);
-    return () => {
-      read.stop();
-      if (refreshEvent) window.removeEventListener(refreshEvent, read.refresh);
-    };
-    // `parse` is a module-level function at every call site.
-  }, [path, skip, refreshEvent]);
-  return value;
-}
 
 function setUpDismissed(): boolean {
   try { return localStorage.getItem(SET_UP_DISMISSED) === "1"; } catch { return false; }
@@ -124,67 +57,59 @@ export function GoLiveCard({
   inert?: boolean;
   /** Desk shows a Hide control that folds the card to one line. */
   compact?: boolean;
-  /** Supply the host facts to skip this card's own bounded reads of them. */
+  /** Supply host facts to skip the app's shared reads of them (tests and previews). */
   agencySetup?: AgencySetupRead;
   websiteLink?: WebsiteLinkRead;
   austinPack?: AustinPackRead;
 }) {
-  const { state, dispatch } = useStore();
+  const { dispatch, refreshHermes } = useStore();
   const [open, setOpen] = useState(true);
   const [doneDismissed, setDoneDismissed] = useState(setUpDismissed);
   // Skipped steps, tried workflows and the dismissed guide: this computer's own choices.
   const [local, setLocal] = useState<GetStartedLocal>(readGetStartedLocal);
   const [guideOpen, setGuideOpen] = useState<boolean | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryNote, setRetryNote] = useState("");
+  const retryInFlight = useRef(false);
   const keep = (next: GetStartedLocal) => { setLocal(next); saveGetStartedLocal(next); };
-  // Unknown setup state stays unknown: a failed or slow read may never read as
-  // finished setup, so the step carries its own honest wording instead.
-  const agencyRead = useBoundedRead("/api/agency-setup", readAgencySetupFacts, agencySetup !== undefined);
-  const packRead = useBoundedRead("/api/austin-pack", parseAustinPackView, austinPack !== undefined);
-  // Step 1 re-reads whenever the link card in Workspace changes the link, so it
-  // ticks without a reload.
-  const linkRead = useBoundedRead("/api/office-link", readWebsiteLinkState, websiteLink !== undefined, "realbud-website-link-changed");
-  // The store already hydrates the loops once per session, so the workflow step
-  // reuses that slice. Anything short of a finished read stays "not checked yet".
-  const routines = state?.activityLoad?.routines;
-  const schedule: ScheduleRead =
-    routines === "ready"
-      ? {
-          read: "ready",
-          loops: (state.loops ?? []).map((loop) => ({
-            id: loop.id,
-            name: loop.name,
-            available: loop.available,
-            enabled: loop.enabled,
-            nextRunAt: loop.nextRunAt,
-          })),
-        }
-      : { read: routines === "error" ? "error" : "loading" };
-  // Bud ticks only on the server's own readiness verdict.
-  const hermes = state?.hermes ?? null;
-  const auto = budAutoSetupView(hermes);
-  // The app-wide office-source watch already keeps this snapshot fresh.
-  const { snapshot: officeSnapshot } = useOfficeSources();
-  const steps = setupSequence({
-    officeAgencyName: agencyName,
-    agencySetup: agencySetup ?? agencyRead,
-    austinPack: austinPack ?? packRead,
-    websiteLink: websiteLink ?? linkRead,
-    bud: hermes ? { ready: hermes.ready, working: Boolean(auto?.working), detail: auto && !auto.working ? auto.detail : null } : undefined,
-    schedule,
-    appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
-    sharedGmailBlocked: sharedGmailNotAllowed(officeSnapshot, state?.config?.composio?.managed === true),
-    gmailReady: gmailReadyHere(officeSnapshot, state?.config?.composio?.managed === true),
-    skipped: local.skipped as SetupStep["id"][],
-  });
-  const firstDay = local.guideDismissed ? [] : firstDayItems(austinPack ?? packRead);
+  // The app's one setup reading. Unknown setup state stays unknown: a failed or
+  // slow read may never read as finished setup.
+  const setup = useSetupState({ officeAgencyName: agencyName, agencySetup, websiteLink, austinPack, skipped: local.skipped as SetupStep["id"][] });
+  const steps = setup.steps;
+  const firstDay = local.guideDismissed ? [] : firstDayItems(setup.austinPack);
   const tryItem = (item: FirstDayItem) => {
     if (!local.tried.includes(item.loopId)) keep({ ...local, tried: [...local.tried, item.loopId] });
     dispatch({ type: "stageAskContext", context: firstDayContext(item, crypto.randomUUID()) });
   };
 
+  // Bud's own Try setup again. A lost answer may hide a started retry, so the status read settles it.
+  const retrySetup = async () => {
+    if (retryInFlight.current) return;
+    retryInFlight.current = true;
+    setRetrying(true);
+    setRetryNote("");
+    try {
+      await api("/api/hermes/auto-setup/retry", { method: "POST", body: "{}" });
+    } catch {
+      setRetryNote("The setup request could not be confirmed. Checking its current status; your work is kept.");
+    }
+    await refreshHermes?.().catch(() => {});
+    retryInFlight.current = false;
+    setRetrying(false);
+  };
+
   const openStep = (step: SetupStep) => {
     if (step.target === "bud-setup") {
       openWorkspaceSetup("bud");
+      return;
+    }
+    if (step.target === "bud-retry") {
+      void retrySetup();
+      return;
+    }
+    if (step.target === "rei-sign-in") {
+      // REI's own page opens in the work browser; the person types their password there.
+      void startReiSignIn();
       return;
     }
     if (typeof location !== "undefined") location.hash = step.target;
@@ -308,6 +233,7 @@ export function GoLiveCard({
                 {step.state !== "done" ? (
                   <p className={`mt-0.5 text-[12.5px] ${step.state === "unknown" ? "text-hold" : "text-ink-muted"}`}>{step.status}</p>
                 ) : null}
+                {step.id === "bud" && retryNote ? <p role="status" className="mt-0.5 text-[12.5px] text-hold">{retryNote}</p> : null}
               </div>
               {action || canSkip || step.state === "skipped" ? (
                 <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
@@ -326,6 +252,7 @@ export function GoLiveCard({
                     <button
                       type="button"
                       onClick={() => openStep(step)}
+                      disabled={step.target === "bud-retry" && retrying}
                       aria-label={step.actionLabel}
                       className={`pm-control rounded border px-3 text-[13px] ${step.state === "current" && !quiet ? "border-agency bg-agency text-white hover:bg-agency-hover" : "border-line bg-sheet text-ink hover:bg-selected"}`}
                     >

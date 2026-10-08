@@ -37,6 +37,8 @@ export interface BrowserTaskCardView {
   progress: string[];
   /** Present only on a task given one app window instead of a site. */
   desktop?: DesktopTarget;
+  /** Asked for an app on this computer: the card asks for a window, not a site. */
+  appTask?: true;
 }
 export interface BrowserTaskBrowser { ready: boolean; name: string | null }
 export interface BrowserTaskList { tasks: BrowserTaskCardView[]; browser: BrowserTaskBrowser }
@@ -69,12 +71,13 @@ export function parseBrowserTaskList(value: unknown): BrowserTaskList {
       !Array.isArray(row.progress) || row.progress.length > 10 || !row.progress.every(line => str(line, 200))) invalid();
     let desktop: DesktopTarget | undefined;
     if (row.desktop !== undefined && row.desktop !== null) try { desktop = parseDesktopTarget(row.desktop); } catch { invalid(); }
+    if (row.appTask !== undefined && row.appTask !== true) invalid();
     return {
       id: row.id as string, messageId: row.messageId as string, status: row.status as BrowserTaskStatus, request: row.request as string,
       sites: [...row.sites as string[]], siteSource: row.siteSource as BrowserTaskCardView["siteSource"], savedJob: row.savedJob as string | null,
       actions: list(row.actions, ACTIONS), consequential: list(row.consequential, KINDS), minutes: row.minutes as number, budget: row.budget as number,
       offerExpiresAt: row.offerExpiresAt as number, startedAt: row.startedAt as number | null, expiresAt: row.expiresAt as number | null, endNote: row.endNote as string | null,
-      progress: [...row.progress as string[]], ...(desktop ? { desktop } : {}),
+      progress: [...row.progress as string[]], ...(desktop ? { desktop } : {}), ...(row.appTask ? { appTask: true as const } : {}),
     };
   });
   return { tasks, browser: { ready: browser.ready as boolean, name: browser.name as string | null } };
@@ -100,8 +103,13 @@ export function browserTaskSteps(actions: readonly BrowserActionClass[], app = f
   return [first, ...words.filter(([action]) => actions.includes(action)).map(([, phrase]) => phrase)];
 }
 
+const DESKTOP_TASK_LIMITS = "It asks you before pressing anything that pays, sends, signs or deletes, and shows you the app's own words for that button. Signing in and passwords stay with you. If the window closes or another app takes it over, the task ends.";
 /** What a task given an app window may and may not do there, in plain words. */
-export const DESKTOP_TASK_SCOPE = "Bud works only in this window. It asks you before pressing anything that pays, sends, signs or deletes, and shows you the app's own words for that button. Signing in and passwords stay with you. If the window closes or another app takes it over, the task ends.";
+export const DESKTOP_TASK_SCOPE = `Bud works only in this window. ${DESKTOP_TASK_LIMITS}`;
+/** The same, before the person has chosen the window. */
+export const DESKTOP_TASK_CHOOSE = `Bud works only in the window you choose. ${DESKTOP_TASK_LIMITS}`;
+/** The card's title for a task in an app window, chosen or still to choose. */
+export const APP_TASK_TITLE = "Task in an app on this computer";
 
 const ASK_WORDS: Record<BrowserConsequentialKind, string> = {
   pay: "payments", sign: "signatures", send: "messages", notice: "notices", delete: "deletions", "account-change": "account changes",
@@ -136,8 +144,10 @@ export function browserTaskStatusLine(task: BrowserTaskCardView, now: number): s
   return ENDED[task.status] ?? task.endNote ?? "This task has ended.";
 }
 
-/** The open app windows, read only while the person is choosing what the task works in. */
-function useDesktopWindows(enabled: boolean): [DesktopWindowsState, () => void] {
+/** The open app windows, read only while the person is choosing what the task works in. The list re-reads
+ * quietly (keeping what is shown) when the picker opens or RealBud regains focus, so a window opened after the
+ * card appeared is offered without a new card. */
+function useDesktopWindows(enabled: boolean): [DesktopWindowsState, () => void, () => void] {
   const [state, setState] = useState<DesktopWindowsState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -147,24 +157,37 @@ function useDesktopWindows(enabled: boolean): [DesktopWindowsState, () => void] 
     void loadDesktopWindows(api).then(next => { if (current) setState(next); });
     return () => { current = false; };
   }, [enabled, attempt]);
-  return [state, useCallback(() => setAttempt(n => n + 1), [])];
+  const reading = useRef(false);
+  const reread = useCallback(() => {
+    if (reading.current) return; // a click fires both focus and mousedown: one read
+    reading.current = true;
+    void loadDesktopWindows(api).then(next => { if (next.status === "ready") setState(next); }).finally(() => { reading.current = false; });
+  }, []);
+  useEffect(() => {
+    if (!enabled) return;
+    window.addEventListener("focus", reread);
+    return () => window.removeEventListener("focus", reread);
+  }, [enabled, reread]);
+  return [state, useCallback(() => setAttempt(n => n + 1), []), reread];
 }
 
 /** "or an app on this computer": a native list of open windows, or why there is none. */
-export function DesktopWindowPicker({ state, value, disabled = false, onChange, onRetry }: {
+export function DesktopWindowPicker({ state, value, disabled = false, onChange, onRetry, onOpen, heading = "or an app on this computer" }: {
   state: DesktopWindowsState;
   value: string;
   disabled?: boolean;
   onChange: (windowId: string) => void;
   onRetry: () => void;
+  /** The person is opening the list: re-read the open windows. */
+  onOpen?: () => void;
+  heading?: string;
 }) {
   const id = useId();
   if (state.status === "unavailable") return <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">Apps on this computer aren't available here.</p>;
-  const heading = "or an app on this computer";
   if (state.status === "ready" && state.windows.length) return (
     <div className="mt-2">
       <label htmlFor={id} className="block text-[12px] text-ink-muted">{heading}</label>
-      <select id={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}
+      <select id={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)} onFocus={onOpen} onMouseDown={onOpen}
         className="pm-control mt-0.5 w-full rounded border border-line bg-paper px-3 text-[14px] text-ink disabled:opacity-50">
         <option value="">Choose an open app window</option>
         {state.windows.map(window => <option key={window.windowId} value={String(window.windowId)}>{desktopWindowLabel(window)}</option>)}
@@ -206,19 +229,24 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
   const app = task.desktop;
   const offered = task.status === "proposed" && now <= task.offerExpiresAt;
   const needsSite = offered && task.sites.length === 0 && !app;
-  const [windows, recheckWindows] = useDesktopWindows(needsSite && Boolean(onStartWindow));
+  const [windows, recheckWindows, rereadWindows] = useDesktopWindows(needsSite && Boolean(onStartWindow));
   const choices = windows.status === "ready" ? windows.windows : [];
   const chosen = choices.find(window => String(window.windowId) === windowId) ?? null;
-  const blocked = needsSite && !site.trim() && !chosen
-    ? choices.length && onStartWindow ? "Enter the site's web address or choose an app window to start." : "Enter the site's web address to start."
-    : null;
-  const kind = app ? "App task" : "Browser task";
+  // Asked for an app ("… in the Notepad app"): the card asks only for the window, never a site.
+  const pickApp = needsSite && Boolean(task.appTask && onStartWindow);
+  const blocked = !needsSite || chosen ? null
+    : pickApp ? "Choose the app window to start."
+      : site.trim() ? null
+        : choices.length && onStartWindow ? "Enter the site's web address or choose an app window to start." : "Enter the site's web address to start.";
+  const inApp = Boolean(app || chosen || task.appTask);
+  const kind = inApp ? APP_TASK_TITLE : "Browser task";
   const title = task.status === "active" ? `${kind} · running` : kind;
-  const where = app ? app.appName : "your browser";
-  const asksFirst = app ? "Anything that pays, sends, signs or deletes asks you first, with the app's own words for that button." : browserTaskAsksFirst(task.consequential);
+  const where = app ? app.appName : inApp ? "the app" : "your browser";
+  const asksFirst = inApp ? "Anything that pays, sends, signs or deletes asks you first, with the app's own words for that button." : browserTaskAsksFirst(task.consequential);
   // What Bud will do, before and while it runs; once it ends the progress line says what it did.
   const live = offered || task.status === "active" || task.status === "paused";
-  const looksOnly = live && !app ? browserTaskLooksOnly(task) : null;
+  const looksOnly = live && !inApp ? browserTaskLooksOnly(task) : null;
+  const appScope = !live || !inApp ? null : app ? DESKTOP_TASK_SCOPE : DESKTOP_TASK_CHOOSE;
   const start = () => chosen && onStartWindow ? onStartWindow(chosen) : onStart(needsSite ? site.trim() : undefined);
   const Icon = app ? AppWindow : Globe;
   return (
@@ -230,29 +258,31 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
         </div>
         <h3 className="mt-1 break-words text-[15px] font-semibold leading-snug text-ink">{sentence(task.request)}</h3>
         {looksOnly ? <p className="mt-1 text-[14px] leading-relaxed text-ink-secondary">{looksOnly}</p> : null}
-        {app && live ? <p className="mt-1 text-[14px] leading-relaxed text-ink-secondary">{DESKTOP_TASK_SCOPE}</p> : null}
+        {appScope ? <p className="mt-1 text-[14px] leading-relaxed text-ink-secondary">{appScope}</p> : null}
         {task.progress.length ? <p aria-label="Progress" className="mt-1 break-words text-[13px] leading-relaxed text-ink-muted">{task.progress.join(" · ")}</p> : null}
         <dl aria-label="What this task covers" className="mt-2 divide-y divide-line border-y border-line text-[14px]">
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
-            <dt className="text-[12px] text-ink-muted">{app ? "App window" : "Site"}</dt>
+            <dt className="text-[12px] text-ink-muted">{app || pickApp ? "App window" : "Site"}</dt>
             <dd className="min-w-0 break-words text-ink">
-              {app ? desktopWindowLabel(app) : task.sites.length ? task.sites.join(", ") : needsSite ? (
+              {app ? desktopWindowLabel(app) : task.sites.length ? task.sites.join(", ") : pickApp ? (
+                <DesktopWindowPicker state={windows} value={windowId} disabled={busy} onRetry={recheckWindows} onOpen={rereadWindows}
+                  heading="Choose the window Bud works in" onChange={setWindowId} />
+              ) : needsSite ? (
                 <>
                   <label htmlFor={siteId} className="sr-only">Site web address</label>
                   <input id={siteId} type="text" inputMode="url" autoComplete="off" spellCheck={false} value={site}
                     onChange={event => { setSite(event.target.value); if (event.target.value.trim()) setWindowId(""); }}
                     placeholder="for example vantagestrata.com.au" className="pm-control w-full rounded border border-line bg-paper px-3 text-[14px] text-ink" />
                   {onStartWindow ? (
-                    <DesktopWindowPicker state={windows} value={windowId} disabled={busy} onRetry={recheckWindows}
+                    <DesktopWindowPicker state={windows} value={windowId} disabled={busy} onRetry={recheckWindows} onOpen={rereadWindows}
                       onChange={next => { setWindowId(next); if (next) setSite(""); }} />
                   ) : null}
-                  {chosen ? <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{DESKTOP_TASK_SCOPE}</p> : null}
                 </>
               ) : "No site"}
               {task.savedJob && task.sites.length ? <span className="block text-[12px] text-ink-muted">From your saved job “{task.savedJob}”</span> : null}
             </dd>
           </div>
-          {app || chosen ? null : (
+          {inApp ? null : (
             <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
               <dt className="text-[12px] text-ink-muted">Browser</dt>
               <dd className="min-w-0 text-ink">{browser.ready ? `${browser.name ?? "Your selected browser"} on this computer` : "Work browser on this computer · opens when you start"}</dd>
@@ -260,7 +290,7 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
           )}
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
             <dt className="text-[12px] text-ink-muted">Bud can</dt>
-            <dd className="min-w-0 text-ink"><ul className="list-disc pl-4">{browserTaskSteps(task.actions, Boolean(app || chosen)).map(step => <li key={step}>{step}</li>)}</ul></dd>
+            <dd className="min-w-0 text-ink"><ul className="list-disc pl-4">{browserTaskSteps(task.actions, inApp).map(step => <li key={step}>{step}</li>)}</ul></dd>
           </div>
           {asksFirst ? (
             <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">

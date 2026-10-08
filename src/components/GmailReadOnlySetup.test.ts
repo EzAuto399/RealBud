@@ -10,6 +10,12 @@ import { ConnectedAppsCard } from "./ConnectedAppsCard";
 
 const store = vi.hoisted(() => ({ state: { config: null as ConfigStatus | null, connected: true, bots: [] }, dispatch: vi.fn(), api: vi.fn() }));
 vi.mock("@/state/store", () => ({ useStore: () => ({ state: store.state, dispatch: store.dispatch }), api: store.api }));
+// Setup's Connect gate, open unless a test closes it (linked computer, Bud ready).
+const setupGate = vi.hoisted(() => ({ connectApps: { on: true } as { on: boolean; reason?: string; actionLabel?: string } }));
+vi.mock("@/lib/use-setup-state", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/use-setup-state")>();
+  return { ...actual, useSetupState: () => ({ ...actual.useSetupState(), gates: { ...actual.useSetupState().gates, connectApps: setupGate.connectApps } }) };
+});
 
 const status = (fields: Partial<ConfigStatus["composio"]> = {}): ConfigStatus => ({
   composio: { configured: true, apiKeyConfigured: false, mode: "consumer", readOnlyConfigured: false, ...fields }, box: { configured: false },
@@ -129,6 +135,13 @@ describe("optional setup and Gmail-only layout", () => {
     const html = renderToStaticMarkup(createElement(ConnectedAppsCard));
     expect(html).toContain("Connection setup needed");
     expect(html).toContain("Your service administrator needs to activate connections on this computer");
+    // On a computer not yet connected to its office, setup's own reason and fix come first.
+    setupGate.connectApps = { on: false, reason: "Connect this computer to your office first.", actionLabel: "Enter link code" };
+    try {
+      const held = renderToStaticMarkup(createElement(ConnectedAppsCard));
+      expect(held).toContain("Connect this computer to your office first.");
+      expect(held).not.toContain("Your service administrator needs to activate connections on this computer");
+    } finally { setupGate.connectApps = { on: true }; }
     expect(html).not.toContain("Add a Platform key");
     expect(html).not.toContain("Save the Platform key");
     expect(html).not.toContain('type="password"');

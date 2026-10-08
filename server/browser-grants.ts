@@ -90,6 +90,9 @@ export interface BrowserTaskRecord {
   /** A desktop task's app window, preselected from the request (an open window of the app it named).
    * Data only: Start checks the window again; the grant's `desktop` is the authority. */
   desktop?: DesktopTarget;
+  /** Proposed from a request for an app on this computer ("… in the Notepad app"), so the card asks for a window,
+   * not a site. Wording only; absent on older records and website tasks. */
+  appTask?: true;
 }
 
 /** The pack recipes a task runs and the account the person selected. Data only: the grant is the authority. */
@@ -138,6 +141,8 @@ export interface BrowserTaskCardView {
   progress: string[];
   /** A desktop task's app window: its grant's, or the one preselected before Start. */
   desktop?: DesktopTarget;
+  /** Asked for an app on this computer: the card asks for a window, not a site. */
+  appTask?: true;
 }
 
 const MAX_RECORDS = 200;
@@ -237,6 +242,7 @@ function validRecord(value: unknown): value is BrowserTaskRecord {
     try { if (parseBrowserTaskGrant(row.grant).id !== row.id) return false; } catch { return false; }
   }
   if (row.desktop !== undefined) { try { parseDesktopTarget(row.desktop); } catch { return false; } }
+  if (row.appTask !== undefined && row.appTask !== true) return false;
   return row.evidence.every(item => item && typeof item === "object" && time((item as JobRunEvidence).at) &&
     EVIDENCE_KINDS.includes((item as JobRunEvidence).kind) && text((item as JobRunEvidence).note, 500));
 }
@@ -284,6 +290,7 @@ export function browserTaskCardView(record: BrowserTaskRecord): BrowserTaskCardV
     endNote: record.endNote,
     progress: browserTaskProgress(record.evidence),
     ...(record.grant?.desktop ?? record.desktop ? { desktop: structuredClone(record.grant?.desktop ?? record.desktop!) } : {}),
+    ...(record.appTask ? { appTask: true as const } : {}),
   };
 }
 
@@ -298,6 +305,8 @@ export interface BrowserTaskProposal {
   recipe?: BrowserTaskRecipe;
   /** A desktop task's preselected app window (no sites). */
   desktop?: DesktopTarget;
+  /** Proposed from a request for an app on this computer (no sites). */
+  appTask?: true;
 }
 
 /** A thread's saved messages. Only the person's own messages are read for attachments. */
@@ -431,7 +440,7 @@ export class BrowserTaskStore {
       if (!request) throw fail(400, "Say what Bud should do on the site.");
       if (input.recipe !== undefined && !validBrowserTaskRecipe(input.recipe)) throw fail(400, "This portal task's recipes or account are not valid. Choose them again.");
       const desktop = input.desktop === undefined ? undefined : parseDesktopTarget(structuredClone(input.desktop));
-      if (desktop && (input.sites.length || input.recipe)) throw fail(400, "A task works in a website or an app window, not both.");
+      if ((desktop || input.appTask) && (input.sites.length || input.recipe)) throw fail(400, "A task works in a website or an app window, not both.");
       const record: BrowserTaskRecord = {
         version: 1, purpose: "browser-task", id: randomUUID(), threadId: input.threadId, messageId: input.messageId, request,
         sites: [...new Set(input.sites.filter(browserTaskSite))].slice(0, 20), siteSource: input.siteSource,
@@ -441,6 +450,7 @@ export class BrowserTaskStore {
         startedAt: null, endedAt: null, endNote: null, grant: null, evidence: [],
         ...(input.recipe ? { recipe: structuredClone(input.recipe) } : {}),
         ...(desktop ? { desktop } : {}),
+        ...(input.appTask === true ? { appTask: true as const } : {}),
       };
       if (record.siteSource !== "none" && !record.sites.length) record.siteSource = "none";
       const rows = [...await this.load(), record];
@@ -575,12 +585,14 @@ let defaultStore: BrowserTaskStore | null = null;
 export const browserTasks = (): BrowserTaskStore => (defaultStore ??= new BrowserTaskStore());
 
 // ── Desktop tasks: the open app windows a person may give a task ─────────
-/** Apps a desktop task never works in: RealBud itself, browsers (those use
- * browser tasks), terminals and code editors, system settings, and password
- * stores. Matched on the app's name (".exe" dropped) and, when the helper
- * gives one, its bundle id. */
+/** Apps a desktop task never works in: RealBud itself and its desktop helper (the cua-driver cursor overlay),
+ * system shells (Dock, taskbar, input and search hosts), browsers (those use browser tasks), terminals and
+ * code editors, system settings, and password stores. Matched on the app's name (".exe" dropped) and, when
+ * the helper gives one, its bundle id. */
 const NOT_A_TASK_APP = new RegExp(`^(?:${[
-  "realbud.*", "electron",
+  "realbud.*", "electron", "cua-driver", "cua.*driver",
+  "dock", "window ?server", "windowmanager", "systemuiserver", "control cent(?:er|re)", "notification cent(?:er|re)",
+  "textinputhost", "shellexperiencehost", "startmenuexperiencehost", "searchhost", "searchapp", "lockapp", "shellhost",
   "google chrome.*", "chrome", "chromium", "microsoft edge.*", "msedge", "safari.*", "firefox.*", "arc", "brave.*", "opera.*", "vivaldi", "orion", "tor browser",
   "terminal", "iterm2?", "warp", "alacritty", "kitty", "wezterm.*", "ghostty", "hyper", "tabby", "windows terminal", "windowsterminal", "command prompt", "cmd",
   "conhost", "(?:windows )?powershell.*", "pwsh", "git bash", "mintty",
@@ -595,16 +607,27 @@ const NOT_A_TASK_BUNDLE = /^(?:com\.realbud\.|com\.github\.electron|com\.google\
  * window and app name. ponytail: use the driver's bundle_id once the pinned release sends it. */
 const bundleStandIn = (appName: string) => appName.replace(/[^A-Za-z0-9.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 200) || "app";
 
-/** The windows a person may give a task, from a list_windows answer: titled windows of other apps, at most 200. */
+/** Shell windows that are not app windows: the desktop itself and the helper's cursor overlay, whatever app name they carry. */
+const NOT_A_TASK_WINDOW = /^(?:Program Manager|Cua\.AgentCursorOverlay\b.*)$/i;
+/** A row whose bounds say it has no area (hidden, minimised to nothing or a shell stub). Rows without bounds pass. */
+const emptyBounds = (bounds: unknown) => {
+  if (!bounds || typeof bounds !== "object") return false;
+  const { width, height } = bounds as Record<string, unknown>;
+  return !(typeof width === "number" && width > 0 && typeof height === "number" && height > 0);
+};
+
+/** The windows a person may give a task, from a list_windows answer: titled, non-empty windows of other apps, at
+ * most 200. The picker, the named-app preselect and Start's check all read through here. */
 export function desktopWindowChoices(rows: unknown, ownPids: readonly number[] = [process.pid, process.ppid]): DesktopTarget[] {
   const out: DesktopTarget[] = [];
   const seen = new Set<number>();
   for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || typeof row !== "object" || Array.isArray(row)) continue;
-    const { app_name, bundle_id, pid, window_id, title } = row as Record<string, unknown>;
+    const { app_name, bundle_id, pid, window_id, title, bounds } = row as Record<string, unknown>;
     const appName = typeof app_name === "string" ? app_name.trim() : "";
     const bundle = typeof bundle_id === "string" ? bundle_id : "";
     if (!appName || typeof title !== "string" || !title.trim() || ownPids.includes(pid as number) || seen.has(window_id as number) ||
+      emptyBounds(bounds) || NOT_A_TASK_WINDOW.test(title.trim()) ||
       NOT_A_TASK_APP.test(appName.replace(/\.exe$/i, "")) || NOT_A_TASK_BUNDLE.test(bundle)) continue;
     try { out.push(parseDesktopTarget({ appName, bundleId: bundle || bundleStandIn(appName), pid, windowId: window_id, title })); } catch { continue; }
     seen.add(window_id as number);

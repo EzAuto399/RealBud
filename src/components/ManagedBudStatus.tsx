@@ -109,7 +109,7 @@ export function ManagedBudStatus({ id, status, connected, recovering = false, ac
   const officeSetupLabel = officeLinked
     ? officeAccess === "failed" || officeAccess === "skipped" || officeAccess === "not-yet" ? "Office service setup needed" : "Setting up your office connection"
     : office.status ? "Connect to your office" : office.error ? "Office connection unavailable" : "Checking office connection";
-  const lastFailure = budAutoSetupView(displayStatus)?.working ? null : budReadinessFailure(displayStatus);
+  const lastFailure = budAutoSetupView(displayStatus)?.working ? null : budReadinessFailure(displayStatus, office.status ? (officeLinked ? "linked" : "not-linked") : undefined);
   // A link may finish on another setup surface. Refresh here even while a
   // missing worker prevented the old model step from becoming current.
   useEffect(() => {

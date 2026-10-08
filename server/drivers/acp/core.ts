@@ -281,6 +281,16 @@ export function plainEngineFailure(delta: string): string | null {
   return delta.length >= 80 && HERMES_FAILURE_COPY.test(delta) ? ENGINE_FAILURE_REPLY : null;
 }
 
+/** After streaming an answer, Hermes ACP sends the finished answer again as one whole chunk when a hook rewrote it
+ * (acp_adapter/server.py `response_transformed`), so the reply read the same paragraph twice, glued together. The
+ * repeat starts with everything streamed since the last tool call: keep only what it adds. The length floor keeps an
+ * ordinary chunk that happens to begin with a short answer so far untouched. */
+export function freshAnswerDelta(sofar: string, delta: string): string {
+  const head = sofar.trim();
+  const body = delta.trimStart();
+  return head.length >= 40 && body.startsWith(head) ? body.slice(head.length) : delta;
+}
+
 export const HERMES_BROWSER_REFUSED =
   "Bud tried to use a web browser of its own, which RealBud does not allow, so this request was stopped. Website work runs in RealBud’s browser, where you sign in yourself.";
 
@@ -921,6 +931,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   run.steerAckPending = false;
                   break;
                 }
+                delta = freshAnswerDelta(run.sawTool ? run.answerText : run.text, delta);
+                if (!delta) break;
                 const plain = plainEngineFailure(delta);
                 if (plain) delta = (run.text.trim() ? "\n\n" : "") + plain;
                 run.text += delta;

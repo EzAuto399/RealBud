@@ -20,7 +20,7 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { FakeAcpDriver } from "../../testing/fake-acp-driver.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
-import { CUA_EXTENSION_REFUSED, cuaNeverTool, ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
+import { CUA_EXTENSION_REFUSED, cuaNeverTool, ENGINE_FAILURE_REPLY, freshAnswerDelta, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
@@ -79,6 +79,18 @@ describe("ACP decodeConfig", () => {
       expect(plainEngineFailure(words), words).toBeNull();
     }
     expect(ENGINE_FAILURE_REPLY).not.toMatch(/hermes|\/retry|\/model|provider|custom/i);
+  });
+  it("drops Hermes' whole-answer repeat after a streamed answer, keeping only what it adds", () => {
+    const answer = "I haven't typed anything yet. Choose the Notepad window on the card and I will leave the file unsaved.";
+    // Streamed in pieces, then the same answer again as one chunk: the second copy adds nothing.
+    let text = "";
+    for (const delta of [answer.slice(0, 30), answer.slice(30), answer]) text += freshAnswerDelta(text, delta);
+    expect(text).toBe(answer);
+    expect(freshAnswerDelta(answer, `\n${answer} Ask me to save it when you are ready.`)).toBe(" Ask me to save it when you are ready.");
+    // Ordinary streaming is untouched: a short answer so far, or a chunk that does not repeat it.
+    expect(freshAnswerDelta("I", "I think so.")).toBe("I think so.");
+    expect(freshAnswerDelta(answer, " Anything else?")).toBe(" Anything else?");
+    expect(freshAnswerDelta("", answer)).toBe(answer);
   });
   it("fullAuto only when explicitly true", () => {
     expect(FakeAcpDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);

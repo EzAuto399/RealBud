@@ -29,7 +29,8 @@ import { FlaggedReceipt, JobDrawer, LoopDetail, type LoopTimingChange } from "./
 import { isAttendedMode } from "@/lib/job-run";
 import { JobList } from "./schedule/JobList";
 import { beginLoopRequest, pendingLoopRequest, resumeLoopRequest, confirmLoopReceipt, rejectLoopRequest, type PendingLoopRequest } from "@/lib/manual-loop-request";
-import { readAgencySetupFacts, switchOnBlocker, type AgencySetupRead } from "@/lib/setup-sequence";
+import { readAgencySetupFacts, type AgencySetupRead } from "@/lib/setup-sequence";
+import { refreshSetupReads, useSetupState } from "@/lib/use-setup-state";
 
 /** `flagged` pins the receipt that needed review when the job was opened, so it
  * is shown directly and acknowledging it does not swap it out of the detail. */
@@ -74,6 +75,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   // Only the book's confirmed zone; the snapshot's default zone is this computer's.
   const timezone = state.desk?.book?.agency.timezone || undefined;
   const recovery = state.scheduleRecovery.active || Boolean(state.desk?.recovery?.active);
+  // The app's one setup reading, fed this page's own pack and agency reads.
+  const { gates } = useSetupState({ austinPack: austin === "unread" ? undefined : austin ?? "unavailable", agencySetup });
 
   const refreshSchedule = useCallback(async () => {
     const request = ++refreshFlight.current;
@@ -371,8 +374,9 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
     switch (row.action) {
       case "stop": stopAttended(); return;
       case "review-result": openRow(row, true); return;
+      // A held action opens the job, where its reason and fix are shown.
       case "run-now":
-        if (row.loop && !row.loop.waitingForPlan) void runNow(row.loop);
+        if (row.loop && !row.loop.waitingForPlan && gates.runNow(row.loop.id).on) void runNow(row.loop);
         else openRow(row);
         return;
       case "check-previous":
@@ -380,7 +384,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
         else openRow(row);
         return;
       case "resume":
-        if (loopOnly) void toggle(loopOnly).then(restoreAfterResume, restoreAfterResume);
+        if (!gates.switchOn(loopOnly?.id ?? row.recipe?.id ?? "").on) openRow(row);
+        else if (loopOnly) void toggle(loopOnly).then(restoreAfterResume, restoreAfterResume);
         else if (row.recipe) void resumeRecipe(row.recipe).then(restoreAfterResume, restoreAfterResume);
         return;
       default: openRow(row);
@@ -513,7 +518,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   let drawerBody: ReactNode = null;
   if (drawer?.mode === "create") drawerBody = workspace;
   else if (drawer?.mode === "packs") drawerBody = (
-    <WorkflowPacksCard onInstalled={refreshSchedule} agencyFirst={drawer.agency} className="mb-0 border-0 bg-transparent p-0" />
+    <WorkflowPacksCard onInstalled={() => { refreshSetupReads(); return refreshSchedule(); }} agencyFirst={drawer.agency} className="mb-0 border-0 bg-transparent p-0" />
   );
   else if (drawer?.mode === "learn") drawerBody = <LearnedRecipesCard bare />;
   else if (drawer?.mode === "archive") {
@@ -577,7 +582,8 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           onOpenDesk={openDesk}
           registerCloseGuard={registerCloseGuard}
           about={<AustinPlanDetail view={austin === "unread" ? null : austin} loopId={loop.id} />}
-          blocker={switchOnBlocker(agencySetup, loop.id, loop.name)}
+          switchGate={gates.switchOn(loop.id)}
+          runGate={gates.runNow(loop.id)}
         />
         </>
       );

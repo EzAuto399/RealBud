@@ -386,6 +386,31 @@ describe("desktop tasks (one app window)", () => {
     ], [4242])).toEqual([MAIL, { appName: "Xero", bundleId: "Xero", pid: 502, windowId: 80, title: "Bills" }]);
   });
 
+  it("never offers RealBud's own helper overlay, its Helper windows, shell windows or zero-size windows", () => {
+    const sized = (r: ReturnType<typeof row>, width: number, height: number) => ({ ...r, bounds: { x: 0, y: 0, width, height } });
+    const NOTEPAD = sized(row(700, 20, "Notepad.exe", "Untitled - Notepad"), 800, 600);
+    expect(desktopWindowChoices([
+      sized(row(701, 21, "cua-driver.exe", "Cua.AgentCursorOverlay.default"), 1920, 1080), row(702, 22, "Overlay Host", "Cua.AgentCursorOverlay.default"),
+      row(703, 23, "RealBud Helper (Renderer)", "RealBud"), row(704, 24, "RealBud.exe", "RealBud"),
+      row(705, 25, "explorer.exe", "Program Manager"), row(706, 26, "TextInputHost.exe", "Windows Input Experience"), row(707, 27, "Dock", "Dock"),
+      sized(row(708, 28, "Fictional App", "Hidden"), 0, 0), sized(row(709, 29, "Fictional App", "Stub"), 640, 0),
+      NOTEPAD, sized(row(710, 30, "explorer.exe", "Documents"), 900, 700),
+    ], [])).toEqual([
+      { appName: "Notepad.exe", bundleId: "Notepad.exe", pid: 700, windowId: 20, title: "Untitled - Notepad" },
+      { appName: "explorer.exe", bundleId: "explorer.exe", pid: 710, windowId: 30, title: "Documents" },
+    ]);
+  });
+
+  it("keeps an app request an app task on the card, with or without a preselected window, and never with a site", async () => {
+    const { store, file } = fixture();
+    const card = await store.propose({ threadId: "thread-ask", messageId: "m-app", request: "Open Notepad on this computer", sites: [], siteSource: "none", savedJob: null, actions: ["read"], appTask: true }, NOW);
+    expect(browserTaskCardView(card)).toMatchObject({ appTask: true, sites: [] });
+    expect(browserTaskCardView(card)).not.toHaveProperty("desktop");
+    expect(browserTaskCardView((await new BrowserTaskStore({ file }).get(card.id))!).appTask).toBe(true);
+    expect(browserTaskCardView(await store.propose(proposal("Download this month's invoices from portal.fictional-strata.example"), NOW))).not.toHaveProperty("appTask");
+    await expect(store.propose({ ...proposal("Download this month's invoices from portal.fictional-strata.example"), appTask: true }, NOW)).rejects.toMatchObject({ status: 400 });
+  });
+
   it("takes a Start window as exactly {pid, windowId}", () => {
     expect(desktopWindowChoice({ pid: 501, windowId: 77 })).toEqual({ pid: 501, windowId: 77 });
     for (const bad of [null, {}, { pid: 501 }, { pid: 0, windowId: 77 }, { pid: 501, windowId: 77, title: "x" }, { pid: "501", windowId: 77 }]) {

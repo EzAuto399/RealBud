@@ -12,9 +12,9 @@ import {
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
 import { appConnectionPrompt, BANK_CSV_FALLBACK, connectedAppCatalog, filterConnectedAppCatalog, OFFICE_GMAIL_SLUG, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
-import { useOfficeLinkRead } from "@/lib/use-office-link";
-import { openWorkspaceSetup } from "@/lib/workspace-setup";
+import { useSetupState } from "@/lib/use-setup-state";
 import { OwnerRequestButton } from "./OwnerRequestButton";
+import { SetupGateNote } from "./SetupGateNote";
 import { useHermiosConnection, type HermiosConnectionControls } from "@/lib/hermios-connection-api";
 import { useConnector, type ConnectorControls } from "@/lib/redbark-connection-api";
 import { useConnectorRegistry } from "@/lib/mcp-connector-api";
@@ -288,11 +288,10 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const sharedMail = snapshot?.sourceKind === "office_shared";
   const catalog = connectedAppCatalog(snapshot, { configured, readOnly, managed, hermios: hermios.view.state, bankFeed: bankFeed.view.state });
   const visibleApps = filterConnectedAppCatalog(catalog, appQuery, appFilter);
-  // Connecting asks Bud in Work, so it waits for the server's own readiness verdict, said before the click.
+  // Connecting asks Bud in Work, so it waits for setup's gate (office link, then Bud ready), said before the click.
+  const gate = useSetupState().gates.connectApps;
   const budReady = state.hermes?.ready === true;
-  const canConnect = !DESIGN_PREVIEW_REASON && configured && Boolean(budId) && budReady && !budBusy && state.connected && !loading && !settingsPending && !connecting;
-  // Before an office link nothing here can be activated; connecting the computer is the step.
-  const officeLink = useOfficeLinkRead(state.connected && !configured);
+  const canConnect = !DESIGN_PREVIEW_REASON && configured && Boolean(budId) && gate.on && budReady && !budBusy && state.connected && !loading && !settingsPending && !connecting;
   const customConnect = () => {
     if (askConnect(customApp)) setCustomApp('');
   };
@@ -314,14 +313,9 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
         {configured ? readOnly ? 'Gmail read-only configured' : managed ? 'Office connection service configured' : 'Connection service configured' : 'Connection setup needed'}
         {' · '}{loading ? 'Checking…' : snapshot?.checkedAt ? `Checked ${fmtDateTime(Date.parse(snapshot.checkedAt))}` : 'Access not checked yet'}
       </p>
-      {!configured && officeLink === "not-linked" ? <div className="mt-2 flex flex-wrap items-center gap-2">
-        <p className="text-[13px] text-ink-secondary">Connect this computer to your office first. You can then connect your work accounts here.</p>
-        <button type="button" className={primary} onClick={() => openWorkspaceSetup("bud")}>Connect this computer</button>
-      </div> : !configured ? <p className="mt-2 text-[13px] text-ink-secondary">Your service administrator needs to activate connections on this computer. You can then connect your work accounts here.</p> : null}
-      {configured && budId && !budReady && state.connected && !DESIGN_PREVIEW_REASON ? <div className="mt-2 flex flex-wrap items-center gap-2">
-        <p role="status" className="text-[13px] text-hold">Connecting apps is available once Bud is set up.</p>
-        <button type="button" className={control} onClick={() => openWorkspaceSetup("bud")}>See Bud setup</button>
-      </div> : null}
+      {/* Setup's reason and its fix, in place: link first, then Bud. */}
+      {!gate.on && state.connected && !DESIGN_PREVIEW_REASON ? <SetupGateNote gate={gate} className="mt-2" />
+        : !configured ? <p className="mt-2 text-[13px] text-ink-secondary">Your service administrator needs to activate connections on this computer. You can then connect your work accounts here.</p> : null}
 
       {error ? <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p> : null}
       {!budId ? <div className="mt-2 flex flex-wrap items-center gap-2">
