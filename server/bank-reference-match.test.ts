@@ -307,24 +307,25 @@ describe("Jev payer hint (data, never a match)", () => {
   // Tenant names only on the extra rules, so the sync payer-name pass leaves row 11 (JOHN DOE, $410, no reference) unhinted.
   const named = [...rules, rule("P-AF", "AF1", { tenant: "Alex Fictional" }), rule("P-JD", "JD1", { tenant: "John Doe" })];
   const pick = (choice: string, confidence: number, probabilities: Record<string, number>) => {
-    const asked: JevRequest[] = [];
-    const decide = async (request: JevRequest): Promise<JevResult> => {
-      asked.push(request);
+    const asked: JevRequest[] = [], prefers: unknown[] = [];
+    const decide = async (request: JevRequest, options?: { prefer?: string }): Promise<JevResult> => {
+      asked.push(request); prefers.push(options?.prefer);
       return { ok: true, id: "dec-fictional", model: "fictional-decider", ms: 1, answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, { type: "choice" as const, choice, confidence, probabilities }])) };
     };
-    return { asked, decide };
+    return { asked, prefers, decide };
   };
   const run = async (choice: string, confidence: number, probabilities: Record<string, number>) => {
     const batch = createBankReferenceBatch(upload(bytes, named));
     const before = bankFirstPass(batch)!, summary = { ...before.summary };
-    const { asked, decide } = pick(choice, confidence, probabilities);
+    const { asked, prefers, decide } = pick(choice, confidence, probabilities);
     const after = await jevPayerHints(batch, before, decide);
-    return { after, summary, asked, row: after.rows[10] };
+    return { after, summary, asked, prefers, row: after.rows[10] };
   };
 
   it("sets only the hint on an unmatched no-reference row", async () => {
-    const { after, summary, asked, row } = await run("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+    const { after, summary, asked, prefers, row } = await run("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
     expect(asked).toHaveLength(1);
+    expect(prefers).toEqual(["luna"]); // Luna first: the 8 Oct eval's only arm with no wrong accepts here
     expect(asked[0].state).toEqual({ p0: { payer: "JOHN DOE", amount: "410.00" } });
     expect(asked[0].questions.p0).toMatchObject({ type: "choice", criteria: { t1: "Alex Fictional", t2: "John Doe", none: expect.any(String) } });
     expect(row).toMatchObject({ class: "exception", disposition: "hold", propertyId: "P-JD", hintSource: "jev", reason: "No reference found." });

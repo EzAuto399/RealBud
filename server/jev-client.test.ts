@@ -307,7 +307,7 @@ describe("jev decide", () => {
   });
 });
 
-describe("jev decide with Jev primary and Luna fallback", () => {
+describe("jev decide: per-use primary (Jev by default, Luna on prefer) and the other as fallback", () => {
   const LUNA = "gpt-6-luna-decisions", JEV = "jev-1.13-decisions";
   const sentModel = (call: number) => JSON.parse(fetchStub.mock.calls[call][1].body).model;
   const luna = { ...answer(), id: "fictional-decision-luna", model: "openai/gpt-6-luna-decisions-2026-09-22" };
@@ -370,10 +370,12 @@ describe("jev decide with Jev primary and Luna fallback", () => {
     [400, "invalid_questions", "invalid"], [402, "monthly_cap_exceeded", "budget"], [402, "request_cap_exceeded", "budget"],
     [409, "request_already_processed", "http"], [409, "idempotency_conflict", "http"],
     [401, "invalid_api_key", "refused"], [403, "model_not_allowed", "refused"], [500, "internal_error", "http"],
-  ])("never falls back after %i %s (%s)", async (status, code, reason) => {
-    fetchStub.mockResolvedValueOnce(failure(status, code));
-    expect(await decide(request)).toEqual({ ok: false, reason });
-    expect(fetchStub).toHaveBeenCalledTimes(1);
+  ])("never falls back after %i %s (%s), whichever model is primary", async (status, code, reason) => {
+    for (const prefer of ["jev", "luna"] as const) {
+      fetchStub.mockClear(); fetchStub.mockResolvedValueOnce(failure(status, code));
+      expect(await decide(request, { prefer })).toEqual({ ok: false, reason });
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("falls back after Jev's own 8 s timeout with Luna's 10 s, naming the abandoned Jev key", async () => {
@@ -392,12 +394,14 @@ describe("jev decide with Jev primary and Luna fallback", () => {
     expect(fetchStub).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a caller's timeoutMs for Jev and never falls back after it", async () => {
+  it("keeps a caller's timeoutMs for the primary and never falls back after it", async () => {
     const asked = timeouts();
     fetchStub.mockImplementation(hang);
     expect(await decide(request, { timeoutMs: 20 })).toEqual({ ok: false, reason: "timeout" });
-    expect(fetchStub).toHaveBeenCalledTimes(1);
-    expect(asked).toEqual([20]);
+    expect(await decide(request, { timeoutMs: 20, prefer: "luna" })).toEqual({ ok: false, reason: "timeout" });
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect([sentModel(0), sentModel(1)]).toEqual([JEV, LUNA]);
+    expect(asked).toEqual([20, 20]);
   });
 
   it("uses the caller's timeoutMs for both calls after a quick 502", async () => {
@@ -407,13 +411,66 @@ describe("jev decide with Jev primary and Luna fallback", () => {
     expect(asked).toEqual([2_500, 2_500]);
   });
 
-  it("keeps a call whose primary is the fallback itself (Luna) at 10 s with no fallback", async () => {
+  it("prefer luna: asks Luna first and returns its answer without asking Jev; prefer jev is the default", async () => {
+    const result = await decide(request, { prefer: "luna" });
+    expect(result).toMatchObject({ ok: true, id: luna.id, model: luna.model });
+    expect(result).not.toHaveProperty("fallbackFrom");
+    expect(await decide(request, { prefer: "jev" })).toMatchObject({ ok: true });
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect([sentModel(0), sentModel(1)]).toEqual([LUNA, JEV]);
+  });
+
+  it.each([[502, "invalid_provider_answers"], [502, "provider_refused"], [503, "model_route_unavailable"]])
+  ("prefer luna: falls back to Jev after %i %s under the Luna key's :fallback", async (status, code) => {
+    fetchStub.mockResolvedValueOnce(failure(status, code)).mockResolvedValueOnce(json(answer()));
+    const result = await decide(request, { prefer: "luna" });
+    expect(result).toMatchObject({ ok: true, model: "jev-1.13", fallbackFrom: LUNA });
+    expect(result).not.toHaveProperty("abandonedIdempotencyKey");
+    expect([sentModel(0), sentModel(1)]).toEqual([LUNA, JEV]);
+    expect(keyOf(1)).toBe(`${keyOf(0)}:fallback`);
+  });
+
+  it("prefer luna: falls back to Jev after Luna's own 8 s timeout or a dropped connection, naming the abandoned Luna key", async () => {
+    const asked = timeouts();
+    fetchStub.mockImplementationOnce(hang);
+    expect(await decide(request, { prefer: "luna" })).toMatchObject({ ok: true, fallbackFrom: LUNA, abandonedIdempotencyKey: keyOf(0) });
+    expect(asked).toEqual([8_000, 10_000]);
+    expect([sentModel(0), sentModel(1), keyOf(1)]).toEqual([LUNA, JEV, `${keyOf(0)}:fallback`]);
+    expect(logs).toEqual([expect.stringMatching(new RegExp(`^\\[jev\\] ok \\d+ms fallback=timeout abandoned=${keyOf(0)}$`))]);
+    fetchStub.mockClear(); fetchStub.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await decide(request, { prefer: "luna" })).toMatchObject({ ok: true, fallbackFrom: LUNA, abandonedIdempotencyKey: keyOf(0) });
+    expect([sentModel(0), sentModel(1)]).toEqual([LUNA, JEV]);
+  });
+
+  it("REALBUD_JEV_MODEL is the primary for every use, prefer included; Luna forced there still falls back to Jev; off refuses", async () => {
     process.env.REALBUD_JEV_MODEL = LUNA;
+    fetchStub.mockResolvedValueOnce(failure(503, "model_route_unavailable")).mockResolvedValueOnce(json(answer()));
+    expect(await decide(request)).toMatchObject({ ok: true, model: "jev-1.13", fallbackFrom: LUNA });
+    expect([sentModel(0), sentModel(1)]).toEqual([LUNA, JEV]);
+    process.env.REALBUD_JEV_MODEL = "fictional-forced-decisions";
+    fetchStub.mockClear();
+    expect(await decide(request, { prefer: "luna" })).toMatchObject({ ok: true });
+    expect(sentModel(0)).toBe("fictional-forced-decisions");
+    process.env.REALBUD_JEV_MODEL = "off";
+    expect(await decide(request, { prefer: "luna" })).toEqual({ ok: false, reason: "refused" });
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefer luna with Luna off asks Jev alone at 10 s; REALBUD_JEV_FALLBACK_MODEL (or off) is every use's fallback", async () => {
+    process.env.REALBUD_LUNA_MODEL = "off";
     const asked = timeouts();
     fetchStub.mockResolvedValueOnce(failure(503, "model_route_unavailable"));
-    expect(await decide(request)).toEqual({ ok: false, reason: "unavailable" });
-    expect(fetchStub).toHaveBeenCalledTimes(1);
-    expect(asked).toEqual([10_000]);
+    expect(await decide(request, { prefer: "luna" })).toEqual({ ok: false, reason: "unavailable" });
+    expect([fetchStub.mock.calls.length, sentModel(0), asked]).toEqual([1, JEV, [10_000]]);
+    delete process.env.REALBUD_LUNA_MODEL;
+    process.env.REALBUD_JEV_FALLBACK_MODEL = "fictional-fallback-decisions";
+    fetchStub.mockClear(); fetchStub.mockResolvedValueOnce(failure(502, "provider_refused"));
+    expect(await decide(request, { prefer: "luna" })).toMatchObject({ ok: true, fallbackFrom: LUNA });
+    expect([sentModel(0), sentModel(1)]).toEqual([LUNA, "fictional-fallback-decisions"]);
+    process.env.REALBUD_JEV_FALLBACK_MODEL = "off";
+    fetchStub.mockClear(); fetchStub.mockResolvedValueOnce(failure(502, "provider_refused"));
+    expect(await decide(request, { prefer: "luna" })).toEqual({ ok: false, reason: "http" });
+    expect([fetchStub.mock.calls.length, sentModel(0)]).toEqual([1, LUNA]);
   });
 
   it("never falls back for an image: the caller's timeout (else 10 s) and one model only", async () => {

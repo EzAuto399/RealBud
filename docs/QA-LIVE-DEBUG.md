@@ -141,12 +141,13 @@ node --test scripts/lib/eval-jev-grade.test.mjs            # wrong-accept counti
 ```
 
 Flags: `--uses w1,w3,ledger,recipe,ask,bills`, `--seed N` (fake only), `--out <new dir>`
-(default `outputs/eval-jev-<date>/<arm>-…`). `REALBUD_JEV_MODEL` picks the model
-(default `jev-1.13-decisions`; `off` refuses every decision).
-`REALBUD_JEV_FALLBACK_MODEL` is the text fallback when Jev's route fails (default
-`gpt-6-luna-decisions`; `off` disables it). `REALBUD_LUNA_MODEL` is the vision model
-for desktop screenshots and the default fallback (default `gpt-6-luna-decisions`;
-`off` disables both). Output: `report.md` and `results.json` with, per
+(default `outputs/eval-jev-<date>/<arm>-…`). `REALBUD_JEV_MODEL` picks the one model
+for every use (default `jev-1.13-decisions`; `off` refuses every decision); the app
+itself picks a primary per use (`jev-client.ts` header). `REALBUD_JEV_FALLBACK_MODEL`
+is the text fallback when the primary's route fails (the eval's default is `off`; the
+app's is the other of Jev and Luna). `REALBUD_LUNA_MODEL` is the vision model
+for desktop screenshots and the app's Luna (default `gpt-6-luna-decisions`; `off`
+leaves Jev alone). Output: `report.md` and `results.json` with, per
 use, accuracy, coverage, wrong-accepts (accepted but wrong: the safety metric),
 fallback rate, p50/p95 latency, calls, tokens, every raw answer, and a sweep:
 the setting with the most coverage at zero wrong-accepts (and at ≤ 1%) against

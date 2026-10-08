@@ -94,7 +94,7 @@ function mappingFromReply(parsed: unknown, headers: string[]): CsvColumnMapping 
   return Object.keys(out).length ? out : null;
 }
 
-type JevDecide = (request: JevRequest) => Promise<JevResult>;
+type JevDecide = (request: JevRequest, options?: { prefer?: "jev" | "luna" }) => Promise<JevResult>;
 const ROLE_MEANING: Record<(typeof ROLES)[number], string> = {
   identity: "the property address or property code",
   daysSinceDue: "how many days the rent is overdue (days in arrears)",
@@ -129,7 +129,8 @@ export async function jevMapping(headers: string[], decide: JevDecide): Promise<
   const questions = Object.fromEntries(ROLES.map((role): [string, JevQuestion] => [role, { type: "choice", criteria,
     instructions: `Which column of this rent ledger export holds ${ROLE_MEANING[role]}? The options are the file's header names. Choose none unless one column clearly fits.` }]));
   let result: JevResult;
-  try { result = await decide({ state: { headers: shown }, questions }); } catch { return null; }
+  // Luna first: 58.6% safe coverage to Jev's 51.7% in the 8 Oct eval.
+  try { result = await decide({ state: { headers: shown }, questions }, { prefer: "luna" }); } catch { return null; }
   if (!result.ok) return null;
   const mapping: CsvColumnMapping = {};
   for (const role of ROLES) {
