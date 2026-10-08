@@ -223,6 +223,15 @@ describe('a cap never destroys the only copy', () => {
     expect((await projectProfileFacts(f.scope, { dataDir: f.data })).blocking).toEqual(['memories/USER.md']);
     expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual(['memories/USER.md']);
   });
+  it('blocks launch when the profile folder is replaced by a link elsewhere', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    const elsewhere = await mkdtemp(join(tmpdir(), 'rb-elsewhere-')); roots.push(elsewhere);
+    await writeFile(join(elsewhere, 'planted.md'), 'not RealBud memory');
+    await rm(f.profile, { recursive: true, force: true }); await symlink(elsewhere, f.profile);
+    expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual(['profile']);
+    await rm(f.profile, { force: true });
+    expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual([]);
+  });
   it('keeps the office SOUL canonical when Repair cannot preserve it (200 preserved copies)', async () => {
     const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
     await updateWorkerState(f.scope, null, draft => { for (let i = 0; draft.preserved.length < 200; i++) draft.preserved.push({ key: `skills/old-${i}/SKILL.md`, digest: createHash('sha256').update(`p${i}`).digest('hex'), base64: Buffer.from(`p${i}`).toString('base64'), reason: 'worker-changed', at: 1 }); }, f.data);

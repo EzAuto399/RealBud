@@ -484,8 +484,11 @@ export const MEMORY_HELD_MESSAGE = 'Bud’s memory file was changed outside Real
  * oversize or an unreviewed edit RealBud could not keep). Call after projection,
  * before a turn: a non-empty list means the turn must not start. */
 export async function memoryHeldForLaunch(scope: WorkerScope, dataDir = DATA_DIR): Promise<string[]> {
+  // No profile yet: nothing for the worker to read. Anything else that is not a
+  // real folder (a link elsewhere, a file) is held: the worker would follow it.
   const root = await lstat(scope.profileDirectory).catch(() => null);
-  if (!root?.isDirectory() || root.isSymbolicLink()) return [];
+  if (!root) return [];
+  if (!root.isDirectory() || root.isSymbolicLink()) return ['profile'];
   const state = await readWorkerState(scope, dataDir), held: string[] = [];
   const files = await readWorkerFiles(scope.profileDirectory, [MEMORY_KEYS.memory, MEMORY_KEYS.user].map(key => ({ key, max: MEMORY_BYTES })));
   for (const key of [MEMORY_KEYS.memory, MEMORY_KEYS.user]) {
