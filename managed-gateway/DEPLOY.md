@@ -143,8 +143,13 @@ with its own `rbc_` credential, and the gateway admits the app on demand:
 
 1. The slug is checked by shape (`^[a-z][a-z0-9_]{0,31}$`) and looked up with the
    office's project key (`GET /toolkits/{slug}`); a toolkit Composio does not
-   know, or one without Composio-managed auth, answers 404
-   `connector_app_unavailable` before anything is created.
+   know answers 404 `connector_app_unavailable` before anything is created.
+   Composio-managed sign-in is used when the toolkit has it. Otherwise an
+   `API_KEY` or `BEARER_TOKEN` scheme whose config needs no fields from RealBud
+   gets config `realbud-<slug>-key-v1` (`use_custom_auth`, empty credentials):
+   the person types the key on Composio's hosted connect page, so it never
+   passes through RealBud or Bud (owner, 8 Oct). Basic (password) schemes and
+   configs needing operator fields still answer 404.
 2. Serialized per (office, app), the office's Composio-managed auth config
    `realbud-<slug>-managed-v1` is found or created in the office's own project,
    with the office's own key. The create intent is journaled first

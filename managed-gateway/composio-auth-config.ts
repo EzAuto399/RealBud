@@ -22,6 +22,12 @@ export const managedAuthConfigName = (slug: string): string => slug === 'gmail' 
  * name from the managed config, so switching never finds or mutates an old
  * managed config and never rebinds a device that already holds one. */
 export const ownAuthConfigName = (slug: string): string => `realbud-${slug}-own-v1`;
+/** A toolkit with no Composio-managed auth whose person types an API key or token
+ * on Composio's hosted connect page (owner, 8 Oct). The config holds no secret;
+ * the key goes from that page to Composio, never through RealBud or Bud. */
+export const keyAuthConfigName = (slug: string): string => `realbud-${slug}-key-v1`;
+export type KeyScheme = 'API_KEY' | 'BEARER_TOKEN';
+const KEY_SCHEMES: readonly KeyScheme[] = ['API_KEY', 'BEARER_TOKEN'];
 /** Composio's v3 OAuth callback: the one redirect URI the provider console allows. */
 export const COMPOSIO_OAUTH_REDIRECT_URI = 'https://backend.composio.dev/api/v3/toolkits/auth/callback';
 export type OAuthProvider = 'google' | 'microsoft';
@@ -50,7 +56,7 @@ export function oauthAppsFromEnv(env: NodeJS.ProcessEnv): (provider: OAuthProvid
     return { clientId, clientSecret };
   };
 }
-export interface ResolveAuthConfigOptions { slug: string; projectKey: string; allowCreate: boolean; beforeCreate: () => void }
+export interface ResolveAuthConfigOptions { slug: string; projectKey: string; allowCreate: boolean; beforeCreate: () => void; /** Create a key config instead of a managed one. */ keyScheme?: KeyScheme }
 export interface ComposioAuthConfigClient {
   /** Gmail's configuration: RealBud's own client with `gmail.readonly` only, or
    * Composio's managed client with its default scopes (read-only at the gateway). */
@@ -63,14 +69,21 @@ export interface ComposioAuthConfigClient {
    * or managed). The durable create intent is keyed by it, so switching to the
    * own client never inherits the managed config's intent. */
   gmailAuthConfigName?(): string;
-  /** The toolkit exists in Composio and offers managed auth under this project key. */
-  toolkitSupportsManagedAuth?(options: { slug: string; projectKey: string }): Promise<boolean>;
+  /** How a person connects this toolkit under this project key: Composio-managed
+   * sign-in, else a key scheme they complete on Composio's hosted page. Null when
+   * the toolkit is unknown, needs no auth, or needs config-level fields RealBud can't supply. */
+  toolkitAuth?(options: { slug: string; projectKey: string }): Promise<'managed' | KeyScheme | null>;
 }
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 function checked(value: unknown, slug: string, own: boolean): string {
   requireThat(record(value), 'connector_auth_config_unreadable', 502);
   const v = value as Record<string, unknown>;
   requireThat(typeof v.id === 'string' && /^ac[_-][A-Za-z0-9_-]{1,128}$/.test(v.id), 'connector_auth_config_unreadable', 502);
+  if (!own && slug !== 'gmail' && v.name === keyAuthConfigName(slug)) {
+    // A person-supplied key: never Composio-managed, never OAuth, no stored secret of ours.
+    requireThat(record(v.toolkit) && v.toolkit.slug === slug && KEY_SCHEMES.includes(v.auth_scheme as KeyScheme) && v.is_composio_managed === false && v.status === 'ENABLED', 'connector_auth_config_not_admitted', 409);
+    return v.id as string;
+  }
   if (own) {
     // RealBud's own OAuth client: never Composio's shared app, always OAuth2.
     requireThat(v.name === ownAuthConfigName(slug) && record(v.toolkit) && v.toolkit.slug === slug && v.auth_scheme === 'OAUTH2' && v.is_composio_managed === false && v.status === 'ENABLED', 'connector_auth_config_not_admitted', 409);
@@ -113,14 +126,16 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
     try { return await response.json(); } catch { throw new GatewayError('connector_auth_config_unreadable', 502); }
   };
   const projectKeyOk = (projectKey: string) => requireThat(/^ak_[A-Za-z0-9_-]{6,512}$/.test(projectKey), 'composio_project_key_unusable', 503);
-  async function resolveAuthConfig({ slug, projectKey, allowCreate, beforeCreate }: ResolveAuthConfigOptions): Promise<string> {
+  async function resolveAuthConfig({ slug, projectKey, allowCreate, beforeCreate, keyScheme }: ResolveAuthConfigOptions): Promise<string> {
     projectKeyOk(projectKey);
     requireThat(TOOLKIT_SLUG.test(slug), 'connector_app_not_admitted', 403);
     const provider = oauthProviderFor(slug);
     // Read per call so the secret is never captured into the client.
     const app = provider ? options.oauthApps?.(provider) : undefined;
     const own = !!app;
-    const name = own ? ownAuthConfigName(slug) : managedAuthConfigName(slug);
+    const name = own ? ownAuthConfigName(slug) : keyScheme && slug !== 'gmail' ? keyAuthConfigName(slug) : managedAuthConfigName(slug);
+    // A held create is reconciled by find only, without the scheme: either non-own name counts.
+    const names = own || slug === 'gmail' ? [name] : [managedAuthConfigName(slug), keyAuthConfigName(slug)];
     const find = async (): Promise<string | undefined> => {
       const items: unknown[] = []; const seen = new Set<string>(); let cursor: string | undefined;
       do {
@@ -132,7 +147,7 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
         cursor = page.next_cursor as string | undefined;
         if (cursor) { requireThat(!seen.has(cursor) && seen.size < 100, 'connector_auth_config_list_partial', 502); seen.add(cursor); }
       } while (cursor);
-      const matches = items.filter(v => record(v) && v.name === name);
+      const matches = items.filter(v => record(v) && names.includes(v.name as string));
       requireThat(matches.length <= 1, 'connector_auth_config_ambiguous', 409);
       return matches.length ? checked(matches[0], slug, own) : undefined;
     };
@@ -147,7 +162,10 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
       const scopes = slug === 'gmail' ? { scopes: GMAIL_READONLY_SCOPE } : {};
       const authConfig = app
         ? { type: 'use_custom_auth', authScheme: 'OAUTH2', name, credentials: { client_id: app.clientId, client_secret: app.clientSecret, oauth_redirect_uri: COMPOSIO_OAUTH_REDIRECT_URI, ...scopes } }
-        : { type: 'use_composio_managed_auth', name };
+        : name === keyAuthConfigName(slug)
+          // Empty credentials: the person supplies the key at connect time on Composio's page.
+          ? { type: 'use_custom_auth', authScheme: keyScheme, name, credentials: {} }
+          : { type: 'use_composio_managed_auth', name };
       const created = await call(projectKey, 'POST', '/auth_configs', { toolkit: { slug }, auth_config: authConfig });
       requireThat(record(created) && record(created.auth_config) && typeof created.auth_config.id === 'string', 'connector_auth_config_unreadable', 502);
       createdId = ((created as Record<string, unknown>).auth_config as Record<string, unknown>).id as string;
@@ -163,15 +181,22 @@ export function composioAuthConfigClient(options: { fetch: HttpTransport; base?:
     resolveGmail: ({ projectKey, allowCreate, beforeCreate }) => resolveAuthConfig({ slug: 'gmail', projectKey, allowCreate, beforeCreate }),
     resolveAuthConfig,
     gmailAuthConfigName: () => options.oauthApps?.('google') ? ownAuthConfigName('gmail') : managedAuthConfigName('gmail'),
-    async toolkitSupportsManagedAuth({ slug, projectKey }) {
+    async toolkitAuth({ slug, projectKey }) {
       projectKeyOk(projectKey);
       requireThat(TOOLKIT_SLUG.test(slug), 'connector_app_not_admitted', 403);
       let body: unknown;
       try { body = await call(projectKey, 'GET', `/toolkits/${slug}`); }
-      catch (error) { if (error instanceof GatewayError && error.code === 'connector_toolkit_unknown') return false; throw error; }
+      catch (error) { if (error instanceof GatewayError && error.code === 'connector_toolkit_unknown') return null; throw error; }
       requireThat(record(body) && typeof body.slug === 'string' && body.slug.toLowerCase() === slug, 'connector_auth_config_unreadable', 502);
-      const schemes = (body as Record<string, unknown>).composio_managed_auth_schemes;
-      return Array.isArray(schemes) && schemes.length > 0 && (body as Record<string, unknown>).no_auth !== true;
+      const v = body as Record<string, unknown>;
+      if (v.no_auth === true) return null;
+      if (Array.isArray(v.composio_managed_auth_schemes) && v.composio_managed_auth_schemes.length > 0) return 'managed';
+      if (!Array.isArray(v.auth_config_details)) return null;
+      const details = v.auth_config_details;
+      // Only a scheme whose config needs nothing from RealBud: every field is the person's, on Composio's page.
+      const usable = (scheme: KeyScheme) => details.some(d => record(d) && d.mode === scheme &&
+        !(record(d.fields) && record(d.fields.auth_config_creation) && Array.isArray(d.fields.auth_config_creation.required) && d.fields.auth_config_creation.required.length > 0));
+      return KEY_SCHEMES.find(usable) ?? null;
     },
   };
 }
