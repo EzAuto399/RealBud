@@ -335,32 +335,32 @@ try {
     await until(async () => JSON.stringify((await api('/api/desk')).body.properties[0]).includes('"graceDays":5'), 'grace days saved');
     check(c, 'Edit: Grace days changed to 5 and saved');
     await widths('desk-property');
-    // Customize desk = this build's Arrange Desk + Show/Hide + reset.
+    // Arrange Desk: Show/Hide, Move up/down, Reset to recommended.
     await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
     await openMore();
     const options = more.locator('details.desk-options');
     if (!await options.evaluate(el => el.open)) await options.locator(':scope > summary').click();
-    await options.getByRole('button', { name: 'Customize desk', exact: true }).click();
-    const panel = page.getByRole('region', { name: 'Customize desk', exact: true });
+    await options.getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+    const panel = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
     await panel.waitFor();
     assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true, 'the safety section cannot be hidden');
     check(c, 'Needs you (safety/approval section) cannot be hidden');
     const up = panel.getByRole('button', { name: 'Move Activity up', exact: true });
     await up.focus(); await page.keyboard.press('Enter');
-    await panel.getByRole('checkbox', { name: 'Show Mail priorities', exact: true }).uncheck();
+    await panel.getByRole('checkbox', { name: 'Show Mail priorities on my Desk', exact: true }).uncheck();
     await shot('customize-draft');
-    await panel.getByRole('button', { name: 'Save layout', exact: true }).click();
-    await panel.getByText('Desk layout saved.', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Save', exact: true }).click();
+    await panel.getByText('Desk arrangement saved.', { exact: true }).waitFor();
     let layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
     assert.equal(layout.find(s => s.id === 'mail').visible, false, 'Mail priorities hidden');
     check(c, 'Arrange (keyboard Move up) and Hide Mail priorities saved');
-    await panel.getByRole('button', { name: 'Reset to default', exact: true }).click();
-    await panel.getByRole('button', { name: 'Save layout', exact: true }).click();
+    await panel.getByRole('button', { name: 'Reset to recommended', exact: true }).click();
+    await panel.getByRole('button', { name: 'Save', exact: true }).click();
     await until(async () => (await api('/api/workspace-tabs')).body.state.desk.sections.every(s => s.visible), 'reset saved');
     layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
-    check(c, `Reset to default restores every section (${layout.map(s => s.id).join(', ')})`);
+    check(c, `Reset to recommended restores every section (${layout.map(s => s.id).join(', ')})`);
     await widths('customize-panel');
-    await panel.getByRole('button', { name: 'Close Customize desk', exact: true }).click();
+    await panel.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   });
 
   await step(5, 'Work: send a message and get Bud\'s answer', async c => {
@@ -585,7 +585,7 @@ try {
       'Electron main is replaced by a test bridge for the local session token and the updater state; the update banner is driven by a fixture, not electron-updater.',
       'The approval card is a generic worker tool approval. A browser payment approval card with recipient and amount needs the owned work browser and broker; not produced here.',
       'Desktop widths 1280 and 1024 only (no phone layouts by product direction).',
-      'Built on origin/main a4849b1 plus claude/fix-link-dead-end: Desk customization is "Customize desk" (Move up/down, Show checkboxes, Reset to default). Arrange Desk / Reset to recommended from the desktop-shell branch are not on this base.',
+      'Desk customization is the one Arrange Desk sheet (Show checkboxes, Move up/down, Reset to recommended, Change history).',
     ],
   }, null, 2));
   if (!passed) writeFileSync(join(output, 'service.log'), logs.slice(-20_000));
