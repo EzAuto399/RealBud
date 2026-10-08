@@ -7,11 +7,15 @@ import {
   gmailReadyHere,
   officeAppsToConnect,
   readAgencySetupFacts,
+  readOfficeLinkFacts,
   readWebsiteLinkState,
   setupSequence,
   setupSequenceComplete,
+  setupState,
   sharedGmailNotAllowed,
   switchOnBlocker,
+  type OfficeLinkFacts,
+  type SetupGate,
   type AgencySetupFacts,
   type AgencySetupWorkflowFacts,
   WORKFLOW_LOOP_IDS,
@@ -93,7 +97,7 @@ describe("Get started: five steps in Kevin's order", () => {
 
   it("ticks step 1 only on a host-reported link", () => {
     expect(step({ ...base, websiteLink: "linked" }, "link")).toMatchObject({ state: "done" });
-    expect(step({ ...base, websiteLink: "not-linked" }, "link")).toMatchObject({ state: "current", status: "Your office owner sends this code. Ask them if you don’t have one yet.", ownerRequest: "linkCode" });
+    expect(step({ ...base, websiteLink: "not-linked" }, "link")).toMatchObject({ state: "current", status: "Connect this computer to your office first. Paste the link code your office owner sent you.", ownerRequest: "linkCode" });
     // The code can be entered and the ask copied: the owner request sits beside the action.
     expect(step({ ...base, websiteLink: "not-linked" }, "link").ownerOnly).toBeUndefined();
     expect(step({ ...base, websiteLink: "linked" }, "link").ownerRequest).toBeUndefined();
@@ -127,7 +131,7 @@ describe("step 2: Bud sets itself up and blocks nothing", () => {
   it("shows as working while installing and lets the next open step be current", () => {
     const steps = onlyOneCurrent({ ...linked, bud: installing });
     expect(steps[1]).toMatchObject({ state: "working", actionLabel: "See progress", target: "bud-setup" });
-    expect(steps[1].status).toBe("This usually takes about 10 minutes and you don’t need to do anything.");
+    expect(steps[1].status).toBe("Bud is setting itself up — step 1 of 4, usually about 10 minutes. Nothing to do; you can look around the sample desk meanwhile.");
     expect(currentSetupStep(steps)?.id).toBe("gmail");
   });
 
@@ -217,7 +221,7 @@ describe("step 4: the office Gmail", () => {
     expect(sharedGmailNotAllowed({ ...shared, checkedAt: "2020-01-01T00:00:00.000Z" }, true)).toBe(false);
     expect(sharedGmailNotAllowed({ ...shared, services: { gmail: { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] } } }, true)).toBe(false);
     // Only the owner can allow it: the step offers the owner request instead of an action that loops back here.
-    const ask = { state: "current", status: "Ask the office owner to allow this computer on realbud.app.", ownerRequest: "sharedGmail", ownerOnly: true };
+    const ask = { state: "current", status: "Only your office owner can allow this computer to read the office Gmail.", ownerRequest: "sharedGmail", ownerOnly: true };
     expect(step({ ...linked, austinPack: pack(), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({}, false), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({ gmail: true }), sharedGmailBlocked: true }, "gmail").state).toBe("done");
@@ -315,12 +319,14 @@ describe("step 5: review and switch on the workflows", () => {
     ] });
 
     it("shows the first unmet need in checklist order, keeping the job as the action", () => {
-      const item = step({ ...ahead, austinPack: kevin(), schedule: loops([]) }, "workflows");
+      // REI's first sign-in is step 4's, before any workflow.
+      expect(step({ ...ahead, austinPack: kevin(), schedule: loops([]) }, "gmail")).toMatchObject({ state: "current", actionLabel: "Sign in to REI", target: "rei-sign-in",
+        status: "Sign in to REI once so Bud can read your tenant list. You type your password on REI’s own page." });
+      // The bank feed never holds a workflow: the bank review takes the CSV.
+      const item = step({ ...ahead, austinPack: kevin({ rei: true }), schedule: loops([]) }, "workflows");
       expect(item).toMatchObject({ state: "current", actionLabel: "Review Bank reference review", target: "job-bank-references" });
-      expect(item.status).toBe("0 of 3 on. Before Bank reference review: Connect Redbark in Connected apps, or add the ANZ CSV in the bank review each time.");
-      // REI sign-in comes before the tenant list it saves.
-      expect(step({ ...ahead, austinPack: kevin({ redbark: true }), schedule: loops([]) }, "workflows").status).toMatch(/Before Bank reference review: In Bank reference review, choose Refresh from REI and sign in/);
-      expect(step({ ...ahead, austinPack: kevin({ redbark: true, rei: true, tenants: true }), schedule: loops([]) }, "workflows").status).toBe("0 of 3 on. Open each workflow, read what it does, then switch it on.");
+      expect(item.status).toBe("0 of 3 on. Before Bank reference review: In Bank reference review, choose Refresh from REI to save the tenant list.");
+      expect(step({ ...ahead, austinPack: kevin({ rei: true, tenants: true }), schedule: loops([]) }, "workflows").status).toBe("0 of 3 on. Open each workflow, read what it does, then switch it on.");
     });
 
     it("points weekly bills and morning priorities at Agency workflow setup until the host reports them ready", () => {
@@ -425,5 +431,134 @@ describe("agency setup validation", () => {
   it("reads an unselected pack and an unsaved timezone without inventing either", () => {
     const partial = readAgencySetupFacts({ ...body, state: { settings: { agencyName: "Harbour", timeZone: "", workflowPackId: null } } });
     expect(partial).toMatchObject({ packSelected: false, timeZone: "" });
+  });
+});
+
+describe("setupState: one stage, the most serious degraded overlay, and gates", () => {
+  const NOW = Date.parse("2026-10-09T01:00:00.000Z");
+  const officeFacts = (fields: Partial<OfficeLinkFacts> = {}): OfficeLinkFacts => ({ link: "linked", revoked: false, officeInactive: false, serviceWithdrawn: false, ...fields });
+  const usage = (remainingNanoAud: string | null) => ({ state: "ready" as const, usage: { period: "2026-10", requests: 3, tokens: { input: "1", output: "1" }, money: { customerNetNanoAud: "5" }, monthlyCapNanoAud: "5", remainingNanoAud, updatedAt: "2026-10-09T00:00:00.000Z" } });
+  /** Fictional role pack: bank work needs REI and the bank feed, morning priorities reads Gmail. */
+  const rolePack = (done: { rei?: boolean; workflows?: boolean } = {}): AustinPackView => ({
+    ...pack({ gmail: true, workflows: done.workflows }),
+    loops: [["bank-references", ["redbark", "rei"]], ["inbound-triage", ["gmail"]], ["maintenance-review", []]].map(([loopId, needs]) =>
+      ({ loopId: loopId as string, owner: "Accounts", plan, needs: needs as AustinChecklistItem["id"][] })),
+    checklist: [
+      { id: "gmail", label: "Gmail", done: true, detail: "The office Gmail is connected." },
+      { id: "redbark", label: "Redbark", done: false, detail: "Connect Redbark in Connected apps, or add the ANZ CSV in the bank review each time." },
+      { id: "rei", label: "REI", done: Boolean(done.rei), detail: "Sign in on REI’s own page." },
+      { id: "workflows", label: "Workflows", done: Boolean(done.workflows), detail: "0 of 3 on.", ...(done.workflows ? {} : { next: "bank-references" }) },
+    ],
+  });
+  const allOn = ["bank-references", "inbound-triage", "maintenance-review"];
+  /** Everything done: the baseline each degraded row starts from. */
+  const done: SetupSequenceInput = { websiteLink: "linked", office: officeFacts(), bud: ready, agencySetup: facts(), austinPack: rolePack({ rei: true, workflows: true }), gmailReady: "own", schedule: loopsOn(allOn), now: NOW };
+  const unlinked: SetupSequenceInput = { ...done, websiteLink: "not-linked", office: officeFacts({ link: "not-linked" }), bud: { ready: false, working: false, detail: null } };
+  const CONNECT = "Connect this computer to your office first.";
+  const SETTING_UP = "Bud is setting itself up — step 2 of 4, usually about 10 minutes. Nothing to do; you can look around the sample desk meanwhile.";
+  const STOPPED = "Bud’s setup stopped while connecting your office’s AI. Nothing was lost.";
+  const NO_GRANT = "AI isn’t turned on for your office yet.";
+  const LIMIT = "Your office has used this month’s AI allowance. New work can start once your owner raises it.";
+  const DISCONNECTED = "This computer was disconnected from your office. Your conversations and files are kept. Connect it again with a new link code.";
+  const WITHDRAWN = "Your office stopped Bud’s access for this computer. Everything saved here is kept. Ask your office owner to restore it on realbud.app.";
+  const INACTIVE = "Your office’s RealBud account is inactive. Nothing was removed; this computer reconnects by itself once your office owner reactivates it on realbud.app.";
+  const RESTART = "Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.";
+  const KEY = "Bud’s AI key hasn’t arrived on this computer. RealBud asks your office for it again by itself; your work is kept.";
+  const AGENCY = "Before Morning priorities can switch on, finish Agency workflow setup and approve it there.";
+  type Row = { name: string; input: SetupSequenceInput; stage: string; next: string | null; nextStatus?: string; degraded: string | null;
+    ask: string | null; connectApps: string | null; switchOn: string | null; runNow?: string | null; loop?: string };
+  const linkRow = (name: string, input: SetupSequenceInput, nextStatus: string, degraded: string | null = null): Row =>
+    ({ name, input, stage: "link", next: "link", nextStatus, degraded, ask: CONNECT, connectApps: CONNECT, switchOn: CONNECT });
+  const budRow = (name: string, input: SetupSequenceInput, reason: string): Row => ({ name, input, stage: "bud", next: null, degraded: null, ask: reason, connectApps: reason, switchOn: reason });
+  const readyRow = (name: string, input: SetupSequenceInput, degraded: string | null, gates: Partial<Row> = {}): Row =>
+    ({ name, input, stage: "ready", next: null, degraded, ask: null, connectApps: null, switchOn: null, ...gates });
+  const rows: Row[] = [
+    linkRow("installed, not linked", unlinked, `${CONNECT} Paste the link code your office owner sent you.`),
+    linkRow("browser approval waiting", { ...unlinked, office: officeFacts({ link: "not-linked", browserExpiresAt: new Date(NOW + 4.5 * 60_000).toISOString() }) }, "Approve this computer in your browser. About 5 minutes left."),
+    linkRow("browser approval expired", { ...unlinked, office: officeFacts({ link: "not-linked", browserExpiresAt: new Date(NOW - 1).toISOString() }) }, "The approval page expired before this computer was approved. Nothing was linked."),
+    linkRow("browser approval declined", { ...unlinked, linkAttempt: { outcome: "declined" } }, "This computer was declined in your browser. Nothing was linked."),
+    linkRow("office at its computer limit, code kept", { ...unlinked, linkAttempt: { outcome: "installation_limit", message: "This office already has 3 computers. Disconnect one to pair another. Your code is kept." } },
+      "This office already has 3 computers. Disconnect one to pair another. Your code is kept."),
+    linkRow("link code refused", { ...unlinked, linkAttempt: { outcome: "link_code_refused", message: "The code is expired, already used, or unavailable. Ask your account owner for a new code." } },
+      "The code is expired, already used, or unavailable. Ask your account owner for a new code."),
+    budRow("linked, Bud setting up", { ...done, bud: { ...installing, step: 2, total: 4 } }, SETTING_UP),
+    budRow("linked, Bud setup stopped", { ...done, bud: { ready: false, working: false, detail: "Held detail.", heldAt: 3, retryable: true } }, STOPPED),
+    budRow("linked, no model grant", { ...done, bud: { ready: false, working: false, detail: null }, modelAccessReason: NO_GRANT }, NO_GRANT),
+    { name: "Bud ready, no pack", input: { ...done, agencySetup: facts({ packSelected: false }), austinPack: { ...rolePack(), installed: null }, schedule: loopsOn([]) }, stage: "pack", next: "pack",
+      nextStatus: "Import your office’s pack. Each workflow arrives switched off.", degraded: null, ask: null, connectApps: null, switchOn: null },
+    { name: "pack imported, shared Gmail not allowed", stage: "gmail", next: "gmail", nextStatus: "Only your office owner can allow this computer to read the office Gmail.", degraded: null, ask: null, connectApps: null, switchOn: null,
+      input: { ...done, gmailReady: null, sharedGmailBlocked: true, schedule: loopsOn([]),
+        austinPack: { ...rolePack({ rei: true }), checklist: rolePack({ rei: true }).checklist.map((item) => (item.id === "gmail" ? { ...item, done: false } : item)) } } },
+    { name: "pack imported, REI never signed in", input: { ...done, austinPack: rolePack(), schedule: loopsOn([]) }, stage: "gmail", next: "gmail",
+      nextStatus: "Sign in to REI once so Bud can read your tenant list. You type your password on REI’s own page.", degraded: null, ask: null, connectApps: null, switchOn: null },
+    { name: "workflows off", input: { ...done, austinPack: rolePack({ rei: true }), schedule: loopsOn([]) }, stage: "workflows", next: "workflows", degraded: null, ask: null, connectApps: null, switchOn: null },
+    { name: "workflows off, mail work not approved", stage: "workflows", next: "workflows", degraded: null, ask: null, connectApps: null, loop: "inbound-triage", switchOn: AGENCY, runNow: AGENCY,
+      input: { ...done, austinPack: rolePack({ rei: true }), schedule: loopsOn([]), agencySetup: facts({ workflows: [bank({ id: "morning-priorities", title: "Morning priorities" })] }) } },
+    readyRow("ready", done, null),
+    // Degraded: the most serious wins and re-applies the gates of the stage it undoes.
+    linkRow("revoked, with an old ping timeout and stale usage", { ...unlinked, office: readOfficeLinkFacts({ state: "revoked", revokedAt: "2026-10-01T00:00:00.000Z",
+      lastReportedAt: "2026-09-01T00:00:00.000Z", error: "The website did not answer in time.", usage: usage("0") }) }, DISCONNECTED, "revoked"),
+    readyRow("Bud access withdrawn while linked", { ...done, office: officeFacts({ serviceWithdrawn: true }), updatePending: true }, "revoked", { ask: WITHDRAWN, connectApps: WITHDRAWN, switchOn: WITHDRAWN }),
+    readyRow("office account inactive", { ...done, office: officeFacts({ officeInactive: true, usage: usage("0") }) }, "officeInactive", { ask: INACTIVE, connectApps: INACTIVE, switchOn: INACTIVE }),
+    readyRow("Bud update waits for a restart", { ...done, bud: { ...ready, restartRequired: true } }, "restartRequired", { ask: RESTART, connectApps: RESTART, switchOn: RESTART }),
+    readyRow("AI allowance used", { ...done, office: officeFacts({ usage: usage("0"), modelKey: "rejected" }) }, "aiLimit", { ask: LIMIT, switchOn: LIMIT }),
+    readyRow("AI allowance overdrawn", { ...done, office: officeFacts({ usage: usage("-12") }) }, "aiLimit", { ask: LIMIT, switchOn: LIMIT }),
+    readyRow("an unknown AI allowance is never a limit", { ...done, office: officeFacts({ usage: usage(null) }) }, null),
+    readyRow("model key missing", { ...done, office: officeFacts({ modelKey: "missing" }) }, "modelKey", { ask: KEY, switchOn: KEY }),
+    readyRow("Gmail needs attention: holds Gmail work", { ...done, gmailDegraded: true }, "gmail", { loop: "inbound-triage", runNow: "Gmail needs attention in Connected apps. Work that reads Gmail waits until it is fixed." }),
+    readyRow("Gmail needs attention: other work runs", { ...done, gmailDegraded: true }, "gmail", { loop: "maintenance-review", runNow: null }),
+    readyRow("REI signed out: holds REI work", { ...done, rei: { state: "needed", used: true, signingIn: false } }, "reiExpired", { loop: "bank-references", runNow: "REI signed you out. Sign in so Bud can read REI today." }),
+    readyRow("REI signed out: other work runs", { ...done, rei: { state: "needed", used: true, signingIn: false } }, "reiExpired", { loop: "inbound-triage", runNow: null }),
+    readyRow("update pending is status only", { ...done, updatePending: true }, "updatePending"),
+  ];
+
+  it.each(rows)("$name", (row) => {
+    const result = setupState(row.input);
+    const loopId = row.loop ?? "bank-references";
+    expect(result.stage).toBe(row.stage);
+    expect(result.next?.id ?? null).toBe(row.next);
+    if (row.nextStatus) expect(result.next?.status).toBe(row.nextStatus);
+    expect(result.degraded?.kind ?? null).toBe(row.degraded);
+    const reason = (gate: SetupGate) => (gate.on ? null : gate.reason);
+    expect(reason(result.gates.ask)).toBe(row.ask);
+    expect(reason(result.gates.connectApps)).toBe(row.connectApps);
+    expect(reason(result.gates.switchOn(loopId))).toBe(row.switchOn);
+    expect(reason(result.gates.runNow(loopId))).toBe(row.runNow === undefined ? row.switchOn : row.runNow);
+    // Every closed gate names its reason, and the step to act on has an action.
+    for (const gate of [result.gates.ask, result.gates.connectApps, result.gates.switchOn(loopId), result.gates.runNow(loopId)]) if (!gate.on) expect(gate.reason).toBeTruthy();
+    if (result.next) expect(result.next.actionLabel).toBeTruthy();
+    expect(result.steps).toEqual(setupSequence(row.input));
+  });
+
+  it("offers the fix where the gate closes", () => {
+    expect(setupState(unlinked).gates.ask).toEqual({ on: false, reason: CONNECT, actionLabel: "Enter link code", target: "you-website-code", ownerRequest: "linkCode" });
+    const stopped = setupState({ ...done, bud: { ready: false, working: false, detail: null, heldAt: 1, retryable: true } });
+    expect(stopped.gates.ask).toMatchObject({ actionLabel: "Try setup again", target: "bud-retry" });
+    expect(stopped.steps[1]).toMatchObject({ actionLabel: "Try setup again", target: "bud-retry" });
+    expect(setupState({ ...done, office: officeFacts({ usage: usage("0") }) }).gates.ask.ownerRequest).toBe("modelAccess");
+    expect(setupState({ ...done, rei: { state: "needed", used: true, signingIn: false } }).gates.runNow("bank-references")).toMatchObject({ actionLabel: "Sign in to REI", target: "rei-sign-in" });
+    expect(setupState({ ...unlinked, linkAttempt: { outcome: "installation_limit", message: "Limit." } }).next?.ownerRequest).toBe("freePlace");
+    // A revoked computer never mentions usage it may no longer have.
+    const revoked = setupState({ ...unlinked, office: readOfficeLinkFacts({ state: "revoked", usage: usage("0") }) });
+    expect(JSON.stringify([revoked.degraded, revoked.gates.ask, revoked.next])).not.toMatch(/usage|allowance/i);
+  });
+
+  it("never closes Ask on an unread link or Bud status, but holds switching on until both are read", () => {
+    const unread = setupState({ ...done, websiteLink: undefined, office: undefined, bud: undefined });
+    expect(unread.gates.ask.on).toBe(true);
+    expect(unread.gates.switchOn("bank-references")).toMatchObject({ on: false, reason: "Not checked yet. Reading this computer’s office link…" });
+    expect(setupState({ ...done, bud: undefined }).gates.connectApps).toMatchObject({ on: false, reason: "Not checked yet. Reading Bud’s setup…" });
+  });
+
+  it("re-validates the office-link body and keeps revoked apart from never linked and an inactive office", () => {
+    expect(readOfficeLinkFacts({ state: "revoked" })).toMatchObject({ link: "not-linked", revoked: true, officeInactive: false });
+    expect(readOfficeLinkFacts({ state: "unlinked", serviceWithdrawn: true })).toMatchObject({ link: "not-linked", revoked: false, serviceWithdrawn: true });
+    expect(readOfficeLinkFacts({ state: "linked", officeInactive: true, provisioningSkipped: "service_not_entitled", modelKey: "rejected" }))
+      .toMatchObject({ link: "linked", revoked: false, officeInactive: true, provisioningSkipped: "service_not_entitled", modelKey: "rejected" });
+    expect(readOfficeLinkFacts({ state: "pending", browser: { expiresAt: "2026-10-09T01:05:00.000Z" } }).browserExpiresAt).toBe("2026-10-09T01:05:00.000Z");
+    // Malformed parts claim nothing.
+    const odd = readOfficeLinkFacts({ state: "linked", modelKey: "lost", provisioningSkipped: "not a reason!", usage: { state: "ready", usage: { remainingNanoAud: 0 } }, browser: { expiresAt: "soon" } });
+    expect(odd).toEqual({ link: "linked", revoked: false, officeInactive: false, serviceWithdrawn: false });
+    expect(readOfficeLinkFacts({ state: "approved", revoked: true })).toEqual({ link: "unavailable", revoked: false, officeInactive: false, serviceWithdrawn: false });
   });
 });

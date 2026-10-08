@@ -214,4 +214,15 @@ describe("last readiness check copy", () => {
     expect(failed("Hermes CLI is not ready")).toBe("Bud is not ready");
     expect(failed("toString")).toBe("toString");
   });
+
+  it("gives way to a current hold: access withdrawn, not linked, or automatic setup running or stopped", () => {
+    const stale = { ready: false, lastPing: { at: 1, ok: false, kind: "ping", detail: "Bud took too long to answer." } } as HermesStatus;
+    const auto = (state: NonNullable<HermesStatus["autoSetup"]>["state"]) => ({ ...stale, autoSetup: { state, step: 2, total: 4, detail: "" } }) as HermesStatus;
+    expect(budReadinessFailure({ ...stale, modelAccess: { managed: false, withdrawn: true, attached: false, detail: "" } })).toBeNull();
+    expect(budReadinessFailure(stale, "not-linked")).toBeNull();
+    for (const state of ["installing", "verifying", "waiting_retry", "held"] as const) expect(budReadinessFailure(auto(state))).toBeNull();
+    // A linked computer with nothing running still hears about its last failed check.
+    expect(budReadinessFailure(stale, "linked")).toBe("Bud took too long to answer.");
+    expect(budReadinessFailure(auto("idle"), "unavailable")).toBe("Bud took too long to answer.");
+  });
 });

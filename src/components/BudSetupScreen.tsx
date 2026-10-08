@@ -8,8 +8,9 @@ import { WindowsTitlebar } from "./shell/DesktopShell";
 
 /** Takes the shell's place during Bud's first setup on this computer, so nobody
  * starts work that cannot run yet. Update and handoff banners stay above it.
- * While setup runs there is no way out; once it waits, stops or can't be
- * confirmed, staff may use the rest of RealBud meanwhile. */
+ * Never a screen with no exit: while setup runs staff may look around the
+ * sample desk; once it waits, stops or can't be confirmed, they may use the
+ * rest of RealBud meanwhile. */
 export function BudSetupScreen({ running, onLeave }: { running: boolean; onLeave: () => void }) {
   const { state } = useStore();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -28,6 +29,11 @@ export function BudSetupScreen({ running, onLeave }: { running: boolean; onLeave
             </p>
           </header>
           <BudSetupCard id="bud-setup-screen" onBack={running ? undefined : onLeave} backLabel="Use RealBud without Bud for now" />
+          {running ? (
+            <button type="button" onClick={onLeave} className="pm-control self-center rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected">
+              Explore the sample desk
+            </button>
+          ) : null}
         </main>
       </div>
     </div>

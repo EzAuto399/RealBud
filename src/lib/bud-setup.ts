@@ -291,8 +291,15 @@ const READINESS_DETAILS: Record<string, string> = Object.assign(Object.create(nu
   "Bud setup changed. Its private readiness check is still needed.": "Bud’s setup didn’t finish. Nothing was lost. Press Try setup again in Bud status.",
 });
 
-export function budReadinessFailure(status: HermesStatus | null): string | null {
-  if (!status || status.ready) return null;
+/**
+ * The last failed readiness check, in product words. Null whenever a current
+ * hold explains Bud better than an old check: access withdrawn, this computer
+ * not linked, or automatic setup running or stopped (it carries its own words).
+ */
+export function budReadinessFailure(status: HermesStatus | null, officeLink?: "linked" | "not-linked" | "unavailable"): string | null {
+  if (!status || status.ready || status.modelAccess?.withdrawn || officeLink === "not-linked") return null;
+  const auto = status.autoSetup?.state;
+  if (auto && auto !== "idle" && auto !== "ready") return null;
   const lastCheck = status.lastPing ?? (status.lastTest?.kind === "ping" ? status.lastTest : null);
   if (lastCheck && !lastCheck.ok && READINESS_DETAILS[lastCheck.detail]) return READINESS_DETAILS[lastCheck.detail]!;
   return lastCheck && !lastCheck.ok

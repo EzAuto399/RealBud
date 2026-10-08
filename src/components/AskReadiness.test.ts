@@ -64,6 +64,18 @@ describe("Ask readiness permission and status", () => {
     expect(html).toContain("View Bud status");
     expect(html).not.toContain("Try check again");
   });
+  it("lets the current setup hold beat an old failed check", () => {
+    fakes.state.hermes = { ...ready, lastPing: { kind: "ping", at: 1, ok: false, detail: "The model connection has expired." } };
+    const html = renderToStaticMarkup(createElement(AskReadiness, { onSetup: () => {}, hold: { on: false, reason: "Connect this computer to your office first." } }));
+    expect(html).toBe("");
+  });
+  it("never blames an old timed-out check on a computer that isn't linked", () => {
+    fakes.state.hermes = { ...ready, model: { attached: false, provider: null, model: null },
+      lastPing: { kind: "ping", at: 1, ok: false, detail: "Bud took too long to answer. Review AI usage on your linked website before checking again." } };
+    const html = renderToStaticMarkup(createElement(AskReadiness, { onSetup: () => {}, officeLink: "not-linked" }));
+    expect(html).toContain("Connect this computer to your office first");
+    expect(html).not.toMatch(/usage|Connection needs another look/i);
+  });
   it("keeps a manual administrator check when the automatic guard has already run", () => {
     fakes.state.serviceAdmin = { managed: false };
     expect(render()).toContain("Test Bud");

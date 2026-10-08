@@ -30,6 +30,8 @@ import { mergeWorkContext } from "@/lib/work-continuation";
 import { buildDeskQueue } from "@/lib/desk-queue";
 import { deskCaseInstruction, deskCaseNextStep } from "@/lib/desk-ask-context";
 import { askMessageSizeError } from "@shared/ask-message";
+import type { SetupGate, SetupJumpTarget } from "@/lib/setup-sequence";
+import { OwnerRequestButton } from "./OwnerRequestButton";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -58,6 +60,9 @@ export function Composer({
   askSetupLabel = "Set up Bud",
   onAskSetup,
   readiness,
+  askGate,
+  showAskGate = false,
+  onAskGateAction,
   starter,
   onConnectApp,
   onCaseAddress,
@@ -80,6 +85,12 @@ export function Composer({
   askSetupLabel?: string;
   onAskSetup?: () => void;
   readiness?: ReactNode;
+  /** Setup's Ask gate (`useSetupState().gates.ask`). Closed: nothing can be
+   * typed, attached, dictated or started, and a saved draft stays as it is. */
+  askGate?: SetupGate;
+  /** The composer shows the closed gate itself: its reason, its fix and the owner request. */
+  showAskGate?: boolean;
+  onAskGateAction?: (target: SetupJumpTarget) => void;
   starter?: { id: number; text: string };
   /** Opens the in-Ask key/sign-in flow — never navigates to You. */
   onConnectApp?: (label?: string) => void;
@@ -191,12 +202,12 @@ export function Composer({
   const queuedHeld = Boolean(queuedItem?.heldReason);
   const [actionPending, setActionPending] = useState<"send" | "steer" | "queue" | "edit-queue" | "delete-queue" | null>(null);
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
-  const askBlocked = productAsk && !askReady && !(attachments.length === 0 && isAskProductControl(text));
-  // Same fact budAvailability reads: a withdrawn grant is terminal (support must
-  // restore it), not a connection that will come back on its own.
-  const accessWithdrawn = askBlocked && state.connected && !state.desk?.recovery?.active && Boolean(state.hermes?.modelAccess?.withdrawn);
+  // Setup holds Ask (not linked, access ended, Bud not set up…): the draft is kept, not editable.
+  const gateLocked = productAsk && askGate?.on === false;
+  const askBlocked = productAsk && (gateLocked || (!askReady && !(attachments.length === 0 && isAskProductControl(text))));
   const interactionBlocked = Boolean(DESIGN_PREVIEW_REASON) || Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
-  dictationBlocked.current = Boolean(approval) || Boolean(actionPending);
+  const inputLocked = Boolean(approval) || Boolean(actionPending) || gateLocked;
+  dictationBlocked.current = inputLocked;
   // The attached Desk case's one next step, read from its current Desk state.
   const caseRef = productAsk ? attachments.find(item => item.id.startsWith("desk-case-")) : undefined;
   const caseId = caseRef?.id.slice("desk-case-".length);
@@ -225,7 +236,7 @@ export function Composer({
     if (!context || context.id === lastWorkContext.current) return;
     // Keep the handoff pending while an approval or composer operation owns
     // input. Consuming it early would lose the selected work.
-    if (approval || actionPending) return;
+    if (approval || actionPending || gateLocked) return;
     lastWorkContext.current = context.id;
     const merged = mergeWorkContext(text, attachments, context);
     setText(merged.text);
@@ -237,11 +248,12 @@ export function Composer({
     );
     dispatch({ type: "consumeAskContext", id: context.id });
     inputRef.current?.focus();
-  }, [productAsk, state.askWorkContext, approval, actionPending, text, attachments, setText, setAttachments, dispatch]);
+  }, [productAsk, state.askWorkContext, approval, actionPending, gateLocked, text, attachments, setText, setAttachments, dispatch]);
   const lastStarter = useRef<number | null>(null);
   useEffect(() => {
     if (!starter || lastStarter.current === starter.id) return;
     lastStarter.current = starter.id;
+    if (gateLocked) return;
     if (!canUseTaskStarter(text, attachments.length) || approval || actionPending) {
       setSpeechError("Your existing draft is kept. Finish or clear it before choosing another example.");
       inputRef.current?.focus();
@@ -250,7 +262,7 @@ export function Composer({
     setText(starter.text);
     setSpeechError(null);
     inputRef.current?.focus();
-  }, [starter, text, attachments.length, approval, actionPending, setText]);
+  }, [starter, text, attachments.length, approval, actionPending, gateLocked, setText]);
 
   const checkedMessage = () => {
     if (DESIGN_PREVIEW_REASON || askBlocked || approval || actionPending || attachmentCopiesRef.current > 0) return null;
@@ -762,7 +774,17 @@ export function Composer({
               : `${askBlockedDetail ?? "Bud isn’t ready yet."} Your message is kept here.`}
           </p>
         ) : null}
-        {askBlocked && !readiness ? (
+        {gateLocked && showAskGate ? (
+          <div role="status" className="mb-2 flex flex-col gap-2 rounded-lg border border-hold/30 bg-hold/10 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <p className="min-w-0 flex-1 text-[13px] leading-5 text-hold">{askGate?.reason}</p>
+            {askGate?.actionLabel && askGate.target && onAskGateAction ? (
+              <button type="button" onClick={() => onAskGateAction(askGate.target!)} className="pm-control h-9 shrink-0 rounded-md bg-agency px-3 text-[13px] font-medium text-white hover:bg-agency-hover">
+                {askGate.actionLabel}
+              </button>
+            ) : null}
+            {askGate?.ownerRequest ? <OwnerRequestButton request={askGate.ownerRequest} /> : null}
+          </div>
+        ) : askBlocked && !readiness ? (
           <div
             role="status"
             className={cn(
@@ -809,7 +831,7 @@ export function Composer({
         />
         {productAsk ? (
           <ComposerOfficeToolkit
-            disabled={Boolean(approval) || Boolean(actionPending)}
+            disabled={inputLocked}
             productAsk
             onAttachFiles={() => fileRef.current?.click()}
             onConnectApp={onConnectApp}
@@ -903,10 +925,10 @@ export function Composer({
               setRecording(false);
             }
           }}
-          disabled={Boolean(approval) || Boolean(actionPending)}
+          disabled={inputLocked}
           placeholder={
-            accessWithdrawn
-                ? "Disconnected from your office. You can still write a draft to keep."
+            gateLocked
+                ? "Bud can’t start work on this computer yet."
               : askBlocked
                 ? "What would you like Bud to prepare? You can draft while we connect."
               : approval
@@ -987,7 +1009,7 @@ export function Composer({
               endSpeak(event.key);
             } : undefined}
             onBlur={productAsk ? cancelSpeak : undefined}
-            disabled={Boolean(approval) || Boolean(actionPending)}
+            disabled={inputLocked}
             aria-label={
               productAsk
                 ? recording
@@ -1061,7 +1083,7 @@ export function Composer({
         {(hasContent || productAsk) && (group || !busy) && (
           <button
             onClick={() => { if (askBlocked) setBlockedNotice(true); else send(); }}
-            disabled={Boolean(DESIGN_PREVIEW_REASON) || (interactionBlocked && !askBlocked) || !hasContent}
+            disabled={Boolean(DESIGN_PREVIEW_REASON) || gateLocked || (interactionBlocked && !askBlocked) || !hasContent}
             aria-label={busy ? "Queue work for Bud" : productAsk ? "Start this work" : "Send message"}
             title={busy ? "Queue — starts when Bud finishes" : productAsk ? "Start work" : "Send"}
             className={cn(
@@ -1078,7 +1100,7 @@ export function Composer({
       </div>
       {productAsk && <div className="ask-composer-help">
         <span><ShieldCheck size={13} aria-hidden />Sends, payments and statutory actions need your review.</span>
-        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${accessWithdrawn ? "Reconnect in Workspace → Website account" : askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
+        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : gateLocked ? "Bud starts once setup is done" : `${askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
       </div>}
     </div>
   );

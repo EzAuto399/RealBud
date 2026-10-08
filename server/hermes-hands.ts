@@ -155,7 +155,7 @@ async function scopedHermesPing(opts?: {
             .filter((line) => line && !/^session_id:/.test(line) && !PING_STARTUP_NOTICE.test(line));
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(done(false, "Bud took too long to answer. Review AI usage on your linked website before checking again."));
+          if (timedOut) return resolve(done(false, "Bud took more than a minute to answer. Try the check again; if it keeps happening, save a support file for hello@realbud.app."));
           const reason = workerMissReason(stdout, stderr);
           return resolve(done(false, reason ? `Bud could not answer — ${reason}.` : "Bud could not answer."));
         }
