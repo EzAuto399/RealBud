@@ -43,7 +43,8 @@ export interface BillFinancialReview extends BillFinancialObservation {
 }
 export interface BillDuplicateReference { billId: string; revision: number; matchedRevision: number; sourceDigest: string }
 export type BillDuplicateMatch = 'exact-evidence' | 'invoice-identity' | 'invoice-conflict';
-export interface BillDuplicateCandidate extends BillDuplicateReference { facts: BillFacts; subject: string; receivedAt: number; match?: BillDuplicateMatch }
+/** `likely` is an ordering hint for the person reviewing: never a duplicate decision, never part of the hold or its review digest. */
+export interface BillDuplicateCandidate extends BillDuplicateReference { facts: BillFacts; subject: string; receivedAt: number; match?: BillDuplicateMatch; likely?: 'same' | 'different' }
 /** Review candidates only: matching vendor labels do not establish supplier identity. */
 export interface BillDuplicateCheck {
   version: 1; sourceDigest: string; reviewDigest: string | null; candidates: BillDuplicateCandidate[]; complete: boolean;

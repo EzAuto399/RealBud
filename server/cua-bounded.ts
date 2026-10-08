@@ -1,7 +1,17 @@
 // Per-workflow Cua bounded session contract. Typed browser tools only.
 import { computerLease, type ComputerLease } from "./computer-lease.ts";
 
-export const CUA_PIN = "0.19.3";
+export const CUA_PIN = "0.34.0";
+
+/** Cua tools Bud never runs in any turn, fenced or not. `install_extension`
+ * installs the perception extension, which bundles OmniParser (AGPL-3.0);
+ * `parse_visual_regions` is that extension's only consumer. The 0.34.0
+ * driver's other self-changing tools: `install_ffmpeg` installs a package
+ * through the system package manager, `set_config` persists driver
+ * configuration, and `check_for_update` calls out for a new driver (RealBud
+ * pins the driver and turns that check off). Enforced in
+ * server/drivers/acp/core.ts (every turn) and the portal fence. */
+export const CUA_NEVER_TOOLS = ["install_extension", "parse_visual_regions", "install_ffmpeg", "set_config", "check_for_update"] as const;
 
 export const FORBIDDEN_TOOLS = [
   "screenshot_desktop",
@@ -12,6 +22,7 @@ export const FORBIDDEN_TOOLS = [
   "shell",
   "computer_exec",
   "computer_batch",
+  ...CUA_NEVER_TOOLS,
 ] as const;
 
 export const ALLOWED_TOOLS = ["navigate", "read", "fill", "click_semantic"] as const;

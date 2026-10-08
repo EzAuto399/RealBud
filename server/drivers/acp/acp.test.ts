@@ -20,7 +20,8 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { FakeAcpDriver } from "../../testing/fake-acp-driver.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
-import { ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
+import { CUA_EXTENSION_REFUSED, cuaNeverTool, ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
+import { __setCuaConnectionForTests } from "../../local-computer.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
@@ -101,6 +102,34 @@ describe("ACP turns (fake CLI)", () => {
       config: { cli: FAKE_CLI, fullAuto },
     });
     recorder = recordEvents(instance.adapter);
+  };
+
+  /** A one-turn ACP CLI that starts `title` without asking, then records a cancel. */
+  const startedToolFake = (title: string, dump: string) => {
+    const fake = join(scratch, "started-tool-acp.mjs");
+    writeFileSync(fake, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const out = m => process.stdout.write(JSON.stringify(m) + "\\n");
+let buf = "", prompt = null;
+process.stdin.on("data", chunk => {
+  buf += chunk; let nl;
+  while ((nl = buf.indexOf("\\n")) !== -1) {
+    const msg = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+    if (msg.method === "initialize") out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, authMethods: [] } });
+    else if (msg.method === "session/new") out({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "fictional-session" } });
+    else if (msg.method === "session/set_mode") out({ jsonrpc: "2.0", id: msg.id, result: {} });
+    else if (msg.method === "session/prompt") {
+      prompt = msg.id;
+      out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-started", title: ${JSON.stringify(title)}, kind: "other" } } });
+    } else if (msg.method === "session/cancel") {
+      writeFileSync(${JSON.stringify(dump)}, "cancelled");
+      out({ jsonrpc: "2.0", id: prompt, result: { stopReason: "cancelled" } });
+    } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+  }
+});
+`);
+    chmodSync(fake, 0o755);
+    return fake;
   };
 
   beforeEach(() => {
@@ -283,6 +312,60 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-browser-job");
     await expect(request()).rejects.toThrow();
     expect(instance.adapter.hasSession("t-browser-job")).toBe(false);
+  });
+
+  it("mounts Bud's decide tool only when the turn carries the decisions binding", async () => {
+    const dump = join(scratch, "decisions.json"); process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, "hang");
+    const decide = vi.fn(async () => ({ ok: true as const, answers: { kind: { type: "noul" as const, noul: 0.8 } }, model: "jev-fictional", ms: 1 }));
+    await instance.adapter.sendTurn({ threadId: "t-decisions", text: "Is this fictional mail a repair?", cwd: scratch,
+      integrations: { decisions: { sameMember: () => true, ready: () => true, decide } } });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+    const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: { name: string }) => row.name === "decisions");
+    expect(descriptor.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    const rpc = async (method: string, params: unknown) => ((await (await fetch(descriptor.url, { method: "POST",
+      headers: { "content-type": "application/json", ...Object.fromEntries(descriptor.headers.map((row: { name: string; value: string }) => [row.name, row.value])) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()) as any).result;
+    expect((await rpc("tools/list", {})).tools.map((tool: { name: string }) => tool.name)).toEqual(["decide"]);
+    const answer = await rpc("tools/call", { name: "decide", arguments: { state: "Tap leaking", questions: { kind: { type: "noul", instructions: "Is it a repair?" } } } });
+    expect(answer.content[0].text).toMatch(/Suggestion only/);
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(NATIVE_DIR, "t-decisions.ndjson"), "utf8")).not.toContain("Tap leaking");
+    await instance.adapter.interruptTurn("t-decisions");
+
+    const plain = join(scratch, "no-decisions.json"); process.env.FAKE_ACP_DUMP = plain;
+    await instance.adapter.sendTurn({ threadId: "t-no-decisions", text: "An attended job turn", cwd: scratch, integrations: {} });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(plain, "utf8")).promptCount).toBe(1));
+    expect((JSON.parse(readFileSync(plain, "utf8")).mcpServers ?? []).map((row: { name: string }) => row.name)).not.toContain("decisions");
+    await instance.adapter.interruptTurn("t-no-decisions");
+  });
+
+  it("binds decisions only for a person's own non-relay Ask while Jev is ready, never for a systemExtra turn", () => {
+    // Source contract (a turn needs a real worker): the binding sits inside the `!opts?.systemExtra` block.
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "index.ts"), "utf8");
+    const start = source.indexOf("      if (!opts?.systemExtra) {\n        // Bud's SSRF-guarded public page reader");
+    const block = source.slice(start, source.indexOf("const handoffOk =", start));
+    expect(start).toBeGreaterThan(0);
+    expect(block).toContain("if (personAskTurn(opts) && jevReady()) integrations.decisions = {");
+    expect(block).toContain("sameMember: () => desk.memberKeyForWorker() === reminderMember, ready: jevReady, decide: jevDecide };");
+    expect(source.match(/integrations\.decisions =/g)).toHaveLength(1);
+    // personAskTurn (tested in server/ask-jev-route.test.ts) is true only with personAsk: true, which only the
+    // person's own Ask routes pass. A queued-follow-up drain and the phone channel relays never pass it.
+    const drain = source.slice(source.indexOf("async function dispatchQueuedMessage("), source.indexOf("async function waitUntilTurnStopped("));
+    expect(drain).toContain("await startTurn(botId, queued.text, { threadId: queued.threadId });");
+    expect(drain).not.toContain("personAsk");
+    expect(source.match(/personAsk: true/g)).toHaveLength(6);
+    for (const line of source.split("\n").filter(row => row.includes("personAsk: true"))) {
+      expect(line, line).toMatch(/^\s+await startTurn\((?:m\[1\]|bot\.id|current\.id), text, \{.*\.\.\.personTurn\(req\), personAsk: true \}\);$/);
+      expect(line).not.toMatch(/systemExtra|channelRelay/);
+    }
+    for (const channel of ["telegram", "discord", "slack"]) {
+      const bridge = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "channels", `${channel}.ts`), "utf8");
+      expect(bridge, channel).toContain("channelRelay: true,");
+      expect(bridge, channel).not.toContain("personAsk");
+    }
+    // The Ask pre-route uses the same gate.
+    expect(source).toContain("routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide });");
   });
 
   // Pinned Hermes gives a delegated child the parent's `mcp-browser` toolset
@@ -794,29 +877,8 @@ describe("ACP turns (fake CLI)", () => {
   it("cancels the turn when Hermes starts one of its own browser tools", async () => {
     // Hermes offers no permission prompt for most browser actions, so the
     // started tool call is the only signal RealBud sees.
-    const fake = join(scratch, "native-browser-acp.mjs"), dump = join(scratch, "native-browser-cancel.json");
-    writeFileSync(fake, `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-const out = m => process.stdout.write(JSON.stringify(m) + "\\n");
-let buf = "", prompt = null;
-process.stdin.on("data", chunk => {
-  buf += chunk; let nl;
-  while ((nl = buf.indexOf("\\n")) !== -1) {
-    const msg = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
-    if (msg.method === "initialize") out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, authMethods: [] } });
-    else if (msg.method === "session/new") out({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "fictional-session" } });
-    else if (msg.method === "session/set_mode") out({ jsonrpc: "2.0", id: msg.id, result: {} });
-    else if (msg.method === "session/prompt") {
-      prompt = msg.id;
-      out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-browser", title: "browser_navigate: https://example.invalid/bills", kind: "fetch" } } });
-    } else if (msg.method === "session/cancel") {
-      writeFileSync(${JSON.stringify(dump)}, "cancelled");
-      out({ jsonrpc: "2.0", id: prompt, result: { stopReason: "cancelled" } });
-    } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
-  }
-});
-`);
-    chmodSync(fake, 0o755);
+    const dump = join(scratch, "native-browser-cancel.json");
+    const fake = startedToolFake("browser_navigate: https://example.invalid/bills", dump);
     instance = await HermesAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: fake, fullAuto: true } });
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId: "native-browser-call", text: "go" });
@@ -824,6 +886,51 @@ process.stdin.on("data", chunk => {
     expect(done).toMatchObject({ stopReason: "cancelled" });
     expect(readFileSync(dump, "utf8")).toBe("cancelled");
     expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: HERMES_BROWSER_REFUSED }));
+  });
+
+  it("names Cua's AGPL extension tools bare or behind an MCP server prefix", () => {
+    for (const title of ["install_extension", "mcp_computer_install_extension: perception", "mcp__computer__parse_visual_regions", "computer.parse_visual_regions {}"]) {
+      expect(cuaNeverTool(title), title).toMatch(/^(install_extension|parse_visual_regions)$/);
+    }
+    expect(cuaNeverTool(undefined, "install_extension")).toBe("install_extension");
+    for (const [title, tool] of [["mcp__computer__install_ffmpeg", "install_ffmpeg"], ["mcp_computer_set_config: {}", "set_config"], ["computer.check_for_update", "check_for_update"]]) {
+      expect(cuaNeverTool(title), title).toBe(tool);
+    }
+    for (const other of ["reinstall_extension", "install_extensions", "mcp__computer__get_window_state", "echo install_extension", "get_config", "check_for_updates", undefined]) {
+      expect(cuaNeverTool(other), String(other)).toBeNull();
+    }
+  });
+
+  it.each([
+    { engine: "fake ACP, cards", driver: FakeAcpDriver, fullAuto: false, computer: false, title: "mcp__computer__parse_visual_regions" },
+    { engine: "fake ACP, cards, desktop mounted", driver: FakeAcpDriver, fullAuto: false, computer: true, title: "mcp__computer__install_extension" },
+    { engine: "Hermes, fullAuto, desktop mounted", driver: HermesAgentDriver, fullAuto: true, computer: true, title: "mcp_computer_install_extension: perception" },
+    { engine: "Hermes, fullAuto", driver: HermesAgentDriver, fullAuto: true, computer: false, title: "mcp_computer_parse_visual_regions" },
+  ])("refuses Cua's extension tools before any card or auto-approval ($engine)", async ({ driver, fullAuto, computer, title }) => {
+    const dump = join(scratch, "cua-extension-permission.json"), script = join(scratch, "cua-extension-callback.json");
+    writeFileSync(script, JSON.stringify({ tool: "other", rawInput: { name: "perception", confirm: true }, title }));
+    process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
+    __setCuaConnectionForTests(computer ? { command: "/fictional/cua-driver", args: ["mcp"], env: {} } : null);
+    try {
+      await create(driver as typeof FakeAcpDriver, "permission", fullAuto);
+      await instance.adapter.sendTurn({ threadId: "cua-extension", text: "go", computer });
+      await recorder.until(event => event.type === "turn.completed");
+    } finally { __setCuaConnectionForTests(undefined); }
+    expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBeNull();
+    expect(recorder.events.some(event => event.type === "request.opened")).toBe(false);
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: CUA_EXTENSION_REFUSED }));
+  });
+
+  it("cancels the turn when an engine starts a Cua extension tool without asking", async () => {
+    const dump = join(scratch, "cua-extension-cancel.json");
+    const fake = startedToolFake("mcp_computer_install_extension: perception", dump);
+    instance = await HermesAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: fake, fullAuto: true } });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "cua-extension-call", text: "go" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ stopReason: "cancelled" });
+    expect(readFileSync(dump, "utf8")).toBe("cancelled");
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: CUA_EXTENSION_REFUSED }));
   });
 
   it("puts Hermes in workspace-scoped accept-edits mode before the prompt", async () => {

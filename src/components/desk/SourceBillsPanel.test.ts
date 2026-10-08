@@ -26,6 +26,14 @@ describe('matching bill review presentation', () => {
     expect(html).toContain('confirm this is a separate invoice');
     expect(html).not.toContain('checked=""');
   });
+  it('shows a likely hint as a muted suggestion that leaves the confirmation to the person', () => {
+    const same = render({ check: { ...check, candidates: [{ ...check.candidates[0], likely: 'same' }] } });
+    expect(same).toContain('<p class="text-ink-secondary">Likely the same bill · suggestion only</p>');
+    expect(same).toContain('confirm this is a separate invoice');
+    expect(same).not.toContain('checked=""');
+    expect(render({ check: { ...check, candidates: [{ ...check.candidates[0], likely: 'different' }] } })).toContain('Likely a different bill · suggestion only');
+    expect(render()).not.toContain('Likely');
+  });
   it('does not offer a separate-invoice override when checking failed or is incomplete', () => {
     const failed = render({ check: null, error: 'Matching bills could not be checked. Your draft is kept; retry before saving.' });
     expect(failed).toContain('role="alert"');

@@ -139,6 +139,17 @@ describe("portal fence", () => {
     expect(isComputerTool("other", "mcp_computer_click_xy")).toBe(true);
   });
 
+  it("refuses Cua's AGPL extension tools in fenced and unfenced turns", () => {
+    const wide: FenceContext = { ...ctx, capabilities: ["portal-read", "portal-prefill", "portal-submit"] };
+    for (const tool of ["install_extension", "parse_visual_regions", "mcp__computer__install_extension", "computer.parse_visual_regions", "mcp_computer_install_extension",
+      "install_ffmpeg", "set_config", "check_for_update", "mcp__computer__set_config"]) {
+      // Unfenced: the host refuses every computer action when no saved job fences it.
+      expect(isComputerTool(tool), tool).toBe(true);
+      // Fenced: no job grant makes them part of the job.
+      expect(fenceDecision(wide, { tool, params: { name: "perception", confirm: true } }), tool).toMatchObject({ kind: "deny" });
+    }
+  });
+
   it("does not treat the engine's own code or terminal runs as computer actions", () => {
     // Hermes execute_code permission as it reaches the host (ACP kind "execute" -> "shell").
     expect(isComputerTool("shell", "execute_code <<'PY'\nimport csv\ndf.fillna(0)\nPY")).toBe(false);

@@ -7,8 +7,9 @@
  * `workerModelAccessSnapshot()` and goes only into this request's header; it
  * never enters env, Hermes or a log. Nothing here logs the key, the state or
  * the answers: one line per call with the outcome code, milliseconds and, for
- * a 400 (a client bug), Modelvia's error code. Usage and cost are never
- * surfaced. `decide` never throws.
+ * a 400 (a client bug), Modelvia's error code. Token usage goes back to the
+ * caller (for run cost) and is never logged or shown; cost never comes back.
+ * `decide` never throws.
  *
  * Contract agreed with Modelvia (mirrors OpenRouter decisions):
  * - POST `${grant.baseUrl}/decisions` (the base ends in /v1), `Authorization:
@@ -53,7 +54,9 @@ export type JevAnswer =
   | { type: "score"; score: number; confidence?: number; probabilities?: Record<string, number> };
 /** Every failure is "no answer" to the caller. */
 export type JevFailure = "refused" | "budget" | "unavailable" | "timeout" | "http" | "invalid" | "aborted";
-export type JevResult = { ok: true; answers: Record<string, JevAnswer>; model: string; ms: number } | { ok: false; reason: JevFailure };
+/** `usage`, when Modelvia sent a well-formed one, is for counting run cost: never logged or shown. */
+export type JevUsage = { input_tokens: number; output_tokens: number };
+export type JevResult = { ok: true; answers: Record<string, JevAnswer>; model: string; ms: number; usage?: JevUsage } | { ok: false; reason: JevFailure };
 
 const MAX_QUESTIONS = 8, MAX_OPTIONS = 64, MAX_STATE_BYTES = 16 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -95,7 +98,7 @@ function toWire(request: JevRequest, model: string): string | null {
 }
 
 /** The strictly validated answers, or null. */
-function fromWire(body: unknown, request: JevRequest): { answers: Record<string, JevAnswer>; model: string } | null {
+function fromWire(body: unknown, request: JevRequest): { answers: Record<string, JevAnswer>; model: string; usage?: JevUsage } | null {
   if (!record(body) || !text(body.id) || !text(body.model) || !record(body.answers)) return null;
   const asked = Object.keys(request.questions), given = body.answers;
   if (Object.keys(given).length !== asked.length) return null;
@@ -120,7 +123,10 @@ function fromWire(body: unknown, request: JevRequest): { answers: Record<string,
       answers[key] = { type: "noul", noul: answer.noul };
     }
   }
-  return { answers, model: body.model };
+  const tokens = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+  const usage = record(body.usage) && tokens(body.usage.input_tokens) && tokens(body.usage.output_tokens)
+    ? { usage: { input_tokens: body.usage.input_tokens, output_tokens: body.usage.output_tokens } } : {};
+  return { answers, model: body.model, ...usage };
 }
 
 /** Whether `decide` could call out at all: a Jev model is configured and the

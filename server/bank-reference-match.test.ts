@@ -309,7 +309,7 @@ describe("Jev payer hint (data, never a match)", () => {
     const asked: JevRequest[] = [];
     const decide = async (request: JevRequest): Promise<JevResult> => {
       asked.push(request);
-      return { ok: true, model: "fictional-decider", ms: 1, answers: { tenant: { type: "choice", choice, confidence, probabilities } } };
+      return { ok: true, model: "fictional-decider", ms: 1, answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, { type: "choice" as const, choice, confidence, probabilities }])) };
     };
     return { asked, decide };
   };
@@ -324,8 +324,8 @@ describe("Jev payer hint (data, never a match)", () => {
   it("sets only the hint on an unmatched no-reference row", async () => {
     const { after, summary, asked, row } = await run("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
     expect(asked).toHaveLength(1);
-    expect(asked[0].state).toEqual({ payer: "JOHN DOE", amount: "410.00" });
-    expect(asked[0].questions.tenant).toMatchObject({ type: "choice", criteria: { t1: "Alex Fictional", t2: "John Doe", none: expect.any(String) } });
+    expect(asked[0].state).toEqual({ p0: { payer: "JOHN DOE", amount: "410.00" } });
+    expect(asked[0].questions.p0).toMatchObject({ type: "choice", criteria: { t1: "Alex Fictional", t2: "John Doe", none: expect.any(String) } });
     expect(row).toMatchObject({ class: "exception", disposition: "hold", propertyId: "P-JD", hintSource: "jev", reason: "No reference found." });
     expect(row.suggestion).toMatch(/^Possibly P-JD \(JD1\)/);
     expect(after.summary).toEqual(summary);
@@ -338,7 +338,7 @@ describe("Jev payer hint (data, never a match)", () => {
   });
   it("ignores an answer without confidence or probabilities", async () => {
     const batch = createBankReferenceBatch(upload(bytes, named)), pass = bankFirstPass(batch)!;
-    await jevPayerHints(batch, pass, async () => ({ ok: true, model: "jev-1.13", ms: 1, answers: { tenant: { type: "choice", choice: "t2" } } }));
+    await jevPayerHints(batch, pass, async () => ({ ok: true, model: "jev-1.13", ms: 1, answers: { p0: { type: "choice", choice: "t2" } } }));
     expect(pass.rows[10].propertyId).toBeUndefined();
   });
   it("ignores low confidence and a narrow lead", async () => {
@@ -460,9 +460,9 @@ describe("Jev payer hint (data, never a match)", () => {
     let db: WorkflowDatabase | undefined;
     try {
       db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 7) });
-      const two = Buffer.from('03/09/2026,"410.00",TRANSFER FROM JOHN DOE    RENT,,,,,\n04/09/2026,"410.00",TRANSFER FROM ALEX FICTIONAL    RENT,,,,,\n');
+      // Nine rows: two calls (8 + 1). The first is answered (and billed); the second runs past the budget.
+      const two = Buffer.from(`${'03/09/2026,"410.00",TRANSFER FROM JOHN DOE    RENT,,,,,\n'.repeat(8)}04/09/2026,"410.00",TRANSFER FROM ALEX FICTIONAL    RENT,,,,,\n`);
       const { asked, decide: answer } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
-      // The first question is answered (and billed); the second runs past the budget.
       const decide = (request: JevRequest, options?: { signal?: AbortSignal }) => asked.length ? new Promise<JevResult>(resolve => {
         asked.push(request); options?.signal?.addEventListener("abort", () => resolve({ ok: false, reason: "timeout" }));
       }) : answer(request);
@@ -471,7 +471,7 @@ describe("Jev payer hint (data, never a match)", () => {
       const hinted = await store.addJevHints(created.id, { timeoutMs: 100 });
       expect(asked).toHaveLength(2);
       expect(hinted.revision).toBe(created.revision + 1);
-      expect(hinted.value.jevHints).toEqual([{ rowId: created.value.batch.rows[0].id, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) }]);
+      expect(hinted.value.jevHints).toEqual(created.value.batch.rows.slice(0, 8).map(row => ({ rowId: row.id, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) })));
     } finally { db?.close(); await removeFixture(dir); }
   });
   // As the upload route runs it: the hint pass only for a record this upload created.
@@ -512,6 +512,50 @@ describe("Jev payer hint (data, never a match)", () => {
       expect(again.revision).toBe(1);
       expect(again.value.jevHints).toBeUndefined();
     } finally { db?.close(); await removeFixture(dir); }
+  });
+  // Eligible rows: plain-name payers, no reference.
+  const eligibleRows = (count: number, name = (n: number) => `JOHN DOE ${String.fromCharCode(65 + (n % 26))}`) =>
+    Buffer.from(Array.from({ length: count }, (_, n) => `03/09/2026,"410.00",PAYMENT FROM ${name(n)}    RENT,,,,,\n`).join(""));
+  const hintPass = (csv: typeof bytes) => { const batch = createBankReferenceBatch(upload(csv, named)); return { batch, pass: bankFirstPass(batch)! }; };
+  it("asks up to eight rows per call, keyed p0 to p7 over one state", async () => {
+    const { batch, pass } = hintPass(eligibleRows(10));
+    const { asked, decide } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+    await jevPayerHints(batch, pass, decide);
+    expect(asked.map(request => Object.keys(request.questions))).toEqual([["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"], ["p0", "p1"]]);
+    expect(asked.map(request => Object.keys(request.state as object))).toEqual(asked.map(request => Object.keys(request.questions)));
+    expect((asked[1].state as Record<string, unknown>).p1).toEqual({ payer: "JOHN DOE J", amount: "410.00" });
+    expect(pass.rows.every(row => row.hintSource === "jev" && row.propertyId === "P-JD" && row.disposition === "hold")).toBe(true);
+  });
+  it("splits a call before its state passes the size cap", async () => {
+    const { batch, pass } = hintPass(eligibleRows(8, n => `JOHN ${String.fromCharCode(65 + n).repeat(3_000)}`));
+    const { asked, decide } = pick("none", 0.97, { t1: 0.01, t2: 0.02, none: 0.97 });
+    await jevPayerHints(batch, pass, decide);
+    expect(asked.length).toBeGreaterThan(1);
+    expect(asked.flatMap(request => Object.keys(request.questions))).toHaveLength(8);
+    for (const request of asked) expect(Buffer.byteLength(JSON.stringify(request.state))).toBeLessThanOrEqual(15_000);
+  });
+  it("a failed or throwing call leaves only its own rows unhinted", async () => {
+    for (const failure of [async (): Promise<JevResult> => ({ ok: false, reason: "unavailable" }), async (): Promise<JevResult> => { throw new Error("fictional Jev failure"); }]) {
+      const { batch, pass } = hintPass(eligibleRows(10));
+      const { asked, decide: answer } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+      let calls = 0;
+      await jevPayerHints(batch, pass, request => calls++ ? answer(request) : failure());
+      expect(calls).toBe(2); expect(asked).toHaveLength(1);
+      expect(pass.rows.map(row => row.hintSource ?? null)).toEqual([...Array(8).fill(null), "jev", "jev"]);
+    }
+  });
+  it("keeps at most three calls in flight", async () => {
+    const { batch, pass } = hintPass(eligibleRows(40));
+    const { asked, decide: answer } = pick("t2", 0.95, { t1: 0.03, t2: 0.95, none: 0.02 });
+    let open = 0, most = 0;
+    await jevPayerHints(batch, pass, async request => {
+      most = Math.max(most, ++open);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      open--; return answer(request);
+    });
+    expect(asked).toHaveLength(5);
+    expect(most).toBe(3);
+    expect(pass.rows.filter(row => row.hintSource === "jev")).toHaveLength(40);
   });
   it("stays off without an injected decide (the sync pass never asks)", () => {
     expect(bankFirstPass(createBankReferenceBatch(upload(bytes, named)))!.rows[10].propertyId).toBeUndefined();

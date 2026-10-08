@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { acquirePortalLease, ALLOWED_TOOLS, buildManifest, CUA_PIN, FORBIDDEN_TOOLS, originAllowed, pinSupported, revokePortalLease, toolAllowed } from "./cua-bounded.ts";
+import { acquirePortalLease, ALLOWED_TOOLS, buildManifest, CUA_NEVER_TOOLS, CUA_PIN, FORBIDDEN_TOOLS, originAllowed, pinSupported, revokePortalLease, toolAllowed } from "./cua-bounded.ts";
 import { computerLease } from "./computer-lease.ts";
 
 describe("bounded Cua contract", () => {
@@ -13,18 +13,25 @@ describe("bounded Cua contract", () => {
     now: 1_000,
   });
 
-  it("pins 0.19.3 and mounts only typed browser tools", () => {
-    expect(manifest.version).toBe("0.19.3");
-    expect(CUA_PIN).toBe("0.19.3");
+  it("pins 0.34.0 and mounts only typed browser tools", () => {
+    expect(manifest.version).toBe("0.34.0");
+    expect(CUA_PIN).toBe("0.34.0");
     expect(manifest.mode).toBe("bounded");
     expect(manifest.tools).toEqual(ALLOWED_TOOLS);
     expect(manifest.forbidden).toEqual(FORBIDDEN_TOOLS);
-    expect(pinSupported("0.19.3")).toBe(true);
-    expect(pinSupported("0.20.0")).toBe(false);
+    expect(pinSupported("0.34.0")).toBe(true);
+    expect(pinSupported("0.19.3")).toBe(false);
   });
 
-  it("forbids desktop, coordinates, Enter, JS, and shell", () => {
+  it("forbids desktop, coordinates, Enter, JS, shell and the AGPL perception extension", () => {
     for (const tool of FORBIDDEN_TOOLS) expect(toolAllowed(manifest, tool)).toBe(false);
+    for (const tool of ["install_extension", "parse_visual_regions"]) expect(FORBIDDEN_TOOLS).toContain(tool);
+    // 0.34.0 tools that install, persist config or reach out for an update.
+    for (const tool of ["install_ffmpeg", "set_config", "check_for_update"]) {
+      expect(CUA_NEVER_TOOLS).toContain(tool);
+      expect(FORBIDDEN_TOOLS).toContain(tool);
+      expect(toolAllowed(manifest, tool)).toBe(false);
+    }
     expect(toolAllowed(manifest, "click_semantic")).toBe(true);
     expect(originAllowed(manifest, "http://127.0.0.1:9/ledger")).toBe(true);
     expect(originAllowed(manifest, "https://evil.example/")).toBe(false);
@@ -47,8 +54,8 @@ describe("bounded Cua contract", () => {
     expect(originAllowed(httpsManifest, "http://portal.example.com/ledger")).toBe(false);
     expect(originAllowed(httpsManifest, "https://portal.example.com:443/x")).toBe(true);
     expect(originAllowed(httpsManifest, "https://evil-portal.example.com/x")).toBe(false);
-    expect(pinSupported("0.19.30")).toBe(false);
-    expect(pinSupported("0.19.3-rc")).toBe(false);
+    expect(pinSupported("0.34.00")).toBe(false);
+    expect(pinSupported("0.34.0-rc")).toBe(false);
   });
 
   it("requires an exact scheme, host, and port match for portal origins", () => {

@@ -68,6 +68,7 @@ export function BillDuplicateReview({ check, loading, error, checked, disabled, 
           <p className="text-ink-secondary">{candidate.match === 'invoice-conflict' ? 'Conflicting invoice version or facts' : candidate.match === 'invoice-identity' ? 'Matching invoice number' : 'Matching source text and facts'}{candidate.facts.invoiceNumber ? ` · ${candidate.facts.invoiceNumber}` : ''}{candidate.facts.invoiceVersion ? ` · version ${candidate.facts.invoiceVersion}` : ''}</p>
           <p className="break-words">{candidate.subject || 'Untitled message'} · received {new Date(candidate.receivedAt).toLocaleString()}</p>
           <p className="text-ink-secondary">Matching revision {candidate.matchedRevision} · current revision {candidate.revision}</p>
+          {candidate.likely && <p className="text-ink-secondary">{candidate.likely === 'same' ? 'Likely the same bill' : 'Likely a different bill'} · suggestion only</p>}
           <button type="button" className={button} disabled={disabled} onClick={() => onOpen(candidate.billId)}>Save draft and open matching bill</button>
         </li>)}</ul><p className="text-ink-secondary">Opening a match saves this draft for later. Return to it through Saved bill reviews.</p></> : check.complete && <p>No exact match found in saved bills. Check the original invoice before accepting.</p>}
       {!check.complete && <p role="alert" className="text-hold">The matching-bill check is incomplete. Saving is held; retry the check before continuing.</p>}
@@ -203,7 +204,8 @@ export function SourceBillsPanel({ onSaved, initialBillId }: { onSaved?: () => v
     setDuplicateRead({ key: duplicateKey, check: null, loading: true, error: '' });
     const current = () => mounted.current && operation === editorGeneration.current && generation === duplicateGeneration.current && duplicateKey === duplicateKeyRef.current;
     const timer = setTimeout(() => {
-      void write('/api/bill-occurrences/duplicate-candidates', 'POST', request).then(result => {
+      // Only this open-review read may rank; the pre-save check never waits on it.
+      void write('/api/bill-occurrences/duplicate-candidates', 'POST', { ...request, rank: true }).then(result => {
         const check = readBillDuplicateCheck(result, request.expectedSourceDigest);
         if (current()) setDuplicateRead({ key: duplicateKey, check, loading: false, error: '' });
       }).catch(() => {

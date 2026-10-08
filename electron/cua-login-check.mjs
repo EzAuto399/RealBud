@@ -26,9 +26,10 @@ export async function checkCuaLogin(driver, binding, session) {
   const snapshot = await call({ target_id: bound.target_id, tab_id: matching[0].tab_id, snapshot_format: "semantic_v2" });
   if (snapshot.target_id !== bound.target_id || snapshot.tab_id !== matching[0].tab_id) return false;
   try { if (new URL(snapshot.page?.url).origin !== binding.origin) return false; } catch { return false; }
-  // Cua 0.19.3's observed semantic_v2 response. Only visible page labels can
-  // prove the account; error text, titles, hidden nodes and partial snapshots
-  // cannot. Match full labels so account 41 cannot match account 410.
+  // Cua's semantic_v2 response (observed live on 0.19.3; same fields in the
+  // 0.34.0 source, browser/tools.rs). Only visible page labels can prove the
+  // account; error text, titles, hidden nodes and partial snapshots cannot.
+  // Match full labels so account 41 cannot match account 410.
   if (snapshot.status !== "ok" || snapshot.snapshot?.format !== "semantic_v2" || snapshot.snapshot?.complete !== true || !Array.isArray(snapshot.content_refs) || !Array.isArray(snapshot.refs)) return false;
   const nodes = [...snapshot.content_refs, ...snapshot.refs].filter(node => node.visibility === "in_viewport" && node.role !== "rootwebarea");
   const labels = nodes.filter(node => typeof node.name === "string").map(node => node.name.normalize("NFKC").trim());
