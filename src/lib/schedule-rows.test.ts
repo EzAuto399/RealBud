@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JobRun, Recipe } from "./desk";
 import type { Loop, LoopRun } from "./routines";
-import { buildScheduleRows, listedScheduleRows, nextRunText, SCHEDULE_NOT_CONFIRMED, scheduleRowForJob, stableOrder, type ScheduleRowInput } from "./schedule-rows";
+import { buildScheduleRows, lastRunText, listedScheduleRows, nextRunText, SCHEDULE_NOT_CONFIRMED, scheduleRowForJob, stableOrder, type ScheduleRowInput } from "./schedule-rows";
 
 const TZ = "Australia/Brisbane";
 // Thursday 1 Oct 2026, 9:00 am in Brisbane (UTC+10, no daylight saving).
@@ -106,6 +106,24 @@ describe("schedule row copy (proposal section 5)", () => {
     expect(nextRunText(brisbane(1, 7, 30), NOW, TZ)).toBe("Today, 7:30 am");
     expect(nextRunText(brisbane(5, 9), NOW, TZ)).toBe("Monday, 9:00 am");
     expect(nextRunText(brisbane(12, 9), NOW, TZ)).toBe("Mon 12 Oct, 9:00 am");
+  });
+});
+
+describe("last run", () => {
+  it("is the latest run that happened, across clock and job receipts", () => {
+    expect(only({ loops: [loop()] }).lastRunAt).toBeNull();
+    expect(only({ loops: [loop()], loopRuns: [loopRun({ finishedAt: NOW - 7_200_000 }), loopRun({ id: "newer", finishedAt: NOW - 600_000 })] }).lastRunAt).toBe(NOW - 600_000);
+    expect(only({ recipes: [recipe()], jobRuns: [jobRun({ startedAt: NOW - 900_000 })] }).lastRunAt).toBe(NOW - 900_000);
+  });
+
+  it("ignores queued, running and missed receipts", () => {
+    const receipts = ["queued", "running", "missed"].map((status, i) => loopRun({ id: `r${i}`, status: status as LoopRun["status"], finishedAt: NOW - 60_000 }));
+    expect(only({ loops: [loop()], loopRuns: receipts }).lastRunAt).toBeNull();
+  });
+
+  it("reads as relative text or Never run", () => {
+    expect(lastRunText(null, NOW)).toBe("Never run");
+    expect(lastRunText(NOW - 2 * 3_600_000, NOW)).toBe("Last run 2 h ago");
   });
 });
 

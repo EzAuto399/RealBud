@@ -3,7 +3,7 @@
 import { CircleAlert, Square } from "lucide-react";
 import { useRef } from "react";
 
-import type { AttentionWord, ScheduleRow } from "@/lib/schedule-rows";
+import { lastRunText, type AttentionWord, type ScheduleRow } from "@/lib/schedule-rows";
 import { scheduleRowGuidance, scheduleRowSection, type ScheduleSection } from "@/lib/schedule-presentation";
 import { StatusLabel } from "../pm";
 
@@ -32,6 +32,7 @@ export function JobList({
   rows,
   selectedKey,
   freezeOrder = false,
+  nowMs = Date.now(),
   actionBlocked,
   onOpen,
   onAction,
@@ -41,6 +42,8 @@ export function JobList({
   selectedKey?: string | null;
   /** Keep section placement stable while someone reads or acts on a row. */
   freezeOrder?: boolean;
+  /** The clock "Last run" is measured against; the page re-renders each minute. */
+  nowMs?: number;
   /** Extra page-level hold (busy, offline) for actions that change work. */
   actionBlocked?: (row: ScheduleRow) => boolean;
   onOpen: (row: ScheduleRow) => void;
@@ -95,7 +98,10 @@ export function JobList({
                         </span>
                         <span id={`${id}-guidance`} className="schedule-row-guidance">{scheduleRowGuidance(row)}</span>
                       </span>
-                      <span id={`${id}-next`} className="schedule-row-next">{row.next}</span>
+                      <span id={`${id}-next`} className="schedule-row-next">
+                        {row.next}
+                        <span className="mt-0.5 block text-[13px]">{lastRunText(row.lastRunAt, nowMs)}</span>
+                      </span>
                     </button>
                     <button
                       type="button"

@@ -37,7 +37,7 @@ describe('Austin pack plan', () => {
 describe('Schedule rows for pack jobs', () => {
   it('shows an off pack job with its office time, and the monthly cadence in words', () => {
     const loop = { id: 'maintenance-review', name: 'Maintenance checks', enabled: false, schedule: { type: 'daily', time: '08:30', weekdays: [1, 2, 3, 4, 5], timezone: 'Australia/Brisbane' } } as Loop;
-    expect(scheduleRowGuidance({ key: 'loop:maintenance-review', name: loop.name, loop, next: 'Paused', attention: null, action: 'resume', actionLabel: 'Resume', actionDisabled: false, group: 2, sortAt: 0 })).toBe('Off · Weekdays 8:30 am, Brisbane time. Review it, then switch it on.');
+    expect(scheduleRowGuidance({ key: 'loop:maintenance-review', name: loop.name, loop, next: 'Paused', lastRunAt: null, attention: null, action: 'resume', actionLabel: 'Resume', actionDisabled: false, group: 2, sortAt: 0 })).toBe('Off · Weekdays 8:30 am, Brisbane time. Review it, then switch it on.');
     expect(scheduleSummary({ time: '09:00', weekdays: [1, 2, 3, 4, 5], monthly: 'first-weekday' })).toBe('First weekday of each month 9:00 am');
   });
 });

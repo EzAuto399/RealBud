@@ -39,16 +39,18 @@ describe("job list", () => {
       recipes: [], jobRuns: [], nowMs: NOW, timeZone: "Australia/Brisbane",
       loopRuns: [run({ loopId: "owner-letter", loopName: "Owner letter", status: "failed", detail: "Fictional engine commentary" })],
     });
-    const html = renderToStaticMarkup(createElement(JobList, { rows, onOpen: () => {}, onAction: () => {} }));
+    const html = renderToStaticMarkup(createElement(JobList, { rows, nowMs: NOW, onOpen: () => {}, onAction: () => {} }));
     expect(html).toContain('aria-label="Jobs"');
     expect(html).toContain('aria-label="Open job: Owner letter"');
     expect(html).toContain('aria-label="Review failed run: Owner letter"');
     expect(html).toContain(">Next run<");
+    expect(html).toContain("Last run 1 min ago");
     expect(html).not.toContain(">Timing<");
     expect(html).toContain(">Failed<");
     expect(html).not.toContain(">On<");
     expect(html).not.toContain("Fictional engine commentary");
     expect(html).not.toContain("“");
+    expect(renderToStaticMarkup(createElement(JobList, { rows: buildScheduleRows({ loops: [loop({ id: "owner-letter", name: "Owner letter", enabled: true, nextRunAt: NOW + 86_400_000 })], recipes: [], jobRuns: [], loopRuns: [], nowMs: NOW, timeZone: "Australia/Brisbane" }), nowMs: NOW, onOpen: () => {}, onAction: () => {} }))).toContain("Never run");
   });
 
   it("names the review action after the row's status and keeps Review result for a plain waiting result", () => {
