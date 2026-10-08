@@ -64,8 +64,9 @@ export function deskDataStatus(desk: DeskSnapshot | null, office: { connected: b
   const last = desk?.lastRunAt ?? null;
   const stale = isObservedStale(last, now);
   const live = !disconnected && office.link === "linked" && !stale;
-  const notice = !desk ? null
-    : disconnected ? `Office disconnected · ${last == null ? "Desk not checked yet" : `Last Desk check ${ago(now - last)}`}`
+  // The sample book is fictional and already labelled; it needs no live-data warning.
+  const notice = !desk || desk.demo || desk.mode === "demo" ? null
+    : disconnected ? `${office.link === "not-linked" ? "Not connected to your office" : "Office disconnected"} · ${last == null ? "Desk not checked yet" : `Last Desk check ${ago(now - last)}`}`
     : stale ? `Desk check is stale · Last checked ${ago(now - last!)}`
     : null;
   return { live, notice };

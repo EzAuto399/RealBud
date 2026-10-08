@@ -29,7 +29,7 @@ describe('desktop shell facts', () => {
   it('calls Desk data live only when the office is reachable and the check is fresh', () => {
     const office = (fields: Record<string, unknown> = {}) => ({ connected: true, link: 'linked', officeInactive: false, ...fields }) as never;
     expect(deskDataStatus(desk({}), office(), now)).toEqual({ live: true, notice: null });
-    expect(deskDataStatus(desk({ lastRunAt: now - 72 * HOUR }), office({ link: 'not-linked' }), now)).toEqual({ live: false, notice: 'Office disconnected · Last Desk check 3 days ago' });
+    expect(deskDataStatus(desk({ lastRunAt: now - 72 * HOUR }), office({ link: 'not-linked' }), now)).toEqual({ live: false, notice: 'Not connected to your office · Last Desk check 3 days ago' });
     expect(deskDataStatus(desk({}), office({ connected: false }), now).notice).toBe('Office disconnected · Last Desk check 1 h ago');
     expect(deskDataStatus(desk({}), office({ officeInactive: true }), now).live).toBe(false);
     expect(deskDataStatus(desk({ lastRunAt: null }), office({ link: 'unavailable' }), now).notice).toBe('Office disconnected · Desk not checked yet');
@@ -37,6 +37,7 @@ describe('desktop shell facts', () => {
     // Link not read yet: not live, but never called disconnected.
     expect(deskDataStatus(desk({}), office({ link: undefined }), now)).toEqual({ live: false, notice: null });
     expect(deskDataStatus(null, office({ connected: false }), now).notice).toBeNull();
+    expect(deskDataStatus(desk({ demo: true }), office({ connected: false }), now)).toEqual({ live: false, notice: null });
   });
   it('names only an enabled, scheduled, unpaused loop as next', () => {
     const loop = (fields: Record<string, unknown>) => ({ id: 'x', name: 'Morning arrears', available: true, enabled: true, nextRunAt: now + HOUR, ...fields }) as never;
