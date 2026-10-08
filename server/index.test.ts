@@ -597,6 +597,7 @@ describe("harness HTTP API", () => {
     const noRemove = await api("POST", "/api/hermes/uninstall");
     expect(noRemove.status).toBe(415);
     expect((await fetch(BASE + "/api/hermes/uninstall", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await fetch(BASE + "/api/hermes/uninstall/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
 
     const repaired = await api("POST", "/api/hermes/repair", {});
     expect(repaired.status).toBe(200);
