@@ -1,17 +1,24 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  DocumentDepsError, DOCUMENT_TOOLS_NEED_REPAIR, DOCUMENT_TOOLS_READY, DOCUMENT_TOOLS_UNSUPPORTED, documentDepsLock, documentToolsStatus, ensureDocumentDeps,
-  ownedRuntimeHome, parseDocumentDepsLock, repairDocumentDeps, runtimePython, selectDocumentWheels, type DocumentDepsLock, type PythonRun,
+  DocumentDepsError, DOCUMENT_TOOLS_NEED_REPAIR, DOCUMENT_TOOLS_READY, DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED, DOCUMENT_TOOLS_UNSUPPORTED, documentDepsLock, documentRuntimeRefusal,
+  documentToolsStatus, ensureDocumentDeps, ownedRuntimeHome, parseDocumentDepsLock, repairDocumentDeps, runtimePython, selectDocumentWheels, type DocumentDepsLock, type PythonRun,
 } from "./hermes-document-deps.ts";
 import { runtimeCli } from "./hermes-paths.ts";
 import { releaseHome, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
 
 const roots: string[] = [];
 const root = () => { const path = mkdtempSync(join(tmpdir(), "realbud-document-deps-test-")); roots.push(path); return path; };
+/** A reviewed release's own runtime folder with an intact venv (0.21.5's commit). */
+const RELEASE = "f97608f178d1ffeca59860195ab7da295f7c8e5f";
+const runtime = (commit = RELEASE) => {
+  const home = join(root(), "runtimes", commit), venv = join(home, "hermes-agent", "venv");
+  mkdirSync(venv, { recursive: true }); writeFileSync(join(venv, "pyvenv.cfg"), "home = /synthetic/python\n");
+  return home;
+};
 afterEach(() => { vi.unstubAllEnvs(); for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
 const bytesFor = (filename: string) => Buffer.from(`fictional wheel ${filename}`);
@@ -33,7 +40,7 @@ const lock: DocumentDepsLock = parseDocumentDepsLock({
   runtimeProvided: [{ name: "fictional-base", import: "fictional_base", minimum: "3.0", license: "MIT" }],
 });
 
-type Fake = { installed: Record<string, string>; machine?: string; platform?: string; venv?: boolean; provided?: string | null; installs: string[][]; pythons: string[]; requirements?: string; wheelFiles?: string[]; scratch?: string };
+type Fake = { installed: Record<string, string>; machine?: string; platform?: string; venv?: boolean; prefix?: string; provided?: string | null; installs: string[][]; pythons: string[]; requirements?: string; wheelFiles?: string[]; scratch?: string };
 function fakePython(fake: Fake): PythonRun {
   return async (python, args, options) => {
     fake.pythons.push(python);
@@ -52,7 +59,8 @@ function fakePython(fake: Fake): PythonRun {
     const state = (names: string[], source: Record<string, string | null>) =>
       Object.fromEntries(names.map(token => token.split(":")[0]).map(name => [name, { version: source[name] ?? null, imports: Boolean(source[name]) }]));
     const split = args.indexOf("--provided");
-    return JSON.stringify({ implementation: "cpython", python: "cp311", platform: fake.platform ?? "darwin", machine: fake.machine ?? "arm64", venv: fake.venv ?? true,
+    // A venv interpreter reports its own venv (two folders above it) as sys.prefix.
+    return JSON.stringify({ implementation: "cpython", python: "cp311", platform: fake.platform ?? "darwin", machine: fake.machine ?? "arm64", venv: fake.venv ?? true, prefix: fake.prefix ?? dirname(dirname(python)),
       packages: state(args.slice(2, split), fake.installed), provided: state(args.slice(split + 1), { "fictional-base": fake.provided === undefined ? "3.1.0" : fake.provided }) }) + "\n";
   };
 }
@@ -71,7 +79,7 @@ const fake = (extra: Partial<Fake> = {}): Fake => ({ installed: {}, installs: []
 
 describe("ensureDocumentDeps", () => {
   it("installs only the current platform's verified wheels with the venv's own Python and pip wheel", async () => {
-    const home = root(), state = fake(), net = fakeRequest();
+    const home = runtime(), state = fake(), net = fakeRequest();
     const result = await ensureDocumentDeps(home, { platform: "darwin", run: fakePython(state), request: net.request, lock });
     expect(result).toEqual({ state: "ready", installed: true, target: "darwin-arm64-cp311" });
     expect(net.urls).toEqual(["pip-1.0.0-py3-none-any.whl", "fictional_pure-1.0.0-py3-none-any.whl", "fictional_native-2.0.0-cp311-cp311-macosx_11_0_arm64.whl"]);
@@ -89,10 +97,10 @@ describe("ensureDocumentDeps", () => {
 
   it("selects the interpreter's own platform: Intel Mac and Windows python.exe", async () => {
     const intel = fake({ machine: "x86_64" }), intelNet = fakeRequest();
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(intel), request: intelNet.request, lock })).resolves.toMatchObject({ target: "darwin-x64-cp311" });
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(intel), request: intelNet.request, lock })).resolves.toMatchObject({ target: "darwin-x64-cp311" });
     expect(intelNet.urls).toContain("fictional_native-2.0.0-cp311-cp311-macosx_10_9_x86_64.whl");
 
-    const home = root(), windows = fake({ platform: "win32", machine: "AMD64" }), windowsNet = fakeRequest();
+    const home = runtime(), windows = fake({ platform: "win32", machine: "AMD64" }), windowsNet = fakeRequest();
     await expect(ensureDocumentDeps(home, { platform: "win32", run: fakePython(windows), request: windowsNet.request, lock })).resolves.toMatchObject({ target: "win32-x64-cp311" });
     expect(runtimePython(home, "win32")).toBe(join(home, "hermes-agent", "venv", "Scripts", "python.exe"));
     expect(new Set(windows.pythons)).toEqual(new Set([join(home, "hermes-agent", "venv", "Scripts", "python.exe")]));
@@ -102,48 +110,77 @@ describe("ensureDocumentDeps", () => {
 
   it("refuses a wheel whose bytes do not match the lock and installs nothing", async () => {
     const state = fake(), net = fakeRequest("fictional_native-2.0.0-cp311-cp311-macosx_11_0_arm64.whl");
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).rejects.toThrow(/didn’t match the reviewed version/);
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).rejects.toThrow(/didn’t match the reviewed version/);
     expect(state.installs).toEqual([]);
     expect(existsSync(state.scratch!)).toBe(false);
   });
 
   it("skips downloads and pip when the locked versions already import", async () => {
     const state = fake({ installed: { "fictional-pure": "1.0.0", "fictional-native": "2.0.0" } }), net = fakeRequest();
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toEqual({ state: "ready", installed: false, target: "darwin-arm64-cp311" });
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toEqual({ state: "ready", installed: false, target: "darwin-arm64-cp311" });
     expect(net.urls).toEqual([]);
     expect(state.installs).toEqual([]);
   });
 
   it("replaces a different installed version with the locked one", async () => {
     const state = fake({ installed: { "fictional-pure": "0.9.0", "fictional-native": "2.0.0" } }), net = fakeRequest();
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toMatchObject({ installed: true });
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toMatchObject({ installed: true });
     expect(state.installs).toHaveLength(1);
   });
 
   it("does not install on an unsupported platform, outside a venv, or without the runtime's own dependencies", async () => {
     const linux = fake({ platform: "linux", machine: "x86_64" }), net = fakeRequest();
-    await expect(ensureDocumentDeps(root(), { platform: "linux", run: fakePython(linux), request: net.request, lock })).resolves.toEqual({ state: "unsupported", detail: DOCUMENT_TOOLS_UNSUPPORTED });
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(fake({ venv: false })), request: net.request, lock })).rejects.toThrow(/not a private environment/);
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run: fakePython(fake({ provided: "2.9" })), request: net.request, lock })).rejects.toThrow(/missing parts/);
+    await expect(ensureDocumentDeps(runtime(), { platform: "linux", run: fakePython(linux), request: net.request, lock })).resolves.toEqual({ state: "unsupported", detail: DOCUMENT_TOOLS_UNSUPPORTED });
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(fake({ venv: false })), request: net.request, lock })).rejects.toThrow(/not a private environment/);
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(fake({ provided: "2.9" })), request: net.request, lock })).rejects.toThrow(/missing parts/);
     expect(net.urls).toEqual([]);
   });
 
   it("reports failure, never ready, when pip leaves the libraries missing", async () => {
     const state = fake(), base = fakePython(state);
     const run: PythonRun = async (python, args, options) => { const out = await base(python, args, options); if (args.includes("install")) state.installed = {}; return out; };
-    await expect(ensureDocumentDeps(root(), { platform: "darwin", run, request: fakeRequest().request, lock })).rejects.toThrow(/did not finish installing/);
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run, request: fakeRequest().request, lock })).rejects.toThrow(/did not finish installing/);
+  });
+
+  it("never writes into a legacy, unknown or replaced runtime, and says so instead of failing", async () => {
+    const legacy = root();
+    mkdirSync(join(legacy, "hermes-agent", "venv"), { recursive: true }); writeFileSync(join(legacy, "hermes-agent", "venv", "pyvenv.cfg"), "");
+    const unknown = runtime("0123456789abcdef0123456789abcdef01234567");
+    const linked = runtime(); const outside = join(root(), "venv"); mkdirSync(outside);
+    rmSync(join(linked, "hermes-agent", "venv"), { recursive: true }); symlinkSync(outside, join(linked, "hermes-agent", "venv"));
+    const unmarked = runtime(); rmSync(join(unmarked, "hermes-agent", "venv", "pyvenv.cfg"));
+    const deleted = runtime(); rmSync(dirname(dirname(deleted)), { recursive: true });
+    for (const home of [legacy, unknown, linked, unmarked, deleted]) {
+      expect(documentRuntimeRefusal(home), home).toBe(DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED);
+      const state = fake(), net = fakeRequest();
+      await expect(ensureDocumentDeps(home, { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toEqual({ state: "unsupported", detail: DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED });
+      expect(state.pythons).toEqual([]); expect(net.urls).toEqual([]);
+    }
+    expect(documentRuntimeRefusal(runtime())).toBeNull();
+    expect(documentRuntimeRefusal(runtime(`${RELEASE}-0123456789ab`))).toBeNull();
+  });
+
+  it("does not install when the interpreter's environment is not the runtime's own venv", async () => {
+    const state = fake({ prefix: "/synthetic/other-env" }), net = fakeRequest();
+    await expect(ensureDocumentDeps(runtime(), { platform: "darwin", run: fakePython(state), request: net.request, lock })).resolves.toEqual({ state: "unsupported", detail: DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED });
+    expect(state.installs).toEqual([]); expect(net.urls).toEqual([]);
   });
 
   it("never runs a real install in tests", async () => {
-    await expect(ensureDocumentDeps(root())).rejects.toThrow(/disabled in automated tests/);
+    await expect(ensureDocumentDeps(runtime())).rejects.toThrow(/disabled in automated tests/);
   });
 });
 
 describe("documentToolsStatus", () => {
   it("reads ready, needs Repair, or a failed check as needs Repair", async () => {
-    await expect(documentToolsStatus(root(), { platform: "darwin", run: fakePython(fake({ installed: { "fictional-pure": "1.0.0", "fictional-native": "2.0.0" } })), lock })).resolves.toEqual({ ready: true, detail: DOCUMENT_TOOLS_READY });
-    await expect(documentToolsStatus(root(), { platform: "darwin", run: fakePython(fake()), lock })).resolves.toEqual({ ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR });
-    await expect(documentToolsStatus(root(), { platform: "darwin", run: async () => { throw new Error("fictional spawn failure"); }, lock })).resolves.toEqual({ ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR });
+    await expect(documentToolsStatus(runtime(), { platform: "darwin", run: fakePython(fake({ installed: { "fictional-pure": "1.0.0", "fictional-native": "2.0.0" } })), lock })).resolves.toEqual({ ready: true, detail: DOCUMENT_TOOLS_READY });
+    await expect(documentToolsStatus(runtime(), { platform: "darwin", run: fakePython(fake()), lock })).resolves.toEqual({ ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR });
+    await expect(documentToolsStatus(runtime(), { platform: "darwin", run: async () => { throw new Error("fictional spawn failure"); }, lock })).resolves.toEqual({ ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR });
+  });
+  it("reads a runtime Repair must not change as unavailable here, never as needing Repair, unless it already has the libraries", async () => {
+    const legacy = root();
+    await expect(documentToolsStatus(legacy, { platform: "darwin", run: fakePython(fake()), lock })).resolves.toEqual({ ready: false, detail: DOCUMENT_TOOLS_UNSUPPORTED });
+    await expect(documentToolsStatus(legacy, { platform: "darwin", run: fakePython(fake({ installed: { "fictional-pure": "1.0.0", "fictional-native": "2.0.0" } })), lock })).resolves.toEqual({ ready: true, detail: DOCUMENT_TOOLS_READY });
   });
 });
 

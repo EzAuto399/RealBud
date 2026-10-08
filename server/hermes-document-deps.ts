@@ -4,21 +4,32 @@
 // never a personal Hermes, and never a lazy install: the profile keeps
 // `allow_lazy_installs: false`. Readiness is always the live import check;
 // nothing records "ready", so an interrupted install reads as needing Repair.
+//
+// Interim (Hermes separation, 2026-10-08): RealBud ships no Word/Excel/PDF
+// libraries of its own; the worker's bundled skills need these Python ones.
+// Until RealBud owns a document runtime, libraries are added only to a
+// reviewed release in its own runtimes folder whose venv is intact
+// (`documentRuntimeRefusal`). A legacy, unknown or replaced runtime is never
+// written: Repair says so and readiness reads "unavailable here", not "needs
+// Repair", so automatic setup does not retry an install it must refuse.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { sandboxedLaunch } from "./worker-network-sandbox.ts";
 import { restrictNewSync } from "./atomic.ts";
 import { augmentedPath } from "./env-path.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
-import { readRuntimeSelection, releaseHome } from "./hermes-runtime-selection.ts";
+import { readRuntimeSelection, releaseHome, runtimeCommit } from "./hermes-runtime-selection.ts";
+import { HERMES_RELEASES } from "./hermes-releases.ts";
 import { execFileCli } from "./procs.ts";
 
 export const DOCUMENT_TOOLS_NEED_REPAIR = "Document tools need Repair.";
 export const DOCUMENT_TOOLS_READY = "Document tools are ready.";
 export const DOCUMENT_TOOLS_UNSUPPORTED = "Document tools are not available on this computer yet.";
+/** Repair's sentence for a runtime RealBud must not add libraries to. */
+export const DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED = "Word, Excel and PDF tools can’t be added to Bud’s current engine, so nothing was changed. Update Bud in Bud setup, or contact RealBud support.";
 export class DocumentDepsError extends Error {}
 
 export type LockedWheel = { filename: string; url: string; sha256: string; size: number; targets: string[] };
@@ -83,6 +94,30 @@ export function ownedRuntimeHome(home = hermesHome()): string | null {
   return existsSync(runtimeCli(home)) ? home : null;
 }
 
+/** Why RealBud must not add libraries to this runtime, or null when it may:
+ * only a catalog release in its own folder (`<home>/runtimes/<commit>`) whose
+ * `hermes-agent/venv` is a real folder holding `pyvenv.cfg`. */
+export function documentRuntimeRefusal(runtimeHome: string): string | null {
+  const id = basename(runtimeHome);
+  if (basename(dirname(runtimeHome)) !== "runtimes" || !/^[a-f0-9]{40}(?:-[a-f0-9]{12})?$/.test(id) ||
+    !HERMES_RELEASES.some(release => release.commit === runtimeCommit(id))) return DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED;
+  try {
+    const agent = join(runtimeHome, "hermes-agent"), venv = join(agent, "venv");
+    for (const folder of [runtimeHome, agent, venv]) { const stat = lstatSync(folder); if (stat.isSymbolicLink() || !stat.isDirectory()) return DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED; }
+    if (!lstatSync(join(venv, "pyvenv.cfg")).isFile()) return DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED;
+  } catch { return DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED; }
+  return null;
+}
+
+/** The interpreter's own environment is the venv RealBud checked, so pip writes nowhere else. */
+function ownVenv(prefix: unknown, runtimeHome: string, platform: NodeJS.Platform): boolean {
+  if (typeof prefix !== "string" || !prefix) return false;
+  try {
+    const [have, want] = [realpathSync.native(prefix), realpathSync.native(join(runtimeHome, "hermes-agent", "venv"))];
+    return platform === "win32" ? have.toLowerCase() === want.toLowerCase() : have === want;
+  } catch { return false; }
+}
+
 export type PythonRun = (python: string, args: string[], options: { env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal; cwd: string; writable?: string[] }) => Promise<string>;
 
 /** Scratch for RealBud's own helper runs: a host-private folder under the
@@ -121,7 +156,7 @@ export interface DocumentDepsOptions {
 }
 
 type Probe = {
-  implementation: string; python: string; platform: string; machine: string; venv: boolean;
+  implementation: string; python: string; platform: string; machine: string; venv: boolean; prefix?: string;
   packages: Record<string, { version: string | null; imports: boolean }>;
   provided: Record<string, { version: string | null; imports: boolean }>;
 };
@@ -141,7 +176,7 @@ const PROBE = [
   "        out[name] = {'version': version, 'imports': ok}",
   "    return out",
   "split = sys.argv.index('--provided')",
-  "print(json.dumps({'implementation': sys.implementation.name, 'python': 'cp%d%d' % sys.version_info[:2], 'platform': sys.platform, 'machine': platform.machine(), 'venv': sys.prefix != sys.base_prefix, 'packages': check(sys.argv[1:split]), 'provided': check(sys.argv[split + 1:])}))",
+  "print(json.dumps({'implementation': sys.implementation.name, 'python': 'cp%d%d' % sys.version_info[:2], 'platform': sys.platform, 'machine': platform.machine(), 'venv': sys.prefix != sys.base_prefix, 'prefix': sys.prefix, 'packages': check(sys.argv[1:split]), 'provided': check(sys.argv[split + 1:])}))",
 ].join("\n");
 
 function childEnv(runtimeHome: string, scratch: string, platform: NodeJS.Platform): NodeJS.ProcessEnv {
@@ -260,6 +295,8 @@ export function ensureDocumentDeps(runtimeHome: string, options: DocumentDepsOpt
 }
 
 async function installDocumentDeps(runtimeHome: string, python: string, options: DocumentDepsOptions): Promise<DocumentDepsResult> {
+  const refusal = documentRuntimeRefusal(runtimeHome);
+  if (refusal) return { state: "unsupported", detail: refusal };
   const lock = options.lock ?? documentDepsLock();
   const run = options.run ?? runPython;
   const platform = options.platform ?? process.platform;
@@ -273,6 +310,7 @@ async function installDocumentDeps(runtimeHome: string, python: string, options:
     const env = childEnv(runtimeHome, scratch, platform);
     const before = await probe(python, lock, run, env, scratch, options.signal);
     if (!before.venv) throw new DocumentDepsError("Bud’s runtime is not a private environment, so document tools were not added. Reinstall Bud.");
+    if (!ownVenv(before.prefix, runtimeHome, platform)) return { state: "unsupported", detail: DOCUMENT_TOOLS_RUNTIME_UNSUPPORTED };
     const target = documentDepsTarget(before);
     const wheels = target ? selectDocumentWheels(lock, target) : null;
     if (!target || !wheels) return { state: "unsupported", detail: DOCUMENT_TOOLS_UNSUPPORTED };
@@ -319,7 +357,9 @@ export async function documentToolsStatus(runtimeHome: string, options: Pick<Doc
     const state = await probe(runtimePython(runtimeHome, platform), lock, options.run ?? runPython, childEnv(runtimeHome, scratch, platform), scratch, options.signal);
     const target = documentDepsTarget(state);
     if (!target || !selectDocumentWheels(lock, target)) return { ready: false, detail: DOCUMENT_TOOLS_UNSUPPORTED };
-    return lockedReady(state, lock) && !providedMissing(state, lock).length ? { ready: true, detail: DOCUMENT_TOOLS_READY } : { ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR };
+    if (lockedReady(state, lock) && !providedMissing(state, lock).length) return { ready: true, detail: DOCUMENT_TOOLS_READY };
+    // Repair would refuse this runtime, so it is not offered.
+    return { ready: false, detail: documentRuntimeRefusal(runtimeHome) ? DOCUMENT_TOOLS_UNSUPPORTED : DOCUMENT_TOOLS_NEED_REPAIR };
   } catch { return { ready: false, detail: DOCUMENT_TOOLS_NEED_REPAIR }; }
   finally { rmSync(scratch, { recursive: true, force: true }); }
 }
