@@ -22,6 +22,36 @@ import { serviceIssuerFromEnv, type ServiceIssuer } from './service-entitlement-
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{while(cleanups.length)await cleanups.pop()!();});
 const OWNER='synthetic-portal-token-owner-000001',READER='synthetic-portal-token-reader-00001',UNKNOWN='synthetic-portal-token-unknown-0001';
 
+test('the public connection return shows RealBud and treats all callback data as unverified', async () => {
+  let authenticated = 0;
+  const server = createGatewayServer({ allowedOrigins: new Set(), portal: { async authenticate() {
+    authenticated++; throw new Error('completion must not authenticate or change an account');
+  } } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  cleanups.push(() => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/connections/complete`;
+  const response = await fetch(base), html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type')!, /^text\/html/);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(response.headers.get('content-security-policy')!, /default-src 'none'/);
+  assert.match(response.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
+  assert.equal(response.headers.get('set-cookie'), null);
+  assert.match(html, /https:\/\/realbud\.app\/realbud-mark-email\.png/);
+  assert.match(html, /Continue in RealBud/); assert.match(html, /Check access/);
+  for (const status of ['success', 'failed']) {
+    const query = new URLSearchParams({ status, connected_account_id: 'untrusted-account', user_id: 'untrusted-user',
+      error: '<script>alert(1)</script>', next: 'https://untrusted.invalid/', token: 'private-callback-token' });
+    const callback = await fetch(`${base}?${query}`);
+    assert.equal(callback.status, 200);
+    assert.equal(await callback.text(), html);
+    assert.equal(callback.headers.get('location'), null);
+    assert.equal(callback.headers.get('set-cookie'), null);
+  }
+  assert.equal(authenticated, 0);
+});
+
 /** The real Modelvia client over a stand-in shaped like Modelvia's operator
  * routes, and a provisioning composition around it. Everything is fictional. */
 const OPERATOR_SECRET='fictional-gateway-operator-secret-000001';

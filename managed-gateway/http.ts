@@ -29,11 +29,24 @@ function bearer(req:IncomingMessage):string {
 function reply(res:ServerResponse,status:number,data:unknown) {
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(data));
 }
+// Presentation only: a browser return never proves consent or changes an account.
+// No callback query, account identifier or provider error is reflected in this page.
+const CONNECTION_COMPLETE_HTML = `<!doctype html>
+<html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Return to RealBud</title><style>
+body{margin:0;background:#f6f4ef;color:#24352e;font-family:system-ui,sans-serif;min-height:100vh;display:grid;place-items:center}
+main{box-sizing:border-box;width:min(92%,480px);padding:40px;background:#fff;border:1px solid #dedfd6;border-radius:20px}
+.brand{display:flex;align-items:center;gap:12px;font-size:23px;font-weight:650}img{width:44px;height:44px}h1{font-size:28px;line-height:1.2;margin:32px 0 16px}p{line-height:1.6}a{color:#235a42}a:focus-visible{outline:3px solid #235a42;outline-offset:4px}
+</style></head><body><main><div class="brand"><img src="https://realbud.app/realbud-mark-email.png" alt="" width="44" height="44">RealBud</div>
+<h1>Continue in RealBud</h1><p>Return to the RealBud app, open <strong>Apps</strong> and select <strong>Check access</strong> to verify your connection.</p>
+<p>If you were connecting an office mailbox, return to its setup page to finish checking the account.</p>
+<p>You can close this tab when you return to RealBud.</p><a href="https://realbud.app/account">Open your RealBud account</a>
+</main></body></html>`;
 /** Dedicated service, never mount on the desktop's loopback/per-boot-token API.
  * TLS termination, request concurrency/rate limits and external identity admission are
  * explicit deployment gates. No cookie auth or permissive CORS is installed.
  *
- * Routes: GET /health, GET /ready, /v1/connectors/* (including the device's POST
+ * Routes: GET /health, GET /ready, GET /connections/complete (public presentation only), /v1/connectors/* (including the device's POST
  * /v1/connectors/events pull and POST /v1/connectors/triggers switch;
  * composio-triggers.ts), the signed POST /v1/webhooks/composio/{companyId}, POST
  * /v1/portal/installations/{provision,revoke}, the desktop's POST
@@ -100,6 +113,11 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       // Browsers use a same-origin portal BFF; explicit bearer auth blocks ambient-cookie CSRF.
       const url=new URL(req.url??'/','http://gateway.invalid');
       if(req.method==='GET' && url.pathname==='/health') { reply(res,200,{service:'realbud-managed-ai'}); return; }
+      if(req.method==='GET' && url.pathname==='/connections/complete') {
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow',
+          'Content-Security-Policy':"default-src 'none'; img-src https://realbud.app; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"});
+        res.end(CONNECTION_COMPLETE_HTML); return;
+      }
       // Readiness, for the platform health check. 200 only when installation
       // provisioning is actually composed; otherwise 503 with the code naming the
       // variable to set — never its value. Unauthenticated on purpose: it reveals

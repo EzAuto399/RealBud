@@ -261,6 +261,86 @@ re-consented weekly.
 the successful default-scope link were observed live by the owner; this change has
 not itself been exercised against a live Composio project or Google consent.
 
+## RealBud connection branding (8 October 2026)
+
+RealBud gives every office its own Composio project. The managed gateway and
+operator CLI now include these defaults in `POST /api/v3.1/org/owner/project/new`:
+
+```json
+{
+  "config": {
+    "display_name": "RealBud",
+    "logo_url": "https://assets.composio.dev/project-files/pr_WlL-cuUFVGLK/xQiBOAlskQozlBcFpoztri47XI9k.png"
+  }
+}
+```
+
+The project name remains `realbud-<companyId>` for office isolation. The logo is
+the existing RealBud desktop icon uploaded to the default Composio project's
+asset storage. This canonical public asset returned HTTP 200 with
+`Content-Type: image/png`; retain it while any project's branding references it.
+The earlier GitHub-hosted URL was accepted by project creation but failed
+Composio's dashboard image rendering with `INVALID_IMAGE_OPTIMIZE_REQUEST`.
+Keep both creation clients in parity when replacing the canonical asset, and
+verify the rendered preview before removing the previous upload.
+
+Composio documents branding in the [project-create config](https://docs.composio.dev/reference/api-reference/projects/postOrgOwnerProjectNew)
+and [white-labeling guide](https://docs.composio.dev/docs/authentication/white-labeling-authentication).
+Each project has its own branding; changing one does not update other projects.
+
+| Surface | Required setup | Status checked 8 October 2026 |
+| --- | --- | --- |
+| Newly provisioned offices | Gateway and operator CLI send the RealBud name and canonical uploaded logo | **LIVE VERIFIED**: deployed gateway created a fresh project; its saved title and rendered logo appeared without a dashboard edit. The operator CLI's matching request passes its tests |
+| Existing projects | Set App Title **RealBud** and upload `build/icon-1024.png` in each project's Settings → White Labeling → Branding | App Title and RealBud logo saved in all three projects; default project's logo persisted after reload, and both office projects showed Changes saved confirmations and the uploaded logo preview |
+| Google/Microsoft consent and Composio badge | Configure production-ready RealBud-owned OAuth apps using the next section | Neither provider's credential pair is installed. Google project `realbud` has the RealBud logo/homepage saved, but remains External/Testing with no clients or testers; Microsoft tenant sign-in remains outstanding |
+| Existing connected accounts | Plan explicit reconnection under the new auth configs | Existing working grants retain their original auth config; no migration performed |
+| Post-auth completion page | Both Gmail and generic link requests send a fixed `callback_url` | **LIVE** at `https://realbud-managed-gateway.fly.dev/connections/complete`; shows the RealBud logo and directs the user to Apps → Check access. Provider token exchange still uses Composio's callback domain |
+
+The live v3 and v3.1 project-config read endpoints returned HTTP 403 for existing
+project keys, so no API backfill was attempted. The dashboard title and logo update covers:
+`realbud-office-fmjwpyw52q`,
+`realbud-rbco_1946641d97e347d5a0c297128b3aad22`, and
+`realbud_first_project`. The CLI's signed-in default org was a different
+workspace; do not use that default as a substitute for the RealBud org.
+
+Dashboard evidence: [default project logo after reload](../outputs/composio-branding-2026-10-08/default-project-logo-saved.jpg),
+[first office logo saved](../outputs/composio-branding-2026-10-08/office-project-logo-saved.jpg), and
+[second office logo saved](../outputs/composio-branding-2026-10-08/realbud-logo-saved.jpg).
+No theme customization was applied.
+
+Live creation verification retained two empty QA projects: `pr_EN6Shc45UAO_`
+(`realbud-branding-verification-20261008`, initial logo subsequently repaired)
+and `pr_KPRj3cFYG-iT` (`realbud-branding-verification-20261008-v2`, final defaults
+verified without editing). No OAuth accounts, customer offices or Modelvia
+resources were created for these checks. The second project's logo loaded with
+nonzero natural dimensions in the dashboard. Its [saved preview](../outputs/composio-branding-2026-10-08/new-project-auto-branded-v2.jpg)
+and the [live completion page](../outputs/composio-branding-2026-10-08/completion-live.jpg)
+are retained as local evidence.
+
+Production uses image `composio-branding-complete-2026-10-08-v2`, digest
+`sha256:959f61bccd8043d5f30074a1fa3ff2c1bae9539f65e564cf12e5d4e598745f58`.
+The release overlays four files onto the previous immutable live image, retaining
+unrelated live code, services, environment and volume. The actual image passed
+11 tests; project-creation source tests passed 48 tests and callback source tests
+passed 160 tests. Live health/readiness passed, and all four deployed file hashes
+matched the candidate. The completion page never treats callback query values
+as proof of consent and never reflects them. No full provider-consent flow was
+completed during this verification.
+
+Name/logo branding does not rename Google's or Microsoft's consent screen.
+Those names come from the provider's OAuth app. Other OAuth providers likewise
+need their own app registration to replace their Composio consent identity;
+the current gateway credential resolver covers Google and Microsoft only.
+Do not delete active accounts or replace their auth-config bindings as part of
+a cosmetic branding update.
+
+Do not enable the global Google credential pair while its OAuth app is Testing
+with no admitted testers: new customer connections would fail. Production
+publication also needs a connected-app privacy policy, domain/brand verification
+and scope review; the website's current `/privacy` covers enquiries only. Reconcile
+the own-client `gmail.readonly` scope with any enabled full-mailbox features before
+switching configs. No provider client was created or existing grant migrated here.
+
 ## RealBud's own OAuth client (30 September 2026)
 
 Google blocks Composio's shared OAuth client for any scope outside its approved

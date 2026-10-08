@@ -234,6 +234,25 @@ test('an office shared mailbox keeps the three bounded reads it was granted; the
   } finally { globalThis.fetch = realFetch; s.f.close(); }
 });
 
+test('new app links return to RealBud without changing the office binding or upstream endpoint', async () => {
+  const binding = { apiKey: 'ak_fictional_office_a', authConfigId: 'ac_xero', userId: 'installation-a', callback_url: 'https://untrusted.invalid/' };
+  const result = { redirect_url: 'https://connect.composio.dev/link/fictional', connected_account_id: 'ca_fictional', expires_at: new Date(Date.now() + 600_000).toISOString() };
+  let calls = 0;
+  const adapter = composioAppAdapter({ base: 'https://composio.example.invalid/api/v3.1', fetch: async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://composio.example.invalid/api/v3.1/connected_accounts/link');
+    assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error');
+    assert.equal(new Headers(init.headers).get('x-api-key'), binding.apiKey);
+    assert.deepEqual(JSON.parse(String(init.body)), { auth_config_id: binding.authConfigId, user_id: binding.userId,
+      callback_url: 'https://realbud-managed-gateway.fly.dev/connections/complete' });
+    return Response.json({ ...result, link_token: 'not-projected' });
+  } });
+  assert.deepEqual(await adapter.authorize(binding, new AbortController().signal), {
+    url: result.redirect_url, accountId: result.connected_account_id, expiresAt: result.expires_at,
+  });
+  assert.equal(calls, 1);
+});
+
 test('the generic adapter refuses a call whose arguments cancel or decline an event', async () => {
   const adapter = composioAppAdapter({ fetch: async () => { throw new Error('must not be reached'); } });
   const binding = { apiKey: 'ak_fictional_office_a', authConfigId: 'ac_cal', userId: 'installation-a', accountId: 'acct_cal' };

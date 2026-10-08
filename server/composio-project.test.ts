@@ -72,14 +72,17 @@ afterEach(async () => {
 });
 
 describe("createProject", () => {
-  it("posts the new project with the organisation key and returns the parsed project", async () => {
+  it("posts RealBud connection branding with the office identity and organisation key", async () => {
     onRequest = (_request, response) => reply(response, 200, { id: PROJECT.id, name: PROJECT.name, api_key: SECRET });
     await expect(createProject(ORG_KEY, PROJECT.name)).resolves.toEqual({ id: PROJECT.id, name: PROJECT.name, apiKey: SECRET });
     expect(received).toHaveLength(1);
     expect(received[0].method).toBe("POST");
     expect(received[0].path).toBe("/api/v3.1/org/owner/project/new");
     expect(received[0].headers["x-org-api-key"]).toBe(ORG_KEY);
-    expect(JSON.parse(received[0].body)).toEqual({ name: PROJECT.name, should_create_api_key: true });
+    expect(JSON.parse(received[0].body)).toEqual({
+      name: PROJECT.name, should_create_api_key: true,
+      config: { display_name: "RealBud", logo_url: "https://assets.composio.dev/project-files/pr_WlL-cuUFVGLK/xQiBOAlskQozlBcFpoztri47XI9k.png" },
+    });
   });
 
   it("rejects a returned key that is not ak_-shaped, without echoing it", async () => {
