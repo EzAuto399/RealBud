@@ -99,8 +99,8 @@ describe("Ask when model access is withdrawn", () => {
   it("names the terminal hold and keeps drafting open instead of promising a reconnect", () => {
     fixture.store = { connected: true, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
     const html = blocked();
-    expect(html).toContain("Bud access unavailable. You can still write a draft to keep.");
-    expect(html).toContain("Bud access unavailable · Contact support · Shift + Enter for a new line");
+    expect(html).toContain("Disconnected from your office. You can still write a draft to keep.");
+    expect(html).toContain("Reconnect in Workspace → Website account · Shift + Enter for a new line");
     expect(html).not.toMatch(/draft while we connect|Connect Bud to start/);
     expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
   });
@@ -110,7 +110,7 @@ describe("Ask when model access is withdrawn", () => {
     const html = blocked();
     expect(html).toContain("You can draft while we connect.");
     expect(html).toContain("Connect Bud to start");
-    expect(html).not.toContain("Bud access unavailable");
+    expect(html).not.toContain("Reconnect in Workspace");
   });
 });
 

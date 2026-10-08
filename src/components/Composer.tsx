@@ -881,7 +881,7 @@ export function Composer({
           disabled={Boolean(approval) || Boolean(actionPending)}
           placeholder={
             accessWithdrawn
-                ? "Bud access unavailable. You can still write a draft to keep."
+                ? "Disconnected from your office. You can still write a draft to keep."
               : askBlocked
                 ? "What would you like Bud to prepare? You can draft while we connect."
               : approval
@@ -1053,7 +1053,7 @@ export function Composer({
       </div>
       {productAsk && <div className="ask-composer-help">
         <span><ShieldCheck size={13} aria-hidden />Sends, payments and statutory actions need your review.</span>
-        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${accessWithdrawn ? "Bud access unavailable · Contact support" : askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
+        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${accessWithdrawn ? "Reconnect in Workspace → Website account" : askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
       </div>}
     </div>
   );
