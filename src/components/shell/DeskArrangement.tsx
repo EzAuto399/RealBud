@@ -131,7 +131,7 @@ export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stor
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 id="rb-arrange-title" className="text-[16px] font-semibold text-ink">Arrange Desk</h2>
-            <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Choose what shows for you. This changes only your view, not records or permissions. Ask Bud for bigger changes.</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Choose what shows on this Desk. This changes only the view, not records or permissions. Ask Bud for bigger changes.</p>
             <p className="mt-0.5 text-[12px] text-ink-muted">Saved on this computer and shared by everyone who uses it.</p>
           </div>
           <button type="button" className={control} aria-label="Close Arrange Desk" onClick={onClose}><X size={16} aria-hidden /></button>

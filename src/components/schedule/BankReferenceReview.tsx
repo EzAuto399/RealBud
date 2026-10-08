@@ -243,7 +243,7 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
     </details>
     {decisionDraft && <section aria-label="Unsaved bank decisions" className="rounded-lg border border-hold p-3 space-y-2 text-sm">
       <p>Your transaction decisions are not saved yet. Finish and save this review, or discard these decisions before choosing another review, reloading it or importing another file. You can still refresh or load more history.</p>
-      {!discardConfirm ? <button className={control} disabled={busy} onClick={() => setDiscardConfirm(true)}>Review unsaved decisions discard</button> : <div role="group" aria-label="Discard unsaved bank decisions" className="space-y-2">
+      {!discardConfirm ? <button className={control} disabled={busy} onClick={() => setDiscardConfirm(true)}>Discard these decisions…</button> : <div role="group" aria-label="Discard unsaved bank decisions" className="space-y-2">
         <p>Discard only the decisions and reasons entered in this open review? The original export and any previously saved reviewed copy stay intact.</p>
         <div className="flex flex-wrap gap-2"><button className={control} disabled={busy} onClick={() => { setDecisions({}); setDiscardConfirm(false); setNotice('Unsaved decisions discarded. Your original export and saved history are unchanged.'); }}>Discard unsaved bank decisions</button><button className={control} disabled={busy} onClick={() => setDiscardConfirm(false)}>Keep editing this review</button></div>
       </div>}

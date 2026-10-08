@@ -188,14 +188,14 @@ try {
   assert.equal((await request(`/api/bank-reference/${draftId}`)).value.result, undefined);
   await page.unroute(historyMatcher, failHistory);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: 'Review unsaved decisions discard', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard these decisions…', exact: true }).click();
   await page.getByRole('group', { name: 'Discard unsaved bank decisions', exact: true }).screenshot({ path: join(out, 'bank-unsaved-mobile.png') });
   await bankPanel.screenshot({ path: join(out, 'bank-draft-mobile.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'Mobile draft controls do not overflow');
   await page.getByRole('button', { name: 'Keep editing this review', exact: true }).click();
   assert.equal(await page.getByLabel('Review reason', { exact: true }).inputValue(), draftReason);
   record('Injected history-response failure retains loaded rows and unsaved decisions; mobile discard cancellation retains the draft');
-  await page.getByRole('button', { name: 'Review unsaved decisions discard', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard these decisions…', exact: true }).click();
   await page.getByRole('button', { name: 'Discard unsaved bank decisions', exact: true }).click();
   assert.equal(await page.getByLabel('Review reason', { exact: true }).inputValue(), '');
   assert.equal(await page.getByLabel('Your decision', { exact: true }).inputValue(), '');
