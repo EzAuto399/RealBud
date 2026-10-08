@@ -210,7 +210,8 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
+import { importLegacyProfileFacts, projectProfileFacts, retireRepairedArtifacts, workerScope } from "./worker-state.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
@@ -2108,6 +2109,8 @@ async function startSeatTurn(
   }
   managedService.assertCapability("reasoning");
   await assertRuntimeIntegrity();
+  // The worker reads memory and skills from this seat's profile: project RealBud's copy first.
+  await projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() });
   const model = bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -3234,7 +3237,9 @@ const workerAutoSetup = createWorkerAutoSetup({
   active: officeServiceActive,
   status: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
   installOrRepair: async () => {
+    await projectWorkerFacts();
     const outcome = await installOrRepairWorker();
+    if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
     // Same receipts as the administrator route: no stale "ready" survives.
     if (outcome.kind === "started") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" });
     if (outcome.kind === "repaired") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
@@ -5103,7 +5108,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       try {
+        await projectWorkerFacts();
         applyPropertyPack();
+        // Repair resets SOUL.md to the shipped copy on purpose; the office's edit is retired, not re-projected.
+        await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
         await reconcileManagedModelProfile();
         syncProductBud();
       } catch (e) {
@@ -6124,6 +6132,15 @@ bindSlackBridge({
 const workspaceIdentity = await companyHost.workspaceIdentity();
 const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
+// Bud's memory, learning and office edits live in RealBud (D/worker-state); the
+// worker profile is a projection, so deleting or replacing the worker loses nothing.
+const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
+const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
+await withWorkerProfile(desk.memberKeyForWorker(), async () => {
+  const scopes = [workerFactsScope(), withWorkerProfile(null, workerFactsScope)].filter((scope, index, all) => all.findIndex(other => other.scopeId === scope.scopeId) === index);
+  try { await importLegacyProfileFacts(scopes, { shipped: shippedProfileDigests() }); await projectWorkerFacts(); }
+  catch { oplog('boot', 'Bud’s saved learning needs service recovery; its profile was left unchanged.'); }
+});
 const memoryReviews = createHermesMemoryReviewService({ context: () => memoryReviewContext(workspaceIdentity.id),
   key: () => Buffer.from(desk.recoveryKeyHex(), 'hex'),
   // The automatic learning pass runs off-request, so it must select the
@@ -6209,7 +6226,7 @@ function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEn
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),
   timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null });
 if (!privateRestoreLocked) reminders.start();
-const customerPacks = createCustomerPackService({ directory: DATA_DIR,
+const customerPacks = createCustomerPackService({ directory: DATA_DIR, workerScope: workerFactsScope,
   // A pack's office/settings.json loops land through the Austin pack's one door: never on, office clocks kept.
   applyLoops: async packLoops => {
     if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) throw new Error('Schedule recovery is active.');
