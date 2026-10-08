@@ -49,6 +49,16 @@ jobs:
     name: NSIS installer
     runs-on: windows-latest
     timeout-minutes: 30
+    # id-token lets main sign through Azure Artifact Signing over OIDC: no
+    # client secret exists anywhere. The federated credential on the Entra app
+    # (vars.AZURE_CLIENT_ID) trusts refs/heads/main of this repo only.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # Signing turns on once the certificate profile exists (it needs a
+      # completed identity validation first). Until then main builds unsigned.
+      SIGN_WINDOWS: ${{ vars.AZURE_SIGN_PROFILE != '' && github.ref == 'refs/heads/main' && (inputs.ref == '' || inputs.ref == 'main' || inputs.ref == 'refs/heads/main' || inputs.ref == github.sha) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,7 +93,58 @@ jobs:
         with:
           path: .postgres-cache
           key: postgres-${{ runner.os }}-${{ hashFiles('scripts/postgres-artifacts.mjs') }}
-      - run: pnpm package:win
+      - name: Azure login for signing (OIDC)
+        if: env.SIGN_WINDOWS == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # The GitHub OIDC assertion expires within minutes and the signer only
+      # asks for a token at the end of packaging, so fetch it now; az caches it
+      # for the rest of the job and AzureCliCredential reads that cache.
+      - name: Prefetch signing token
+        if: env.SIGN_WINDOWS == 'true'
+        run: az account get-access-token --resource https://codesigning.azure.net --output none
+      - name: pnpm package:win
+        shell: bash
+        env:
+          AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
+        run: |
+          if [ "$SIGN_WINDOWS" = "true" ]; then
+            : "${AZURE_SIGN_PROFILE:?Set AZURE_SIGN_PROFILE to the approved certificate profile}"
+            : "${AZURE_SIGN_PUBLISHER:?Set AZURE_SIGN_PUBLISHER to the certificate CN}"
+            # publisherName must equal the certificate CN exactly: it lands in
+            # app-update.yml and electron-updater rejects updates signed by
+            # anyone else. Keep it stable or list old and new names.
+            pnpm package:win \
+              -c.forceCodeSigning=true \
+              "-c.win.azureSignOptions.publisherName=$AZURE_SIGN_PUBLISHER" \
+              -c.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net/ \
+              -c.win.azureSignOptions.codeSigningAccountName=realbudsigning \
+              "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGN_PROFILE"
+          else
+            pnpm package:win
+          fi
+      - name: Verify Authenticode signatures
+        if: env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        env:
+          AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem release/RealBud-*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one signed installer.' }
+          $files = $installers + @(Get-Item release/win-unpacked/RealBud.exe)
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            "$($f.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "$($f.Name) is not validly signed" }
+            $publisher = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            if ($publisher -cne $env:AZURE_SIGN_PUBLISHER) { throw "$($f.Name) has an unexpected publisher: $publisher" }
+            if (-not $sig.TimeStamperCertificate) { throw "$($f.Name) has no trusted timestamp" }
+          }
       - name: Install and exercise the packaged Windows runtime
         shell: pwsh
         run: |

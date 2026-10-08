@@ -160,15 +160,14 @@ win:
     - target: zip
       arch: x64
   icon: build/icon.ico
-  # No signing config yet (would go under win.signtoolOptions or
-  # win.azureSignOptions — eb 26 nests it, there is no top-level
-  # win.certificateFile). The installer is unsigned, so SmartScreen shows
-  # "unknown publisher" on first run (README says so). verifyUpdateCodeSignature
-  # defaults true, but electron-updater skips the check when app-update.yml
-  # carries no publisherName — so auto-update still works today. Do NOT set
-  # publisherName without actually signing, or every update is rejected as
-  # untrusted; and once signed, keep the cert subject stable (or list both old
-  # and new in publisherName) or you strand already-installed users.
+  # Signing is NOT configured here: local and branch builds stay unsigned.
+  # .github/workflows/package-win.yml adds win.azureSignOptions on the CLI
+  # (Azure Artifact Signing, account realbudsigning, OIDC login) only on main
+  # and only once repo variable AZURE_SIGN_PROFILE is set. Unsigned builds
+  # carry no publisherName, so electron-updater skips verification. Signed
+  # builds write publisherName (vars.AZURE_SIGN_PUBLISHER) into app-update.yml:
+  # keep the cert subject stable (or list both old and new names) or every
+  # installed signed copy rejects the next update.
 
 nsis:
   oneClick: true
