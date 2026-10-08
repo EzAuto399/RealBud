@@ -1,8 +1,9 @@
 /**
  * Assigned-case preparation: a RealBud-owned, bounded model loop. It never
  * enters a private Hermes conversation and imports no worker code, venv or
- * profile file; the only profile value it reads is the office's model choice,
- * and a deleted worker folder falls back to the default choice.
+ * profile file. The model is the seat's saved choice, which RealBud keeps
+ * outside the worker (worker-control.ts), so a deleted worker folder keeps the
+ * same model, effort and price.
  *
  * Each run starts from fresh messages (RealBud's instructions and the case),
  * offers one planning tool (`todo_list`, validated here, which reads and
@@ -13,17 +14,15 @@
  * model request) bound every run. Nothing here logs a body, a key or the case.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { managedServiceFailure } from './managed-service.ts';
-import { MANAGED_MODEL_KEY_ENV, managedModelProfile, propertyProfileDir } from './hermes-pack.ts';
+import { MANAGED_MODEL_KEY_ENV } from './hermes-pack.ts';
 import { currentWorkerProfile } from './hermes-profile.ts';
-import { hermesHome } from './hermes-paths.ts';
 import { modelServiceFailure } from './model-service-failure.ts';
 import { modelviaRefusal } from '../shared/modelvia-receipt.ts';
-import { DEFAULT_MANAGED_MODEL_CHOICE, managedModelChoice, type ManagedModelChoice } from '../shared/managed-model-choices.ts';
-import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from './hermes-runtime-env.ts';
-import { workerModelGrant } from './worker-model-access.ts';
+import { managedModelChoice, type ManagedModelChoice } from '../shared/managed-model-choices.ts';
+import { MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from './hermes-runtime-env.ts';
+import { canonicalModelChoice, workerModelGrant } from './worker-model-access.ts';
+import { WorkerControlDamaged } from './worker-control.ts';
 import { emptyRunUsage, noteModelviaReply, noteModelviaRequest } from './run-cost.ts';
 import type { RunUsage } from '../shared/contracts.ts';
 
@@ -112,15 +111,12 @@ function grantedAccess(): { baseUrl: string; key: string } | string {
   return { baseUrl, key };
 }
 
-/** The office's saved choice from the seat's profile; the default when the
- * worker folder (or its config) is gone; null for a config that names no
- * valid choice, which the office repairs rather than silently re-pricing.
- * ponytail: read the canonical choice instead once RealBud keeps one outside
- * the worker profile (Hermes-separation packet 4). */
-function officeChoice(home: string): ManagedModelChoice | null {
-  const saved = managedModelChoice(managedModelProfile(home).choice);
-  if (saved) return saved;
-  return existsSync(join(propertyProfileDir(home), 'config.yaml')) ? null : managedModelChoice(DEFAULT_MANAGED_MODEL_CHOICE);
+/** The seat's canonical choice (seeded once from its profile, then the
+ * provisioning receipt, then the default), or the sentence for a saved record
+ * that needs recovery: preparation never guesses another model or price. */
+async function officeChoice(root?: string): Promise<ManagedModelChoice | string> {
+  try { return managedModelChoice(await canonicalModelChoice({ root })); }
+  catch (error) { return error instanceof WorkerControlDamaged ? error.message : unavailable; }
 }
 
 /** The assistant turn as sent back with its tool results: the standard fields
@@ -152,7 +148,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
   const failure = managedServiceFailure('reasoning'); if (failure) return { ok: false, detail: failure };
   const access = grantedAccess(); if (typeof access === 'string') return { ok: false, detail: access };
   const profile = currentWorkerProfile().profile;
-  const choice = officeChoice(hermesHome(opts.root)); if (!choice) return { ok: false, detail: MANAGED_ACCESS_MISMATCH };
+  const choice = await officeChoice(opts.root); if (typeof choice === 'string') return { ok: false, detail: choice };
   const maxTurns = Math.max(1, Math.min(DEPARTMENT_LIMITS.turns.max, Math.floor(opts.maxTurns ?? DEPARTMENT_LIMITS.turns.default)));
   const timeoutMs = Math.max(1, Math.min(DEPARTMENT_LIMITS.timeoutMs.max, opts.timeoutMs ?? DEPARTMENT_LIMITS.timeoutMs.default));
 

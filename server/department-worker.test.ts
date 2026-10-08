@@ -1,12 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_LIMITS, DEPARTMENT_SYSTEM_PROMPT, relayIdempotencyKey, relayRefusalDetail, todoToolReply, type DepartmentWorkerOptions } from './department-worker.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
-import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
+import { MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
 import { setWorkerModelGrant } from './worker-model-access.ts';
+import { controlPath, storedModelChoice } from './worker-control.ts';
 
 const dirs: string[] = [], servers: Server[] = [];
 const askDepartmentWorker = (prompt: string, opts: DepartmentWorkerOptions = {}) => realAskDepartmentWorker(prompt, {
@@ -200,12 +201,13 @@ describe('owned preparation loop on a fictional provider', () => {
     expect(captures).toHaveLength(1);
   });
 
-  it('refuses before any request without a grant, a key or a valid saved choice', async () => {
-    const { root, captures, profile, port } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
-    // A saved model with an effort RealBud never pairs with it is repaired, not re-priced.
-    writeFileSync(join(profile, 'config.yaml'), PROFILE_CONFIG(port, 'deepseek-v4.1-flash', 'xhigh'));
-    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_MISMATCH });
-    writeFileSync(join(profile, 'config.yaml'), PROFILE_CONFIG(port));
+  it('refuses before any request without a grant, a key or a readable saved choice', async () => {
+    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    // A damaged saved choice is kept and refuses; no other model or price is guessed.
+    const record = controlPath(root, 'model-choice');
+    mkdirSync(dirname(record), { recursive: true, mode: 0o700 }); writeFileSync(record, '{not json', { mode: 0o600 });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: expect.stringMatching(/needs recovery/) });
+    expect(readFileSync(record, 'utf8')).toBe('{not json');
     setWorkerModelAccessSnapshot({});
     expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_RECOVERY });
     setWorkerModelGrant({ state: 'withdrawn' });
@@ -253,12 +255,14 @@ describe('owned preparation loop on a fictional provider', () => {
     } finally { controller.abort(); release(); await pending; }
   });
 
-  it('still prepares after the worker folder is deleted, on the office default model', async () => {
+  it('keeps the office\'s saved model and effort after the worker folder is deleted', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'Prepared without a worker.' }));
     expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: true });
     rmSync(root, { recursive: true, force: true }); expect(existsSync(root)).toBe(false);
     expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: true, stdout: 'Prepared without a worker.' });
-    expect(captures.map(capture => [capture.body.model, capture.body.reasoning_effort])).toEqual([['deepseek-v4.1-flash', 'high'], ['claude-sonnet-5.5', 'medium']]);
+    // The first run saved the profile's Flash · High in RealBud's own record; the default (Sonnet · Medium) is never substituted.
+    expect(storedModelChoice(root, currentWorkerProfile().profile)).toBe('flash-high');
+    expect(captures.map(capture => [capture.body.model, capture.body.reasoning_effort])).toEqual([['deepseek-v4.1-flash', 'high'], ['deepseek-v4.1-flash', 'high']]);
     expect(existsSync(root)).toBe(false);
   });
 });
