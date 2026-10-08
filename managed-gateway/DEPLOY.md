@@ -417,3 +417,19 @@ Later on 26 September, gateway main `db4f0c9c` (signed desktop entitlements and 
 Earlier on 26 September 2026, after integrating the Composio hotfix from main (`8f7f7ee6`), the full managed-gateway local suite (`node --experimental-strip-types --test ./*.test.ts`) passed 284/284 tests and the gateway TypeScript check passed. The invoice-email retry and recovery coverage had passed in the earlier, pre-integration 280/280 local suite on the same date. These are local source-level checks.
 
 The 24 September 2026 receipt was 188 passing local tests plus the offline `sandbox-smoke.ts`, all against injected fakes. That 24 September receipt did not exercise a real Composio project, Modelvia customer read or Modelvia key from this service. The Square adapter is proven against an injected fake only: local tenant, money, signature, retry and webhook behaviour, not Square's hosted response shape. A supervised sandbox payment-link checkout, webhook and refund, and any real customer acceptance, remain to be done. Refunding a care credit exists as a service method with tests but has no operator command yet.
+
+## Invite AI acceptance recovery (9 October 2026)
+
+The operator AI-access route also accepts optional `onboardingAcceptance` with
+`companyId`, `inviteId`, `acceptanceId`, `acceptedAt`, `email`, `termsReference`
+and `termsDigest`. The website must build it from the immutable accepted invite,
+never from browser fields. Only the published 26 September invite digest is
+recognised; the entitlement's `goLiveEvidence` and date must match that receipt.
+The gateway imports AI acceptance once, preserving any newer negotiated markup.
+Monthly care terms remain a separate acceptance. Existing clients without this
+field keep their existing behaviour.
+
+Deploy this gateway before the paired website receipt forwarding change. For a
+previously blocked invite, retry the existing AI-access step with its stored
+receipt and mark that step complete only after the response confirms active
+customer access and terms. Do not create another invite or fabricate acceptance.

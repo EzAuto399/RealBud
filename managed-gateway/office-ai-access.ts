@@ -37,6 +37,7 @@ import type { UsageLedger } from './ledger.ts';
 import { DEFAULT_OFFICE_AI_CAP_NANO_AUD, parseOfficeAiAccess, type ModelviaOperatorClient } from './modelvia-keys.ts';
 import { customerTermsPolicy, hasCustomerTerms, termsForCompany, type CustomerTermsPolicy, type CustomerTermsResult, type ModelviaTermsClient, type OfficeTermsDecision, type ResaleSyncResult } from './modelvia-keys.ts';
 import { latestResaleAcceptance } from './commercial-terms.ts';
+import { recordInviteAiAcceptance, validateInviteAiAcceptance } from './office-invite-terms.ts';
 import type { MarginReport } from './office-ai-billing.ts';
 import type { OfficeAiTermsRoutes } from './office-ai-terms.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
@@ -59,7 +60,7 @@ export class OfficeAiAccessService {
 
   async set(actor: OperatorPrincipal, value: unknown): Promise<OfficeAiAccessResult> {
     requireThat(actor && actor.role === OPERATOR_ROLE && typeof actor.subject === 'string', 'operator_unauthenticated', 401);
-    object(value); exact(value, ['companyId', 'customerId', 'name', 'access']);
+    object(value); exact(value, ['companyId', 'customerId', 'name', 'access', ...(Object.hasOwn(value, 'onboardingAcceptance') ? ['onboardingAcceptance'] : [])]);
     id(value.companyId);
     requireThat(typeof value.customerId === 'string' && MODELVIA_CUSTOMER.test(value.customerId), 'invalid_modelvia_customer');
     requireThat(typeof value.name === 'string' && value.name.trim().length > 0 && value.name.trim().length <= 200 && !/[\u0000-\u001f\u007f]/.test(value.name), 'invalid_ai_access');
@@ -68,6 +69,8 @@ export class OfficeAiAccessService {
     const { ledger, modelvia } = this.options;
     // A company with no entitlement record is a typo or the wrong database.
     ledger.tenant(companyId);
+    const receipt = Object.hasOwn(value, 'onboardingAcceptance') ? validateInviteAiAcceptance(ledger, companyId, value.onboardingAcceptance) : undefined;
+    requireThat(!receipt || access.mode === 'default', 'invite_acceptance_invalid', 409);
     return serialized(`office-ai-access:${companyId}`, async () => {
       const requestedCap = access.mode === 'custom' ? access.monthlyCapNanoAud : access.mode === 'default' ? DEFAULT_OFFICE_AI_CAP_NANO_AUD : undefined;
       // Journalled before any Modelvia call. No customer id, no secret.
@@ -78,6 +81,7 @@ export class OfficeAiAccessService {
       bindOfficeCustomer(ledger, companyId, customerId);
       // An office's Modelvia billing account is its company id.
       const customer = await modelvia.setCustomerAccess(customerId, { name, access, billingCompanyId: companyId });
+      if (receipt && !this.options.terms?.clientFundedCompanies.has(companyId)) recordInviteAiAcceptance(ledger, receipt, actor.subject);
       const projects = access.mode === 'disabled' ? [] : await applyCustomerCaps({ ledger, modelvia, requestCapNanoAud: this.options.requestCapNanoAud }, companyId);
       // Commercial terms once the customer exists (Modelvia's order: customer,
       // then policy). Reported, never thrown: the customer and caps above are
