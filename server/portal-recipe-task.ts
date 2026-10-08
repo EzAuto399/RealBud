@@ -22,7 +22,8 @@ import type { BrowserJson } from "./browser-runtime.ts";
 import type { BrowserSessionRuntime } from "./browser-session.ts";
 import { validBrowserTaskRecipe, type BrowserTaskProposal, type BrowserTaskRecipe, type BrowserTaskRecord } from "./browser-grants.ts";
 import { filterPortalRunRows, parsePortalRecipePack, wholePortalRead, type FilteredPortalResult, type PortalRecipePack } from "./portal-recipe.ts";
-import { portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
+import { PORTAL_TAB_MISSING, portalRecipeGrantNeeds, runPortalRecipes, type PersonApprove, type PortalRunOptions, type PortalRunResult } from "./portal-recipe-runner.ts";
+import type { SignInOutcome } from "./browser-sign-in.ts";
 import { jobBrowserUrl } from "./browser-authority.ts";
 import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { createLearnedRecipeStore, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
@@ -205,10 +206,21 @@ export function learnedReadSafe(pack: PortalRecipePack, runs: ReadonlyArray<{ re
   for (const run of runs) visit(run.recipe);
   return [...out];
 }
-/** Runs a started recipe task with its saved grant. The record, not the caller, says what runs. */
+/** The portal is signed out, or no tab is on it yet: the address-only sign-in handover can open it. */
+const needsPortalPage = (result: PortalRunResult) => result.outcome === "handover" &&
+  (result.reason === "sign-in" || result.reason === "choose-tab" && result.detail === PORTAL_TAB_MISSING);
+const SIGN_IN_ENDED: Record<Exclude<SignInOutcome, "signed_in">, string> = {
+  stopped: "The sign-in was stopped, so the read did not start.",
+  timed_out: "Sign-in was not finished within 15 minutes, so the read did not start.",
+  wrong_account: "The portal is signed in to a different account than this task allows, so the read did not start.",
+};
+/** Runs a started recipe task with its saved grant. The record, not the caller, says what runs.
+ * `signIn` (the host's address-only handover, server/ask-task-sign-in.ts): when no tab is on the portal yet, or it shows
+ * its sign-in page, RealBud opens the portal's start page (or brings its tab forward), the person signs in there if asked,
+ * and the same runs start once more. Bud types nothing; the account marker is still checked before any read. */
 export async function runPortalRecipeTask(input: {
   record: BrowserTaskRecord; grant: BrowserTaskGrant; runtime: BrowserSessionRuntime; approve: PersonApprove;
-  signal: AbortSignal; isActive: () => boolean; load?: PackLoader;
+  signal: AbortSignal; isActive: () => boolean; load?: PackLoader; signIn?: (signal: AbortSignal) => Promise<SignInOutcome | null>;
 } & Pick<PortalRunOptions, "operations" | "approvals" | "rules" | "assertCapability" | "now" | "workroom" | "pollMs">): Promise<PortalRunResult> {
   const { record, grant } = input;
   if (!record.recipe || grant.route !== "ask" || grant.id !== record.id || grant.request.text !== record.request || record.status !== "active") {
@@ -221,15 +233,24 @@ export async function runPortalRecipeTask(input: {
   dispatching.add(grant.id); running.add(grant.id);
   try {
     const pack = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
-    const result = withRowFilters(pack, record.recipe.runs, await runPortalRecipes({
-      pack, runs: record.recipe.runs, account: record.recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
-      approve: input.approve, signal: input.signal, isActive: input.isActive, learnedReadSafe: learnedReadSafe(pack, record.recipe.runs),
+    const recipe = record.recipe;
+    const run = () => runPortalRecipes({
+      pack, runs: recipe.runs, account: recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
+      approve: input.approve, signal: input.signal, isActive: input.isActive, learnedReadSafe: learnedReadSafe(pack, recipe.runs),
       // Ask only: a drifted control's fallback chooser (TypeSafe Jev) when the office has one. Loops and W1 never get it.
       ...(jevReady() ? { chooser: decide } : {}),
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
-    }));
+    });
+    let raw = await run();
+    if (input.signIn && needsPortalPage(raw) && !input.signal.aborted && input.isActive()) {
+      const outcome = await input.signIn(input.signal).catch(() => null);
+      if (outcome === "signed_in" && !input.signal.aborted && input.isActive()) raw = await run();
+      else raw = { ...raw, ...(outcome === "stopped" || input.signal.aborted ? { outcome: "stopped" as const } : {}),
+        detail: outcome && outcome !== "signed_in" ? SIGN_IN_ENDED[outcome] : "The work browser could not open the portal, so the read did not start." };
+    }
+    const result = withRowFilters(pack, recipe.runs, raw);
     const notice = learnedNotices.get(pack);
     return notice ? { ...result, detail: [result.detail, notice].filter(Boolean).join(" ") } : result;
   } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
@@ -332,10 +353,13 @@ function withRowFilters(pack: PortalRecipePack, runs: PortalRunOptions["runs"], 
 
 /** What the person reads in Ask afterwards: outcome, rows read, and where it stopped. */
 export function portalRecipeTaskReply(result: PortalRunResult & { results: FilteredPortalResult[] }): string {
-  // Only a finished run that nobody was asked about is known to have only read.
-  const readOnly = result.outcome === "completed" && result.receipt.approvals.person === 0;
+  // Only a run that nobody was asked about (no submit, upload or download reached the person) and that left no step's
+  // result unknown is known to have only read, finished or not.
+  const readOnly = result.receipt.approvals.person === 0 && result.outcome !== "hold";
+  const portal = result.receipt.portal === "rei-cloud" ? "REI" : "the portal";
   const lines = [result.outcome === "completed" ? "The portal read finished." : `The portal read ended early (${result.reason ?? result.outcome}).`,
-    readOnly ? "Nothing was saved, sent or paid." : "RealBud cannot confirm what changed in the portal. Check it there before relying on this."];
+    !readOnly ? "RealBud cannot confirm what changed in the portal. Check it there before relying on this."
+      : result.outcome === "completed" ? "Nothing was saved, sent or paid." : `Bud stopped before finishing the read. Nothing in ${portal} was changed.`];
   if (result.detail) lines.push(result.detail);
   for (const item of result.results) {
     if (item.outcome === "not-run" || item.recipe === "open-session") continue;

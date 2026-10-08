@@ -696,6 +696,8 @@ onBrowserSignIn({
     const context = fenceContextFor(threadId);
     const botId = context?.botId || store.botByThread(threadId)?.id || store.productBud()?.id;
     const askGrant = context?.grant?.route === "ask" ? context.grant : undefined;
+    // A recipe task waits through the address-only handover instead (runPortalRecipeTask's signIn), keeping its fence.
+    if (askGrant && portalRecipeTaskRunning(askGrant.id)) return false;
     if (context && askGrant && context.runId === runId && botId) {
       const held = signInHandoffs().hold({ runId, threadId, botId, jobRevision: ASK_PAUSE_REVISION, reason, task: askTaskPause({ ...context, botId }, askGrant) });
       if (held) void browserTasks().pause(askGrant.id, BROWSER_TASK_PAGE_SIGN_IN_NOTE).catch(reportBrowserTaskFailure);
@@ -907,8 +909,11 @@ function runAskRecipeTask(threadId: string, botId: string, record: Awaited<Retur
     let reply: string;
     let end: BrowserTaskEnd = "finished";
     try {
-      const result = await runPortalRecipeTask({ record, grant, runtime: askBrowserRuntime(), load: askPortalPackLoader(), approve, signal: stop.signal,
-        isActive: () => !stop.signal.aborted && fenceContextFor(threadId)?.grant?.id === grant.id });
+      const runtime = askBrowserRuntime(), load = askPortalPackLoader();
+      const result = await runPortalRecipeTask({ record, grant, runtime, load, approve, signal: stop.signal,
+        isActive: () => !stop.signal.aborted && fenceContextFor(threadId)?.grant?.id === grant.id,
+        // No portal tab yet, or its sign-in page: open the portal and wait on the tab's address (Bud types nothing), then read.
+        signIn: signal => askTaskSignIn({ threadId, sites: grant.sites, runtime: askSignInRuntime(runtime), load, signal }).then(opened => opened?.outcome ?? null) });
       reply = portalRecipeTaskReply(result);
       // REI rows land on Desk under the source-of-truth rule (read-only: nothing goes back to REI).
       if (record.recipe?.portal === "rei-cloud") {
@@ -4235,6 +4240,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const runtime = await askRuntime();
         let browser = await runtime.status();
         if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await runtime.connect(); } catch { /* answered below */ } }
+        // A lease the last task left unreleased is not a missing browser: say so plainly.
+        if (browser.state === "recovery_required") return json(res, 409, { error: "The last browser task has not released the work browser yet. Press Stop on the work browser, then press Start again. Nothing was started.", code: "browser_recovery_required" });
         if (browser.state !== "ready" || !browser.selectedBrowserId) return json(res, 409, { error: "The work browser could not be opened. Check that Google Chrome or Microsoft Edge is installed, then press Start again.", code: "browser_not_connected" });
         const started = await browserTasks().start(taskId, { threadId, browserId: browser.selectedBrowserId, site: body.site });
         const grant = started.grant;

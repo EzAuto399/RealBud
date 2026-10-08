@@ -285,6 +285,10 @@ export interface FictionalReiOptions {
   dialogOn?: string;
   /** The person has a second REI tab open. */
   secondReiTab?: boolean;
+  /** No tab is on REI or its sign-in page yet (a freshly opened work browser); a test clears it once REI is opened. */
+  noPortalTab?: boolean;
+  /** The browser also holds about:blank and new-tab pages, as a freshly opened work browser does. */
+  blankTabs?: boolean;
   /** The Search box's accessible name (live REI's DataTables boxes read "Search:"). */
   searchLabel?: string;
   /** The Tenants and Suppliers grids in live REI's Syncfusion shape (7 Oct 2026): rows in rowgroups, a hidden empty-named
@@ -523,8 +527,9 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     if (args[0] === "status") return { daemon_version: BROWSER_VERSION, protocol_version: BROWSER_PROTOCOL, browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: BROWSER_VERSION, extension_protocol_version: BROWSER_PROTOCOL }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "owned", browser_instance_id: "work", interaction }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; return { stopped: ["owned"], failed: [], return_failures: [] }; }
-    if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" },
-      ...(options.secondReiTab ? [{ tab_id: 3, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard`, title: "REI", scope: "user" }] : [])] };
+    if (args[0] === "tab" && args[1] === "list") return { tabs: [...(options.noPortalTab ? [] : [{ tab_id: 1, url, title: "REI", scope }]), { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" },
+      ...(options.secondReiTab ? [{ tab_id: 3, url: `${FICTIONAL_REI_ORIGIN}/customers/dashboard`, title: "REI", scope: "user" }] : []),
+      ...(options.blankTabs ? [{ tab_id: 4, url: "about:blank", title: "", scope: "user" }, { tab_id: 5, url: "edge://newtab/", title: "New tab", scope: "user" }, { tab_id: 6, url: "chrome://newtab/", title: "New Tab", scope: "user" }] : [])] };
     if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
     if (args[0] === "observe") {
       const text = render(); if (loading > 0) loading -= 1;

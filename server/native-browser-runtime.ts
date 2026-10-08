@@ -200,7 +200,15 @@ export class NativeBrowserRuntime implements BrowserSessionRuntime {
     if (this.controller) await this.controller.stop();
     else await (await this.browserHost()).disconnect(); // Restart: close the owned browser before clearing an orphaned controller lease.
     this.controller = null;
-    if (this.controllerRoot) { await rm(this.controllerRoot, { recursive: true }); this.controllerRoot = null; }
+    // The engine's daemon runs with this control folder as its working directory and exits just after `close`
+    // answers. On Windows the folder cannot be removed until it has (EBUSY/EPERM), so removal is retried, and a
+    // folder that still will not go never holds the lease: the controller is confirmed stopped and the folder
+    // holds only control files, never the login profile.
+    if (this.controllerRoot) {
+      await rm(this.controllerRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+        .catch(() => console.warn("[browser] A temporary work-browser control folder could not be removed yet."));
+      this.controllerRoot = null;
+    }
     await this.save({ ...saved, lease: null });
   }
   async stop(disconnect = false): Promise<BrowserStatus> {

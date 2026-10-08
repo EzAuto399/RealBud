@@ -147,4 +147,30 @@ describe.skipIf(process.platform === "win32")("REI reads with no bank connected 
     expect((await messages()).some(message => /I can read .* from REI Cloud/.test(message.text ?? "") && message.text !== offer.text)).toBe(false);
     await api("POST", "/api/bots/bud/interrupt", {});
   }, 90_000);
+
+  it("a read started while REI is signed out opens REI's sign-in page, waits for the person (Bud types nothing), then reads", async () => {
+    await lab("sign-out");
+    const opened = (await api("POST", "/api/w1/lab", { action: "status" })).body as { signInTabs: number };
+    const [, offer] = await ask(ARREARS_QUESTION);
+    const card = (await tasks()).find(task => task.messageId === offer.id)!;
+    const before = (await messages()).length;
+    expect((await api("POST", `/api/browser/tasks/${card.id}/start`, { threadId })).status).toBe(202);
+    // The task waits on REI's sign-in page through the ordinary handover: still active, nothing pressed.
+    const waiting = await waitFor(async () => (await api("GET", `/api/browser/sign-in?threadId=${encodeURIComponent(threadId)}`)).body.handovers as Array<{ state: string; site: string }>,
+      list => list.some(item => item.state === "waiting"), "the sign-in handover");
+    expect(waiting.find(item => item.state === "waiting")!.site).toBe("REI Cloud");
+    expect((await tasks()).find(task => task.id === card.id)!.status).toBe("active");
+    const during = (await api("POST", "/api/w1/lab", { action: "status" })).body as { signInTabs: number; effects: string[] };
+    expect(during.signInTabs).toBe(opened.signInTabs + 1);
+    expect(during.effects).toEqual([]);
+    await lab("sign-in"); // the person signs in; Bud never does
+    const reply = (await waitFor(messages, list => list.slice(before).some(message => /The portal read (finished|ended early)/.test(message.text ?? "")), "the read's reply"))
+      .slice(before).find(message => /The portal read (finished|ended early)/.test(message.text ?? ""))!.text!;
+    expect(reply).toContain("The portal read finished.");
+    expect(reply).toMatch(/\*\*arrears-review\*\*: [1-9]\d* rows?/);
+    expect((await waitFor(tasks, list => list.find(task => task.id === card.id)?.status !== "active", "the task to end")).find(task => task.id === card.id)!.status).toBe("finished");
+    // Released: the next Start gets the browser.
+    expect((await api("GET", `/api/browser/tasks?threadId=${encodeURIComponent(threadId)}`)).body.browser).toMatchObject({ ready: true });
+    expect((await lab("status")).effects).toEqual([]);
+  }, 90_000);
 });

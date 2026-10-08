@@ -18,7 +18,7 @@ import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_REICID, fictionalRe
 import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { DATA_DIR } from "./config.ts";
 import { createLearnedRecipeStore, LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
-import { runPortalRecipes } from "./portal-recipe-runner.ts";
+import { PORTAL_TAB_MISSING, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { decide, jevReady } from "./jev-client.ts";
 import type { BrowserJson } from "./browser-runtime.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
@@ -169,10 +169,16 @@ describe("running a started recipe task", () => {
     const reply = portalRecipeTaskReply(result);
     expect(reply).toContain("Nothing was saved, sent or paid");
     expect(reply).toContain("**bank-reconciliation-read**: 2 rows over 2 pages; stopped before Reconcile.");
-    // Anything else (ended early, or the person approved a step) never claims nothing changed.
-    for (const other of [{ ...result, outcome: "handover" as const, reason: "sign-in" }, { ...result, receipt: { ...result.receipt, approvals: { recipe: 1, person: 1 } } }]) {
+    // Ended early before anyone was asked anything: it says so plainly, without the cautious wording.
+    const early = portalRecipeTaskReply({ ...result, outcome: "handover" as const, reason: "sign-in" });
+    expect(early).toContain("Bud stopped before finishing the read. Nothing in REI was changed.");
+    expect(early).not.toContain("cannot confirm");
+    // A step the person approved, or one whose result is unknown, never claims nothing changed.
+    for (const other of [{ ...result, outcome: "handover" as const, reason: "sign-in", receipt: { ...result.receipt, approvals: { recipe: 1, person: 1 } } },
+      { ...result, receipt: { ...result.receipt, approvals: { recipe: 1, person: 1 } } }, { ...result, outcome: "hold" as const, reason: "unknown-result" }]) {
       const text = portalRecipeTaskReply(other);
       expect(text).not.toContain("Nothing was saved");
+      expect(text).not.toContain("Nothing in REI was changed");
       expect(text).toContain("RealBud cannot confirm what changed in the portal");
     }
   });
@@ -285,6 +291,76 @@ describe("running a started recipe task", () => {
     const result = await runPortalRecipeTask({ record: started, grant: started.grant, runtime, approve: async () => false, signal: stop.signal, isActive: () => active, load: fictional, ...f.stores });
     expect(result.outcome).toBe("stopped");
     expect((await runtime.status()).active).toBe(false);
+  });
+});
+
+describe("an REI read started from chat finds or opens REI (choose-tab, 8 Oct on Windows)", () => {
+  const DASHBOARD = `${FICTIONAL_REI_ORIGIN}/customers/dashboard`;
+  const arrearsTask = async (f: Awaited<ReturnType<typeof fixture>>) => {
+    const proposal = await portalRecipeTaskProposal({ threadId: "thread-ask", messageId: "m1", portal: "rei-cloud", target: "arrears-review", inputs: { min_days: "15" }, account: { marker: FICTIONAL_BUSINESS } }, fictional);
+    return f.store.start((await f.store.propose(proposal, NOW)).id, { threadId: "thread-ask", browserId: "work" }, NOW);
+  };
+  const run = (f: Awaited<ReturnType<typeof fixture>>, started: Awaited<ReturnType<typeof arrearsTask>>, signIn?: (signal: AbortSignal) => Promise<"signed_in" | "stopped" | "timed_out" | "wrong_account" | null>, signal = new AbortController().signal) =>
+    runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal, isActive: () => true, load: fictional, ...(signIn ? { signIn } : {}), ...f.stores });
+  const typed = (f: Awaited<ReturnType<typeof fixture>>) => f.mock.calls.filter(call => ["fill", "press", "select", "upload"].includes(call[0]));
+
+  it("(a) reads the one REI tab beside about:blank, new-tab and unrelated tabs, and never needs a sign-in", async () => {
+    const f = await fixture({ blankTabs: true });
+    const signIn = vi.fn(async () => "signed_in" as const);
+    const result = await run(f, await arrearsTask(f), signIn);
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(signIn).not.toHaveBeenCalled();
+    expect(f.mock.calls.filter(call => call[0] === "tab" && call[1] === "borrow").map(call => call[2])).toEqual(["1"]);
+    expect(result.receipt.accountChecks).toBeGreaterThan(0);
+  });
+
+  it("(b) with no REI tab yet, opens REI's start page through the sign-in handover, then reads in the same task", async () => {
+    const options: Parameters<typeof fictionalReiPortal>[0] = { noPortalTab: true, blankTabs: true };
+    const f = await fixture(options);
+    const started = await arrearsTask(f);
+    // Without a handover (an older host) it ends early, plainly.
+    const bare = await run(f, started);
+    expect(bare).toMatchObject({ outcome: "handover", reason: "choose-tab", detail: PORTAL_TAB_MISSING });
+    expect(portalRecipeTaskReply(bare)).toContain("Bud stopped before finishing the read. Nothing in REI was changed.");
+    // The handover opens REI in the work browser (the saved session lands on the dashboard): the task reads it.
+    const signIn = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); delete options.noPortalTab; return "signed_in" as const; });
+    const result = await run(f, started, signIn);
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(result.results.find(item => item.recipe === "arrears-review")!.rows.length).toBeGreaterThan(0);
+    expect(f.mock.effects).toEqual([]);
+  });
+
+  it("waits through the sign-in handover on REI's sign-in page, typing nothing, and still checks the account before reading", async () => {
+    const f = await fixture({ signedOut: true, blankTabs: true });
+    const started = await arrearsTask(f);
+    let typedBeforeSignIn = -1;
+    const signIn = vi.fn(async () => { typedBeforeSignIn = typed(f).length; f.mock.signIn(); await f.mock.command(["navigate", DASHBOARD]); return "signed_in" as const; });
+    const result = await run(f, started, signIn);
+    expect(result.outcome, result.detail).toBe("completed");
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(typedBeforeSignIn).toBe(0);
+    expect(result.receipt.accountChecks).toBeGreaterThan(0);
+  });
+
+  it("an account other than the task's still stops the read after sign-in", async () => {
+    const options: Parameters<typeof fictionalReiPortal>[0] = { noPortalTab: true, business: "FICT2" };
+    const f = await fixture(options);
+    const result = await run(f, await arrearsTask(f), async () => { delete options.noPortalTab; return "signed_in"; });
+    expect(result).toMatchObject({ outcome: "handover", reason: "account-marker-changed" });
+    expect(result.results.find(item => item.recipe === "arrears-review")!.table).toBe("unread");
+  });
+
+  it("a sign-in that is not finished ends the task plainly; Stop ends it as stopped", async () => {
+    const f = await fixture({ noPortalTab: true });
+    const started = await arrearsTask(f);
+    const late = await run(f, started, async () => "timed_out");
+    expect(late).toMatchObject({ outcome: "handover", detail: "Sign-in was not finished within 15 minutes, so the read did not start." });
+    expect(portalRecipeTaskReply(late)).toContain("Nothing in REI was changed.");
+    const unopened = await run(f, started, async () => null);
+    expect(unopened.detail).toMatch(/could not open the portal/);
+    expect((await run(f, started, async () => "stopped")).outcome).toBe("stopped");
+    expect((await f.runtime.status()).active).toBe(false);
   });
 });
 

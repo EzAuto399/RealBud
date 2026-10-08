@@ -1,4 +1,4 @@
-import { access, rm } from "node:fs/promises";
+import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -124,6 +124,22 @@ describe("native browser task lifecycle", () => {
     await f.runtime.release("fictional-next-job");
     expect(f.controllers).toHaveLength(2);
     expect(f.host.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("releases the lease when the stopped engine's control folder cannot be removed yet (Windows: the daemon's working directory)", windowsAdmissionTimeout(30), async () => {
+    const f = fixture(); await f.runtime.connect(); await f.runtime.acquire("fictional-read");
+    // A folder the release cannot empty, as Windows refuses while the engine's daemon still runs in it.
+    const locked = join(f.controllerRoots[0], "daemon"); await mkdir(locked); await writeFile(join(locked, "fictional.pid"), "1"); await chmod(locked, 0o500);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await f.runtime.release("fictional-read");
+      expect(await f.saved()).toMatchObject({ lease: null });
+      // Not "needs recovery": the next Start gets the browser.
+      expect(await f.runtime.status()).toMatchObject({ state: "ready", active: false });
+      await f.runtime.acquire("fictional-next-read");
+      await f.runtime.release("fictional-next-read");
+      if (process.platform !== "win32") expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not be removed yet/));
+    } finally { warn.mockRestore(); await chmod(locked, 0o700).catch(() => {}); }
   });
 
   it("revokes pending work immediately and withholds its late observation after Stop", windowsAdmissionTimeout(20), async () => {

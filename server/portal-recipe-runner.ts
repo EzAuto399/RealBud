@@ -55,6 +55,8 @@ class RunEnd extends Error {
   constructor(outcome: Exclude<PortalRunOutcome, "completed">, reason: string, detail = "") { super(reason); this.outcome = outcome; this.reason = reason; this.detail = detail; }
 }
 const handover = (reason: string, detail = "") => new RunEnd("handover", reason, detail);
+/** The `choose-tab` detail when no tab is on the portal or its sign-in page (other tabs, such as about:blank, never count). */
+export const PORTAL_TAB_MISSING = "Open the portal in your browser and sign in, then start again.";
 const blocked = (reason: string, detail = "") => new RunEnd("blocked", reason, detail);
 
 export interface PortalRecipeResult {
@@ -650,7 +652,7 @@ export async function runPortalRecipes(options: PortalRunOptions): Promise<Porta
     const listing = JSON.parse(await tool("browser_tabs", {})) as { tabs?: Array<{ tab_id: number; site: string }> };
     const candidates = (listing.tabs ?? []).filter(tab => tab.site === pack.origin || signInOrigins.includes(tab.site));
     const chosen = options.tabId !== undefined ? candidates.filter(tab => tab.tab_id === options.tabId) : candidates;
-    if (chosen.length !== 1) return finish("handover", "choose-tab", chosen.length ? "More than one portal tab is open. Choose the one Bud should use." : "Open the portal in your browser and sign in, then start again.");
+    if (chosen.length !== 1) return finish("handover", "choose-tab", chosen.length ? "More than one portal tab is open. Choose the one Bud should use." : PORTAL_TAB_MISSING);
     tabId = chosen[0].tab_id;
     await tool("browser_borrow", { tab_id: tabId }, { tool: "browser_read" });
     for (const [index, run] of options.runs.entries()) {
