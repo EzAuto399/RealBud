@@ -494,8 +494,8 @@ function Bubble({
   );
 }
 
-/** A tool run: spinner while live, check/cross once settled. */
-function ActivityChip({ message }: { message: Message }) {
+/** A tool run: spinner while its turn is live, check/cross once settled, "stopped" if the turn ended first. */
+function ActivityChip({ message, live }: { message: Message; live: boolean }) {
   const { dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
@@ -517,8 +517,11 @@ function ActivityChip({ message }: { message: Message }) {
     );
   }
   const failed = tool.ok === false;
+  const stopped = tool.ok === undefined && !live;
   const spoken = tool.spoken?.trim();
-  const label = spoken || toolLabel(tool.name);
+  const phrase = spoken || toolLabel(tool.name);
+  // A finished step never reads as still "running …".
+  const label = stopped ? `${phrase} · stopped` : tool.ok === true ? phrase.replace(/^running\b/i, "ran") : phrase;
   const title = spoken && spoken !== tool.name ? `${tool.name} · ${spoken}` : tool.name;
   return (
     <div className="flex justify-start">
@@ -528,7 +531,9 @@ function ActivityChip({ message }: { message: Message }) {
           failed ? "text-danger" : "text-ink-secondary",
         )}
       >
-        {tool.ok === undefined ? (
+        {stopped ? (
+          <Square size={11} aria-hidden />
+        ) : tool.ok === undefined ? (
           <Loader2 size={13} className="animate-spin" />
         ) : failed ? (
           <X size={13} />
@@ -856,6 +861,8 @@ export const MessagesList = memo(function MessagesList({
     if (['proposed', 'active', 'paused', 'interrupted', 'budget'].includes(task.status) || browserTaskError?.id === task.id) retainedIds.add(task.messageId);
   }
   const page = pageChatHistory(messages, nextWindow.count, retainedIds);
+  // Only steps of the live turn can still be running; an open step before it was stopped.
+  const liveTurnFrom = bot.busy ? ([...messages].reverse().find((m) => m.role === "user")?.at ?? 0) : Infinity;
   const pendingAnchor = useRef<{ threadId: string; leafId: string | null; id: string | null; top: number; height: number; scrollTop: number } | null>(null);
   const contentAnchor = (row: Element | undefined) => row?.querySelector('[data-chat-content]')?.firstElementChild;
   const loadEarlier = () => {
@@ -952,7 +959,7 @@ export const MessagesList = memo(function MessagesList({
                   setupInstance={m.tool.setup ? engine : undefined}
                 />
               ) : (
-                <ActivityChip message={m} />
+                <ActivityChip message={m} live={m.at >= liveTurnFrom} />
               );
             case "screen":
               return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;

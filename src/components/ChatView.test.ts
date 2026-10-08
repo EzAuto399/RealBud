@@ -87,3 +87,36 @@ describe("Ask task card wiring", () => {
     expect(onBrowserTask).toHaveBeenLastCalledWith("task-1", "start", "portal.fictional-strata.example");
   });
 });
+
+describe("Work step chips after Stop", () => {
+  const at = Date.now();
+  const ask = { id: "m-ask", role: "user", kind: "text", text: "Open the receipts", at } as any;
+  const done = { id: "m-done", role: "bot", kind: "activity", tool: { name: "run", ok: true, spoken: "running run" }, at: at + 1 } as any;
+  const open = { id: "m-open", role: "bot", kind: "activity", tool: { name: "read_page", spoken: "reading a page" }, at: at + 2 } as any;
+  const render = (busy: boolean, messages = [ask, done, open]) => renderToStaticMarkup(createElement(MessagesList, {
+    bot: { id: "bud", threadId: "t-desk", name: "Bud", busy, messages } as any, messages,
+    editingId: null, lastBotTextId: undefined, canRetryLast: false, engine: undefined, onStartEdit: vi.fn(), onCancelEdit: vi.fn(),
+    onSubmitEdit: vi.fn(), onRegenerate: vi.fn(), productAsk: true, scrollRef: { current: null }, readingEarlier: false, onReadEarlier: vi.fn(),
+  }));
+
+  it("reads an unfinished step as stopped once the turn has ended, and a finished one never as running", () => {
+    const html = render(false);
+    expect(html).toContain("reading a page · stopped");
+    expect(html).not.toContain("animate-spin");
+    expect(html).toContain("ran run");
+    expect(html).not.toMatch(/>running run</);
+  });
+
+  it("keeps the spinner on an unfinished step while the turn is live", () => {
+    const html = render(true);
+    expect(html).toContain("animate-spin");
+    expect(html).not.toContain("· stopped");
+  });
+
+  it("reads a step left open by an earlier stopped turn as stopped while a new turn runs", () => {
+    const next = { id: "m-next", role: "user", kind: "text", text: "Try again", at: at + 3 } as any;
+    const html = render(true, [ask, done, open, next]);
+    expect(html).toContain("reading a page · stopped");
+    expect(html).not.toContain("animate-spin");
+  });
+});
