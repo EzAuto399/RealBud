@@ -13,6 +13,9 @@ describe('truthful connection failure guidance', () => {
     expect(reply).not.toMatch(/Finish any|already open|https?:/);
     expect(reply).toContain('After setup is resolved');
   });
+  it('tells a shared-only office how to allow personal Gmail too', () => {
+    expect(connectionFailureReply('Gmail', managedAuthorizationFailure(403, 'office_mailbox_owner_authorization_required'), true)).toContain('sets Gmail to Both');
+  });
   it.each([[403, undefined], [404, undefined], [404, 'private_diagnostic'], [409, 'connector_link_outcome_unknown'], [409, 'connector_account_already_bound'], [502, 'request_failed'], [429, 'connector_link_rejected'], [502, 'connector_app_not_admitted']])('keeps uncertain effects held for %s %s', (status, code) => {
     const error = managedAuthorizationFailure(Number(status), code as string | undefined);
     expect(error.outcome).toBe('unknown');

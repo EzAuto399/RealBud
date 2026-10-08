@@ -75,7 +75,7 @@ export function connectedAppCatalog(snapshot: ConnectedAppsStatus | null, option
     const status = !options.configured ? 'Setup needed' : excluded ? 'Off in Work' : sharedGmail && !connected ? 'Office setup needed'
       : gmailUnchecked ? 'Check access first' : !service ? 'Availability not checked' : OFFICE_SOURCE_LABELS[state];
     return { ...app, ...(ownGmail ? { label: 'Your Gmail', purpose: 'Your own work mail on this computer' } : {}), origin: service ? 'reported' : 'suggested', connected, status,
-      detail: ownGmail ? 'Only you use this mailbox. Bud uses it unless you ask for the office mailbox.' : sharedGmail ? connected ? 'Office shared account' : 'Owner: realbud.app → Computers → Gmail for this office, then allow this computer. Then check access.'
+      detail: ownGmail ? 'Only you use this mailbox. Bud uses it unless you ask for the office mailbox.' : sharedGmail ? connected ? 'Office shared account' : 'Owner: realbud.app → Computers → Gmail for this office, then allow this computer. Then check access. For your own Gmail too, the owner sets Gmail to Both there.'
         : service ? 'Reported by your connection service' : 'Bud will check whether your service offers this connection.',
       action: !options.configured || connected || excluded || sharedGmail || gmailUnchecked || state === 'signing-in' ? null : service ? 'connect' : 'find' };
   });

@@ -7,7 +7,7 @@ const MESSAGES: Record<AuthorizationReason, string> = {
   setup: 'Managed connections need service setup for this private workspace.',
   'invalid-app': 'Name the app to connect, for example “connect Xero”.',
   rejected: 'The connection service rejected sign-in setup. Ask service support to check the app configuration before trying again.',
-  'owner-required': 'The office owner connects this shared mailbox on realbud.app → Computers → Gmail for this office, then allows this computer. Check access after that.',
+  'owner-required': 'This office uses the shared office Gmail. The owner connects it on realbud.app → Computers → Gmail for this office, then allows this computer. To add your own Gmail beside it, the owner sets Gmail to Both there.',
   unknown: 'The sign-in result needs review. Check the current connection before starting another sign-in.',
 };
 
