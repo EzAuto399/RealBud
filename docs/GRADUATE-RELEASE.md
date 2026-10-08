@@ -123,7 +123,7 @@ BuildingLink / custom body corporate portal).
 2. Configure `win.signtoolOptions` in `electron-builder.yml`.
 3. Only then set `publisherName` in updater metadata.
 4. Build on native Windows x64: `pnpm package:win` (see [Windows build and test](WINDOWS-BUILD-AND-TEST.md)).
-5. Upload `RealBud-<ver>-setup.exe` + `latest.yml` to the same GitHub release tag.
+5. Upload `RealBud-<ver>-setup.exe` + `latest.yml` to the same GitHub release tag while it is still a draft (Wave 5).
 
 The earlier CSV-only restriction inferred from `hermesInstallCommand` is
 superseded: that legacy terminal command is disabled on every platform, while
@@ -154,9 +154,9 @@ older compatibility pin as the current installer target or track upstream main.
 
 1. Bump `package.json` version.
 2. Notarized Mac artifacts + signed Windows artifacts.
-3. `gh release create vX.Y.Z` on `EzAuto399/RealBud` with:
-   - `RealBud-X.Y.Z.dmg`, `.blockmap`, `RealBud-X.Y.Z-arm64.zip`, `.blockmap`, `latest-mac.yml`
-   - `RealBud-X.Y.Z-setup.exe`, `.blockmap`, `latest.yml`
+3. `gh release create vX.Y.Z --draft` on `EzAuto399/RealBud`, upload every asset, check the list with `gh release view vX.Y.Z --json assets`, then `gh release edit vX.Y.Z --draft=false --latest`. Never upload into a published release (clients read `latest*.yml` the moment it lands) and keep the previous release's `.blockmap`s for differential updates:
+   - `RealBud-X.Y.Z.dmg`, `.blockmap`, `RealBud.dmg`, `RealBud-X.Y.Z-arm64.zip`, `.blockmap`, `latest-mac.yml`
+   - `RealBud-X.Y.Z-setup.exe`, `.blockmap`, `RealBud-setup.exe`, `latest.yml`
 4. Smoke stapled Mac; install smoke on Windows.
 5. Confirm packaged updater points at `EzAuto399/RealBud` (`app-update.yml`).
 

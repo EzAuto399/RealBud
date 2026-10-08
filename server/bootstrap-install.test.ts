@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cancelBootstrapInstall, installInFlight, installStatus, startBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
+import { cancelBootstrapInstall, installBlocksUpdate, installInFlight, installStatus, startBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { uninstallWorker } from "./hermes-lifecycle.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import type { runWorkerBootstrap } from "./worker-bootstrap.ts";
@@ -80,4 +80,16 @@ it("cancellation during verification remains incomplete", async () => {
   startBootstrapInstall({ run, verify: async () => { cancelBootstrapInstall(); return version; } });
   await waitForBootstrapStop();
   expect(installStatus().state).toBe("failed");
+});
+
+it("a setup told to stop no longer holds an app update back, even while its child lingers", async () => {
+  let release!: () => void;
+  const lingering = new Promise<void>(resolve => { release = resolve; });
+  startBootstrapInstall({ run: async () => { await lingering; } }); // ignores the abort, like a child holding the pipe
+  expect(installBlocksUpdate()).toBe(true);
+  cancelBootstrapInstall();
+  expect(installInFlight()).toBe(true);
+  expect(installBlocksUpdate()).toBe(false);
+  release();
+  await waitForBootstrapStop();
 });

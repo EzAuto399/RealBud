@@ -41,7 +41,7 @@ const ready = {
 const safeguards = { ...ready, ready: false, pack: { installed: true, approvalsManual: true, workroomReady: false }, lastPing: null };
 let fixture = structuredClone(safeguards), failRefresh = false, delayRefresh = 0, managed = true;
 let officeFixture = { state: 'unlinked' }, retryFailure = false, retryDelay = 0, officeReadInFlight = 0;
-let qaConnected = true, qaRecovering = false;
+let qaConnected = true, qaRecovering = false, statusReadsInFlight = 0;
 const qaSubscribers = new Set();
 const counts = { statusReads: 0, officeReads: 0, maxConcurrentOfficeReads: 0, hermesMutations: [], externalRequests: [] };
 const checks = [], screenshots = [], errors = [], findings = [], observations = {};
@@ -174,7 +174,7 @@ try {
     if (url.pathname === '/api/onboarding' && req.method() === 'GET') return json({ version: 1, scope: 'a'.repeat(64), revision: 1, stage: 'complete' });
     if (url.pathname === '/api/config' && req.method() === 'GET') { const res = await route.fetch(); const body = await res.json(); body.serviceAdmin = { managed, configured: true, authenticated: false, expiresAt: null }; return json(body); }
     if (url.pathname === '/api/service-admin/status') return json({ managed, configured: true, authenticated: false, expiresAt: null });
-    if (url.pathname === '/api/hermes' && req.method() === 'GET') { counts.statusReads++; if (delayRefresh) await wait(delayRefresh); if (failRefresh) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional status read failed.' }) }); return json(fixture); }
+    if (url.pathname === '/api/hermes' && req.method() === 'GET') { counts.statusReads++; statusReadsInFlight++; try { if (delayRefresh) await wait(delayRefresh); if (failRefresh) return await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional status read failed.' }) }); return await json(fixture); } finally { statusReadsInFlight--; } }
     if (url.pathname === '/api/desk/recovery/auto') return json({ ok: false, error: 'Fictional recovery remains held.' });
     if (url.pathname.startsWith('/api/hermes') && req.method() !== 'GET') { counts.hermesMutations.push({ path: url.pathname, managed }); return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional QA blocks worker mutations.' }) }); }
     if (url.pathname === '/api/hermes/model') return json({ model: { provider: 'custom:realbud', model: 'deepseek-v4.1-flash', choice: 'flash-high', keyPresent: true, keyHint: null, managed: true } });
@@ -246,6 +246,8 @@ try {
     checks.push('A later ready status is observed automatically within the 15-second read interval; bounded read refreshes update the visible facts without a model or repair request.');
     const setState = async (status, { connected = true, recovering = false } = {}) => {
       fixture = structuredClone(status);
+      // A read that started before this change must not land after the dispatch below.
+      await until(async () => statusReadsInFlight === 0, 'status reads settled'); await wait(250);
       await page.evaluate(({ status, connected, recovering }) => { const { state, dispatch } = window.__budQa; dispatch({ type: 'connected', value: connected }); dispatch({ type: 'hermesStatus', status }); if (state.desk) dispatch({ type: 'deskSnapshot', snapshot: { ...state.desk, recovery: { ...(state.desk.recovery || {}), active: recovering } } }); }, { status, connected, recovering });
     };
     await setState(null); await panel.getByText('Checking Bud', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); await shot('bud-checking');
@@ -277,6 +279,11 @@ try {
     checks.push('An authorized development-administrator fixture opens the actual existing Set up workroom control; no setup mutation is executed.');
     const shell = page.locator('.rb-app-shell'), coverHeading = name => page.getByRole('heading', { level: 1, name, exact: true });
     const leave = page.getByRole('button', { name: 'Use RealBud without Bud for now', exact: true });
+    // Desk has no status view: the shell itself must notice the first setup starting on the service.
+    await setState({ ...missingWorker, model: ready.model, modelAccess: ready.modelAccess }); await shell.waitFor();
+    await page.evaluate(() => { location.hash = '#/desk'; }); await page.getByRole('dialog').waitFor({ state: 'hidden' }).catch(() => {});
+    const setupStartedAt = Date.now(); fixture = structuredClone(installing);
+    await coverHeading('Setting up Bud').waitFor({ timeout: 20_000 }); observations.setupScreenAfterServerStartMs = Date.now() - setupStartedAt;
     await setState(installing); await coverHeading('Setting up Bud').waitFor();
     assert.equal(await shell.count(), 0); assert.equal(await composer.count(), 0); assert.equal(await leave.count(), 0);
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k'); assert.equal(await shell.count(), 0);
@@ -295,7 +302,7 @@ try {
     await setState(ready); await shell.waitFor(); assert.equal(await coverHeading('Setting up Bud').count(), 0);
     await setState({ ...ready, ready: false, lastPing: null, readyOnce: false, autoSetup: { state: 'ready', code: 'ready', step: 4, total: 4, detail: 'Bud is ready.' } }); await wait(500);
     assert.equal(await shell.count(), 1); assert.equal(await coverHeading('Bud needs a check').count(), 0);
-    checks.push('Bud’s first setup takes the whole window with no exit while it runs; waiting to retry, a held setup or a lost connection offer a way into RealBud; leaving is never undone by a later retry; a Bud already tested here, book recovery, a ready Bud and a needs-a-check Bud keep the shell.');
+    checks.push('Bud’s first setup takes the whole window within one status read (from Desk, with no status view open) and has no exit while it runs; waiting to retry, a held setup or a lost connection offer a way into RealBud; leaving is never undone by a later retry; a Bud already tested here, book recovery, a ready Bud and a needs-a-check Bud keep the shell.');
     observations.finalStaffMutations = counts.hermesMutations.filter(row => row.managed);
 
   }

@@ -80,10 +80,15 @@ does not cover subsequent working-tree changes or an installed upgrade.
 
 ## 4. Publish
 
-Upload to the **same tag** as the macOS release for that version.
+Upload to the **same tag** as the macOS release for that version, and only
+while that release is a **draft**. Clients read `latest.yml` as soon as the
+release is public; a feed that lands before its installer finishes uploading
+fails every update check in the gap.
 
 ```powershell
 Copy-Item release/RealBud-<version>-setup.exe release/RealBud-setup.exe
+# Skip the create if the draft already exists (whichever platform uploads first makes it).
+gh release create v<version> --repo EzAuto399/RealBud --draft --title v<version> --generate-notes
 gh release upload v<version> --repo EzAuto399/RealBud `
   release/RealBud-<version>-setup.exe `
   release/RealBud-setup.exe `
@@ -91,8 +96,19 @@ gh release upload v<version> --repo EzAuto399/RealBud `
   release/latest.yml
 ```
 
+Once the Mac files are on the draft too (`RealBud-<version>.dmg`, `RealBud.dmg`,
+`RealBud-<version>-arm64.zip`, both `.blockmap`s, `latest-mac.yml`), check the
+list names all of them plus the four Windows files above, then publish:
+
+```powershell
+gh release view v<version> --repo EzAuto399/RealBud --json isDraft,assets --jq '.isDraft, .assets[].name'
+gh release edit v<version> --repo EzAuto399/RealBud --draft=false --latest
+```
+
 - **`RealBud-<version>-setup.exe`** is what `latest.yml` references.
 - **`RealBud-setup.exe`** is a stable `/releases/latest/download/` URL.
+- **Never upload into an already-published release**, and never delete the
+  previous release or its `.blockmap`: differential updates read the old one.
 
 **Never hand-edit `latest.yml`.** It pins the installer's sha512.
 

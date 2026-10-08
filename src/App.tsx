@@ -1,12 +1,12 @@
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
-import { useBudStatusSnapshot } from "@/lib/bud-status-monitor";
+import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
 import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
 import { youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
 import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
-import { lazy, useEffect, useRef, useState } from "react";
+import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
@@ -31,7 +31,7 @@ import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
-import { budFirstSetupCover } from "@/lib/bud-setup";
+import { budFirstSetupCover, parseBudStatus } from "@/lib/bud-setup";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
@@ -68,7 +68,13 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   }, []);
   const { state, dispatch } = useStore();
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
-  const budStatusRead = useBudStatusSnapshot();
+  const refreshBudStatus = useCallback(async (isCurrent: () => boolean) => {
+    const status = parseBudStatus(await api("/api/hermes", undefined, { timeoutMs: 15_000 }));
+    if (isCurrent()) dispatch({ type: "hermesStatus", status });
+  }, [dispatch]);
+  // Until Bud's first setup finishes, every screen keeps its status fresh, so the
+  // setup screen appears as soon as setup starts (Desk has no status view of its own).
+  const budStatusRead = useBudStatusMonitor({ enabled: state.connected && !state.hermes?.readyOnce, onRefresh: refreshBudStatus });
   const workspaceTabs = useWorkspaceTabs();
   const savedView = workspaceTabs.data?.state?.tabs.find(tab => tab.id === state.workspaceTabId && tab.visible);
   const [setup, setSetup] = useState<WorkspaceSetupTarget | null>(initialSetup);
