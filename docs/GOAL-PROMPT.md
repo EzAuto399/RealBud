@@ -1,5 +1,7 @@
 # RealBud — current working direction
 
+Kevin's visit, 9 October: [Kevin's PC setup runbook](KEVIN-VISIT-2026-10-09.md): owner steps before leaving, on-site Gmail, Redbark and remote-help steps, auto-update behaviour, and 8 October evidence. Bud's session search is fixed on Mac and the unpinned tirith download is off (in 0.1.43). Gmail and Redbark live connects still need owner sign-ins.
+
 Latest continuation, 8 October (round 2): [Jev, Luna and desktop-app tasks](JEV-DESKTOP-2026-10-08.md), merged after 0.1.40: desktop-app tasks with a fence and Jev/Luna control picks, mail loop labels instead of hiding, every AI call in per-run cost. Local tests only; Modelvia Luna route, live eval and full QA pending.
 
 Product continuation, 8 October: [Claude Code and Codex UX implementation](CLAUDE-UX-COLLABORATION-2026-10-08.md) adds an explicit organization workspace for existing admin AI/apps controls, organization-specific drafts and recovery, and a simpler customer Home with computer- and budget-aware guidance. Implemented with the actual Claude Code CLI and locally checked against source components. Organization-scoped workflow engineering and verified device delivery remain open; no deployment or live customer acceptance is claimed.
