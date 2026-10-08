@@ -10,7 +10,7 @@ import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { createEmptyFileSync, fsyncDir, restrictNewSync } from './atomic.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { decodeDeskPlain } from './desk-v3-decode.ts';
-import { isPrivateBackupPath, validatePrivateBusinessFile, validatePrivateLogicalRecord, validatePrivateWorkspaceIdentity, validatePrivatePackHistoryFiles } from './private-workspace-backup.ts';
+import { isPrivateBackupPath, privateWorkerFactWorkspace, validatePrivateBusinessFile, validatePrivateLogicalRecord, validatePrivateWorkspaceIdentity, validatePrivatePackHistoryFiles } from './private-workspace-backup.ts';
 import { validateSourceBillGraph, type BillLookup, type BillLookupStore } from './source-bill-graph.ts';
 import { validateExecutionGraph } from './execution-history-backup.ts';
 import { validateBackupMailGraph } from './private-backup-mail-validation.ts';
@@ -433,6 +433,8 @@ export class PrivateBackupCatalog {
       if (!object(value) || Object.keys(value).sort().join(',') !== 'name,value' || value.name !== file.path.split('/').at(-1)!.slice(0, -5) || !object(value.value)) invalid('Saved mail evidence has an invalid identity.');
       if (JSON.stringify(encryptJson(this.key, value)).length > 2_000_000) invalid('Saved legacy mail evidence exceeds its entity limit.', 413);
     } else if (['agency-setup.json', 'workspace-views/tabs.json'].includes(file.path) && (!object(value) || value.workspaceId !== this.workspaceId)) invalid('Saved settings belong to another workspace.');
+    const factWorkspace = privateWorkerFactWorkspace(file.path);
+    if (factWorkspace !== null && factWorkspace !== this.workspaceId) invalid('Saved learning belongs to another workspace.');
     validatePrivateBusinessFile(file.path, value);
   }
   /** Full integrity and business graph admission. No trusted preview should be

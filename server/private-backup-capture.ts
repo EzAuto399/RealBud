@@ -9,7 +9,7 @@ import { setImmediate } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { decryptBytes, isEncryptedEnvelope } from './desk-crypto.ts';
 import { PrivateBackupCatalog, type CatalogFile } from './private-backup-catalog.ts';
-import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, privateBackupHistoryStorage, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
+import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, PRIVATE_WORKER_FACT_ROOTS, privateBackupHistoryStorage, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { WINDOWS_FILE_PRIVACY_MAX_BATCH, windowsFilePrivacyBatch, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
 
@@ -237,6 +237,7 @@ class CaptureFilesystem {
     for (const path of ['company-installation/private', 'vault/properties', 'vault/owners', 'vault/decisions', 'vault/workflow-inputs']) await walk(path, 0);
     await walk('vault/workflow-support', 1);
     for (const root of PRIVATE_PACK_HISTORY_ROOTS) await walk(root, 1);
+    for (const root of PRIVATE_WORKER_FACT_ROOTS) await walk(root, 2);
     return [...paths].sort();
   }
   protected async guards(): Promise<void> {

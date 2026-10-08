@@ -216,7 +216,7 @@ describe('actual completed pack upgrade history across private cold restore', ()
     expect(source.key.equals(target.key)).toBe(false);
     if (version === 'v1') {
       const { backup, receipt } = await source.backup.exportBackup(phrase);
-      expect(receipt.excluded).toContain('Worker installation, authentication, conversations and memory');
+      expect(receipt.excluded).toContain('Worker installation, authentication and conversations');
       expect((await target.backup.stageRestore({ backup, passphrase: phrase, expectedDigest: receipt.digest })).needsRestart).toBe(true);
       expect((await applyStagedPrivateRestore({ directory: target.directory, key: target.key })).restored).toBe(true);
       expect(existsSync(join(target.directory, PRIVATE_RESTORE_STAGE_FILE))).toBe(false);

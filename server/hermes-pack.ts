@@ -150,6 +150,13 @@ function shippedPack(root?: string): { plan?: SkillPlan; files: ShippedFile[]; d
   return { plan, files, digest: sha256(Buffer.from(files.map(f => `${f.rel} ${f.digest}`).join("\n"))) };
 }
 
+/** Bytes RealBud shipped for a SOUL/skill path (current pack or a known earlier
+ * revision). Canonical worker state never captures these as office edits. */
+export function shippedProfileDigests(root?: string): { has(key: string, digest: string): boolean } {
+  const current = new Map(shippedPack(root).files.map(file => [file.rel, file.digest]));
+  return { has: (key, digest) => current.get(key) === digest || (LEGACY_SHIPPED[key] ?? []).includes(digest) };
+}
+
 /** Add missing shipped files; replace one only when its bytes are something
  * RealBud shipped before (or `forced`, e.g. SOUL on Repair). Office edits are
  * kept and named. `existing` is in `files` order, already read under admission. */

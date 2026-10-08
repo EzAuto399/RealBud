@@ -1,4 +1,7 @@
-/** RealBud owns review authority; the selected native store owns memory rules. */
+/** RealBud owns review authority and, through server/hermes-memory-owned.ts, the
+ * memory itself: reviews read and commit RealBud's canonical worker state and
+ * need no worker Python. The native helper below is kept, unselected, for the
+ * opt-in native proofs; it is never mixed with owned state at runtime. */
 import { createHash, createHmac } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
@@ -22,6 +25,7 @@ import { createLearningStore, defaultLearningDirectory, learningTextDigest, mark
 import type { WorkspaceActivity } from './workspace-activity.ts';
 import { MEMORY_RECOVERY_API, parseMemoryRecoveryPage, parseMemoryRecoveryClosure } from '../shared/hermes-memory-recovery.ts';
 import { parseMemoryProposalInput, parseMemoryProposalResult, type MemoryProposalInput, type MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
+import { OWNED_MEMORY_RUNTIME, runOwnedMemoryReview } from './hermes-memory-owned.ts';
 
 /** Hermes 0.21.3 (v2026.9.14): staged replace/remove select by old_text. */
 export const MEMORY_REVIEW_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
@@ -69,7 +73,12 @@ const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const exact = (v: Record<string, unknown>, keys: string[]) => Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 function fail(code: MemoryReviewErrorCode, status = code === 'unavailable' ? 503 : 409): never { throw Object.assign(new Error(MEMORY_REVIEW_ERRORS[code]), { code, status }); }
 const samePath = (a: string, b: string) => process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+/** Owned reviews bind the workspace and member profile only; no worker runtime is selected or required. */
 export function memoryReviewContext(workspaceId: string): MemoryReviewContext {
+  return { profileDirectory: propertyProfileDir(), runtimeDirectory: '', workspaceId, profileId: currentWorkerProfile().profile, runtimeId: OWNED_MEMORY_RUNTIME, python: '' };
+}
+/** The native helper's context: the selected, admitted runtime. */
+export function nativeMemoryReviewContext(workspaceId: string): MemoryReviewContext {
   const home = hermesHome(), selection = readRuntimeSelection(home).selected;
   if (!selection || !admittedNativeFiles(selection)) fail('unsupported');
   const runtimeDirectory = join(releaseHome(home, selection), 'hermes-agent');
@@ -97,7 +106,18 @@ async function digestFile(path: string) {
     return createHash('sha256').update(bytes).digest('hex');
   } finally { await file.close(); }
 }
-async function validateRuntime(context: MemoryReviewContext) {
+const WORKSPACE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/, PROFILE = /^property(?:-[a-z0-9-]+)?$/;
+/** Owned admission: trusted identity shape only. Windows keeps its platform hold
+ * until owned review is proven there (pending work is preserved meanwhile). */
+export async function validateOwnedMemoryContext(context: MemoryReviewContext) {
+  if (process.platform === 'win32') fail('platform-unverified');
+  if (!WORKSPACE.test(context.workspaceId) || !PROFILE.test(context.profileId) || context.profileId.length > 64 || context.runtimeId !== OWNED_MEMORY_RUNTIME) fail('unsupported');
+}
+/** The default invoke: RealBud-owned operations with the helper's request/response contract. */
+export function invokeOwnedMemoryReview(context: MemoryReviewContext, request: Request, options: { signal?: AbortSignal } = {}): Promise<unknown> {
+  return runOwnedMemoryReview({ ...request, profileDirectory: context.profileDirectory }, { signal: options.signal });
+}
+export async function validateNativeMemoryRuntime(context: MemoryReviewContext) {
   // The native Python helper has not admitted Windows per-file ACL and durable
   // rename behavior yet. A private profile ACL alone cannot vouch for explicit
   // grants on existing child files. Preserve pending data until that gate passes.
@@ -164,8 +184,8 @@ const STOP = Symbol('auto-review-stop');
 const errorCode = (error: unknown) => (error as { code?: unknown } | null)?.code;
 export function createHermesMemoryReviewService(options: {
   context: () => MemoryReviewContext; key: () => Buffer; withActivity?: WorkspaceActivity;
-  /** Trusted test seams, never serialized or available through HTTP. */
-  validateRuntime?: typeof validateRuntime; invoke?: typeof runMemoryReviewHelper;
+  /** Trusted seams, never serialized or available through HTTP. Defaults are the owned operations. */
+  validateRuntime?: typeof validateOwnedMemoryContext; invoke?: typeof runMemoryReviewHelper;
   /** Defaults to RealBud's data directory, outside the worker's writable home. */
   learningDirectory?: (context: MemoryReviewContext) => string; autoReviewIntervalMs?: number; now?: () => number;
 }) {
@@ -200,7 +220,7 @@ export function createHermesMemoryReviewService(options: {
     active.add(lockId);
     let dispatched = false, classifiedRefusal = false;
     try {
-      await (options.validateRuntime ?? validateRuntime)(context);
+      await (options.validateRuntime ?? validateOwnedMemoryContext)(context);
       if (controller.signal.aborted) fail('unavailable', 503);
       checkOwner();
       if (JSON.stringify(options.context()) !== identity) fail('stale-review');
@@ -208,7 +228,7 @@ export function createHermesMemoryReviewService(options: {
       const signingKey = createHmac('sha256', sourceKey).update(`realbud-memory-review-v1\0${context.workspaceId}\0${context.profileId}`).digest();
       const { python: _python, ...binding } = context;
       let raw: unknown;
-      try { dispatched = true; raw = await (options.invoke ?? runMemoryReviewHelper)(context, { ...binding, ...input, version: 1, key: signingKey.toString('base64') }, { signal: controller.signal }); }
+      try { dispatched = true; raw = await (options.invoke ?? invokeOwnedMemoryReview)(context, { ...binding, ...input, version: 1, key: signingKey.toString('base64') }, { signal: controller.signal }); }
       finally { signingKey.fill(0); }
       if (controller.signal.aborted) fail('unavailable', 503);
       checkOwner();
@@ -358,7 +378,7 @@ export function createHermesMemoryReviewService(options: {
   timer?.unref();
   async function learningContext() {
     if (closed) fail('unavailable', 503);
-    const context = options.context(); await (options.validateRuntime ?? validateRuntime)(context);
+    const context = options.context(); await (options.validateRuntime ?? validateOwnedMemoryContext)(context);
     if (closed) fail('unavailable', 503);
     if (JSON.stringify(options.context()) !== JSON.stringify(context)) fail('stale-review');
     return context;

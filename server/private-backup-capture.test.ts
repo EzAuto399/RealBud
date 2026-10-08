@@ -12,6 +12,8 @@ import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { plantPrivateFile, plantPrivateFiles, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+import { putArtifact, updateWorkerState, workerScope } from './worker-state.ts';
+import { createLearningStore, defaultLearningDirectory } from './learning-auto-keep.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
 afterEach(async () => {
@@ -213,6 +215,23 @@ describe('bounded immutable live-source capture', () => {
     await expect(capturePrivateWorkspace(large.options)).rejects.toThrow(/entity limit/);
     const mail = await fixture(); await save(mail.directory, 'company-installation/private/mail-unknown.json', {});
     await expect(capturePrivateWorkspace(mail.options)).rejects.toThrow(/Unrecognized mail evidence/);
+  });
+  it('captures canonical worker facts and learning ledgers, never the worker folder, and refuses another workspace’s facts', async () => {
+    const f = await fixture(), scope = workerScope(f.workspaceId, 'property', join(f.directory, 'hermes/profiles/property'));
+    await updateWorkerState(scope, null, draft => { putArtifact(draft, 'memories/MEMORY.md', Buffer.from('Fictional kept preference.'), 'realbud', 1); }, f.directory);
+    await createLearningStore(defaultLearningDirectory({ workspaceId: f.workspaceId, profileId: 'property' }, f.directory), { workspaceId: f.workspaceId, profileId: 'property' }).update(store => { store.autoKeep = true; });
+    await save(f.directory, 'hermes/profiles/property/memories/MEMORY.md', Buffer.from('Worker copy, never exported.'));
+    await save(f.directory, 'hermes/profiles/property/.env', Buffer.from('FICTIONAL_WORKER_ENV=never-exported'));
+    const receipt = await capturePrivateWorkspace(f.options); await verifyPrivateWorkspaceCapture(f.options, receipt);
+    const factPath = `worker-state/${f.workspaceId}/${scope.scopeId}/state.json`, ledgerPath = `memory-learning/${f.workspaceId}/property/auto-keep.json`;
+    expect(Buffer.from(JSON.parse(f.catalog.getFile(factPath)!.data.toString('utf8')).artifacts['memories/MEMORY.md'].base64, 'base64').toString()).toBe('Fictional kept preference.');
+    expect(JSON.parse(f.catalog.getFile(ledgerPath)!.data.toString('utf8'))).toMatchObject({ autoKeep: true, workspaceId: f.workspaceId });
+    expect(f.catalog.getFile('hermes/profiles/property/memories/MEMORY.md')).toBeUndefined();
+    const bytes = await readFile(join(f.catalog.directory, 'catalog.sqlite')); expect(bytes.includes(Buffer.from('never-exported'))).toBe(false);
+    const other = await fixture(), foreign = workerScope(randomUUID(), 'property', '/synthetic/profile');
+    await updateWorkerState(foreign, null, draft => { putArtifact(draft, 'memories/MEMORY.md', Buffer.from('Another office.'), 'realbud', 1); }, other.directory);
+    await expect(capturePrivateWorkspace(other.options)).rejects.toThrow(/another workspace/);
+    expect(other.catalog.summary().sealed).toBe(false);
   });
   it('supports cold target names and authority-only guards without a source key or catalog', async () => {
     const f = await fixture(); seedDatabase(f.directory, f.key);
