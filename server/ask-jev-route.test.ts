@@ -96,6 +96,16 @@ describe("Jev pre-route for Ask", () => {
       expect(decide).not.toHaveBeenCalled();
     });
 
+  it.each([
+    "send the rent reminder to the tenant at 14 Sample Street",
+    "what's the arrears balance for 3 Example Road",
+    "draft a reply to the owner of 12A about the leak",
+  ])("goes straight to Bud without waiting on Jev for ordinary work: %s", async text => {
+    const decide = fixed(answer("setup"));
+    expect(await askJevRoute(text, { person: true, ready: () => true, decide })).toBeNull();
+    expect(decide).not.toHaveBeenCalled();
+  });
+
   it("never runs for a message the person did not type, or when Jev is not ready", async () => {
     const decide = fixed(answer("setup"));
     expect(await askJevRoute("how do I finish Bud's setup", { person: false, ready: () => true, decide })).toBeNull();

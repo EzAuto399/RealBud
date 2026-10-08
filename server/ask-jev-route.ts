@@ -56,10 +56,16 @@ export async function chooseAskRoute(text: string, decide: AskJevDecide): Promis
   return (answer.confidence ?? 0) >= ASK_JEV_MIN_CONFIDENCE && top - runnerUp >= ASK_JEV_MIN_MARGIN ? answer.choice as AskJevRoute : null;
 }
 
+/** Words at least one routable control's question uses. A message with none of
+ * them is ordinary work, so it goes straight to Bud instead of waiting on a
+ * decision (about 0.7-1.6 s live). Missing a control here only means Bud
+ * answers it, so this is a speed gate, never a safety one. */
+const MAY_BE_CONTROL = /\b(connect\w*|disconnect\w*|integrat\w*|apps?|accounts?|sources?|access|hook\w*|plug\w*|gmail|outlook|myob|drive|xero|schedul\w*|routines?|jobs?|loops?|recurring|automatic\w*|by itself|every (?:morning|day|week)|set ?up|setup|ready|working|answering|broken|bank|feed|redbark|linked)\b/i;
+
 /** The Ask seam: only a person's own message, only when every regex control
- * missed and Jev is ready. */
+ * missed, the message may be about a control, and Jev is ready. */
 export async function askJevRoute(text: string, options: { person: boolean; ready: () => boolean; decide: AskJevDecide }): Promise<AskJevRoute | null> {
-  if (!options.person || isAskProductControl(text) || scheduleIntentReply(text) || /^\s*check\s+.+?\s+connection[.!]?\s*$/i.test(text) || !options.ready()) return null;
+  if (!options.person || isAskProductControl(text) || scheduleIntentReply(text) || /^\s*check\s+.+?\s+connection[.!]?\s*$/i.test(text) || !MAY_BE_CONTROL.test(text) || !options.ready()) return null;
   return chooseAskRoute(text, options.decide);
 }
 
