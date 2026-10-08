@@ -12,11 +12,14 @@ const approvalUrl = `https://realbud.app/link/${"A".repeat(43)}`;
 const request = { approvalUrl, displayCode: "ABCD-EFGH", expiresAt: "2026-09-23T10:00:00.000Z" };
 const unlinked: OfficeLinkStatus = { state: "unlinked" };
 const noop = () => {};
+// Nine minutes and three seconds before the saved approval expires.
+const beforeExpiry = Date.parse(request.expiresAt) - 543_000;
 const view = (phase: BrowserLinkPhase, status: OfficeLinkStatus | null = unlinked, label = "Reception Mac", extra: Partial<WebsiteLinkCardViewProps> = {}) => renderToStaticMarkup(createElement(WebsiteLinkCardView, {
   status, phase, label, code: "", busy: false, error: "", confirm: false,
   onLabel: noop, onCode: noop, onStart: noop, onOpenAgain: noop, onCancel: noop, onRetry: noop,
-  onLinkCode: noop, onReport: noop, onDisconnect: noop, onConfirm: noop, onRefresh: noop, ...extra,
+  onLinkCode: noop, onReport: noop, onDisconnect: noop, onConfirm: noop, onRefresh: noop, now: beforeExpiry, ...extra,
 }));
+const asHtml = (text: string) => text.replace(/&/g, "&amp;");
 const liveRegion = (html: string) => /<p role="status" aria-live="polite" class="sr-only">([^<]*)<\/p>/.exec(html)?.[1];
 
 describe("website account card", () => {
@@ -42,6 +45,10 @@ describe("website account card", () => {
     expect(html).toContain("<summary");
     expect(html).toContain("Have a link code instead?");
     expect(html).toContain("Link this computer</button>");
+    // Get started's "Enter link code" lands on this field (src/lib/you-navigation.ts opens its disclosure).
+    expect(html).toMatch(/Link code<input id="you-website-code" required=""/);
+    expect(html).toContain('No code yet?</span><span class="workspace-copy"><button type="button"');
+    expect(html).toContain('aria-label="Copy request for your owner"');
     expect(html).not.toContain("<details open");
     expect(html).not.toContain("Optional.");
     // The live region is present before anything changes.
@@ -56,7 +63,7 @@ describe("website account card", () => {
   it("waits with the display code, a way back to the page, and cancel", () => {
     const html = view({ kind: "waiting", request });
     expect(liveRegion(html)).toBe("Approve this computer in your browser. The page shows code ABCD-EFGH.");
-    expect(html).toContain("Waiting…");
+    expect(html).toContain('Waiting for approval · <span class="tabular-nums">Expires in 9:03</span>');
     expect(html).toContain(">Open the page again</button>");
     expect(html).toContain(">Cancel</button>");
     // No second start and no pasted-code path while an approval is waiting.
@@ -75,6 +82,23 @@ describe("website account card", () => {
     expect(starting).toMatch(/class="pm-decision[^"]*">Try again<\/button>/);
   });
 
+  it("says when the approval page expired while waiting and starts a new request in place", () => {
+    const html = view({ kind: "waiting", request }, unlinked, "Reception Mac", { now: Date.parse(request.expiresAt) + 1_000 });
+    expect(html).toContain('role="alert" class="text-danger">The approval page expired before this computer was approved. Nothing was linked.');
+    expect(html).toContain(">Start a new request</button>");
+    expect(html).not.toContain("Expires in");
+    expect(html).not.toContain("Open the page again");
+  });
+
+  it("keeps a code refused at the office's computer limit and offers the owner request", () => {
+    const limit = "This office already has 5 computers. Disconnect one to pair another. Your code is kept: once your account owner disconnects a computer under Account → Computers on realbud.app, try this same code again.";
+    const html = view({ kind: "idle" }, { state: "pending", label: "Reception Mac", error: limit });
+    expect(html).toContain("<details open=\"\"");
+    expect(html).toContain('role="alert" class="text-danger">This office already has 5 computers.');
+    expect(html).toContain('aria-label="Copy request for your owner"');
+    expect(html).not.toContain("No code yet?");
+  });
+
   it("shows a failure the service also recorded only once", () => {
     const message = "The website could not be reached. Check this computer’s internet connection, then try again.";
     const html = view({ kind: "unreachable", message }, { state: "unlinked", error: message });
@@ -85,10 +109,10 @@ describe("website account card", () => {
   it("says declined and expired plainly and offers to start again", () => {
     const declined = view({ kind: "declined" });
     expect(liveRegion(declined)).toBe("This computer was declined in your browser. Nothing was linked.");
-    expect(declined).toMatch(/class="pm-decision[^"]*">Start again<\/button>/);
+    expect(declined).toMatch(/class="pm-decision[^"]*">Start a new request<\/button>/);
     const expired = view({ kind: "expired" });
     expect(liveRegion(expired)).toBe("The approval page expired before this computer was approved. Nothing was linked.");
-    expect(expired).toContain(">Start again</button>");
+    expect(expired).toContain(">Start a new request</button>");
     expect(expired).toContain("Have a link code instead?");
   });
 
@@ -162,13 +186,13 @@ describe("website account card", () => {
       expect(message).not.toMatch(/Use Update status|has not arrived/);
       if (reason !== "provisioning_attempt_requires_review") expect(message).toContain("RealBud checks again with each status update.");
       const html = view({ kind: "idle" }, status);
-      expect(html).toContain(message.replace(/’/g, "’").replace(/→/g, "→"));
+      expect(html).toContain(asHtml(message));
       expect(liveRegion(html)).toContain("RealBud support");
     }
     // A reason from a newer website is shown generically, quoting it for support, rather than hidden.
     const future = modelAccessMessage({ ...linked, provisioningSkipped: "some_future_reason" })!;
     expect(future).toContain("it reported “some_future_reason”");
-    expect(future).toContain("Contact RealBud support");
+    expect(future).toContain("Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file)");
     // The stated reason outranks a later transient report failure, and never shows once access is set up.
     expect(modelAccessState({ ...linked, provisioningSkipped: "service_not_entitled", error: "Fictional status check failed." })).toBe("skipped");
     expect(modelAccessState({ ...linked, provisioningSkipped: "service_not_entitled", provisioned: true })).toBe("ready");
@@ -178,6 +202,8 @@ describe("website account card", () => {
     const stranded: OfficeLinkStatus = { state: "linked", agencyLabel: "Synthetic Office", provisioned: false, lastReportedAt: "2026-09-23T10:00:00.000Z" };
     const html = view({ kind: "idle" }, stranded);
     expect(html).toContain("Bud’s model access has not arrived from your account yet. RealBud checks again with each status update. If it still hasn’t arrived after the next update, remove this computer under Account → Computers on realbud.app, then link it again.");
+    // Removing the computer is the owner's step: the request to copy is right here.
+    expect(html).toContain('aria-label="Copy request for your owner"');
     // Not before the first report has settled.
     expect(view({ kind: "idle" }, { ...stranded, lastReportedAt: undefined })).not.toContain("remove this computer");
   });

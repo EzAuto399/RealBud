@@ -353,10 +353,15 @@ export function LoopDetail({
   onOpenDesk,
   registerCloseGuard,
   about,
+  blocker,
 }: {
   loop: Loop;
   /** What the job does, from an installed pack (AustinPlanDetail). */
   about?: ReactNode;
+  /** What the host still requires before this job may switch on (`nextBlocker`
+   * in src/lib/setup-sequence.ts). Switching on is held, with this reason, so
+   * the host never has to refuse it. */
+  blocker?: { status: string; actionLabel?: string } | null;
   /** This job's clock receipts, newest first. */
   runs: readonly LoopRun[];
   /** Shown at the top of the drawer by FlaggedReceipt; not repeated here. */
@@ -394,6 +399,9 @@ export function LoopDetail({
   // Morning priorities adopts the reviewed agency time; it never uses the generic timing change.
   const spec = evaluatorForLoop(loop.id);
   const agencyTimed = spec?.agencyTimed === true;
+  const held = !loop.enabled && blocker ? blocker : null;
+  const switchLabel = loop.enabled ? "Pause" : "Resume";
+  const heldId = useId();
 
   return (
     <article id={`routine-${loop.id}`} tabIndex={-1} aria-label={`${loop.name} details`} className="space-y-4 outline-none">
@@ -427,16 +435,23 @@ export function LoopDetail({
             // aria-disabled while saving (the parent's `disabled` includes busy): a disabled
             // button drops keyboard focus out of the drawer, so Escape stops working.
             onClick={busy ? undefined : onToggle}
-            disabled={disabled && !busy}
+            disabled={(disabled && !busy) || Boolean(held)}
             aria-disabled={busy || undefined}
-            title={loop.enabled ? "Pause this job" : "Resume this job"}
+            aria-describedby={held ? heldId : undefined}
+            title={`${switchLabel} this job`}
             className="pm-control inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-40 aria-disabled:opacity-40"
           >
             {loop.enabled ? <Pause size={13} aria-hidden /> : <Play size={13} aria-hidden />}
-            {loop.enabled ? "Pause" : "Resume"}
+            {switchLabel}
           </button>
         ) : null}
       </div>}
+      {held && !manualOnly && !loop.waitingForPlan ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p id={heldId} className="text-[13px] text-hold">{held.status}</p>
+          {held.actionLabel ? <button type="button" onClick={onOpenSetup} className="pm-control rounded border border-line px-3 text-[13px] text-ink hover:bg-selected">{held.actionLabel}</button> : null}
+        </div>
+      ) : null}
       {progress ? (
         <p role="status" className="text-[13px] text-ink-muted">
           <span className="font-medium text-ink">{progress.label}</span>

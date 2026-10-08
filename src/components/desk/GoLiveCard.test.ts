@@ -181,6 +181,23 @@ describe('Get started card', () => {
     expect(html.match(/aria-label="Connect Gmail"/g)).toHaveLength(1);
     expect(html).toContain('Sign in to Gmail in your browser.');
   });
+
+  it('offers a request to copy for the owner where only the owner can unblock a step', () => {
+    // Unlinked: enter the code, or copy the ask for it.
+    const fresh = render({ agencyName: '', websiteLink: 'not-linked' });
+    expect(fresh.match(/aria-label="Enter link code"/g)).toHaveLength(1);
+    expect(fresh.match(/aria-label="Copy request for your owner"/g)).toHaveLength(1);
+    // A shared office Gmail this computer is not allowed on: the request replaces an action that would loop back.
+    store.state = { config: { composio: { managed: true } } };
+    officeFixture.snapshot = { configured: true, checkedAt: new Date().toISOString(), sourceKind: 'office_shared', tools: { available: false, names: [] }, services: {
+      gmail: { connected: false, status: 'NOT_CONNECTED', accountSelectionRequired: false, accounts: [] },
+    } };
+    const blocked = render(linked);
+    expect(blocked).toContain('Ask the office owner to allow this computer on realbud.app.');
+    expect(blocked.match(/aria-label="Copy request for your owner"/g)).toHaveLength(1);
+    expect(blocked).not.toContain('aria-label="Connect Gmail"');
+    expect(blocked).not.toContain('Open connected apps');
+  });
 });
 
 describe('bounded setup reads', () => {

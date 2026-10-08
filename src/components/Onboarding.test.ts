@@ -46,7 +46,7 @@ const OFFICE = 'Fictional Harbour Agency';
 const request = { approvalUrl: `https://realbud.app/link/${'A'.repeat(43)}`, displayCode: 'ABCD-EFGH', expiresAt: '2026-09-30T10:00:00.000Z' };
 function connection(status: OfficeLinkStatus | null, phase: ConnectOfficeViewProps['phase'] = { kind: 'idle' }) {
   const office = status?.state === 'linked' ? status.agencyLabel ?? null : null;
-  return { office, view: { status, phase, error: '', code: '', codeBusy: false, onStart: vi.fn(), onOpenAgain: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onCode: vi.fn(), onLinkCode: vi.fn(), onRefresh: vi.fn() } };
+  return { office, view: { status, phase, error: '', code: '', codeBusy: false, onStart: vi.fn(), onOpenAgain: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onCode: vi.fn(), onLinkCode: vi.fn(), onRefresh: vi.fn(), now: Date.parse('2026-09-30T09:55:00.000Z') } };
 }
 
 const initial: OnboardingState = { version: 1, scope: 'a'.repeat(64), revision: 3, stage: 'profile' };
@@ -253,6 +253,8 @@ describe('connect this computer to your office', () => {
     expect(markup).toContain('Paste the link code your office owner sent you.');
     expect(markup).toMatch(/<button type="submit" class="pm-decision[^"]*"[^>]*>Connect with this code<\/button>/);
     expect(markup).toContain('I’m the office owner: approve in my browser</button>');
+    // Staff without a code copy the ask for their owner right here; nothing is sent.
+    expect(markup).toMatch(/No code yet\?<\/span><span class="workspace-copy"><button type="button"[^>]*aria-label="Copy request for your owner">/);
     expect(markup).not.toContain('<details');
     expect(markup).toContain('aria-label="You stay in charge"');
     expect(markup).not.toContain('Continue to Bud setup');
@@ -268,6 +270,7 @@ describe('connect this computer to your office', () => {
     expect(markup).toContain('>ABCD-EFGH</span>');
     expect(markup).toContain('Open the page again</button>');
     expect(markup).toContain('>Cancel</button>');
+    expect(markup).toContain('Expires in 5:00');
     expect(markup).not.toContain('approve in my browser</button>');
     expect(markup).not.toContain('Connect with this code');
   });

@@ -9,6 +9,7 @@ import { SUPPORT_SAVED, supportSaveOutcome } from "./you/SupportCard";
 import { Card } from "./SettingsPrimitives";
 import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
 import { modelAccessState, WEBSITE_LINK_CHANGED } from "./you/browser-link";
+import { CONTACT_SUPPORT_INLINE } from "@shared/support";
 
 type ManagedBudStatusProps = {
   id: string;
@@ -24,7 +25,7 @@ type ManagedBudStatusProps = {
 };
 
 export const RESTART_HELP = "RealBud stops and starts its service on this computer. Your work is kept.";
-export const RESTART_FAILED = "RealBud couldn’t confirm its service restarted. Your work is kept. Start it from RealBud service under Settings & help, or contact RealBud support.";
+export const RESTART_FAILED = `RealBud couldn’t confirm its service restarted. Your work is kept. Start it from RealBud service under Settings & help, or ${CONTACT_SUPPORT_INLINE}.`;
 export const RESTART_BUSY = "Bud is still working, so RealBud didn’t restart its service. Try again when the current work finishes. Your work is kept.";
 export const RESTART_NOT_OWNED = "Another RealBud installation on this computer started this service, so only that installation can restart it. Your work is kept.";
 type ServiceNote = { ok: boolean; text: string } | null;

@@ -249,7 +249,7 @@ describe("holds staff clear themselves", () => {
   it("offers a support file for a damaged setup record, and names a usable computer when setup is unavailable here", () => {
     vi.stubGlobal("window", { ogb: service() });
     const recovery = render(held("held_recovery"));
-    expect(recovery).toContain("Save a support file and send it to RealBud support.");
+    expect(recovery).toContain("Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings &amp; help → Save support file).");
     expect(recovery).toContain(">Save a support file</button>");
     expect(recovery).not.toMatch(/Try setup again|Restart RealBud’s service/);
     const unavailable = render(held("held_unavailable"));

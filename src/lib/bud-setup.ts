@@ -1,5 +1,6 @@
 import type { BudAutoSetup, HermesStatus } from "@/state/store";
 import { isManagedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
+import { CONTACT_SUPPORT, CONTACT_SUPPORT_INLINE } from "@shared/support";
 
 export type BudSetupStage = "checking" | "install" | "safeguards" | "model" | "verify" | "ready";
 export type BudSetupStep = Exclude<BudSetupStage, "checking" | "ready">;
@@ -118,7 +119,7 @@ const SETUP_PHASES: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> =
 const SETUP_HOLDS: Partial<Record<NonNullable<BudAutoSetup["code"]>, string>> = {
   held_exhausted: "Bud couldn’t finish setting up on this computer. RealBud support has the details; try again later.",
   held_failed: "Bud’s setup didn’t finish. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.",
-  held_recovery: "Bud’s setup record needs recovery. Your files are kept. Save a support file and send it to RealBud support.",
+  held_recovery: `Bud’s setup record needs recovery. Your files are kept. ${CONTACT_SUPPORT}.`,
   held_restart: "Bud’s update is installed. RealBud’s service needs to restart to use it; your work is kept.",
   held_unavailable: "Bud can’t be set up automatically on this kind of computer. Use RealBud on a Mac or Windows computer for Bud’s work; your files are kept.",
 };
@@ -128,7 +129,7 @@ function heldDetail(auto: BudAutoSetup): string {
   const stage = HELD_AT[auto.step];
   if (stage && auto.code === "held_failed") return `Bud’s setup stopped while ${stage}. Nothing was lost. Press Try setup again; if it stops twice, tell your office owner.`;
   if (stage && auto.code === "held_exhausted") return `Bud couldn’t finish setting up on this computer. It stopped while ${stage}. RealBud support has the details; try again later.`;
-  return (auto.code && SETUP_HOLDS[auto.code]) || "Bud’s setup could not finish. Contact RealBud support.";
+  return (auto.code && SETUP_HOLDS[auto.code]) || `Bud’s setup could not finish. ${CONTACT_SUPPORT}.`;
 }
 // A fixed phrase, not a measurement: keep the word "usually".
 const SETUP_ESTIMATE = "Usually about 10 minutes.";
@@ -175,7 +176,7 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
   // never an administrator dead end. The person can ask the service to run
   // its own check again (the server re-checks the link).
   if (managedIdle(status)) {
-    return { label: "Bud needs a check", detail: "Bud’s last check no longer matches this computer’s setup. Try setup again; if it keeps stopping, contact RealBud support.", working: false };
+    return { label: "Bud needs a check", detail: `Bud’s last check no longer matches this computer’s setup. Try setup again; if it keeps stopping, ${CONTACT_SUPPORT_INLINE}.`, working: false };
   }
   return null;
 }

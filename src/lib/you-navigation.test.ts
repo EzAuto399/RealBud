@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { revealSettingsTarget, scrollYouTarget, youHashTarget, youRecoveryTarget } from "./you-navigation";
 
 describe("settings navigation", () => {
-  it.each(['you-website', 'you-private-backup'])("reveals and focuses %s without another scroll", id => {
+  it.each(['you-website', 'you-website-code', 'you-private-backup'])("reveals and focuses %s without another scroll", id => {
     const outer = { tagName: "DETAILS", open: false, parentElement: null };
     const target = { tagName: "SECTION", parentElement: outer, focus: vi.fn(), getBoundingClientRect: () => ({ top: 200 }) };
     const scroller = { scrollTop: 0, getBoundingClientRect: () => ({ top: 0 }), querySelector: () => null, scrollTo: vi.fn() };
@@ -13,6 +13,23 @@ describe("settings navigation", () => {
       expect(outer.open).toBe(true);
       expect(target.focus).toHaveBeenCalledWith({ preventScroll: true });
       expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: "auto" });
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("opens the folded link-code field for Enter link code, and lands on the card when the field is not shown", () => {
+    const card = { tagName: "SECTION", parentElement: null, focus: vi.fn(), getBoundingClientRect: () => ({ top: 40 }) };
+    const disclosure = { tagName: "DETAILS", open: false, parentElement: card };
+    const field = { tagName: "INPUT", parentElement: disclosure, focus: vi.fn(), getBoundingClientRect: () => ({ top: 90 }) };
+    const scroller = { scrollTop: 0, getBoundingClientRect: () => ({ top: 0 }), scrollTo: vi.fn() };
+    let shown = true;
+    vi.stubGlobal("document", { getElementById: (id: string) => id === "you-website-code" ? (shown ? field : null) : id === "you-website" ? card : null, querySelector: () => scroller });
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
+    try {
+      scrollYouTarget("you-website-code");
+      expect(disclosure.open).toBe(true);
+      expect(field.focus).toHaveBeenCalledWith({ preventScroll: true });
+      shown = false;
+      scrollYouTarget("you-website-code");
+      expect(card.focus).toHaveBeenCalledWith({ preventScroll: true });
     } finally { vi.unstubAllGlobals(); }
   });
   it("opens a section folded inside Settings & help and scrolls it just below the top", () => {
@@ -33,7 +50,7 @@ describe("settings navigation", () => {
     ["#connected-apps", "you-connected-apps"], ["#you-connected-apps", "you-connected-apps"],
     ["#you-recovery", "you-recovery"], ["#you-private-backup", "you-private-backup"], ["#you-packs", "you-packs"], ["#you-jobs", "you-jobs"],
     ["#you-phone", "you-phone"], ["#you-office", "you-office"], ["#you-profile", "you-profile"],
-    ["#you-website", "you-website"],
+    ["#you-website", "you-website"], ["#you-website-code", "you-website-code"],
     ["#you-advanced", "you-advanced"],
     ["#you-service-admin", "you-service-admin"],
     ["#you-memory", "you-memory"], ["#you-settings", "you-settings"],

@@ -3,9 +3,11 @@ import { Check, ExternalLink, Loader2 } from "lucide-react";
 import { useStore } from "@/state/store";
 import type { BrowserLinkRequest, OfficeLinkStatus } from "../../server/office-link";
 import {
-  browserLinkMessage, defaultComputerName, linkedOffice, modelAccessMessage, modelAccessState, officeLinkRecoveryMessage, openApproval, pendingRequest,
-  useBrowserLink, type BrowserLinkPhase,
+  approvalTimeLeft, asksToRemoveComputer, browserLinkMessage, computerLimitReached, defaultComputerName, linkedOffice, modelAccessMessage, modelAccessState,
+  officeLinkRecoveryMessage, openApproval, pendingRequest, useBrowserLink, APPROVAL_PAGE_EXPIRED, type BrowserLinkPhase,
 } from "./you/browser-link";
+import { useApprovalClock } from "./BrowserApprovalCard";
+import { OwnerRequestButton } from "./OwnerRequestButton";
 
 const primary = "pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 const secondary = "pm-control inline-flex items-center justify-center gap-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-raised/60 disabled:opacity-40";
@@ -27,6 +29,8 @@ export interface ConnectOfficeViewProps {
   onLinkCode: () => void;
   /** Read the saved link again after it could not be loaded. */
   onRefresh: () => void;
+  /** Fixed clock for tests; live, the time left ticks every second. */
+  now?: number;
 }
 
 /**
@@ -45,6 +49,10 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
   const access = office ? modelAccessMessage(status, { passive: true }) : null;
   const recovery = officeLinkRecoveryMessage(status);
   const failure = error || (office ? recovery !== access ? recovery : "" : status?.error !== problem ? status?.error : "");
+  const expiresAt = request ? Date.parse(request.expiresAt) : null;
+  const now = useApprovalClock(expiresAt, props.now);
+  // The page expired while this computer waited: say so and start again here.
+  const lapsed = request !== null && expiresAt !== null && now >= expiresAt && phase.kind !== "cancelling";
 
   return <div className="space-y-3 text-[13.5px] text-ink" data-connect-office="">
     <p role="status" aria-live="polite" className="sr-only">{[announce, access ?? ""].filter(Boolean).join(" ")}</p>
@@ -53,6 +61,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       <div>
         <p className="font-medium">Connected to {office}</p>
         {access ? <p className="mt-0.5 text-[12.5px] text-ink-secondary" aria-busy={modelAccessState(status) === "setting-up" || undefined}>{access}</p> : null}
+        {asksToRemoveComputer(access) ? <div className="mt-2"><OwnerRequestButton request="removeComputer" /></div> : null}
       </div>
     </div> : request ? <>
       <p className="font-medium">Your browser opened realbud.app. Sign in with the email RealBud invited, check the page shows code {request.displayCode}, then approve.</p>
@@ -60,10 +69,12 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
         <span className="block text-[12px] text-ink-muted">Code on this computer</span>
         <span className="block font-mono text-[22px] font-semibold tracking-[0.12em] text-ink tabular-nums">{request.displayCode}</span>
       </p>
-      {phase.kind === "waiting" ? <p className="flex items-center gap-2 text-ink-muted"><Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Waiting for your approval…</p> : null}
+      {lapsed ? <p role="alert" className="text-danger">{APPROVAL_PAGE_EXPIRED}</p>
+        : phase.kind === "waiting" ? <p className="flex items-center gap-2 text-ink-muted"><Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Waiting for your approval… <span className="tabular-nums">{approvalTimeLeft(request, now)}</span></p> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
       <div className="flex flex-wrap gap-2">
-        {phase.kind === "unreachable"
+        {lapsed ? <button type="button" className={secondary} onClick={props.onStart}>Start a new request</button>
+          : phase.kind === "unreachable"
           ? <button type="button" className={secondary} onClick={() => props.onRetry(request)}>Try again</button>
           : <button type="button" className={secondary} disabled={phase.kind === "cancelling"} onClick={() => props.onOpenAgain(request)}><ExternalLink size={14} aria-hidden="true" />Open the page again</button>}
         <button type="button" className={secondary} disabled={phase.kind === "cancelling"} aria-busy={phase.kind === "cancelling" || undefined} onClick={() => props.onCancel(request)}>{phase.kind === "cancelling" ? "Cancelling…" : "Cancel"}</button>
@@ -78,10 +89,13 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
         <label className="block text-ink">Link code<input required title="" autoComplete="off" spellCheck={false} value={code} onChange={event => props.onCode(event.target.value)} placeholder="Paste the code here" className={field} /></label>
         <button type="submit" className={primary} disabled={codeBusy || !status || !code.trim()} aria-busy={codeBusy || undefined}>{codeBusy ? "Connecting… this can take up to a minute." : "Connect with this code"}</button>
       </form>
+      <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-muted">
+        {computerLimitReached(failure) ? <OwnerRequestButton request="freePlace" /> : <><span>No code yet?</span><OwnerRequestButton request="linkCode" /></>}
+      </div>
       {codePending ? null : <div className="border-t border-line pt-2 text-[12.5px] text-ink-muted">
         <button type="button" className={quiet} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
           {phase.kind === "starting" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
-          I’m the office owner: approve in my browser
+          {phase.kind === "declined" || phase.kind === "expired" ? "Start a new request" : "I’m the office owner: approve in my browser"}
         </button>
         <p>{phase.kind === "starting" ? "Opening your browser…" : "Owners: realbud.app → Computers → Pair a new computer."}</p>
       </div>}

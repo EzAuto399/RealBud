@@ -119,6 +119,23 @@ describe("job drawer", () => {
     expect(buttonTag(held, "Resume")).toContain('disabled=""');
   });
 
+  it("holds switching on with the host's reason and its fix, instead of a switch the host would refuse", () => {
+    const blocker = { status: "Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.", actionLabel: "Open Agency workflow setup" };
+    const html = detail({ blocker });
+    const tag = buttonTag(html, "Resume");
+    expect(tag).toContain('disabled=""');
+    const described = /aria-describedby="([^"]+)"/.exec(tag)?.[1];
+    expect(described).toBeTruthy();
+    expect(html).toContain(`<p id="${described}" class="text-[13px] text-hold">${blocker.status}</p>`);
+    expect(html).toContain(">Open Agency workflow setup</button>");
+    // Once on, the reason no longer holds Pause.
+    const on = detail({ blocker, loop: loop({ enabled: true }) });
+    expect(buttonTag(on, "Pause")).not.toContain('disabled=""');
+    expect(on).not.toContain(blocker.status);
+    // A pack need without its own action still names the reason.
+    expect(detail({ blocker: { status: "Before Weekly bills review: Sign in to REI." } })).toContain("Before Weekly bills review: Sign in to REI.");
+  });
+
   it("keeps Pause/Resume focusable while its change is saving, so keyboard focus is not dropped", () => {
     // A focused button that becomes disabled loses focus to <body>; Escape then cannot close the drawer.
     for (const enabled of [false, true]) {

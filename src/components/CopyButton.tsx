@@ -1,10 +1,10 @@
 import { Check, Copy } from "lucide-react";
 import { useCopyText } from "@/lib/use-copy-text";
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({ text, label = "Copy", className = "pm-control" }: { text: string; label?: string; className?: string }) {
   const { state, copy } = useCopyText(text);
   return <span className="workspace-copy">
-    <button type="button" className="pm-control" disabled={state === "copying" || !text.trim()} onClick={() => void copy()} aria-label={state === "failed" ? `Try again: ${label}` : label}>
+    <button type="button" className={className} disabled={state === "copying" || !text.trim()} onClick={() => void copy()} aria-label={state === "failed" ? `Try again: ${label}` : label}>
       {state === "copied" ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
       {state === "copying" ? "Copying…" : state === "copied" ? "Copied" : state === "failed" ? "Try again" : label}
     </button>

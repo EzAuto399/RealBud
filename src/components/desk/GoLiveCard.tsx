@@ -21,6 +21,7 @@ import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { SET_UP_DISMISSED, firstDayContext, firstDayItems, readGetStartedLocal, saveGetStartedLocal, type FirstDayItem, type GetStartedLocal } from "@/lib/first-day";
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { api, useStore } from "@/state/store";
+import { OwnerRequestButton } from "../OwnerRequestButton";
 
 const STATE_LABEL: Record<SetupStep["state"], string> = {
   done: "Done",
@@ -307,7 +308,7 @@ export function GoLiveCard({
                 ) : null}
               </div>
               {action || canSkip || step.state === "skipped" ? (
-                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
                   {canSkip ? (
                     <button type="button" onClick={() => skip(step)} aria-label={`Skip for now: ${step.title}`} className="pm-control rounded px-2 text-[13px] text-ink-secondary hover:bg-selected hover:text-ink">
                       Skip for now
@@ -318,7 +319,8 @@ export function GoLiveCard({
                       Back to this step
                     </button>
                   ) : null}
-                  {action ? (
+                  {action && step.ownerRequest ? <OwnerRequestButton request={step.ownerRequest} /> : null}
+                  {action && !step.ownerOnly ? (
                     <button
                       type="button"
                       onClick={() => openStep(step)}

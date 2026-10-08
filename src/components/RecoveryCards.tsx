@@ -8,6 +8,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { browserApprovalFact, browserApprovalMoney, readBrowserApprovalCard, type BrowserApprovalCard, type BrowserApprovalFactName } from "@shared/browser-approval-card";
 import { BrowserApprovalFacts } from "./BrowserApprovalCard";
 import { api } from "@/state/store";
+import { CONTACT_SUPPORT_INLINE } from "@shared/support";
 
 export interface HeldStep { id: string; host: string; summary: string; approval: BrowserApprovalCard | null }
 export type CustodyState = "clear" | "held" | "unsaved" | "damaged";
@@ -84,7 +85,7 @@ export function HeldStepCard({ step, busy, error, onAnswer }: { step: HeldStep; 
 const CUSTODY: Record<Exclude<CustodyState, "clear">, { text: string; action?: string }> = {
   held: { text: "Bud may still have work running from before RealBud last closed, so restart this computer and then let Bud check.", action: "I've restarted, check again" },
   unsaved: { text: "Bud couldn't save its record of running work, so free some disk space and then let Bud check.", action: "Check again" },
-  damaged: { text: "Bud's record of running work needs recovery, so contact RealBud support before starting new work." },
+  damaged: { text: `Bud's record of running work needs recovery, so ${CONTACT_SUPPORT_INLINE} before starting new work.` },
 };
 
 export function WorkerCustodyNotice({ state, busy, error, onCheck }: { state: Exclude<CustodyState, "clear">; busy: boolean; error?: string; onCheck: () => void }) {
