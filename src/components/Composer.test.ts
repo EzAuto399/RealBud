@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot } from "@/state/store";
 import { Composer } from "./Composer";
 
-const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null }));
+const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null, store: {} as Record<string, unknown> }));
 vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
 // Keep React's real hooks while observing state requests from event handlers.
 // A server render lets the tests inspect the control wiring without a DOM.
@@ -17,7 +17,7 @@ vi.mock("react", async importOriginal => {
 });
 vi.mock("@/state/store", () => ({
   api: fixture.api,
-  useStore: () => ({ state: { bots: [], askWorkContext: null }, dispatch: fixture.dispatch }),
+  useStore: () => ({ state: { bots: [], askWorkContext: null, ...fixture.store }, dispatch: fixture.dispatch }),
   visibleMessages: (bot: Bot) => bot.messages,
 }));
 const caps = vi.hoisted(() => ({ dictation: { available: false as boolean } }));
@@ -31,7 +31,7 @@ function render(heldReason?: NonNullable<Bot["queuedMessage"]>["heldReason"], bu
   return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true }));
 }
 
-beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.stateUpdates.length = 0; caps.dictation.available = false; });
+beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.store = {}; fixture.stateUpdates.length = 0; caps.dictation.available = false; });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("held connected-app follow-up", () => {
@@ -86,6 +86,31 @@ describe("Ask while Bud is re-checking", () => {
     expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
     expect(html).toContain("You can draft while we connect.");
     expect(html).not.toContain("Bud is re-checking");
+  });
+});
+
+describe("Ask when model access is withdrawn", () => {
+  const blocked = () => {
+    const bot: Bot = { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+      color: "green", unread: false, busy: false, messages: [], modelSelection: { instanceId: "fixture", model: "fixture" } };
+    return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askReady: false, readiness: createElement("span") }));
+  };
+
+  it("names the terminal hold and keeps drafting open instead of promising a reconnect", () => {
+    fixture.store = { connected: true, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
+    const html = blocked();
+    expect(html).toContain("Bud access unavailable. You can still write a draft to keep.");
+    expect(html).toContain("Bud access unavailable · Contact support · Shift + Enter for a new line");
+    expect(html).not.toMatch(/draft while we connect|Connect Bud to start/);
+    expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
+  });
+
+  it("keeps the connecting copy while the local service is reconnecting", () => {
+    fixture.store = { connected: false, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
+    const html = blocked();
+    expect(html).toContain("You can draft while we connect.");
+    expect(html).toContain("Connect Bud to start");
+    expect(html).not.toContain("Bud access unavailable");
   });
 });
 

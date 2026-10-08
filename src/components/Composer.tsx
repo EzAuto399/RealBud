@@ -187,6 +187,9 @@ export function Composer({
   const [actionPending, setActionPending] = useState<"send" | "steer" | "queue" | "edit-queue" | "delete-queue" | null>(null);
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const askBlocked = productAsk && !askReady && !(attachments.length === 0 && isAskProductControl(text));
+  // Same fact budAvailability reads: a withdrawn grant is terminal (support must
+  // restore it), not a connection that will come back on its own.
+  const accessWithdrawn = askBlocked && state.connected && !state.desk?.recovery?.active && Boolean(state.hermes?.modelAccess?.withdrawn);
   const interactionBlocked = Boolean(DESIGN_PREVIEW_REASON) || Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
   dictationBlocked.current = Boolean(approval) || Boolean(actionPending);
   // A send tried while Bud is not ready explains itself; the draft stays put.
@@ -877,7 +880,9 @@ export function Composer({
           }}
           disabled={Boolean(approval) || Boolean(actionPending)}
           placeholder={
-            askBlocked
+            accessWithdrawn
+                ? "Bud access unavailable. You can still write a draft to keep."
+              : askBlocked
                 ? "What would you like Bud to prepare? You can draft while we connect."
               : approval
               ? productAsk
@@ -1048,7 +1053,7 @@ export function Composer({
       </div>
       {productAsk && <div className="ask-composer-help">
         <span><ShieldCheck size={13} aria-hidden />Sends, payments and statutory actions need your review.</span>
-        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
+        <span className="ask-keyboard-hint">{DESIGN_PREVIEW_REASON ? "Draft only in preview" : approval ? "Review the request above to continue" : `${accessWithdrawn ? "Bud access unavailable · Contact support" : askBlocked ? "Connect Bud to start" : busy ? group ? "Enter to queue" : "Enter to update current work" : "Enter to start"} · Shift + Enter for a new line${capabilities.dictation.available && !busy ? " · Hold Speak to dictate" : ""}`}</span>
       </div>}
     </div>
   );
