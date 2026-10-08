@@ -1,9 +1,9 @@
 // Auto-update popup — a small card floating bottom-left, driven by the
-// preload's updater bridge. Renders nothing in the browser/dev (no bridge)
-// and while idle/checking; appears only when actionable: an update to
-// download, a download in progress, a restart to apply, or an error.
+// preload's updater bridge. Checking and downloading happen silently in the
+// background, so it appears only when actionable: a restart to apply, or an
+// error.
 import { useState } from "react";
-import { ArrowDownToLine, CircleAlert, RefreshCw, Sparkles, X } from "lucide-react";
+import { CircleAlert, RefreshCw, X } from "lucide-react";
 import { useUpdaterState } from "@/lib/updater";
 
 // electron-updater surfaces failures as a whole HTTP dump — status line,
@@ -24,35 +24,17 @@ export function UpdateBanner() {
   // dismissal is per status+version, so the popup returns for the next
   // update (and when an available one finishes downloading)
   const [dismissed, setDismissed] = useState<string | null>(null);
-  if (!s || s.status === "idle" || s.status === "checking") return null;
+  if (!s || (s.status !== "downloaded" && s.status !== "error")) return null;
   const key = `${s.status}:${s.version ?? ""}:${s.deferred ?? ""}`;
   if (dismissed === key) return null;
   const updater = window.ogb!.updater!;
 
-  const title =
-    s.status === "available"
-      ? `RealBud ${s.version} is available`
-      : s.status === "downloading"
-        ? `Downloading ${s.version ?? "update"}…`
-        : s.status === "downloaded"
-          ? `${s.version} is ready`
-          : "Update check failed";
-  const subtitle =
-    s.status === "available"
-      ? "A newer version is ready to download."
-      : s.status === "downloading"
-        ? `Downloading ${Math.round(s.percent ?? 0)}%`
-        : s.status === "downloaded"
-          ? s.deferred && s.message ? s.message : "Restart to finish updating."
-          : friendlyError(s.message);
-  const StatusIcon =
-    s.status === "available"
-      ? Sparkles
-      : s.status === "downloading"
-        ? ArrowDownToLine
-        : s.status === "downloaded"
-          ? RefreshCw
-          : CircleAlert;
+  const ready = s.status === "downloaded";
+  const title = ready ? `${s.version} is ready` : "Update failed";
+  const subtitle = ready
+    ? s.deferred && s.message ? s.message : "Restart to finish updating."
+    : friendlyError(s.message);
+  const StatusIcon = ready ? RefreshCw : CircleAlert;
 
   return (
     <div
@@ -69,66 +51,44 @@ export function UpdateBanner() {
             {subtitle}
           </div>
         </div>
-        {s.status !== "downloading" && (
-          <button
-            type="button"
-            onClick={() => setDismissed(key)}
-            className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="Dismiss"
-            aria-label="Dismiss update notice"
-          >
-            <X size={14} aria-hidden />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setDismissed(key)}
+          className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          title="Dismiss"
+          aria-label="Dismiss update notice"
+        >
+          <X size={14} aria-hidden />
+        </button>
       </div>
 
-      {s.status === "downloading" && (
-        <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-raised">
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none"
-            style={{ width: `${Math.min(100, Math.max(0, s.percent ?? 0))}%` }}
-          />
-        </div>
-      )}
-
-      {s.status !== "downloading" && (
-        <div className="mt-2.5 flex gap-2">
-          {s.status === "available" && (
-            <button
-              type="button"
-              onClick={() => void updater.download()}
-              className="pm-control flex flex-1 items-center justify-center gap-1.5 rounded bg-accent px-3 text-[13px] font-medium text-white"
-            >
-              <ArrowDownToLine size={13} aria-hidden /> Download
-            </button>
-          )}
-          {s.status === "downloaded" && (
-            <button
-              type="button"
-              onClick={() => void updater.install()}
-              className="pm-control flex flex-1 items-center justify-center gap-1.5 rounded bg-accent px-3 text-[13px] font-medium text-white"
-            >
-              <RefreshCw size={13} aria-hidden /> Restart to update
-            </button>
-          )}
-          {s.status === "error" && (
-            <button
-              type="button"
-              onClick={() => void updater.check()}
-              className="pm-control flex flex-1 items-center justify-center gap-1.5 rounded bg-raised px-3 text-[13px] text-ink hover:bg-raised-hover"
-            >
-              <RefreshCw size={13} aria-hidden /> Try again
-            </button>
-          )}
+      <div className="mt-2.5 flex gap-2">
+        {ready && (
           <button
             type="button"
-            onClick={() => setDismissed(key)}
-            className="pm-control rounded px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+            onClick={() => void updater.install()}
+            className="pm-control flex flex-1 items-center justify-center gap-1.5 rounded bg-accent px-3 text-[13px] font-medium text-white"
           >
-            Later
+            <RefreshCw size={13} aria-hidden /> Restart to update
           </button>
-        </div>
-      )}
+        )}
+        {!ready && (
+          <button
+            type="button"
+            onClick={() => void updater.check()}
+            className="pm-control flex flex-1 items-center justify-center gap-1.5 rounded bg-raised px-3 text-[13px] text-ink hover:bg-raised-hover"
+          >
+            <RefreshCw size={13} aria-hidden /> Try again
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setDismissed(key)}
+          className="pm-control rounded px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+        >
+          Later
+        </button>
+      </div>
     </div>
   );
 }
