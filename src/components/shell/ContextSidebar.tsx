@@ -7,7 +7,7 @@ import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { isEmptyOfficeBook } from "../desk/OfficeBookNotice";
 import { useDeskNav } from "./use-desk-nav";
-import { openArrangeDesk, openScheduleLoop } from "./shell-layout";
+import { openArrangeDesk, openScheduleLoop, useDeskDataStatus } from "./shell-layout";
 
 const PROPERTY_LIMIT = 8;
 const GROUPS: Array<[QueueFilter, string]> = [["now", "Needs you"], ["next", "Next"], ["waiting", "Waiting"], ["done", "Done today"], ["all", "All tasks"]];
@@ -32,14 +32,17 @@ function DeskContext() {
   const counts = queueCounts(nav.rows);
   const desk = state.desk;
   const properties = desk?.properties ?? [];
+  // Disconnected or stale: an empty queue is only what the saved data holds.
+  const { live } = useDeskDataStatus();
+  const noTasks = live ? "No tasks yet" : "No tasks in saved data";
   // No tasks: one line that says why (and where to start) instead of five filters that show nothing.
   const queue = nav.rows.length ? GROUPS.map(([filter, label]) => {
     const count = filter === "all" ? nav.rows.length : counts[filter];
     return <Item key={filter} label={label} current={nav.filter === filter} onClick={() => nav.openFilter(filter)}><span className="rb-context-count">{count}</span></Item>;
   }) : !desk ? <Note>Loading the book…</Note>
-    : isEmptyOfficeBook(desk) ? <Item label="No tasks yet" detail="Add properties to start" current={nav.tab === "properties"} onClick={() => nav.openTab("properties")} />
-    : desk.lastRunAt == null ? <Note>No tasks yet. Check tasks on Desk to fill the queue.</Note>
-    : <Note>No tasks right now.</Note>;
+    : isEmptyOfficeBook(desk) ? <Item label={noTasks} detail="Add properties to start" current={nav.tab === "properties"} onClick={() => nav.openTab("properties")} />
+    : desk.lastRunAt == null ? <Note>{noTasks}. Check tasks on Desk to fill the queue.</Note>
+    : <Note>{live ? "No tasks right now." : "No tasks in saved data."}</Note>;
   return (<>
     <Group label="Queue">{queue}</Group>
     {properties.length ? (

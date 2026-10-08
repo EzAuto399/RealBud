@@ -41,6 +41,7 @@ import type { DeskOtherWork } from "@/lib/desk-view-state";
 import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
 import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
+import { useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { deskSectionsOrDefault } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
@@ -89,6 +90,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // The day's REI sign-in: while REI needs it, it is Desk's one primary action.
   const rei = useReiSignIn();
   const reiNeeded = rei.view?.state === "needed";
+  // Disconnected office or stale check: one line says so above everything Desk shows.
+  const dataStatus = useDeskDataStatus();
   const activityShown = deskLayout?.find(section => section.id === "activity")?.visible !== false;
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
@@ -793,11 +796,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               <HermiosMark size={18} />
               Hermios
             </button>
-            {(mode !== "cases" || otherWork) && !hermiosOpen ? (
-              <button type="button" aria-pressed={true} onClick={() => setMode("cases")} className="desk-workspace-back">
-                Back to tasks
-              </button>
-            ) : null}
           </div>
           {/* The shell's Properties / Bills / saved-view tabs join this row on Desk. */}
           <div ref={setDeskTabSlot} className="desk-shell-tabs" />
@@ -884,6 +882,12 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
       ) : (
         <div ref={contentScrollRef} className="desk-content min-h-0 flex-1 overflow-y-auto" data-drawer-open={drawerOpen ? "true" : undefined}>
           <div className="desk-notices empty:hidden" inert={drawerOpen}>
+            {dataStatus.notice ? (
+              <div role="status" className="flex max-w-[46rem] items-center gap-2 rounded border border-hold/30 bg-hold/10 px-3 py-2 text-[13px] text-ink">
+                <CircleAlert size={16} className="shrink-0 text-hold" aria-hidden />
+                {dataStatus.notice}
+              </div>
+            ) : null}
             {offerOfficeBook ? (
               <StartOfficeBook busy={busy !== null} onStart={() => { void run("/api/desk/live", "POST", { expectedRevision: snap.revision }, "live", "Office book started"); }} />
             ) : null}
@@ -899,7 +903,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           <DeskWorkArea
             active={otherWork}
             opened={openedOther}
-            onBack={() => setOtherWork(null)}
             tasks={tasks}
             panels={{
               mail: <><div className="rb-card-menu-row"><DeskCardMenu id="mail" /></div><MailWorkPanel /></>,

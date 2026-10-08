@@ -595,7 +595,7 @@ try {
   let proposalPosts = 0;
   const countProposalPost = request => { if (new URL(request.url()).pathname === '/api/bill-proposals' && request.method() === 'POST') proposalPosts++; };
   page.on('request', countProposalPost);
-  await page.getByRole('region',{name:'Mail priorities',exact:true}).getByRole('button',{name:'Back to tasks',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:/^Tasks\s*\d*$/}).click();
   await page.locator('.desk-other-work > summary').click();
   await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
   const billsPanel = page.getByRole('region', { name: 'Source-linked bills and calendar', exact: true });

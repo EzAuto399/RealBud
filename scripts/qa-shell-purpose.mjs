@@ -305,18 +305,19 @@ try {
   await nav.getByRole('button', { name: 'Desk', exact: true }).click();
   await page.reload();
   await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
-  await until(async () => (await contextBar.getByRole('button', { name: /^No tasks yet/ }).count()) === 1, 'The empty book shows one queue line');
+  await until(async () => (await contextBar.getByRole('button', { name: /^No tasks (yet|in saved data)/ }).count()) === 1, 'The empty book shows one queue line');
   assert.equal(await contextBar.getByRole('button', { name: /^(Needs you|Next|Waiting|Done today|All tasks) \d+$/ }).count(), 0, 'No dead filter buttons on an empty book');
   await shot('empty-book-desk.png');
   const emptyDone = [];
-  await press('Desk context (empty book)', contextBar.getByRole('button', { name: /^No tasks yet/ }), 'No tasks yet — Add properties to start', () => page.getByRole('heading', { name: 'Properties', exact: true }).waitFor());
-  emptyDone.push(await contextBar.getByRole('button', { name: /^No tasks yet/ }).innerText().then(text => text.trim().replace(/\s+/g, ' ')));
+  await press('Desk context (empty book)', contextBar.getByRole('button', { name: /^No tasks (yet|in saved data)/ }), 'No tasks — Add properties to start', () => page.getByRole('heading', { name: 'Properties', exact: true }).waitFor());
+  emptyDone.push(await contextBar.getByRole('button', { name: /^No tasks (yet|in saved data)/ }).innerText().then(text => text.trim().replace(/\s+/g, ' ')));
   await press('Desk context (empty book)', contextBar.getByRole('button', { name: 'Arrange Desk', exact: true }), 'Arrange Desk', () => page.getByRole('dialog', { name: 'Arrange Desk', exact: true }).waitFor());
   emptyDone.push('Arrange Desk');
   await page.keyboard.press('Escape');
   covered('Desk context (empty book)', await names(contextBar), emptyDone);
   assert.equal(await today.getByRole('button').count(), 0, 'No zero-count shortcuts on an empty book');
-  await today.getByText('No tasks yet.', { exact: true }).waitFor();
+  // Unlinked or stale, the empty copy speaks only for saved data.
+  await today.getByText(/^No tasks (yet|in saved data)\.$/).waitFor();
   const emptyPanelDone = [];
   for (const title of ['Evidence', 'Approvals waiting', 'Today']) {
     await press('Side panel (empty book)', panel.locator(`summary[aria-label="${title} options"]`), `${title} options`, () => panel.getByRole('group', { name: `${title} options`, exact: true }).waitFor());
@@ -337,7 +338,7 @@ try {
   covered('Status bar (empty book)', await names(statusBar), ['Desk not checked yet', emptyLoopLabel]);
   if (await page.getByRole('dialog').count()) { await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'detached' }); }
   await nav.getByRole('button', { name: 'Desk', exact: true }).click();
-  pass('Empty office book: the queue group is one "No tasks yet · Add properties to start" button that opens Properties; Today shows "No tasks yet." instead of zero shortcuts; panel menus and "Desk not checked yet" (→ Start your office book) still act');
+  pass('Empty office book: the queue group is one "No tasks … · Add properties to start" button that opens Properties; Today shows "No tasks …" (scoped to saved data unless live) instead of zero shortcuts; panel menus and "Desk not checked yet" (→ Start your office book) still act');
 
   // 8. Phone width still fits.
   await page.setViewportSize({ width: 390, height: 844 });

@@ -7,7 +7,7 @@ import { defaultDeskSections, defaultShellLayout } from '@shared/workspace-tabs'
 vi.hoisted(() => { vi.stubGlobal('window', {}); });
 const store = vi.hoisted(() => ({ state: { connected: true, desk: null as unknown, loops: [] as unknown[] } }));
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: store.state, dispatch: vi.fn() }) }));
-import { clampPanelWidth, deskRunStatus, nextLoop, nextLoopLine, withDeskSection, withShellPanel } from './shell-layout';
+import { clampPanelWidth, deskDataStatus, deskRunStatus, nextLoop, nextLoopLine, withDeskSection, withShellPanel } from './shell-layout';
 import { tabKeyTarget, AreaTabs } from './AreaTabs';
 import { parseShellBrowser } from './shell-status';
 import { StatusBar } from './StatusBar';
@@ -25,6 +25,18 @@ describe('desktop shell facts', () => {
     expect(deskRunStatus(desk({ lastRunAt: now - 13 * HOUR }), now)).toEqual({ label: 'Desk · stale, checked 13 h ago', tone: 'hold' });
     expect(deskRunStatus(desk({}), now)).toEqual({ label: 'Desk checked 1 h ago', tone: 'agency' });
     expect(deskRunStatus(null, now).label).toBe('Desk loading');
+  });
+  it('calls Desk data live only when the office is reachable and the check is fresh', () => {
+    const office = (fields: Record<string, unknown> = {}) => ({ connected: true, link: 'linked', officeInactive: false, ...fields }) as never;
+    expect(deskDataStatus(desk({}), office(), now)).toEqual({ live: true, notice: null });
+    expect(deskDataStatus(desk({ lastRunAt: now - 72 * HOUR }), office({ link: 'not-linked' }), now)).toEqual({ live: false, notice: 'Office disconnected · Last Desk check 3 days ago' });
+    expect(deskDataStatus(desk({}), office({ connected: false }), now).notice).toBe('Office disconnected · Last Desk check 1 h ago');
+    expect(deskDataStatus(desk({}), office({ officeInactive: true }), now).live).toBe(false);
+    expect(deskDataStatus(desk({ lastRunAt: null }), office({ link: 'unavailable' }), now).notice).toBe('Office disconnected · Desk not checked yet');
+    expect(deskDataStatus(desk({ lastRunAt: now - 72 * HOUR }), office(), now)).toEqual({ live: false, notice: 'Desk check is stale · Last checked 3 days ago' });
+    // Link not read yet: not live, but never called disconnected.
+    expect(deskDataStatus(desk({}), office({ link: undefined }), now)).toEqual({ live: false, notice: null });
+    expect(deskDataStatus(null, office({ connected: false }), now).notice).toBeNull();
   });
   it('names only an enabled, scheduled, unpaused loop as next', () => {
     const loop = (fields: Record<string, unknown>) => ({ id: 'x', name: 'Morning arrears', available: true, enabled: true, nextRunAt: now + HOUR, ...fields }) as never;

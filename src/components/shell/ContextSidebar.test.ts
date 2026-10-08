@@ -3,8 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.hoisted(() => { vi.stubGlobal('window', {}); });
-const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, rows: [] as unknown[] }));
+const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, rows: [] as unknown[], link: { link: 'linked' as string | undefined, officeInactive: false } }));
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: store.state, dispatch: vi.fn() }) }));
+vi.mock('@/lib/use-office-link', () => ({ useOfficeLinkStatus: () => store.link }));
 vi.mock('@/lib/workspace-tabs', async original => ({ ...(await original<object>()), useWorkspaceTabs: () => ({ data: null }) }));
 vi.mock('@/lib/desk-queue', async original => ({ ...(await original<object>()), buildDeskQueue: () => store.rows }));
 import { openDeskProperty, openDeskQueueFilter, useDeskViewState } from '@/lib/desk-view-state';
@@ -36,6 +37,21 @@ describe('Desk context queue', () => {
     expect(html).toContain('Add properties to start');
     expect(html).not.toContain('Needs you');
     expect(html).not.toContain('>Properties<');
+  });
+
+  it('scopes an empty queue to saved data when the office is disconnected or the check is stale', () => {
+    store.rows = [];
+    store.state = { activeView: 'desk', desk: desk({}), connected: true, loops: [], bots: [] };
+    expect(render()).toContain('No tasks right now.');
+    store.link = { link: 'not-linked', officeInactive: false };
+    expect(render()).toContain('No tasks in saved data.');
+    expect(render()).not.toContain('No tasks right now');
+    store.link = { link: 'linked', officeInactive: false };
+    store.state = { ...store.state, desk: desk({ lastRunAt: now - 13 * 3_600_000 }) };
+    expect(render()).toContain('No tasks in saved data.');
+    store.state = { ...store.state, desk: desk({ properties: [], lastRunAt: null }), connected: false };
+    expect(render()).toContain('No tasks in saved data');
+    expect(render()).not.toContain('No tasks yet');
   });
 
   it('says why the queue is empty on an unchecked sample book, without dead filters', () => {

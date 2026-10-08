@@ -309,10 +309,10 @@ try {
   assert.equal(await page.locator('.desk-empty-canvas').count(), 0);
   await openMore(); await page.getByRole('button', { name: 'Prepare several properties', exact: true }).click();
   await page.locator('.desk-content').getByRole('region', { name: 'Batch workspace', exact: true }).waitFor();
-  await header.getByRole('button', { name: 'Back to tasks', exact: true }).waitFor();
+  await header.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/, pressed: false }).waitFor();
   assert.equal(await page.locator('.desk-empty-canvas').count(), 0);
   await noOverflow();
-  record('Properties and batch modes open from More inside .desk-content with Back to tasks available');
+  record('Properties and batch modes open from More inside .desk-content with the Tasks tab as the way back');
   assert.deepEqual(errors, []); assert.deepEqual(deniedOrigins, []);
   record('No horizontal overflow, renderer errors or off-origin browser requests in the exercised flows');
 } catch (cause) {
