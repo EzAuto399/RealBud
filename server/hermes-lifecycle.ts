@@ -1,23 +1,30 @@
 // Repair re-applies the property pack to an existing compatible worker.
-// Automatic removal is held until all worker descendants can be proved stopped.
+// Immediate removal stays refused: only a restart proves every worker
+// descendant stopped (reboot-required removal: `worker-removal.ts`).
 import { installInFlight, reconcileManagedModelProfile } from "./hermes-bridge.ts";
 import {
   applyPropertyPack,
   hermesAgentDir,
+  hermesHome,
   isInsideHermesHome,
   propertyProfileDir,
 } from "./hermes-pack.ts";
 import { clearHermesVersionCache, hermesStatus, type HermesStatus } from "./hermes-status.ts";
 import { repairDocumentDeps } from "./hermes-document-deps.ts";
 import { workerLaunchesHeld, WORKERS_HELD } from "./worker-network-sandbox.ts";
+import { RUNTIME_DAMAGED, type verifyRuntime } from "./hermes-runtime-check.ts";
+import { assertNoRemovalPending } from "./hermes-runtime-selection.ts";
 
 /** Repair the owned profile without downgrading/reinstalling a shared CLI.
  * Null means no CLI exists and the normal first-install flow may continue. */
-export async function repairExistingProfile(opts?: { root?: string; cli?: string; documentDeps?: typeof repairDocumentDeps }): Promise<HermesStatus | null> {
+export async function repairExistingProfile(opts?: { root?: string; cli?: string; documentDeps?: typeof repairDocumentDeps; verifyRuntime?: typeof verifyRuntime }): Promise<HermesStatus | null> {
   if (installInFlight()) throw Object.assign(new Error("an install is already running"), { status: 409 });
+  assertNoRemovalPending(hermesHome(opts?.root));
   clearHermesVersionCache();
-  const status = await hermesStatus(opts);
+  // Repair re-checks the runtime's source and connection in full.
+  const status = await hermesStatus({ ...opts, integrity: "force" });
   if (!status.cli.installed) return null;
+  if (status.runtimeIntegrity === "damaged") throw Object.assign(new Error(RUNTIME_DAMAGED), { status: 409, code: "worker_runtime_damaged" });
   if (!status.cli.compatible) throw Object.assign(new Error(`${status.detail} Your separate Hermes installation has been kept.`), { status: 409 });
   if (installInFlight()) throw Object.assign(new Error("an install is already running"), { status: 409 });
   applyPropertyPack(opts?.root);
@@ -25,7 +32,7 @@ export async function repairExistingProfile(opts?: { root?: string; cli?: string
   // Adds the reviewed document libraries to RealBud's own runtime. A failure
   // here leaves the repaired profile in place and says what still needs Repair.
   const documents = await (opts?.documentDeps ?? repairDocumentDeps)(opts?.root);
-  const repaired = await hermesStatus(opts);
+  const repaired = await hermesStatus({ ...opts, integrity: "await" });
   return documents ? { ...repaired, detail: `${repaired.detail} ${documents}` } : repaired;
 }
 

@@ -12,11 +12,13 @@ import { HERMES_PIN, HERMES_COMPATIBLE_RELEASES, hermesCli, hermesInstallCommand
 import { approvalsAreManual, hermesHome, MANAGED_MODEL_API_MODE, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
 import type { HandsLast } from "./hands-last.ts";
-import { readRuntimeSelection } from "./hermes-runtime-selection.ts";
+import { readRuntimeSelection, WORKER_HOLD_COPY, workerHold, type WorkerHold } from "./hermes-runtime-selection.ts";
 import { DOCUMENT_TOOLS_UNSUPPORTED, documentToolsStatus, ownedRuntimeHome } from "./hermes-document-deps.ts";
+import { checkRuntimeIntegrity, runtimeIdentity, runtimeIntegrity, RUNTIME_DAMAGED, type RuntimeIntegrity, type verifyRuntime } from "./hermes-runtime-check.ts";
 
 export function workerSetupPending(root?: string): boolean {
-  return !readRuntimeSelection(hermesHome(root)).selected && bootstrapPending(hermesHome(root));
+  try { return !readRuntimeSelection(hermesHome(root)).selected && bootstrapPending(hermesHome(root)); }
+  catch { return false; }
 }
 
 export type VersionProbe = { state: "ok" | "missing" | "timeout" | "error"; text: string | null };
@@ -44,6 +46,11 @@ export interface HermesStatus {
   /** Word, Excel and PDF libraries in RealBud's own runtime. Informational:
    * it never changes `ready` or `detail`. */
   documentTools?: DocumentToolsState;
+  /** Source and connection check of the runtime this process launches. A
+   * damaged runtime reads as not compatible, so Repair stages a replacement. */
+  runtimeIntegrity?: RuntimeIntegrity;
+  /** Nothing may launch: a removal awaits a restart, or the selection needs recovery. */
+  hold?: WorkerHold;
 }
 
 /** `unavailable_here`: no reviewed libraries for this computer, or Bud runs a
@@ -89,6 +96,9 @@ export function modelAccessStatus(root?: string): ModelAccessStatus {
  * Only the digest leaves this function; file contents and keys stay private. */
 export function hermesReadinessFingerprint(version: string, root?: string): string {
   const hash = createHash("sha256").update(version.trim());
+  // The runtime on disk, not only its version: a replaced runtime of the same
+  // version needs its own passing check.
+  hash.update(`\0runtime\0${runtimeIdentity(hermesCli())}`);
   const profile = propertyProfileDir(root);
   let location = profile;
   try { location = realpathSync(profile); } catch { /* Missing profiles remain unready. */ }
@@ -240,16 +250,37 @@ export async function probeHermesVersion(cli: string): Promise<string | null> {
   return (await probeHermesCli(cli)).text;
 }
 
-export async function hermesStatus(opts?: { root?: string; cli?: string; platform?: NodeJS.Platform; probeTimeoutMs?: number; checkDocuments?: typeof documentToolsStatus }): Promise<HermesStatus> {
-  const probe = await probeHermesCli(opts?.cli ?? hermesCli(), opts?.probeTimeoutMs);
-  const versionText = probe.text;
-  const matchesPin = versionText != null && hermesMatchesPin(versionText);
-  const compatible = versionText != null && hermesIsCompatible(versionText);
-  const version = parseHermesVersion(versionText ?? "").product ?? "supported";
+/** `integrity`: "cached" (status polls) reads the last check and starts one in
+ * the background; "await" waits for a current result; "force" re-runs it (Repair). */
+export async function hermesStatus(opts?: { root?: string; cli?: string; platform?: NodeJS.Platform; probeTimeoutMs?: number; checkDocuments?: typeof documentToolsStatus;
+  integrity?: "cached" | "await" | "force"; verifyRuntime?: typeof verifyRuntime }): Promise<HermesStatus> {
   const pack = { installed: packInstalled(opts?.root), approvalsManual: approvalsAreManual(opts?.root), workroomReady: propertyWorkroomReady(opts?.root) };
   const modelAccess = modelAccessStatus(opts?.root);
+  const base = {
+    pin: { ...HERMES_PIN }, handsLabel: BUD_HANDS_LABEL, pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
+    installCommand: hermesInstallCommand(opts?.platform ?? process.platform),
+    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
+    modelAccess,
+  };
+  // Held: nothing is probed or launched, and status never throws.
+  const hold = workerHold(hermesHome(opts?.root));
+  if (hold) {
+    return { ...base, cli: { installed: true, versionText: null, matchesPin: false, compatible: false, probeState: "error" },
+      bootstrapPending: false, detail: modelAccess.withdrawn ? modelAccess.detail : WORKER_HOLD_COPY[hold], ready: false, hold, documentTools: "unknown" };
+  }
+  const cli = opts?.cli ?? hermesCli();
+  const probe = await probeHermesCli(cli, opts?.probeTimeoutMs);
+  const versionText = probe.text;
+  const matchesPin = versionText != null && hermesMatchesPin(versionText);
+  const integrityOptions = { cli, root: opts?.root, verify: opts?.verifyRuntime };
+  const runtimeIntegrityState = probe.state !== "ok" ? undefined : opts?.integrity === "await" || opts?.integrity === "force"
+    ? await checkRuntimeIntegrity({ ...integrityOptions, force: opts.integrity === "force" }) : runtimeIntegrity(integrityOptions);
+  const damaged = runtimeIntegrityState === "damaged";
+  const compatible = versionText != null && hermesIsCompatible(versionText) && !damaged;
+  const version = parseHermesVersion(versionText ?? "").product ?? "supported";
   let detail: string;
   if (modelAccess.withdrawn) detail = modelAccess.detail;
+  else if (damaged) detail = RUNTIME_DAMAGED;
   else if (probe.state === "missing") detail = `The worker is not installed. Install the supported v${HERMES_PIN.product} worker, then apply Bud's hands safeguards.`;
   else if (probe.state === "timeout") detail = "The installed worker took too long to report its version. Retry the check; reinstalling is not required by this result.";
   else if (probe.state === "error") detail = "The worker could not report its version. Check that Bud starts, then retry the check.";
@@ -259,13 +290,11 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
   else if (!pack.workroomReady) detail = `Worker ${version} needs the current private workroom policy. Re-apply Bud's hands safeguards.`;
   else detail = `Worker ${version} and Bud's hands are installed. Run the hands test before Recheck or Ask.`;
   return {
-    pin: { ...HERMES_PIN },
-    handsLabel: BUD_HANDS_LABEL,
+    ...base,
     cli: { installed: probe.state !== "missing", versionText, matchesPin, compatible, probeState: probe.state },
-    pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
-    installCommand: hermesInstallCommand(opts?.platform ?? process.platform), bootstrapPending: workerSetupPending(opts?.root),
-    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
-    detail, ready: false, modelAccess, documentTools: documentToolsState(opts),
+    bootstrapPending: workerSetupPending(opts?.root),
+    detail, ready: false, documentTools: documentToolsState(opts),
+    ...(runtimeIntegrityState ? { runtimeIntegrity: runtimeIntegrityState } : {}),
     ...(versionText ? { workerFingerprint: hermesReadinessFingerprint(versionText, opts?.root) } : {}),
   };
 }

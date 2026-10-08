@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,9 @@ import { cancelBootstrapInstall, installInFlight, startBootstrapInstall, waitFor
 import { repairExistingProfile, uninstallWorker, WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
 import type { runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
+import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
+import { runtimeCli } from "./hermes-paths.ts";
+import { releaseHome, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
@@ -266,6 +269,27 @@ describe("repairExistingProfile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     dirs.push(dirname(cli));
     await expect(repairExistingProfile({ root: home, cli })).rejects.toMatchObject({ status: 409 });
     expect(readFileSync(join(profile, "config.yaml"), "utf8")).toBe("keep this unchanged");
+  });
+
+  it.skipIf(process.platform === "win32")("re-checks the selected runtime in full at every Repair and never repairs a damaged one in place", async () => {
+    const home = tempDir("realbud-repair-integrity-");
+    const profile = join(home, "profiles", HERMES_PIN.profile);
+    privateFixtureDirectory(profile);
+    const id = `${HERMES_RECOMMENDED.commit}-aaaaaaaaaaaa`, cli = runtimeCli(releaseHome(home, id));
+    const version = `Hermes Agent v${HERMES_RECOMMENDED.product} (${HERMES_RECOMMENDED.tag.slice(1)})`;
+    mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, `#!/bin/sh\necho '${version}'\n`); chmodSync(cli, 0o755);
+    saveRuntimeSelection(home, { version: 1, selected: id, previous: null });
+    const verify = vi.fn(async () => version);
+    const options = { root: home, cli, verifyRuntime: verify, documentDeps: async () => null };
+    expect(await repairExistingProfile(options)).toMatchObject({ runtimeIntegrity: "ok", cli: { compatible: true } });
+    await repairExistingProfile(options);
+    expect(verify).toHaveBeenCalledTimes(2);
+    const config = readFileSync(join(profile, "config.yaml"), "utf8");
+    writePrivateFixtureFile(join(profile, "config.yaml"), `${config}# fictional office edit\n`);
+    const refuse = vi.fn(async () => { throw new Error("fictional modified source files"); });
+    await expect(repairExistingProfile({ ...options, verifyRuntime: refuse })).rejects.toMatchObject({ status: 409, code: "worker_runtime_damaged" });
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toBe(`${config}# fictional office edit\n`);
+    expect(readFileSync(cli, "utf8")).toContain(version);
   });
 
   it("returns 409 while an install job is running", async () => {

@@ -5,7 +5,7 @@ import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { applyPropertyPack, packInstalled } from "./hermes-pack.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES, type HermesRelease } from "./hermes-releases.ts";
 import { hermesCli } from "./hermes-pin.ts";
-import { adoptFirstRuntime, readRuntimeSelection, releaseHome, runtimeCommit, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
+import { adoptFirstRuntime, assertNoRemovalPending, commitRuntimeSelection, readRuntimeSelection, releaseHome, runtimeCommit } from "./hermes-runtime-selection.ts";
 import { installInFlight, installStatus, startBootstrapInstall, type InstallJob } from "./hermes-bridge.ts";
 import { acquireWorkerSetupLock, bootstrapChildRunning, bootstrapPending, bootstrapPlan, finishWorkerBootstrap, runWorkerBootstrap, BootstrapError } from "./worker-bootstrap.ts";
 import { hermesStatus, type HermesStatus } from "./hermes-status.ts";
@@ -13,6 +13,9 @@ import { repairExistingProfile } from "./hermes-lifecycle.ts";
 import { verifyRuntime } from "./hermes-runtime-check.ts";
 import { ensureProfileDirectory, verifyProfileDirectory } from "./hermes-profile-storage.ts";
 import { privateDirectory, readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { controlPath } from "./worker-control.ts";
+
+const present = (path: string) => { try { lstatSync(path); return true; } catch { return false; } };
 
 type CompletedRuntime = { version: 1; candidateId: string; commit: string; product: string; tag: string; installerSha256: string };
 function completedRuntime(value: unknown): CompletedRuntime | undefined {
@@ -49,7 +52,13 @@ export function discardFailedCandidate(home: string, candidateId: string, lockHo
 }
 
 export function runtimeUpdateStatus(home = hermesHome()) {
-  const selection = readRuntimeSelection(home);
+  let selection: ReturnType<typeof readRuntimeSelection>;
+  // A selection that needs recovery is reported, never thrown into a status read.
+  try { selection = readRuntimeSelection(home); }
+  catch {
+    const customRuntime = Boolean(process.env.REALBUD_HERMES_CLI?.trim());
+    return { recommended: { product: HERMES_RECOMMENDED.product, tag: HERMES_RECOMMENDED.tag }, selected: null, restartRequired: false, canRestorePrevious: false, customRuntime, selectionNeedsRecovery: true };
+  }
   const selected = HERMES_RELEASES.find(r => r.commit === runtimeCommit(selection.selected));
   const owned = runtimeCli(home);
   const selectedCli = selection.selected ? runtimeCli(releaseHome(home, selection.selected)) : existsSync(owned) ? owned : "hermes";
@@ -71,7 +80,8 @@ export function runtimeUpdateStatus(home = hermesHome()) {
  */
 export function recommendedUpdateAwaitingRestart(home = hermesHome()): boolean {
   if (process.env.REALBUD_HERMES_CLI?.trim()) return false;
-  const selection = readRuntimeSelection(home);
+  let selection: ReturnType<typeof readRuntimeSelection>;
+  try { selection = readRuntimeSelection(home); } catch { return false; }
   if (!selection.selected || runtimeCommit(selection.selected) !== HERMES_RECOMMENDED.commit) return false;
   const selectedCli = runtimeCli(releaseHome(home, selection.selected));
   return existsSync(selectedCli) && hermesCli() !== selectedCli;
@@ -100,6 +110,7 @@ export function startRuntimeUpdate(options: {
   if (installInFlight()) throw Object.assign(new Error("Bud setup is already running."), { status: 409 });
   if (process.env.REALBUD_HERMES_CLI?.trim()) throw Object.assign(new Error("This installation uses a custom agent path. Update that installation separately or remove the custom setting first."), { status: 409 });
   const home = options.home ?? hermesHome();
+  assertNoRemovalPending(home);
   const before = readRuntimeSelection(home);
   if (bootstrapChildRunning(home)) throw Object.assign(new Error("An earlier agent setup is still running. Wait for it to stop before starting a new installation."), { status: 409 });
   // Freeze this process's executable before preparing the next launch.
@@ -118,7 +129,10 @@ export function startRuntimeUpdate(options: {
   let candidateId = `${release.commit}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   let candidate = releaseHome(home, candidateId);
   const lockHome = join(home, ".runtime-install");
-  const completedPath = join(lockHome, "completed-runtime.json");
+  // The download receipt lives with RealBud's worker records, outside the
+  // worker home; one written before the move is still honoured.
+  const completedPath = controlPath(home, "completed-runtime");
+  const readCompleted = async () => completedRuntime(await readPrivateJson(completedPath, 2_000) ?? await readPrivateJson(join(lockHome, "completed-runtime.json"), 2_000));
   const installerSha256 = bootstrapPlan(process.platform, release, true)?.sha256;
   if (!installerSha256) throw new BootstrapError("Automatic Bud setup is not available on this computer yet.");
   return startBootstrapInstall({
@@ -131,9 +145,11 @@ export function startRuntimeUpdate(options: {
       try {
         opts.signal.throwIfAborted();
         if (bootstrapChildRunning(lockHome)) throw new BootstrapError("An earlier agent setup is still running. Wait for it to stop before starting a new installation.");
-        const completed = completedRuntime(await readPrivateJson(completedPath, 2_000));
+        const completed = await readCompleted();
+        // A receipt whose folder is gone (the worker was deleted) is history, not a download to reuse.
         if (completed && completed.commit === release.commit && completed.product === release.product && completed.tag === release.tag &&
-          completed.installerSha256 === installerSha256 && completed.candidateId !== before.selected && completed.candidateId !== before.previous) {
+          completed.installerSha256 === installerSha256 && completed.candidateId !== before.selected && completed.candidateId !== before.previous &&
+          present(releaseHome(home, completed.candidateId))) {
           candidateId = completed.candidateId;
           candidate = releaseHome(home, candidateId);
           // Verify existing ownership/privacy, without following a planted
@@ -156,7 +172,7 @@ export function startRuntimeUpdate(options: {
         // (finalize) after writing it, and the next attempt re-verifies a
         // receipted candidate in full. An unreadable receipt keeps the folder.
         let receipted = true;
-        try { receipted = completedRuntime(await readPrivateJson(completedPath, 2_000))?.candidateId === candidateId; } catch {}
+        try { receipted = (await readCompleted())?.candidateId === candidateId; } catch {}
         if (!receipted) discardFailedCandidate(home, candidateId, lockHome, before);
         throw error;
       }
@@ -170,11 +186,12 @@ export function startRuntimeUpdate(options: {
     },
     // Updating an existing profile never reapplies defaults or copies skills.
     onSuccess: () => { if (!packInstalled(home)) applyPropertyPack(home); },
-    commit: () => {
-      const current = readRuntimeSelection(home);
-      if (JSON.stringify(current) !== JSON.stringify(before)) throw new BootstrapError("Another setup changed the selected agent. Your current selection is kept; retry the update.");
+    commit: async () => {
       finishWorkerBootstrap(lockHome);
-      saveRuntimeSelection(home, { version: 1, selected: candidateId, previous: before.selected, previousAvailable: !options.firstInstall });
+      // Awaited inside the installer lock; the selection is compared inside the write.
+      try {
+        await commitRuntimeSelection(home, { version: 1, selected: candidateId, previous: before.selected, previousAvailable: !options.firstInstall }, "selected", before);
+      } catch (error) { throw new BootstrapError(error instanceof Error && /changed the selected agent/.test(error.message) ? error.message : "Bud’s runtime selection could not be saved. Your current selection is kept; retry the update."); }
       if (options.firstInstall) adoptFirstRuntime(home);
     },
   });
@@ -205,17 +222,22 @@ export async function installOrRepairWorker(options: {
 } = {}): Promise<WorkerInstallOutcome> {
   if (installInFlight()) return { kind: "running", install: installStatus() };
   const home = options.home ?? hermesHome();
-  const current = await (options.status ?? hermesStatus)();
+  assertNoRemovalPending(home);
+  // Repair checks the running runtime's source and connection afresh.
+  const current = await (options.status ?? (() => hermesStatus({ integrity: "force" })))();
+  const damaged = current.runtimeIntegrity === "damaged";
   // Adopt at once only when no usable worker runs: the resolved one is
   // missing, or RealBud never selected its own and the one found is not
   // compatible. Otherwise the private runtime waits for the next restart.
   const compatibleCli = current.cli.compatible ?? current.cli.matchesPin;
-  const firstInstall = () => current.cli.probeState === "missing" || (readRuntimeSelection(home).selected === null && !compatibleCli);
+  // A damaged runtime is kept on disk but nothing usable runs on it, so its
+  // verified replacement is adopted at once and never offered as a rollback.
+  const firstInstall = () => damaged || current.cli.probeState === "missing" || (readRuntimeSelection(home).selected === null && !compatibleCli);
   const start = () => startRuntimeUpdate({ home, run: options.run, verify: options.verify, repair: true, firstInstall: firstInstall() });
   if (current.cli.installed && !(current.cli.compatible ?? current.cli.matchesPin)) {
     // The supported runtime is already installed for the next launch.
     // Another download would end in the same state, so say what finishes it.
-    if (recommendedUpdateAwaitingRestart(home)) return { kind: "awaiting_restart" };
+    if (!damaged && recommendedUpdateAwaitingRestart(home)) return { kind: "awaiting_restart" };
     // A personal or newer Hermes installation is never downgraded by
     // Repair. Prepare an independent supported runtime instead.
     return { kind: "started", install: start() };
@@ -228,7 +250,8 @@ export async function installOrRepairWorker(options: {
   return { kind: "started", install: start() };
 }
 
-export function restorePreviousRuntime(home = hermesHome()) {
+export async function restorePreviousRuntime(home = hermesHome()) {
+  assertNoRemovalPending(home);
   if (installInFlight()) throw Object.assign(new Error("Wait for agent setup to finish or stop it first."), { status: 409 });
   if (process.env.REALBUD_HERMES_CLI?.trim()) throw Object.assign(new Error("This installation uses a custom agent path. Manage that installation separately."), { status: 409 });
   const lockHome = join(home, ".runtime-install");
@@ -239,7 +262,7 @@ export function restorePreviousRuntime(home = hermesHome()) {
     if (!selected.previousAvailable) throw Object.assign(new Error("No previous runtime selection is available."), { status: 409 });
     if (selected.previous && !existsSync(runtimeCli(releaseHome(home, selected.previous)))) throw Object.assign(new Error("The previous agent is missing. The current selection has been kept."), { status: 409 });
     hermesCli();
-    saveRuntimeSelection(home, { version: 1, selected: selected.previous, previous: selected.selected, previousAvailable: true });
+    await commitRuntimeSelection(home, { version: 1, selected: selected.previous, previous: selected.selected, previousAvailable: true }, "restored", selected);
     return { restartRequired: true };
   } finally { release(); }
 }
