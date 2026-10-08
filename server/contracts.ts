@@ -143,6 +143,10 @@ export interface SendTurnInput {
   system?: string;
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
+    /** Host-selected workroom for fixed read-only Ask reads (server/workroom-read-broker.ts);
+     * never a worker-supplied root. `scope` binds warm runtime reuse to one member;
+     * `active` answers whether that member may still read. */
+    workroom?: { root: string; scope: string; active(): boolean };
     /** Host-only proposal capability. The opaque scope binds warm runtime reuse;
      * only a private MCP descriptor is serialized to the Hermes worker. */
     memoryProposals?: {

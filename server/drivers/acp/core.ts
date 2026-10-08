@@ -59,6 +59,7 @@ import { WORKFLOW_SETTINGS_SERVER, startWorkflowSettingsBroker } from "../../wor
 import { BANK_SOURCE_SERVER, startBankSourceBroker } from "../../bank-source-broker.ts";
 import { DECIDE_SERVER, startDecideBroker } from "../../decide-broker.ts";
 import { MCP_CONNECTORS_SERVER, startMcpConnectorBroker } from "../../mcp-connector-broker.ts";
+import { WORKROOM_SERVER, startWorkroomReadBroker } from "../../workroom-read-broker.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
 import { HERMES_MEMORY_APPROVAL, hermesMemoryPermission } from "./hermes-memory-approval.ts";
 import { productTurnWrapUp } from "../../product-mode.ts";
@@ -385,6 +386,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const acpMcpServers = (turn: SendTurnInput): AcpMcpServer[] => {
         const servers: AcpMcpServer[] = [];
+        const workroom = turn.integrations?.workroom;
+        if (DRIVER_KIND === "hermesAgent" && workroom) {
+          if (typeof workroom.root !== "string" || !workroom.root || typeof workroom.scope !== "string" || !workroom.scope || workroom.scope.length > 4096 ||
+            typeof workroom.active !== "function") throw new Error("Bud's workroom is unavailable. Start a new request.");
+          servers.push({ type: "http", name: WORKROOM_SERVER, url: "http://127.0.0.1/realbud-workroom", headers: [] });
+        }
         if (DRIVER_KIND === "hermesAgent" && turn.integrations?.memoryProposals) {
           const capability = turn.integrations.memoryProposals;
           if (typeof capability.scope !== "string" || !capability.scope || capability.scope.length > 4096 || typeof capability.propose !== "function") {
@@ -483,8 +490,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       };
 
       const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"], memoryScope?: string,
-        hermiosCrm?: NonNullable<SendTurnInput["integrations"]>["hermiosCrm"]) =>
+        hermiosCrm?: NonNullable<SendTurnInput["integrations"]>["hermiosCrm"], workroom?: NonNullable<SendTurnInput["integrations"]>["workroom"]) =>
         createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers,
+          // A workroom mount is bound to one root and member scope.
+          ...(mcpServers.some(server => server.name === WORKROOM_SERVER) ? { workroomRoot: workroom?.root, workroomScope: workroom?.scope } : {}),
           ...(mcpServers.some(server => server.name === "memory-proposals") ? { memoryScope } : {}),
           // A CRM mount is bound to one member and one connection generation.
           ...(mcpServers.some(server => server.name === HERMIOS_CRM_SERVER) ? { hermiosScope: hermiosCrm?.scope, hermiosGeneration: hermiosCrm?.generation } : {}),
@@ -555,6 +564,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let bankBroker: LoopbackToolServer | undefined;
         let decideBroker: LoopbackToolServer | undefined;
         let connectorsBroker: LoopbackToolServer | undefined;
+        let workroomBroker: LoopbackToolServer | undefined;
         const brokerMounts: Array<() => void> = [];
         // The CRM mount is pinned to the first turn's member scope and generation;
         // a later turn on this warm process may use it only while both still match.
@@ -563,6 +573,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const actingTurn = () => {
           const run = current;
           return !closed && run && !run.settled && !run.cancellationRequested && run.promptSent ? run : undefined;
+        };
+        // The workroom mount is pinned to the first turn's root and member scope;
+        // a later turn may read only while both match and the host says it is active.
+        const workroomMount = DRIVER_KIND === "hermesAgent" && firstTurn.integrations?.workroom
+          ? { root: firstTurn.integrations.workroom.root, scope: firstTurn.integrations.workroom.scope } : undefined;
+        const workroomTurnId = () => {
+          const run = actingTurn(), integration = run?.turn.integrations?.workroom;
+          return workroomMount && integration && integration.root === workroomMount.root && integration.scope === workroomMount.scope &&
+            integration.active() ? run!.turnId : null;
         };
         const currentCrmAccess = () => {
           const integration = actingTurn()?.turn.integrations?.hermiosCrm;
@@ -624,6 +643,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           bankBroker?.close();
           decideBroker?.close();
           connectorsBroker?.close();
+          workroomBroker?.close();
           for (const release of brokerMounts.splice(0)) release();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
@@ -678,6 +698,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           bankBroker?.cancelPending();
           decideBroker?.cancelPending();
           connectorsBroker?.cancelPending();
+          workroomBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
           if (run.wrapUpTimer) clearTimeout(run.wrapUpTimer);
           run.wrapUpTimer = null;
@@ -1050,6 +1071,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
         const reviewOnce = (summary: string, signal: AbortSignal, card?: ApprovalCardDetails) => reviewAnswer(summary, signal, card).then(answer => answer.allowed);
         const ready = (async () => {
+          if (workroomMount && mcpServers.some(server => server.name === WORKROOM_SERVER)) {
+            // Fixed read-only workroom reads; no card. Entitlement is checked before and after each read.
+            workroomBroker = await startWorkroomReadBroker({ root: workroomMount.root, turnId: workroomTurnId,
+              assertCapability: () => managedService.assertCapability("reasoning") });
+            if (closed) { workroomBroker.close(); throw new Error("Bud’s workroom read session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === WORKROOM_SERVER ? workroomBroker!.descriptor : server);
+          }
           if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {
             memoryBroker = await startMemoryProposalBroker({
               isActive: () => Boolean(currentMemoryIntegration()),
@@ -1418,6 +1446,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           bankBroker?.cancelPending();
           decideBroker?.cancelPending();
           connectorsBroker?.cancelPending();
+          workroomBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
@@ -1499,7 +1528,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const mcpServers = acpMcpServers(turn);
         if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER || server.name === DESKTOP_SERVER)) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
-        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm);
+        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm, turn.integrations?.workroom);
         let runtime = warm.get(threadId);
         // A rewind or poisoned-session recovery deliberately clears the
         // persisted cursor. Do not let the warm-process optimization undo
