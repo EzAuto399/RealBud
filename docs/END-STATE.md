@@ -1,5 +1,7 @@
 # RealBud end state
 
+UX dead ends, 8 October: [Recovery in place: pattern and sweep](UX-DEAD-ENDS-2026-10-08.md). Owner hit a link page at the 5-computer cap with no way to disconnect; the sweep found about 50 related dead ends across the desktop app and realbud.app. The rule now sits in `.claude/rules/ui.md`, `.claude/rules/website.md` and the CLAUDE.md lessons; Kevin-path fixes are in progress. Source sweep only.
+
 Kevin's visit, 9 October: [Kevin's PC setup runbook](KEVIN-VISIT-2026-10-09.md): owner steps before leaving, on-site Gmail, Redbark and remote-help steps, auto-update behaviour, and 8 October evidence. Bud's session search is fixed on Mac and the unpinned tirith download is off (in 0.1.43). Gmail and Redbark live connects still need owner sign-ins.
 
 Latest continuation, 8 October (round 2): [Jev, Luna and desktop-app tasks](JEV-DESKTOP-2026-10-08.md), merged after 0.1.40: desktop-app tasks with a fence and Jev/Luna control picks, mail loop labels instead of hiding, every AI call in per-run cost. Local tests only; Modelvia Luna route, live eval and full QA pending.
