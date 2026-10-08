@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPOSIO_OAUTH_REDIRECT_URI, composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE, LEGACY_GMAIL_AUTH_CONFIG_NAME, managedAuthConfigName, oauthAppsFromEnv, oauthProviderFor, ownAuthConfigName } from './composio-auth-config.ts';
+import { COMPOSIO_OAUTH_REDIRECT_URI, composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE, keyAuthConfigName, LEGACY_GMAIL_AUTH_CONFIG_NAME, managedAuthConfigName, oauthAppsFromEnv, oauthProviderFor, ownAuthConfigName } from './composio-auth-config.ts';
 // Composio's managed Gmail default scope set as it reads back (fictional id).
 const MANAGED_DEFAULT_SCOPES = ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/contacts.readonly', 'https://www.googleapis.com/auth/contacts.other.readonly', 'https://mail.google.com/'];
 const config = (changes: Record<string, unknown> = {}) => ({ id: 'ac_test', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', ...changes });
@@ -187,4 +187,49 @@ test('toolkits map to one provider; unknown and prototype names map to none', ()
   for (const slug of ['gmail', 'googlecalendar', 'googledrive', 'googlesheets', 'googledocs', 'googlemeet']) assert.equal(oauthProviderFor(slug), 'google');
   for (const slug of ['outlook', 'one_drive', 'microsoft_teams', 'share_point']) assert.equal(oauthProviderFor(slug), 'microsoft');
   for (const slug of ['xero', 'slack', 'constructor', 'toString', '__proto__']) assert.equal(oauthProviderFor(slug), undefined);
+});
+
+const keyDetail = (mode: string, configRequired: unknown[] = []) => ({ mode, fields: { auth_config_creation: { required: configRequired }, connected_account_initiation: { required: [{ name: 'generic_api_key', is_secret: true }] } } });
+test('toolkitAuth: managed sign-in first, else a key scheme the person completes on Composio\'s page', async () => {
+  const cases: [Record<string, unknown> | null, string | null][] = [
+    [{ composio_managed_auth_schemes: ['OAUTH2'], auth_config_details: [keyDetail('API_KEY')] }, 'managed'],
+    [{ composio_managed_auth_schemes: [], auth_config_details: [keyDetail('BEARER_TOKEN'), keyDetail('API_KEY')] }, 'API_KEY'],
+    [{ composio_managed_auth_schemes: [], auth_config_details: [keyDetail('BEARER_TOKEN')] }, 'BEARER_TOKEN'],
+    // Config-level fields (a client secret, a base URL) are RealBud's to supply: refused.
+    [{ composio_managed_auth_schemes: [], auth_config_details: [keyDetail('API_KEY', [{ name: 'base_url' }])] }, null],
+    // Password sign-in and OAuth without Composio's app are not key schemes.
+    [{ composio_managed_auth_schemes: [], auth_config_details: [keyDetail('BASIC'), keyDetail('OAUTH2')] }, null],
+    [{ composio_managed_auth_schemes: [] }, null],
+    // A missing or malformed field list fails closed.
+    [{ composio_managed_auth_schemes: [], auth_config_details: [{ mode: 'API_KEY' }, { mode: 'API_KEY', fields: { auth_config_creation: {} } }] }, null],
+    [{ no_auth: true, composio_managed_auth_schemes: ['OAUTH2'] }, null],
+    [null, null],
+  ];
+  for (const [body, want] of cases) {
+    const client = composioAuthConfigClient({ fetch: async () => body ? Response.json({ slug: 'perplexityai', ...body }) : new Response('', { status: 404 }) });
+    assert.equal(await client.toolkitAuth!({ slug: 'perplexityai', projectKey: args.projectKey }), want, JSON.stringify(body));
+  }
+});
+test('a key config is created with empty credentials under its own name, then read back before returning', async () => {
+  let created = false; const posts: unknown[] = [];
+  const key = (changes: Record<string, unknown> = {}) => ({ id: 'ac_key', name: keyAuthConfigName('perplexityai'), toolkit: { slug: 'perplexityai' }, auth_scheme: 'API_KEY', is_composio_managed: false, status: 'ENABLED', ...changes });
+  const client = composioAuthConfigClient({ fetch: async (_url, init) => {
+    if (init.method === 'POST') { created = true; posts.push(JSON.parse(init.body as string)); return Response.json({ auth_config: { id: 'ac_key' } }, { status: 201 }); }
+    return Response.json({ items: created ? [key()] : [], next_cursor: null });
+  } });
+  assert.equal(await client.resolveAuthConfig!({ slug: 'perplexityai', ...args, keyScheme: 'API_KEY' }), 'ac_key');
+  assert.deepEqual(posts, [{ toolkit: { slug: 'perplexityai' }, auth_config: { type: 'use_custom_auth', authScheme: 'API_KEY', name: 'realbud-perplexityai-key-v1', credentials: {} } }]);
+  // A held create reconciles by find only, without being told the scheme.
+  assert.equal(await client.resolveAuthConfig!({ slug: 'perplexityai', ...args, allowCreate: false }), 'ac_key');
+  // A key-named config that is managed, OAuth, Basic or disabled fails closed.
+  for (const changes of [{ is_composio_managed: true }, { auth_scheme: 'OAUTH2' }, { auth_scheme: 'BASIC' }, { status: 'DISABLED' }, { toolkit: { slug: 'slack' } }]) {
+    const bad = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [key(changes)] }); } });
+    await assert.rejects(bad.resolveAuthConfig!({ slug: 'perplexityai', ...args, keyScheme: 'API_KEY' }), /connector_auth_config_not_admitted/);
+  }
+  // Gmail never takes the key path.
+  const gmail = composioAuthConfigClient({ fetch: async (_url, init) => { assert.equal(init.method, 'GET'); return Response.json({ items: [key({ name: 'realbud-gmail-key-v1', toolkit: { slug: 'gmail' } })] }); } });
+  await assert.rejects(gmail.resolveAuthConfig!({ slug: 'gmail', ...args, allowCreate: false, keyScheme: 'API_KEY' }), /connector_auth_config_create_unconfirmed/);
+  // A toolkit on RealBud's own OAuth client never takes a key config, before any call.
+  const own = composioAuthConfigClient({ fetch: async () => { throw new Error('no call expected'); }, oauthApps: () => ({ clientId: 'fictional-id', clientSecret: 'fictional-secret' }) });
+  await assert.rejects(own.resolveAuthConfig!({ slug: 'googlesheets', ...args, keyScheme: 'API_KEY' }), /connector_app_unavailable/);
 });

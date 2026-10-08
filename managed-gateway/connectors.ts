@@ -13,7 +13,7 @@ import type { UsageLedger } from './ledger.ts';
 import { authorizeGmailReadOnly, createGmailReadOnlyTransport, getGmailReadOnlyAccess, scanGmailReadOnly, readGmailPdfAttachment, type GmailReadOnlyBinding } from '../server/composio-gmail.ts';
 import { parseMailScanRequest } from '../shared/mail-ingestion.ts';
 import { parseSourceAttachmentRequest } from '../shared/source-attachments.ts';
-import { TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
+import { TOOLKIT_SLUG, type ComposioAuthConfigClient, type KeyScheme } from './composio-auth-config.ts';
 import { composioAppAdapter, type AppAccount, type AppBinding, type AppTool, type ComposioAppAdapter } from './composio-apps.ts';
 import { classifyAppToolCall } from '../shared/app-tool-policy.ts';
 import { serialized } from './serialized.ts';
@@ -294,7 +294,7 @@ export class ManagedConnectors {
   }
   /**
    * Admit `app` for this device's office and device, on the person's own ask.
-   * Serialized per (office, app): the office's Composio-managed auth config is
+   * Serialized per (office, app): the office's Composio-managed (or person-key) auth config is
    * found or created once in the office's own project, under the office's own
    * key; then the device's registry allowlist gains the app. Another office's
    * project, key or config is never consulted. Gmail is never re-admitted here:
@@ -304,18 +304,24 @@ export class ManagedConnectors {
     requireThat(app !== 'gmail' && APP.test(app), 'connector_app_not_admitted', 403);
     const { authConfigs, admitApp } = this.options;
     // Without admission composed, only provisioned apps exist: the old refusal.
-    requireThat(authConfigs?.resolveAuthConfig && authConfigs.toolkitSupportsManagedAuth && admitApp, 'connector_app_not_admitted', 403);
+    requireThat(authConfigs?.resolveAuthConfig && authConfigs.toolkitAuth && admitApp, 'connector_app_not_admitted', 403);
     const projectKey = this.projectKey(device);
     const company = device.companyId, now = () => this.options.ledger.now();
     await serialized(`connector-app:${company}:${app}`, async () => {
       const office = this.officeApp(company, app);
       if (office?.state === 'ready') return;
-      if (!office) requireThat(await authConfigs!.toolkitSupportsManagedAuth!({ slug: app, projectKey }), 'connector_app_unavailable', 404);
+      // Composio-managed sign-in first; else a key the person types on Composio's own page.
+      let keyScheme: KeyScheme | undefined;
+      if (!office) {
+        const auth = await authConfigs!.toolkitAuth!({ slug: app, projectKey });
+        requireThat(auth, 'connector_app_unavailable', 404);
+        if (auth !== 'managed') keyScheme = auth;
+      }
       current();
       // A pending row is an earlier create whose outcome nobody saw: find only.
       let authConfigId: string;
       try {
-        authConfigId = await authConfigs!.resolveAuthConfig!({ slug: app, projectKey, allowCreate: !office, beforeCreate: () => {
+        authConfigId = await authConfigs!.resolveAuthConfig!({ slug: app, projectKey, allowCreate: !office, keyScheme, beforeCreate: () => {
           this.options.ledger.db.transaction(() => {
             this.options.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,created) VALUES(?,?,?,?)', company, app, 'pending', now());
             this.options.ledger.db.append(company, 'connector_app_config_requested', null, now(), { app, deviceId: device.id });

@@ -140,6 +140,13 @@ function payloadText(pending: Pending): string {
   return [pending.detail, pending.held, pending.allowKey, pending.message.card?.title].filter(Boolean).join("\n");
 }
 
+// Bud's scripts get a network sandbox on macOS only (server/drivers/acp/hermes.ts
+// `networkSandbox`); owner, 8 Oct: keep them on Windows and say so on the card.
+const SCRIPT_TOOLS = new Set(["shell", "bash", "terminal", "execute_code"]);
+export function scriptNetworkNote(tool: string, platform: string | undefined): string | null {
+  return platform === "win32" && SCRIPT_TOOLS.has(tool.toLowerCase()) ? "On Windows, scripts Bud runs can reach the internet." : null;
+}
+
 function legacyLabel(tool: string): string {
   const nice: Record<string, string> = {
     Bash: "Command approval requested",
@@ -178,6 +185,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
     ? approvalHeadline(pending.tool, payloadText(pending), knownAddresses)
     : legacyLabel(pending.tool);
   const isSubmit = !isMemory && pending.fence?.surface === "portal-submit";
+  const networkNote = scriptNetworkNote(pending.tool, typeof window !== "undefined" ? window.ogb?.platform : undefined);
   return (
     <div className={cn("rounded-t-2xl border-b px-4 py-3", productAsk ? "border-line bg-sheet" : "border-hairline/50 bg-raised/40")}>
       <div className="flex flex-wrap items-center gap-2">
@@ -209,6 +217,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         </pre>
       )}
       {isMemory ? null : <ExactRequest text={pending.exactRequest} />}
+      {networkNote && <p className="mt-2 text-[12.5px] text-hold">{networkNote}</p>}
       {isSubmit ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}

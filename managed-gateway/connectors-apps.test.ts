@@ -21,19 +21,21 @@ function setup() {
   const admitted: { deviceId: string; app: string }[] = [];
   const admitApp = (deviceId: string, app: string) => { admitted.push({ deviceId, app }); devices = devices.map(d => d.id === deviceId && !d.apps!.includes(app) ? { ...d, apps: [...d.apps!, app] } : d); };
   // Composio auth-config surface keyed by project key: each office sees only its own configs.
-  const configs = new Map<string, Record<string, unknown>[]>(); let creates = 0; const toolkitLookups: string[] = [];
+  const configs = new Map<string, Record<string, unknown>[]>(); let creates = 0; const toolkitLookups: string[] = []; const createBodies: unknown[] = [];
   let createDelay = 0; let refuseLink = 0;
   const authConfigs = composioAuthConfigClient({ fetch: async (url, init) => {
     const key = new Headers(init.headers).get('x-api-key')!; assert.ok(key.startsWith('ak_fictional_office_')); assert.equal(new Headers(init.headers).get('x-org-api-key'), null);
     const u = new URL(url);
     const toolkit = /\/toolkits\/([^/]+)$/.exec(u.pathname)?.[1];
-    if (toolkit) { toolkitLookups.push(`${key}:${toolkit}`); return toolkit === 'nosuchapp' ? new Response('', { status: 404 }) : Response.json({ slug: toolkit, composio_managed_auth_schemes: toolkit === 'apikeyonly' ? [] : ['OAUTH2'] }); }
+    if (toolkit) { toolkitLookups.push(`${key}:${toolkit}`); return toolkit === 'nosuchapp' ? new Response('', { status: 404 }) : Response.json({ slug: toolkit, composio_managed_auth_schemes: ['apikeyonly', 'keyapp'].includes(toolkit) ? [] : ['OAUTH2'],
+      ...(toolkit === 'keyapp' ? { auth_config_details: [{ mode: 'API_KEY', fields: { auth_config_creation: { required: [] }, connected_account_initiation: { required: [{ name: 'generic_api_key' }] } } }] } : {}) }); }
     assert.ok(u.pathname.endsWith('/auth_configs'));
     if (init.method === 'POST') {
       if (createDelay) await new Promise(r => setTimeout(r, createDelay));
-      const body = JSON.parse(init.body as string) as { toolkit: { slug: string }; auth_config: { name: string } };
-      const id = `ac_${body.toolkit.slug}_${++creates}`;
-      configs.set(key, [...(configs.get(key) ?? []), { id, name: body.auth_config.name, toolkit: { slug: body.toolkit.slug }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }]);
+      const body = JSON.parse(init.body as string) as { toolkit: { slug: string }; auth_config: { name: string; type: string; authScheme?: string; credentials?: unknown } };
+      const id = `ac_${body.toolkit.slug}_${++creates}`; createBodies.push(body);
+      const custom = body.auth_config.type === 'use_custom_auth';
+      configs.set(key, [...(configs.get(key) ?? []), { id, name: body.auth_config.name, toolkit: { slug: body.toolkit.slug }, auth_scheme: custom ? body.auth_config.authScheme : 'OAUTH2', is_composio_managed: !custom, status: 'ENABLED' }]);
       return Response.json({ auth_config: { id } }, { status: 201 });
     }
     const slug = u.searchParams.get('toolkit_slug');
@@ -57,7 +59,7 @@ function setup() {
     access: async () => { gmailCalls++; return { checkedAt: new Date(f.now()).toISOString(), services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } }; },
     authConfigs, admitApp, apps, ...overrides });
   const request = (token: string, path: string, body?: unknown, session?: string) => ({ token, profile: 'property', method: body === undefined ? 'GET' : 'POST', path, body, session, signal: new AbortController().signal });
-  return { f, a, b, make, request, devices: () => devices, set: (next: ConnectorDevice[]) => { devices = next; }, admitted, bindings, accounts, authConfigs, creates: () => creates, toolkitLookups, gmailCalls: () => gmailCalls, setCreateDelay: (ms: number) => { createDelay = ms; }, refuseLink: (status: number) => { refuseLink = status; } };
+  return { f, a, b, make, request, createBodies, devices: () => devices, set: (next: ConnectorDevice[]) => { devices = next; }, admitted, bindings, accounts, authConfigs, creates: () => creates, toolkitLookups, gmailCalls: () => gmailCalls, setCreateDelay: (ms: number) => { createDelay = ms; }, refuseLink: (status: number) => { refuseLink = status; } };
 }
 
 test('"connect xero" admits the app on demand into its own office project, then links the installation user', async () => {
@@ -129,10 +131,26 @@ test('an unknown toolkit, one without managed auth, a bad slug and Gmail itself 
   } finally { s.f.close(); }
 });
 
+test('an API-key app is admitted with a key config and the same hosted link; RealBud never holds the key', async () => {
+  const s = setup(); try {
+    const broker = s.make();
+    const reply = await broker.handle(s.request(s.a.token, '/v1/connectors/authorize', { app: 'keyapp' }));
+    assert.deepEqual(reply.body, { url: 'https://connect.composio.dev/link/fictional' });
+    assert.deepEqual(s.toolkitLookups, ['ak_fictional_office_a:keyapp']);
+    // The config holds no secret: the person types the key on Composio's page.
+    assert.deepEqual(s.createBodies, [{ toolkit: { slug: 'keyapp' }, auth_config: { type: 'use_custom_auth', authScheme: 'API_KEY', name: 'realbud-keyapp-key-v1', credentials: {} } }]);
+    assert.equal(s.bindings.find(b => b.op === 'authorize')!.binding.authConfigId, 'ac_keyapp_1');
+    assert.deepEqual(s.admitted, [{ deviceId: 'install-a', app: 'keyapp' }]);
+    // Office B's computer reuses nothing of office A's.
+    await broker.handle(s.request(s.b.token, '/v1/connectors/authorize', { app: 'keyapp' }));
+    assert.equal(s.creates(), 2); assert.deepEqual(s.toolkitLookups, ['ak_fictional_office_a:keyapp', 'ak_fictional_office_b:keyapp']);
+  } finally { s.f.close(); }
+});
+
 test('an uncertain config create is held for the office and never repeated', async () => {
   const s = setup(); try {
     let posts = 0;
-    const flaky: ComposioAuthConfigClient = { ...s.authConfigs, resolveGmail: s.authConfigs.resolveGmail, toolkitSupportsManagedAuth: async () => true,
+    const flaky: ComposioAuthConfigClient = { ...s.authConfigs, resolveGmail: s.authConfigs.resolveGmail, toolkitAuth: async () => 'managed' as const,
       async resolveAuthConfig(o) { if (o.allowCreate) { o.beforeCreate(); posts++; } throw Object.assign(new Error('connector_auth_config_create_unconfirmed'), { code: 'connector_auth_config_create_unconfirmed' }); } };
     const broker = s.make({ authConfigs: flaky });
     await assert.rejects(() => broker.handle(s.request(s.a.token, '/v1/connectors/authorize', { app: 'xero' })));
@@ -274,7 +292,7 @@ test('a definitive refusal clears the journaled intent (config or link); an unce
   const s = setup(); try {
     // Config create refused outright: the pending row is removed and the next ask may create again.
     let allowCreates: boolean[] = [];
-    const refusing: ComposioAuthConfigClient = { resolveGmail: s.authConfigs.resolveGmail, toolkitSupportsManagedAuth: async () => true,
+    const refusing: ComposioAuthConfigClient = { resolveGmail: s.authConfigs.resolveGmail, toolkitAuth: async () => 'managed' as const,
       async resolveAuthConfig(o) { allowCreates.push(o.allowCreate); if (o.allowCreate) o.beforeCreate(); throw new GatewayError('connector_auth_config_rejected', 400); } };
     await assert.rejects(() => s.make({ authConfigs: refusing }).handle(s.request(s.a.token, '/v1/connectors/authorize', { app: 'xero' })), /connector_auth_config_rejected/);
     assert.equal(s.f.ledger.db.get('SELECT state FROM connector_office_apps WHERE company=? AND app=?', s.f.tenant.companyId, 'xero'), undefined);
