@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
+import { ArrowDownToLine, Building2, CalendarDays, MessageSquare, SlidersHorizontal } from "lucide-react";
 import { useWorkspaceTabs } from '@/lib/workspace-tabs';
 import '@/workspace-tabs.css';
 import '@/sidebar-utilities.css';
@@ -16,56 +16,22 @@ function macDoorKeys(): boolean {
   return /mac/i.test(uaData?.platform ?? navigator.platform);
 }
 
+// Updates check and download by themselves in the background; the rail shows
+// nothing until a new version is on disk, then one "Restart to update" button.
 function UpdateButton() {
   const s = useUpdaterState();
-  const [checkedAt, setCheckedAt] = useState(0);
   const updater = window.ogb?.updater;
-  const upToDate = Boolean(checkedAt) && (!s || s.status === "idle") && Date.now() - checkedAt < 3000;
-  useEffect(() => {
-    if (!upToDate) return;
-    const timer = setTimeout(() => setCheckedAt(0), 3000);
-    return () => clearTimeout(timer);
-  }, [upToDate]);
-  if (!updater) return null;
-
-  const status = s?.status ?? "idle";
-  const working = status === "checking" || status === "downloading";
-  const label =
-    status === "available"
-      ? `Version ${s?.version ?? ""} available — download`
-      : status === "downloading"
-        ? `Downloading… ${Math.round(s?.percent ?? 0)}%`
-        : status === "downloaded"
-          ? `Version ${s?.version ?? ""} ready — restart to update`
-          : status === "checking"
-            ? "Checking for updates…"
-            : upToDate
-              ? "You're up to date"
-              : "Check for updates";
-
+  if (!updater || s?.status !== "downloaded") return null;
+  const label = s.message ?? `Version ${s.version ?? ""} ready — restart to update`;
   return (
     <button
-      onClick={() => {
-        if (status === "downloaded") return void updater.install();
-        if (status === "available") return void updater.download();
-        setCheckedAt(Date.now());
-        void updater.check();
-      }}
-      disabled={working}
+      onClick={() => void updater.install()}
       title={label}
       aria-label={label}
-      className="relative rounded-md p-2 text-accent hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency disabled:opacity-60"
+      className="relative rounded-md p-2 text-accent hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency"
     >
-      {working ? (
-        <Loader2 size={18} className="animate-spin" />
-      ) : upToDate ? (
-        <Check size={18} />
-      ) : status === "available" ? (
-        <ArrowDownToLine size={18} />
-      ) : (
-        <RefreshCw size={18} />
-      )}
-      {status === "downloaded" && <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-accent" />}
+      <ArrowDownToLine size={18} />
+      <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-accent" />
     </button>
   );
 }

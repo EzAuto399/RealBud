@@ -1,6 +1,6 @@
-// In-app auto-updater (electron-updater), manual/button-driven — the same
-// shape t3code's desktop app uses: autoDownload off, quitAndInstall on the
-// user's "Restart to update" click. One state object is broadcast to the
+// In-app auto-updater (electron-updater): checks and downloads by itself in
+// the background; the only thing staff see is "Restart to update" once a new
+// version is on disk, and quitAndInstall waits for that click. One state object is broadcast to the
 // renderer on every transition; the renderer just renders it.
 //
 // Only runs in the packaged, signed+notarized app (mac auto-update requires
@@ -120,7 +120,7 @@ export function startUpdater(mainWindow) {
     setState({ status: "error", message: "updater unavailable" });
     return;
   }
-  autoUpdater.autoDownload = false; // button-driven download
+  autoUpdater.autoDownload = true; // fetch a new version as soon as a check finds it
   autoUpdater.autoInstallOnAppQuit = false; // button-driven install
   autoUpdater.logger = null;
 

@@ -25,6 +25,11 @@ describe('UpdateBanner', () => {
     expect(html).not.toMatch(/Hermes|MCP|broker|service_busy/i);
   });
 
+  it('stays out of the way while an update is found and downloaded in the background', () => {
+    expect(render({ status: 'available', version: '0.2.0' })).toBe('');
+    expect(render({ status: 'downloading', version: '0.2.0', percent: 40 })).toBe('');
+  });
+
   it('asks for a restart when nothing holds the update', () => {
     const html = render({ status: 'downloaded', version: '0.2.0' });
     expect(html).toContain('Restart to finish updating.');

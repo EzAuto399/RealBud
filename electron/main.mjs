@@ -319,7 +319,7 @@ function createWindow({ untilServiceDecided = pendingLaunchDecision } = {}) {
     // macOS keeps inset traffic lights, Windows keeps its custom overlay,
     // and Linux uses the native desktop title bar and window controls.
     ...(isMac
-      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } }
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 12, y: 16 } }
       : process.platform === "win32"
         ? {
             titleBarStyle: "hidden",
