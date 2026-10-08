@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Loop, LoopRun } from "@/lib/routines";
 import { buildScheduleRows } from "@/lib/schedule-rows";
+import { stageState, type FixtureStage } from "../setup-stages.fixture";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 
@@ -120,20 +121,53 @@ describe("job drawer", () => {
   });
 
   it("holds switching on with the host's reason and its fix, instead of a switch the host would refuse", () => {
-    const blocker = { status: "Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.", actionLabel: "Open Agency workflow setup" };
-    const html = detail({ blocker });
+    const switchGate = { on: false, reason: "Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.", actionLabel: "Open Agency workflow setup", target: "schedule-agency" as const };
+    const html = detail({ switchGate });
     const tag = buttonTag(html, "Switch on");
     expect(tag).toContain('disabled=""');
     const described = /aria-describedby="([^"]+)"/.exec(tag)?.[1];
     expect(described).toBeTruthy();
-    expect(html).toContain(`<p id="${described}" class="text-[13px] text-hold">${blocker.status}</p>`);
+    expect(html).toContain(`<p id="${described}" class="text-[13px] text-hold">${switchGate.reason}</p>`);
     expect(html).toContain(">Open Agency workflow setup</button>");
     // Once on, the reason no longer holds Pause.
-    const on = detail({ blocker, loop: loop({ enabled: true }) });
+    const on = detail({ switchGate, loop: loop({ enabled: true }) });
     expect(buttonTag(on, "Pause")).not.toContain('disabled=""');
-    expect(on).not.toContain(blocker.status);
-    // A pack need without its own action still names the reason.
-    expect(detail({ blocker: { status: "Before Weekly bills review: Sign in to REI." } })).toContain("Before Weekly bills review: Sign in to REI.");
+    expect(on).not.toContain(switchGate.reason);
+  });
+
+  it("reads setup's gates at each stage: link first, then the pack's own need, then an REI sign-out for the work that reads REI", () => {
+    const gated = (stage: FixtureStage, id: Loop["id"] = "rei-supplier-check", name = "REI supplier check") => {
+      const { gates } = stageState(stage);
+      return detail({ loop: loop({ id, name }), switchGate: gates.switchOn(id), runGate: gates.runNow(id) });
+    };
+    // Stage 0, an unlinked computer: connect first, with the link-code fix and the owner request, never "Finish Bud's installation".
+    const unlinked = gated(0);
+    expect(buttonTag(unlinked, "Switch on")).toContain('disabled=""');
+    expect(buttonTag(unlinked, "Run now")).toContain('disabled=""');
+    expect(unlinked).toContain("Connect this computer to your office first.");
+    expect(unlinked).toContain(">Enter link code</button>");
+    expect(unlinked).toContain('aria-label="Copy request for your owner"');
+    expect(unlinked).not.toContain("Finish Bud");
+    // One sentence when both are held for the same reason.
+    expect(unlinked.match(/Connect this computer to your office first\./g)).toHaveLength(1);
+    // Stage 1, Bud still setting itself up: its progress is the fix.
+    const installing = gated(1);
+    expect(buttonTag(installing, "Switch on")).toContain('disabled=""');
+    expect(installing).toContain("Bud is setting itself up — step 2 of 4");
+    expect(installing).toContain(">See progress</button>");
+    // Stage 3, REI never signed in: the pack's own need for this workflow holds its switch.
+    const rei = gated(3);
+    expect(buttonTag(rei, "Switch on")).toContain('disabled=""');
+    expect(rei).toContain("Before REI supplier check: In Bills, Maintenance checks, choose Refresh from REI to save the supplier list.");
+    // Mail work in the same pack is not held by REI.
+    expect(buttonTag(gated(3, "weekly-bills", "Weekly bills"), "Switch on")).not.toContain('disabled=""');
+    // Ready, then signed out of REI: only the run that reads REI waits, with REI's own sign-in as the fix.
+    expect(buttonTag(gated("ready"), "Switch on")).not.toContain('disabled=""');
+    const signedOut = detail({ loop: loop({ id: "rei-supplier-check", name: "REI supplier check", enabled: true }), runGate: stageState("reiSignedOut").gates.runNow("rei-supplier-check") });
+    expect(buttonTag(signedOut, "Run now")).toContain('disabled=""');
+    expect(signedOut).toContain("REI signed you out. Sign in so Bud can read REI today.");
+    expect(signedOut).toContain(">Sign in to REI</button>");
+    expect(buttonTag(signedOut, "Pause")).not.toContain('disabled=""');
   });
 
   it("keeps Pause/Resume focusable while its change is saving, so keyboard focus is not dropped", () => {

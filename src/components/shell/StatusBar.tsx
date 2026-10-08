@@ -8,15 +8,44 @@ import type { ShellBrowser } from "./shell-status";
 import { useOfficeLinkStatus } from "@/lib/use-office-link";
 import { startReiSignIn, useReiSignIn } from "@/lib/rei-sign-in";
 import { fmtDateTime } from "@/lib/au";
+import { SETUP_STEP_COUNT, type SetupDegradedKind, type SetupJumpTarget, type SetupState } from "@/lib/setup-sequence";
+import { useSetupState } from "@/lib/use-setup-state";
+import { openSetupTarget } from "../SetupGateNote";
 
 const dot = { agency: "bg-agency", hold: "bg-hold", muted: "bg-ink-muted", danger: "bg-danger" } as const;
+
+const DEGRADED_LABEL: Record<SetupDegradedKind, string> = {
+  revoked: "Office access stopped",
+  officeInactive: "Office account inactive",
+  restartRequired: "Restart to finish Bud’s update",
+  aiLimit: "AI allowance used",
+  modelKey: "AI key problem",
+  gmail: "Gmail needs attention",
+  reiExpired: "REI: sign in needed",
+  updatePending: "Update ready",
+};
+
+/** The one setup item: the most serious degraded state, else "Setup N of 5 · <next>", else nothing once ready.
+ *  The full sentence is its title; the target is its fix (an owner-only fix opens the Website account card). */
+export function setupStatusItem(setup: Pick<SetupState, "stage" | "degraded" | "steps" | "next">): { label: string; title: string; target?: SetupJumpTarget } | null {
+  const issue = setup.degraded;
+  // A waiting update is only news; it never hides setup progress.
+  if (issue && (issue.kind !== "updatePending" || setup.stage === "ready")) {
+    const target = issue.target ?? (issue.ownerRequest ? "you-website" : undefined);
+    return { label: DEGRADED_LABEL[issue.kind], title: issue.message, ...(target ? { target } : {}) };
+  }
+  if (setup.stage === "ready") return null;
+  const step = setup.next ?? setup.steps.find((item) => item.state !== "done");
+  return step ? { label: `Setup ${step.number} of ${SETUP_STEP_COUNT} · ${step.title}`, title: step.status, target: step.target } : null;
+}
 
 /** Slim facts across the bottom. Stale, sample or unreported facts say so; nothing
  *  here is presented as live unless it is. Each fact with somewhere to go opens it;
  *  connection state is only a fact, except "not connected", which opens its fix.
  *  Hidden below 960px. */
 export function StatusBar({ browser, stopping, stopError, onStop, budget }: { browser: ShellBrowser; stopping: boolean; stopError: string; onStop: () => void; budget: UsageBudget | null }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshHermes } = useStore();
+  const setupItem = setupStatusItem(useSetupState());
   // Re-read relative times each minute so "checked 5 min ago" does not freeze.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
@@ -53,10 +82,14 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
   return (
     <footer className="rb-status-bar" aria-label="Status bar">
       {/* Not linked, or an inactive office: the Website account card explains and fixes it. */}
-      {state.connected && (link === "not-linked" || (link === "linked" && officeInactive)) ? (
+      {/* The setup item names the fix; the connection then stays a plain fact. */}
+      {setupItem && state.connected ? (setupItem.target
+        ? <button type="button" className="rb-status-item rb-status-link" title={setupItem.title} onClick={() => void openSetupTarget(setupItem.target!, dispatch, refreshHermes)}><span className={cn("rb-status-dot", dot.hold)} aria-hidden />{setupItem.label}</button>
+        : <span className="rb-status-item" title={setupItem.title}><span className={cn("rb-status-dot", dot.hold)} aria-hidden />{setupItem.label}</span>) : null}
+      {state.connected && !setupItem && (link === "not-linked" || (link === "linked" && officeInactive)) ? (
         <button type="button" className="rb-status-item rb-status-link" title={officeInactive ? "Open Website account" : "Reconnect this computer in Workspace"} onClick={openWebsite}><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</button>
       ) : <span className="rb-status-item"><span className={cn("rb-status-dot", connection.tone)} aria-hidden />{connection.label}</span>}
-      {rei?.used ? (rei.state === "signed_in"
+      {rei?.used && setupItem?.target !== "rei-sign-in" ? (rei.state === "signed_in"
         ? <span className="rb-status-item" title={rei.at ? `Seen signed in ${fmtDateTime(rei.at)}` : undefined}><span className={cn("rb-status-dot", dot.agency)} aria-hidden />REI: signed in</span>
         : <button type="button" className="rb-status-item rb-status-link" title="Open REI’s sign-in page in the work browser" onClick={() => void startReiSignIn()}>
           <span className={cn("rb-status-dot", rei.state === "needed" ? dot.hold : dot.muted)} aria-hidden />{reiOpening ? "REI: opening sign-in…" : rei.state === "needed" ? "REI: sign in needed" : "REI: not checked yet"}

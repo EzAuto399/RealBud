@@ -26,6 +26,7 @@ const temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud austin pack QA ')
 const data = join(temp, 'data'), output = resolve(process.env.QA_OUTPUT || join(root, 'outputs/austin-pack-2026-10-05'));
 mkdirSync(data, { mode: 0o700 }); mkdirSync(output, { recursive: true });
 const checks = [], errors = [], wait = ms => new Promise(r => setTimeout(r, ms));
+const until = async (check, label) => { for (let i = 0; i < 150; i++) { if (await check().catch(() => false)) return; await wait(100); } throw new Error(`Timed out: ${label}`); };
 const pass = text => { checks.push(text); console.log(`PASS ${text}`); };
 // Name, Off text with its Brisbane time, in pack order.
 const SIX = [
@@ -62,6 +63,9 @@ try {
   await primeBrowserSession(context, base, token);
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  // Schedule's switches follow setup's gates: a fictional linked office and a ready Bud (route replies, not a real link or worker).
+  await context.route('**/api/office-link', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'linked', label: 'Fictional Accounts computer', agencyLabel: 'Fictional Harbour Agency', lastReportedAt: '2026-10-08T00:00:00.000Z' }) }));
+  await context.route('**/api/hermes', async route => { const response = await route.fetch(); const body = await response.json(); delete body.autoSetup; await route.fulfill({ response, json: { ...body, ready: true, restartRequired: false } }); });
   page = await context.newPage(); page.setDefaultTimeout(20_000); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/schedule');
   await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
@@ -120,7 +124,8 @@ try {
   await card.getByText('0 of 6 on.', { exact: false }).waitFor();
   let cardText = (await card.innerText()).replace(/\s+/g, ' ');
   assert.match(cardText, /3\. Import your office’s pack · Done/, cardText);
-  assert.doesNotMatch(cardText, /4\. Connect the office Gmail · Done/, cardText);
+  // Step 4 was "Connect the office Gmail"; it is now "Connect what your workflows read". Accept both.
+  assert.doesNotMatch(cardText, /4\. (?:Connect the office Gmail|Connect what your workflows read) · Done/, cardText);
   assert.equal(await page.getByRole('region', { name: 'Get started', exact: true }).count(), 1);
   await page.screenshot({ path: join(output, '04-desk-get-started.png') });
   pass('Desk shows one Get started card: the imported pack is Done, Gmail is not, and the workflows step reads 0 of 6 on');
@@ -137,8 +142,17 @@ try {
   const about = drawer.getByRole('region', { name: 'What this job does' });
   await about.getByText('Property manager: senders Gmail could not verify', { exact: false }).waitFor();
   await about.getByText('Not yet: REI supplier list saved', { exact: false }).waitFor();
+  // Setup holds the switch, in place, until the supplier list it reads is saved.
+  const switchOn = drawer.getByRole('button', { name: /^(Resume|Switch on)$/ });
+  assert.ok(await switchOn.isDisabled(), 'Switch on waits for the supplier list');
+  await drawer.getByText('Before Maintenance checks: In Bills, Maintenance checks, choose Refresh from REI to save the supplier list.', { exact: true }).waitFor();
   await page.screenshot({ path: join(output, '06-w4-review.png') });
-  await drawer.getByRole('button', { name: /^(Resume|Switch on)$/ }).click();
+  await page.getByRole('button', { name: 'Close Maintenance checks', exact: true }).click();
+  await request('/api/supplier-directory/import', 'POST', { csv: 'Reference,Description,Email\nFIC-PLUMB,Fictional Plumbing,accounts@fictional-plumbing.example', expectedRevision: 0 });
+  await page.reload(); await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Open job: Maintenance checks', exact: true }).click();
+  await until(() => switchOn.isEnabled(), 'Switch on once the supplier list is saved');
+  await switchOn.click();
   const on = await (async () => { for (let i = 0; i < 100; i++) { const loop = (await request('/api/loops')).loops.find(l => l.id === 'maintenance-review'); if (loop.enabled && loop.nextRunAt) return loop; await wait(100); } throw new Error('W4 did not turn on'); })();
   const expected = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Brisbane', hour: '2-digit', minute: '2-digit', hour12: false }).format(on.nextRunAt);
   assert.equal(expected, '08:30');
@@ -190,7 +204,8 @@ finally {
   writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure,
     layer: 'Actual local HTTP app + built UI from source; fictional empty office; not live Gmail/Redbark/REI, packaged, Windows or customer proof', checks, errors,
     limits: ['No Gmail, Redbark or REI connection exists here, so every connection item stays open; their done states are unit-tested (server/austin-pack.test.ts).',
-      'This computer is never linked, so Get started keeps "Enter link code" as its current action; its "Review <next workflow>" and "Open Agency workflow setup" buttons are unit-tested (src/lib/setup-sequence.test.ts), and the agency link is followed here by its hash, not clicked.',
+      'The office link and Bud readiness are fictional route replies (linked, ready), so Schedule switches follow setup gates as on a set-up computer; no real link or worker. Get started\'s "Review <next workflow>" and "Open Agency workflow setup" buttons are unit-tested (src/lib/setup-sequence.test.ts), and the agency link is followed here by its hash, not clicked.',
+      'The supplier list Maintenance checks reads is imported through the service API (a fictional two-line CSV) after the held Switch on is checked.',
       'Weekly bills is never switched on here: that needs a verified Gmail, a reviewed agency setup and an approved plan. The import-to-switch-on chain is a service test (server/customer-pack-roles.test.ts).',
       'The REI "signed in once" record comes from a finished REI sign-in handover; this run performs none.',
       'Fictional data; Mac browser rendering only; no packaged build, Windows or customer acceptance.'],

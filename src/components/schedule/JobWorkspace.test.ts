@@ -7,6 +7,7 @@ import { api } from "@/state/store";
 import { JobWorkspace, timingIssue } from "./JobWorkspace";
 import { PortalJobActions } from "./PortalJobActions";
 import { JobRunFeed } from "../desk/JobRunFeed";
+import { SetupGateNote } from "../SetupGateNote";
 
 const fixture = vi.hoisted(() => ({ cursor: 0, values: [] as unknown[], preview: null as string | null,
   state: { connected: true, jobDraftBusy: false, jobDraft: null as unknown as JobDraftState, jobRuns: [] as JobRun[], desk: null, config: null, serviceAdmin: null, hermes: null, scheduleRecovery: { active: false, detail: "" } },
@@ -19,6 +20,10 @@ vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: fixtur
 const access = vi.hoisted(() => ({ admin: true, link: "linked" as string | undefined, availability: vi.fn((..._args: unknown[]) => ({ ready: true })) }));
 vi.mock("@/lib/use-service-admin-access", () => ({ useServiceAdminAccess: () => access.admin }));
 vi.mock("@/lib/use-office-link", () => ({ useOfficeLinkRead: () => access.link }));
+vi.mock("@/lib/use-setup-state", async () => {
+  const { stageState } = await import("../setup-stages.fixture");
+  return { useSetupState: () => stageState(access.link === "not-linked" ? 0 : "ready") };
+});
 vi.mock("@/lib/bud-setup", () => ({ budAvailability: access.availability, budFacingCopy: (value: unknown, fallback: string) => value instanceof Error ? value.message : fallback }));
 vi.mock("@/lib/design-preview", () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
 vi.mock("../desk/JobRunFeed", () => ({ JobRunFeed: () => null }));
@@ -135,6 +140,21 @@ describe("Bud availability on a job", () => {
     access.admin = false; access.link = "not-linked";
     view();
     expect(access.availability).toHaveBeenLastCalledWith(null, true, false, { canAdminister: false, officeLink: "not-linked" });
+  });
+
+  it("holds trying and resuming on an unlinked computer with setup's reason and the link-code fix, not Bud's installation", () => {
+    access.link = "not-linked";
+    access.availability.mockReturnValue({ ready: false, detail: "Finish Bud's installation before starting work.", action: "Set up Bud" } as never);
+    try {
+      const note = elements(view()).find(node => node.type === SetupGateNote);
+      expect(note?.props.gate).toMatchObject({ on: false, reason: "Connect this computer to your office first.", actionLabel: "Enter link code", target: "you-website-code", ownerRequest: "linkCode" });
+      expect(text(view())).not.toContain("Finish Bud");
+      expect(button("Approve and try once").props.disabled).toBe(true);
+      fixture.state.jobDraft = { text: plan.description, plan: { ...approved(), status: "paused" }, fields: jobPlanFields(approved()), saved: true }; fixture.recipes = [{ ...approved(), status: "paused" }];
+      expect(button("Resume job").props.disabled).toBe(true);
+    } finally {
+      access.link = "linked"; access.availability.mockReturnValue({ ready: true });
+    }
   });
 });
 

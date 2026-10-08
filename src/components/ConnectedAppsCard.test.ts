@@ -9,7 +9,10 @@ const fixture = vi.hoisted(() => ({ snapshot: null as ConnectedAppsStatus | null
   budReady: true, bots: [{ id: 'bud', busy: false }] as { id: string; busy: boolean }[], configured: true, link: 'linked' as string | undefined }));
 vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
 vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: { composio: { managed: true } }, bots: fixture.bots, connected: true, hermes: { ready: fixture.budReady } }, dispatch: fixture.dispatch }) }));
-vi.mock('@/lib/use-office-link', () => ({ useOfficeLinkRead: () => fixture.link }));
+vi.mock('@/lib/use-setup-state', async () => {
+  const { stageState } = await import('./setup-stages.fixture');
+  return { useSetupState: () => stageState(fixture.link === 'not-linked' ? 0 : fixture.budReady ? 'ready' : 1) };
+});
 vi.mock('@/lib/connected-apps-refresh', () => ({ officeSources: { refresh: vi.fn() }, useOfficeSources: () => ({ snapshot: fixture.snapshot, loading: false, error: '' }) }));
 vi.mock('./GmailReadOnlySetup', () => ({ connectedAppsMode: () => 'consumer', selectedConnectedAppsConfigured: () => fixture.configured, useConnectionSettingsPending: () => false, hasUnconfirmedGmailSettingsChange: () => false }));
 import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile } from './ConnectedAppsCard';
@@ -27,19 +30,24 @@ it('sends an unlinked computer to connect to its office first, not to a service 
   fixture.configured = false; fixture.link = 'not-linked';
   const markup = html();
   expect(markup).toContain('Connect this computer to your office first.');
-  expect(markup).toContain('>Connect this computer</button>');
+  expect(markup).toContain('>Enter link code</button>');
+  expect(markup).toContain('aria-label="Copy request for your owner"');
   expect(markup).not.toContain('service administrator');
   // A linked computer that still lacks connections keeps the administrator sentence.
   fixture.link = 'linked';
   expect(html()).toContain('Your service administrator needs to activate connections on this computer.');
 });
-it('holds Connect with its reason until Bud is set up, and offers Bud setup', () => {
+it('holds Connect at stage 1 with setup’s reason and Bud’s progress as the fix', () => {
   fixture.budReady = false;
   const connect = appControls().find(element => element.props['aria-label'] === 'Find Google Sheets connection')!;
   expect(connect.props.disabled).toBe(true);
   const markup = html();
-  expect(markup).toContain('Connecting apps is available once Bud is set up.');
-  expect(markup).toContain('>See Bud setup</button>');
+  expect(markup).toContain('Bud is setting itself up — step 2 of 4');
+  expect(markup).toContain('>See progress</button>');
+  // Ready: Connect acts, and no setup sentence is shown.
+  fixture.budReady = true;
+  expect(appControls().find(element => element.props['aria-label'] === 'Find Google Sheets connection')!.props.disabled).toBe(false);
+  expect(html()).not.toContain('Bud is setting itself up');
 });
 it('offers Open Work when Bud is not on this desk yet', () => {
   fixture.bots = [];

@@ -28,6 +28,8 @@ import { PortalJobActions } from "./PortalJobActions";
 import { routineRunsForActivity, type WorkActivity } from "@/lib/work-activity";
 import type { LoopRun } from "@/lib/routines";
 import { budAvailability, budFacingCopy } from "@/lib/bud-setup";
+import { useSetupState } from "@/lib/use-setup-state";
+import { SetupGateNote } from "../SetupGateNote";
 import { useOfficeLinkRead } from "@/lib/use-office-link";
 import { canUseTaskStarter } from "@/lib/pm-task-starters";
 import { PmTaskStarters } from "../PmTaskStarters";
@@ -118,6 +120,11 @@ export function JobWorkspace({
   // Staff on an unlinked computer are told to connect it, as Work tells them.
   const officeLink = useOfficeLinkRead(state.connected && !canAdminister);
   const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, officeLink });
+  // Setup's own gates come first: link, Bud, AI access, each with its fix.
+  const { gates } = useSetupState();
+  const runGate = gates.runNow(plan?.id ?? "");
+  const switchGate = gates.switchOn(plan?.id ?? "");
+  const workReady = availability.ready && runGate.on;
   // Recovery holds every change until the saved schedule is trustworthy again.
   const blocked = !state.connected || Boolean(state.desk?.recovery?.active) || Boolean(state.scheduleRecovery?.active) || loading || Boolean(loadError);
   const dirty = Boolean(plan && fields && (!draft.saved || jobPlanChanged(plan, fields)));
@@ -231,7 +238,7 @@ export function JobWorkspace({
 
   const build = () =>
     perform("Building your plan…", async () => {
-      if (!availability.ready) return;
+      if (!workReady) return;
       const shaped = (await api(
         "/api/recipes/draft",
         { method: "POST", body: JSON.stringify({ text: draft.text.trim() }) },
@@ -319,7 +326,7 @@ export function JobWorkspace({
   const executeRun = async (plan: Recipe, mode: "run" | "prepare") => {
       const receiptMode = mode === "run" ? "shadow" : "prepare";
       const checking = pendingRequests[receiptMode];
-      if (!plan || dirty || stale || (!checking && (running || !availability.ready))) return;
+      if (!plan || dirty || stale || (!checking && (running || !workReady))) return;
       const scope = { id: plan.id, revision: plan.revision, mode: receiptMode } as const;
       let requestId: string;
       if (checking) {
@@ -372,7 +379,7 @@ export function JobWorkspace({
     });
 
   const approveAndTry = () => perform("Approving this job and starting one try…", async () => {
-    if (!plan || dirty || stale || running || !availability.ready) return;
+    if (!plan || dirty || stale || running || !workReady) return;
     let approvedRecipes: Recipe[] = [];
     const approved = await approveSingleTry(plan, async patch => {
       const body = await api(`/api/recipes/${plan.id}`, { method: "PATCH", body: JSON.stringify(patch) }, { timeoutMs: 15_000 });
@@ -516,7 +523,9 @@ export function JobWorkspace({
         ) : null}
 
         {DESIGN_PREVIEW_REASON ? <p role="status" className="mb-4 rounded border border-line bg-selected p-3 text-[14px] text-ink">{DESIGN_PREVIEW_REASON} You can describe a job and explore examples here. Suggestions, approvals and runs are available in the RealBud app.</p> : null}
-        {!DESIGN_PREVIEW_REASON && !availability.ready && state.connected ? (
+        {!DESIGN_PREVIEW_REASON && !runGate.on && state.connected ? (
+          <SetupGateNote gate={runGate} className="mb-4 border-l-2 border-hold pl-3" suffix={!blocked ? " You can write and save the steps yourself." : ""} />
+        ) : !DESIGN_PREVIEW_REASON && !availability.ready && state.connected ? (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-l-2 border-hold pl-3">
             <p role="status" className="max-w-xl text-[14px] text-hold">{availability.detail}{!blocked ? " You can write and save the steps yourself." : ""}</p>
             {availability.action ? (
@@ -569,7 +578,7 @@ export function JobWorkspace({
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={busy || blocked || Boolean(DESIGN_PREVIEW_REASON) || !availability.ready || !draft.text.trim()}
+                disabled={busy || blocked || Boolean(DESIGN_PREVIEW_REASON) || !workReady || !draft.text.trim()}
                 onClick={() => void build()}
                 className={primaryClass}
               >
@@ -584,7 +593,7 @@ export function JobWorkspace({
                 }} className={buttonClass}>Clear description</button>
               ) : null}
             </div>
-            <details className="mt-3" open={!availability.ready}>
+            <details className="mt-3" open={!workReady}>
               <summary className="cursor-pointer text-[13px] text-ink-muted">Write a plan yourself</summary>
               <p className="mt-2 text-[13px] text-ink-muted">Useful if you already have the steps, or Bud is not connected.</p>
               <button type="button" disabled={busy || blocked} onClick={writePlan} className={`${buttonClass} mt-2`}>
@@ -744,15 +753,15 @@ export function JobWorkspace({
                 {pendingRequests.prepare ? <button type="button" className={primaryClass} disabled={actionBlocked} onClick={() => void run("prepare")}>Check previous run</button>
                   : pendingRequests.shadow ? <button type="button" className={primaryClass} disabled={actionBlocked} onClick={() => void run("run")}>Check walkthrough result</button>
                   : running ? <button type="button" className={primaryClass} onClick={() => showSection("job-plan-results")}>View progress</button>
-                  : !portal && recipeNeedsPlanApproval(plan) ? <button type="button" className={primaryClass} disabled={actionBlocked || (!plan.schedule && !availability.ready)} onClick={() => void (plan.schedule ? approve() : approveAndTry())}>
+                  : !portal && recipeNeedsPlanApproval(plan) ? <button type="button" className={primaryClass} disabled={actionBlocked || (plan.schedule ? !switchGate.on : !workReady)} onClick={() => void (plan.schedule ? approve() : approveAndTry())}>
                     <CheckCircle2 size={16} />{plan.schedule ? "Approve repeat schedule" : "Approve and try once"}
                   </button>
-                  : !portal && plan.status === "paused" ? <button type="button" className={primaryClass} disabled={actionBlocked} onClick={() => void togglePaused()}>Resume job</button>
+                  : !portal && plan.status === "paused" ? <button type="button" className={primaryClass} disabled={actionBlocked || !switchGate.on} onClick={() => void togglePaused()}>Resume job</button>
                   : !portal && trial ? <>
                     <button type="button" className={primaryClass} onClick={() => showSection("job-plan-results")}>Review result</button>
-                    <button type="button" className={buttonClass} disabled={actionBlocked || !availability.ready || !recipeClockRunnable(plan)} onClick={() => void run("prepare")}><Play size={15} />Try again</button>
+                    <button type="button" className={buttonClass} disabled={actionBlocked || !workReady || !recipeClockRunnable(plan)} onClick={() => void run("prepare")}><Play size={15} />Try again</button>
                   </>
-                  : !portal && recipeClockRunnable(plan) ? <button type="button" className={primaryClass} disabled={actionBlocked || !availability.ready} onClick={() => void run("prepare")}><Play size={16} />Try once</button> : null}
+                  : !portal && recipeClockRunnable(plan) ? <button type="button" className={primaryClass} disabled={actionBlocked || !workReady} onClick={() => void run("prepare")}><Play size={16} />Try once</button> : null}
                 {!recipeNeedsPlanApproval(plan) && plan.status === "active" ? <button type="button" disabled={actionBlocked || running} className={buttonClass} onClick={() => void togglePaused()}>Pause job</button> : null}
               </>}
               {running && !portal ? (
@@ -926,7 +935,7 @@ export function JobWorkspace({
             <details className="mt-4 border-t border-line pt-3">
               <summary className="cursor-pointer text-[13px] text-ink-muted">Walk through the steps without using sources</summary>
               <p className="mt-2 text-[13px] text-ink-muted">A walkthrough explains the saved instructions. It does not open sources, verify access or prepare a live result.</p>
-              <button type="button" className={`${buttonClass} mt-2`} disabled={actionBlocked || dirty || (!pendingRequests.shadow && (running || !availability.ready))} onClick={() => void run("run")}>
+              <button type="button" className={`${buttonClass} mt-2`} disabled={actionBlocked || dirty || (!pendingRequests.shadow && (running || !workReady))} onClick={() => void run("run")}>
                 {pendingRequests.shadow ? "Check walkthrough result" : "Preview steps only"}
               </button>
             </details>

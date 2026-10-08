@@ -20,6 +20,8 @@ import { StatusLabel } from "../pm";
 import { BankReferenceReview } from "./BankReferenceReview";
 import { ExecutionHistory } from "./ExecutionHistory";
 import { evaluatorForLoop } from "@shared/workflow-catalog";
+import type { SetupGate } from "@/lib/setup-sequence";
+import { SetupGateNote } from "../SetupGateNote";
 
 export type CloseGuardRegistrar = (guard: () => boolean) => () => void;
 export type LoopTimingChange = { time: string; weekdays: number[]; intervalDays?: number | null; anchorDate?: string };
@@ -331,6 +333,8 @@ export function NewMailSwitch({ loopId, initial }: { loopId: string; initial?: N
   );
 }
 
+const OPEN_GATE: SetupGate = { on: true };
+
 /** Detail for a built-in scheduled job (not a saved plan). */
 export function LoopDetail({
   loop,
@@ -354,15 +358,17 @@ export function LoopDetail({
   onOpenDesk,
   registerCloseGuard,
   about,
-  blocker,
+  switchGate = OPEN_GATE,
+  runGate = OPEN_GATE,
 }: {
   loop: Loop;
   /** What the job does, from an installed pack (AustinPlanDetail). */
   about?: ReactNode;
-  /** What the host still requires before this job may switch on (`nextBlocker`
-   * in src/lib/setup-sequence.ts). Switching on is held, with this reason, so
-   * the host never has to refuse it. */
-  blocker?: { status: string; actionLabel?: string } | null;
+  /** Setup's gate for switching this job on or resuming it (`gates.switchOn`).
+   * Held with its reason and fix, so the host never has to refuse it. */
+  switchGate?: SetupGate;
+  /** Setup's gate for running this job now (`gates.runNow`). */
+  runGate?: SetupGate;
   /** This job's clock receipts, newest first. */
   runs: readonly LoopRun[];
   /** Shown at the top of the drawer by FlaggedReceipt; not repeated here. */
@@ -400,9 +406,16 @@ export function LoopDetail({
   // Morning priorities adopts the reviewed agency time; it never uses the generic timing change.
   const spec = evaluatorForLoop(loop.id);
   const agencyTimed = spec?.agencyTimed === true;
-  const held = !loop.enabled && blocker ? blocker : null;
+  // Pause is never held; switching on, resuming and running are.
+  const held = !loop.enabled && !switchGate.on ? switchGate : null;
+  // A pending request stays checkable: recovering a lost receipt starts nothing new.
+  const runHeld = !pendingRequest && !runGate.on ? runGate : null;
   const switchLabel = loop.enabled ? "Pause" : switchOnLabel(loop.id, runs);
   const heldId = useId();
+  const runHeldId = useId();
+  // One sentence when both are held for the same reason (link, Bud, AI access).
+  const heldShown = held && !manualOnly && !loop.waitingForPlan ? held : null;
+  const runNote = runHeld && !manualOnly && runHeld.reason !== heldShown?.reason ? runHeld : null;
 
   return (
     <article id={`routine-${loop.id}`} tabIndex={-1} aria-label={`${loop.name} details`} className="space-y-4 outline-none">
@@ -420,7 +433,8 @@ export function LoopDetail({
           type="button"
           key={pendingRequest?.requestId ?? "new-run"}
           onClick={onRun}
-          disabled={controlsDisabled || (!pendingRequest && !loop.enabled && !loop.waitingForPlan && !spec?.runWhileOff) || (!pendingRequest && Boolean(activeRun))}
+          aria-describedby={runHeld ? (runNote ? runHeldId : heldId) : undefined}
+          disabled={controlsDisabled || Boolean(runHeld) || (!pendingRequest && !loop.enabled && !loop.waitingForPlan && !spec?.runWhileOff) || (!pendingRequest && Boolean(activeRun))}
           className="pm-decision inline-flex items-center gap-1.5 rounded-lg bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
         >
           {busy ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden /> : <Play size={13} aria-hidden />}
@@ -447,12 +461,8 @@ export function LoopDetail({
           </button>
         ) : null}
       </div>}
-      {held && !manualOnly && !loop.waitingForPlan ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <p id={heldId} className="text-[13px] text-hold">{held.status}</p>
-          {held.actionLabel ? <button type="button" onClick={onOpenSetup} className="pm-control rounded border border-line px-3 text-[13px] text-ink hover:bg-selected">{held.actionLabel}</button> : null}
-        </div>
-      ) : null}
+      {heldShown ? <SetupGateNote gate={heldShown} id={heldId} /> : null}
+      {runNote ? <SetupGateNote gate={runNote} id={runHeldId} /> : null}
       {progress ? (
         <p role="status" className="text-[13px] text-ink-muted">
           <span className="font-medium text-ink">{progress.label}</span>
