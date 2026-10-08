@@ -67,6 +67,8 @@ describe("Ask mutation session boundary", () => {
     // Reads Modelvia receipts with the office key.
     ["GET", "/api/job-runs/run-1/cost"],
     ["GET", "/api/loop-runs/run-1/cost"],
+    // Pauses a saved job and aborts its running worker.
+    ["POST", "/api/loops/recipe-repeat-fictional/stop"],
   ])("requires the session before %s %s can change work or authority", (method, path) => {
     expect(needsSession(path, method)).toBe(true);
     const req = { url: path, method, headers: { host: "127.0.0.1:8799" } } as unknown as IncomingMessage;

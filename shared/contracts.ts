@@ -62,7 +62,8 @@ export type WorkState =
 
 export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage" | "weekly-bills" | "bank-references" | "maintenance-review" | "rei-supplier-check" | "rei-morning-refresh" | "inspection-draft" | `recipe-${string}`;
 
-export type LoopSchedule = { type: "daily"; time: string; weekdays: number[]; timezone?: string; intervalDays?: number; anchorDate?: string; monthly?: "first-weekday" };
+/** `everyMinutes` repeats from `time` up to `until` (exclusive, default end of day) on `weekdays` (shared/routine-clock.ts). */
+export type LoopSchedule = { type: "daily"; time: string; weekdays: number[]; timezone?: string; intervalDays?: number; anchorDate?: string; monthly?: "first-weekday"; everyMinutes?: number; until?: string };
 
 export type LoopRunStatus =
   | "queued"
@@ -447,6 +448,10 @@ export const JOB_CAPABILITIES = [
   "portal-read",
   "portal-prefill",
   "portal-submit",
+  /** A prepare run reads the newest saved collection of the reviewed Gmail, inline as untrusted lines
+   * (server/job-executor.ts); such a job gets no file tools and opens no portal (server/recipes.ts).
+   * Published packs may not grant it. */
+  "read-mail",
 ] as const;
 export type JobCapability = (typeof JOB_CAPABILITIES)[number];
 
@@ -473,8 +478,9 @@ export interface Recipe {
   siteNotes?: string | null;
   status: RecipeStatus;
   createdAt: number;
-  /** RealBud clock; null means the job stays manual until a cadence is taught. */
-  schedule: { time: string; weekdays: number[] } | null;
+  /** RealBud clock; null means the job stays manual until a cadence is taught.
+   * `everyMinutes` repeats from `time` up to `until` on `weekdays`, as in LoopSchedule. */
+  schedule: { time: string; weekdays: number[]; everyMinutes?: number; until?: string } | null;
   /** Set once when a person approves the plan. Missing on disk loads as null. */
   planApprovedAt: number | null;
   /** Monotonic job-plan version. Runs carry a full immutable snapshot too. */

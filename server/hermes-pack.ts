@@ -112,6 +112,8 @@ const LEGACY_SHIPPED: Readonly<Record<string, readonly string[]>> = {
     "1aee1058db6dec321da6791c5575f86799f58748321b2fad80f17c4e5a7b7c44",
     // Neutral SOUL before Bud could propose a workflow's new time (2026-10-08).
     "e7991443b5d1bc198277b04845090ca13dccf0d617df4758fce79e8d024faa04",
+    // SOUL before Bud could propose a repeat at any cadence (2026-10-09).
+    "bdf197d5b8d38db7a45f63e558ee992977779c8090f19463fcbe0568decb0586",
   ],
   "skills/morning-arrears/SKILL.md": ["f52e1dc7954e750eada6b35d97e367c3c9a2bb5488947694968c53447e8ba1df"],
 };

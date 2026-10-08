@@ -21,14 +21,15 @@ import type { LoopbackToolServer } from "./web-research-broker.ts";
 import { createApprovalSettings } from "./approval-settings.ts";
 import { APPROVAL_DENIED, APPROVAL_TIMED_OUT } from "./approval-answer.ts";
 import { defaultApprovalSettings, type ApprovalSettings } from "../shared/approval-settings.ts";
-import { APPROVAL_POLICY_CONFLICT, bindApprovalPolicy, bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings } from "./workflow-settings-broker.ts";
+import { APPROVAL_POLICY_CONFLICT, bindApprovalPolicy, bindRepeatJobs, bindWorkflowSettings, clockLabel, dateRanges, friendly, LOOP_SCHEDULE_CONFLICT, scheduleWords, SETTINGS_CONFLICT, startWorkflowSettingsBroker, type BudWorkflowSettings, type RepeatJobs } from "./workflow-settings-broker.ts";
+import { getRecipe, listRecipes, patchRecipe, saveRecipe } from "./recipes.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } }));
 
 const directories: string[] = [], managers: LoopManager[] = [];
 const cleanUp = async () => { managers.splice(0).forEach(manager => manager.close()); await Promise.all(directories.splice(0).map(path => removeFixture(path))); };
-async function stores(listRecipes?: LoopManagerOptions["listRecipes"], approvals?: Parameters<typeof bindWorkflowSettings>[0]["approvals"]) {
+async function stores(listRecipes?: LoopManagerOptions["listRecipes"], approvals?: Parameters<typeof bindWorkflowSettings>[0]["approvals"], repeats?: (loops: LoopManager) => RepeatJobs) {
   const directory = privateTempRoot(join(tmpdir(), "realbud-bud-settings-")); directories.push(directory);
   const maintenance = createMaintenanceReviewStore({ file: join(directory, "maintenance-review.json"), now: () => 5_000 });
   const inspection = createInspectionRulesStore({ file: join(directory, "inspection-rules.json"), now: () => 5_000 });
@@ -38,7 +39,8 @@ async function stores(listRecipes?: LoopManagerOptions["listRecipes"], approvals
     execute: async () => ({ ok: true, detail: "Fictional run." }) });
   managers.push(loops);
   let refusal: string | null = null;
-  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, loops, writable: () => refusal, approvals });
+  const settings: BudWorkflowSettings = bindWorkflowSettings({ maintenance, inspection, agency: { read: agencyService.getConfiguration, save: agencySaves }, loops, writable: () => refusal, approvals,
+    ...(repeats ? { repeats: repeats(loops) } : {}) });
   return { maintenance, inspection, agencyService, agencySaves, loops, settings, loop: (id: string) => loops.listLoops().find(row => row.id === id)!, refuse: (value: string | null) => { refusal = value; } };
 }
 
@@ -65,6 +67,9 @@ describe("review card wording", () => {
     expect(scheduleWords({ time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe("Every day 8:00 am");
     expect(scheduleWords({ time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], intervalDays: 2, anchorDate: "2026-10-02" })).toBe("Every 2 days from 2 Oct 2026, 8:00 am");
     expect(scheduleWords({ time: "09:00", weekdays: [1, 2, 3, 4, 5], monthly: "first-weekday" })).toBe("First weekday of each month, 9:00 am");
+    expect(scheduleWords({ time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" })).toBe("Every 2 minutes, 9:00 am–5:00 pm, weekdays");
+    expect(scheduleWords({ time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], everyMinutes: 120 })).toBe("Every 2 hours, from 8:00 am, every day");
+    expect(scheduleWords({ time: "07:00", weekdays: [1, 4], everyMinutes: 60, until: "12:00" })).toBe("Every hour, 7:00 am–12:00 pm, Mondays and Thursdays");
   });
 });
 
@@ -294,6 +299,137 @@ describe("working rules broker", () => {
     answer = { allowed: false, resolution: "user" };
     expect(await propose()).toMatchObject({ isError: true, content: [{ text: `${APPROVAL_DENIED} Do not retry without a new request.` }] });
     expect(loop("weekly-bills")).toMatchObject({ revision: 1, schedule: { time: "08:00" } });
+  });
+});
+
+describe("repeats Bud proposes (repeat_propose)", () => {
+  let broker: LoopbackToolServer | undefined;
+  afterEach(async () => { broker?.close(); broker = undefined; await cleanUp(); });
+  const call = async (name: string, args: unknown) => ((await (await fetch(broker!.descriptor.url, { method: "POST",
+    headers: { "content-type": "application/json", ...Object.fromEntries(broker!.descriptor.headers.map(row => [row.name, row.value])) },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })).json()) as any).result;
+  /** The real job store and clock, bound the way the host binds them; Tuesday 6 Oct 2026, 9:00 am UTC. */
+  async function office(newMail: { available: boolean; reason?: string } = { available: true }, host: { readMail?: boolean; approve?: (id: string, expectedRevision: number) => unknown } = {}) {
+    const mailSwitch = vi.fn(async (_loopId: string, enabled: boolean) => ({ enabled }));
+    let repeats!: RepeatJobs;
+    const fixture = await stores(listRecipes, undefined, loops => repeats = bindRepeatJobs({
+      recipes: { get: getRecipe, save: saveRecipe, approve: host.approve ?? ((id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision })) },
+      loops, newMail: { available: async () => newMail, set: mailSwitch }, readMail: host.readMail ?? true, now: () => Date.parse("2026-10-06T09:00:00Z") }));
+    let turn = "turn-1";
+    const cards: string[] = [];
+    const open = (approve: () => boolean | Promise<boolean>) => startWorkflowSettingsBroker({ turnId: () => turn, settings: () => fixture.settings,
+      approve: async summary => { cards.push(summary); return approve(); } }).then(started => { broker = started; });
+    return { ...fixture, repeats, mailSwitch, cards, open, changeTurn: () => { turn = "turn-2"; } };
+  }
+  const saved = (title: string) => listRecipes().filter(recipe => recipe.title === title);
+  const inbox = (title: string, patch: Record<string, unknown> = {}) => ({ title, request: "Check my inbox every 2 minutes in work hours and draft replies to tenants.",
+    steps: ["Read the newest saved mail", "Draft a reply for each tenant email"], abilities: ["read-mail", "draft"],
+    cadence: { time: "09:00", until: "17:00", everyMinutes: 2, weekdays: [1, 2, 3, 4, 5] }, reason: "Sherry wants tenant emails answered quickly.", ...patch });
+
+  it("shows what, when, the next runs and the cost on one card; Deny or a changed turn saves nothing", async () => {
+    const { cards, open, changeTurn, refuse } = await office();
+    await open(() => false);
+    expect(await call("repeat_propose", inbox("Fictional inbox check A"))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("chose Don't allow") }] });
+    expect(cards[0]).toBe([
+      "Repeat this for you",
+      "What: Fictional inbox check A — Check my inbox every 2 minutes in work hours and draft replies to tenants.",
+      "Steps: 1. Read the newest saved mail; 2. Draft a reply for each tenant email",
+      "When: Every 2 minutes, 9:00 am–5:00 pm, weekdays",
+      "Next runs: Tue, 6 Oct, 9:02 am; Tue, 6 Oct, 9:04 am; Tue, 6 Oct, 9:06 am",
+      "About 240 runs a day; each counts toward the office's monthly AI limit.",
+      "May: Read the reviewed mailbox, Prepare drafts for review",
+      "Never on its own: send, reply, pay, sign or submit — each waits for your approval of that exact item.",
+      "Results arrive in Updates from Bud. Pause, Run now or Stop any time on Schedule.",
+      "Why: Sherry wants tenant emails answered quickly.",
+    ].join("\n"));
+    broker!.close();
+    // The turn moved on while the card was open, or the book went into recovery: Allow still saves nothing.
+    await open(() => { changeTurn(); return true; });
+    expect(await call("repeat_propose", inbox("Fictional inbox check A"))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("no longer working") }] });
+    broker!.close();
+    await open(() => { refuse("Recover the private book before changing working rules. Nothing was changed."); return true; });
+    expect(await call("repeat_propose", inbox("Fictional inbox check A"))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Recover the private book") }] });
+    expect(saved("Fictional inbox check A")).toEqual([]);
+  });
+
+  it("Allow saves exactly one approved job on the clock and says when it first runs", async () => {
+    const { open, loop, repeats, mailSwitch } = await office();
+    await open(() => true);
+    const result = await call("repeat_propose", inbox("Fictional inbox check B"));
+    expect(result.isError).toBeUndefined();
+    const [job] = saved("Fictional inbox check B");
+    expect(saved("Fictional inbox check B")).toHaveLength(1);
+    expect(job).toMatchObject({ id: expect.stringMatching(/^repeat-/), status: "active", revision: 1, approvedRevision: 1, planApprovedAt: expect.any(Number), allowedOrigins: [],
+      description: "Check my inbox every 2 minutes in work hours and draft replies to tenants.", capabilities: ["read-mail", "draft"],
+      schedule: { time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" } });
+    const nextRunAt = Date.parse("2026-10-06T09:02:00Z");
+    expect(result.structuredContent).toEqual({ loopId: `recipe-${job!.id}`, recipeId: job!.id, nextRunAt });
+    expect(result.content[0].text).toBe('Saved "Fictional inbox check B" on Schedule: Every 2 minutes, 9:00 am–5:00 pm, weekdays. First run Tue, 6 Oct, 9:02 am. Its results arrive in Updates from Bud; Pause, Run now or Stop it on Schedule.');
+    expect(loop(`recipe-${job!.id}`)).toMatchObject({ enabled: true, waitingForPlan: false, nextRunAt, schedule: { everyMinutes: 2, until: "17:00" } });
+    expect(mailSwitch).not.toHaveBeenCalled();
+    // The same card's id never saves a second job.
+    await repeats.create(job!.id, { title: "Fictional inbox check B", request: "again", steps: ["x"], abilities: ["analyse"], cadence: { time: "10:00", weekdays: [1] } });
+    expect(saved("Fictional inbox check B")).toEqual([job]);
+    // Bud reads the repeat back in plain words.
+    expect((await call("workflow_settings_read", { target: "loop_schedule" })).content[0].text).toContain(`- loop_schedule recipe-${job!.id} "Fictional inbox check B" (revision 1, on, can repeat weekdays): Every 2 minutes, 9:00 am–5:00 pm, weekdays`);
+  });
+
+  it("turns on new mail for the saved job when asked, and says so on the card", async () => {
+    const { open, cards, mailSwitch } = await office();
+    await open(() => true);
+    const result = await call("repeat_propose", inbox("Fictional inbox check C", { cadence: { time: "08:00", weekdays: [0, 1, 2, 3, 4, 5, 6], newMail: true } }));
+    expect(result.isError).toBeUndefined();
+    // A new-mail run reads the latest collection, which may not hold the mail that woke it: the card says so.
+    expect(cards[0]).toContain("When: Every day 8:00 am, and checks your latest collected mail when new mail arrives\n");
+    expect(result.content[0].text).toContain("Every day 8:00 am, and checks your latest collected mail when new mail arrives. First run");
+    expect(cards[0]).toContain("About 1 run a day;");
+    expect(mailSwitch).toHaveBeenCalledExactlyOnceWith(`recipe-${saved("Fictional inbox check C")[0]!.id}`, true);
+    expect(result.structuredContent).toMatchObject({ newMail: true });
+  });
+
+  it("refuses website or portal work, a bad cadence, secrets, and new mail that cannot wake it, before any card", async () => {
+    const { open, cards } = await office({ available: false, reason: "Connect Gmail in Connected apps first." });
+    await open(() => true);
+    const refused = async (patch: Record<string, unknown>, text: string) =>
+      expect(await call("repeat_propose", inbox("Fictional inbox check D", patch))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining(text) }] });
+    await refused({ abilities: ["portal-read", "analyse"] }, "Website and portal work repeats from Schedule, beside the person");
+    await refused({ abilities: ["web-research"] }, "Website and portal work repeats from Schedule");
+    await refused({ cadence: { time: "09:00", weekdays: [1], everyMinutes: 0 } }, "Choose everyMinutes from 1 to 1440");
+    await refused({ cadence: { time: "09:00", weekdays: [1], everyMinutes: 5, until: "08:00" } }, "an until (HH:MM) after time");
+    await refused({ cadence: { time: "9am", weekdays: [1] } }, "cadence.time must be HH:MM");
+    await refused({ cadence: { time: "09:00", weekdays: [1], cron: "* * * * *" } }, "cadence holds");
+    await refused({ abilities: ["analyse"], cadence: { time: "09:00", weekdays: [1], newMail: true } }, "add read-mail");
+    await refused({ steps: ["Log in with sk-ant-api03-fictionalfictionalfictionalfictional"] }, "no passwords, keys or codes");
+    await refused({ cadence: { time: "09:00", weekdays: [1], newMail: true } }, "New mail can't start this repeat yet: Connect Gmail in Connected apps first.");
+    // Its worker gets no file tools, so mail and workroom files never share a job.
+    await refused({ abilities: ["read-mail", "read-files", "draft"] }, "can't also read workroom files");
+    expect(cards).toEqual([]);
+    expect(saved("Fictional inbox check D")).toEqual([]);
+  });
+
+  it("reads mail only when this turn may (the person's own message, Gmail allowed for them), before any card and again at save", async () => {
+    const { open, cards, repeats } = await office({ available: true }, { readMail: false });
+    await open(() => true);
+    expect(await call("repeat_propose", inbox("Fictional inbox check E"))).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("needs Gmail allowed for you in Connected apps") }] });
+    expect(cards).toEqual([]);
+    await expect(repeats.create("repeat-fictional-e", { title: "Fictional inbox check E", request: "x", steps: ["x"], abilities: ["read-mail"], cadence: { time: "09:00", weekdays: [1] } }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(saved("Fictional inbox check E")).toEqual([]);
+    // A repeat that doesn't read mail is still offered.
+    expect((await call("repeat_propose", inbox("Fictional book check E", { abilities: ["read-book", "analyse"] }))).isError).toBeUndefined();
+    expect(saved("Fictional book check E")).toHaveLength(1);
+  });
+
+  it("saved but not approved: says it waits on Schedule with its id, so asking again never saves a second job", async () => {
+    const { open, loop } = await office({ available: true }, { approve: () => { throw new Error("fictional disk failure"); } });
+    await open(() => true);
+    const result = await call("repeat_propose", inbox("Fictional inbox check F"));
+    const [job] = saved("Fictional inbox check F");
+    expect(saved("Fictional inbox check F")).toHaveLength(1);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('Saved as "Fictional inbox check F", waiting for plan approval on Schedule. Approve its plan there to start it; don\'t propose it again.');
+    expect(result.structuredContent).toEqual({ loopId: `recipe-${job!.id}`, recipeId: job!.id, waitingForPlan: true });
+    expect(loop(`recipe-${job!.id}`)).toMatchObject({ enabled: false, waitingForPlan: true });
   });
 });
 

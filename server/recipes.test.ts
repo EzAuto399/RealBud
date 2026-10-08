@@ -125,6 +125,22 @@ describe("validateRecipe", () => {
     expect(validateRecipe({ ...card, schedule: null }).schedule).toBeNull();
   });
 
+  it("round-trips a minute repeat through save and load, and drops an invalid one", () => {
+    const repeat = { time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" };
+    const [saved] = saveRecipe({ ...card, id: "repeat-job", schedule: repeat });
+    expect(saved.schedule).toEqual(repeat);
+    expect(loadRecipes(true)[0]!.schedule).toEqual(repeat);
+    // A cadence change is a material plan change: approval never floats to it.
+    patchRecipe(saved.id, { planApproved: true, expectedRevision: saved.revision });
+    const [retimed] = saveRecipe({ ...card, id: saved.id, schedule: { ...repeat, everyMinutes: 5 }, expectedRevision: saved.revision });
+    expect(retimed).toMatchObject({ revision: saved.revision + 1, approvedRevision: null, schedule: { everyMinutes: 5, until: "17:00" } });
+    expect(validateRecipe({ ...card, schedule: { time: "09:00", weekdays: [1], everyMinutes: 15 } }).schedule).toEqual({ time: "09:00", weekdays: [1], everyMinutes: 15 });
+    for (const bad of [{ everyMinutes: 0 }, { everyMinutes: 1441 }, { everyMinutes: 1.5 }, { everyMinutes: 2, until: "08:00" }, { everyMinutes: 2, until: "09:00" },
+      { until: "17:00" }, { everyMinutes: 2, intervalDays: 2, anchorDate: "2026-10-02" }, { everyMinutes: 2, until: "25:00" }]) {
+      expect(validateRecipe({ ...card, schedule: { time: "09:00", weekdays: [1], ...bad } }).schedule).toBeNull();
+    }
+  });
+
   it("rejects a bad origin", () => {
     try {
       validateRecipe({ ...card, allowedOrigins: ["not a host"] });
@@ -315,6 +331,20 @@ describe("recipe store", () => {
         capabilities: ["portal-prefill"],
       }).capabilities,
     ).toEqual(["portal-read", "portal-prefill"]);
+  });
+
+  it("refuses to save a job that reads mail with portal work or workroom files (POST /api/recipes saves through here)", () => {
+    for (const capabilities of [["read-mail", "portal-read"], ["read-mail", "portal-prefill"], ["read-mail", "read-files"]]) {
+      let error: unknown;
+      try { saveRecipe({ ...card, id: "fictional-mail-portal", capabilities }); } catch (caught) { error = caught; }
+      expect(statusOf(error)).toBe(400);
+      expect((error as Error).message).toMatch(/reads mail can't also open portal sites or read workroom files/);
+    }
+    expect(getRecipe("fictional-mail-portal")).toBeUndefined();
+    // A mail job stays a mail job: Ask's portal-site patch can't add portal work to it either.
+    saveRecipe({ ...card, id: "fictional-mail", allowedOrigins: [], capabilities: ["read-mail", "draft"] });
+    expect(() => patchRecipe("fictional-mail", { allowedOrigins: ["propertyme.com.au"], ensurePortal: true })).toThrow(/reads mail/);
+    expect(getRecipe("fictional-mail")).toMatchObject({ capabilities: ["read-mail", "draft"], allowedOrigins: [] });
   });
 
   it("requires prefill and a site for portal-submit, and clears acknowledgement on edit", () => {

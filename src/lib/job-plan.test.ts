@@ -72,6 +72,16 @@ describe("job plan editing", () => {
     },
   );
 
+  it("keeps a saved minute repeat through an edit and rejects a window that ends before it starts", () => {
+    const repeating: Recipe = { ...plan, schedule: { time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" } };
+    const fields = jobPlanFields(repeating);
+    expect(jobPlanChanged(repeating, fields)).toBe(false);
+    expect(jobPlanInput(repeating, { ...fields, steps: "Check the queue" }, true).schedule).toEqual(repeating.schedule);
+    expect(jobPlanInput(plan, jobPlanFields(plan), true).schedule).toBeNull();
+    expect(() => jobPlanInput(repeating, { ...fields, time: "18:00" }, true)).toThrow(/repeat's end time/);
+    expect(JOB_ABILITY_LABELS["read-mail"]).toBe("Read the reviewed mailbox");
+  });
+
   it("does not grant broader capabilities when editing timing", () => {
     const input = jobPlanInput(plan, { ...jobPlanFields(plan), scheduled: true }, true);
     expect(input.capabilities).toEqual(plan.capabilities);

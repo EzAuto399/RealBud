@@ -43,8 +43,9 @@ export const EVALUATOR_CATALOG = [
   { ...ownResults, id: "rei-supplier-check", version: 1, loopId: "rei-supplier-check", notify: true, cadenceEditable: true },
   { ...ownResults, id: "rei-morning-refresh", version: 1, loopId: "rei-morning-refresh" },
   { ...ownResults, id: "inspection-draft", version: 1, loopId: "inspection-draft", notify: true },
-  // Taught and pack jobs: on once their plan is approved (server/routines.ts refreshRecipeLoops).
-  { ...deskDigest, id: "recipe", version: 1, loopId: null },
+  // Taught, pack and repeat jobs: on once their plan is approved (server/routines.ts refreshRecipeLoops).
+  // Their own result posts in Updates from Bud; the rent digest would describe unrelated counts after every run.
+  { ...deskDigest, id: "recipe", version: 1, loopId: null, pulse: false, notify: true },
 ] as const satisfies readonly EvaluatorSpec[];
 
 export type EvaluatorId = (typeof EVALUATOR_CATALOG)[number]["id"];

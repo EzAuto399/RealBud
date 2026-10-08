@@ -1,3 +1,4 @@
+import { validCalendarCadence } from "@shared/routine-clock";
 import type { JobCapability, Recipe } from "./desk";
 
 export interface JobPlanFields {
@@ -10,6 +11,9 @@ export interface JobPlanFields {
   scheduled: boolean;
   time: string;
   weekdays: number[];
+  /** A saved repeat (every N minutes from `time` until `until`); the editor keeps it through a save. */
+  everyMinutes: number | null;
+  until: string | null;
 }
 
 /** Only in app memory until Save; never put PM descriptions in browser storage. */
@@ -32,6 +36,7 @@ export const JOB_ABILITY_LABELS: Record<JobCapability, string> = {
   "portal-read": "Read the named portal",
   "portal-prefill": "Fill permitted portal fields",
   "portal-submit": "Ask before each permitted Submit",
+  "read-mail": "Read the reviewed mailbox",
 };
 
 export function jobPlanFields(plan: Recipe): JobPlanFields {
@@ -45,6 +50,8 @@ export function jobPlanFields(plan: Recipe): JobPlanFields {
     scheduled: plan.schedule != null,
     time: plan.schedule?.time ?? "09:00",
     weekdays: [...(plan.schedule?.weekdays ?? [1, 2, 3, 4, 5])],
+    everyMinutes: plan.schedule?.everyMinutes ?? null,
+    until: plan.schedule?.until ?? null,
   };
 }
 
@@ -77,6 +84,10 @@ export function jobPlanInput(
   ) {
     throw new Error("Choose a valid time and at least one day, or choose Only when I run it.");
   }
+  const repeat = fields.everyMinutes == null ? {} : { everyMinutes: fields.everyMinutes, ...(fields.until == null ? {} : { until: fields.until }) };
+  if (fields.scheduled && !validCalendarCadence({ ...repeat, time: fields.time })) {
+    throw new Error("Choose a start time before the repeat's end time, and a repeat of 1 to 1440 minutes.");
+  }
   return {
     ...plan,
     title: fields.title.trim(),
@@ -88,7 +99,7 @@ export function jobPlanInput(
       .filter(Boolean),
     evidence: fields.evidence.trim(),
     capabilities: fields.capabilities,
-    schedule: fields.scheduled ? { time: fields.time, weekdays: fields.weekdays } : null,
+    schedule: fields.scheduled ? { time: fields.time, weekdays: fields.weekdays, ...repeat } : null,
     expectedRevision: saved ? plan.revision : 0,
   };
 }
