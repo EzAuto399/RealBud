@@ -887,6 +887,9 @@ export function managedModelConfig(raw: string, baseUrl: string, choiceId: Manag
  * holds no valid choice — including the earlier `auto` router entry or a
  * retired model id — moves to `flash-high`.
  */
+/** Written once an office has had its one move to the default choice. */
+const MEDIUM_FOR_ALL_MARKER = ".realbud-medium-default-2026-10-08";
+
 export function applyManagedModelProfile(baseUrl: string, opts?: { root?: string; choice?: ManagedModelChoiceId }): ManagedModelApply {
   const url = String(baseUrl ?? "").trim();
   if (!/^https?:\/\/[^\s"']+$/.test(url) || url.length > 2_048) {
@@ -898,13 +901,18 @@ export function applyManagedModelProfile(baseUrl: string, opts?: { root?: string
   const existing = readProfileFile(configPath);
   const raw = existing?.toString("utf8") ?? "";
   const saved = managedModelProfile(opts?.root);
-  const choiceId = opts?.choice ?? saved.choice ?? managedModelChoiceKeepingModel(saved.model) ?? DEFAULT_MANAGED_MODEL_CHOICE;
+  // Owner decision 8 Oct 2026: every office moves to the default once, including
+  // one saved on Sonnet · High (the default until then). The marker makes it
+  // once, so an office that steps back up to High afterwards stays there.
+  const marker = join(dir, MEDIUM_FOR_ALL_MARKER), moveOnce = !opts?.choice && saved.choice === "sonnet-high" && !existsSync(marker);
+  const choiceId = opts?.choice ?? (moveOnce ? DEFAULT_MANAGED_MODEL_CHOICE : saved.choice) ?? managedModelChoiceKeepingModel(saved.model) ?? DEFAULT_MANAGED_MODEL_CHOICE;
   const choice = managedModelChoice(choiceId);
   // Build and validate first: a damaged config is refused before anything,
   // including the `.env`, changes.
   const next = managedModelConfig(raw, url, choiceId);
   const envKeyRemoved = removeManagedEnvKey(dir);
   writeProfileFile(configPath, next, true, existing);
+  if (!existsSync(marker)) writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 });
   return {
     provider: MANAGED_MODEL_PROVIDER, apiMode: MANAGED_MODEL_API_MODE, baseUrl: url,
     choice: choiceId, model: choice.model, reasoningEffort: choice.effort, keyEnv: MANAGED_MODEL_KEY_ENV,
