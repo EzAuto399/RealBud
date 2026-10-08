@@ -1,5 +1,7 @@
 # RealBud end state
 
+Latest continuation, 9 October: [Release 0.1.45 and 0.1.46](RELEASE-0.1.46-2026-10-09.md). v0.1.46 is Latest for Windows (staged setup gating, app task fixes, repeats from chat); VM upgrade and a real cua desktop task passed; Mac signing and the sign-in code are still open.
+
 UX dead ends, 8 October: [Recovery in place: pattern and sweep](UX-DEAD-ENDS-2026-10-08.md). Owner hit a link page at the 5-computer cap with no way to disconnect; the sweep found about 50 related dead ends across the desktop app and realbud.app. The rule now sits in `.claude/rules/ui.md`, `.claude/rules/website.md` and the CLAUDE.md lessons; Kevin-path fixes are in progress. Source sweep only.
 
 Kevin's visit, 9 October: [Kevin's PC setup runbook](KEVIN-VISIT-2026-10-09.md): owner steps before leaving, on-site Gmail, Redbark and remote-help steps, auto-update behaviour, and 8 October evidence. Bud's session search is fixed on Mac and the unpinned tirith download is off (in 0.1.43). Gmail and Redbark live connects still need owner sign-ins.
