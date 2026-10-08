@@ -17,8 +17,9 @@ vi.mock('@/lib/local-session', () => ({ ensureSession: async () => '', clearLoca
 // module load would land after the timed window, so it answers at once here.
 vi.mock('@/lib/company-api', () => ({ companyApi: { memberSessionHeaders: async () => ({}) } }));
 
-// A stalled service: the request only ends when its signal aborts.
-const stalled = vi.fn((_path: string, init: RequestInit) => new Promise((_resolve, reject) => {
+// A stalled service: the request only ends when its signal aborts. Its health check is refused.
+const stalled = vi.fn((path: string, init: RequestInit) => new Promise((_resolve, reject) => {
+  if (path === '/api/health') return reject(new TypeError('Failed to fetch'));
   if (init.signal?.aborted) return reject(init.signal.reason);
   init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
 }));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LOCAL_SERVICE_UNAVAILABLE, isLocalServiceProxyFailure, isRecoveryWriteError, localServiceError } from "./api-error";
+import { LOCAL_SERVICE_BUSY, LOCAL_SERVICE_UNAVAILABLE, isLocalServiceProxyFailure, isRecoveryWriteError, localServiceError } from "./api-error";
 
 describe("API error copy", () => {
   it("turns a transport failure into a safe, actionable local-service message", () => {
@@ -9,6 +9,7 @@ describe("API error copy", () => {
     expect(error.message).toBe(LOCAL_SERVICE_UNAVAILABLE);
     expect(error.cause).toBe(cause);
     expect(error.message).not.toContain("fetch");
+    expect(localServiceError(cause, true).message).toBe(LOCAL_SERVICE_BUSY);
   });
 
   it("recognises the authoritative recovery write block only", () => {
