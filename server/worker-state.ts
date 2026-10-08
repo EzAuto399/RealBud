@@ -12,10 +12,11 @@
  * credential-shaped or over-cap bytes are never stored, only a digest, size and
  * reason; every scope shares one byte and entry cap. */
 import { createHash } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { DATA_DIR } from './config.ts';
-import { readPrivateJson, writePrivateJson } from './private-json.ts';
+import { readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
 import { ensureProfileDirectories, readProfileFiles, writeProfileFiles, type ProfileFileWrite } from './hermes-profile-storage.ts';
 import { containsCredential } from './redact.ts';
 import { workerEditRecord } from './hermes-memory-store.ts';
@@ -98,7 +99,8 @@ const emptyState = (scope: WorkerScope): WorkerState => ({ version: 1, purpose: 
 
 export async function readWorkerState(scope: WorkerScope, dataDir = DATA_DIR): Promise<WorkerState> {
   let raw: unknown;
-  try { raw = await readPrivateJson(workerStateFile(scope, dataDir), WORKER_STATE_MAX_BYTES); } catch { recovery(); }
+  // A damaged file is set aside and its last good copy restored, never cleared.
+  try { raw = await readPrivateJsonWithFallback(workerStateFile(scope, dataDir), WORKER_STATE_MAX_BYTES, value => { validateWorkerState(value, scope); }); } catch { recovery(); }
   if (raw === undefined) return emptyState(scope);
   const state = validateWorkerState(raw, scope);
   if (state.profileId !== scope.profileId) recovery();
@@ -149,6 +151,59 @@ export function holdCopy(state: WorkerState, key: string, bytes: Buffer, reason:
   // ponytail: holds are digest notes, not facts; past the bound the oldest are dropped.
   if (state.held.length > HELD_LIMIT) state.held.splice(0, state.held.length - HELD_LIMIT);
 }
+const clean = new Set<string>();
+/** No stored content may look like a credential, whichever build wrote it: such an
+ * item becomes a digest-only hold. Checked once per digest. */
+function sanitize(state: WorkerState) {
+  const flagged = (digest: string, base64: string) => {
+    if (clean.has(digest)) return false;
+    if (containsCredential(Buffer.from(base64, 'base64').toString('utf8'))) return true;
+    if (clean.size > 20_000) clean.clear();
+    clean.add(digest); return false;
+  };
+  for (const [key, row] of Object.entries(state.artifacts)) if (flagged(row.digest, row.base64)) {
+    holdCopy(state, key, Buffer.from(row.base64, 'base64'), 'credential', row.at); delete state.artifacts[key];
+  }
+  state.preserved = state.preserved.filter(row => {
+    if (!flagged(row.digest, row.base64)) return true;
+    holdCopy(state, row.key, Buffer.from(row.base64, 'base64'), 'credential', row.at); return false;
+  });
+}
+/** Logical bytes of a saved scope for a backup: the same rule applied without writing. */
+export function sanitizedWorkerStateBytes(data: Buffer): Buffer {
+  let value: unknown; try { value = JSON.parse(data.toString('utf8')); } catch { return data; }
+  if (!object(value) || !object(value.artifacts) || !Array.isArray(value.preserved) || !Array.isArray(value.held)) return data;
+  const before = JSON.stringify(value); sanitize(value as unknown as WorkerState);
+  return JSON.stringify(value) === before ? data : Buffer.from(JSON.stringify(value));
+}
+/** Withheld items recorded in a saved scope (digest-only holds). */
+export function workerStateHeldCount(data: Buffer): number {
+  try { const value = JSON.parse(data.toString('utf8')) as { held?: unknown }; return Array.isArray(value.held) ? value.held.length : 0; } catch { return 0; }
+}
+/** Folder-level note for names a capped listing never examined. */
+function holdUnlisted(state: WorkerState, folder: string, count: number, at: number) {
+  if (count <= 0) return;
+  state.held = state.held.filter(row => !(row.key === folder && row.reason === 'capacity' && row.digest === sha256(`realbud-unlisted-v1\0${folder}`)));
+  state.held.push({ key: folder, digest: sha256(`realbud-unlisted-v1\0${folder}`), bytes: count, reason: 'capacity', at });
+  if (state.held.length > HELD_LIMIT) state.held.splice(0, state.held.length - HELD_LIMIT);
+}
+const strictKey = (key: string) => key.startsWith('memories/') || key.startsWith('pending/') || key.startsWith('.realbud-memory-reviews/');
+/** The review helper's admission for memory and proposal files (POSIX): owned by
+ * this account with no group or other access, inside folders of this account that
+ * no one else can write. Windows ACLs are admitted by the profile reader. */
+export function strictWorkerFile(profile: string, path: string): boolean {
+  if (process.platform === 'win32') return true;
+  const uid = process.getuid?.();
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== uid || (stat.mode & 0o077) !== 0) return false;
+    for (let folder = dirname(path); ; folder = dirname(folder)) {
+      const dir = lstatSync(folder);
+      if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 0o022) !== 0) return false;
+      if (resolve(folder) === resolve(profile) || dirname(folder) === folder) return true;
+    }
+  } catch { return false; }
+}
 /** A worker's direct edit of MEMORY.md/USER.md never changes canonical memory: it
  * becomes a reviewable proposal (or, when not expressible as one, a preserved copy). */
 export function recordWorkerMemoryEdit(state: WorkerState, target: 'memory' | 'user', bytes: Buffer, at: number): 'proposed' | 'preserved' | HeldCopy['reason'] {
@@ -176,10 +231,11 @@ export function updateWorkerState<T>(scope: WorkerScope, expectedRevision: numbe
     if (expectedRevision !== null && current.revision !== expectedRevision) throw Object.assign(new Error('Bud’s saved learning changed. Refresh and try again.'), { code: 'stale-review', status: 409 });
     const before = JSON.stringify(current), draft = structuredClone(current);
     const result = change(draft);
+    sanitize(draft);
     if (JSON.stringify(draft) === before) return { state: current, result };
     draft.revision = current.revision + 1;
     validateWorkerState(draft, scope);
-    await writePrivateJson(file, draft, { maxBytes: WORKER_STATE_MAX_BYTES, validate: raw => { validateWorkerState(raw, scope); } });
+    await writePrivateJson(file, draft, { maxBytes: WORKER_STATE_MAX_BYTES, validate: raw => { validateWorkerState(raw, scope); }, keepPrevious: true });
     return { state: draft, result };
   });
   const tail = work.then(() => undefined, () => undefined);
@@ -216,8 +272,9 @@ async function names(path: string): Promise<{ name: string; directory: boolean; 
 async function readWorkerFiles(profile: string, keys: { key: string; max: number }[]): Promise<WorkerRead> {
   const out: WorkerRead = new Map(), ok: string[] = [];
   for (const { key, max } of keys) {
-    const state = await regularFile(join(profile, ...key.split('/')), max);
-    if (state === 'ok') ok.push(key); else if (state !== 'missing') out.set(key, state);
+    const path = join(profile, ...key.split('/')), state = await regularFile(path, max);
+    if (state === 'ok' && strictKey(key) && !strictWorkerFile(profile, path)) out.set(key, 'unsafe');
+    else if (state === 'ok') ok.push(key); else if (state !== 'missing') out.set(key, state);
   }
   const read = (list: string[]) => readProfileFiles(list.map(key => join(profile, ...key.split('/'))));
   try { read(ok).forEach((bytes, index) => { if (bytes) out.set(ok[index], bytes); }); }
@@ -225,16 +282,22 @@ async function readWorkerFiles(profile: string, keys: { key: string; max: number
   return out;
 }
 /** Profile-relative keys of the facts RealBud imports. */
-async function workerFactKeys(profile: string): Promise<{ key: string; max: number }[]> {
+async function workerFactKeys(profile: string): Promise<{ keys: { key: string; max: number }[]; unlisted: Map<string, number> }> {
   const keys: { key: string; max: number }[] = [{ key: 'SOUL.md', max: FILE_BYTES }, { key: MEMORY_KEYS.memory, max: MEMORY_BYTES },
     { key: MEMORY_KEYS.user, max: MEMORY_BYTES }, { key: '.realbud-shipped.json', max: 256 * 1024 }];
-  for (const [folder, pattern, max] of [['pending/memory', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES], ['pending/skills', /^[a-f0-9]{8}\.json$/, 100_000],
-    ['.realbud-memory-reviews', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES], ['.realbud-memory-reviews/proposals', /^[a-f0-9]{64}\.(?:json|stage)$/, MEMORY_BYTES],
-    ['.realbud-memory-reviews/claims', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES]] as const) {
-    for (const entry of await names(join(profile, ...folder.split('/')))) if (pattern.test(entry.name)) keys.push({ key: `${folder}/${entry.name}`, max });
+  const unlisted = new Map<string, number>();
+  // Decision history first: worker-staged bulk can never push it past the listing cap.
+  for (const [folder, pattern, max] of [['.realbud-memory-reviews', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES], ['.realbud-memory-reviews/proposals', /^[a-f0-9]{64}\.(?:json|stage)$/, MEMORY_BYTES],
+    ['.realbud-memory-reviews/claims', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES], ['pending/memory', /^[a-f0-9]{8}\.json$/, MEMORY_BYTES], ['pending/skills', /^[a-f0-9]{8}\.json$/, 100_000]] as const) {
+    const found = (await names(join(profile, ...folder.split('/')))).filter(entry => pattern.test(entry.name)).sort((a, b) => a.name < b.name ? -1 : 1);
+    const room = Math.max(0, IMPORT_FILES - keys.length);
+    for (const entry of found.slice(0, room)) keys.push({ key: `${folder}/${entry.name}`, max });
+    if (found.length > room) unlisted.set(folder, found.length - room);
   }
-  keys.push(...await skillKeys(profile, IMPORT_FILES - Math.min(keys.length, IMPORT_FILES)));
-  return keys.slice(0, IMPORT_FILES);
+  const room = Math.max(0, IMPORT_FILES - keys.length), skills = await skillKeys(profile, room + 1);
+  keys.push(...skills.slice(0, room));
+  if (skills.length > room) unlisted.set('skills', 1);
+  return { keys, unlisted };
 }
 /** At most `limit` skill files, shallow first; the rest are not read at all. */
 async function skillKeys(profile: string, limit: number): Promise<{ key: string; max: number }[]> {
@@ -279,11 +342,11 @@ export async function importLegacyProfileFacts(scopes: WorkerScope[], options: {
   for (const scope of scopes) {
     const existing = await readWorkerState(scope, dataDir);
     if (existing.migration.complete) { results.push({ scopeId: scope.scopeId, complete: true, imported: 0, preserved: 0, held: 0, skipped: true }); continue; }
-    const files = await readWorkerFiles(scope.profileDirectory, await workerFactKeys(scope.profileDirectory));
+    const listing = await workerFactKeys(scope.profileDirectory), files = await readWorkerFiles(scope.profileDirectory, listing.keys);
     const record = files.get('.realbud-shipped.json'), shipped = shippedWith(options.shipped ?? noneShipped, Buffer.isBuffer(record) ? record : null);
     const lines = [...files].map(([key, bytes]) => `${key} ${Buffer.isBuffer(bytes) ? sha256(bytes) : bytes === 'unsafe' ? 'unsafe' : `oversize:${bytes.oversize}`}`).sort();
     const sourceDigest = sha256(lines.join('\n')), at = now();
-    const counts = { imported: 0, preserved: 0, held: 0 };
+    const counts = { imported: 0, preserved: 0, held: 0 }, stored = new Map<string, string>();
     // Decisions and memory first, so worker-supplied bulk can never crowd them out of the shared cap.
     const rank = (key: string) => key.startsWith('.realbud-memory-reviews/') ? 0 : memoryKey(key) ? 1 : key.startsWith('pending/') ? 2 : 3;
     await updateWorkerState(scope, null, draft => {
@@ -295,26 +358,23 @@ export async function importLegacyProfileFacts(scopes: WorkerScope[], options: {
         const current = draft.artifacts[key];
         const refused = !current ? putArtifact(draft, key, bytes, 'import', at) : current.digest !== digest ? preserveCopy(draft, key, bytes, 'import-differs', at) : null;
         if (refused) { counts.held++; continue; }
+        stored.set(key, digest);
         if (!current) counts.imported++; else if (current.digest !== digest) counts.preserved++;
         if (projectableKey(key) && (!current || current.digest === digest)) draft.projected[key] = digest;
       }
+      for (const [folder, count] of listing.unlisted) { holdUnlisted(draft, folder, count, at); counts.held += count; }
       draft.migration = { sourceDigest, complete: false, at };
     }, dataDir);
-    // Read back: every captured worker copy is now canonical or preserved.
+    // Read back: what was stored is still stored. (Holds are notes and may be bounded away.)
     const saved = await readWorkerState(scope, dataDir);
-    for (const [key, bytes] of files) {
-      if (!Buffer.isBuffer(bytes)) continue;
-      const digest = sha256(bytes);
-      if (officeFile(key) && shipped.has(key, digest) || saved.held.some(row => row.key === key && row.digest === digest)) continue;
-      if (saved.artifacts[key]?.digest !== digest && !saved.preserved.some(row => row.key === key && row.digest === digest)) recovery();
-    }
+    for (const [key, digest] of stored) if (saved.artifacts[key]?.digest !== digest && !saved.preserved.some(row => row.key === key && row.digest === digest)) recovery();
     await updateWorkerState(scope, null, draft => { draft.migration = { sourceDigest, complete: true, at: now() }; }, dataDir);
     results.push({ scopeId: scope.scopeId, complete: true, ...counts, skipped: false });
   }
   return results;
 }
 
-export interface ProjectionResult { written: string[]; held: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null }
+export interface ProjectionResult { written: string[]; held: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null; discoveryCapped: boolean }
 /** Bring the worker profile up to RealBud's canonical copy (before every turn,
  * launch and Repair). A missing copy is regenerated; a copy RealBud wrote, or
  * bytes the pack shipped, are replaced. Worker-side bytes are never promoted:
@@ -323,7 +383,7 @@ export interface ProjectionResult { written: string[]; held: string[]; skipped: 
  * copy returns to the approved memory; skill and SOUL changes stay in place,
  * held. Reads only known keys plus a capped discovery list. */
 export async function projectProfileFacts(scope: WorkerScope, options: { dataDir?: string; now?: () => number; shipped?: ShippedDigests; keys?: readonly string[] } = {}): Promise<ProjectionResult> {
-  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], skipped: null };
+  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], skipped: null, discoveryCapped: false };
   const root = await lstat(scope.profileDirectory).catch(() => null);
   if (!root?.isDirectory() || root.isSymbolicLink()) return { ...result, skipped: 'profile-missing' };
   const state = await readWorkerState(scope, dataDir);
@@ -331,12 +391,15 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
   if (!state.migration.complete) return { ...result, skipped: 'migration-incomplete' };
   const limit = (key: string) => memoryKey(key) ? MEMORY_BYTES : FILE_BYTES;
   const known = [...new Set([MEMORY_KEYS.memory, MEMORY_KEYS.user, 'SOUL.md', ...Object.keys(state.artifacts).filter(projectableKey)])].filter(key => !options.keys || options.keys.includes(key));
-  const discovered = options.keys ? [] : (await skillKeys(scope.profileDirectory, DISCOVERY_FILES)).filter(row => !known.includes(row.key));
+  const listed = options.keys ? [] : await skillKeys(scope.profileDirectory, DISCOVERY_FILES + 1);
+  result.discoveryCapped = listed.length > DISCOVERY_FILES;
+  const discovered = listed.slice(0, DISCOVERY_FILES).filter(row => !known.includes(row.key));
   const wanted = [...known.map(key => ({ key, max: limit(key) })), ...discovered];
   const files = await readWorkerFiles(scope.profileDirectory, [...wanted, { key: '.realbud-shipped.json', max: 256 * 1024 }]);
   const record = files.get('.realbud-shipped.json'), shipped = shippedWith(options.shipped ?? noneShipped, artifactBytes(state, '.realbud-shipped.json'), Buffer.isBuffer(record) ? record : null);
   const writes: { key: string; write: ProfileFileWrite; digest: string }[] = [], at = now();
   await updateWorkerState(scope, null, draft => {
+    if (result.discoveryCapped) holdUnlisted(draft, 'skills', 1, at);
     for (const { key } of wanted) {
       const read = files.get(key), canonical = draft.artifacts[key], projected = draft.projected[key];
       if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(key), 'unsafe', at); result.held.push(key); continue; }
@@ -360,13 +423,14 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
     }
   }, dataDir);
   if (!writes.length) return result;
-  const folders = [...new Set(writes.map(row => row.key.split('/').slice(0, -1)).filter(parts => parts.length).flatMap(parts => parts.map((_, i) => join(scope.profileDirectory, ...parts.slice(0, i + 1)))))];
-  if (folders.length) ensureProfileDirectories(folders);
-  const done: { key: string; digest: string }[] = [];
+  const done: { key: string; digest: string }[] = [], failed: string[] = [];
   for (const row of writes) {
-    // One at a time: a concurrent worker change to one file never blocks the others.
-    try { writeProfileFiles([row.write]); done.push(row); result.written.push(row.key); } catch { result.held.push(row.key); }
+    // One at a time: an unusable folder or a concurrent worker change holds only that file.
+    const parts = row.key.split('/').slice(0, -1), folders = parts.map((_, i) => join(scope.profileDirectory, ...parts.slice(0, i + 1)));
+    try { if (folders.length) ensureProfileDirectories(folders); writeProfileFiles([row.write]); done.push(row); result.written.push(row.key); }
+    catch { failed.push(row.key); result.held.push(row.key); }
   }
+  if (failed.length) await updateWorkerState(scope, null, draft => { for (const key of failed) holdCopy(draft, key, Buffer.from(`realbud-unwritable-v1\0${key}`), 'unsafe', now()); }, dataDir);
   if (done.length) await updateWorkerState(scope, null, draft => {
     for (const row of done) if ((draft.artifacts[row.key]?.digest ?? sha256(Buffer.alloc(0))) === row.digest) draft.projected[row.key] = row.digest;
   }, dataDir);
@@ -400,11 +464,12 @@ export async function listPendingSkills(scope: WorkerScope, dataDir = DATA_DIR):
 export async function capturePendingSkill(scope: WorkerScope, id: string, bytes: Buffer, options: { dataDir?: string; now?: () => number } = {}): Promise<string> {
   if (!/^[a-f0-9]{8}$/.test(id)) recovery();
   const key = `pending/skills/${id}.json`, digest = sha256(bytes), at = (options.now ?? Date.now)();
-  await updateWorkerState(scope, null, draft => {
+  const { result: refused } = await updateWorkerState(scope, null, draft => {
     const current = draft.artifacts[key];
     if (current && current.digest !== digest) throw Object.assign(new Error('A different saved skill proposal has this identifier.'), { code: 'conflict', status: 409 });
-    // Credential-shaped or over-cap records are withheld (digest only) and so cannot be approved.
-    putArtifact(draft, key, bytes, 'worker', at);
+    return putArtifact(draft, key, bytes, 'worker', at);
   }, options.dataDir ?? DATA_DIR);
+  // Recorded as a digest-only hold; the caller must not act on a record RealBud could not keep.
+  if (refused) throw Object.assign(new Error(refused === 'credential' ? 'This pending proposal contains credential-shaped text and cannot be reviewed here.' : 'This pending proposal could not be saved. Review older proposals first.'), { code: refused, status: 409 });
   return digest;
 }

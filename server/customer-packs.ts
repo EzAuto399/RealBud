@@ -893,19 +893,24 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     const scope = options.workerScope?.();
     if (scope) names = [...new Set([...names, ...(await listPendingSkills(scope, options.directory)).map(id => `${id}.json`)])].sort();
-    const items: PackSkillProposal[] = [];
-    for (const name of names.slice(0, 100)) {
+    // Closed proposals are filtered before the page is cut, so decided ones never hide open ones.
+    const items: PackSkillProposal[] = []; let hasMore = false, scanned = 0;
+    for (const name of names) {
+      if (++scanned > 2000) { hasMore = true; break; } // ponytail: bounded scan of worker-staged names
+      let item: PackSkillProposal;
       try {
-        const item = await proposal(name.slice(0, -5), entries);
-        if (!Object.values(entries).some(entry => entry.proposalReceipts?.some(receipt => receipt.id === item.id && receipt.digest === item.pendingDigest))) items.push(item);
-      } catch { items.push({ id: name.slice(0, -5), pendingDigest: '', packId: null, skillId: null, name: 'Unreadable skill proposal', state: 'unsupported', reason: 'The record needs service recovery. It was not followed or activated.', current: null, proposed: null, currentDigest: null, activeRevision: 0, origin: 'Worker proposal' }); }
+        item = await proposal(name.slice(0, -5), entries);
+        if (Object.values(entries).some(entry => entry.proposalReceipts?.some(receipt => receipt.id === item.id && receipt.digest === item.pendingDigest))) continue;
+      } catch { item = { id: name.slice(0, -5), pendingDigest: '', packId: null, skillId: null, name: 'Unreadable skill proposal', state: 'unsupported', reason: 'The record needs service recovery. It was not followed or activated.', current: null, proposed: null, currentDigest: null, activeRevision: 0, origin: 'Worker proposal' }; }
+      if (items.length === 100) { hasMore = true; break; }
+      items.push(item);
     }
     const revisions: PackSkillRevisionMetadata[] = Object.values(entries).flatMap(entry => entry.pack.skills.flatMap(skill => {
       const versions = entry.overrides?.[skill.id]?.versions ?? [activeSkill(entry, skill.id)];
       return versions.slice(-2).map(version => revisionMetadata(entry, skill.id, version, activeSkill(entry, skill.id).revision));
     }));
     const learning = options.learningStatus?.() ?? { supported: stagedLearningSupported(), policyReady: learningPolicyReady(), enabled: stagedLearningEnabled() };
-    return { proposals: items, revisions, skillHistories:Object.values(entries).flatMap(entry=>entry.pack.skills.map(skill=>skillSummary(entry,skill.id))), learning, hasMore: names.length > 100, pendingUpgrades: Object.values(entries).filter(entry => entry.upgrade).map(entry => ({ packId: entry.pack.id, digest: entry.digest })) };
+    return { proposals: items, revisions, skillHistories:Object.values(entries).flatMap(entry=>entry.pack.skills.map(skill=>skillSummary(entry,skill.id))), learning, hasMore, pendingUpgrades: Object.values(entries).filter(entry => entry.upgrade).map(entry => ({ packId: entry.pack.id, digest: entry.digest })) };
   }
   async function finishUpgrade(entries: Record<string, Journal>, entry: Journal) {
     assertIdle(entry);
@@ -960,6 +965,12 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     return exclusive(async () => {
       const entries = await journals(), item = await proposal(String(input.id), entries);
       if (!item.pendingDigest || item.pendingDigest !== input.pendingDigest) return fail('The proposal changed. Review it again.', 409);
+      // A decided proposal stays decided, even when RealBud's saved copy outlives the worker's file.
+      const decided = Object.values(entries).flatMap(entry => (entry.proposalReceipts ?? []).filter(receipt => receipt.id === item.id && receipt.digest === item.pendingDigest).map(receipt => ({ entry, receipt })))[0];
+      if (decided) {
+        if (decided.receipt.outcome === (input.decision === 'approve' ? 'applied' : 'rejected')) return status(decided.entry);
+        return fail('This proposal was already decided. Refresh the list.', 409);
+      }
       if (!item.packId || !item.skillId || item.state !== 'reviewable') return fail('This proposal needs service review and cannot be applied here.', 409);
       const entry = entries[item.packId];
       if (item.currentDigest !== input.currentDigest) return fail('The active skill changed. Review the latest instructions first.', 409);

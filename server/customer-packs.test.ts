@@ -367,6 +367,26 @@ describe('worker folder deleted or replaced', () => {
     expect(await same.handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).toMatchObject({ status: 200 });
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);
   });
+  it('keeps a rejected proposal closed although RealBud’s copy outlives the worker file: approve after reject is refused', async () => {
+    const f = await installedFixture(), service = createCustomerPackService(scoped(f, randomUUID()));
+    await stage(f.root, `${f.baseline}\nRejected addition.\n`);
+    const item = (await service.proposals()).proposals[0], request = { id: item.id, pendingDigest: item.pendingDigest, currentDigest: item.currentDigest };
+    await service.reviewProposal({ ...request, decision: 'reject' });
+    await expect(service.reviewProposal({ ...request, decision: 'approve' })).rejects.toMatchObject({ status: 409 });
+    await expect(service.reviewProposal({ ...request, decision: 'reject' })).resolves.toMatchObject({ localReady: true });
+    expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline); expect(f.resetRecipeApprovals).not.toHaveBeenCalled();
+  });
+  it('lists an open proposal behind 100 decided ones', async () => {
+    const f = await installedFixture(), service = createCustomerPackService(scoped(f, randomUUID()));
+    const ids = Array.from({ length: 101 }, (_, i) => i.toString(16).padStart(8, '0'));
+    for (const id of ids) await stage(f.root, `${f.baseline}\nSuggestion ${id}.\n`, {}, id);
+    const journal = JSON.parse(await readFile(join(f.root, 'customer-packs.json'), 'utf8'));
+    journal.installs[f.pack.id].proposalReceipts = await Promise.all(ids.slice(0, 100).map(async id => ({ id, outcome: 'rejected', at: '2026-10-08T00:00:00.000Z',
+      digest: createHash('sha256').update(await readFile(join(f.root, 'profile/pending/skills', `${id}.json`), 'utf8')).digest('hex') })));
+    await writeFile(join(f.root, 'customer-packs.json'), JSON.stringify(journal));
+    const listed = await service.proposals();
+    expect(listed.proposals.map(item => item.id)).toEqual([ids[100]]); expect(listed.hasMore).toBe(false);
+  });
   it('never resumes from a worker copy that changed after approval', async () => {
     const f = await installedFixture(), workspaceId = randomUUID(), improved = `${f.baseline}\nApproved text.\n`; const file = await stage(f.root, improved);
     const reset = f.options.resetRecipeApprovals;

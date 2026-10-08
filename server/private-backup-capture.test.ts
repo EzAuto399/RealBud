@@ -256,14 +256,18 @@ describe('bounded immutable live-source capture', () => {
     const bytes = await readFile(join(f.catalog.directory, 'catalog.sqlite'));
     expect(bytes.includes(Buffer.from(secret))).toBe(false); expect(bytes.includes(Buffer.from(Buffer.from(planted).toString('base64').slice(0, 24)))).toBe(false);
   });
-  it('withholds an older worker-fact file that carries credential-shaped text instead of refusing the backup', async () => {
+  it('carries an older scope with credential-shaped text whole: RealBud’s facts stay, the item becomes a fingerprint, the backup succeeds', async () => {
     const f = await fixture(), scope = workerScope(f.workspaceId, 'property', '/synthetic/profile'), secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';
     await updateWorkerState(scope, null, draft => { putArtifact(draft, 'memories/MEMORY.md', Buffer.from('Fictional preference.'), 'realbud', 1); }, f.directory);
     const file = workerStateFile(scope, f.directory), older = JSON.parse(await readFile(file, 'utf8'));
     older.artifacts['skills/old/SKILL.md'] = { digest: createHash('sha256').update(`token = "${secret}"`).digest('hex'), base64: Buffer.from(`token = "${secret}"`).toString('base64'), source: 'office', at: 1 };
     await save(f.directory, `worker-state/${f.workspaceId}/${scope.scopeId}/state.json`, older);
     const receipt = await capturePrivateWorkspace(f.options); await verifyPrivateWorkspaceCapture(f.options, receipt);
-    expect(f.catalog.getFile(`worker-state/${f.workspaceId}/${scope.scopeId}/state.json`)).toBeUndefined();
+    const carried = JSON.parse(f.catalog.getFile(`worker-state/${f.workspaceId}/${scope.scopeId}/state.json`)!.data.toString('utf8'));
+    expect(Buffer.from(carried.artifacts['memories/MEMORY.md'].base64, 'base64').toString()).toBe('Fictional preference.');
+    expect(carried.artifacts['skills/old/SKILL.md']).toBeUndefined();
+    expect(carried.held).toEqual([expect.objectContaining({ key: 'skills/old/SKILL.md', reason: 'credential' })]);
+    expect(f.catalog.seal()).toMatchObject({ sealed: true });
     expect((await readFile(join(f.catalog.directory, 'catalog.sqlite'))).includes(Buffer.from(Buffer.from(`token = "${secret}"`).toString('base64')))).toBe(false);
   });
   it('supports cold target names and authority-only guards without a source key or catalog', async () => {

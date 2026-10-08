@@ -34,12 +34,15 @@ describe.skipIf(process.platform === 'win32')('host-owned typed memory proposal 
     await f.service.close();
   });
 
-  it('keeps retries in the same conversation binding and separates member, workspace and runtime changes', () => {
+  it('keeps retries in the same conversation binding across updates and relocation, and separates member and workspace', () => {
     let selected = context(); const f = fixture({ context: () => selected });
     const first = f.service.proposalIntegration('chat-one', () => true)!.scope;
     expect(f.service.proposalIntegration('chat-one', () => true)!.scope).toBe(first);
     expect(f.service.proposalIntegration('chat-two', () => true)!.scope).not.toBe(first);
-    for (const patch of [{ profileId: 'property-other', profileDirectory: '/fictional/other' }, { runtimeId: `${MEMORY_REVIEW_RUNTIME}-different` }, { workspaceId: '22222222-3333-4444-8555-666666666666' }]) {
+    for (const patch of [{ runtimeId: `${MEMORY_REVIEW_RUNTIME}-different` }, { profileDirectory: '/fictional/relocated/property' }]) {
+      selected = { ...context(), ...patch }; expect(f.service.proposalIntegration('chat-one', () => true)!.scope).toBe(first);
+    }
+    for (const patch of [{ profileId: 'property-other', profileDirectory: '/fictional/other' }, { workspaceId: '22222222-3333-4444-8555-666666666666' }]) {
       selected = { ...context(), ...patch }; expect(f.service.proposalIntegration('chat-one', () => true)!.scope).not.toBe(first);
     }
   });

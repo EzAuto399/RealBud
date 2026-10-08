@@ -2,7 +2,7 @@
  * memory itself: reviews read and commit RealBud's canonical worker state and
  * need no worker Python. The native helper below is kept, unselected, for the
  * opt-in native proofs; it is never mixed with owned state at runtime. */
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
@@ -26,6 +26,7 @@ import type { WorkspaceActivity } from './workspace-activity.ts';
 import { MEMORY_RECOVERY_API, parseMemoryRecoveryPage, parseMemoryRecoveryClosure } from '../shared/hermes-memory-recovery.ts';
 import { parseMemoryProposalInput, parseMemoryProposalResult, type MemoryProposalInput, type MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
 import { OWNED_MEMORY_RUNTIME, runOwnedMemoryReview } from './hermes-memory-owned.ts';
+import { memorySigningKey } from './hermes-memory-signing.ts';
 
 /** Hermes 0.21.3 (v2026.9.14): staged replace/remove select by old_text. */
 export const MEMORY_REVIEW_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
@@ -65,7 +66,7 @@ const admittedNativeFiles = (runtimeId: string | null) => { const commit = runti
 export interface MemoryReviewContext { profileDirectory: string; runtimeDirectory: string; workspaceId: string; profileId: string; runtimeId: string; python: string }
 type Command = { command: 'list'; cursor?: string } | { command: 'preview'; id: string } | { command: 'decide'; id: string; expectedDigest: string; decision: 'approve' | 'reject' }
   | { command: 'interrupted-list'; cursor?: string } | { command: 'interrupted-close'; proposalKey: string; expectedDigest: string }
-  | { command: 'propose'; scopeId: string; input: MemoryProposalInput };
+  | { command: 'propose'; scopeId: string; input: MemoryProposalInput; legacyScopeIds?: string[] };
 type Request = Omit<MemoryReviewContext, 'python'> & Command & { version: 1; key: string };
 const mutating = (command: Command) => command.command === 'decide' || command.command === 'propose' || command.command === 'interrupted-close';
 const helper = fileURLToPath(new URL('./helpers/hermes-memory-review.py', import.meta.url));
@@ -114,8 +115,8 @@ export async function validateOwnedMemoryContext(context: MemoryReviewContext) {
   if (!WORKSPACE.test(context.workspaceId) || !PROFILE.test(context.profileId) || context.profileId.length > 64 || context.runtimeId !== OWNED_MEMORY_RUNTIME) fail('unsupported');
 }
 /** The default invoke: RealBud-owned operations with the helper's request/response contract. */
-export function invokeOwnedMemoryReview(context: MemoryReviewContext, request: Request, options: { signal?: AbortSignal } = {}): Promise<unknown> {
-  return runOwnedMemoryReview({ ...request, profileDirectory: context.profileDirectory }, { signal: options.signal });
+export function invokeOwnedMemoryReview(context: MemoryReviewContext, request: Request, options: { signal?: AbortSignal; dataDir?: string } = {}): Promise<unknown> {
+  return runOwnedMemoryReview({ ...request, profileDirectory: context.profileDirectory }, { signal: options.signal, dataDir: options.dataDir });
 }
 export async function validateNativeMemoryRuntime(context: MemoryReviewContext) {
   // The native Python helper has not admitted Windows per-file ACL and durable
@@ -188,11 +189,16 @@ export function createHermesMemoryReviewService(options: {
   validateRuntime?: typeof validateOwnedMemoryContext; invoke?: typeof runMemoryReviewHelper;
   /** Defaults to RealBud's data directory, outside the worker's writable home. */
   learningDirectory?: (context: MemoryReviewContext) => string; autoReviewIntervalMs?: number; now?: () => number;
+  /** RealBud's data directory for owned state and the carried signing keys (tests use a temporary one). */
+  dataDirectory?: string;
+  /** The helper-era context a 0.1.42 conversation was bound to, for retrying its proposals. */
+  legacyContext?: (workspaceId: string) => MemoryReviewContext;
 }) {
   const active = new Set<string>(), controllers = new Set<AbortController>(), drains = new Set<Promise<void>>();
   let closed = false;
   const now = options.now ?? Date.now;
-  const learningDirectory = options.learningDirectory ?? ((context: MemoryReviewContext) => defaultLearningDirectory(context));
+  const dataDirectory = options.dataDirectory ?? DATA_DIR;
+  const learningDirectory = options.learningDirectory ?? ((context: MemoryReviewContext) => defaultLearningDirectory(context, dataDirectory));
   const learningStore = (context: MemoryReviewContext) => createLearningStore(learningDirectory(context), { workspaceId: context.workspaceId, profileId: context.profileId }, now);
   const exec = <T>(work: () => Promise<T>): Promise<T> => options.withActivity ? options.withActivity(work) : work();
   const ownerFor = (context: MemoryReviewContext) => ({ signal: new AbortController().signal, context: JSON.stringify(context), isCurrent: () => true });
@@ -225,10 +231,14 @@ export function createHermesMemoryReviewService(options: {
       checkOwner();
       if (JSON.stringify(options.context()) !== identity) fail('stale-review');
       const sourceKey = options.key(); if (!Buffer.isBuffer(sourceKey) || sourceKey.length !== 32) fail('unavailable');
-      const signingKey = createHmac('sha256', sourceKey).update(`realbud-memory-review-v1\0${context.workspaceId}\0${context.profileId}`).digest();
+      // Carried by private backups, so restored decisions and journals keep verifying.
+      const signingKey = await memorySigningKey(sourceKey, context.workspaceId, context.profileId, dataDirectory).catch(() => fail('unavailable'));
+      if (controller.signal.aborted) { signingKey.fill(0); fail('unavailable', 503); }
+      if (JSON.stringify(options.context()) !== identity) { signingKey.fill(0); fail('stale-review'); }
       const { python: _python, ...binding } = context;
       let raw: unknown;
-      try { dispatched = true; raw = await (options.invoke ?? invokeOwnedMemoryReview)(context, { ...binding, ...input, version: 1, key: signingKey.toString('base64') }, { signal: controller.signal }); }
+      const invoke = options.invoke ?? ((c: MemoryReviewContext, r: Request, o: { signal?: AbortSignal }) => invokeOwnedMemoryReview(c, r, { ...o, dataDir: dataDirectory }));
+      try { dispatched = true; raw = await invoke(context, { ...binding, ...input, version: 1, key: signingKey.toString('base64') }, { signal: controller.signal }); }
       finally { signingKey.fill(0); }
       if (controller.signal.aborted) fail('unavailable', 503);
       checkOwner();
@@ -462,11 +472,20 @@ export function createHermesMemoryReviewService(options: {
       let captured: MemoryReviewContext;
       try { captured = { ...options.context() }; } catch { return null; }
       const identity = JSON.stringify(captured), memberKey = currentWorkerProfile().memberKey;
-      const scope = createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', identity, threadId])).digest('hex');
+      // Stable across updates and relocation: workspace, member profile and conversation only.
+      const scope = createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v2', captured.workspaceId, captured.profileId, threadId])).digest('hex');
+      // A 0.1.42 conversation bound its proposals to the helper's runtime context; retries find
+      // those journals only through this binding, verified by their signatures.
+      const legacyScopeIds: string[] = [];
+      try {
+        const legacy = (options.legacyContext ?? nativeMemoryReviewContext)(captured.workspaceId);
+        if (legacy.workspaceId === captured.workspaceId && legacy.profileId === captured.profileId)
+          legacyScopeIds.push(createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', JSON.stringify(legacy), threadId])).digest('hex'));
+      } catch { /* no helper-era runtime: nothing to look up */ }
       return { scope, propose: async (raw, signal) => withWorkerProfile(memberKey, async () => {
         const input = parseMemoryProposalInput(raw); if (!input) fail('invalid', 400);
         if (containsCredential(JSON.stringify(input))) fail('blocked-content');
-        const work = () => run({ command: 'propose', scopeId: scope, input }, { signal, context: identity, isCurrent });
+        const work = () => run({ command: 'propose', scopeId: scope, input, ...(legacyScopeIds.length ? { legacyScopeIds } : {}) }, { signal, context: identity, isCurrent });
         const result = options.withActivity ? await options.withActivity(work) : await work();
         const proposal = parseMemoryProposalResult(result); if (!proposal) fail('recovery-required');
         return proposal;

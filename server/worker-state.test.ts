@@ -1,6 +1,6 @@
 /** Canonical worker facts: import, projection and preservation. Synthetic profiles only. */
 import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -157,7 +157,47 @@ describe('pending skills', () => {
     await expect(capturePendingSkill(f.scope, '0000beef', Buffer.from('{"changed":true}'), { dataDir: f.data })).rejects.toMatchObject({ code: 'conflict' });
     expect((await readPendingSkill(f.scope, '0000beef', f.data))?.bytes).toEqual(bytes);
     expect(await readPendingSkill(f.scope, '../escape', f.data)).toBeNull();
-    await capturePendingSkill(f.scope, '0000cafe', Buffer.from('{"note":"token = \\"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD\\""}'), { dataDir: f.data });
+    // A refusal is explicit to the caller and recorded as a digest-only hold.
+    await expect(capturePendingSkill(f.scope, '0000cafe', Buffer.from('{"note":"token = \\"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD\\""}'), { dataDir: f.data })).rejects.toMatchObject({ code: 'credential', status: 409 });
     expect(await readPendingSkill(f.scope, '0000cafe', f.data)).toBeNull(); expect(JSON.stringify(await f.state())).not.toContain('sk-proj');
+    expect((await f.state()).held).toEqual([expect.objectContaining({ key: 'pending/skills/0000cafe.json', reason: 'credential' })]);
+  });
+});
+
+describe('one bad file never blocks the scope', () => {
+  it('restores the last good saved scope when the current file is damaged', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await projectProfileFacts(f.scope, { dataDir: f.data });
+    await writeFile(workerStateFile(f.scope, f.data), '{"damaged":', { mode: 0o600 });
+    expect(await f.canonical('memories/MEMORY.md')).toBe('Prefers concise updates.');
+  });
+
+  it('holds only the file whose worker folder is unusable during projection', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await rm(join(f.profile, 'memories', 'MEMORY.md'));
+    await mkdir(join(f.root, 'elsewhere'), { recursive: true, mode: 0o700 });
+    await rm(join(f.profile, 'skills', 'office-notes'), { recursive: true }); await symlink(join(f.root, 'elsewhere'), join(f.profile, 'skills', 'office-notes'));
+    const result = await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect(result.written).toEqual(['memories/MEMORY.md']); expect(result.held).toContain('skills/office-notes/SKILL.md');
+    expect(await f.read('memories/MEMORY.md')).toBe('Prefers concise updates.');
+    expect((await f.state()).held.some(row => row.key === 'skills/office-notes/SKILL.md' && row.reason === 'unsafe')).toBe(true);
+  });
+
+  it('completes the import when worker-planted refusals overflow the bounded hold list', async () => {
+    const f = await fixture();
+    for (let i = 0; i < 1200; i++) await f.write(`pending/skills/${i.toString(16).padStart(8, '0')}.json`, `{"note":"token = \\"sk-proj-${'a'.repeat(30)}${i}\\""}`);
+    expect(await importLegacyProfileFacts([f.scope], { dataDir: f.data })).toMatchObject([{ complete: true }]);
+    const state = await f.state();
+    expect(state.held.length).toBeLessThanOrEqual(1000); expect(await f.canonical('memories/MEMORY.md')).toBe('Prefers concise updates.');
+  }, 30_000);
+});
+
+describe('capped listings are recorded', () => {
+  it('notes a capped skill discovery as a hold instead of silently skipping files', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    for (let i = 0; i < 70; i++) { await mkdir(join(f.profile, 'skills', `extra-${i}`), { recursive: true, mode: 0o700 }); await f.write(`skills/extra-${i}/SKILL.md`, `# ${i}\n`); }
+    const result = await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect(result.discoveryCapped).toBe(true);
+    expect((await f.state()).held).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'skills', reason: 'capacity' })]));
   });
 });
