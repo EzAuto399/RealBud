@@ -13,12 +13,14 @@ import {
   buildDeskQueue,
   filterDeskQueue,
   queueCounts,
+  queueReason,
   type DeskQueueItem,
   type DeskRecoveryPlan,
   type QueueCounts,
   type QueueFilter,
 } from "@/lib/desk-queue";
 import { deskHandsStatus, missAction } from "@/lib/hands-label";
+import { stableOrder } from "@/lib/schedule-rows";
 import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
 import { StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
@@ -38,9 +40,9 @@ import { MailWorkPanel } from './desk/MailWorkPanel';
 import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskSections, DeskWorkArea, LicenseeBadge, OTHER_WORK_LABELS } from "./desk/DeskSections";
 import type { DeskOtherWork } from "@/lib/desk-view-state";
-import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
 import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
+import { openArrangeDesk, useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { deskSectionsOrDefault } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
@@ -89,8 +91,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // The day's REI sign-in: while REI needs it, it is Desk's one primary action.
   const rei = useReiSignIn();
   const reiNeeded = rei.view?.state === "needed";
+  // Disconnected office or stale check: one line says so above everything Desk shows.
+  const dataStatus = useDeskDataStatus();
   const activityShown = deskLayout?.find(section => section.id === "activity")?.visible !== false;
-  const [customizeOpen, setCustomizeOpen] = useState(false);
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
   // Paint instantly from the SSE-pushed snapshot when we have one; the
   // effect below still refreshes from the server on mount.
@@ -324,8 +327,30 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     const ids = new Set(taskScope.ids);
     return rows.filter(row => row.propertyId && ids.has(row.propertyId));
   }, [rows, taskScope]);
-  const visible = useMemo(() => filterDeskQueue(scopedRows, filter, query).filter(row => caseKind === "all" || row.kind === caseKind), [scopedRows, filter, query, caseKind]);
+  const live = useMemo(() => filterDeskQueue(scopedRows, filter, query).filter(row => caseKind === "all" || row.kind === caseKind), [scopedRows, filter, query, caseKind]);
+  // While a case is open, new data never reorders the rows under the person
+  // (Schedule does the same). Changing the view or Update order applies the live order.
+  const viewKey = `${mode}|${filter}|${query}|${caseKind}|${taskScope?.label ?? ""}`;
+  const reviewed = useRef<{ view: string; ids: string[] } | null>(null);
+  const [, setOrderNonce] = useState(0);
+  const { rows: visible, updates: orderUpdates } = reviewOrder(selectedId && reviewed.current?.view === viewKey ? reviewed.current.ids : null, live);
+  reviewed.current = { view: viewKey, ids: visible.map((row) => row.id) };
+  const updateOrder = () => {
+    reviewed.current = null;
+    setOrderNonce((value) => value + 1);
+    document.getElementById("desk-queue-list")?.focus();
+  };
   const selected = visible.find((row) => row.id === selectedId) ?? visible[0];
+  // A new licensee escalation joins the end of a held order, so it is always announced too.
+  const licenseeSeen = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!snap) return;
+    const seen = licenseeSeen.current;
+    const licensee = rows.filter((row) => row.kind === "licensee-required");
+    licenseeSeen.current = new Set(licensee.map((row) => row.id));
+    const fresh = seen ? licensee.find((row) => !seen.has(row.id)) : undefined;
+    if (fresh) setAnnounce(`New licensee escalation · ${fresh.address.split(",")[0]?.trim() || fresh.address}`);
+  }, [rows]);
   const counts = queueCounts(scopedRows);
   const askAboutCase = (intent: DeskAskIntent = "next") => {
     if (!snap || !selected) return;
@@ -593,6 +618,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             checkState={checkState}
             liveEmpty={liveEmpty}
             selectedId={selected?.id}
+            orderUpdates={orderUpdates}
+            onUpdateOrder={updateOrder}
             onClose={() => setQueueOpen(false)}
             onHighlight={setSelectedId}
             onSelect={(id) => {
@@ -772,8 +799,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 <details className="desk-options">
                   <summary className="desk-more-item">Desk options</summary>
                   <div className="desk-options-body">
-                    <button type="button" className="desk-more-item" aria-expanded={customizeOpen} onClick={chooseMore(() => setCustomizeOpen(true))}>
-                      Customize desk
+                    <button type="button" className="desk-more-item" onClick={chooseMore(openArrangeDesk)}>
+                      Arrange Desk
                     </button>
                     <div className="desk-more-layout">
                       <WorkspaceLayout />
@@ -793,11 +820,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               <HermiosMark size={18} />
               Hermios
             </button>
-            {(mode !== "cases" || otherWork) && !hermiosOpen ? (
-              <button type="button" aria-pressed={true} onClick={() => setMode("cases")} className="desk-workspace-back">
-                Back to tasks
-              </button>
-            ) : null}
           </div>
           {/* The shell's Properties / Bills / saved-view tabs join this row on Desk. */}
           <div ref={setDeskTabSlot} className="desk-shell-tabs" />
@@ -817,7 +839,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 }}
               />
               {!sectionShown("mail") && !sectionShown("bills") && !sectionShown("shared-work") ? (
-                <p className="px-2.5 py-2 text-[12px] text-ink-muted">Turn these on in More → Desk options → Customize desk.</p>
+                <p className="px-2.5 py-2 text-[12px] text-ink-muted">Turn these on in More → Desk options → Arrange Desk.</p>
               ) : null}
             </div>
           </details>
@@ -852,20 +874,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           </div>
         ) : null}
       </header>
-      {customizeOpen ? (
-        <div
-          className="desk-customize-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="desk-customize-title"
-          ref={(node) => { if (node && !node.contains(document.activeElement)) node.querySelector<HTMLElement>('[aria-label="Close Customize desk"]')?.focus(); }}
-          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setCustomizeOpen(false); } }}
-          onMouseDown={(event) => { if (event.target === event.currentTarget) setCustomizeOpen(false); }}
-        >
-          <div className="desk-customize-dialog"><DeskCustomizePanel onClose={() => setCustomizeOpen(false)} /></div>
-        </div>
-      ) : null}
-
       {hermiosOpen ? (
         /* Hermios is an exclusive surface: its native view owns its own
            scrolling, so RealBud adds no outer scroller around it. */
@@ -884,6 +892,12 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
       ) : (
         <div ref={contentScrollRef} className="desk-content min-h-0 flex-1 overflow-y-auto" data-drawer-open={drawerOpen ? "true" : undefined}>
           <div className="desk-notices empty:hidden" inert={drawerOpen}>
+            {dataStatus.notice ? (
+              <div role="status" className="flex max-w-[46rem] items-center gap-2 rounded border border-hold/30 bg-hold/10 px-3 py-2 text-[13px] text-ink">
+                <CircleAlert size={16} className="shrink-0 text-hold" aria-hidden />
+                {dataStatus.notice}
+              </div>
+            ) : null}
             {offerOfficeBook ? (
               <StartOfficeBook busy={busy !== null} onStart={() => { void run("/api/desk/live", "POST", { expectedRevision: snap.revision }, "live", "Office book started"); }} />
             ) : null}
@@ -899,7 +913,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           <DeskWorkArea
             active={otherWork}
             opened={openedOther}
-            onBack={() => setOtherWork(null)}
             tasks={tasks}
             panels={{
               mail: <><div className="rb-card-menu-row"><DeskCardMenu id="mail" /></div><MailWorkPanel /></>,
@@ -933,8 +946,19 @@ function queueRowId(id: string): string {
   return `queue-row-${id}`;
 }
 
+/** Rows in the order the person is reviewing: rows stay put, finished rows drop
+ *  out and new rows join the end. `updates` says the live order differs. */
+export function reviewOrder(frozen: readonly string[] | null, live: readonly DeskQueueItem[]): { rows: DeskQueueItem[]; updates: boolean } {
+  if (!frozen) return { rows: [...live], updates: false };
+  const liveIds = live.map((row) => row.id);
+  const byId = new Map(live.map((row) => [row.id, row]));
+  const ids = stableOrder(frozen, liveIds);
+  return { rows: ids.map((id) => byId.get(id)!), updates: ids.some((id, index) => id !== liveIds[index]) };
+}
+
 /** A queue row: a pointer to the case, two lines, plus the licensee badge so a
- *  licensee hold is conspicuous before the case is opened. */
+ *  licensee hold is conspicuous before the case is opened, and one muted line
+ *  saying why the row sits where it does. */
 function QueueRow({ row, selected, onSelect }: { row: DeskQueueItem; selected: boolean; onSelect: () => void }) {
   const licensee = row.kind === "licensee-required";
   const meta = licensee ? row.meta : `${CASE_KIND_LABELS[row.kind] ?? row.kind} · ${row.meta}`;
@@ -957,6 +981,7 @@ function QueueRow({ row, selected, onSelect }: { row: DeskQueueItem; selected: b
       {licensee ? <LicenseeBadge /> : null}
       <span className="desk-queue-meta line-clamp-2 text-[12px] text-ink-muted" title={meta}>{meta}</span>
       {showAction ? <span className="text-[12px] text-agency">{row.action}</span> : null}
+      <span className="desk-queue-reason text-[13px] text-ink-muted">{queueReason(row)}</span>
     </button>
   );
 }
@@ -992,6 +1017,8 @@ function QueuePane({
   checkState,
   liveEmpty,
   selectedId,
+  orderUpdates,
+  onUpdateOrder,
   onHighlight,
   onSelect,
   onClose,
@@ -1010,6 +1037,8 @@ function QueuePane({
   checkState: QueueCheckState;
   liveEmpty: boolean;
   selectedId?: string;
+  orderUpdates: boolean;
+  onUpdateOrder: () => void;
   onHighlight: (id: string) => void;
   onSelect: (id: string) => void;
   onClose: () => void;
@@ -1066,6 +1095,12 @@ function QueuePane({
       </div>
       {scope && <div className="property-scope-banner"><strong>{scope.label}</strong><button type="button" onClick={onClearScope}>Show all properties</button></div>}
       {reminders ? <div className="desk-queue-reminders border-b border-line px-3 py-2">{reminders}</div> : null}
+      {orderUpdates ? (
+        <div className="flex items-center justify-between gap-2 border-b border-line px-3 text-[13px] text-ink-muted">
+          <span>Updates available</span>
+          <button type="button" onClick={onUpdateOrder} className="pm-control text-agency">Update order</button>
+        </div>
+      ) : null}
       <div
         id="desk-queue-list"
         role="listbox"

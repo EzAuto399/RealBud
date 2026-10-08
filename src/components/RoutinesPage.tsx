@@ -277,7 +277,6 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   // Filters must never hide the local Stop control for attended work.
   const runningCount = visibleRows.filter((row) => scheduleRowSection(row) === "running").length;
   const filteredRows = visibleRows.filter((row) => matchingKeys.has(row.key) || scheduleRowSection(row) === "running");
-  const attentionCount = filterScheduleRows(listed, "attention").length;
 
   /** Load a saved job into the plan editor without overwriting unsaved work. */
   const openRecipeDraft = (recipe: Recipe): boolean => {
@@ -580,12 +579,11 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
       <header className="shrink-0 px-4 py-1.5 min-[720px]:px-6">
-        {/* One thin line: title, what needs attention (only when something does), actions. */}
+        {/* One thin line: title and actions. The Needs you filter and group carry the attention count. */}
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5">
             <CalendarDays size={21} className="text-agency" aria-hidden />
             <h1 className="pm-screen-title text-ink">Schedule</h1>
-            {attentionCount ? <p className="text-[14px] text-hold">{attentionCount} {attentionCount === 1 ? "job needs" : "jobs need"} your attention. Choose a job below to see what it needs.</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => changeDrawer({ mode: "learn" })} className="pm-control inline-flex items-center gap-1.5 rounded px-3 text-[13px] text-ink-muted hover:bg-raised hover:text-ink">

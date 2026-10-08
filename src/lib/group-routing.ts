@@ -15,15 +15,6 @@ export function defaultResponderName(group: Group, members: Bot[]): string | nul
   return members.find((member) => member.id === value.botId)?.name ?? null;
 }
 
-export function groupResponseHint(group: Group, members: Bot[]): string {
-  if (group.dm) return "Reply here to continue the bot-to-bot conversation.";
-  const value = effectiveDefaultResponder(group, members);
-  if (value.kind === "everyone") return "Everyone responds unless you @mention specific bots.";
-  if (value.kind === "mentions") return "Mention a bot with @ to bring them in.";
-  const name = defaultResponderName(group, members) ?? "The lead bot";
-  return `${name} responds by default — @mention someone else to choose them instead.`;
-}
-
 export function groupComposerHint(group: Group, members: Bot[]): string {
   if (group.dm) return "continue the conversation";
   const value = effectiveDefaultResponder(group, members);

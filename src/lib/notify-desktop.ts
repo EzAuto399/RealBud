@@ -9,12 +9,6 @@ let lastNeedsYou: number | null = null;
 let lastHeadline: string | null = null;
 let skipForever = false;
 
-export function resetNotifyDesktop(): void {
-  lastNeedsYou = null;
-  lastHeadline = null;
-  skipForever = false;
-}
-
 export function briefCountsLine(brief: Pick<MorningBrief, "checkedCount" | "needsYou" | "licensee">): string {
   const bits = [`${brief.checkedCount} checked`];
   if (brief.needsYou) bits.push(brief.needsYou === 1 ? "1 needs you" : `${brief.needsYou} need you`);

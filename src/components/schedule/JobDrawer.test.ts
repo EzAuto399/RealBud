@@ -39,14 +39,31 @@ describe("job list", () => {
       recipes: [], jobRuns: [], nowMs: NOW, timeZone: "Australia/Brisbane",
       loopRuns: [run({ loopId: "owner-letter", loopName: "Owner letter", status: "failed", detail: "Fictional engine commentary" })],
     });
-    const html = renderToStaticMarkup(createElement(JobList, { rows, onOpen: () => {}, onAction: () => {} }));
+    const html = renderToStaticMarkup(createElement(JobList, { rows, nowMs: NOW, onOpen: () => {}, onAction: () => {} }));
     expect(html).toContain('aria-label="Jobs"');
     expect(html).toContain('aria-label="Open job: Owner letter"');
-    expect(html).toContain('aria-label="Review result: Owner letter"');
+    expect(html).toContain('aria-label="Review failed run: Owner letter"');
+    expect(html).toContain(">Next run<");
+    expect(html).toContain("Last run 1 min ago");
+    expect(html).not.toContain(">Timing<");
     expect(html).toContain(">Failed<");
     expect(html).not.toContain(">On<");
     expect(html).not.toContain("Fictional engine commentary");
     expect(html).not.toContain("“");
+    expect(renderToStaticMarkup(createElement(JobList, { rows: buildScheduleRows({ loops: [loop({ id: "owner-letter", name: "Owner letter", enabled: true, nextRunAt: NOW + 86_400_000 })], recipes: [], jobRuns: [], loopRuns: [], nowMs: NOW, timeZone: "Australia/Brisbane" }), nowMs: NOW, onOpen: () => {}, onAction: () => {} }))).toContain("Never run");
+  });
+
+  it("names the review action after the row's status and keeps Review result for a plain waiting result", () => {
+    const action = (status: LoopRun["status"]) => {
+      const rows = buildScheduleRows({ loops: [loop()], recipes: [], jobRuns: [], nowMs: NOW, loopRuns: [run({ status })] });
+      const html = renderToStaticMarkup(createElement(JobList, { rows, onOpen: () => {}, onAction: () => {} }));
+      return /aria-label="((?!Open job)[^"]*): Weekly bills review"/.exec(html)?.[1];
+    };
+    expect(action("failed")).toBe("Review failed run");
+    expect(action("missed")).toBe("Review missed run");
+    expect(action("partial")).toBe("Review incomplete run");
+    expect(action("interrupted")).toBe("Review interrupted run");
+    expect(action("awaiting-approval")).toBe("Review result");
   });
 
   it("disables a changing row action during recovery", () => {
@@ -66,7 +83,7 @@ describe("job list", () => {
     expect(html).toContain('data-section="attention"');
     expect(html.indexOf('data-section="running"')).toBeLessThan(html.indexOf('data-section="attention"'));
     expect(html).toContain('aria-label="View progress: Inspection review"');
-    expect(html).toContain('aria-label="Review result: Weekly bills review"');
+    expect(html).toContain('aria-label="Review failed run: Weekly bills review"');
     expect(html).toContain("Review the failed run before trying again.");
     expect(html).not.toContain('data-section="paused"');
   });

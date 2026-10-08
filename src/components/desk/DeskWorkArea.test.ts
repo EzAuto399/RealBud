@@ -18,7 +18,6 @@ describe("Other work", () => {
     renderToStaticMarkup(createElement(DeskWorkArea, {
       active,
       opened: new Set(opened),
-      onBack: noop,
       tasks: createElement("textarea", { "aria-label": "Draft wording", defaultValue: "Unsaved edit" }),
       panels: {
         mail: createElement("form", { "aria-label": "Review saved mail item" }, "mail draft"),
@@ -30,7 +29,9 @@ describe("Other work", () => {
   it("replaces the task area while open, keeping the tasks and their draft mounted", () => {
     const html = area("mail", ["mail"]);
     expect(html).toMatch(/<div class="desk-work-tasks" hidden="">.*Unsaved edit/);
-    expect(html).toMatch(/<section class="desk-other-work-surface" data-other-work="mail" aria-label="Mail priorities"><button[^>]*>Back to tasks<\/button><form/);
+    // Desk's Tasks tab is the one way back; the surface adds no second one.
+    expect(html).toMatch(/<section class="desk-other-work-surface" data-other-work="mail" aria-label="Mail priorities"><form/);
+    expect(html).not.toContain("Back to tasks");
     expect(html).not.toContain("bills");
   });
 

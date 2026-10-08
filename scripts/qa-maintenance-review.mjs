@@ -159,10 +159,11 @@ try {
   pass('Bud posts one chat card for the new findings (none for the quiet rerun), and its Open button goes to Desk');
   await page.locator('.desk-more > summary').filter({ hasText: /^More$/ }).click();
   await page.locator('.desk-options > summary').click();
-  await page.getByRole('button', { name: 'Customize desk', exact: true }).click();
-  const showBills = page.getByLabel('Show Bills and calendar', { exact: true });
-  if (!await showBills.isChecked()) { await showBills.check(); await page.getByRole('button', { name: 'Save layout', exact: true }).click(); await page.getByText('Desk layout saved.', { exact: true }).waitFor(); }
-  await page.getByRole('button', { name: 'Close Customize desk', exact: true }).click();
+  await page.locator('.desk-options-body').getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+  const arrange = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
+  const showBills = arrange.getByLabel('Show Bills and calendar on my Desk', { exact: true });
+  if (!await showBills.isChecked()) { await showBills.check(); await arrange.getByRole('button', { name: 'Save', exact: true }).click(); await arrange.getByText('Desk arrangement saved.', { exact: true }).waitFor(); }
+  await arrange.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   await page.locator('.desk-other-work > summary').click();
   await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Maintenance checks' }); await panel.waitFor();

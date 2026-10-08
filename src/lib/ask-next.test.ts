@@ -43,6 +43,14 @@ describe("ask next actions", () => {
     expect(next[2]?.label).toBe("Brief me on 12 Oak St");
   });
 
+  it("drops the address chip that repeats the attached case's next step", () => {
+    const input = { miss: false, needsYou: 1, workerReady: true, lastRunAt: 100,
+      addresses: [{ address: "12 Oak St, Dickson ACT", attention: "needs-you" as const }] };
+    expect(askNextActions(input).map((row) => row.id)).toEqual(["desk", "brief-12 Oak St, Dickson ACT"]);
+    expect(askNextActions({ ...input, caseAddress: "12 Oak St, Dickson ACT" }).map((row) => row.id)).toEqual(["desk"]);
+    expect(askNextActions({ ...input, caseAddress: "4/22 Harbour Rd, Kingston ACT" }).map((row) => row.id)).toEqual(["desk", "brief-12 Oak St, Dickson ACT"]);
+  });
+
   it("offers in-Ask Connected apps key setup when the broker key is missing", () => {
     const next = askNextActions({
       miss: false,

@@ -3,6 +3,7 @@
 // no run commentary; the detail drawer owns explanations and decisions.
 import type { JobRun, Recipe } from "./desk";
 import type { Loop, LoopRun } from "./routines";
+import { relativeAgo } from "./au";
 import { isAttendedMode } from "./job-run";
 import { findRecipeForLoop, recipeNeedsPlanApproval } from "./portal-job";
 
@@ -45,6 +46,8 @@ export interface ScheduleRow {
   loop?: Loop;
   recipe?: Recipe;
   next: string;
+  /** When the latest run that started last finished (or started); null if none has. */
+  lastRunAt: number | null;
   attention: AttentionWord | null;
   /** The unreviewed receipt behind the attention word, so opening the job can
    * acknowledge exactly that run. */
@@ -82,6 +85,19 @@ const FAILURE_WORDS: Record<string, AttentionWord> = {
   interrupted: "Interrupted",
   partial: "Incomplete",
 };
+
+/** Secondary text under the next run, so a fresh result reads differently from an old one. */
+export const lastRunText = (lastRunAt: number | null, nowMs: number) => (lastRunAt == null ? "Never run" : `Last run ${relativeAgo(lastRunAt, nowMs)}`);
+
+/** Queued, still-running and missed receipts are not a run that happened yet. */
+function latestRunAt(runs: readonly { status: string; createdAt: number; startedAt?: number; finishedAt?: number }[]): number | null {
+  let last: number | null = null;
+  for (const run of runs) {
+    const t = ["queued", "running", "missed"].includes(run.status) ? undefined : run.finishedAt ?? run.startedAt ?? run.createdAt;
+    if (t != null && (last == null || t > last)) last = t;
+  }
+  return last;
+}
 
 type Issue = { word: AttentionWord; severity: number; at: number; kind: "loop" | "job"; id: string };
 const at = (run: { startedAt?: number; createdAt: number }) => run.startedAt ?? run.createdAt;
@@ -206,6 +222,7 @@ function buildRow(input: ScheduleRowInput, loop: Loop | undefined, recipe: Recip
     loop,
     recipe,
     next,
+    lastRunAt: latestRunAt([...loopRuns, ...jobRuns]),
     attention,
     ...(issue && attention === issue.word ? { attentionRun: { kind: issue.kind, id: issue.id } } : {}),
     action,

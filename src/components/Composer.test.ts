@@ -2,9 +2,12 @@ import { createElement, type ComponentProps, type ReactElement, type ReactNode, 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bot } from "@/state/store";
+import type { DeskSnapshot } from "@/lib/desk";
+import { buildDeskQueue } from "@/lib/desk-queue";
+import { deskCaseInstruction } from "@/lib/desk-ask-context";
 import { Composer } from "./Composer";
 
-const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null }));
+const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null, store: {} as Record<string, unknown> }));
 vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
 // Keep React's real hooks while observing state requests from event handlers.
 // A server render lets the tests inspect the control wiring without a DOM.
@@ -17,7 +20,7 @@ vi.mock("react", async importOriginal => {
 });
 vi.mock("@/state/store", () => ({
   api: fixture.api,
-  useStore: () => ({ state: { bots: [], askWorkContext: null }, dispatch: fixture.dispatch }),
+  useStore: () => ({ state: { bots: [], askWorkContext: null, ...fixture.store }, dispatch: fixture.dispatch }),
   visibleMessages: (bot: Bot) => bot.messages,
 }));
 const caps = vi.hoisted(() => ({ dictation: { available: false as boolean } }));
@@ -31,7 +34,7 @@ function render(heldReason?: NonNullable<Bot["queuedMessage"]>["heldReason"], bu
   return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true }));
 }
 
-beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.stateUpdates.length = 0; caps.dictation.available = false; });
+beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.store = {}; fixture.stateUpdates.length = 0; caps.dictation.available = false; });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("held connected-app follow-up", () => {
@@ -86,6 +89,31 @@ describe("Ask while Bud is re-checking", () => {
     expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
     expect(html).toContain("You can draft while we connect.");
     expect(html).not.toContain("Bud is re-checking");
+  });
+});
+
+describe("Ask when model access is withdrawn", () => {
+  const blocked = () => {
+    const bot: Bot = { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+      color: "green", unread: false, busy: false, messages: [], modelSelection: { instanceId: "fixture", model: "fixture" } };
+    return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askReady: false, readiness: createElement("span") }));
+  };
+
+  it("names the terminal hold and keeps drafting open instead of promising a reconnect", () => {
+    fixture.store = { connected: true, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
+    const html = blocked();
+    expect(html).toContain("Disconnected from your office. You can still write a draft to keep.");
+    expect(html).toContain("Reconnect in Workspace → Website account · Shift + Enter for a new line");
+    expect(html).not.toMatch(/draft while we connect|Connect Bud to start/);
+    expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
+  });
+
+  it("keeps the connecting copy while the local service is reconnecting", () => {
+    fixture.store = { connected: false, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
+    const html = blocked();
+    expect(html).toContain("You can draft while we connect.");
+    expect(html).toContain("Connect Bud to start");
+    expect(html).not.toContain("Reconnect in Workspace");
   });
 });
 
@@ -275,5 +303,58 @@ describe("Ask work action labels", () => {
     expect(html).toContain("Enter to update current work");
     expect(html).not.toContain("Enter to start");
     expect(html).not.toContain("Steer now");
+  });
+});
+
+describe("attached Desk case next step", () => {
+  const attach = (caseId: string, draft?: string) => vi.stubGlobal("localStorage", {
+    getItem: (key: string) => key === "omb-draft-attachments"
+      ? JSON.stringify({ "bot:bud": [{ kind: "paste", id: `desk-case-${caseId}`, label: "Money · 12 Oak St", text: "Selected RealBud case.", size: 22, lines: 1 }] })
+      : key === "omb-drafts" && draft ? JSON.stringify({ "bot:bud": draft }) : null,
+    setItem: () => {},
+  });
+  const desk = {
+    properties: [{ id: "p1", address: "12 Oak St" }], sources: [], ledger: [],
+    workItems: [{ id: "w1", propertyId: "p1", kind: "arrears-reminder", state: "proposed", occurrenceKey: "p1:week", sourceIds: [] }],
+    drafts: [{ id: "d1", propertyId: "p1", workItemId: "w1", kind: "friendly-reminder", status: "pending", to: "Tenant", body: "Hi", createdAt: 1 }],
+    escalations: [{ id: "e1", propertyId: "p1", reason: "dispute", detail: "Tenant disputes the amount", createdAt: 2 }],
+  };
+
+  it("offers one step from the case's current Desk state before Back to this case, without sending", () => {
+    attach("draft:d1");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).toContain('aria-label="Next step: Review draft"');
+    expect(html.indexOf("Next step")).toBeLessThan(html.indexOf("Back to this case"));
+    expect(fixture.api).not.toHaveBeenCalled();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("never offers a draft on a licensee case", () => {
+    attach("esc:e1");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).toContain('aria-label="Next step: Summarise for licensee"');
+    expect(html).not.toContain("Review draft");
+  });
+
+  it("offers nothing for a decided case or one no longer on Desk", () => {
+    attach("draft:d1");
+    fixture.store = { desk: { ...desk, drafts: [{ ...desk.drafts[0], status: "allowed" }] } };
+    expect(render()).not.toContain("Next step");
+    attach("draft:gone");
+    fixture.store = { desk };
+    const html = render();
+    expect(html).not.toContain("Next step");
+    expect(html).toContain("Back to this case");
+  });
+
+  it("does not offer the step the composer already holds", () => {
+    fixture.store = { desk };
+    const item = buildDeskQueue(desk as unknown as DeskSnapshot).find(row => row.id === "draft:d1")!;
+    attach("draft:d1", deskCaseInstruction(item, "refine"));
+    expect(render()).not.toContain("Next step");
+    attach("draft:d1", deskCaseInstruction(item, "next"));
+    expect(render()).toContain('aria-label="Next step: Review draft"');
   });
 });

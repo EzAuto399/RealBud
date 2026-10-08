@@ -74,19 +74,17 @@ export const OTHER_WORK_LABELS: Record<DeskOtherWork, string> = {
 
 /** The task area and any opened Other work surface. Only one shows at a time;
  *  the rest stay mounted but hidden so unsaved drafts and in-flight request
- *  identities survive switching back and forth. */
+ *  identities survive switching back and forth. The Tasks tab is the way back. */
 export function DeskWorkArea({
   active,
   opened,
   tasks,
   panels,
-  onBack,
 }: {
   active: DeskOtherWork | null;
   opened: ReadonlySet<DeskOtherWork>;
   tasks: ReactNode;
   panels: Record<DeskOtherWork, ReactNode>;
-  onBack: () => void;
 }) {
   return (
     <>
@@ -94,7 +92,6 @@ export function DeskWorkArea({
       {(Object.keys(OTHER_WORK_LABELS) as DeskOtherWork[]).map(id =>
         opened.has(id) || active === id ? (
           <section key={id} className="desk-other-work-surface" data-other-work={id} hidden={active !== id} aria-label={OTHER_WORK_LABELS[id]}>
-            <button type="button" className="desk-back-to-tasks pm-control" onClick={onBack}>Back to tasks</button>
             {panels[id]}
           </section>
         ) : null,

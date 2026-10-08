@@ -71,6 +71,11 @@ describe("budFacingCopy", () => {
     expect(copy).not.toMatch(/Hermes|CLI|\bpack\b|\bprofile\b|\bpin\b|\.hermes/i);
   });
 
+  it("never doubles a word when the server already says private profile", () => {
+    expect(budFacingCopy("Bud’s private profile needs recovery before it can be changed.", "x"))
+      .toBe("Bud’s private setup needs recovery before it can be changed.");
+  });
+
   it("uses a safe fallback for missing detail", () => {
     expect(budFacingCopy(null, "Check Bud again.")).toBe("Check Bud again.");
   });

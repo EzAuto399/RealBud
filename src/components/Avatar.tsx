@@ -24,17 +24,6 @@ import { CursorAvatar, REALBUD_SHAPE, type CursorAvatarHandle } from "./CursorAv
 const GRADIENT_SHAPE = REALBUD_SHAPE;
 
 /**
- * Legacy face-placement knobs from the Maus body era. The cursor mascot
- * places its own face; these remain only so the preview harness's sliders
- * keep compiling — the matching props are accepted and ignored.
- */
-export const FACE_X = 80;
-export const FACE_Y = 102;
-export const FACE_SCALE = 0.47;
-export const EYE_SCALE = 1.12;
-export const MOUTH_WEIGHT = 11;
-
-/**
  * How far the pointer may pull the eyes. Facing forward the full range is
  * safe; with the expressions' authored gaze they already start off-centre.
  */
@@ -206,20 +195,3 @@ function MausAvatarComponent(
 }
 
 export const MausAvatar = memo(forwardRef(MausAvatarComponent));
-
-export function InitialsAvatar({
-  initials,
-  size = 32,
-}: {
-  initials: string;
-  size?: number;
-}) {
-  return (
-    <div
-      className="flex shrink-0 items-center justify-center rounded-full bg-raised text-ink-secondary font-medium"
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
-    >
-      {initials}
-    </div>
-  );
-}

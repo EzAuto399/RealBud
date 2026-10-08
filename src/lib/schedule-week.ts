@@ -221,12 +221,6 @@ export function sameCalendarDay(aMs: number, bMs: number, timeZone?: string): bo
   return a.year === b.year && a.month === b.month && a.day === b.day;
 }
 
-export function sameCalendarMonth(aMs: number, bMs: number, timeZone?: string): boolean {
-  const a = zonedYmd(aMs, timeZone);
-  const b = zonedYmd(bMs, timeZone);
-  return a.year === b.year && a.month === b.month;
-}
-
 export function producedByRunId(items: ReadonlyArray<{ origin?: { runId?: string } | null }>): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const item of items) {

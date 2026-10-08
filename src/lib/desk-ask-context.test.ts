@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deskAskContext, deskCaseInstruction, deskCaseIsNoDraft } from "./desk-ask-context";
+import { deskAskContext, deskCaseInstruction, deskCaseIsNoDraft, deskCaseNextStep } from "./desk-ask-context";
 import { mergeWorkContext } from "./work-continuation";
 import type { DeskSnapshot } from "./desk";
 import type { DeskQueueItem } from "./desk-queue";
@@ -120,5 +120,17 @@ describe("grounded case actions", () => {
     expect(deskCaseInstruction(hardship, "next")).not.toMatch(/Prepare the next useful deliverable/i);
 
     expect(deskCaseIsNoDraft(item)).toBe(false);
+  });
+
+  it("derives one Work next step from the case state, never a draft for the licensee", () => {
+    const pending = { ...item, kind: "money-arrears" as const, bucket: "now" as const, state: "proposed", holdReason: undefined };
+    expect(deskCaseNextStep(pending)).toEqual({ intent: "refine", label: "Review draft" });
+    expect(deskCaseNextStep({ ...pending, holdReason: "hardship" })).toEqual({ intent: "summary", label: "Summarise for licensee" });
+    expect(deskCaseInstruction({ ...pending, holdReason: "hardship" }, "summary")).not.toMatch(/draft/i);
+    expect(deskCaseNextStep({ ...item, kind: "licensee-required", bucket: "now", draftId: undefined })).toEqual({ intent: "summary", label: "Summarise for licensee" });
+    // A held case with wording follows its recovery step, not a draft review.
+    expect(deskCaseNextStep(item)).toEqual({ intent: "investigate", label: "Classify and prepare a brief; do not dispatch a tradie" });
+    expect(deskCaseNextStep({ ...item, kind: "import-issue", holdReason: "unmatched" })).toEqual({ intent: "investigate", label: "Investigate with Bud" });
+    expect(deskCaseNextStep({ ...pending, bucket: "done", state: "approved" })).toBeNull();
   });
 });

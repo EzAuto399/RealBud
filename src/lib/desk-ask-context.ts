@@ -11,6 +11,17 @@ export function deskCaseIsNoDraft(item: DeskQueueItem): boolean {
     (plan.action === "none" && /will not draft/i.test(plan.next));
 }
 
+/** Work's one primary step for an attached case, read from the case's current Desk state. A done
+ * case has none. The intent is one Desk already stages; choosing it only fills the composer. */
+export function deskCaseNextStep(item: DeskQueueItem): { intent: DeskAskIntent; label: string } | null {
+  if (item.bucket === "done") return null;
+  if (deskCaseIsNoDraft(item)) return { intent: "summary", label: "Summarise for licensee" };
+  // Only a proposed case can still be approved; a held draft follows its recovery step.
+  if (item.draftId && item.state === "proposed") return { intent: "refine", label: "Review draft" };
+  const plan = recoveryPlanFor(item);
+  return { intent: "investigate", label: plan.action === "ask" ? plan.next : "Investigate with Bud" };
+}
+
 export function deskCaseInstruction(item: DeskQueueItem, intent: DeskAskIntent): string {
   const plan = recoveryPlanFor(item);
   // Licensee / hardship-style cases must not ask for a draft-shaped deliverable —

@@ -179,7 +179,7 @@ try {
   const mailPanel = page.getByRole('region', { name: 'Mail priorities and follow-ups', exact: true });
   await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false);
-  await page.getByRole('region', { name: 'Mail priorities', exact: true }).getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   await page.locator('.desk-work-tasks').waitFor();
   await openDeskMail(); await mailPanel.waitFor();
   assert.deepEqual(await views(), beforeDeskMail, 'Opening Desk mail replaces the work area without creating saved views');

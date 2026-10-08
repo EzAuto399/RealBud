@@ -59,43 +59,44 @@ try {
   // Default: today's order.
   assert.equal((await call('/api/workspace-tabs')).body.state.version, 2);
   const header = page.locator('.pm-desk-header');
-  const openCustomize = async () => {
+  const openArrange = async () => {
     const more = header.locator('details.desk-more').filter({ has: page.getByRole('group', { name: 'More Desk tools', exact: true, includeHidden: true }) });
     if (!await more.evaluate(element => element.open)) await more.locator(':scope > summary').click();
     const options = more.locator('details.desk-options');
     if (!await options.evaluate(element => element.open)) await options.locator(':scope > summary').click();
-    await options.getByRole('button', { name: 'Customize desk', exact: true }).click();
+    await options.getByRole('button', { name: 'Arrange Desk', exact: true }).click();
   };
-  await openCustomize();
-  const panel = page.getByRole('region', { name: 'Customize desk', exact: true });
+  await openArrange();
+  const panel = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
   await panel.waitFor();
   assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true);
-  pass('Customize desk opens from More → Desk options with Needs you fixed');
+  await panel.getByText(/Saved on this computer/).waitFor();
+  pass('Arrange Desk opens from More → Desk options with Needs you fixed and a "Saved on this computer" line');
   // Keyboard reorder: move Needs you to the top with the keyboard, hide mail/bills/shared work.
   for (let i = 0; i < 5; i++) { const up = panel.getByRole('button', { name: 'Move Needs you up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
-  for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) await panel.getByRole('checkbox', { name: `Show ${label}`, exact: true }).uncheck();
-  await panel.screenshot({ animations: 'disabled', path: join(output, 'customize-panel-draft.png') });
-  await panel.getByRole('button', { name: 'Save layout', exact: true }).click();
-  await panel.getByText('Desk layout saved.', { exact: true }).waitFor();
+  for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) await panel.getByRole('checkbox', { name: `Show ${label} on my Desk`, exact: true }).uncheck();
+  await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-draft.png') });
+  await panel.getByRole('button', { name: 'Save', exact: true }).click();
+  await panel.getByText('Desk arrangement saved.', { exact: true }).waitFor();
   const saved = (await call('/api/workspace-tabs')).body.state;
   assert.deepEqual(saved.desk.sections.map(s => s.id), ['queue', 'brief', 'mail', 'bills', 'shared-work', 'go-live', 'activity']);
   assert.deepEqual(saved.desk.sections.filter(s => !s.visible).map(s => s.id), ['mail', 'bills', 'shared-work']);
   assert.equal(saved.history.length, 2);
   pass('Save persists the reordered layout with history (earlier layout kept)');
-  await panel.screenshot({ animations: 'disabled', path: join(output, 'customize-panel-saved.png') });
+  await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-saved.png') });
 
   // Stale save: another window changes the layout, this panel keeps its draft.
-  await panel.getByRole('checkbox', { name: 'Show Activity', exact: true }).uncheck();
+  await panel.getByRole('checkbox', { name: 'Show Activity on my Desk', exact: true }).uncheck();
   const other = saved.desk.sections.map(s => s.id === 'go-live' ? { ...s, visible: false } : s);
   assert.equal((await call('/api/workspace-tabs', 'PUT', { version: 2, expectedRevision: saved.revision, tabs: saved.tabs, desk: { sections: other } })).status, 200);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await panel.getByText(/This card changed — open it again/).waitFor();
-  assert.equal(await panel.getByRole('checkbox', { name: 'Show Activity', exact: true }).isChecked(), false, 'draft kept');
-  assert.equal(await panel.getByRole('button', { name: 'Save layout', exact: true }).isDisabled(), true);
-  await panel.screenshot({ animations: 'disabled', path: join(output, 'customize-panel-stale.png') });
+  assert.equal(await panel.getByRole('checkbox', { name: 'Show Activity on my Desk', exact: true }).isChecked(), false, 'draft kept');
+  assert.equal(await panel.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
+  await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-stale.png') });
   pass('A layout changed in another window keeps the draft and shows the reopen message');
   await panel.getByRole('button', { name: 'Open again', exact: true }).click();
-  await panel.getByRole('button', { name: 'Close Customize desk', exact: true }).click();
+  await panel.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   await wait(200);
   const nav = header.getByRole('navigation', { name: 'Desk workspace', exact: true });
   assert.equal(await nav.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ }).getAttribute('aria-pressed'), 'true');
@@ -106,7 +107,7 @@ try {
   for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) {
     assert.equal(await otherWork.getByRole('button', { name: label, exact: true }).count(), 0);
   }
-  await otherWork.getByText('Turn these on in More → Desk options → Customize desk.', { exact: true }).waitFor();
+  await otherWork.getByText('Turn these on in More → Desk options → Arrange Desk.', { exact: true }).waitFor();
   await page.screenshot({ animations: 'disabled', path: join(output, 'desk-customized.png') });
   await header.locator('.desk-other-work > summary').click();
   pass('Saved visibility removes mail/bills/shared work from Other work while Tasks and its queue remain available');
@@ -115,8 +116,16 @@ try {
   const current = (await call('/api/workspace-tabs')).body.state;
   const before = current.history.find(entry => entry.savedAt === null);
   assert.equal((await call('/api/workspace-tabs/revert', 'POST', { expectedRevision: current.revision - 1, toRevision: before.revision })).status, 409);
-  assert.equal((await call('/api/workspace-tabs/revert', 'POST', { expectedRevision: current.revision, toRevision: before.revision })).status, 200);
-  pass('Revert is revision-checked and restores the earlier layout as a new revision');
+  // The sheet's Change history restores it with one click, as a new revision.
+  await openArrange();
+  await panel.getByRole('heading', { name: 'Change history', exact: true }).waitFor();
+  await panel.getByRole('button', { name: 'Restore layout from Before customizing', exact: true }).click();
+  await panel.getByText('Earlier layout restored.', { exact: true }).waitFor();
+  const restored = (await call('/api/workspace-tabs')).body.state;
+  assert.equal(restored.revision, current.revision + 1);
+  assert.deepEqual(restored.desk.sections, before.sections);
+  await panel.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
+  pass('Revert is revision-checked on the API; Change history → Restore puts the earlier layout back as a new revision');
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await header.locator('.desk-other-work > summary').click();
   await otherWork.getByRole('button', { name: 'Shared work', exact: true }).waitFor();
@@ -126,19 +135,19 @@ try {
   const mail = page.locator('.desk-other-work-surface[data-other-work="mail"]');
   await mail.waitFor();
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false, 'Other work replaces Tasks');
-  await mail.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   await page.locator('.desk-work-tasks').waitFor();
   await mail.waitFor({ state: 'hidden' });
-  pass('Restored Other work entries follow the saved order and replace the work area until Back to tasks');
+  pass('Restored Other work entries follow the saved order and replace the work area until the Tasks tab');
 
   // Narrow window: no horizontal scroll with the panel open.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await openCustomize();
+  await openArrange();
   await panel.waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal page scroll at 390px');
-  await page.screenshot({ animations: 'disabled', path: join(output, 'customize-panel-390.png') });
-  pass('390x844 shows the panel without horizontal scroll');
+  await page.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-390.png') });
+  pass('390x844 shows the sheet without horizontal scroll');
   assert.deepEqual(errors, []);
   pass('Zero renderer page errors');
 } catch (error) {

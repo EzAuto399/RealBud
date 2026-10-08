@@ -1014,6 +1014,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const [askAction, setAskAction] = useState<"recheck" | "attend" | "approve" | "set-site" | null>(null);
   const [askActionNotice, setAskActionNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [focusRecipeId, setFocusRecipeId] = useState<string | null>(null);
+  const [caseAddress, setCaseAddress] = useState<string | null>(null);
   const [setSiteRecipeId, setSetSiteRecipeId] = useState<string | null>(null);
   const [setSiteUrl, setSetSiteUrl] = useState("");
   const [phoneContinueOpen, setPhoneContinueOpen] = useState(false);
@@ -1186,8 +1187,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       recipes: savedRecipes,
       composioConfigured: Boolean(state.config?.composio?.configured),
       focusRecipeId,
+      caseAddress,
     }),
-    [askBrief?.addresses, askBrief?.lastRunAt, askMiss, askNeedsYou, askWorkerReady, askWorkroomReady, attendedRun, bot.busy, focusRecipeId, lastBotText, savedRecipes, state.config?.composio?.configured],
+    [askBrief?.addresses, askBrief?.lastRunAt, askMiss, askNeedsYou, askWorkerReady, askWorkroomReady, attendedRun, bot.busy, caseAddress, focusRecipeId, lastBotText, savedRecipes, state.config?.composio?.configured],
   );
   const runAskRecheck = useCallback(async () => {
     if (askAction || bot.busy) return;
@@ -1726,6 +1728,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
         onBackToDesk={productAsk ? goDesk : undefined}
+        onCaseAddress={productAsk ? setCaseAddress : undefined}
       />
       </div>
       {productAsk && <AskAppContextPanel context={appContext} onManage={() => openAskConnectSetup()} />}
