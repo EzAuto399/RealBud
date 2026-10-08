@@ -132,6 +132,15 @@ export function appendHistory(input: HistoryInput): HistoryEntry[] {
   return next;
 }
 
+/** An AI call whose work keeps no record of its own: its Modelvia requests as
+ * a history row, so the run cost can still attribute them. Nothing when it made
+ * none; a failed write never fails the work that made the call. */
+export function recordUsage(name: string, usage: RunUsage, options: { ok?: boolean; threadId?: string } = {}): void {
+  if (!usage.calls) return;
+  try { appendHistory({ kind: "tool", name, ok: options.ok ?? true, detail: "", threadId: options.threadId, usage }); }
+  catch { /* history must not take the work down */ }
+}
+
 /** Latest first. */
 export function listHistory(limit = 50): HistoryEntry[] {
   const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;

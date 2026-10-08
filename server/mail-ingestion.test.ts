@@ -123,7 +123,7 @@ describe('durable private mail acquisition and work list', () => {
     expect(input.threads.some((t: { threadId: string }) => noisy.includes(t.threadId))).toBe(false);
     const listed = await f.service.page({ group: 'reference' });
     expect(listed.items.map(i => i.threadId).sort()).toEqual([...noisy].sort());
-    for (const item of listed.items) expect(item).toMatchObject({ disposition: 'noise', priority: 'low', reason: 'Screened as noise', screenedBy: 'jev', reviewed: false, newEvidence: false, status: 'open' });
+    for (const item of listed.items) expect(item).toMatchObject({ disposition: 'noise', priority: 'low', reason: 'Screened: likely a newsletter or automated mail.', screenedBy: 'jev', reviewed: false, newEvidence: false, status: 'open' });
     expect((await f.service.get()).items.find(i => i.threadId === edited)).toMatchObject({ disposition: 'hold', reviewed: true, note: 'Fictional staff note' });
     const undo = listed.items[0]!;
     const saved = (await f.service.update(undo.id, { expectedRevision: undo.revision, disposition: 'action-review', priority: 'normal' })).items.find(i => i.id === undo.id)!;
@@ -133,6 +133,75 @@ describe('durable private mail acquisition and work list', () => {
     classify.mockClear(); classify.mockResolvedValueOnce(null);
     expect(await f.service.screenNoise(receipt, classify)).toBeNull();
     expect(classify.mock.calls[0]![0].map(t => t.id).sort()).toEqual(f.data.threads.slice(10, 24).map(t => t.id).sort());
+  });
+  it('lists screened mail under Screened and "Not noise" returns it to the next batch, never screened again', async () => {
+    const f = await fixture();
+    f.data.threads = Array.from({ length: 6 }, (_, n) => thread((0xd00 + n).toString(16), (0xe00 + n).toString(16)));
+    const receipt = (await f.service.collect()).latestScan!, ids = f.data.threads.map(t => t.id);
+    const considered = ids.map((id, n) => ({ id, bulk: n < 3 ? 0.99 : 0.2, action: n < 3 ? 0.01 : 0.8 }));
+    const classify = vi.fn(async (_threads: MailThread[]) => ({ noise: ids.slice(0, 3), model: 'typesafe/jev-1.13-20260917', considered }));
+    expect(await f.service.screenNoise(receipt, classify)).toEqual({ screened: 3, model: 'typesafe/jev-1.13-20260917' });
+    const screened = await f.service.page({ group: 'screened' });
+    expect(screened.items.map(i => i.threadId).sort()).toEqual(ids.slice(0, 3).sort());
+    expect(screened.counts.screened).toBe(3);
+    const target = screened.items[0]!;
+    await expect(f.service.update(target.id, { expectedRevision: target.revision, notNoise: true, note: 'x' })).rejects.toMatchObject({ status: 400 });
+    await expect(f.service.update(target.id, { expectedRevision: target.revision - 1, notNoise: true })).rejects.toMatchObject({ status: 409 });
+    const open = (await f.service.page({ group: 'open' })).items[0]!;
+    await expect(f.service.update(open.id, { expectedRevision: open.revision, notNoise: true })).rejects.toMatchObject({ status: 409 });
+    const after = (await f.service.update(target.id, { expectedRevision: target.revision, notNoise: true })).items.find(i => i.id === target.id)!;
+    expect(after).toMatchObject({ disposition: 'hold', priority: 'normal', reviewed: false, newEvidence: true, notNoise: true, status: 'open' });
+    expect(after).not.toHaveProperty('screenedBy');
+    expect((await f.service.page({ group: 'screened' })).counts.screened).toBe(2);
+    expect((await f.service.page({ group: 'open' })).items.map(i => i.id)).toContain(target.id);
+    // Back in Bud's next batch with the three that were never screened.
+    expect(await f.service.prepareInput(receipt)).toMatchObject({ batchThreadCount: 4 });
+    const input = JSON.parse(await readFile(join(f.options.workroomDirectory, 'workflow-inputs', 'accounts-inbox.json'), 'utf8'));
+    expect(input.threads.map((t: { threadId: string }) => t.threadId)).toContain(target.threadId);
+    // Never offered to the screen again.
+    classify.mockClear(); classify.mockResolvedValueOnce(null as never);
+    await f.service.screenNoise(receipt, classify);
+    expect(classify.mock.calls[0]![0].map(t => t.id).sort()).toEqual(ids.slice(3).sort());
+    // Shadow log: thread hash, model, both probabilities, outcome and the "Not noise" label; never text, subject or sender.
+    const log = JSON.parse(await readFile(join(f.root, 'jev-screen-log.json'), 'utf8'));
+    const sha = (id: string) => createHash('sha256').update(id).digest('hex');
+    expect(log.rows).toHaveLength(7);
+    expect(log.rows.slice(0, 6)).toEqual(considered.map((row, n) => ({ threadHash: sha(row.id), at: expect.any(Number), model: 'typesafe/jev-1.13-20260917', bulkP: row.bulk, actionP: row.action, screened: n < 3 })));
+    expect(log.rows[6]).toEqual({ threadHash: sha(target.threadId), notNoise: true, at: expect.any(Number) });
+    const raw = JSON.stringify(log);
+    for (const hidden of ['Fictional repair', 'tenant@example.test', 'accounts@example.test', 'Please review', ...ids]) expect(raw).not.toContain(hidden);
+  });
+  it('caps the shadow log at the last 2,000 rows and keeps a damaged log untouched', async () => {
+    const f = await fixture();
+    f.data.threads = [thread('d01', 'e01')];
+    const receipt = (await f.service.collect()).latestScan!, path = join(f.root, 'jev-screen-log.json');
+    const { writePrivateJson } = await import('./private-json.ts');
+    await writePrivateJson(path, { version: 1, purpose: 'jev-screen-log', rows: Array.from({ length: 2000 }, (_, n) => ({ threadHash: 'f'.repeat(64), notNoise: true, at: n })) });
+    await f.service.screenNoise(receipt, async () => ({ noise: [], model: 'fictional-jev', considered: [{ id: 'd01', bulk: 0.5, action: 0.5 }] }));
+    const log = JSON.parse(await readFile(path, 'utf8'));
+    expect(log.rows).toHaveLength(2000);
+    expect(log.rows[0].at).toBe(1); expect(log.rows.at(-1)).toMatchObject({ threadHash: createHash('sha256').update('d01').digest('hex'), screened: false });
+    await writeFile(path, '{"damaged":', { mode: 0o600 });
+    await expect(f.service.screenNoise(receipt, async () => ({ noise: ['d01'], model: 'fictional-jev', considered: [{ id: 'd01', bulk: 0.99, action: 0 }] }))).resolves.toEqual({ screened: 1, model: 'fictional-jev' });
+    expect(await readFile(path, 'utf8')).toBe('{"damaged":');
+  });
+  it('never offers open work to the screen: a conversation Bud held stays out when a reply arrives', async () => {
+    const f = await fixture();
+    f.data.threads = [thread('d01', 'e01'), thread('d02', 'e02')];
+    await f.service.collect();
+    const run = await reviewRun(f), review = JSON.parse(run.evidence[0]!.note);
+    review.threads = review.threads.map((row: InboxReview['threads'][number]) => ({ ...row, disposition: 'hold', reason: 'Fictional hold: the owner must decide.' }));
+    run.evidence[0]!.note = JSON.stringify(review);
+    await f.service.applyReview(run);
+    f.advance();
+    for (const t of f.data.threads) t.messages.push({ ...t.messages[0]!, id: `${t.messages[0]!.id}f`, at: initialTime + 500, body: 'A fictional follow-up arrived.' });
+    const receipt = (await f.service.collect()).latestScan!;
+    // Both wait for Bud again (so the old screen would have offered them), still held.
+    expect((await f.service.page({ group: 'open' })).counts.needsReview).toBe(2);
+    expect((await f.service.get()).items.every(i => i.disposition === 'hold' && !i.reviewed)).toBe(true);
+    const classify = vi.fn(async () => ({ noise: ['d01', 'd02'], model: 'fictional-jev' }));
+    expect(await f.service.screenNoise(receipt, classify)).toBeNull();
+    expect(classify).not.toHaveBeenCalled();
   });
   it('uses the explicitly selected collection purpose without falling back to morning authority', async () => {
     const f = await fixture();

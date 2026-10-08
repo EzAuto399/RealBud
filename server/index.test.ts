@@ -357,7 +357,21 @@ describe("harness HTTP API", () => {
     expect((await api("PATCH", `/api/desk/batches/${detail.id}`, { action: "pause", expectedRevision: -1 })).status).toBe(409);
     expect(detail.items.every((item: { source: string }) => item.source === "")).toBe(true);
     expect((await api("GET", `/api/desk/batches/${detail.id}?revision=bad`)).status).toBe(400);
+    // The batch's AI cost line: its items made no Modelvia requests here, so nothing to show; session-gated; unknown is a 404.
+    expect(await api("GET", `/api/desk/batches/${detail.id}/cost`)).toEqual({ status: 200, body: { cost: { state: "none" } } });
+    expect((await fetch(`${BASE}/api/desk/batches/${detail.id}/cost`)).status).toBe(401);
+    expect((await api("GET", "/api/desk/batches/fictional-missing/cost")).status).toBe(404);
     expect((await api("GET", "/api/desk")).body.revision).toBe(snapshot.revision);
+  });
+
+  it("costs a Desk check refused after the worker answered as a desk recheck row, then answers its refusal", () => {
+    // Source contract (a refusal needs a live worker and a Desk edit mid-check): the flight's own check records its usage
+    // before rethrowing, so the 409 still reaches the caller and a joiner never records it twice.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const check = source.slice(source.indexOf("async function runDeskCheck("), source.indexOf("function emitLoopAndPulse("));
+    expect(check).toContain('} catch (error) { recordUsage("desk recheck", usage, { ok: false }); throw error; }');
+    expect(check.indexOf("recordUsage(")).toBeGreaterThan(check.indexOf("deskCheckFlight.run("));
+    expect(source).not.toContain("throws away its usage");
   });
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
@@ -450,6 +464,9 @@ describe("harness HTTP API", () => {
     // owner-letter v0 runs: it drafts Copy-only cards on Desk
     const letter = await api("POST", "/api/loops/owner-letter/run", {});
     expect(letter.status).toBe(201);
+    // A routine run has its own cost route; one that made no AI request costs nothing.
+    expect(await api("GET", `/api/loop-runs/${letter.body.run.id}/cost`)).toEqual({ status: 200, body: { cost: { state: "none" } } });
+    expect((await api("GET", "/api/loop-runs/no-such-run/cost")).status).toBe(404);
     const deskSnap = (await api("GET", "/api/desk")).body;
     const letters = deskSnap.drafts.filter((d: { kind: string }) => d.kind === "owner-letter");
     expect(letters.length).toBeGreaterThan(0);
@@ -797,7 +814,7 @@ describe("harness HTTP API", () => {
     expect(start).toBeGreaterThan(0);
     expect(source.slice(start, source.indexOf("\n", source.indexOf("finally {", start)))).toBe([
       "    routingBots.add(bot.id);",
-      "    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide }); }",
+      "    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: countJevUsage(routeUsage, jevDecide) }); }",
       "    finally { routingBots.delete(bot.id); }",
     ].join("\n"));
     expect(source).toContain('if (bot.busy || routingBots.has(bot.id)) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });');

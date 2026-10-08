@@ -7,6 +7,9 @@
 // end it for good; a task is never restarted from a saved grant. A sign-in
 // request pauses it instead: the same grant, with its remaining time and
 // steps, continues once the person has signed in, and never after it expired.
+// A desktop task is the same card given one open app window instead of a site
+// (`grant.desktop`, server/desktop-fence.ts): its grant has no sites, it never
+// pauses for sign-in, and Start re-reads the window before saving the grant.
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
@@ -17,6 +20,10 @@ import { redactSecretsInText } from "./redact.ts";
 import { normalizeOrigin } from "./recipes.ts";
 import { grantedBrowserTools, portalBrowserPolicy } from "./attended-run.ts";
 import { addBrowserTaskUpload, browserTaskWorkroom, MAX_BROWSER_FILE_BYTES } from "./browser-runtime.ts";
+import { startCuaClient, type CuaClient } from "./cua-client.ts";
+import { desktopSnapshot } from "./desktop-fence.ts";
+import { readCuaConnection } from "./local-computer.ts";
+import { DESKTOP_WINDOWS_MAX, parseDesktopTarget, type DesktopTarget } from "../shared/desktop-task.ts";
 import {
   BROWSER_ACTION_CLASSES,
   BROWSER_CONSEQUENTIAL_KINDS,
@@ -41,6 +48,9 @@ export const ASK_TASK_OFFER_MS = 60 * 60_000;
 /** The Ask reply that carries the card. It stands alone where the card cannot show (a phone). */
 export const BROWSER_TASK_OFFER =
   "I can do this now in your browser. Check what it covers, then press **Start this task** in Work on this computer. Payments, signatures, messages and notices each still ask you first.";
+/** The Ask reply that carries a desktop task's card (an app window instead of a site). */
+export const DESKTOP_TASK_OFFER =
+  "I can do this now in an app on this computer. Check the window and what it covers, then press **Start this task** in Work on this computer. Payments, signatures, messages and deletions each still ask you first.";
 export const BROWSER_TASK_UNAVAILABLE =
   "I couldn't prepare this browser task, so nothing was done in your browser. Check this computer's disk space, then ask again.";
 
@@ -77,6 +87,9 @@ export interface BrowserTaskRecord {
   /** A person-started portal recipe task (server/portal-recipe-task.ts): RealBud's
    * runner does the steps instead of a model turn. Absent on other tasks. */
   recipe?: BrowserTaskRecipe;
+  /** A desktop task's app window, preselected from the request (an open window of the app it named).
+   * Data only: Start checks the window again; the grant's `desktop` is the authority. */
+  desktop?: DesktopTarget;
 }
 
 /** The pack recipes a task runs and the account the person selected. Data only: the grant is the authority. */
@@ -123,6 +136,8 @@ export interface BrowserTaskCardView {
   endNote: string | null;
   /** What the task has done so far, in short words from its own record, oldest first. */
   progress: string[];
+  /** A desktop task's app window: its grant's, or the one preselected before Start. */
+  desktop?: DesktopTarget;
 }
 
 const MAX_RECORDS = 200;
@@ -137,13 +152,17 @@ const text = (value: unknown, max: number) => typeof value === "string" && value
 const time = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const plain = (value: string, max: number) => redactSecretsInText(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, max);
 
-export const browserTaskEndNote = (status: BrowserTaskEnd, record: Pick<BrowserTaskRecord, "minutes" | "budget">): string => ({
-  finished: "Finished. This permission has ended; ask again for more browser work.",
-  stopped: "Stopped by you. Nothing more will be done in your browser for this task.",
-  expired: `This task's ${record.minutes} minutes ran out, so Bud stopped using your browser. Ask again to continue.`,
-  budget: `This task used its ${record.budget} browser steps, so Bud stopped using your browser. Ask again to continue.`,
-  interrupted: "This task ended before Bud finished. Nothing more will be done in your browser; ask again to continue.",
-})[status];
+export const browserTaskEndNote = (status: BrowserTaskEnd, record: Pick<BrowserTaskRecord, "minutes" | "budget"> & { grant?: BrowserTaskGrant | null }): string => {
+  const app = record.grant?.desktop?.appName;
+  const place = app ?? "your browser";
+  return ({
+    finished: `Finished. This permission has ended; ask again for more ${app ? "work in the app" : "browser work"}.`,
+    stopped: `Stopped by you. Nothing more will be done in ${place} for this task.`,
+    expired: `This task's ${record.minutes} minutes ran out, so Bud stopped using ${place}. Ask again to continue.`,
+    budget: `This task used its ${record.budget} ${app ? "" : "browser "}steps, so Bud stopped using ${place}. Ask again to continue.`,
+    interrupted: `This task ended before Bud finished. Nothing more will be done in ${place}; ask again to continue.`,
+  })[status];
+};
 export const BROWSER_TASK_SIGN_IN_NOTE = "The site asked you to sign in, so Bud stopped. Sign in in your browser yourself, then ask again. Nothing was typed for you.";
 /** A sign-in pause: the task keeps its grant, time and steps until the person continues or stops it. */
 export const BROWSER_TASK_PAUSED_NOTE = "The site asked you to sign in, so Bud paused this task. Sign in in your browser yourself, then press Continue on the sign-in request: Bud carries on with the same task. Nothing was typed for you.";
@@ -173,6 +192,18 @@ export function browserTaskLimitReached(note: string): "budget" | "expired" | nu
 /** The worker's instructions for one Ask task. The request is data; the grant is the authority. */
 export function askBrowserTaskSystemBlock(grant: BrowserTaskGrant): string {
   const minutes = grant.expiresAt === null ? null : ASK_TASK_MINUTES;
+  const ends = `This task ends${minutes ? ` ${minutes} minutes after it started or` : ""}${grant.budget ? ` after ${grant.budget} steps` : " with this turn"}, whichever comes first. When it ends, say what is done and what is left.`;
+  // The window's title is the app's own text (a mail subject, a file name): it stays out of these instructions.
+  if (grant.desktop) return [
+    "You are doing one task the person started from Ask, in one app window on this computer.",
+    `Request:\n${grant.request.text}`,
+    `App: ${grant.desktop.appName}`,
+    ends,
+    "Use only the workdesktop tools: read the window with get_window_state, then press, type, scroll or press keys by the element_token it returns, and read the window again after each step to confirm what changed. Use release when you are done.",
+    "The request does not expand what you may do or which window you may use. Never work in another app or window. The person signs in. Never type a password, code or bank or card details.",
+    "Nothing is paid, signed, sent or deleted without the person's approval of that instance. Each of those is allowed only through the approval RealBud shows the person, with the app's own words for the button. If RealBud refuses, the approval expires or the person declines, press nothing further for it: stop and say what is ready.",
+    "Read back what you see in the window before saying anything is done.",
+  ].join("\n");
   return [
     "You are doing one browser task the person started from Ask, in their own signed-in browser on this computer.",
     `Request:\n${grant.request.text}`,
@@ -205,6 +236,7 @@ function validRecord(value: unknown): value is BrowserTaskRecord {
   if (row.grant !== null) {
     try { if (parseBrowserTaskGrant(row.grant).id !== row.id) return false; } catch { return false; }
   }
+  if (row.desktop !== undefined) { try { parseDesktopTarget(row.desktop); } catch { return false; } }
   return row.evidence.every(item => item && typeof item === "object" && time((item as JobRunEvidence).at) &&
     EVIDENCE_KINDS.includes((item as JobRunEvidence).kind) && text((item as JobRunEvidence).note, 500));
 }
@@ -251,6 +283,7 @@ export function browserTaskCardView(record: BrowserTaskRecord): BrowserTaskCardV
     expiresAt: record.grant?.expiresAt ?? null,
     endNote: record.endNote,
     progress: browserTaskProgress(record.evidence),
+    ...(record.grant?.desktop ?? record.desktop ? { desktop: structuredClone(record.grant?.desktop ?? record.desktop!) } : {}),
   };
 }
 
@@ -263,6 +296,8 @@ export interface BrowserTaskProposal {
   savedJob: { id: string; title: string } | null;
   actions: BrowserActionClass[];
   recipe?: BrowserTaskRecipe;
+  /** A desktop task's preselected app window (no sites). */
+  desktop?: DesktopTarget;
 }
 
 /** A thread's saved messages. Only the person's own messages are read for attachments. */
@@ -363,7 +398,8 @@ export class BrowserTaskStore {
     const now = Date.now();
     const lapsed = (row: BrowserTaskRecord) => row.status === "paused" && typeof row.grant?.expiresAt === "number" && row.grant.expiresAt <= now;
     if (rows.some(row => row.status === "active" || lapsed(row))) {
-      await this.save(rows.map(row => row.status === "active" ? { ...row, status: "interrupted" as const, endedAt: now, endNote: BROWSER_TASK_RESTART_NOTE }
+      await this.save(rows.map(row => row.status === "active" ? { ...row, status: "interrupted" as const, endedAt: now,
+        endNote: row.grant?.desktop ? BROWSER_TASK_RESTART_NOTE.replace("your browser", row.grant.desktop.appName) : BROWSER_TASK_RESTART_NOTE }
         : lapsed(row) ? { ...row, status: "expired" as const, endedAt: now, endNote: PAUSED_EXPIRED_NOTE } : row));
       return this.rows!;
     }
@@ -394,6 +430,8 @@ export class BrowserTaskStore {
       const request = plain(input.request, 2000);
       if (!request) throw fail(400, "Say what Bud should do on the site.");
       if (input.recipe !== undefined && !validBrowserTaskRecipe(input.recipe)) throw fail(400, "This portal task's recipes or account are not valid. Choose them again.");
+      const desktop = input.desktop === undefined ? undefined : parseDesktopTarget(structuredClone(input.desktop));
+      if (desktop && (input.sites.length || input.recipe)) throw fail(400, "A task works in a website or an app window, not both.");
       const record: BrowserTaskRecord = {
         version: 1, purpose: "browser-task", id: randomUUID(), threadId: input.threadId, messageId: input.messageId, request,
         sites: [...new Set(input.sites.filter(browserTaskSite))].slice(0, 20), siteSource: input.siteSource,
@@ -402,6 +440,7 @@ export class BrowserTaskStore {
         minutes: ASK_TASK_MINUTES, budget: ASK_TASK_BUDGET, status: "proposed", createdAt: now,
         startedAt: null, endedAt: null, endNote: null, grant: null, evidence: [],
         ...(input.recipe ? { recipe: structuredClone(input.recipe) } : {}),
+        ...(desktop ? { desktop } : {}),
       };
       if (record.siteSource !== "none" && !record.sites.length) record.siteSource = "none";
       const rows = [...await this.load(), record];
@@ -429,7 +468,7 @@ export class BrowserTaskStore {
   /** The person pressed Start: the grant is saved before any browser work.
    * Bound to this thread and the browser selected now; the site comes from
    * the request or saved job, or from the person when neither named one. */
-  start(id: string, input: { threadId: string; browserId: string; site?: unknown }, now = Date.now()): Promise<BrowserTaskRecord & { grant: BrowserTaskGrant }> {
+  start(id: string, input: { threadId: string; browserId?: string; site?: unknown; desktop?: DesktopTarget }, now = Date.now()): Promise<BrowserTaskRecord & { grant: BrowserTaskGrant }> {
     return this.exclusive(async () => {
       const rows = await this.load();
       const row = rows.find(item => item.id === id);
@@ -438,15 +477,18 @@ export class BrowserTaskStore {
       if (row.status !== "proposed") throw fail(409, "This request was already answered or has ended. Ask again to start a new task.");
       if (now - row.createdAt > ASK_TASK_OFFER_MS) throw fail(409, "This request is from more than an hour ago. Ask again to start it.");
       if (rows.some(item => item.threadId === row.threadId && holding(item))) throw fail(409, "Another browser task is running in this conversation. Stop it first.");
-      if (!text(input.browserId, 200)) throw fail(409, "Connect your browser before starting this task.");
+      // A desktop task: the one app window the host checked just now, no sites, no browser and no uploads.
+      const desktop = input.desktop === undefined ? undefined : parseDesktopTarget(structuredClone(input.desktop));
+      if (desktop && (row.sites.length || row.recipe)) throw fail(409, "This task is for a website. Start it without choosing an app window.");
+      if (!desktop && !text(input.browserId, 200)) throw fail(409, "Connect your browser before starting this task.");
       let sites = row.sites; let siteSource = row.siteSource;
-      if (!sites.length) {
+      if (!sites.length && !desktop) {
         const host = typeof input.site === "string" && input.site.length <= 260 ? normalizeOrigin(input.site) : null;
         if (!host || !browserTaskSite(host)) throw fail(400, "Enter the site's web address first, for example vantagestrata.com.au.");
         sites = [host]; siteSource = "person";
       }
       // Only a task that may upload gets copies, and only of files the person attached in this thread.
-      const uploads = row.actions.includes("upload") ? await this.taskUploads(row.threadId, row.id) : [];
+      const uploads = !desktop && row.actions.includes("upload") ? await this.taskUploads(row.threadId, row.id) : [];
       const grant = parseBrowserTaskGrant({
         version: BROWSER_TASK_GRANT_VERSION,
         purpose: BROWSER_TASK_GRANT_PURPOSE,
@@ -456,14 +498,15 @@ export class BrowserTaskStore {
         request: { text: row.request, sha256: sha256(row.request) },
         sites,
         // A recipe task is bound to the account the person selected: the broker refuses any control once its marker is gone.
-        browser: { id: input.browserId, accountMarker: row.recipe?.account.marker ?? null },
+        browser: { id: desktop ? null : input.browserId!, accountMarker: row.recipe?.account.marker ?? null },
         actions: row.actions,
         consequential: BROWSER_CONSEQUENTIAL_POLICY,
         uploads,
         expiresAt: now + row.minutes * 60_000,
         budget: row.budget,
+        ...(desktop ? { desktop } : {}),
       });
-      const started = await this.change(id, current => ({ ...current, sites, siteSource, status: "active", startedAt: now, grant }));
+      const started = await this.change(id, current => ({ ...current, sites, siteSource, status: "active", startedAt: now, grant, ...(desktop ? { desktop } : {}) }));
       return { ...started, grant };
     });
   }
@@ -530,3 +573,88 @@ export class BrowserTaskStore {
 
 let defaultStore: BrowserTaskStore | null = null;
 export const browserTasks = (): BrowserTaskStore => (defaultStore ??= new BrowserTaskStore());
+
+// ── Desktop tasks: the open app windows a person may give a task ─────────
+/** Apps a desktop task never works in: RealBud itself, browsers (those use
+ * browser tasks), terminals and code editors, system settings, and password
+ * stores. Matched on the app's name (".exe" dropped) and, when the helper
+ * gives one, its bundle id. */
+const NOT_A_TASK_APP = new RegExp(`^(?:${[
+  "realbud.*", "electron",
+  "google chrome.*", "chrome", "chromium", "microsoft edge.*", "msedge", "safari.*", "firefox.*", "arc", "brave.*", "opera.*", "vivaldi", "orion", "tor browser",
+  "terminal", "iterm2?", "warp", "alacritty", "kitty", "wezterm.*", "ghostty", "hyper", "tabby", "windows terminal", "windowsterminal", "command prompt", "cmd",
+  "conhost", "(?:windows )?powershell.*", "pwsh", "git bash", "mintty",
+  "code", "code - insiders", "visual studio.*", "devenv", "cursor", "windsurf", "zed", "xcode", "android studio", "sublime text", "nova", "fleet",
+  "jetbrains.*", "intellij idea.*", "idea64", "pycharm.*", "webstorm.*", "goland.*", "clion.*", "rider.*", "phpstorm.*", "rubymine.*", "datagrip.*", "rustrover.*",
+  "system settings", "system preferences", "settings", "control panel", "keychain access", "passwords", "credential manager",
+  "1password.*", "bitwarden", "dashlane", "lastpass", "keepassxc", "keepass", "enpass", "nordpass", "proton pass", "keeper.*", "roboform",
+].join("|")})$`, "i");
+const NOT_A_TASK_BUNDLE = /^(?:com\.realbud\.|com\.github\.electron|com\.google\.chrome|org\.chromium\.|com\.microsoft\.edge|com\.apple\.safari|org\.mozilla\.|company\.thebrowser\.|com\.brave\.|com\.apple\.terminal|com\.googlecode\.iterm2|dev\.warp\.|com\.microsoft\.vscode|com\.todesktop\.|com\.jetbrains\.|com\.apple\.dt\.xcode|com\.apple\.systempreferences|com\.apple\.keychainaccess|com\.apple\.passwords|com\.1password\.|com\.agilebits\.|com\.bitwarden\.)/i;
+/** cua-driver 0.22 list_windows sends no bundle id. The app's own name stands in (shown on cards as is); the
+ * fence identifies the window by pid and window id, and the broker accepts the stand-in only for the same pid,
+ * window and app name. ponytail: use the driver's bundle_id once the pinned release sends it. */
+const bundleStandIn = (appName: string) => appName.replace(/[^A-Za-z0-9.-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, 200) || "app";
+
+/** The windows a person may give a task, from a list_windows answer: titled windows of other apps, at most 200. */
+export function desktopWindowChoices(rows: unknown, ownPids: readonly number[] = [process.pid, process.ppid]): DesktopTarget[] {
+  const out: DesktopTarget[] = [];
+  const seen = new Set<number>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const { app_name, bundle_id, pid, window_id, title } = row as Record<string, unknown>;
+    const appName = typeof app_name === "string" ? app_name.trim() : "";
+    const bundle = typeof bundle_id === "string" ? bundle_id : "";
+    if (!appName || typeof title !== "string" || !title.trim() || ownPids.includes(pid as number) || seen.has(window_id as number) ||
+      NOT_A_TASK_APP.test(appName.replace(/\.exe$/i, "")) || NOT_A_TASK_BUNDLE.test(bundle)) continue;
+    try { out.push(parseDesktopTarget({ appName, bundleId: bundle || bundleStandIn(appName), pid, windowId: window_id, title })); } catch { continue; }
+    seen.add(window_id as number);
+    if (out.length >= DESKTOP_WINDOWS_MAX) break;
+  }
+  return out;
+}
+
+const DESKTOP_UNAVAILABLE = "Apps on this computer aren't available here.";
+/** One short desktop-helper session: list or read, then close. Null when the helper is not set up (macOS and Windows only). */
+async function withDesktopHelper<T>(work: (client: CuaClient) => Promise<T>, timeoutMs?: number): Promise<T | null> {
+  if (!["darwin", "win32"].includes(process.platform) && process.env.REALBUD_CUA_TEST_READY !== "1") return null;
+  const connection = readCuaConnection();
+  if (!connection) return null;
+  const client = await startCuaClient(connection, timeoutMs ? { timeoutMs } : {});
+  try { return await work(client); } finally { client.close(); }
+}
+const listWith = async (client: CuaClient) => {
+  const listed = await client.call("list_windows", {});
+  if (listed.isError) throw fail(503, DESKTOP_UNAVAILABLE);
+  return desktopWindowChoices(listed.structuredContent?.windows);
+};
+
+/** `GET /api/desktop/windows`: the open windows a task may use, or null when this computer cannot list them. */
+export async function listDesktopWindows(options: { timeoutMs?: number } = {}): Promise<DesktopTarget[] | null> {
+  return withDesktopHelper(listWith, options.timeoutMs);
+}
+
+/** Start's check: the chosen window is still open and offered, and its controls read (not degraded, not empty).
+ * Returns the window as listed now; anything else is a plain refusal and nothing starts. */
+export async function checkDesktopWindow(choice: { pid: number; windowId: number }): Promise<DesktopTarget> {
+  const target = await withDesktopHelper(async client => {
+    const window = (await listWith(client)).find(row => row.pid === choice.pid && row.windowId === choice.windowId);
+    if (!window) throw fail(409, "That window is no longer open, or Bud does not work in that app. Choose the window again.");
+    const read = await client.call("get_window_state", { pid: window.pid, window_id: window.windowId, include_screenshot: false });
+    const raw = read.structuredContent ?? read;
+    const degraded = Boolean(raw && typeof raw === "object" && (raw as Record<string, unknown>).degraded_reason != null);
+    if (read.isError || degraded || !desktopSnapshot(raw).elements.some(element => !element.menuBar && element.token)) {
+      throw fail(409, "RealBud could not read the controls in that window, so the task did not start. Bring the window to the front and press Start again.");
+    }
+    return window;
+  }).catch((error: unknown) => { throw typeof (error as { status?: unknown })?.status === "number" ? error : fail(503, DESKTOP_UNAVAILABLE); });
+  if (!target) throw fail(503, DESKTOP_UNAVAILABLE);
+  return target;
+}
+
+/** Start's `window` field: exactly `{pid, windowId}`, or a plain refusal. */
+export function desktopWindowChoice(value: unknown): { pid: number; windowId: number } {
+  const row = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const id = (item: unknown) => typeof item === "number" && Number.isSafeInteger(item) && item > 0;
+  if (!row || Object.keys(row).length !== 2 || !id(row.pid) || !id(row.windowId)) throw fail(400, "Choose the app window again.");
+  return { pid: row.pid as number, windowId: row.windowId as number };
+}

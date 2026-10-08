@@ -166,6 +166,41 @@ added to cua-driver upstream or requested as a driver tool — never bolted on
 beside it. This keeps one TCC identity, one binary to sign/notarize, and one
 behavior contract.
 
+### Desktop tasks: the `workdesktop` broker (2026-10-08)
+
+Current, unlike the history above. Evidence tier: source and local tests; not
+yet run against a live window. Product rules: [Desktop app tasks](PORTAL-WORK.md#desktop-app-tasks-2026-10-08).
+
+A desktop task (one app window the person chose, `shared/desktop-task.ts`)
+mounts one MCP server for Bud's turn, `workdesktop`, the desktop counterpart of
+`workbrowser`.
+
+- **Bud never gets raw cua tools.** No `cua-driver mcp` entry is added to the
+  worker's config for a desktop task. `workdesktop` offers a few task-shaped
+  tools (read the window, press a named control, type into a named field,
+  press a key, scroll) and RealBud calls the driver itself after
+  `decideDesktopAction` in `server/desktop-fence.ts` allows the step, or after
+  the person approves its card.
+- **One cua session per task.** The broker opens one driver session for the
+  task, labelled with the task id, addresses only the granted `pid` and
+  `window_id`, and ends the session on Stop, expiry, budget, a closed or
+  changed window, or the end of the turn. A session label is never authority.
+- **Token map.** Bud sees the driver's `element_token` for each control in the
+  latest `get_window_state` (menu-bar rows left out). The fence acts only on a
+  token in the current snapshot: a newer read replaces the whole map, so an
+  old token is stale and refused, and an invented or replayed one matches
+  nothing. `pick_control` never offers credential fields or sign-in controls
+  (`desktopCandidates`), and the fence refuses them whatever token Bud sends.
+- **Never-tools stay out.** `CUA_NEVER_TOOLS` (`server/cua-bounded.ts`) and
+  everything outside the fence's five desktop tools (menus by path,
+  `set_value`, drag, hotkeys, `launch_app`, `kill_app`, browser tools,
+  session escalation, recording, replay, config and update tools) are
+  neither offered by `workdesktop` nor dispatched by it.
+- **Screenshots.** Jev picks from labels and roles only. When it cannot pick,
+  the GPT-6 Luna Decisions fallback may see a screenshot of the granted window
+  only (owner approved 2026-10-08); its point is hit-tested back to a control
+  and judged by the same fence.
+
 ## Browser use: three tiers
 
 1. **Default, zero setup: embedded browser.** `WebContentsView` inside the

@@ -1,6 +1,8 @@
 # RealBud — current working direction
 
-Latest continuation, 8 October: [cua-driver 0.34 and Jev tuning](CUA-034-JEV-2026-10-08.md) merged after 0.1.40: driver upgrade, Jev batching, Ask pre-route, duplicate-bill ranking, Bud `decide` tool and the Jev eval. Local tests only; live Jev eval and live REI run pending.
+Latest continuation, 8 October (round 2): [Jev, Luna and desktop-app tasks](JEV-DESKTOP-2026-10-08.md), merged after 0.1.40: desktop-app tasks with a fence and Jev/Luna control picks, mail loop labels instead of hiding, every AI call in per-run cost. Local tests only; Modelvia Luna route, live eval and full QA pending.
+
+Earlier, 8 October: [cua-driver 0.34 and Jev tuning](CUA-034-JEV-2026-10-08.md) merged after 0.1.40: driver upgrade, Jev batching, Ask pre-route, duplicate-bill ranking, Bud `decide` tool and the Jev eval. Local tests only; live Jev eval and live REI run pending.
 
 Intelligent UI, 8 October: [Intelligent UI and demo polish](INTELLIGENT-UI-2026-10-08.md) makes Desk honest about saved versus live data, gives each queue row a reason and a stable order, folds customising into Arrange Desk, adds a state-based Next step in Work and clearer Schedule actions, and removes about 1,360 lines of dead renderer code. `pnpm qa` and renderer QA pass; not packaged or installed.
 

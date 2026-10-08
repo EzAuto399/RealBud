@@ -327,7 +327,7 @@ describe('Jev ordering for duplicate bill review', () => {
       await new Promise(resolve => setTimeout(resolve, 1)); inFlight--;
       const state = request.state as Record<string, Record<string, unknown>>, answers: Record<string, { type: 'noul'; noul: number }> = {};
       for (const key of Object.keys(request.questions)) { const value = noul(state, key); if (typeof value !== 'number') return value; answers[key] = { type: 'noul', noul: value }; }
-      return { ok: true, answers, model: 'fictional-jev', ms: 1 };
+      return { ok: true, id: "dec-fictional", answers, model: 'fictional-jev', ms: 1 };
     };
     return { decide, asked, peak: () => peak };
   }
@@ -366,7 +366,7 @@ describe('Jev ordering for duplicate bill review', () => {
     ['a refused call', () => ({ ok: false, reason: 'refused' })],
     ['an over-budget office', () => ({ ok: false, reason: 'budget' })],
     ['a timeout in the last batch', (state, key) => String(state[key]!.invoiceNumber) === 'FW-17' ? { ok: false, reason: 'timeout' } : 0.99],
-    ['a missing answer', (_state, key) => key === 'c3' ? ({ ok: true, answers: {}, model: 'fictional-jev', ms: 1 }) : 0.99],
+    ['a missing answer', (_state, key) => key === 'c3' ? ({ ok: true, id: "dec-fictional", answers: {}, model: 'fictional-jev', ms: 1 }) : 0.99],
   ])('keeps today\'s order and no labels after %s', async (_name, noul) => {
     const original = check(Array.from({ length: 18 }, (_, n) => candidate(n, bill({ invoiceNumber: `FW-${n}` }))));
     const { decide } = jev(noul);

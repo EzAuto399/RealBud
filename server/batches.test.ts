@@ -97,6 +97,24 @@ describe("durable property batches", () => {
     expect(ask).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps each item's Modelvia requests across attempts; an older or malformed saved usage still loads", async () => {
+    const { service, input, ask, file, deps } = setup();
+    const failed = { ok: false as const, detail: "Bud took too long.", usage: { requestIds: ["req-fictional-1"], calls: 1 } };
+    ask.mockResolvedValueOnce({ ...receipt(), usage: { requestIds: ["req-fictional-0"], calls: 1, inputTokens: 5 } } as never)
+      .mockResolvedValueOnce(failed as never).mockResolvedValueOnce({ ...receipt(), usage: { requestIds: ["req-fictional-2"], calls: 1 } } as never);
+    const created = service.create(input); await service.wait(created.id);
+    service.control(created.id, "retry-failed", service.get(created.id).revision); await service.wait(created.id);
+    expect(service.get(created.id).items.map(i => i.usage)).toEqual([
+      { requestIds: ["req-fictional-0"], calls: 1, inputTokens: 5 }, { requestIds: ["req-fictional-1", "req-fictional-2"], calls: 2 }]);
+    service.stop();
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    saved[0].items[0].usage = { requestIds: "req-fictional-0", calls: 1 };
+    delete saved[0].items[1].usage;
+    writeFileSync(file, JSON.stringify(saved));
+    const reloaded = new BatchService(deps); services.push(reloaded);
+    expect(reloaded.get(created.id).items.map(i => [i.status, i.usage])).toEqual([["ready", undefined], ["ready", undefined]]);
+  });
+
   it("refuses an action Bud never allows with 400 even when the revision is stale", () => {
     const { service, input } = setup();
     const batch = service.create(input);

@@ -12,10 +12,20 @@ const dataDir = vi.hoisted(() => {
   return dir;
 });
 
+// A test may answer for the worker with its relay usage; otherwise the real askWorker runs.
+const workerAnswer = vi.hoisted(() => ({ next: null as null | { ok: true; stdout: string; usage: { requestIds: string[]; calls: number } } }));
+vi.mock("./recipe-draft.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./recipe-draft.ts")>();
+  return { ...real, askWorker: (...args: Parameters<typeof real.askWorker>) => {
+    const answer = workerAnswer.next; workerAnswer.next = null;
+    return answer ? Promise.resolve(answer) : real.askWorker(...args);
+  } };
+});
+
 const { distillRecipe } = await import("./recipe-distill.ts");
 const { saveRecipe, getRecipe } = await import("./recipes.ts");
 const { createSession, appendEvidence, transitionSession } = await import("./portal-sessions.ts");
-const { appendHistory } = await import("./computer-history.ts");
+const { appendHistory, listHistory } = await import("./computer-history.ts");
 
 const dirs: string[] = [];
 
@@ -110,5 +120,12 @@ describe("distillRecipe", () => {
       expect(String(error)).toMatch(/not usable/i);
     }
     expect(getRecipe(card.id)?.steps).toEqual(card.steps);
+  });
+
+  it("keeps the worker's Modelvia requests as a history row, even when the rewrite is not usable", async () => {
+    saveRecipe(card);
+    workerAnswer.next = { ok: true, stdout: `{"steps":[]}`, usage: { requestIds: ["req-fictional-distill"], calls: 1 } };
+    await expect(distillRecipe(card.id)).rejects.toMatchObject({ status: 503 });
+    expect(listHistory(1)[0]).toMatchObject({ name: "tighten job steps", ok: true, usage: { requestIds: ["req-fictional-distill"], calls: 1 } });
   });
 });

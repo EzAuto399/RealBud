@@ -3,6 +3,7 @@
 // actions (pay, sign, send, notice, delete, account change) are always asked
 // once, per instance, with the verified facts. Dependency-free: the server
 // builds and enforces grants (server/browser-authority.ts), the app may show them.
+import { parseDesktopTarget, type DesktopTarget } from "./desktop-task.ts";
 
 export const BROWSER_TASK_GRANT_VERSION = 1 as const;
 export const BROWSER_TASK_GRANT_PURPOSE = "browser-task-grant" as const;
@@ -51,6 +52,10 @@ export interface BrowserTaskGrant {
    * saved job never had. Absent means an explicit task grant. It can only
    * narrow a grant, never widen one. */
   origin?: typeof BROWSER_LEGACY_JOB_ORIGIN;
+  /** Present only on a desktop task: the one app window it works in
+   * (server/desktop-fence.ts). Its `sites` are always empty, so a desktop
+   * grant never reaches a website as well. */
+  desktop?: DesktopTarget;
 }
 export const BROWSER_LEGACY_JOB_ORIGIN = "legacy-job" as const;
 /** The card asking the person to confirm which portal account an Ask task works in (server/browser-broker.ts). */
@@ -117,7 +122,8 @@ const GRANT_KEYS = ["version", "purpose", "id", "runId", "route", "request", "si
  * before the `origin` marker existed are explicit task grants. */
 export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
   const legacy = object(value) && Object.hasOwn(value, "origin");
-  const row = exact(value, legacy ? [...GRANT_KEYS, "origin"] : GRANT_KEYS);
+  const desktop = object(value) && Object.hasOwn(value, "desktop");
+  const row = exact(value, [...GRANT_KEYS, ...(legacy ? ["origin"] : []), ...(desktop ? ["desktop"] : [])]);
   if (row.version !== BROWSER_TASK_GRANT_VERSION || row.purpose !== BROWSER_TASK_GRANT_PURPOSE) invalid();
   if (!identifier(row.id) || !identifier(row.runId)) invalid();
   if (typeof row.route !== "string" || !(BROWSER_TASK_ROUTES as readonly string[]).includes(row.route)) invalid();
@@ -128,6 +134,12 @@ export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
   // An empty list is valid and reaches nothing; it never widens to "any site".
   if (!Array.isArray(row.sites) || row.sites.length > 20 || !row.sites.every(browserTaskSite) ||
     new Set(row.sites).size !== row.sites.length) invalid();
+  // A desktop task works in one app window only: no sites, and never a saved job's grant.
+  let target: DesktopTarget | undefined;
+  if (desktop) {
+    if ((row.sites as unknown[]).length || legacy) invalid();
+    try { target = parseDesktopTarget(row.desktop); } catch { invalid(); }
+  }
   const browser = exact(row.browser, ["id", "accountMarker"]);
   if ((browser.id !== null && !label(browser.id, 200)) || (browser.accountMarker !== null && !label(browser.accountMarker, 200))) invalid();
   const actions = unique(row.actions, BROWSER_ACTION_CLASSES, BROWSER_ACTION_CLASSES.length);
@@ -158,5 +170,6 @@ export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
     expiresAt: row.expiresAt as number | null,
     budget: row.budget as number | null,
     ...(legacy ? { origin: BROWSER_LEGACY_JOB_ORIGIN } : {}),
+    ...(target ? { desktop: target } : {}),
   };
 }

@@ -2,11 +2,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { askNextActions } from "@/lib/ask-next";
-import { AskNextActionPanel } from "./ChatView";
+import { AskNextActionPanel, MessagesList } from "./ChatView";
 
 // This panel has no native dependencies; importing ChatView also imports
 // the composer's desktop-capability context, which expects a browser.
 vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: vi.fn() }));
+vi.mock("@/state/store", async importOriginal => ({ ...await importOriginal<object>(), useStore: () => ({ dispatch: vi.fn(), state: {} }), api: vi.fn() }));
+// The task card's own rendering has its tests; here only what ChatView hands it.
+const cards = vi.hoisted(() => [] as Array<Record<string, any>>);
+vi.mock("./BrowserTaskCard", () => ({ BrowserTaskCard: (props: Record<string, any>) => { cards.push(props); return null; }, useBrowserTasks: vi.fn() }));
 
 const actions = () => ({ onAsk: vi.fn(), onRecheck: vi.fn(), onDesk: vi.fn(), onYou: vi.fn() });
 const suggestions = (lastBotText: string, threadIdle = true) => askNextActions({
@@ -60,5 +64,26 @@ describe("Ask connection follow-up placement", () => {
     expect(html).toContain("Run beside me now");
     expect(html).toContain("Other task starters");
     expect(html).not.toContain('aria-label="Connection follow-up"');
+  });
+});
+
+describe("Ask task card wiring", () => {
+  it("passes the chosen app window to Start as the task's target", () => {
+    const at = Date.now();
+    const bot = { id: "bud", threadId: "t-desk", name: "Bud", busy: false, messages: [] } as any;
+    const reply = { id: "m-offer", role: "bot", kind: "text", text: "Press **Start this task**", at } as any;
+    const task = { id: "task-1", messageId: "m-offer", status: "proposed", request: "Open the inbox", sites: [], siteSource: "none", savedJob: null,
+      actions: ["read", "click"], consequential: [], minutes: 30, budget: 40, offerExpiresAt: at + 60_000, startedAt: null, expiresAt: null, endNote: null, progress: [] };
+    const onBrowserTask = vi.fn();
+    cards.length = 0;
+    renderToStaticMarkup(createElement(MessagesList, { bot: { ...bot, messages: [reply] }, messages: [reply], editingId: null, lastBotTextId: undefined, canRetryLast: false,
+      engine: undefined, onStartEdit: vi.fn(), onCancelEdit: vi.fn(), onSubmitEdit: vi.fn(), onRegenerate: vi.fn(), productAsk: true,
+      browserTasks: { "m-offer": task } as any, onBrowserTask, scrollRef: { current: null }, readingEarlier: false, onReadEarlier: vi.fn() }));
+    expect(cards).toHaveLength(1);
+    const window = { appName: "Mail", bundleId: "com.apple.mail", pid: 501, windowId: 77, title: "Inbox" };
+    cards[0].onStartWindow(window);
+    expect(onBrowserTask).toHaveBeenCalledWith("task-1", "start", window);
+    cards[0].onStart("portal.fictional-strata.example");
+    expect(onBrowserTask).toHaveBeenLastCalledWith("task-1", "start", "portal.fictional-strata.example");
   });
 });

@@ -418,6 +418,8 @@ export interface LoopRun {
   workerFingerprint?: string;
   /** Taught-job loops link to the durable general execution receipt. */
   jobRunId?: string;
+  /** Modelvia requests the loop made itself (not through a linked job run). */
+  usage?: RunUsage;
   startedAt?: number;
   finishedAt?: number;
   seenAt?: number;
@@ -564,7 +566,12 @@ export interface RunUsage {
   calls: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Jev decisions ("Computer-use decisions" on the invoice) among those
+   * requests: each id is also in `requestIds`, its tokens only here. Never the
+   * state, questions or answers. */
+  decisions?: RunDecisionUsage[];
 }
+export interface RunDecisionUsage { id: string; model?: string; inputTokens?: number; outputTokens?: number; ms?: number }
 
 export type PortalSessionState = "prepared" | "running" | "awaiting-review" | "done" | "unknown" | "failed";
 export interface PortalSession {

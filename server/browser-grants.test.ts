@@ -20,6 +20,8 @@ import {
   browserTaskProgress,
   browserTaskLimitReached,
   BrowserTaskStore,
+  desktopWindowChoice,
+  desktopWindowChoices,
   threadAttachedFiles,
   type BrowserTaskProposal,
   validBrowserTaskRecipe,
@@ -368,5 +370,40 @@ describe("portal recipe task account", () => {
     expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1", urlValue: "" } })).toBe(false);
     expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1\n" } })).toBe(false);
     expect(validBrowserTaskRecipe({ portal: "rei-cloud", runs, account: { marker: "FICT1", other: "x" } })).toBe(false);
+  });
+});
+
+describe("desktop tasks (one app window)", () => {
+  const MAIL = { appName: "Mail", bundleId: "com.apple.mail", pid: 501, windowId: 77, title: "Inbox" };
+  const row = (pid: number, window_id: number, app_name: string, title: string, bundle_id?: string) => ({ pid, window_id, app_name, title, ...(bundle_id ? { bundle_id } : {}) });
+
+  it("offers only titled windows of other apps, never RealBud, browsers, terminals, editors, settings or password stores", () => {
+    expect(desktopWindowChoices([
+      row(501, 77, "Mail", "Inbox", "com.apple.mail"), row(502, 80, "Xero", "Bills"), row(501, 78, "Mail", "  "), row(501, 77, "Mail", "Inbox again"),
+      row(4242, 1, "Fictional Helper", "Own window"), row(601, 2, "Google Chrome", "Portal"), row(602, 3, "msedge.exe", "Portal"), row(603, 4, "iTerm2", "zsh"),
+      row(604, 5, "Cursor", "x.ts"), row(605, 6, "PyCharm CE", "x.py"), row(606, 7, "System Settings", "Privacy"), row(607, 8, "Bitwarden", "Vault"),
+      row(608, 9, "RealBud", "Work"), row(609, 10, "Renamed", "Page", "com.google.Chrome"), row(610, 11, "Notes", "Bad\ntitle"), "junk", null,
+    ], [4242])).toEqual([MAIL, { appName: "Xero", bundleId: "Xero", pid: 502, windowId: 80, title: "Bills" }]);
+  });
+
+  it("takes a Start window as exactly {pid, windowId}", () => {
+    expect(desktopWindowChoice({ pid: 501, windowId: 77 })).toEqual({ pid: 501, windowId: 77 });
+    for (const bad of [null, {}, { pid: 501 }, { pid: 0, windowId: 77 }, { pid: 501, windowId: 77, title: "x" }, { pid: "501", windowId: 77 }]) {
+      expect(() => desktopWindowChoice(bad)).toThrow("Choose the app window again.");
+    }
+  });
+
+  it("starts with the window and no sites, never on a website card, and a restart interrupts it", async () => {
+    const { store, file } = fixture();
+    const card = await store.propose({ threadId: "thread-ask", messageId: "m-desk", request: "Open the inbox in the Mail app", sites: [], siteSource: "none", savedJob: null, actions: ["read", "click"], desktop: MAIL }, NOW);
+    expect(browserTaskCardView(card).desktop).toEqual(MAIL);
+    const started = await store.start(card.id, { threadId: "thread-ask", desktop: MAIL }, NOW + 1);
+    expect(started.grant).toMatchObject({ sites: [], browser: { id: null, accountMarker: null }, uploads: [], desktop: MAIL });
+    expect(askBrowserTaskSystemBlock(started.grant)).not.toContain("Inbox");
+    const site = await store.propose(proposal("Download this month's invoices from portal.fictional-strata.example", { threadId: "thread-other" }), NOW);
+    await expect(store.start(site.id, { threadId: "thread-other", desktop: MAIL }, NOW + 1)).rejects.toMatchObject({ status: 409 });
+    await expect(store.propose({ ...proposal("Download this month's invoices from portal.fictional-strata.example"), desktop: MAIL }, NOW)).rejects.toMatchObject({ status: 400 });
+    const restarted = new BrowserTaskStore({ file });
+    expect(await restarted.get(card.id)).toMatchObject({ status: "interrupted", endNote: "RealBud restarted before this task finished. Nothing more will be done in Mail; ask again to continue." });
   });
 });

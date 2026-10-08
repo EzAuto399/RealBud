@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowDatabase } from "./workflow-database.ts";
 import { BankReferenceStore } from "./bank-reference-store.ts";
+import { validateSavedBankBatch } from "./bank-reference-validation.ts";
 import { bankFirstPass, jevPayerHints, matchReference, maskPayer, narrativeTail, referenceVariants } from "./bank-reference-match.ts";
 import type { JevRequest, JevResult } from "./jev-client.ts";
 import { redbarkBankUpload, REDBARK_CSV_COLUMNS, type RedbarkAccount, type RedbarkTransaction } from "./redbark-source.ts";
@@ -309,7 +310,7 @@ describe("Jev payer hint (data, never a match)", () => {
     const asked: JevRequest[] = [];
     const decide = async (request: JevRequest): Promise<JevResult> => {
       asked.push(request);
-      return { ok: true, model: "fictional-decider", ms: 1, answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, { type: "choice" as const, choice, confidence, probabilities }])) };
+      return { ok: true, id: "dec-fictional", model: "fictional-decider", ms: 1, answers: Object.fromEntries(Object.keys(request.questions).map(key => [key, { type: "choice" as const, choice, confidence, probabilities }])) };
     };
     return { asked, decide };
   };
@@ -338,7 +339,7 @@ describe("Jev payer hint (data, never a match)", () => {
   });
   it("ignores an answer without confidence or probabilities", async () => {
     const batch = createBankReferenceBatch(upload(bytes, named)), pass = bankFirstPass(batch)!;
-    await jevPayerHints(batch, pass, async () => ({ ok: true, model: "jev-1.13", ms: 1, answers: { p0: { type: "choice", choice: "t2" } } }));
+    await jevPayerHints(batch, pass, async () => ({ ok: true, id: "dec-fictional", model: "jev-1.13", ms: 1, answers: { p0: { type: "choice", choice: "t2" } } }));
     expect(pass.rows[10].propertyId).toBeUndefined();
   });
   it("ignores low confidence and a narrow lead", async () => {
@@ -360,6 +361,11 @@ describe("Jev payer hint (data, never a match)", () => {
       expect(asked).toHaveLength(eligible.length);
       expect(hinted.revision).toBe(created.revision + 1);
       expect(hinted.value.jevHints).toEqual([{ rowId: eligible[0].rowId, propertyId: "P-JD", suggestion: expect.stringMatching(/^Possibly P-JD/) }]);
+      // The pass's Jev calls are saved on the upload by Modelvia request id; never the payer, amount or answer.
+      expect(hinted.value.jevUsage).toEqual({ requestIds: ["dec-fictional"], calls: 1, decisions: [{ id: "dec-fictional", model: "fictional-decider", ms: 1 }] });
+      expect(JSON.stringify(hinted.value.jevUsage)).not.toMatch(/JOHN|DOE|410|t2|payer/);
+      expect(() => validateSavedBankBatch(created.id, { ...hinted.value, jevUsage: { ...hinted.value.jevUsage, state: "x" } })).toThrow(/integrity/);
+      expect(() => validateSavedBankBatch(created.id, { ...hinted.value, jevUsage: { requestIds: ["dec-fictional"] } })).toThrow(/integrity/);
       for (let read = 0; read < 3; read++) {
         const view = store.get(created.id);
         expect(view.firstPass!.rows.find(row => row.rowId === eligible[0].rowId)).toMatchObject({ propertyId: "P-JD", hintSource: "jev", disposition: "hold", class: "exception" });
@@ -372,6 +378,7 @@ describe("Jev payer hint (data, never a match)", () => {
       // The review still needs the person's decisions and saves over the hinted revision.
       const reviewed = store.review(created.id, hinted.revision, firstPassDecisions(store.get(created.id).firstPass!));
       expect(reviewed.value.jevHints).toHaveLength(1);
+      expect(reviewed.value.jevUsage).toEqual(hinted.value.jevUsage);
       expect(store.importArtifact(created.id).summary).toEqual({ rows: 27, import: 14, hold: 10, exclude: 3 });
       expect(asked).toHaveLength(1);
     } finally { db?.close(); await removeFixture(dir); }

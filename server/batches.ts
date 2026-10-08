@@ -12,6 +12,7 @@ import { deskContextMarkdown } from "./desk-context.ts";
 import { askWorker } from "./recipe-draft.ts";
 import { parsePrepareResult } from "./job-executor.ts";
 import { productBudSystemPrompt } from "./ask-book.ts";
+import { addRunUsage, cleanRunUsage, emptyRunUsage } from "./run-cost.ts";
 
 const MAX_OUTPUT = 24_000;
 const excerpt = (text: string, limit: number) => text.length > limit ? `${text.slice(0, limit - 70)}\n[Excerpt only: additional source text was not included.]` : text;
@@ -50,6 +51,11 @@ export class BatchService {
     try {
       const data: unknown = JSON.parse(readFileSync(this.file, "utf8"));
       if (!validStoredWorkBatches(data)) throw new Error("invalid batch history");
+      // Usage is optional: an item saved before it was recorded loads without it, a malformed one is dropped.
+      for (const item of data.flatMap(batch => batch.items)) {
+        const usage = cleanRunUsage(item.usage);
+        if (usage) item.usage = usage; else delete item.usage;
+      }
       this.batches = data;
       if (data.some(batch => batch.status === "running" || batch.items.some(item => item.status === "running"))) {
         this.commit(next => {
@@ -253,6 +259,7 @@ export class BatchService {
         const retry = !result.ok && b.autoContinue && item.attempt < BATCH_AUTO_ATTEMPTS;
         item.status = useful ? (parsed!.needsApproval.length ? "needs-review" : "ready") : retry ? "queued" : "failed";
         if (retry) item.retryAt = Date.now() + (this.deps.retryDelayMs ?? 30_000) * 2 ** (item.attempt - 1);
+        if (result.usage) item.usage = addRunUsage(item.usage ?? emptyRunUsage(), result.usage);
         item.output = useful ? output : "";
         item.gaps = useful ? parsed!.needsApproval : [];
         item.detail = useful ? parsed!.summary : "Bud did not return a complete result. Your other results are kept; retry this item when ready.";

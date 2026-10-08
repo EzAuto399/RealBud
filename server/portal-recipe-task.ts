@@ -29,6 +29,8 @@ import { portalPaths, type PortalPathStore } from "./portal-path-overrides.ts";
 import { createLearnedRecipeStore, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { decide, jevReady } from "./jev-client.ts";
+import { countJevUsage, emptyRunUsage } from "./run-cost.ts";
+import { recordUsage } from "./computer-history.ts";
 import { browserTaskUploadName, LOOP_READ_ACTIONS, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { LEARN_NAME } from "../shared/learned-recipes.ts";
 
@@ -231,6 +233,8 @@ export async function runPortalRecipeTask(input: {
   // Held here too when no host holds it (a direct call); a host's hold outlives the run.
   const own = !running.has(grant.id);
   dispatching.add(grant.id); running.add(grant.id);
+  // The chooser's decisions belong to this Ask: a history row on its thread.
+  const usage = emptyRunUsage();
   try {
     const pack = await (input.load ?? loadPortalRecipePack)(record.recipe.portal);
     const recipe = record.recipe;
@@ -238,7 +242,7 @@ export async function runPortalRecipeTask(input: {
       pack, runs: recipe.runs, account: recipe.account, grant, threadId: record.threadId, runtime: input.runtime,
       approve: input.approve, signal: input.signal, isActive: input.isActive, learnedReadSafe: learnedReadSafe(pack, recipe.runs),
       // Ask only: a drifted control's fallback chooser (TypeSafe Jev) when the office has one. Loops and W1 never get it.
-      ...(jevReady() ? { chooser: decide } : {}),
+      ...(jevReady() ? { chooser: countJevUsage(usage, decide) } : {}),
       ...(input.operations ? { operations: input.operations } : {}), ...(input.approvals ? { approvals: input.approvals } : {}),
       ...(input.rules ? { rules: input.rules } : {}), ...(input.assertCapability ? { assertCapability: input.assertCapability } : {}),
       ...(input.now ? { now: input.now } : {}), ...(input.workroom ? { workroom: input.workroom } : {}), ...(input.pollMs !== undefined ? { pollMs: input.pollMs } : {}),
@@ -253,7 +257,7 @@ export async function runPortalRecipeTask(input: {
     const result = withRowFilters(pack, recipe.runs, raw);
     const notice = learnedNotices.get(pack);
     return notice ? { ...result, detail: [result.detail, notice].filter(Boolean).join(" ") } : result;
-  } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); }
+  } finally { dispatching.delete(grant.id); if (own) running.delete(grant.id); recordUsage("portal control choice", usage, { threadId: record.threadId }); }
 }
 
 // ── a loop's unattended read (route loop-read) ──────────────────────────────

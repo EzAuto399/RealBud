@@ -253,6 +253,52 @@ export function browserTaskIntent(text: string, recipes: () => Recipe[]): Browse
   };
 }
 
+// ── one-off app tasks on this computer ───────────────────────────────────
+/** "in the Mail app", "in the Xero window": the app the person named. */
+const IN_APP = /\bin\s+(?:the\s+|my\s+)?([A-Za-z0-9][\w&.+' -]{0,40}?)\s+(?:app|application|window)\b/i;
+/** "on my computer", "on this Mac": an app here, which one the person chooses on the card. */
+const ON_COMPUTER = /\bon\s+(?:my|this)\s+(?:computer|mac|pc|laptop|desktop)\b/i;
+const NOT_AN_APP_NAME = /^(?:the|a|an|this|that|my|your|our|same|other|right|correct|desktop|computer)$/i;
+/** In an app window Bud reads, presses, types and uses keys (server/desktop-fence.ts). */
+const DESKTOP_ACTIONS: readonly BrowserActionClass[] = ["read", "click", "fill", "keys"];
+
+export interface DesktopTaskIntent {
+  /** The person's request as an imperative, with pasted secrets removed. */
+  request: string;
+  /** The app the person named, or null ("on my computer"). The host preselects a window only when one is open. */
+  app: string | null;
+  actions: BrowserActionClass[];
+}
+
+/** A one-off request to do something in an app on this computer ("Open the March statement in the Xero app",
+ * "Can you check the inbox in the Mail window?", "Print this on my computer"). Questions, quoted or forwarded
+ * text, and routine or take-over work never become one. */
+export function desktopTaskIntent(text: string): DesktopTaskIntent | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 2000) return null;
+  if (/<pasted-text\b|<attached-file\b/i.test(trimmed) || FORWARDED.test(trimmed) || quotesAnInstruction(trimmed) || CONNECTED_TOOL_REQUEST.test(trimmed)) return null;
+  const request = imperativeFrom(trimmed);
+  if (!request || isQuestion(request) || PREPARATION_START.test(request) || /^(?:please\s+)?(?:do not|don't|never)\b/i.test(request)) return null;
+  const opening = request.split(/[.!?](?=\s)|[\r\n]/, 1)[0];
+  if (!ONE_OFF.test(opening) || ROUTINE.test(opening)) return null;
+  const named = IN_APP.exec(opening)?.[1]?.trim();
+  if (!named && !ON_COMPUTER.test(opening)) return null;
+  return {
+    request: stripPortalSecrets(request).trim().slice(0, 2000),
+    app: named && !NOT_AN_APP_NAME.test(named) ? named : null,
+    actions: browserTaskActions(request).filter(action => DESKTOP_ACTIONS.includes(action)),
+  };
+}
+
+/** The one open window of the app the person named (case-insensitive, whole words of the app's name), or null when
+ * none or several are open: then the person chooses on the card. */
+export function preselectedWindow<T extends { appName: string }>(app: string | null, windows: readonly T[] | null): T | null {
+  const wanted = app?.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!wanted || !windows) return null;
+  const matches = windows.filter(window => ` ${window.appName.toLowerCase().replace(/\s+/g, " ")} `.includes(` ${wanted} `));
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export async function portalJobIntentReply(
   text: string,
   deps: {

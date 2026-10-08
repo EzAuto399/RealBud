@@ -212,7 +212,7 @@ and export only.
 
 - Unattended Submit, session-scoped Submit, or a Submit standing rule — **never**.
 - Pay / transfer / sign / send / delete / statutory by Bud — **never**.
-- General desktop apps beyond the browser — later (fence is browser-typed today).
+- General desktop apps beyond the browser — superseded 2026-10-08: one app window per task, see [Desktop app tasks](#desktop-app-tasks-2026-10-08).
 - Clock launching a browser — **never**. Scheduled portal jobs queue
   “Ready beside you” (shipped 2026-09-02).
 
@@ -264,3 +264,55 @@ and export only.
 - The word for the browser is the user’s own Chrome — no container detour
   unless they ask for it.
 - The clock never launches a browser.
+
+## Desktop app tasks (2026-10-08)
+
+Evidence tier: source and local tests only. Not yet run against a live app
+window, a packaged build or an installed device.
+
+A desktop task is a browser task given **one open app window** instead of a
+site. The fence is `server/desktop-fence.ts`; the target type is
+`shared/desktop-task.ts`.
+
+- **Choosing the window.** When the request names no site, the task card
+  offers "or an app on this computer": a list of open windows ("Mail —
+  Inbox") from `GET /api/desktop/windows`. The person picks one and presses
+  Start. Where the list is unavailable the card says so and offers sites only.
+  The grant then carries that window and no sites, so it never reaches a
+  website as well.
+- **Every step is re-checked** against Stop, the time and step limits, and a
+  fresh window list. If the window closes or another app takes it over, the
+  task ends. A desktop grant carries no account marker, so RealBud does not
+  promise to notice a different account inside the same app. Another window
+  of the same app asks once; any other window is refused.
+- **Allowed:** reading and scrolling the window, pressing ordinary named
+  buttons, links, tabs and menu items, and Tab, Escape, the arrows and Page
+  keys when the task may use keys. Typing needs the task's "fill" permission,
+  otherwise it asks once. Everything else (menus by path, setting values
+  directly, dragging, browser tools, other apps) is refused.
+- **Asked every time:** pay, sign, send, notice, delete and account change.
+  Each is its own card, once per instance, showing the app, the window title
+  and the control's real label from the app ("Move to Trash", "Empty Trash",
+  "Discard" and "Erase" count as delete here). A click anywhere inside such a
+  control (its icon, its caption) is that control's card. OK, Continue, Save,
+  Done and other confirming buttons ask once, and are a card when the sheet
+  or dialog holding them (read on its own, never the rest of the window)
+  mentions a payment, signature, message, deletion or notice. A control Bud
+  cannot name (an unnamed one is judged by the nearest named control around
+  it), an unlabelled point, Return with no clear target, a typed line break
+  and modifier keys also ask once.
+- **Refused:** sign-in controls, password and other secure fields, codes and
+  bank or card details. Those stay with the person.
+- **How Bud picks a control.** Jev chooses from the window's labelled controls
+  and their roles only, with no screenshot (owner approved), whenever there is
+  at least one; from a partial read its answer says "partial list". Only when
+  Jev cannot pick, a GPT-6 Luna Decisions call may look at a screenshot of the
+  selected window, never the whole screen (owner approved 2026-10-08). A
+  screenshot over Modelvia's size limit is taken again at 512 px; if the
+  driver cannot, the answer is "none — screenshot too large for the vision
+  fallback". Its
+  answer is a point that the fence maps back to a named control and judges
+  the same way; an unlabelled point asks.
+- **Person-started only.** A desktop task starts from the person pressing
+  Start on the card. No saved job, loop or schedule starts one, and it never
+  repeats on its own.

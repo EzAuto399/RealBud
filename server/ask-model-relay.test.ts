@@ -856,6 +856,15 @@ describe("Ask model relay usage", () => {
     expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-original"], calls: 1 });
   });
 
+  it("counts a Jev decision on the lease's usage, taken with the turn's calls", () => {
+    const lease = createAskModelRelayLease();
+    lease.recordJev({ ok: true, id: "dec-fictional-turn", model: "jev-1.13", ms: 9, usage: { input_tokens: 4, output_tokens: 0 } });
+    lease.recordJev({ ok: false });
+    expect(lease.takeUsage()).toEqual({ requestIds: ["dec-fictional-turn"], calls: 1, decisions: [{ id: "dec-fictional-turn", model: "jev-1.13", inputTokens: 4, outputTokens: 0, ms: 9 }] });
+    expect(lease.takeUsage()).toEqual({ requestIds: [], calls: 0 });
+    lease.revoke();
+  });
+
   it("records into a one-shot launch's own counter", async () => {
     const root = home(), gateway = await upstream((response) => {
       response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-once" });

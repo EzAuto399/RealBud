@@ -52,6 +52,9 @@ export interface MailWorkItem {
   /** Set only while Jev's pre-screen is the reason this item is noise. Data,
    * never authority: a staff edit or a later Bud review replacing it clears it. */
   screenedBy?: 'jev';
+  /** A person said this conversation is not noise ("Not noise"): it went back
+   * to Bud's next review and is never offered to the screen again. */
+  notNoise?: true;
   firstSeenAt: number; updatedAt: number; lastMessageAt: number;
 }
 export interface MailWorkspaceSnapshot {
@@ -385,10 +388,13 @@ export function mailHistorySetupDetail(status: Omit<MailHistoryStatus, 'detail' 
   if (status.state === 'held') return `History collection is held (${clause(status.heldReason)}); ${status.windowsChecked} of ${status.windowCount} approved windows were checked. The checkpoint was kept.`;
   return 'History collection has not started for this account.';
 }
-export type MailWorkGroup = 'open' | 'waiting' | 'reference' | 'snoozed' | 'done' | 'all';
+/** 'all' and 'screened' (open Jev-screened items) are page filters, not item groups. */
+export type MailWorkGroup = 'open' | 'waiting' | 'reference' | 'snoozed' | 'done' | 'all' | 'screened';
 export interface MailWorkspaceCounts {
   total: number; open: number; waiting: number; reference: number; snoozed: number; done: number;
   highPriority: number; needsReview: number;
+  /** Open conversations Jev's screen set aside (shown as "Screened (n)"). */
+  screened?: number;
 }
 export interface MailWorkspaceMetadata {
   version: 2; revision: number; latestScan: MailScanReceipt | null;
@@ -412,7 +418,7 @@ export const mailChangedSinceReview = (item: MailWorkItem): boolean => item.revi
  * that Bud has not prepared for this exact source yet. */
 export const mailNeedsPreparation = (item: MailWorkItem): boolean =>
   item.newEvidence && (!item.reviewed || item.preparedDigest !== item.sourceDigest);
-export function mailWorkGroup(item: MailWorkItem): Exclude<MailWorkGroup, 'all'> {
+export function mailWorkGroup(item: MailWorkItem): Exclude<MailWorkGroup, 'all' | 'screened'> {
   if (item.status !== 'open') return item.status;
   if (mailChangedSinceReview(item)) return 'open';
   if (item.disposition === 'waiting') return 'waiting';

@@ -12,6 +12,7 @@ import { clearManagedAccess, FICTIONAL_GRANTED_KEY, grantManagedAccess } from ".
 import { startAskModelRelay } from "./ask-model-relay.ts";
 import { propertyProfileDir } from "./hermes-pack.ts";
 import type { JevAnswer, JevRequest, JevResult } from "./jev-client.ts";
+import { listHistory } from "./computer-history.ts";
 
 const CSV = `Property,Days in arrears,Rent received,Levies
 12 Oak St,5,false,false
@@ -138,7 +139,7 @@ describe("inspectLedgerColumns", () => {
       const asked: JevRequest[] = [];
       const decide = async (request: JevRequest): Promise<JevResult> => {
         asked.push(request);
-        return typeof answers === "function" ? answers() : { ok: true, model: "fictional-decider", ms: 1, answers };
+        return typeof answers === "function" ? answers() : { ok: true, id: "dec-fictional", model: "fictional-decider", ms: 1, answers };
       };
       return { asked, jev: { decide, ready: () => ready } };
     };
@@ -153,6 +154,17 @@ describe("inspectLedgerColumns", () => {
       expect(Object.keys(asked[0].questions)).toEqual(["identity", "daysSinceDue", "rentLanded", "levyPaid"]);
       expect(asked[0].questions.identity).toMatchObject({ type: "choice", criteria: { h0: "Property", h3: "Levies", none: expect.any(String) } });
       expect(JSON.stringify(asked[0])).not.toContain("12 Oak St");
+    });
+
+    it("keeps the Jev call's cost as a history row, since the inspection saves nothing else", async () => {
+      const { jev: injected } = jev(all);
+      await inspectLedgerColumns(CSV, { jev: injected });
+      expect(listHistory(1)[0]).toMatchObject({ name: "ledger columns", ok: true,
+        usage: { requestIds: ["dec-fictional"], calls: 1, decisions: [{ id: "dec-fictional", model: "fictional-decider", ms: 1 }] } });
+      // A refused call made no request: no row.
+      const before = listHistory(50).length;
+      await inspectLedgerColumns(CSV, { jev: jev(async () => ({ ok: false, reason: "refused" }) as JevResult).jev });
+      expect(listHistory(50)).toHaveLength(before);
     });
 
     it.each([

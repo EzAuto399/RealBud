@@ -273,9 +273,13 @@ describe("Desk morning check", () => {
           { propertyId: "prop-oak", daysSinceDue: 0, rentLanded: true, levyPaid: true, daysSinceCourtesy: null },
         ],
         detail: "Worker answered with 1 ledger rows.",
+        usage: { requestIds: ["req-fictional-ledger"], calls: 1 },
       }),
     });
-    const snap = await desk.runMorningCheckLive();
+    const usage = { requestIds: [], calls: 0 };
+    const snap = await desk.runMorningCheckLive(usage);
+    // The worker's requests reach the caller's usage (the loop run's cost).
+    expect(usage).toEqual({ requestIds: ["req-fictional-ledger"], calls: 1 });
     expect(snap.hands).toBe("held");
     expect(snap.handsDetail).toMatch(/Uncovered stay held/);
     const uncovered = snap.results.filter((row) => row.reason === "uncovered-by-worker");

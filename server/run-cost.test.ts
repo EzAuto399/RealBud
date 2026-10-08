@@ -2,7 +2,7 @@
  * fetch; every id, key and amount is fictional. */
 import { describe, expect, it } from "vitest";
 
-import { cleanRunUsage, emptyRunUsage, MAX_RUN_REQUEST_IDS, noteModelviaReply, noteModelviaRequest, runCost } from "./run-cost.ts";
+import { addRunUsage, cleanRunUsage, countJevUsage, emptyRunUsage, MAX_RUN_REQUEST_IDS, noteModelviaReply, noteModelviaRequest, recordJevUsage, runCost } from "./run-cost.ts";
 
 const KEY = "fictional-office-key";
 const access = { baseUrl: "https://gateway.fictional.test/v1/", key: KEY };
@@ -133,5 +133,55 @@ describe("pricing a run from Modelvia receipts", () => {
     const stub = receipts(Object.fromEntries(ids.map(id => [id, receipt(id, { chargedNanoAud: "1000000" })])));
     expect(await runCost({ requestIds: ids, calls: 12 }, access, { fetch: stub.fetcher })).toEqual({ state: "priced", requests: 12, chargedNanoAud: "12000000" });
     expect(stub.peak()).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("counting Jev decisions on a run", () => {
+  const STATE = { payer: "FICTIONAL PAYER STATE", amount: "410.00" };
+  const answered = (id: string) => ({ ok: true as const, id, model: "jev-1.13-20260917", ms: 42, usage: { input_tokens: 476, output_tokens: 0 },
+    answers: { p0: { type: "choice", choice: "t1-FICTIONAL-ANSWER" } } });
+
+  it("records the request id, model, tokens and ms of each answered call; never the state, questions or answers", async () => {
+    const usage = emptyRunUsage();
+    const decide = countJevUsage(usage, async (request: { state: unknown; questions: Record<string, unknown> }) =>
+      request.questions.fail ? { ok: false as const, reason: "budget" } : answered(`dec-fictional-${Object.keys(request.questions)[0]}`));
+    await decide({ state: STATE, questions: { a: { instructions: "FICTIONAL QUESTION" } } });
+    await decide({ state: STATE, questions: { b: {} } });
+    await decide({ state: STATE, questions: { fail: {} } });
+    expect(usage).toEqual({ requestIds: ["dec-fictional-a", "dec-fictional-b"], calls: 2, decisions: [
+      { id: "dec-fictional-a", model: "jev-1.13-20260917", inputTokens: 476, outputTokens: 0, ms: 42 },
+      { id: "dec-fictional-b", model: "jev-1.13-20260917", inputTokens: 476, outputTokens: 0, ms: 42 }] });
+    expect(JSON.stringify(usage)).not.toMatch(/FICTIONAL|answers|state|questions/);
+  });
+
+  it("counts a charged answer that failed validation by its id alone", () => {
+    const usage = emptyRunUsage();
+    recordJevUsage(usage, { ok: false, id: "dec-fictional-invalid" });
+    recordJevUsage(usage, { ok: false });
+    recordJevUsage(usage, { ok: true, id: "not an id/../x" });
+    expect(usage).toEqual({ requestIds: ["dec-fictional-invalid"], calls: 1, decisions: [{ id: "dec-fictional-invalid" }] });
+  });
+
+  it("prices decisions from their receipts with the run's other calls", async () => {
+    const usage = emptyRunUsage();
+    noteModelviaRequest(usage, "req-fictional-chat");
+    recordJevUsage(usage, answered("dec-fictional-1"));
+    const { fetcher, asked } = receipts({ "req-fictional-chat": receipt("req-fictional-chat", { chargedNanoAud: "3000" }),
+      "dec-fictional-1": receipt("dec-fictional-1", { chargedNanoAud: "500" }) });
+    // The total is unchanged; the decisions' own part is its sub-line.
+    expect(await runCost(usage, access, { fetch: fetcher })).toEqual({ state: "priced", requests: 2, chargedNanoAud: "3500", decisionsNanoAud: "500" });
+    expect(asked.map(call => call.url).sort()).toEqual(["https://gateway.fictional.test/v1/requests/dec-fictional-1", "https://gateway.fictional.test/v1/requests/req-fictional-chat"]);
+  });
+
+  it("adds one usage into another, and keeps well-formed decisions through a save", () => {
+    const seed = emptyRunUsage();
+    recordJevUsage(seed, answered("dec-fictional-1"));
+    const total = addRunUsage(addRunUsage(emptyRunUsage(), seed), { requestIds: ["req-fictional-chat"], calls: 1, inputTokens: 20, outputTokens: 5 });
+    expect(total).toEqual({ requestIds: ["dec-fictional-1", "req-fictional-chat"], calls: 2, inputTokens: 20, outputTokens: 5,
+      decisions: [{ id: "dec-fictional-1", model: "jev-1.13-20260917", inputTokens: 476, outputTokens: 0, ms: 42 }] });
+    expect(seed.calls).toBe(1);
+    expect(cleanRunUsage(JSON.parse(JSON.stringify(total)))).toEqual(total);
+    expect(cleanRunUsage({ ...total, decisions: [{ id: "bad id/..", ms: 1 }, { id: "dec-fictional-2", model: "has space", inputTokens: -1, state: "x" }] }))
+      .toEqual({ ...total, decisions: [{ id: "dec-fictional-2" }] });
   });
 });

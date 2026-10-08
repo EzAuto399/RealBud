@@ -11,6 +11,7 @@ import { captureAccountsReview, preflightAccountsReview, validateAccountsReview 
 import { createHash } from "node:crypto";
 import { isCompanyExecutionSource, type CompanyExecutionSource } from '../shared/company-execution.ts';
 import { departmentWorkRecipe } from './department-work-plan.ts';
+import { addRunUsage, emptyRunUsage } from './run-cost.ts';
 
 const MAX_RESULT_ITEMS = 20;
 const MAX_RESULT_LINE = 500;
@@ -54,6 +55,9 @@ export interface JobExecutorDependencies {
    * accounts adapters or ordinary profile worker. The authority supplies the
    * selected source and checks every provider/result boundary. */
   department?: { source(): Promise<CompanyExecutionSource>; check(): Promise<void>; ask: typeof askWorker };
+  /** Modelvia requests made for this run before it started (a loop's Jev
+   * screen), counted on its usage with the worker's own. */
+  usage?: RunUsage;
 }
 
 /** Hermes enforces this coarse tool boundary for each attempt. Model-only
@@ -188,7 +192,7 @@ export async function executeRecipeJob(
   const running = store.start(enqueued.run.id);
   const executionRecipe = recipeForRun(recipe, enqueued.run);
   // Every settle after the worker answered carries the Modelvia requests it made.
-  let usage: RunUsage | undefined;
+  let usage: RunUsage | undefined = dependencies.usage;
   const settle = (input: SettleJobRunInput) => store.settle(running.id, usage ? { ...input, usage } : input);
 
   try {
@@ -260,7 +264,7 @@ export async function executeRecipeJob(
       maxTurns: worker.maxTurns ?? executionRecipe.limits.maxTurns,
       toolsets: worker.toolsets ?? jobWorkerToolsets(executionRecipe.capabilities),
     });
-    usage = result.usage;
+    usage = dependencies.usage ? addRunUsage(addRunUsage(emptyRunUsage(), dependencies.usage), result.usage) : result.usage;
     await department?.check();
     if (!result.ok) {
       return {
