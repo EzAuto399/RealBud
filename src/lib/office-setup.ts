@@ -16,9 +16,6 @@ import { agencyIsNamed, officeTicks, type Office, type OfficeTickId } from "../.
 export { agencyIsNamed };
 export type { Office };
 
-/** The card that holds every one of these fields. */
-export const OFFICE_CARD_ID = "you-office";
-
 interface OfficeGroup {
   /** DOM id of the form group, used as the scroll target. */
   id: string;

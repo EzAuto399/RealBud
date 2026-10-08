@@ -5,7 +5,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { resolveProductBud, resolveProductBudId } from "@/lib/product-bud";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 
 export type ConfigSection = "composio" | "composioApi" | "box";
@@ -211,43 +210,6 @@ function CredentialEditor({ section, onSaved }: { section: ConfigSection; onSave
         </button>
       </div>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
-    </div>
-  );
-}
-
-const QUICK_CONNECT = [
-  { slug: "gmail", label: "Gmail" },
-  { slug: "outlook", label: "Outlook" },
-  { slug: "notion", label: "Notion" },
-  { slug: "googlecalendar", label: "Google Calendar" },
-] as const;
-
-/** Connection shortcuts use the canonical Ask broker, including its error recovery.
- * They never poll the legacy connector routes, which product mode denies. */
-export function ConnectedAppQuickConnect() {
-  const { state, dispatch } = useStore();
-  const budId = resolveProductBudId(state.bots);
-  const busy = Boolean(resolveProductBud(state.bots)?.busy);
-  if (!state.config?.composio?.configured) return null;
-  return (
-    <div className="mt-3">
-      <div className="text-[12px] text-ink-secondary">Connect an app with Bud</div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {QUICK_CONNECT.map(row => (
-          <button key={row.slug} type="button" disabled={busy || !state.connected || !budId}
-            onClick={() => {
-              if (!budId) return;
-              dispatch({ type: "showAsk" });
-              dispatch({ type: "send", botId: budId, text: `connect ${row.label}` });
-            }}
-            className="pm-control rounded-lg border border-line bg-sheet px-3 py-1.5 text-[12.5px] text-ink hover:border-agency/35 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50">
-            Connect {row.label}
-          </button>
-        ))}
-      </div>
-      <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
-        {busy ? "Bud is finishing a task. Connect an app when it finishes." : "Bud checks the connection in Ask and guides you through sign-in. Your unsent draft stays saved."}
-      </p>
     </div>
   );
 }

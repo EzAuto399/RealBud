@@ -22,7 +22,6 @@ export type ChannelsState = {
   slack: ChannelStatus;
 };
 
-export type TelegramDisconnected = ChannelDisconnected;
 export type TelegramConnected = ChannelConnected;
 export type TelegramChannel = ChannelStatus;
 
