@@ -1,8 +1,10 @@
-/** Short-circuit Ask replies for "every Wednesday / weekly … check" asks.
- * Bud never edits RealBud's clock directly. A new check is set up in Schedule,
- * so that ask gets a one-step pointer here. Moving the built Morning money check
- * goes to Bud, who offers the change on RealBud's approval card (loop_schedule in
- * server/workflow-settings-broker.ts); only Allow on that card saves it. */
+/** Recognises "every Wednesday / weekly … check" asks. Retired as an Ask pre-route
+ * (8 Oct): server/index.ts no longer answers these with a pointer to Schedule. They
+ * reach Bud, who proposes the repeat on RealBud's approval card (repeat_propose) or
+ * moves a built workflow's time (loop_schedule), both in
+ * server/workflow-settings-broker.ts; only Allow on the card saves it.
+ * ask-jev-route.ts still calls scheduleIntentReply, only to keep these asks with Bud
+ * instead of the Jev pre-route; its text is no longer shown. */
 import { askBookIntent } from "./ask-book.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
 import { parsePortalJobIntent } from "./portal-job-intent.ts";
@@ -57,8 +59,8 @@ function cadenceLine(weekdayHint: string | null): string {
   return weekdayHint;
 }
 
-/** A new check: the existing schedule editor opens inside Ask and owns the save/approval.
- * Morning money already exists, so Bud answers that one with its approval card. */
+/** Retired pre-route text: no longer shown in Ask (see the header). Truthy for a new weekday
+ * check, which ask-jev-route.ts keeps with Bud; null otherwise. Delete once that caller goes. */
 export function scheduleIntentReply(text: string): string | null {
   const intent = parseScheduleIntent(text);
   if (!intent || intent.kind === "morning-money") return null;

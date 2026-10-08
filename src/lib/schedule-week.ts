@@ -85,10 +85,36 @@ export function plannedLoopFootnote(loop: { name: string }): string {
   return `${loop.name} · Planned — set the clock now; RealBud runs it after it is built.`;
 }
 
+const DAY_FULL = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"] as const;
+
+function clockLabel(value: string): string {
+  const [hour, minute] = value.split(":").map(Number);
+  return fmtTimeOfDay(new Date(2000, 0, 1, hour || 0, minute || 0).getTime());
+}
+
+/** A repeat in plain words: "Every 2 minutes, 9:00 am–5:00 pm, weekdays". */
+function repeatSummary(schedule: { time: string; weekdays: number[]; everyMinutes: number; until?: string }): string {
+  const every = schedule.everyMinutes;
+  const step = every === 1 ? "Every minute" : every === 60 ? "Every hour" : every % 60 === 0 ? `Every ${every / 60} hours` : `Every ${every} minutes`;
+  const window = schedule.until
+    ? `${clockLabel(schedule.time)}–${clockLabel(schedule.until)}`
+    : schedule.time === "00:00" ? "all day" : `from ${clockLabel(schedule.time)}`;
+  const days = [...schedule.weekdays].sort((a, b) => a - b);
+  const dayLabel =
+    days.length === 7
+      ? "every day"
+      : days.join(",") === "1,2,3,4,5"
+        ? "weekdays"
+        : days.length === 1
+          ? DAY_FULL[days[0]!] ?? DAY_NAMES[days[0]!]
+          : days.map((day) => DAY_NAMES[day]).join(", ");
+  return `${step}, ${window}, ${dayLabel}`;
+}
+
 /** Card-face / disclosure clock, e.g. "Weekdays 7:30 am". */
 export function scheduleSummary(schedule: { time: string; weekdays: number[] } & CalendarCadence): string {
-  const [hour, minute] = schedule.time.split(":").map(Number);
-  const time = fmtTimeOfDay(new Date(2000, 0, 1, hour || 0, minute || 0).getTime());
+  if (schedule.everyMinutes) return repeatSummary({ ...schedule, everyMinutes: schedule.everyMinutes });
+  const time = clockLabel(schedule.time);
   const days = [...schedule.weekdays].sort((a, b) => a - b);
   const dayLabel =
     days.length === 7
@@ -174,15 +200,13 @@ export function calendarShortName(id: Loop["id"]): string {
   }
 }
 
-const DAY_FULL = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"] as const;
-
 /** Teach-bar clock line: "Runs Fridays at 4:00 pm · Australia/Brisbane". */
-export function recipeScheduleLine(schedule: { time: string; weekdays: number[] }, timeZone?: string): string {
-  const [hour, minute] = schedule.time.split(":").map(Number);
-  const time = fmtTimeOfDay(new Date(2000, 0, 1, hour || 0, minute || 0).getTime());
+export function recipeScheduleLine(schedule: { time: string; weekdays: number[]; everyMinutes?: number; until?: string }, timeZone?: string): string {
+  const time = clockLabel(schedule.time);
   const days = [...schedule.weekdays].sort((a, b) => a - b);
-  const when =
-    days.length === 7
+  const when = schedule.everyMinutes
+    ? repeatSummary({ ...schedule, everyMinutes: schedule.everyMinutes })
+    : days.length === 7
       ? `Runs every day at ${time}`
       : days.join(",") === "1,2,3,4,5"
         ? `Runs weekdays at ${time}`

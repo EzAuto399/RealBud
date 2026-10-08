@@ -106,7 +106,7 @@ try {
   assert.equal(await composer.inputValue(), draft);
   await ask("what are we connected to?");
   await until(async () => /Gmail.*connected/i.test(await page.locator("main").innerText()), "connected source stays available in Ask");
-  await ask("Schedule a payment check every Wednesday");
+  await ask("Schedule something for me");
   await until(async () => (await page.locator("main").innerText()).includes("Nothing has changed yet"), "schedule reply");
   await composer.fill(draft);
   await page.getByRole("button", { name: "Schedule work", exact: true }).last().click();

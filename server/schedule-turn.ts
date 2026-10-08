@@ -33,6 +33,11 @@ function cadence(schedule: Loop["schedule"]): string {
   const days = [...schedule.weekdays].sort((a, b) => a - b);
   const which = days.length === 7 ? "every day" : days.join(",") === "1,2,3,4,5" ? "weekdays"
     : days.length === 1 ? DAYS[days[0]!]! : days.map(day => SHORT[day]).join(", ");
+  // A repeat: "every 2 minutes, 9:00 am–5:00 pm on weekdays".
+  if (schedule.everyMinutes) {
+    const step = schedule.everyMinutes, every = step === 1 ? "every minute" : step === 60 ? "every hour" : step % 60 === 0 ? `every ${step / 60} hours` : `every ${step} minutes`;
+    return `${every}, ${schedule.until ? `${at}–${clock(schedule.until)}` : `from ${at}`}${days.length === 7 ? " every day" : ` on ${which}`}`;
+  }
   if (schedule.intervalDays && schedule.intervalDays > 1) {
     return days.length === 7 ? `every ${schedule.intervalDays} days at ${at}` : `${which}, every ${schedule.intervalDays} days, at ${at}`;
   }
@@ -59,7 +64,7 @@ function state(loop: Loop): string {
  * placeholders, except bank review, which stays reachable by hand). */
 export function scheduleJobsTurnContext(loops: readonly Loop[], opts: { timeZone: string; recovery?: boolean }): string {
   const shown = loops.filter(loop => loop.available || loop.id === "bank-references");
-  const rule = "Switching a job on or off, changing its time, running it and approving its plan happen only on Schedule, done by the person. Work cannot do any of that: never say a job was switched on, run, changed or approved unless the person says they did it on Schedule. To make new work repeatable, draft it here and point them to **Make this repeatable**.";
+  const rule = "Switching a job on or off, running it and approving its plan happen on Schedule, done by the person. Work cannot do any of that: never say a job was switched on, run or approved unless the person says they did it on Schedule. A new repeat or a changed time is saved only when the person allows Bud's card: to repeat something at any cadence, call repeat_propose, and never say it is set up or changed until the tool says it was saved.";
   if (shown.length === 0) {
     return `Schedule jobs: this office has no jobs on Schedule yet. Do not describe any scheduled job or workflow as set up. ${rule}`;
   }

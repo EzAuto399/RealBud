@@ -223,11 +223,12 @@ describe("ask book", () => {
     expect(prompt).toMatch(/never move money/);
   });
 
-  it("drafts recurring work in Ask instead of bouncing to Schedule", () => {
+  it("proposes a repeat at any cadence on the approval card instead of bouncing to Schedule", () => {
     const prompt = productBudSystemPrompt();
-    expect(prompt).toMatch(/Make this repeatable/);
-    expect(prompt).toMatch(/draft the job outcome and concrete steps/i);
-    expect(prompt).not.toMatch(/answer in two short sentences: open \*\*Schedule/);
+    expect(prompt).toContain("When the person asks you to repeat something, at any cadence (every N minutes or hours, daily, chosen weekdays, or when new mail arrives), do it once now if useful, then call repeat_propose.");
+    expect(prompt).toContain("Never refuse a cadence for being frequent; the office's monthly AI limit bounds cost. Never say it is set up until the tool says it was saved.");
+    expect(prompt).toContain("Runs only prepare: sending, paying, signing or submitting always waits for the person's approval of that exact item.");
+    expect(prompt).not.toMatch(/Make this repeatable|did not turn the clock on|answer in two short sentences: open \*\*Schedule/);
   });
 
   it("turns internal workroom and unknown failures into safe recovery copy", () => {

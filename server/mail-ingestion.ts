@@ -869,6 +869,24 @@ export function createMailIngestionService(options: Options) {
                 return structuredClone({ receipt, data: source.data, settings: source.settings });
             }));
         },
+        /** Read only, for a saved job allowed to read mail: the newest confirmed collection of the reviewed
+         * Gmail, one line per conversation, latest first. Writes nothing and creates no work items (collect()
+         * does both); a collection made under another source or scope review is never read. Null when none. */
+        async headlines(limit = 30): Promise<{ receiptId: string; collectedAt: number; lines: string[] } | null> {
+            const authority = await options.authorize('morning-priorities');
+            return locked(() => storage.run(() => {
+                const receipt = storage.db.projectPage<MailScanReceipt, MailScanReceipt>('mail-receipt', { limit: 20 }, row => validReceipt(row.value) ? row.value : mailRecovery()).records
+                    .find(row => row.accountId === authority.accountId && row.bindingRevision === authority.bindingRevision && ['complete', 'partial'].includes(row.status));
+                const raw = receipt && storage.source(receipt.id);
+                if (!receipt || !raw) return null;
+                const source = validateMailSource(raw, receipt, options.workspaceId);
+                // Controls, zero-width marks and direction overrides become spaces (the broker's jobLine class).
+                const plain = (value: string, max: number) => redactSecretsInText(value.replace(/[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, max);
+                const latest = source.data.threads.flatMap(thread => thread.messages.slice(-1)).sort((a, b) => b.at - a.at).slice(0, limit);
+                return { receiptId: receipt.id, collectedAt: receipt.completedAt ?? receipt.windowEndAt,
+                    lines: latest.map(m => `${new Date(m.at).toISOString()} | ${m.direction} | from ${plain(m.from, 120)} | ${plain(m.subject, 160)} | ${plain(m.body, 300)}`) };
+            }));
+        },
         collect, collectHistory, historyCoverage, startHistory, resumeHistoryIfPending, historyStatus,
         prepareInput, screenNoise, applyReview, update, page, scanHistory,
         cancel: () => active?.abort(), get: async () => ({ ...await locked(read), history: await historyStatus() }),

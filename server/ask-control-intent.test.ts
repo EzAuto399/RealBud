@@ -18,7 +18,9 @@ describe("product intent routing and PM copy", () => {
     expect(parseAskControlIntent("how do I connect Bud")).toBe("setup");
     for (const text of ["how do i link the lease to the property", "how do I connect the tenant with the plumber", "how do i set up a rent increase for 14 Sample Street"]) expect(parseAskControlIntent(text)).toBeNull();
     expect(parseAskControlIntent("Set up Bud")).toBe("setup");
-    expect(parseAskControlIntent("Schedule the arrears check every Wednesday")).toBe("schedule-edit");
+    // Naming a cadence reaches Bud, who proposes the repeat on an approval card.
+    for (const text of ["Schedule the arrears check every Wednesday", "remind me every 2 minutes about my inbox", "schedule my inbox summary hourly", "set up a reminder when new mail arrives"]) expect(parseAskControlIntent(text)).toBeNull();
+    expect(parseAskControlIntent("Schedule something for me")).toBe("schedule-edit");
     expect(parseAskControlIntent("Pause the schedule")).toBe("schedule-edit");
     // Changing an existing workflow's time reaches Bud, which offers a before → after card.
     expect(parseAskControlIntent("Change the schedule for weekly bills to Thursdays")).toBeNull();

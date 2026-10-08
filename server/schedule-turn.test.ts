@@ -47,6 +47,16 @@ describe("schedule jobs in the Work turn", () => {
     expect(text).not.toContain("Hidden placeholder");
   });
 
+  it("describes a minute repeat and says a new repeat goes through Bud's card", () => {
+    const [base] = officeLoops();
+    const repeat = (schedule: Partial<Loop["schedule"]>) => ({ ...base!, id: "recipe-repeat" as Loop["id"], name: "Inbox check", enabled: false, schedule: { ...base!.schedule, ...schedule } });
+    const text = scheduleJobsTurnContext([repeat({ time: "09:00", until: "17:00", everyMinutes: 2, weekdays: [1, 2, 3, 4, 5] })], { timeZone: ZONE });
+    expect(text).toContain("- Inbox check: off (paused); every 2 minutes, 9:00 am–5:00 pm on weekdays.");
+    expect(scheduleJobsTurnContext([repeat({ time: "08:00", everyMinutes: 120, weekdays: [0, 1, 2, 3, 4, 5, 6] })], { timeZone: ZONE })).toContain("every 2 hours, from 8:00 am every day.");
+    expect(text).toContain("to repeat something at any cadence, call repeat_propose, and never say it is set up or changed until the tool says it was saved.");
+    expect(text).not.toContain("Make this repeatable");
+  });
+
   it("stays bounded and redacts secret-shaped names", () => {
     const [base] = officeLoops();
     const many = Array.from({ length: 60 }, (_, i) => ({ ...base!, id: `recipe-${i}` as Loop["id"], name: `Job ${i} ${"x".repeat(500)}`, description: "y".repeat(5_000) }));

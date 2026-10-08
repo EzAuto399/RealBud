@@ -278,6 +278,14 @@ describe("recipeScheduleLine", () => {
     );
     expect(recipeScheduleLine({ time: "07:30", weekdays: [1, 2, 3, 4, 5] })).toBe("Runs weekdays at 7:30 am");
   });
+
+  it("describes a minute or hour repeat in plain words, with its window and days", () => {
+    expect(recipeScheduleLine({ time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" })).toBe("Every 2 minutes, 9:00 am–5:00 pm, weekdays");
+    expect(recipeScheduleLine({ time: "00:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 60 }, "Australia/Brisbane")).toBe("Every hour, all day, weekdays · Australia/Brisbane");
+    expect(recipeScheduleLine({ time: "00:00", weekdays: [0, 1, 2, 3, 4, 5, 6], everyMinutes: 15 })).toBe("Every 15 minutes, all day, every day");
+    expect(recipeScheduleLine({ time: "08:30", weekdays: [5], everyMinutes: 120 })).toBe("Every 2 hours, from 8:30 am, Fridays");
+    expect(recipeScheduleLine({ time: "09:00", weekdays: [1, 3], everyMinutes: 1, until: "09:30" })).toBe("Every minute, 9:00 am–9:30 am, Mon, Wed");
+  });
 });
 
 describe("planned loops stay off the day chips", () => {
@@ -323,6 +331,13 @@ describe("scheduleSummary", () => {
     expect(scheduleSummary({ time: "07:30", weekdays: [1, 2, 3, 4, 5] })).toBe("Weekdays 7:30 am");
     expect(scheduleSummary({ time: "16:00", weekdays: [5] })).toBe("Fri 4:00 pm");
     expect(scheduleSummary({ time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe("Every day 9:00 am");
+  });
+
+  it("uses the same repeat words and leaves day intervals and monthly text unchanged", () => {
+    expect(scheduleSummary({ time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" })).toBe("Every 2 minutes, 9:00 am–5:00 pm, weekdays");
+    expect(scheduleSummary({ time: "00:00", weekdays: [0, 1, 2, 3, 4, 5, 6], everyMinutes: 15 })).toBe("Every 15 minutes, all day, every day");
+    expect(scheduleSummary({ time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6], intervalDays: 14, anchorDate: "2026-10-05" })).toBe("Every 14 days 9:00 am · from 2026-10-05");
+    expect(scheduleSummary({ time: "09:00", weekdays: [1, 2, 3, 4, 5], monthly: "first-weekday" })).toBe("First weekday of each month 9:00 am");
   });
 });
 
