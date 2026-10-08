@@ -437,7 +437,7 @@ describe("a drifted control's fallback chooser (Ask only, guarded; fictional REI
   const jevPicks = (target: string, confidence = 0.99, probabilities?: (keys: string[], choice: string) => Record<string, number>) => vi.fn<PortalChooser>(async request => {
     const criteria = (request.questions.control as { criteria: Record<string, string> }).criteria;
     const keys = Object.keys(criteria); const choice = keys.find(key => criteria[key] === target) ?? "none";
-    return { ok: true, model: "fictional-jev-1", ms: 3, answers: { control: { type: "choice", choice, confidence,
+    return { ok: true, id: "dec-fictional", model: "fictional-jev-1", ms: 3, answers: { control: { type: "choice", choice, confidence,
       probabilities: probabilities ? probabilities(keys, choice) : Object.fromEntries(keys.map(key => [key, key === choice ? 0.97 : 0.03 / (keys.length - 1)])) } } };
   });
   const step = (run: Awaited<ReturnType<typeof runPortalRecipes>>, verb: string) => run.receipt.steps.filter(item => item.verb === verb).at(-1)!;
@@ -482,7 +482,7 @@ describe("a drifted control's fallback chooser (Ask only, guarded; fictional REI
     cleanup.push(() => removeFixture(runtime.root));
     await runtime.connect(); await runtime.select("work");
     expect(await f.start(OWNER_TWO, { runtime })).toMatchObject({ outcome: "blocked", reason: "ambiguous-control" });
-    const chooser = vi.fn<PortalChooser>(async () => ({ ok: true, model: "fictional-jev-1", ms: 1, answers: { control: { type: "choice", choice: "c0", confidence: 0.99, probabilities: { c0: 0.98, c1: 0.01, none: 0.01 } } } }));
+    const chooser = vi.fn<PortalChooser>(async () => ({ ok: true, id: "dec-fictional", model: "fictional-jev-1", ms: 1, answers: { control: { type: "choice", choice: "c0", confidence: 0.99, probabilities: { c0: 0.98, c1: 0.01, none: 0.01 } } } }));
     const run = await f.start(OWNER_TWO, { runtime, chooser });
     expect(run.outcome, `${run.reason} ${run.detail}`).toBe("completed");
     expect(run.results[1].rows.map(row => row.Name)).toEqual(["Fictional Owner Two"]);
@@ -573,7 +573,7 @@ describe("a drifted control's fallback chooser (Ask only, guarded; fictional REI
       ["timeout", async () => ({ ok: false, reason: "timeout" })],
       ["budget", async () => ({ ok: false, reason: "budget" })],
       ["throws", async () => { throw new Error("fictional outage"); }],
-      ["other question", async () => ({ ok: true, model: "fictional-jev-1", ms: 1, answers: {} })],
+      ["other question", async () => ({ ok: true, id: "dec-fictional", model: "fictional-jev-1", ms: 1, answers: {} })],
     ];
     for (const [name, chooser] of results) {
       const f = await fixture({ searchLabel: "Find" });

@@ -40,7 +40,7 @@ describe("an Ask task grant in the ACP core", () => {
     const dump = join(scratch, `${thread}.json`); process.env.FAKE_ACP_DUMP = dump; process.env.FAKE_ACP_MODE = "hang";
     instance = await HermesAgentDriver.create({ instanceId: "acp-grant", displayName: "ACP", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: thread, text: "Start this task", computer: true, integrations: { browser } });
+    await instance.adapter.sendTurn({ threadId: thread, text: "Start this task", integrations: { browser } });
     return dump;
   };
   let requestId = 0;

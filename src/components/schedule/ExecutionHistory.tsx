@@ -9,8 +9,9 @@ type Run = JobRun | LoopRun;
 type Page = { runs: Run[]; nextCursor: string | null };
 const isJob = (run: Run): run is JobRun => 'jobId' in run;
 
-/** `GET /api/job-runs/:id/cost`: Modelvia's own charge, summed on the server. */
-export type RunCost = { state: 'none' } | { state: 'priced'; requests: number; chargedNanoAud: string } | { state: 'pending' | 'not-priced' | 'incomplete' | 'unavailable'; requests: number };
+/** `GET /api/job-runs/:id/cost` (or `/api/loop-runs/:id/cost`): Modelvia's own charge, summed on the server.
+ * `decisionsNanoAud` is the computer-use decisions' part of that total, present only when above zero. */
+export type RunCost = { state: 'none' } | { state: 'priced'; requests: number; chargedNanoAud: string; decisionsNanoAud?: string } | { state: 'pending' | 'not-priced' | 'incomplete' | 'unavailable'; requests: number };
 
 export function readRunCost(value: unknown): RunCost | null {
   if (!value || typeof value !== 'object') return null;
@@ -18,7 +19,13 @@ export function readRunCost(value: unknown): RunCost | null {
   if (cost.state === 'none') return { state: 'none' };
   if (!Number.isSafeInteger(cost.requests) || (cost.requests as number) < 0) return null;
   const requests = cost.requests as number;
-  if (cost.state === 'priced') return typeof cost.chargedNanoAud === 'string' && /^(0|[1-9][0-9]{0,20})$/.test(cost.chargedNanoAud) ? { state: 'priced', requests, chargedNanoAud: cost.chargedNanoAud } : null;
+  const nano = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9][0-9]{0,20})$/.test(value);
+  if (cost.state === 'priced') {
+    if (!nano(cost.chargedNanoAud)) return null;
+    // An unreadable sub-line is dropped; the total still shows.
+    const decisions = nano(cost.decisionsNanoAud) && BigInt(cost.decisionsNanoAud) > 0n && BigInt(cost.decisionsNanoAud) <= BigInt(cost.chargedNanoAud) ? { decisionsNanoAud: cost.decisionsNanoAud } : {};
+    return { state: 'priced', requests, chargedNanoAud: cost.chargedNanoAud, ...decisions };
+  }
   return cost.state === 'pending' || cost.state === 'not-priced' || cost.state === 'incomplete' || cost.state === 'unavailable' ? { state: cost.state, requests } : null;
 }
 
@@ -42,16 +49,27 @@ export function aiCostText(cost: RunCost | null): string | null {
   return `${requests} · cost unavailable`;
 }
 
-/** Read only once its run is opened; a failure never breaks the run view. */
-function AiCostLine({ runId }: { runId: string }) {
-  const [text, setText] = useState<string | null>('AI: checking cost…');
+/** The invoice's own line for Jev decisions, included in the total above; nothing when none were charged. */
+export function aiDecisionsText(cost: RunCost | null): string | null {
+  return cost?.state === 'priced' && cost.decisionsNanoAud ? `Computer-use decisions · ${audFromNano(cost.decisionsNanoAud)}` : null;
+}
+
+/** The cost lines for one read cost. */
+export function AiCostLines({ cost }: { cost: RunCost | null }) {
+  const text = aiCostText(cost), decisions = aiDecisionsText(cost);
+  return <>{text && <p className="text-[12px] text-ink-muted">{text}</p>}{decisions && <p className="text-[12px] text-ink-muted">{decisions}</p>}</>;
+}
+
+/** Read only once its run (or batch) is opened; a failure never breaks the view. */
+export function AiCostLine({ path }: { path: string }) {
+  const [cost, setCost] = useState<RunCost | null | 'checking'>('checking');
   useEffect(() => {
     let live = true;
-    api(`/api/job-runs/${encodeURIComponent(runId)}/cost`, undefined, { timeoutMs: 20000 })
-      .then(data => { if (live) setText(aiCostText(readRunCost(data?.cost))); }, () => { if (live) setText('AI: cost unavailable'); });
+    api(path, undefined, { timeoutMs: 20000 })
+      .then(data => { if (live) setCost(readRunCost(data?.cost)); }, () => { if (live) setCost(null); });
     return () => { live = false; };
-  }, [runId]);
-  return text ? <p className="text-[12px] text-ink-muted">{text}</p> : null;
+  }, [path]);
+  return cost === 'checking' ? <p className="text-[12px] text-ink-muted">AI: checking cost…</p> : <AiCostLines cost={cost} />;
 }
 
 function HistoryPages({ kind, filter }: { kind: 'jobs' | 'routines'; filter?: string }) {
@@ -83,7 +101,8 @@ function HistoryPages({ kind, filter }: { kind: 'jobs' | 'routines'; filter?: st
     {!page && busy && <p role="status" className="text-[13px] text-ink-muted">Loading saved history…</p>}
     {page?.runs.length === 0 && <p className="text-[13px] text-ink-secondary">No saved {kind === 'jobs' ? 'job' : 'routine'} results yet.</p>}
     <ul className="divide-y divide-line">
-      {page?.runs.map(run => { const costRunId = isJob(run) ? (run.usage ? run.id : undefined) : run.jobRunId; return <li key={run.id} className="py-3">
+      {page?.runs.map(run => { const costPath = isJob(run) ? (run.usage ? `/api/job-runs/${encodeURIComponent(run.id)}/cost` : undefined)
+        : run.usage ? `/api/loop-runs/${encodeURIComponent(run.id)}/cost` : run.jobRunId ? `/api/job-runs/${encodeURIComponent(run.jobRunId)}/cost` : undefined; return <li key={run.id} className="py-3">
         <details onToggle={event => { if (event.currentTarget.open && !opened.has(run.id)) setOpened(previous => new Set(previous).add(run.id)); }}>
           <summary className="cursor-pointer text-[13px]">
             <span className="break-words font-medium">{isJob(run) ? run.jobTitle : run.loopName}</span>
@@ -94,7 +113,7 @@ function HistoryPages({ kind, filter }: { kind: 'jobs' | 'routines'; filter?: st
             <p className="whitespace-pre-wrap break-words">{isJob(run) ? safeJobRunDetail(run.detail, 32000) : run.detail || 'No detail recorded.'}</p>
             {isJob(run) && preparedJobText(run) && <pre className="whitespace-pre-wrap break-words font-sans">{preparedJobText(run)}</pre>}
             {isJob(run) && run.evidence.length > 0 && <details><summary className="cursor-pointer">Sources and notes ({run.evidence.length})</summary><ol className="mt-2 list-decimal space-y-2 pl-5">{run.evidence.map((evidence, index) => <li key={index} className="whitespace-pre-wrap break-words">{evidence.note}<span className="block text-[11px] text-ink-muted">{fmtDateTime(evidence.at)}</span></li>)}</ol></details>}
-            {costRunId && opened.has(run.id) && <AiCostLine runId={costRunId} />}
+            {costPath && opened.has(run.id) && <AiCostLine path={costPath} />}
             <p className="break-all text-[11px] text-ink-muted">Record {run.id}</p>
           </div>
         </details>

@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { MailPriorityCardView, mailCardVisible, setMailItemStatus, type MailCardSnapshot } from './MailPriorityCard';
+import { MailPriorityCardView, mailCardVisible, markMailNotNoise, setMailItemStatus, type MailCardSnapshot } from './MailPriorityCard';
 import type { MailScanReceipt, MailTaskPage, MailWorkItem } from '@shared/mail-ingestion';
 
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn() }) }));
@@ -74,5 +74,26 @@ describe('MailPriorityCard', () => {
     expect(render()).not.toContain('Prepare priorities');
     expect(render({ snapshot: snapshot({ latestReview: null }) })).toContain('Prepare priorities');
     expect(render({ snapshot: snapshot({ latestReview: { runId: 'r', sourceReceiptId: 'old', at: 1 } }), preparing: true })).toMatch(/disabled=""[^>]*>Prepare priorities/);
+  });
+
+  it('keeps screened mail visible as a collapsed Screened group with Not noise on each one', () => {
+    expect(render()).not.toContain('Screened');
+    const withScreened = { ...counts, screened: 2 };
+    const open = { ...page([item('1')]), counts: withScreened }, closed = render({ page: open, snapshot: snapshot({ counts: withScreened }) });
+    expect(closed).toMatch(/<details[^>]*><summary[^>]*>Screened \(2\) — likely newsletters or automated mail\. Check them<\/summary>/);
+    expect(closed).not.toMatch(/<details[^>]*open/);
+    expect(closed).toContain('Checking saved mail…');
+    const screened = page([item('n1', { disposition: 'noise', screenedBy: 'jev', subject: 'Fictional newsletter' }), item('n2', { disposition: 'noise', screenedBy: 'jev', subject: '' })], 'screened');
+    const html = render({ page: open, snapshot: snapshot({ counts: withScreened }), screened });
+    expect(html).toContain('aria-label="Not noise: Fictional newsletter"');
+    expect(html).toContain('aria-label="Not noise: Untitled conversation"');
+    expect(html).toContain('Not noise puts it back for Bud’s next review.');
+    expect(render({ page: open, snapshot: snapshot({ counts: withScreened }), screened, busy: true })).toMatch(/disabled=""[^>]*>Not noise/);
+  });
+
+  it('Not noise sends only the item revision and the flag', async () => {
+    const request = vi.fn().mockResolvedValue({});
+    await markMailNotNoise(request, item('1'));
+    expect(request).toHaveBeenCalledWith('/api/mail-workspace/items/1', { method: 'PATCH', body: JSON.stringify({ expectedRevision: 7, notNoise: true }) });
   });
 });

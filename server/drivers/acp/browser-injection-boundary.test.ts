@@ -116,7 +116,7 @@ async function fixture(options: { checkedAccount?: boolean; reference?: string }
     recorder = recordEvents(instance.adapter);
     const recorded = recorder;
     cleanup.push(async () => { recorded.stop(); await current.dispose(); });
-    await instance.adapter.sendTurn({ threadId, text: userRequest, computer: true, integrations: { browser: {
+    await instance.adapter.sendTurn({ threadId, text: userRequest, integrations: { browser: {
       runId, grant, allowedOrigins: [SITE], capabilities: ["portal-read", "portal-prefill", "portal-submit"], active: () => true,
       ...(options.checkedAccount ? { checkpoint: { browserId: "office-alpha", tabId: 1, origin: `https://${SITE}`, accountMarker: OFFICE } } : {}),
     } } });

@@ -142,7 +142,11 @@ node --test scripts/lib/eval-jev-grade.test.mjs            # wrong-accept counti
 
 Flags: `--uses w1,w3,ledger,recipe,ask,bills`, `--seed N` (fake only), `--out <new dir>`
 (default `outputs/eval-jev-<date>/<arm>-…`). `REALBUD_JEV_MODEL` picks the model
-(default `jev-1.13-decisions`). Output: `report.md` and `results.json` with, per
+(default `jev-1.13-decisions`; `off` refuses every decision).
+`REALBUD_JEV_FALLBACK_MODEL` is the text fallback when Jev's route fails (default
+`gpt-6-luna-decisions`; `off` disables it). `REALBUD_LUNA_MODEL` is the vision model
+for desktop screenshots and the default fallback (default `gpt-6-luna-decisions`;
+`off` disables both). Output: `report.md` and `results.json` with, per
 use, accuracy, coverage, wrong-accepts (accepted but wrong: the safety metric),
 fallback rate, p50/p95 latency, calls, tokens, every raw answer, and a sweep:
 the setting with the most coverage at zero wrong-accepts (and at ≤ 1%) against
@@ -153,6 +157,18 @@ A threshold changes only on a live run's evidence, never the fake arm's, and the
 live arm is rerun after the change. The key is read only from that variable,
 held in memory, never printed or saved; data, logs and HOME are a `mkdtemp`
 folder. The live arm has not run yet.
+
+**W3 screen shadow log.** The morning screen asks two questions per thread
+(`bulk`, `asks_action`) and screens only at `SCREEN_BULK_MIN` (0.97) and
+`SCREEN_ACTION_MAX` (0.03) in `server/morning-mail-workflow.ts`. Each run appends
+one row per answered thread to `<data dir>/jev-screen-log.json` (last 2,000):
+sha256 of the thread id, the Jev model, `bulkP`, `actionP` and whether it was
+screened; a person's "Not noise" adds `{threadHash, notNoise: true}`. No subject,
+sender or text is saved. To tune: join rows on `threadHash`; a screened row with a
+later `notNoise` row is a live wrong-accept. Count wrong-accepts and coverage for
+each grid point the eval sweeps (`SCREEN_GRID`), then confirm any change with a
+live eval run before moving the constants. Copy the log only from an office that
+has agreed to share it; it stays on that computer otherwise.
 
 ---
 

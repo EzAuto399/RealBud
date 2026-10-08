@@ -8,6 +8,7 @@ import type { DeskSnapshot } from "@/lib/desk";
 import { useWorkspacePreferences } from "@/lib/workspace-preferences";
 import { api, useStore } from "@/state/store";
 import { ChatMarkdown } from "../ChatMarkdown";
+import { AiCostLine } from "../schedule/ExecutionHistory";
 
 type Summary = Pick<WorkBatch, "id" | "task" | "status" | "createdAt"> & { counts: ReturnType<typeof batchCounts> };
 type Selection = { ids: string[]; task: BatchTask; instruction: string; key: string; submittedRevision?: number; autoContinue?: boolean };
@@ -185,6 +186,7 @@ export function BatchWorkspace({ snapshot, scope, onClearScope, openNewDraft, on
         <div className="batch-progress-title"><strong>{batch.status === "running" ? "Bud is preparing your batch" : batch.status === "paused" ? counts.running ? "Pausing after the current property" : "Your batch is paused" : counts.failed ? "Batch finished · some items need retry" : "Your review pack is ready"}</strong><span>{counts.ready + counts.failed} of {counts.total} settled</span></div>
         <progress aria-label="Properties settled" value={counts.ready + counts.failed} max={counts.total}/>
         <p role="status">{batch.detail}</p>
+        {batch.status !== "running" && <AiCostLine key={`${batch.id}:${counts.ready + counts.failed}`} path={`/api/desk/batches/${encodeURIComponent(batch.id)}/cost`}/>}
         <div className="batch-progress-actions"><span>{counts.ready} prepared · {counts.failed} need retry · {counts.reviewed} reviewed</span><div className="flex flex-wrap gap-2">
           {(batch.status === "running" || batch.waitingForWorker) && <button className={button} disabled={pending} onClick={() => void control("pause")}><Pause size={14}/>{batch.waitingForWorker ? "Pause automatic continuation" : "Pause after this property"}</button>}
           {batch.status !== "running" && (counts.remaining > 0 || counts.failed > 0) && !state.hermes?.ready && <button className={primary} onClick={() => { openWorkspaceSetup("bud"); }}>Check Bud connection</button>}

@@ -1,6 +1,6 @@
 // Rewrite a job's steps from the last run. Origins and evidence never change.
 import type { PortalSession, Recipe } from "../shared/contracts.ts";
-import { listHistory } from "./computer-history.ts";
+import { listHistory, recordUsage } from "./computer-history.ts";
 import { listSessions } from "./portal-sessions.ts";
 import { askWorker, lastJsonObject, type WorkerChatOpts } from "./recipe-draft.ts";
 import { getRecipe, saveRecipe, validateRecipe } from "./recipes.ts";
@@ -49,6 +49,8 @@ export async function distillRecipe(
   const session = latestSessionFor(recipe.id);
   const historyLines = listHistory(20).map((entry) => `${entry.name} · ${entry.ok ? "ok" : "denied"}${entry.detail ? ` · ${entry.detail}` : ""}`);
   const result = await askWorker(distillPrompt(recipe, session, historyLines), opts);
+  // The rewrite is offered, not a run: its own history row carries the cost.
+  if (result.usage) recordUsage("tighten job steps", result.usage, { ok: result.ok });
   if (!result.ok) {
     throw Object.assign(new Error(`Bud could not tighten those steps — ${result.detail}`), { status: 503 });
   }

@@ -5,19 +5,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DECIDE_SERVER, MAX_DECISIONS_PER_TURN, SUGGESTION_ONLY, secretKeyName, startDecideBroker, type BudDecisions } from "./decide-broker.ts";
 import type { JevRequest, JevResult } from "./jev-client.ts";
 import type { LoopbackToolServer } from "./web-research-broker.ts";
+import { emptyRunUsage, recordJevUsage } from "./run-cost.ts";
 
 const question = { kind: { type: "choice", instructions: "Which kind of mail is this?", criteria: { repair: "A repair request", other: "Anything else" } } };
-const ok: JevResult = { ok: true, answers: { kind: { type: "choice", choice: "repair", confidence: 0.9 } }, model: "jev-fictional", ms: 3, usage: { input_tokens: 10, output_tokens: 1 } };
+const ok: JevResult = { ok: true, id: "dec-fictional", answers: { kind: { type: "choice", choice: "repair", confidence: 0.9 } }, model: "jev-fictional", ms: 3, usage: { input_tokens: 10, output_tokens: 1 } };
 
 describe("decide broker", () => {
   let broker: LoopbackToolServer | undefined;
   afterEach(() => { broker?.close(); broker = undefined; vi.restoreAllMocks(); });
   const start = async (over: Partial<BudDecisions> = {}, turn: { id: string | null } = { id: "turn-1" }) => {
-    const receipts: unknown[] = [];
+    const receipts: unknown[] = [], usage = emptyRunUsage();
     const decide = vi.fn(async (_request: JevRequest, _options: { signal?: AbortSignal }): Promise<JevResult> => ok);
     const binding: BudDecisions = { sameMember: () => true, ready: () => true, decide, ...over };
-    broker = await startDecideBroker({ turnId: () => turn.id, decisions: () => binding, receipt: receipt => receipts.push(receipt) });
-    return { receipts, decide: (over.decide ?? decide) as typeof decide };
+    // As core.ts does through the turn's relay lease (`recordJev`).
+    broker = await startDecideBroker({ turnId: () => turn.id, decisions: () => binding, receipt: receipt => receipts.push(receipt), record: result => recordJevUsage(usage, result) });
+    return { receipts, usage, decide: (over.decide ?? decide) as typeof decide };
   };
   const rpc = async (method: string, params: unknown) => ((await (await fetch(broker!.descriptor.url, { method: "POST",
     headers: { "content-type": "application/json", ...Object.fromEntries(broker!.descriptor.headers.map(r => [r.name, r.value])) },
@@ -43,6 +45,16 @@ describe("decide broker", () => {
     expect(receipts).toEqual([{ tool: "decide", outcome: "succeeded", questions: 1 }]);
     const recorded = JSON.stringify(receipts) + logs.join("\n");
     expect(recorded).not.toMatch(/Sample St|repair|input_tokens/);
+  });
+
+  it("counts each answered call on the turn's usage by its Modelvia id, never its state or answers", async () => {
+    const { usage } = await start();
+    await call({ state: { subject: "Leaking tap at 1 Sample St" }, questions: question });
+    expect(usage).toEqual({ requestIds: ["dec-fictional"], calls: 1, decisions: [{ id: "dec-fictional", model: "jev-fictional", inputTokens: 10, outputTokens: 1, ms: 3 }] });
+    expect(JSON.stringify(usage)).not.toMatch(/Sample St|repair|kind/);
+    const refused = await start({ decide: vi.fn(async () => ({ ok: false, reason: "budget" }) as JevResult) });
+    await call({ state: "x", questions: question });
+    expect(refused.usage).toEqual({ requestIds: [], calls: 0 });
   });
 
   it("refuses once the turn is no longer active", async () => {

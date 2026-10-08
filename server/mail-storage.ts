@@ -158,7 +158,7 @@ export class MailStorage {
         const token=this.db.changeToken();
         if(this.cachedMetadata?.token===token)return structuredClone(this.cachedMetadata.value);
         const reg = this.register();
-        const counts: MailWorkspaceCounts = { total: 0, open: 0, waiting: 0, reference: 0, snoozed: 0, done: 0, highPriority: 0, needsReview: 0 };
+        const counts: MailWorkspaceCounts = { total: 0, open: 0, waiting: 0, reference: 0, snoozed: 0, done: 0, highPriority: 0, needsReview: 0, screened: 0 };
         let nextSnoozeAt: number | null = null;
         for (const row of this.records('mail-item')) {
             const item = row.value as MailWorkItem;
@@ -168,6 +168,8 @@ export class MailStorage {
                 counts.highPriority++;
             if (mailNeedsPreparation(item))
                 counts.needsReview++;
+            if (item.status === 'open' && item.screenedBy === 'jev')
+                counts.screened!++;
             if (item.status === 'snoozed' && (nextSnoozeAt === null || item.snoozedUntil! < nextSnoozeAt))
                 nextSnoozeAt = item.snoozedUntil;
         }

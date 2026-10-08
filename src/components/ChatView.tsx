@@ -54,6 +54,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { pendingApprovals } from "./PendingApproval";
 import { BrowserTaskCard, useBrowserTasks, type BrowserTaskAction, type BrowserTaskBrowser, type BrowserTaskCardView } from "./BrowserTaskCard";
+import type { DesktopTarget } from "@shared/desktop-task";
 import { BrowserSignInStrip, useBrowserSignIns } from "./BrowserSignInStrip";
 import { ModelPicker } from "./ModelPicker";
 import { TaskPicker } from "./TaskPicker";
@@ -756,7 +757,7 @@ export function AskNextActionPanel({
   </>;
 }
 
-const MessagesList = memo(function MessagesList({
+export const MessagesList = memo(function MessagesList({
   bot,
   messages,
   editingId,
@@ -834,7 +835,7 @@ const MessagesList = memo(function MessagesList({
   browserTaskBrowser?: BrowserTaskBrowser;
   browserTaskActing?: string | null;
   browserTaskError?: { id: string; text: string } | null;
-  onBrowserTask?: (id: string, action: BrowserTaskAction, site?: string) => void;
+  onBrowserTask?: (id: string, action: BrowserTaskAction, site?: string | DesktopTarget) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
   readingEarlier: boolean;
   onReadEarlier: () => void;
@@ -987,6 +988,7 @@ const MessagesList = memo(function MessagesList({
                     busy={browserTaskActing === task.id}
                     error={browserTaskError?.id === task.id ? browserTaskError.text : null}
                     onStart={(site) => onBrowserTask(task.id, "start", site)}
+                    onStartWindow={(w) => onBrowserTask(task.id, "start", w)}
                     onDecline={() => onBrowserTask(task.id, "decline")}
                     onSaveJob={() => onBrowserTask(task.id, "save-job")}
                     onStop={() => onBrowserTask(task.id, "stop")}
@@ -1159,7 +1161,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const browserTasks = useBrowserTasks({ threadId: bot.threadId, messages, busy: Boolean(bot.busy), enabled: productAsk, onInterrupt: stopTurn });
   const browserSignIns = useBrowserSignIns({ threadId: bot.threadId, busy: Boolean(bot.busy), enabled: productAsk });
   // Start opens the work browser itself; on a mapped site it also opens the sign-in handover, so look for it afterwards.
-  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => {
+  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string | DesktopTarget) => {
     void browserTasks.act(id, action, site).then(() => { if (action === "start") void browserSignIns.refresh(); });
   }, [browserTasks.act, browserSignIns.refresh]);
   const goYouSetup = useCallback(() => {

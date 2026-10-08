@@ -20,7 +20,9 @@ import { currentWorkerProfile } from "./hermes-profile.ts";
 import { lastJsonBlock } from "./hermes-hands.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
-import type { CsvColumnMapping } from "../shared/contracts.ts";
+import type { CsvColumnMapping, RunUsage } from "../shared/contracts.ts";
+import { countJevUsage, emptyRunUsage } from "./run-cost.ts";
+import { recordUsage } from "./computer-history.ts";
 
 const INSPECT_TIMEOUT_MS = 60_000;
 const SAMPLE_MAX_LINES = 100;
@@ -154,17 +156,25 @@ function writeExportSample(csv: string): string | null {
   }
 }
 
-export async function inspectLedgerColumns(
-  csv: string,
-  opts?: { cli?: string; timeoutMs?: number; root?: string; jev?: { decide: JevDecide; ready: () => boolean } },
-): Promise<LedgerColumnInspect> {
+type InspectOptions = { cli?: string; timeoutMs?: number; root?: string; jev?: { decide: JevDecide; ready: () => boolean } };
+
+/** The inspection keeps no record of its own (the import may never happen), so
+ * its Jev call and worker fallback are one history row for their cost. */
+export async function inspectLedgerColumns(csv: string, opts?: InspectOptions): Promise<LedgerColumnInspect> {
+  const usage = emptyRunUsage();
+  let result: LedgerColumnInspect | undefined;
+  try { return result = await inspect(csv, opts, usage); }
+  finally { recordUsage("ledger columns", usage, { ok: Boolean(result?.mapping) }); }
+}
+
+async function inspect(csv: string, opts: InspectOptions | undefined, usage: RunUsage): Promise<LedgerColumnInspect> {
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return miss(serviceFailure);
   // Tests inject Jev; under VITEST the office's live Jev is never called.
   const jev = opts?.jev ?? (process.env.VITEST ? undefined : { decide: jevDecide, ready: jevReady });
   if (jev?.ready()) {
     const headers = headerRow(csv);
-    const mapping = headers && await jevMapping(headers, jev.decide);
+    const mapping = headers && await jevMapping(headers, countJevUsage(usage, jev.decide));
     if (mapping) return { mapping, detail: "Bud read the columns." };
   }
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker");
@@ -250,5 +260,5 @@ export async function inspectLedgerColumns(
         resolve({ mapping, detail: "Bud read the columns." });
       },
     ));
-  }));
+  }), { usage });
 }

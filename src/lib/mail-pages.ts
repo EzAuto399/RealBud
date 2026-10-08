@@ -3,7 +3,7 @@ import type { MailScanPage, MailTaskPage, MailWorkGroup, MailWorkItem, MailWorks
 const changed = (): never => { throw new Error('This mail page changed or could not be checked. Refresh the list before loading more. Your open edits are kept.'); };
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const count = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
-const groups: MailWorkGroup[] = ['all', 'open', 'waiting', 'reference', 'snoozed', 'done'];
+const groups: MailWorkGroup[] = ['all', 'open', 'waiting', 'reference', 'snoozed', 'done', 'screened'];
 function counts(value: unknown): value is MailWorkspaceCounts {
   if (!record(value) || !['total', 'open', 'waiting', 'reference', 'snoozed', 'done', 'highPriority', 'needsReview'].every(key => count(value[key]))) return false;
   return ['open', 'waiting', 'reference', 'snoozed', 'done'].reduce((sum, key) => sum + Number(value[key]), 0) === value.total && Number(value.highPriority) <= Number(value.total) && Number(value.needsReview) <= Number(value.total);

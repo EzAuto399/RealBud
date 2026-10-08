@@ -32,10 +32,16 @@ export const mailNeedsPreparing = (snapshot: MailCardSnapshot) =>
 /** Same PATCH MailWorkPanel sends: the item's revision guards against a concurrent edit. */
 export const setMailItemStatus = (request: Request, item: MailWorkItem, status: 'open' | 'done') =>
   request(`/api/mail-workspace/items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ expectedRevision: item.revision, status }) });
+/** "Not noise" on a screened conversation: back to Bud's next review, never screened again. */
+export const markMailNotNoise = (request: Request, item: MailWorkItem) =>
+  request(`/api/mail-workspace/items/${item.id}`, { method: 'PATCH', body: JSON.stringify({ expectedRevision: item.revision, notNoise: true }) });
 
-export function MailPriorityCardView({ snapshot, page, tab, showAll, busy, preparing, uncertainReview, notice, error, onTab, onShowAll, onOpen, onDone, onPrepare }: {
+export function MailPriorityCardView({ snapshot, page, tab, showAll, busy, preparing, uncertainReview, notice, error, onTab, onShowAll, onOpen, onDone, onPrepare,
+  screened = null, onScreened = () => undefined, onNotNoise = () => undefined }: {
   snapshot: MailCardSnapshot | null; page: MailTaskPage | null; tab: MailCardTab; showAll: boolean; busy: boolean; preparing: boolean; uncertainReview: boolean;
   notice: string; error: string; onTab: (tab: MailCardTab) => void; onShowAll: () => void; onOpen: () => void; onDone: (item: MailWorkItem) => void; onPrepare: () => void;
+  /** The open Jev-screened items, loaded when the Screened group is opened. */
+  screened?: MailTaskPage | null; onScreened?: () => void; onNotNoise?: (item: MailWorkItem) => void;
 }) {
   const panelId = useId();
   if (!mailCardVisible(snapshot)) return null;
@@ -65,6 +71,19 @@ export function MailPriorityCardView({ snapshot, page, tab, showAll, busy, prepa
         })}</ul>}
       {!showAll && current && current.total > ROWS && <button type="button" className={link} onClick={onShowAll}>Show all {current.total}</button>}
     </div>
+    {/* Screened mail is set aside for Bud, never hidden: the count always shows and each one can go back. */}
+    {(counts.screened ?? 0) > 0 && <details className="rounded-lg border border-line px-3 py-2" onToggle={event => { if (event.currentTarget.open) onScreened(); }}>
+      <summary className="min-h-10 cursor-pointer py-2 text-ink focus-visible:outline-2 focus-visible:outline-agency">Screened ({counts.screened}) — likely newsletters or automated mail. Check them</summary>
+      {!screened ? <p className="text-ink-muted">Checking saved mail…</p> : !screened.items.length ? <p className="text-ink-muted">Nothing here.</p> :
+        <ul className="divide-y divide-line">{screened.items.map(item => {
+          const subject = item.subject || 'Untitled conversation';
+          return <li key={item.id} className="flex items-center gap-3 py-2">
+            <p className="min-w-0 flex-1 truncate">{subject}</p>
+            <button type="button" className={`${control} shrink-0`} aria-label={`Not noise: ${subject}`} disabled={busy} onClick={() => onNotNoise(item)}>Not noise</button>
+          </li>;
+        })}</ul>}
+      <p className="text-ink-muted">Not noise puts it back for Bud’s next review.</p>
+    </details>}
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {scan && mailCoveragePartial(snapshot) && <p className="text-hold">Read {scan.messageCount} emails since {shortDate(scan.windowStartAt)}. Some couldn’t be read. <button type="button" className={link} onClick={onOpen}>See which</button></p>}
       {(mailNeedsPreparing(snapshot) || uncertainReview) && <button type="button" className={control} disabled={busy || preparing || !Number.isSafeInteger(snapshot.schedule?.revision)} onClick={onPrepare}>{uncertainReview ? 'Check and retry' : 'Prepare priorities'}</button>}
@@ -81,6 +100,7 @@ export function MailPriorityCardView({ snapshot, page, tab, showAll, busy, prepa
 export function MailPriorityCard({ className = '' }: { className?: string }) {
   const tabs = useWorkspaceTabs(), { dispatch } = useStore();
   const [snapshot, setSnapshot] = useState<MailCardSnapshot | null>(null), [page, setPage] = useState<MailTaskPage | null>(null);
+  const [screened, setScreened] = useState<MailTaskPage | null>(null), screenedOpen = useRef(false);
   const [tab, setTab] = useState<MailCardTab>('open'), [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [uncertainReview, setUncertainReview] = useState(false);
   const alive = useRef(true), pending = useRef(false), view = useRef({ tab, showAll }), pageSeq = useRef(0), refreshSeq = useRef(0), reviewRequest = useRef<{ requestId: string; expectedRevision: number } | null>(null);
@@ -91,6 +111,11 @@ export function MailPriorityCard({ className = '' }: { className?: string }) {
     const next = readMailTaskPage(await api(mailPageUrl('/api/mail-workspace/items', { group, limit: all ? 100 : ROWS })), { group, q: '' });
     if (alive.current && sequence === pageSeq.current) setPage(next);
   };
+  // ponytail: the first 100 screened items; page further if an office ever screens more in one morning.
+  const loadScreened = async () => {
+    const next = readMailTaskPage(await api(mailPageUrl('/api/mail-workspace/items', { group: 'screened', limit: 100 })), { group: 'screened', q: '' });
+    if (alive.current) setScreened(next);
+  };
   const refresh = async () => {
     const sequence = ++refreshSeq.current, next: MailCardSnapshot = await api('/api/mail-workspace');
     if (next?.version !== 2 || !next.counts) throw new Error('The saved mail summary could not be checked. Refresh before continuing.');
@@ -98,6 +123,7 @@ export function MailPriorityCard({ className = '' }: { className?: string }) {
       setSnapshot(next);
       if (reviewRequest.current && next.operation?.requestId === reviewRequest.current.requestId) { reviewRequest.current = null; setUncertainReview(false); setNotice('The saved receipt confirms this request.'); }
       if (mailCardVisible(next)) await loadPage(view.current.tab, view.current.showAll);
+      if (screenedOpen.current) await loadScreened();
     }
     return next;
   };
@@ -127,6 +153,16 @@ export function MailPriorityCard({ className = '' }: { className?: string }) {
     await refresh();
     if (alive.current) setNotice(status === 'done' ? 'Marked done here. Gmail is unchanged.' : 'Reopened. Nothing was sent.');
   });
+  const notNoise = (item: MailWorkItem) => void run(async () => {
+    try { await markMailNotNoise(api, item); }
+    catch (cause) {
+      await refresh().catch(() => undefined);
+      throw (cause as { status?: number })?.status === 409 ? new Error('This item changed — check it again.') : cause;
+    }
+    await refresh();
+    if (alive.current) setNotice('Back in Needs you. Bud will prepare it in the next review. Nothing was sent.');
+  });
+  const openScreened = () => { screenedOpen.current = true; void loadScreened().catch(cause => { if (alive.current) setError(cause instanceof Error ? cause.message : 'Saved mail could not be read.'); }); };
   // Mirrors MailWorkPanel.requestReview: a lost response keeps the same request ID so a retry only reconciles it.
   const prepare = () => void run(async () => {
     const current = await refresh();
@@ -168,5 +204,6 @@ export function MailPriorityCard({ className = '' }: { className?: string }) {
 
   if (!mailCardVisible(snapshot)) return null;
   return <div className={className}><MailPriorityCardView snapshot={snapshot} page={page} tab={tab} showAll={showAll} busy={busy} preparing={preparing} uncertainReview={uncertainReview}
-    notice={notice} error={error} onTab={next => { setTab(next); setShowAll(false); }} onShowAll={() => setShowAll(true)} onOpen={open} onDone={done} onPrepare={prepare} /></div>;
+    notice={notice} error={error} onTab={next => { setTab(next); setShowAll(false); }} onShowAll={() => setShowAll(true)} onOpen={open} onDone={done} onPrepare={prepare}
+    screened={screened} onScreened={openScreened} onNotNoise={notNoise} /></div>;
 }

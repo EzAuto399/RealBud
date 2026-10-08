@@ -69,3 +69,10 @@ export async function askJevRoute(text: string, options: { person: boolean; read
 export function personAskTurn(opts?: { personAsk?: boolean; channelRelay?: boolean; systemExtra?: string }): boolean {
   return opts?.personAsk === true && !opts.channelRelay && !opts.systemExtra;
 }
+
+/** A desktop task's pick_control: the person's own Ask, or the Start they pressed on their own task card in this app
+ * (`startedByPerson`, set only by the session-authenticated Start route). Never a relay, a queued drain, a loop,
+ * a recovery or a sign-in continuation. `decide` and the Ask pre-route keep `personAskTurn`. */
+export function personDesktopTurn(opts?: { personAsk?: boolean; channelRelay?: boolean; systemExtra?: string; startedByPerson?: boolean }): boolean {
+  return personAskTurn(opts) || (opts?.startedByPerson === true && !opts.channelRelay);
+}

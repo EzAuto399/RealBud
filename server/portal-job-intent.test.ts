@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
 
-import { browserTaskActions, browserTaskIntent, parsePortalJobIntent, portalJobIntentReply, reiReadIntent } from "./portal-job-intent.ts";
+import { browserTaskActions, browserTaskIntent, desktopTaskIntent, parsePortalJobIntent, portalJobIntentReply, preselectedWindow, reiReadIntent } from "./portal-job-intent.ts";
 
 describe("REI read questions in Ask", () => {
   it("maps a read question that names REI to one read recipe", () => {
@@ -365,5 +365,31 @@ describe("browserTaskIntent", () => {
     const intent = browserTaskIntent("Download the invoices from portal.fictional-strata.example password: hunter2secret token Abcd1234Efgh5678", () => []);
     expect(intent?.request).not.toMatch(/hunter2secret|Abcd1234Efgh5678/);
     expect(intent?.sites).toEqual(["portal.fictional-strata.example"]);
+  });
+});
+
+describe("desktop app tasks in Ask", () => {
+  it("reads 'in the X app/window' and 'on my computer' as a one-off app task", () => {
+    expect(desktopTaskIntent("Open the March statement in the Xero app")).toEqual({ request: "Open the March statement in the Xero app", app: "Xero", actions: ["read", "click"] });
+    expect(desktopTaskIntent("Can you open the Smith lease in the Microsoft Outlook window and search for the bond?")).toMatchObject({ app: "Microsoft Outlook", actions: ["read", "fill", "click", "keys"] });
+    expect(desktopTaskIntent("Print the rent report on my computer")).toMatchObject({ app: null });
+    expect(desktopTaskIntent("Open the latest invoice in the app")).toMatchObject({ app: null });
+  });
+
+  it("never matches a question, a routine, quoted or forwarded text, or a request with no app", () => {
+    for (const text of ["How do I open the inbox in the Mail app?", "Check the inbox in the Mail app every Monday", 'Kevin wrote "open it in the Mail app"',
+      "Fwd: open the invoice in the Xero app", "Open the March statement", "Draft a reply in the Mail app", "The Mail app is slow"]) {
+      expect(desktopTaskIntent(text), text).toBeNull();
+    }
+  });
+
+  it("preselects only the one open window of the named app", () => {
+    const mail = { appName: "Mail", windowId: 1 }, outlook = { appName: "Microsoft Outlook", windowId: 2 };
+    expect(preselectedWindow("mail", [mail, outlook])).toBe(mail);
+    expect(preselectedWindow("Outlook", [mail, outlook])).toBe(outlook);
+    expect(preselectedWindow("Mail", [mail, { ...mail, windowId: 3 }])).toBeNull();
+    expect(preselectedWindow("Xero", [mail])).toBeNull();
+    expect(preselectedWindow(null, [mail])).toBeNull();
+    expect(preselectedWindow("Mail", null)).toBeNull();
   });
 });

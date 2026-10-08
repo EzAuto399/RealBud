@@ -55,6 +55,23 @@ describe("browser task grant", () => {
     expect(Object.hasOwn(parseBrowserTaskGrant(grant()), "origin")).toBe(false);
   });
 
+  const desktop = { appName: "Mail", bundleId: "com.apple.mail", pid: 4242, windowId: 7001, title: "Fictional inbox" };
+  it("keeps a desktop task's one window, with no sites", () => {
+    const value = { ...grant(), sites: [], desktop };
+    expect(parseBrowserTaskGrant(value)).toEqual(value);
+    expect(Object.hasOwn(parseBrowserTaskGrant(grant()), "desktop")).toBe(false);
+  });
+
+  it.each([
+    ["a desktop window together with sites", { ...grant(), desktop }],
+    ["a desktop window on a saved job's grant", { ...grant(), route: "job", origin: "legacy-job", sites: [], desktop }],
+    ["a desktop window with an unknown key", { ...grant(), sites: [], desktop: { ...desktop, url: "https://portal.example" } }],
+    ["a desktop window with an unsafe pid", { ...grant(), sites: [], desktop: { ...desktop, pid: 1.5 } }],
+    ["an empty desktop key", { ...grant(), sites: [], desktop: undefined }],
+  ])("refuses %s", (_name, value) => {
+    expect(() => parseBrowserTaskGrant(value)).toThrow("This browser task permission is incomplete or damaged. Start the task again from your request.");
+  });
+
   it("accepts only exact HTTPS sites", () => {
     for (const site of ["portal.example", "https://portal.example", "vantagestrata.com.au"]) expect(browserTaskSite(site)).toBe(true);
     for (const site of ["portal", "https://portal.example:8443", "https://portal.example/?q=1", "ftp://portal.example", " portal.example"]) expect(browserTaskSite(site)).toBe(false);

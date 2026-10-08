@@ -45,7 +45,7 @@ describe("browser approval card in the ACP core", () => {
     const dump = join(scratch, "dump.json"); process.env.FAKE_ACP_DUMP = dump; process.env.FAKE_ACP_MODE = "hang";
     instance = await HermesAgentDriver.create({ instanceId: "acp-approval", displayName: "ACP", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: thread, text: "Pay the fictional levy", computer: true,
+    await instance.adapter.sendTurn({ threadId: thread, text: "Pay the fictional levy",
       integrations: { browser: { runId: "run-approval", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read"],
         grant: legacyBrowserGrant({ runId: "run-approval", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read"] }) } } });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
@@ -137,6 +137,34 @@ describe("browser approval card in the ACP core", () => {
       { sessionUpdate: "tool_call", toolCallId: "tc-upload", tool: "browser_upload", argumentKeys: ["tab_id", "ref", "file"] },
       { sessionUpdate: "tool_call", toolCallId: "tc-new", tool: "browser_later_tool", argumentKeys: ["note"] },
       { sessionUpdate: "tool_call", toolCallId: "tc-other", title: "web search: https://fictional-other.example/a/b" },
+    ]);
+  });
+
+  it("strips content and output from a page call's untitled updates (browser and desktop) in the native log", async () => {
+    const IMAGE = "iVBORw0KGgoFICTIONALSCREENSHOT0123456789";
+    const secret = ["Fictional Strata ledger row 48213", IMAGE, "jane.citizen@example.com", "fictional typed note"];
+    const update = (toolCallId: string, status: string, extra: Record<string, unknown>) => ({ sessionUpdate: "tool_call_update", toolCallId, status, ...extra });
+    process.env.FAKE_ACP_UPDATES = JSON.stringify([
+      { sessionUpdate: "tool_call", toolCallId: "tc-read", title: "mcp__workbrowser__browser_read", rawInput: { tab_id: 1 } },
+      { sessionUpdate: "tool_call", toolCallId: "tc-desk", title: "mcp__workdesktop__get_window_state", rawInput: { include_screenshot: true } },
+      { sessionUpdate: "tool_call", toolCallId: "tc-plain", title: "terminal: ls" },
+      update("tc-read", "in_progress", { content: [{ type: "content", content: { type: "text", text: secret[0] } }] }),
+      update("tc-desk", "in_progress", { content: [{ type: "content", content: { type: "image", data: IMAGE, mimeType: "image/png" } }] }),
+      update("tc-read", "completed", { rawOutput: { text: secret[2] } }),
+      update("tc-desk", "completed", { rawOutput: { text: secret[3] }, content: [{ type: "content", content: { type: "image", data: IMAGE, mimeType: "image/png" } }] }),
+      update("tc-plain", "completed", { rawOutput: { text: "fictional-plain-output" } }),
+    ]);
+    await start();
+    await recorder.until(event => event.type === "item.completed" && event.itemId === "tc-plain");
+    const native = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    for (const value of secret) expect(native).not.toContain(value);
+    expect(native).toContain("fictional-plain-output"); // other tools' output is unchanged
+    const updates = native.trim().split("\n").map(line => JSON.parse(line).msg?.params?.update).filter(row => row?.sessionUpdate === "tool_call_update");
+    expect(updates.filter(row => row.toolCallId !== "tc-plain")).toEqual([
+      { sessionUpdate: "tool_call_update", toolCallId: "tc-read", status: "in_progress", tool: "browser_read", argumentKeys: [] },
+      { sessionUpdate: "tool_call_update", toolCallId: "tc-desk", status: "in_progress", tool: "get_window_state", argumentKeys: [] },
+      { sessionUpdate: "tool_call_update", toolCallId: "tc-read", status: "completed", tool: "browser_read", argumentKeys: [] },
+      { sessionUpdate: "tool_call_update", toolCallId: "tc-desk", status: "completed", tool: "get_window_state", argumentKeys: [] },
     ]);
   });
 

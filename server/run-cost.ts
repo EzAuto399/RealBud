@@ -7,7 +7,7 @@
  *
  * Nothing here logs a request, a response body or the key.
  */
-import type { RunUsage } from "../shared/contracts.ts";
+import type { RunDecisionUsage, RunUsage } from "../shared/contracts.ts";
 import { modelviaRefusal, parseModelviaReceipt, type ModelviaReceipt } from "../shared/modelvia-receipt.ts";
 
 /** A run keeps at most this many request ids; a full list may be incomplete. */
@@ -60,6 +60,54 @@ export function noteModelviaReply(usage: RecordedRunUsage, body: unknown): void 
   if (output !== undefined) usage.outputTokens = (usage.outputTokens ?? 0) + output;
 }
 
+/** What `recordJevUsage` reads from a jev-client `decide` result. */
+export interface JevCall { ok: boolean; id?: string; model?: string; ms?: number; usage?: { input_tokens: number; output_tokens: number } }
+const MODEL = /^[\w.:/-]{1,100}$/;
+function decisionRow(value: unknown): RunDecisionUsage | null {
+  if (!record(value) || !usableId(value.id)) return null;
+  const input = count(value.inputTokens), output = count(value.outputTokens), ms = count(value.ms);
+  return { id: value.id, ...(typeof value.model === "string" && MODEL.test(value.model) ? { model: value.model } : {}),
+    ...(input !== undefined ? { inputTokens: input } : {}), ...(output !== undefined ? { outputTokens: output } : {}), ...(ms !== undefined ? { ms } : {}) };
+}
+function addDecision(usage: RunUsage, row: RunDecisionUsage | null): void {
+  if (!row || (usage.decisions?.length ?? 0) >= MAX_RUN_REQUEST_IDS || usage.decisions?.some(saved => saved.id === row.id)) return;
+  (usage.decisions ??= []).push(row);
+}
+
+/**
+ * One Jev decision into the run that asked it: its Modelvia request id (so the
+ * run's cost prices it from its receipt, like any relayed call) and a
+ * `decisions` row with model, tokens and milliseconds. Never the state,
+ * questions or answers. A result without an id was refused or never answered;
+ * Modelvia charges no refusal.
+ * ponytail: a timeout after dispatch may still be charged with no id to price
+ * it, the same gap the relays have for a dropped answer; count it as
+ * `unidentified` if Modelvia shows such charges.
+ */
+export function recordJevUsage(usage: RecordedRunUsage, result: JevCall): void {
+  if (!usableId(result.id)) return;
+  noteModelviaRequest(usage, result.id);
+  addDecision(usage, decisionRow({ id: result.id, model: result.model, ms: result.ms,
+    inputTokens: result.usage?.input_tokens, outputTokens: result.usage?.output_tokens }));
+}
+
+/** `decide`, recording each answer into `usage` (`recordJevUsage`). */
+export function countJevUsage<A extends unknown[], R extends JevCall>(usage: RecordedRunUsage, decide: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return async (...args) => { const result = await decide(...args); recordJevUsage(usage, result); return result; };
+}
+
+/** `from` added into `into` (returned): calls, ids, tokens and decisions. */
+export function addRunUsage(into: RecordedRunUsage, from: RecordedRunUsage | undefined): RecordedRunUsage {
+  if (!from) return into;
+  into.calls += from.calls;
+  for (const id of from.requestIds) addRequestId(into, id);
+  if (from.unidentified) into.unidentified = (into.unidentified ?? 0) + from.unidentified;
+  if (from.inputTokens !== undefined) into.inputTokens = (into.inputTokens ?? 0) + from.inputTokens;
+  if (from.outputTokens !== undefined) into.outputTokens = (into.outputTokens ?? 0) + from.outputTokens;
+  for (const row of from.decisions ?? []) addDecision(into, row);
+  return into;
+}
+
 /** A saved usage record, or undefined when absent or unreadable: a run saved
  * before usage was recorded loads without it. */
 export function cleanRunUsage(value: unknown): RecordedRunUsage | undefined {
@@ -73,13 +121,17 @@ export function cleanRunUsage(value: unknown): RecordedRunUsage | undefined {
   const input = count(value.inputTokens), output = count(value.outputTokens);
   if (input !== undefined) usage.inputTokens = input;
   if (output !== undefined) usage.outputTokens = output;
+  // A malformed decisions row is dropped, like an unusable id.
+  if (Array.isArray(value.decisions)) for (const row of value.decisions) addDecision(usage, decisionRow(row));
   return usage;
 }
 
 /** What the run view shows. Money is Modelvia's charged nanoAUD, summed. */
 export type RunCost =
   | { state: "none" }
-  | { state: "priced"; requests: number; chargedNanoAud: string }
+  /** `decisionsNanoAud`: the part of the total charged for Jev decisions
+   * (`usage.decisions`), present only when above zero. The total includes it. */
+  | { state: "priced"; requests: number; chargedNanoAud: string; decisionsNanoAud?: string }
   | { state: "pending"; requests: number }
   | { state: "not-priced"; requests: number }
   /** Some calls carried no receipt id: their charge cannot be read, so no sum is a total. */
@@ -141,10 +193,12 @@ export async function runCost(usage: RecordedRunUsage | undefined, access: RunCo
   if (receipts.length !== ids.length) return { state: "unavailable", requests };
   if (receipts.some(receipt => receipt.priceBasis === "withheld")) return { state: "not-priced", requests };
   if (receipts.some(receipt => !FINAL.has(receipt.state))) return { state: "pending", requests };
-  let total = 0n;
+  const decisionIds = new Set(usage.decisions?.map(row => row.id));
+  let total = 0n, decisions = 0n;
   for (const receipt of receipts) {
     if (receipt.chargedNanoAud === null) return { state: "unavailable", requests };
     total += BigInt(receipt.chargedNanoAud);
+    if (decisionIds.has(receipt.requestId)) decisions += BigInt(receipt.chargedNanoAud);
   }
-  return { state: "priced", requests, chargedNanoAud: total.toString() };
+  return { state: "priced", requests, chargedNanoAud: total.toString(), ...(decisions > 0n ? { decisionsNanoAud: decisions.toString() } : {}) };
 }

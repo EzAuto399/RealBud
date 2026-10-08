@@ -9,6 +9,8 @@ import { bankReviewId, bankReviewVersion, type BankReviewAmendment, type BankRev
 import type { W1ImportProof } from './w1-rei-workflow.ts';
 import { bankFirstPass, jevPayerHints } from './bank-reference-match.ts';
 import type { JevRequest, JevResult } from './jev-client.ts';
+import type { RunUsage } from '../shared/contracts.ts';
+import { countJevUsage, emptyRunUsage } from './run-cost.ts';
 import { createTenantDirectoryStore, tenantDirectoryCsv, tenantListHash } from './tenant-directory.ts';
 
 /** Where a batch's REI tenants came from, recorded when the batch is created: the office's saved REI tenant list
@@ -33,6 +35,9 @@ export interface SavedBankBatch {
   /** Jev payer hints, asked once when the batch was imported (`addJevHints`).
    * Suggestions only: shown with hintSource "jev", never a match or an import. */
   jevHints?: BankJevHint[];
+  /** The hint pass's Jev calls (Modelvia request ids, model, tokens), saved with
+   * its hints so the upload's AI cost can be read; never the state or answers. */
+  jevUsage?: RunUsage;
 }
 export interface BankJevHint { rowId: string; propertyId: string; suggestion: string }
 type JevDecide = (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>;
@@ -127,11 +132,11 @@ export class BankReferenceStore {
       const pass = decide && fresh && this.jevReady() ? bankFirstPass(value.batch) : null;
       if (!decide || !pass) return this.view(record);
       const signal = AbortSignal.timeout(options.timeoutMs ?? JEV_HINTS_MS);
-      let answered = 0;
-      await jevPayerHints(value.batch, pass, async (request, asked) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }, { signal });
+      let answered = 0; const usage = emptyRunUsage();
+      await jevPayerHints(value.batch, pass, countJevUsage(usage, async (request: JevRequest, asked?: { signal?: AbortSignal }) => { const result = await decide(request, asked); if (result.ok) answered++; return result; }), { signal });
       if (!answered) return this.view(record);
       const jevHints = pass.rows.flatMap((row): BankJevHint[] => row.hintSource === "jev" ? [{ rowId: row.rowId, propertyId: row.propertyId!, suggestion: row.suggestion! }] : []);
-      return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, record.revision, value => ({ ...value, jevHints }))));
+      return this.view(this.validated(this.db.update<SavedBankBatch>("bank", id, record.revision, value => ({ ...value, jevHints, jevUsage: usage }))));
     } catch {
       // A conflict, a failed write or a Jev error: the batch as it is now, hints or not.
       return this.get(id);

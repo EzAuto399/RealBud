@@ -21,7 +21,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pmInboxCases } from './lib/pm-inbox-fixture.mjs';
-import { CHOICE_GRID, LABEL_GRID, NOUL_GRID, ROLES, accept, choiceLead, percentile, same, sweep } from './lib/eval-jev-grade.mjs';
+import { CEILINGS, CHOICE_GRID, LABEL_GRID, ROLES, SCREEN_GRID, accept, choiceLead, percentile, same, sweep } from './lib/eval-jev-grade.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EVAL = join(root, 'scripts/eval-jev');
@@ -178,28 +178,31 @@ const USE = {
       });
       return { records, module, calls, unasked };
     } },
-  w3: { title: 'W3 inbound mail noise screen', where: 'server/morning-mail-workflow.ts screenMailNoise', grid: NOUL_GRID,
+  w3: { title: 'W3 inbound mail noise screen', where: 'server/morning-mail-workflow.ts screenMailNoise', grid: SCREEN_GRID,
     async run() {
-      const { screenMailNoise, NOISE_THRESHOLD } = await import(mod('server/morning-mail-workflow'));
-      this.current = { noul: NOISE_THRESHOLD };
+      const { screenMailNoise, SCREEN_BULK_MIN, SCREEN_ACTION_MAX } = await import(mod('server/morning-mail-workflow'));
+      this.current = { bulk: SCREEN_BULK_MIN, action: SCREEN_ACTION_MAX };
       const fx = read(join(EVAL, 'w3-mail.json'));
       const pm = pmInboxCases(Array.from({ length: 10 }, (_, i) => `EVAL-JEV-MAIL-${String(i + 1).padStart(2, '0')}`))
         .map((mail, i) => ({ id: `w3-pm-inbox-${String(i + 1).padStart(2, '0')}`, noise: fx.pmInboxNoise[i], ...mail }));
       const cases = [...pm, ...fx.cases];
       const bySubject = new Map(cases.map(c => [c.subject.slice(0, 200), c]));
       if (bySubject.size !== cases.length) throw new Error('Two W3 cases share a subject.');
-      oracle = body => Object.fromEntries(Object.keys(body.questions).map(q => { const c = bySubject.get(body.state[q].subject); return [q, { gold: c.noise, key: `w3:${c.id}` }]; }));
+      // Two questions per thread ("t0.bulk", "t0.asks_action"): bulk gold is the noise label, asks_action gold its opposite.
+      oracle = body => Object.fromEntries(Object.keys(body.questions).map(q => { const [t, kind] = q.split('.'), c = bySubject.get(body.state[t].subject);
+        return [q, { gold: kind === 'bulk' ? c.noise : !c.noise, key: `w3:${c.id}:${kind}` }]; }));
       const threads = cases.map((c, i) => ({ id: c.id, historyComplete: true, messages: [{ id: `${c.id}-1`, threadId: c.id, at: Date.UTC(2026, 9, 7, 21, i), direction: 'incoming',
         from: c.from, to: 'office@fictional-realty.example.invalid', subject: c.subject, body: c.body, bodyTruncated: false, attachments: [] }] }));
       const calls = [];
       const result = await screenMailNoise(threads, { decide: recorder(calls), known: () => false });
       const asked = new Map();
-      for (const call of calls) for (const q of Object.keys(call.request.questions)) asked.set(call.request.state[q].subject, call.answers?.[q]);
+      for (const call of calls) for (const t of Object.keys(call.request.state)) asked.set(call.request.state[t].subject, { bulk: call.answers?.[`${t}.bulk`], action: call.answers?.[`${t}.asks_action`] });
       const records = [], module = [], unasked = [];
       for (const c of cases) {
         if (!asked.has(c.subject.slice(0, 200))) { unasked.push(c.id); continue; }
         const answer = asked.get(c.subject.slice(0, 200));
-        records.push({ kind: 'noul', id: c.id, gold: c.noise, answered: answer?.type === 'noul', noul: answer?.type === 'noul' ? answer.noul : null });
+        const answered = answer.bulk?.type === 'noul' && answer.action?.type === 'noul';
+        records.push({ kind: 'screen', id: c.id, gold: c.noise, answered, bulk: answered ? answer.bulk.noul : null, action: answered ? answer.action.noul : null });
         module.push(result?.noise.includes(c.id) ? true : null);
       }
       return { records, module, calls, unasked };
@@ -377,7 +380,7 @@ writeFileSync(join(out, 'results.json'), sanitize(JSON.stringify(results, null, 
 // ── Report ──
 const pct = v => v === null || v === undefined ? '' : `${Math.round(v * 1000) / 10}%`;
 const cell = v => v === null || v === undefined ? '' : String(v);
-const th = t => t ? Object.entries(t).map(([k, v]) => `${k} ${k === 'different' ? '≤' : '≥'} ${v}`).join(', ') : 'none qualifies';
+const th = t => t ? Object.entries(t).map(([k, v]) => `${k} ${CEILINGS.includes(k) ? '≤' : '≥'} ${v}`).join(', ') : 'none qualifies';
 const md = [
   `# Jev eval: ${arm} arm`, '',
   `${results.startedAt} · source ${results.source.head?.slice(0, 12) ?? 'unknown'} (${results.source.uncommittedEntries ?? '?'} uncommitted entries) · Node ${process.version} · model ${MODEL}${arm === 'fake' ? ` · seed ${seed}` : ''}`, '',

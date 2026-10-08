@@ -36,9 +36,9 @@ import type {
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
-import { readCuaConnection } from "../../local-computer.ts";
 import { CUA_NEVER_TOOLS } from "../../cua-bounded.ts";
 import { BROWSER_SERVER, startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { DESKTOP_SERVER, startDesktopBroker, type DesktopBroker, type DesktopDecisions } from "../../desktop-broker.ts";
 import { browserRuntime } from "../../browser-runtime.ts";
 import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts";
 import { portalMapForSites } from "../../portal-recipe-task.ts";
@@ -159,6 +159,18 @@ const WARM_SESSION_IDLE_MS = 10 * 60_000;
 export const WORKER_APPROVAL_CARD_MS = 285_000;
 /** When a card opened now stops waiting. */
 const approvalDeadline = () => new Date(Date.now() + WORKER_APPROVAL_CARD_MS).toISOString();
+
+/** Running desktop task brokers by run: Stop, the run's end and the global browser Stop end each driver session. */
+const liveDesktopBrokers = new Map<DesktopBroker, string>();
+function stopDesktopBroker(broker: DesktopBroker | undefined): Promise<void> {
+  if (!broker) return Promise.resolve();
+  liveDesktopBrokers.delete(broker);
+  return broker.stop().catch(() => undefined);
+}
+/** The global Stop (releaseComputerControl, /api/browser/stop) ends every desktop task's driver session; a task's end, its run's. */
+export async function releaseDesktopBrokers(runId?: string): Promise<void> {
+  await Promise.all([...liveDesktopBrokers].filter(([, run]) => runId === undefined || run === runId).map(([broker]) => stopDesktopBroker(broker)));
+}
 const MAX_WARM_SESSIONS = 8;
 
 type AcpStdioMcpServer = {
@@ -178,23 +190,29 @@ type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
 /** A call to RealBud's work browser or sign-in server, by the name Hermes ACP puts first in a tool call's title:
  * mcp__<server>__<tool>, or mcp_<server>_<tool> in older releases ("sign-in" is written sign_in). Its arguments carry
  * page addresses, field values and file names, so no sink but the local card and approval record sees them. */
-const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})__?([a-z\\d_]*)`, "i");
+const PAGE_TOOL = new RegExp(`^\\s*mcp__?(?:${BROWSER_SERVER}|${DESKTOP_SERVER}|${SIGN_IN_SERVER.replace("-", "[-_]")})__?([a-z\\d_]*)`, "i");
 const PAGE_TOOL_LABEL: Record<string, string> = {
   browser_tabs: "Checked the open tabs", browser_borrow: "Borrowed a tab", browser_read: "Read a page",
   browser_navigate: "Opened a page", browser_fill: "Filled a field", browser_click_semantic: "Clicked a control",
   browser_press: "Pressed a key", browser_select: "Chose an option", browser_download: "Downloaded a file",
   browser_upload: "Uploaded a file", browser_release: "Stopped browser work", open_for_sign_in: "Opened the sign-in page",
+  // workdesktop (an app window): typed text and control ids stay out of every log, as for the browser.
+  get_window_state: "Read the app window", pick_control: "Asked which control to use", click: "Pressed a control", type_text: "Typed into a field",
+  scroll: "Scrolled the window", press_key: "Pressed a key", release: "Stopped app work",
 };
 const pageTool = (title: unknown): string | null => typeof title === "string" ? PAGE_TOOL.exec(title)?.[1]?.toLowerCase() ?? null : null;
 /** A page tool call's title for the event log and the Work activity line: a fixed label per tool, never its arguments. */
 const pageToolLabel = (tool: string): string => PAGE_TOOL_LABEL[tool] ?? "Used the work browser";
 /** A page tool call (a start, update or permission request) as the private native log keeps it: the tool name and its
- * argument keys, no values. Every other message is unchanged. */
-function withoutPageToolValues(message: any): any {
+ * argument keys, no values, content or output (screenshots included). Hermes sends a tool_call_update without a title,
+ * so `pageCalls` remembers each page call's id from its start until it completes. Every other message is unchanged. */
+function withoutPageToolValues(message: any, pageCalls: Map<string, string>): any {
   const key = message?.params?.update ? "update" : message?.params?.toolCall ? "toolCall" : null;
   const call = key ? message.params[key] : null;
-  const tool = pageTool(call?.title);
+  const id = typeof call?.toolCallId === "string" ? call.toolCallId : null;
+  const tool = pageTool(call?.title) ?? (id !== null ? pageCalls.get(id) ?? null : null);
   if (tool === null) return message;
+  if (id !== null) { if (call.status === "completed" || call.status === "failed") pageCalls.delete(id); else pageCalls.set(id, tool); }
   const { sessionUpdate, toolCallId, kind, status, rawInput } = call;
   const argumentKeys = rawInput && typeof rawInput === "object" ? Object.keys(rawInput) : [];
   return { ...message, params: { ...message.params, [key!]: { sessionUpdate, toolCallId, kind, status, tool, argumentKeys } } };
@@ -220,17 +238,17 @@ export function hermesNativeBrowserTool(...values: unknown[]): string | null {
  * spaced label (`Tool: computer/install_extension`). Checked for
  * every engine and every turn, fenced or not, before any auto-approval. */
 // Linear on purpose: a title is model-influenced text, so no nested repeats.
-// A name counts at the start of the leading tool token or right after one of
-// `_./:`, and must not run on into `[a-z0-9_-]`.
+// Only the bare name or the Cua `computer` server's own prefixes count: another
+// server's tool that shares a name (a meeting app's `start_recording`) is not Cua.
+const CUA_SERVER_PREFIXES = ["", "mcp__computer__", "mcp_computer_", "computer.", "computer/", "computer:", "computer__", "computer_"];
 export function cuaNeverTool(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value !== "string") continue;
     const head = value.trimStart().replace(/^[a-z][a-z ]{0,30}:\s+/i, "");
-    const token = (/^[a-z0-9_./:-]+/i.exec(head)?.[0] ?? "").toLowerCase();
-    for (let i = 0; i < token.length; i++) {
-      if (i > 0 && !"_./:".includes(token[i - 1])) continue;
-      for (const name of CUA_NEVER_TOOLS) {
-        if (token.startsWith(name, i) && !/[a-z0-9_-]/.test(token[i + name.length] ?? "")) return name;
+    const token = (/^[a-z0-9_./:-]+/i.exec(head)?.[0] ?? "").toLowerCase().replace(/[./:]+$/, "");
+    for (const name of CUA_NEVER_TOOLS) {
+      for (const prefix of CUA_SERVER_PREFIXES) {
+        if (token === prefix + name || token.startsWith(prefix + name + ".")) return name;
       }
     }
   }
@@ -374,6 +392,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           servers.push({ type: "http", name: "memory-proposals", url: "http://127.0.0.1/realbud-memory-proposals", headers: [] });
         }
+        // A desktop task mounts workdesktop INSTEAD of the browser, and never a raw computer server beside it.
+        if (turn.integrations?.desktop && turn.integrations.browser) throw new Error("This task cannot use an app window and a browser together. Start it again.");
+        if (turn.integrations?.desktop) servers.push({ type: "http", name: DESKTOP_SERVER, url: "http://127.0.0.1/realbud-desktop", headers: [] });
         if (turn.integrations?.browser) servers.push({ type: "http", name: BROWSER_SERVER, url: "http://127.0.0.1/realbud-browser", headers: [] });
         // Replaced with private loopback brokers before session/new or load.
         const pages = turn.integrations?.webPages;
@@ -446,27 +467,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
         }
         const computer = turn.integrations?.computer;
-        if (computer && !turn.integrations?.browser) {
+        const workTask = turn.integrations?.browser || turn.integrations?.desktop;
+        if (computer && !workTask) {
           servers.push({
             name: "computer",
             command: process.execPath,
             args: [COMPUTER_PROXY_PATH],
             env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
           });
-        } else if (turn.integrations?.localComputer && !turn.integrations?.browser) {
+        } else if (turn.integrations?.localComputer && !workTask) {
           const local = turn.integrations.localComputer;
           servers.push({ name: "computer", command: local.command, args: local.args, env: acpEnv(local.env ?? {}) });
-        }
-        if (turn.computer === true && !turn.integrations?.browser && !servers.some((server) => server.name === "computer")) {
-          const conn = readCuaConnection();
-          if (conn) {
-            servers.push({
-              name: "computer",
-              command: conn.command,
-              args: conn.args,
-              env: Object.entries(conn.env).map(([name, value]) => ({ name, value })),
-            });
-          }
         }
         return servers;
       };
@@ -533,6 +544,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let appBroker: ConnectedAppsBroker | undefined;
         let officeMailBroker: ConnectedAppsBroker | undefined;
         let browserBroker: BrowserBroker | undefined;
+        let desktopBroker: DesktopBroker | undefined;
         let memoryBroker: Awaited<ReturnType<typeof startMemoryProposalBroker>> | undefined;
         let pagesBroker: LoopbackToolServer | undefined;
         let signInBroker: LoopbackToolServer | undefined;
@@ -599,6 +611,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const removeRuntime = () => {
           modelLease?.revoke();
           browserBroker?.close();
+          stopDesktopBroker(desktopBroker);
           appBroker?.close();
           officeMailBroker?.close();
           memoryBroker?.close();
@@ -650,6 +663,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           run.settled = true;
           // A browser capability belongs to one job attempt, never a warm chat.
           if (browserBroker) { browserBroker.close(); keepWarm = false; }
+          // So does a desktop task's: its driver session ends with the run.
+          if (desktopBroker) { stopDesktopBroker(desktopBroker); keepWarm = false; }
           if (steered) keepWarm = false;
           appBroker?.cancelPending();
           officeMailBroker?.cancelPending();
@@ -941,6 +956,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
 
         let buffer = "";
+        const pageCalls = new Map<string, string>();
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
           buffer += chunk;
@@ -955,7 +971,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: withoutPageToolValues(message) });
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: withoutPageToolValues(message, pageCalls) });
             if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
               const pending = rpcPending.get(message.id);
               if (pending) {
@@ -1105,6 +1121,42 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }
             mcpServers = mcpServers.map(server => server.name === BROWSER_SERVER ? browserBroker!.descriptor : server);
           }
+          if (firstTurn.integrations?.desktop) {
+            const desktop = firstTurn.integrations.desktop;
+            // pick_control only with the host's binding (a person's own attended Ask, or their own Start on the card, while Jev is ready); each answer is counted on the turn.
+            const binding = desktop.decisions;
+            desktopBroker = await startDesktopBroker({
+              runId: desktop.runId, grant: desktop.grant, step: desktop.step,
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed && (desktop.active?.() ?? true)),
+              ...(binding ? { decisions: () => closed ? undefined : { sameMember: () => binding.sameMember(), ready: () => binding.ready(), lunaReady: () => binding.lunaReady(),
+                decide: async (request, options) => {
+                  // The host binds jev-client's decide, which takes model, image and timeoutMs; contracts type it without jev-client.
+                  const result = await (binding.decide as DesktopDecisions["decide"])(request, options);
+                  try { modelLease?.recordJev(result); } catch { /* counting never changes the outcome */ }
+                  return result;
+                } } } : {}),
+              // The broker decided this step; the card carries its projection and stays on this computer (remote: desktop-only).
+              approve: (tool, params, summary, signal, projection) => new Promise<boolean>(resolve => {
+                const run = current;
+                if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+                const requestId = newId();
+                const finish = (decision: { behavior: string; scope?: "once" | "session" }, resolution: "user" | "timeout" | "stopped" = "user") => {
+                  if (!run.asks.delete(requestId)) return;
+                  clearTimeout(timer); signal.removeEventListener("abort", aborted);
+                  const allowed = resolution === "user" && decision.behavior === "allow" && decision.scope !== "session" && !run.settled && !run.cancellationRequested && !closed && !signal.aborted;
+                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: resolution === "user" ? "user" : "system", resolution }); resolve(allowed);
+                };
+                const aborted = () => finish({ behavior: "deny" }, "stopped");
+                const timer = setTimeout(() => finish({ behavior: "deny" }, "timeout"), WORKER_APPROVAL_CARD_MS); timer.unref();
+                run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary, deadline: approvalDeadline(),
+                  remote: projection.remote, fence: projection.fence, approvalPolicy: projection.approvalPolicy });
+              }),
+            });
+            liveDesktopBrokers.set(desktopBroker, desktop.runId);
+            if (closed) { stopDesktopBroker(desktopBroker); throw new Error("Desktop work stopped."); }
+            mcpServers = mcpServers.map(server => server.name === DESKTOP_SERVER ? desktopBroker!.descriptor : server);
+          }
           if (firstTurn.integrations?.composio) {
             const { key, url, headers, gmailReadOnly, allowedApps, managed } = firstTurn.integrations.composio;
             if (gmailReadOnly && (typeof gmailReadOnly.requestId !== "string" || !gmailReadOnly.requestId.trim())) throw new Error("Gmail review needs a fresh request identity.");
@@ -1213,6 +1265,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               turnId: () => actingTurn()?.turnId ?? null,
               decisions: () => actingTurn()?.turn.integrations?.decisions,
               receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { decisions: receipt } }),
+              // Counted on the turn's usage with its relayed model calls.
+              record: result => modelLease?.recordJev(result),
             });
             if (closed) { decideBroker.close(); throw new Error("Bud’s typed decisions session stopped."); }
             mcpServers = mcpServers.map(server => server.name === DECIDE_SERVER ? decideBroker!.descriptor : server);
@@ -1294,7 +1348,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // resolved session capabilities at the actual prompt boundary,
             // including a computer mounted through the CUA fallback.
             managedService.assertCapability("reasoning");
-            if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
+            if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER || server.name === DESKTOP_SERVER)) managedService.assertCapability("computer-use");
             if (!sessionAnnounced) {
               sessionAnnounced = true;
               emit({
@@ -1351,6 +1405,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           run.cancellationRequested = true;
           modelLease?.revoke();
           browserBroker?.close();
+          stopDesktopBroker(desktopBroker);
           appBroker?.cancelPending();
           officeMailBroker?.cancelPending();
           memoryBroker?.cancelPending();
@@ -1442,7 +1497,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
-        if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER)) managedService.assertCapability("computer-use");
+        if (mcpServers.some(server => server.name === "computer" || server.name === BROWSER_SERVER || server.name === DESKTOP_SERVER)) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
         const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope, turn.integrations?.hermiosCrm);
         let runtime = warm.get(threadId);

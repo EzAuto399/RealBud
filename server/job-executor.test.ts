@@ -311,6 +311,20 @@ describe("executeRecipeJob", () => {
     expect(result.run).toMatchObject({ status: "failed", usage });
   });
 
+  it("counts a loop's earlier Jev screen on the run with the worker's own requests", async () => {
+    const screen = { requestIds: ["dec-fictional-screen"], calls: 1, decisions: [{ id: "dec-fictional-screen", model: "jev-1.13", inputTokens: 300, outputTokens: 0, ms: 12 }] };
+    const answered = await executeRecipeJob(job({ capabilities: ["analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "usage-screen" }, {
+      store: store(), usage: screen, ask: async () => ({ ok: false, detail: "Bud could not answer.", usage: { requestIds: ["req-fictional-worker"], calls: 1, inputTokens: 20, outputTokens: 4 } }),
+    });
+    expect(answered.run.usage).toEqual({ requestIds: ["dec-fictional-screen", "req-fictional-worker"], calls: 2, inputTokens: 20, outputTokens: 4, decisions: screen.decisions });
+    expect(screen).toEqual({ requestIds: ["dec-fictional-screen"], calls: 1, decisions: screen.decisions });
+    // A run that fails before the worker answers still carries the screen's calls.
+    const thrown = await executeRecipeJob(job({ capabilities: ["analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "usage-screen-thrown" }, {
+      store: store(), usage: screen, ask: async () => { throw new Error("Bud could not start."); },
+    });
+    expect(thrown.run).toMatchObject({ status: "failed", usage: screen });
+  });
+
   it("rejects an oversized store write before changing the run's state", () => {
     const runs = store();
     const queued = runs.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "oversized" });

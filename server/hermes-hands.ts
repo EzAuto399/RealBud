@@ -12,7 +12,9 @@ import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
 
-import type { LedgerFacts } from "../shared/contracts.ts";
+import type { LedgerFacts, RunUsage } from "../shared/contracts.ts";
+import { emptyRunUsage } from "./run-cost.ts";
+import { recordUsage } from "./computer-history.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { currentWorkerProfile, withWorkerProfile } from "./hermes-profile.ts";
@@ -26,6 +28,8 @@ export interface HermesLedgerAttempt {
   rows: LedgerFacts[] | null;
   /** Why we got rows (or why the live check missed). */
   detail: string;
+  /** The Modelvia requests this attempt made, when it made any. */
+  usage?: RunUsage;
 }
 
 export interface HermesPing {
@@ -111,7 +115,9 @@ async function scopedHermesPing(opts?: {
   }
 
   workerFingerprint = hermesReadinessFingerprint(version, opts?.root);
-  return withAskModelRelayLease(() => new Promise((resolve) => {
+  // The check reasons through the relay like any model call; its Modelvia requests are a history row so they are costed.
+  const usage = emptyRunUsage();
+  const ping = await withAskModelRelayLease(() => new Promise<HermesPing>((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(done(false, serviceFailure));
@@ -163,7 +169,9 @@ async function scopedHermesPing(opts?: {
         resolve(done(true, "Bud answered OK — Recheck can ask for the morning ledger."));
       },
     ));
-  }));
+  }), { usage });
+  recordUsage("readiness check", usage, { ok: ping.ok });
+  return ping;
 }
 
 export function uncoveredPropertyIds(requested: string[], rows: LedgerFacts[]): string[] {
@@ -289,7 +297,8 @@ async function scopedHermesLedger(
     `The last line of your reply must be the JSON array (at minimum []), with no text after it.\n` +
     `Do not send, pay, or draft a statutory notice.`;
 
-  return withAskModelRelayLease(() => new Promise((resolve) => {
+  const usage = emptyRunUsage();
+  const attempt = await withAskModelRelayLease(() => new Promise<HermesLedgerAttempt>((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
@@ -333,7 +342,8 @@ async function scopedHermesLedger(
         resolve({ rows, detail: `Bud answered with ${rows.length} ledger rows.` });
       },
     ));
-  }));
+  }), { usage });
+  return usage.calls ? { ...attempt, usage } : attempt;
 }
 
 const activePings = new Set<string>();

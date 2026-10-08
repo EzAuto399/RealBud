@@ -154,6 +154,15 @@ export interface SendTurnInput {
      * (false once Stop, expiry or the step limit ended it). */
     browser?: { runId: string; allowedOrigins: string[]; capabilities: import("../shared/contracts.ts").JobCapability[]; checkpoint?: import("../shared/browser.ts").BrowserCheckpoint;
       grant?: import("../shared/browser-task.ts").BrowserTaskGrant; active?: () => boolean };
+    /** A person-started desktop task: one app window (`grant.desktop`, server/desktop-broker.ts).
+     * Mounted as `workdesktop` instead of `browser`, never beside it or a raw computer server.
+     * `decisions` (pick_control) only for a person's own attended Ask while Jev is ready;
+     * `step` records the broker's decisions as the task's evidence. Typed without server/desktop-broker.ts
+     * (as decide-broker does) so the app's types never load the Jev client. */
+    desktop?: { runId: string; grant: import("../shared/browser-task.ts").BrowserTaskGrant; active?: () => boolean;
+      /** `decide` is jev-client's own (it also takes model, image and timeoutMs). */
+      decisions?: import("./decide-broker.ts").BudDecisions & { lunaReady(): boolean };
+      step?: (step: { at: number; tool: string; outcome: string; note: string }) => void };
     composio?: {
       allowedApps?: string[];
       url?: string;
@@ -209,8 +218,6 @@ export interface SendTurnInput {
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
   };
-  /** Product Ask: mount this Mac's computer MCP tools when a CUA descriptor exists. */
-  computer?: boolean;
   cwd?: string;
 }
 

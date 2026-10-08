@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { JevRequest, JevResult } from "./jev-client.ts";
-import { ASK_JEV_MAX_TEXT, ASK_JEV_TIMEOUT_MS, askJevRoute, chooseAskRoute, personAskTurn, type AskJevRoute } from "./ask-jev-route.ts";
+import { ASK_JEV_MAX_TEXT, ASK_JEV_TIMEOUT_MS, askJevRoute, chooseAskRoute, personAskTurn, personDesktopTurn, type AskJevRoute } from "./ask-jev-route.ts";
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
 import { isAskProductControl } from "../shared/ask-controls.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 
 const answer = (choice: string, confidence = 0.98, probabilities: Record<string, number> | null = { [choice]: confidence, bud: 1 - confidence }): JevResult =>
-  ({ ok: true, model: "fictional-jev", ms: 5, answers: { route: { type: "choice", choice, confidence, ...(probabilities ? { probabilities } : {}) } } });
+  ({ ok: true, id: "dec-fictional", model: "fictional-jev", ms: 5, answers: { route: { type: "choice", choice, confidence, ...(probabilities ? { probabilities } : {}) } } });
 const fixed = (result: JevResult) => vi.fn(async (_request: JevRequest, _options?: { timeoutMs?: number }) => result);
 
 // Fictional labelled cases: every one misses the regex controls, so Jev decides it.
@@ -113,5 +113,19 @@ describe("Jev pre-route for Ask", () => {
     expect(personAskTurn({ systemExtra: "Attended job block" })).toBe(false);
     expect(personAskTurn({ personAsk: true, systemExtra: "Attended job block" })).toBe(false);
     expect(personAskTurn(undefined)).toBe(false);
+    // The card Start flag never opens Jev for the pre-route or `decide`.
+    expect(personAskTurn({ startedByPerson: true } as Parameters<typeof personAskTurn>[0])).toBe(false);
+  });
+
+  it("gives a desktop task pick_control for the person's own Ask or their own Start on the card, never a relay or a host start", () => {
+    const start = { systemExtra: "Desktop task block", startedByPerson: true };
+    expect(personDesktopTurn(start)).toBe(true);
+    expect(personDesktopTurn({ personAsk: true })).toBe(true);
+    expect(personDesktopTurn({ ...start, channelRelay: true })).toBe(false);
+    expect(personDesktopTurn({ systemExtra: "Desktop task block" })).toBe(false); // loop, recovery, sign-in continuation
+    expect(personDesktopTurn({ startedByPerson: false, systemExtra: "x" })).toBe(false);
+    expect(personDesktopTurn({ channelRelay: true })).toBe(false);
+    expect(personDesktopTurn({})).toBe(false); // a queued follow-up drain
+    expect(personDesktopTurn(undefined)).toBe(false);
   });
 });

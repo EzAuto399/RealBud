@@ -14,7 +14,7 @@
  * Contract agreed with Modelvia (mirrors OpenRouter decisions):
  * - POST `${grant.baseUrl}/decisions` (the base ends in /v1), `Authorization:
  *   Bearer <office key>`, `Idempotency-Key: <fresh UUID per decision>`.
- * - Request `{model, state, questions}`; `model` is "gpt-6-luna-decisions" unless
+ * - Request `{model, state, questions}`; `model` is "jev-1.13-decisions" unless
  *   REALBUD_JEV_MODEL overrides it; REALBUD_JEV_MODEL="off" means refused with
  *   no call. No session_id or user. `toWire` mirrors Modelvia's request schema
  *   so a bad request is "invalid" before any (billable) call: state a non-empty
@@ -23,15 +23,17 @@
  *   most 8,000 characters; every criterion non-blank and at most 4,000; a choice
  *   offers at least 2 options.
  * - Response `{id, model, answers, usage:{input_tokens, output_tokens}}`, no cost.
+ *   `id` is the Modelvia request id (also `X-Request-Id`): the run records it
+ *   and prices the call from its receipt (`GET /v1/requests/{id}`, run-cost.ts).
  *   `model` may be a dated id ("typesafe/jev-1.13-20260917"); extra fields are ignored.
  * - Retry once with the SAME key only after 503 serving_temporarily_unavailable
  *   (never charged); model_route_unavailable is configuration, so no retry. Never after a timeout or a
  *   dropped connection: the first call may have been charged.
  * - 401/403 refused · 402 budget · 409 no answer (http) · those two 503s
  *   (after the retry) unavailable · 502 invalid_provider_answers and 400 invalid.
- * - Fallback: when the primary model differs from the fallback ("jev-1.13-decisions",
- *   or REALBUD_JEV_FALLBACK_MODEL; "off" disables it), Jev is asked once, under
- *   `<primary key>:jev`, only after a 502, a 503 model_route_unavailable (free),
+ * - Fallback: for a text decision, when the primary model differs from the fallback
+ *   (GPT-6 Luna Decisions, or REALBUD_JEV_FALLBACK_MODEL; "off" disables it), the
+ *   fallback is asked once, under `<primary key>:fallback`, only after a 502, a 503 model_route_unavailable (free),
  *   a dropped connection before any response, or the primary's own timeout when
  *   the caller set no timeoutMs. Never after 400, 402, 409 or any other status:
  *   a 409 request_already_processed was already charged. The result names the
@@ -67,28 +69,42 @@ export type JevUsage = { input_tokens: number; output_tokens: number };
 /** Set only when the fallback was asked: the primary model, and the primary's
  * Idempotency-Key when it got no response (it may still have been billed). */
 export type JevFallback = { fallbackFrom?: string; abandonedIdempotencyKey?: string };
-/** `model` is the model that answered, as Modelvia names it. */
-export type JevResult = ({ ok: true; answers: Record<string, JevAnswer>; model: string; ms: number; usage?: JevUsage } | { ok: false; reason: JevFailure }) & JevFallback;
+/** `model` is the model that answered, as Modelvia names it. `id`: the Modelvia
+ * request id, for run cost (`recordJevUsage` in run-cost.ts). A failure carries
+ * one only when Modelvia answered 2xx (so charged) with answers that failed validation. */
+export type JevResult = ({ ok: true; id: string; answers: Record<string, JevAnswer>; model: string; ms: number; usage?: JevUsage } | { ok: false; reason: JevFailure; id?: string }) & JevFallback;
 
 const MAX_QUESTIONS = 8, MAX_OPTIONS = 64, MAX_STATE_BYTES = 16 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
-// Luna answers in about 150 ms, so 8 s without a reply means it is broken: ask
-// Jev instead. This is deliberately below Modelvia's 120 s decisions bound,
+// Jev answers in about 70–500 ms (vendor figure), so 8 s without a reply means
+// it is broken: ask the fallback instead. This is deliberately below Modelvia's 120 s decisions bound,
 // which keeps running after the client leaves, so an abandoned Luna call may
-// still be billed (about A$0.0001 each). The owner accepts that as the price of speed.
+// still be billed (a fraction of a cent each). The owner accepts that as the price of speed.
 const PRIMARY_TIMEOUT_MS = 8_000;
 const DECISIONS_PATH = "/decisions";
 const RETRYABLE_503 = ["serving_temporarily_unavailable"];
 // Installed apps set no env, so the Modelvia catalogue ids are the defaults. Until the
-// operator enables a route Modelvia refuses before dispatch (403/503, never charged);
-// a 503 model_route_unavailable from Luna falls back to Jev.
-const PRIMARY_DEFAULT_MODEL = "gpt-6-luna-decisions";
-const FALLBACK_DEFAULT_MODEL = "jev-1.13-decisions";
+// operator enables a route Modelvia refuses before dispatch (403/503, never charged).
+// Owner, 2026-10-08: Jev first for every text decision; GPT-6 Luna Decisions only
+// reads images (desktop control picks) and is the text fallback when Jev's route fails.
+const PRIMARY_DEFAULT_MODEL = "jev-1.13-decisions";
+/** GPT-6 Luna Decisions (`openai/gpt-6-luna-decisions` upstream). REALBUD_LUNA_MODEL
+ * overrides the Modelvia id; "off" disables it. */
+export const LUNA_DECISIONS_MODEL = "gpt-6-luna-decisions";
+export const lunaModel = (): string | null => { const set = process.env.REALBUD_LUNA_MODEL?.trim(); return set === "off" ? null : set || LUNA_DECISIONS_MODEL; };
 const jevModel = () => { const set = process.env.REALBUD_JEV_MODEL?.trim(); return set === "off" ? null : set || PRIMARY_DEFAULT_MODEL; };
+/** The text fallback (REALBUD_JEV_FALLBACK_MODEL, default Luna; "off" disables it). */
 const fallbackModel = (primary: string) => {
-  const set = process.env.REALBUD_JEV_FALLBACK_MODEL?.trim() || FALLBACK_DEFAULT_MODEL;
+  const set = process.env.REALBUD_JEV_FALLBACK_MODEL?.trim() || lunaModel() || "off";
   return set === "off" || set === primary ? null : set;
 };
+/** Modelvia's /v1/decisions refuses a state over 256,000 bytes
+ * (managed-gateway/decisions.ts MAX_STATE_BYTES); the base64 image counts
+ * toward it. Raise both together when Modelvia lifts it for image routes.
+ * Nothing downscales the image: a larger one is refused. */
+export const MODELVIA_STATE_BYTES = 256_000;
+export const MAX_IMAGE_BYTES = Math.floor((MODELVIA_STATE_BYTES - 16 * 1024) * 3 / 4);
+const PNG_BASE64 = /^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/;
 
 const MAX_INSTRUCTIONS = 8_000, MAX_CRITERION = 4_000;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -100,8 +116,21 @@ const unit = (value: unknown): value is number => typeof value === "number" && N
 const unitMap = (value: unknown, keys?: string[]): value is Record<string, number> =>
   record(value) && Object.entries(value).every(([key, p]) => unit(p) && (!keys || keys.includes(key)));
 
-/** The request body, or null when it breaks the schema or the hygiene caps. */
-function toWire(request: JevRequest, model: string): string | null {
+/**
+ * The decision state with one PNG attached, in OpenRouter's decisions shape
+ * (docs/guides/community/multimodal-decisions, read 2026-10-08): `state`
+ * becomes a top-level array whose text items are plain strings and whose
+ * image is `{type:"image_url", image_url:{url:"data:image/png;base64,…"}}`.
+ * Images nested inside objects are not read, and remote URLs are not fetched.
+ * Only GPT-6 Luna Decisions reads images; Jev is text only.
+ */
+export function withImage(state: Record<string, unknown>, pngBase64: string): unknown[] {
+  return [JSON.stringify(state), { type: "image_url", image_url: { url: `data:image/png;base64,${pngBase64}`, detail: "low" } }];
+}
+
+/** The request body, or null when it breaks the schema or the hygiene caps. The
+ * 16 KiB state cap is checked before the image (bounded by MAX_IMAGE_BYTES) is attached. */
+function toWire(request: JevRequest, model: string, image?: string): string | null {
   const questions = Object.entries(record(request.questions) ? request.questions : {});
   if (!questions.length || questions.length > MAX_QUESTIONS) return null;
   for (const [key, question] of questions) {
@@ -117,11 +146,15 @@ function toWire(request: JevRequest, model: string): string | null {
   const { state } = request;
   if (!(text(state) ? state.length > 0 : !!state && typeof state === "object")) return null;
   if (Buffer.byteLength(JSON.stringify(state), "utf8") > MAX_STATE_BYTES) return null;
-  return JSON.stringify({ model, state, questions: request.questions });
+  if (image === undefined) return JSON.stringify({ model, state, questions: request.questions });
+  if (!record(state) || !PNG_BASE64.test(image) || Math.floor(image.length * 3 / 4) > MAX_IMAGE_BYTES) return null;
+  const imageState = withImage(state, image);
+  if (Buffer.byteLength(JSON.stringify(imageState), "utf8") > MODELVIA_STATE_BYTES) return null;
+  return JSON.stringify({ model, state: imageState, questions: request.questions });
 }
 
 /** The strictly validated answers, or null. */
-function fromWire(body: unknown, request: JevRequest): { answers: Record<string, JevAnswer>; model: string; usage?: JevUsage } | null {
+function fromWire(body: unknown, request: JevRequest): { id: string; answers: Record<string, JevAnswer>; model: string; usage?: JevUsage } | null {
   if (!record(body) || !text(body.id) || !text(body.model) || !record(body.answers)) return null;
   const asked = Object.keys(request.questions), given = body.answers;
   if (Object.keys(given).length !== asked.length) return null;
@@ -149,15 +182,15 @@ function fromWire(body: unknown, request: JevRequest): { answers: Record<string,
   const tokens = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
   const usage = record(body.usage) && tokens(body.usage.input_tokens) && tokens(body.usage.output_tokens)
     ? { usage: { input_tokens: body.usage.input_tokens, output_tokens: body.usage.output_tokens } } : {};
-  return { answers, model: body.model, ...usage };
+  return { id: body.id, answers, model: body.model, ...usage };
 }
 
 /** Whether `decide` could call out at all: a Jev model is configured and the
  * office has an active grant with its key. Callers skip silently otherwise. */
 export function jevReady(): boolean {
-  const grant = workerModelGrant();
-  return !!jevModel() && grant.state === "active" && !!workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
+  return !!jevModel() && grantReady();
 }
+const grantReady = () => workerModelGrant().state === "active" && !!workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
 
 /** Modelvia's error code, only when it is a plain code (never free text). */
 function errorCode(body: unknown): string | null {
@@ -166,10 +199,15 @@ function errorCode(body: unknown): string | null {
   return text(code) && /^[a-z][a-z0-9_.:-]{0,79}$/.test(code) ? code : null;
 }
 
-/** Ask Jev. Refused without a configured model, an active grant, its key,
+/** `jevReady()` for Luna: its model is configured and the office grant is active. */
+export function lunaReady(): boolean {
+  return !!lunaModel() && grantReady();
+}
+
+/** Ask Jev (or `model`, e.g. `lunaModel()`). Refused without a configured model, an active grant, its key,
  * the managed service's reasoning entitlement, or an https (or loopback http)
- * gateway. */
-export async function decide(request: JevRequest, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<JevResult> {
+ * gateway. `image` (base64 PNG, at most MAX_IMAGE_BYTES) needs an object state; it is never logged. */
+export async function decide(request: JevRequest, options: { signal?: AbortSignal; timeoutMs?: number; model?: string; image?: string } = {}): Promise<JevResult> {
   const started = Date.now();
   let fellBack: JevFallback = {}, note = "";
   const done = (result: JevResult, code: string | null = null): JevResult => {
@@ -177,7 +215,7 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
     return { ...result, ...fellBack };
   };
   if (options.signal?.aborted) return done({ ok: false, reason: "aborted" });
-  const model = jevModel();
+  const model = options.model === undefined ? jevModel() : options.model.trim();
   if (!model) return done({ ok: false, reason: "refused" });
   const grant = workerModelGrant();
   const key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
@@ -188,7 +226,7 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
       !(base.protocol === "https:" || base.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname))) {
     return done({ ok: false, reason: "refused" });
   }
-  const body = toWire(request, model);
+  const body = toWire(request, model, options.image);
   if (body === null) return done({ ok: false, reason: "invalid" });
 
   // A withdrawn, cleared or replaced key ends this call.
@@ -197,15 +235,15 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
     const now = workerModelGrant();
     if (now.state !== "active" || now.keyId !== grant.keyId || workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim() !== key) withdrawn.abort();
   });
-  type Outcome = { status: number; body: unknown } | { failed: "timeout" | "aborted" | "http"; early: boolean };
+  type Outcome = { status: number; requestId: string | null; body: unknown } | { failed: "timeout" | "aborted" | "http"; early: boolean };
   /** One model under one Idempotency-Key and its own timeout; only an uncharged
    * 503 is retried, with the same key. `early`: the failure came before any response. */
   const attempt = async (payload: string, idempotencyKey: string, timeoutMs: number): Promise<Outcome> => {
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([timeout, withdrawn.signal, ...(options.signal ? [options.signal] : [])]);
     let early = true;
-    /** One exchange: status and parsed body (undefined when unreadable). */
-    const exchange = async (): Promise<{ status: number; body: unknown }> => {
+    /** One exchange: status, Modelvia's request id and parsed body (undefined when unreadable). */
+    const exchange = async (): Promise<{ status: number; requestId: string | null; body: unknown }> => {
       early = true;
       const response = await fetch(`${normalizedGatewayUrl(grant.baseUrl)}${DECISIONS_PATH}`, {
         method: "POST",
@@ -215,14 +253,15 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
       early = false;
       // 403 is a mode or model refusal, not a rejected key; only 401 and success inform the check-in.
       if (response.status !== 403) noteKeyAnswer(grant.keyId, response.status);
+      const requestId = response.headers.get("x-request-id");
       const chunks: Uint8Array[] = []; let size = 0;
       if (response.body) for await (const part of response.body) {
         size += part.length;
-        if (size > MAX_RESPONSE_BYTES) return { status: response.status, body: undefined };
+        if (size > MAX_RESPONSE_BYTES) return { status: response.status, requestId, body: undefined };
         chunks.push(part);
       }
-      try { return { status: response.status, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }; }
-      catch { return { status: response.status, body: undefined }; }
+      try { return { status: response.status, requestId, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }; }
+      catch { return { status: response.status, requestId, body: undefined }; }
     };
     try {
       const answer = await exchange();
@@ -231,7 +270,7 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
       return { failed: timeout.aborted ? "timeout" : signal.aborted ? "aborted" : "http", early };
     }
   };
-  const fallback = fallbackModel(model), primaryKey = randomUUID();
+  const fallback = options.image === undefined ? fallbackModel(model) : null, primaryKey = randomUUID();
   try {
     let outcome = await attempt(body, primaryKey, options.timeoutMs ?? (fallback ? PRIMARY_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
     if (fallback) {
@@ -241,7 +280,7 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
       if (unanswered || routeFailed) {
         fellBack = { fallbackFrom: model, ...(unanswered ? { abandonedIdempotencyKey: primaryKey } : {}) };
         note = ` fallback=${"failed" in outcome ? outcome.failed : outcome.status}${unanswered ? ` abandoned=${primaryKey}` : ""}`;
-        outcome = await attempt(toWire(request, fallback)!, `${primaryKey}:jev`, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+        outcome = await attempt(toWire(request, fallback)!, `${primaryKey}:fallback`, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       }
     }
     if ("failed" in outcome) return done({ ok: false, reason: outcome.failed });
@@ -253,6 +292,9 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
     if (status === 400) return done({ ok: false, reason: "invalid" }, code);
     if (status < 200 || status >= 300) return done({ ok: false, reason: "http" });
     const read = fromWire(outcome.body, request);
-    return done(read ? { ok: true, ...read, ms: Date.now() - started } : { ok: false, reason: "invalid" });
+    if (read) return done({ ok: true, ...read, ms: Date.now() - started });
+    // Answered, so charged: keep the id so the run still counts the call.
+    const id = outcome.requestId ?? (record(outcome.body) && text(outcome.body.id) ? outcome.body.id : null);
+    return done({ ok: false, reason: "invalid", ...(id ? { id } : {}) });
   } catch { return done({ ok: false, reason: "http" }); } finally { stopWatch(); }
 }
