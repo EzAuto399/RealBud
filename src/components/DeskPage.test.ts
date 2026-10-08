@@ -21,7 +21,7 @@ vi.mock("./desk/RemindersPanel", () => ({
   RemindersPanel: ({ headerAction }: { headerAction?: ReactNode }) => createElement("section", { className: "desk-reminders", "data-testid": "reminders" }, createElement("div", null, "Reminders", headerAction)),
 }));
 
-import { DeskPage } from "./DeskPage";
+import { DeskPage, reviewOrder } from "./DeskPage";
 import { openDeskTasks } from "@/lib/desk-view-state";
 
 function snapshot(partial: Partial<DeskSnapshot> = {}): DeskSnapshot {
@@ -226,5 +226,25 @@ describe("Desk layout", () => {
     expect(reminders).toBeGreaterThan(0);
     expect(reminders).toBeLessThan(html.indexOf('aria-label="Case queue"'));
     expect(html).toMatch(/class="desk-reminders-disclosure" data-open="false"/);
+  });
+});
+
+describe("Desk queue review order", () => {
+  const row = (id: string, kind = "money-arrears") => ({ id, kind, bucket: "now", state: "proposed", address: id, action: "", meta: "", updatedAt: 1 }) as Parameters<typeof reviewOrder>[1][number];
+
+  it("keeps the order under review, drops finished rows and appends a new licensee escalation", () => {
+    const live = [row("esc:new", "licensee-required"), row("b"), row("a")];
+    const held = reviewOrder(["a", "b", "c"], live);
+    expect(held.rows.map((item) => item.id)).toEqual(["a", "b", "esc:new"]);
+    expect(held.updates).toBe(true);
+    expect(reviewOrder(["a", "b"], [row("a"), row("b")]).updates).toBe(false);
+    // No case open (or Update order): the live order applies.
+    expect(reviewOrder(null, live)).toEqual({ rows: live, updates: false });
+  });
+
+  it("says on each row why it is there and shows no Update order until the order changes", () => {
+    const html = render(snapshot());
+    expect(html).toMatch(/class="desk-queue-reason[^"]*">Licensee escalation · Changed /);
+    expect(html).not.toContain("Update order");
   });
 });

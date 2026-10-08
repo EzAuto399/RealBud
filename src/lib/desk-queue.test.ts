@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS, type DeskSnapshot, type WorkState } from "../../shared/contracts";
-import { bucketForWork, buildDeskQueue, filterDeskQueue, licenseeFact, queueCounts, recoveryPlanFor, type QueueBucket } from "./desk-queue";
+import { bucketForWork, buildDeskQueue, filterDeskQueue, licenseeFact, queueCounts, queueReason, recoveryPlanFor, type DeskQueueItem, type QueueBucket } from "./desk-queue";
 
 function snap(partial: Partial<DeskSnapshot>): DeskSnapshot {
   return {
@@ -321,5 +321,30 @@ describe("licensee hold copy", () => {
     const row = buildDeskQueue(snap({ escalations: [{ id: "esc-1", propertyId: "prop-oak", reason: "statutory-clock", detail, periodDueAt: 1, createdAt: 2 }] }))[0]!;
     expect(row.meta).toBe("10 days late on this sample book; courtesy window ends day 7.");
     expect(JSON.stringify(recoveryPlanFor(row))).not.toMatch(/statutory|PMS/);
+  });
+});
+
+describe("queue row reason", () => {
+  const now = Date.UTC(2026, 9, 8, 6, 0);
+  const row = (partial: Partial<DeskQueueItem>): DeskQueueItem => ({
+    id: "r", kind: "money-arrears", bucket: "now", state: "proposed", address: "12 Oak St", action: "", meta: "", updatedAt: now - 2 * 3_600_000, ...partial,
+  });
+
+  it("names the sort reason from facts the row already carries", () => {
+    expect(queueReason(row({}), now)).toBe("Changed 2 h ago");
+    expect(queueReason(row({ kind: "licensee-required", state: "held" }), now)).toBe("Licensee escalation · Changed 2 h ago");
+    expect(queueReason(row({ bucket: "waiting", state: "held", holdReason: "partial-payment" }), now)).toBe("Held · needs checking · Changed 2 h ago");
+    expect(queueReason(row({ bucket: "waiting", state: "stale" }), now)).toBe("Stale · needs a fresh check · Changed 2 h ago");
+    expect(queueReason(row({ bucket: "waiting", state: "effect-unknown" }), now)).toBe("Result unknown · needs checking · Changed 2 h ago");
+    expect(queueReason(row({ kind: "import-issue", holdReason: "unmatched" }), now)).toBe("Source row not matched · Changed 2 h ago");
+    expect(queueReason(row({ kind: "import-issue", meta: "REI's page changed" }), now)).toBe("REI page changed · Changed 2 h ago");
+    expect(queueReason(row({ kind: "maintenance-intake", bucket: "next", state: "held" }), now)).toBe("On the book · Changed 2 h ago");
+    expect(queueReason(row({ bucket: "next", state: "preparing", updatedAt: now - 20_000 }), now)).toBe("Preparing · Changed just now");
+  });
+
+  it("never invents a time it does not have", () => {
+    expect(queueReason(row({ updatedAt: 0 }), now)).toBe("Needs you");
+    expect(queueReason(row({ bucket: "done", state: "approved", updatedAt: 0 }), now)).toBe("Decided");
+    expect(queueReason(row({ kind: "licensee-required", updatedAt: 0 }), now)).toBe("Licensee escalation");
   });
 });
