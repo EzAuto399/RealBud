@@ -117,7 +117,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace');
   assert.equal(mail.latestScan.status, 'partial'); assert.deepEqual(mail.latestScan.gaps, ['Attachment contents were not read. Any decision needing an attachment must stay held.']); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
   pass('Other work opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
-  await page.getByRole('region', { name: 'Bills and calendar', exact: true }).getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   // Saved views are managed by Bud. Seed the route through the revisioned API
   // so reload, two-window and unmount/hydration checks still use a durable view.
   const allBillsViews = (await request('/api/workspace-tabs')).state, allBillsViewId = `view-${randomUUID()}`;

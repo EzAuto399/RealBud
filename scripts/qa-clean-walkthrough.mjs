@@ -336,7 +336,7 @@ try {
     check(c, 'Edit: Grace days changed to 5 and saved');
     await widths('desk-property');
     // Customize desk = this build's Arrange Desk + Show/Hide + reset.
-    await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
     await openMore();
     const options = more.locator('details.desk-options');
     if (!await options.evaluate(el => el.open)) await options.locator(':scope > summary').click();

@@ -9,7 +9,7 @@ import { fmtDateTime } from "@/lib/au";
 import { useStore, visibleMessages } from "@/state/store";
 import { pendingApprovals, waitingLine } from "../PendingApproval";
 import { CardMenu, useDeskArrangement } from "./DeskArrangement";
-import { clampPanelWidth, nextLoopLine, shellPanelLocked } from "./shell-layout";
+import { clampPanelWidth, nextLoopLine, shellPanelLocked, useDeskDataStatus } from "./shell-layout";
 import { useDeskNav } from "./use-desk-nav";
 import type { ShellBrowser } from "./shell-status";
 
@@ -78,11 +78,11 @@ function useBudWaiting(): BudWaitingRow[] {
   return rows;
 }
 
-function ApprovalsPanel() {
+function ApprovalsPanel({ live }: { live: boolean }) {
   const nav = useDeskNav();
   const bud = useBudWaiting();
   const waiting = nav.rows.filter(row => row.bucket === "now");
-  if (!waiting.length) return bud.length ? <BudWaiting rows={bud} /> : <p className="text-ink-muted">Nothing is waiting for your approval.</p>;
+  if (!waiting.length) return bud.length ? <BudWaiting rows={bud} /> : <p className="text-ink-muted">{live ? "Nothing is waiting for your approval." : "Nothing waiting in saved data."}</p>;
   return (<>
     <BudWaiting rows={bud} />
     <ul className="space-y-1">
@@ -100,13 +100,13 @@ function ApprovalsPanel() {
   </>);
 }
 
-function TodayPanel() {
+function TodayPanel({ live }: { live: boolean }) {
   const { state } = useStore();
   const nav = useDeskNav();
   const counts = queueCounts(nav.rows);
   // Only what main does not already say: the queue counts (each opens that status) and the next loop.
   return (<>
-    {!nav.rows.length ? <p className="text-ink-muted">No tasks yet.</p> : <div className="grid grid-cols-3 gap-2 text-center">
+    {!nav.rows.length ? <p className="text-ink-muted">{live ? "No tasks yet." : "No tasks in saved data."}</p> : <div className="grid grid-cols-3 gap-2 text-center">
       {([["now", "Needs you"], ["next", "Next"], ["waiting", "Waiting"]] as const).map(([filter, label]) => (
         <button key={filter} type="button" aria-label={`${label}: ${counts[filter]}`} aria-current={nav.filter === filter ? "true" : undefined} onClick={() => nav.openFilter(filter)}
           className="rb-panel-count"><span className="block text-[11px] text-ink-muted">{label}</span><span className="block text-[16px] font-semibold tabular-nums">{counts[filter]}</span></button>
@@ -144,6 +144,8 @@ function AccountsPanel({ browser }: { browser: ShellBrowser }) {
  *  1280px, a drawer from 960px, hidden below. Width is saved per member. */
 export function ContextPanel({ browser, open, onClose }: { browser: ShellBrowser; open: boolean; onClose: () => void }) {
   const arrangement = useDeskArrangement();
+  // Disconnected or stale: empty panels speak only for the saved data.
+  const { live } = useDeskDataStatus();
   // A delayed width save uses the newest stored layout and revision.
   const latest = useRef(arrangement);
   latest.current = arrangement;
@@ -181,7 +183,7 @@ export function ContextPanel({ browser, open, onClose }: { browser: ShellBrowser
     else if (event.key === "End") { event.preventDefault(); resizeBy(-SHELL_PANEL_WIDTH.max); }
   };
   const bodies: Record<ShellPanelId, ReactNode> = {
-    evidence: <EvidencePanel />, approvals: <ApprovalsPanel />, today: <TodayPanel />, activity: <ActivityPanel />, accounts: <AccountsPanel browser={browser} />,
+    evidence: <EvidencePanel />, approvals: <ApprovalsPanel live={live} />, today: <TodayPanel live={live} />, activity: <ActivityPanel />, accounts: <AccountsPanel browser={browser} />,
   };
   const shown = arrangement.shell.panels.filter(item => item.visible);
   const hidden = arrangement.shell.panels.filter(item => !item.visible);

@@ -289,7 +289,7 @@ try {
   await page.getByText('Approved', { exact: true }).last().waitFor();
   await shot('10-live-card-resolved-1440.png');
   await page.goto(`${origin}/#/desk`);
-  await panel.getByText('Nothing is waiting for your approval.', { exact: true }).waitFor();
+  await panel.getByText(/^(Nothing is waiting for your approval|Nothing waiting in saved data)\.$/).waitFor();
   assert.equal(await panel.getByText(/^Bud is waiting on you/).count(), 0);
   pass('Allow for this task sends scope "task" to /api/threads/:id/respond; once the server settles it the composer card closes, the conversation shows Approved and the panel count clears');
   await page.unroute(url => /^\/api\/threads\/[\w-]+\/respond$/.test(url.pathname));

@@ -5,6 +5,9 @@ import {
 import { isObservedStale } from "@/lib/observed-stale";
 import type { DeskSnapshot } from "@/lib/desk";
 import type { Loop } from "@/lib/routines";
+import type { WebsiteLinkRead } from "@/lib/setup-sequence";
+import { useOfficeLinkStatus } from "@/lib/use-office-link";
+import { useStore } from "@/state/store";
 
 /** Opens the one Arrange Desk sheet from any card, panel or sidebar menu. */
 export const ARRANGE_DESK_EVENT = "realbud:arrange-desk";
@@ -51,6 +54,26 @@ export function deskRunStatus(desk: DeskSnapshot | null, now = Date.now()): { la
   const when = `checked ${ago(now - desk.lastRunAt)}`;
   if (isObservedStale(desk.lastRunAt, now)) return { label: `${sample ? "Sample book" : "Desk"} · stale, ${when}`, tone: "hold" };
   return sample ? { label: `Sample book · ${when}`, tone: "muted" } : { label: `Desk ${when}`, tone: "agency" };
+}
+
+/** Desk data is live only while this computer reaches its office and the last check is fresh.
+ *  Otherwise `notice` names which, so empty lists never read as a completed live check.
+ *  An unread link is not live, but is not called disconnected either. */
+export function deskDataStatus(desk: DeskSnapshot | null, office: { connected: boolean; link: WebsiteLinkRead; officeInactive: boolean }, now = Date.now()): { live: boolean; notice: string | null } {
+  const disconnected = !office.connected || office.link === "not-linked" || office.link === "unavailable" || (office.link === "linked" && office.officeInactive);
+  const last = desk?.lastRunAt ?? null;
+  const stale = isObservedStale(last, now);
+  const live = !disconnected && office.link === "linked" && !stale;
+  const notice = !desk ? null
+    : disconnected ? `Office disconnected · ${last == null ? "Desk not checked yet" : `Last Desk check ${ago(now - last)}`}`
+    : stale ? `Desk check is stale · Last checked ${ago(now - last!)}`
+    : null;
+  return { live, notice };
+}
+export function useDeskDataStatus() {
+  const { state } = useStore();
+  const { link, officeInactive } = useOfficeLinkStatus(state.connected);
+  return deskDataStatus(state.desk, { connected: state.connected, link, officeInactive });
 }
 
 /** The soonest enabled loop that is actually scheduled; a paused clock is not a next run. */

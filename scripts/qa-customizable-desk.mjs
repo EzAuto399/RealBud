@@ -126,10 +126,10 @@ try {
   const mail = page.locator('.desk-other-work-surface[data-other-work="mail"]');
   await mail.waitFor();
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false, 'Other work replaces Tasks');
-  await mail.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   await page.locator('.desk-work-tasks').waitFor();
   await mail.waitFor({ state: 'hidden' });
-  pass('Restored Other work entries follow the saved order and replace the work area until Back to tasks');
+  pass('Restored Other work entries follow the saved order and replace the work area until the Tasks tab');
 
   // Narrow window: no horizontal scroll with the panel open.
   await page.setViewportSize({ width: 390, height: 844 });
