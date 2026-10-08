@@ -183,7 +183,9 @@ beforeAll(async () => {
           return json(res, 200, { items, next_cursor: null });
         }
         if (url.pathname === "/api/v3.1/connected_accounts/link" && req.method === "POST") {
-          if (!body?.user_id?.startsWith("realbud_") || !body.auth_config_id || Object.keys(body).some(key => !["auth_config_id", "user_id"].includes(key))) violations.push("unbound sign-in request");
+          // The return destination is RealBud's fixed completion page (#166); nothing else may ride along.
+          if (!body?.user_id?.startsWith("realbud_") || !body.auth_config_id || body.callback_url !== "https://realbud-managed-gateway.fly.dev/connections/complete"
+            || Object.keys(body).some(key => !["auth_config_id", "user_id", "callback_url"].includes(key))) violations.push("unbound sign-in request");
           linkedAccount = true; selectedUser = body.user_id; selectedAuth = body.auth_config_id;
           linkMarkerBeforeDispatch = Boolean(diskConfig().composio?.gmailReadOnly?.linkUnknown);
           if (loseLinkResponse) { res.destroy(); return; }
