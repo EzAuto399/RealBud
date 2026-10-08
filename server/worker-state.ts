@@ -395,8 +395,10 @@ export async function importLegacyProfileFacts(scopes: WorkerScope[], options: {
   return results;
 }
 
-/** `blocking`: memory files the worker can read that are not RealBud-approved bytes. */
-export interface ProjectionResult { written: string[]; held: string[]; blocking: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null; discoveryCapped: boolean }
+/** `blocking`: memory files the worker can read that are not RealBud-approved bytes.
+ * `unkept`: office files changed outside RealBud whose only bytes RealBud could not keep;
+ * Repair must not overwrite them. */
+export interface ProjectionResult { written: string[]; held: string[]; blocking: string[]; unkept: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null; discoveryCapped: boolean }
 /** Bring the worker profile up to RealBud's canonical copy (before every turn,
  * launch and Repair). A missing copy is regenerated; a copy RealBud wrote, or
  * bytes the pack shipped, are replaced. Worker-side bytes are never promoted:
@@ -405,7 +407,7 @@ export interface ProjectionResult { written: string[]; held: string[]; blocking:
  * copy returns to the approved memory; skill and SOUL changes stay in place,
  * held. Reads only known keys plus a capped discovery list. */
 export async function projectProfileFacts(scope: WorkerScope, options: { dataDir?: string; now?: () => number; shipped?: ShippedDigests; keys?: readonly string[] } = {}): Promise<ProjectionResult> {
-  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], blocking: [], skipped: null, discoveryCapped: false };
+  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], blocking: [], unkept: [], skipped: null, discoveryCapped: false };
   const root = await lstat(scope.profileDirectory).catch(() => null);
   if (!root?.isDirectory() || root.isSymbolicLink()) return { ...result, skipped: 'profile-missing' };
   const state = await readWorkerState(scope, dataDir);
@@ -424,8 +426,8 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
     if (result.discoveryCapped) holdUnlisted(draft, 'skills', 1, at);
     for (const { key } of wanted) {
       const read = files.get(key), canonical = draft.artifacts[key], projected = draft.projected[key];
-      if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(key), 'unsafe', at); result.held.push(key); if (memoryKey(key)) result.blocking.push(key); continue; }
-      if (read && !Buffer.isBuffer(read)) { holdOversize(draft, key, read.oversize, at); result.held.push(key); if (memoryKey(key)) result.blocking.push(key); continue; }
+      if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(key), 'unsafe', at); result.held.push(key); (memoryKey(key) ? result.blocking : result.unkept).push(key); continue; }
+      if (read && !Buffer.isBuffer(read)) { holdOversize(draft, key, read.oversize, at); result.held.push(key); (memoryKey(key) ? result.blocking : result.unkept).push(key); continue; }
       const worker = read;
       if (!worker && !canonical) continue;
       const workerDigest = worker ? sha256(worker) : null;
@@ -435,7 +437,8 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
         if (!memoryKey(key)) {
           // A skill or SOUL change made outside RealBud: kept for review, left in place, never canonical.
           if (officeFile(key) && shipped.has(key, workerDigest!)) continue;
-          preserveCopy(draft, key, worker, 'worker-changed', at); result.held.push(key); continue;
+          if (preserveCopy(draft, key, worker, 'worker-changed', at)) result.unkept.push(key);
+          result.held.push(key); continue;
         }
         const kept = recordWorkerMemoryEdit(draft, key === MEMORY_KEYS.user ? 'user' : 'memory', worker, at); result.held.push(key);
         // The worker's only copy is replaced only once it is a proposal or a preserved copy

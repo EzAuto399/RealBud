@@ -232,6 +232,14 @@ describe('a cap never destroys the only copy', () => {
     await rm(f.profile, { force: true });
     expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual([]);
   });
+  it('reports an office edit it could not keep, so Repair can refuse to overwrite it', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await updateWorkerState(f.scope, null, draft => { for (let i = 0; draft.preserved.length < 200; i++) draft.preserved.push({ key: `skills/old-${i}/SKILL.md`, digest: createHash('sha256').update(`q${i}`).digest('hex'), base64: Buffer.from(`q${i}`).toString('base64'), reason: 'worker-changed', at: 1 }); }, f.data);
+    await f.write('SOUL.md', 'Newest office voice, kept nowhere else.\n');
+    const result = await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect(result.unkept).toEqual(['SOUL.md']);
+    expect(await f.read('SOUL.md')).toBe('Newest office voice, kept nowhere else.\n');
+  });
   it('keeps the office SOUL canonical when Repair cannot preserve it (200 preserved copies)', async () => {
     const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
     await updateWorkerState(f.scope, null, draft => { for (let i = 0; draft.preserved.length < 200; i++) draft.preserved.push({ key: `skills/old-${i}/SKILL.md`, digest: createHash('sha256').update(`p${i}`).digest('hex'), base64: Buffer.from(`p${i}`).toString('base64'), reason: 'worker-changed', at: 1 }); }, f.data);

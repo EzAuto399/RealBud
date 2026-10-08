@@ -3241,7 +3241,7 @@ const workerAutoSetup = createWorkerAutoSetup({
   active: officeServiceActive,
   status: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
   installOrRepair: async () => {
-    await projectWorkerFacts();
+    if ((await projectWorkerFacts()).unkept.length) throw Object.assign(new Error(REPAIR_WOULD_LOSE_EDIT), { status: 409 });
     const outcome = await installOrRepairWorker();
     if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
     // Same receipts as the administrator route: no stale "ready" survives.
@@ -5112,7 +5112,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       try {
-        await projectWorkerFacts();
+        // Never overwrite an office edit RealBud could not keep (its only copy is in the worker folder).
+        if ((await projectWorkerFacts()).unkept.length) return json(res, 409, { error: REPAIR_WOULD_LOSE_EDIT, code: "repair_would_lose_edit" });
         applyPropertyPack();
         // Repair resets SOUL.md to the shipped copy on purpose; the office's edit is retired, not re-projected.
         await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
@@ -6138,6 +6139,7 @@ const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: w
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
 // Bud's memory, learning and office edits live in RealBud (D/worker-state); the
 // worker profile is a projection, so deleting or replacing the worker loses nothing.
+const REPAIR_WOULD_LOSE_EDIT = "An edit to Bud’s instructions was made outside RealBud and couldn’t be saved, so Repair would overwrite it. Your files were kept. Contact RealBud support.";
 const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
 const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
 // Each seat imports inside its own profile, so helper-era proposal identities and
