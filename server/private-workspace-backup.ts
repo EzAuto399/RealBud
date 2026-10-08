@@ -38,7 +38,7 @@ import { WEBSITE_REQUEST_KIND, validateSavedWebsiteRequest, restoreWebsiteReques
 import { validateWebsiteWorkGraph } from './website-work-backup.ts';
 import { isSkillArchivePath, validateSkillOverride, validateSkillJournalRoot } from './customer-pack-skill-history.ts';
 import { sanitizedWorkerStateBytes, validateWorkerState, workerStateHeldCount } from './worker-state.ts';
-import { MEMORY_SIGNING_NAME, parseMemorySigning } from './hermes-memory-signing.ts';
+import { MEMORY_SIGNING_NAME, ensureWorkspaceMemorySigning, parseMemorySigning } from './hermes-memory-signing.ts';
 import { parseLearningStore } from './learning-auto-keep.ts';
 import { containsCredential } from './redact.ts';
 import { validateCustomerSkillArchiveFile, validateCustomerSkillArchiveSet } from './customer-pack-skill-backup.ts';
@@ -583,7 +583,10 @@ export function createPrivateWorkspaceBackup(options: PrivateWorkspaceBackupOpti
       try {
         const generation = options.epoch(); key = Buffer.from(options.key());
         lease?.assertCurrent();
-        await noStage(key); const files = await filesAt(directory), database = await recordsAt(directory, key);
+        await noStage(key);
+        // Every signed learning record leaves with the key that verifies it.
+        await ensureWorkspaceMemorySigning(key, options.workspaceId, directory);
+        const files = await filesAt(directory), database = await recordsAt(directory, key);
         const snapshot = validateSnapshot({ version: 1, createdAt: new Date(now()).toISOString(), workspaceId: options.workspaceId, keyHex: key.toString('hex'), files, databasePresent: database.present, records: database.records });
         if (Buffer.byteLength(json(snapshot)) > MAX_PAYLOAD) fail('This business snapshot exceeds the supported size. Use assisted backup.');
         const salt = randomBytes(16), encryptionKey = await passphraseKey(passphrase, salt);

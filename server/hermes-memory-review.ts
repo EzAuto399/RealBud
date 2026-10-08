@@ -27,6 +27,7 @@ import { MEMORY_RECOVERY_API, parseMemoryRecoveryPage, parseMemoryRecoveryClosur
 import { parseMemoryProposalInput, parseMemoryProposalResult, type MemoryProposalInput, type MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
 import { OWNED_MEMORY_RUNTIME, runOwnedMemoryReview } from './hermes-memory-owned.ts';
 import { memorySigningKey } from './hermes-memory-signing.ts';
+import { legacyProposalContexts, readWorkerState, recordLegacyProposalContext, workerScope } from './worker-state.ts';
 
 /** Hermes 0.21.3 (v2026.9.14): staged replace/remove select by old_text. */
 export const MEMORY_REVIEW_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
@@ -77,6 +78,11 @@ const samePath = (a: string, b: string) => process.platform === 'win32' ? resolv
 /** Owned reviews bind the workspace and member profile only; no worker runtime is selected or required. */
 export function memoryReviewContext(workspaceId: string): MemoryReviewContext {
   return { profileDirectory: propertyProfileDir(), runtimeDirectory: '', workspaceId, profileId: currentWorkerProfile().profile, runtimeId: OWNED_MEMORY_RUNTIME, python: '' };
+}
+/** The helper-era context identity a 0.1.42 conversation's proposals were bound to,
+ * for `importLegacyProfileFacts({ legacyProposalContext })`; null without a runtime. */
+export function legacyProposalContextIdentity(workspaceId: string): string | null {
+  try { return JSON.stringify(nativeMemoryReviewContext(workspaceId)); } catch { return null; }
 }
 /** The native helper's context: the selected, admitted runtime. */
 export function nativeMemoryReviewContext(workspaceId: string): MemoryReviewContext {
@@ -198,6 +204,10 @@ export function createHermesMemoryReviewService(options: {
   let closed = false;
   const now = options.now ?? Date.now;
   const dataDirectory = options.dataDirectory ?? DATA_DIR;
+  const legacyContextIdentity = (workspaceId: string, profileId: string) => {
+    try { const legacy = (options.legacyContext ?? nativeMemoryReviewContext)(workspaceId); return legacy.workspaceId === workspaceId && legacy.profileId === profileId ? JSON.stringify(legacy) : null; }
+    catch { return null; }
+  };
   const learningDirectory = options.learningDirectory ?? ((context: MemoryReviewContext) => defaultLearningDirectory(context, dataDirectory));
   const learningStore = (context: MemoryReviewContext) => createLearningStore(learningDirectory(context), { workspaceId: context.workspaceId, profileId: context.profileId }, now);
   const exec = <T>(work: () => Promise<T>): Promise<T> => options.withActivity ? options.withActivity(work) : work();
@@ -474,17 +484,20 @@ export function createHermesMemoryReviewService(options: {
       const identity = JSON.stringify(captured), memberKey = currentWorkerProfile().memberKey;
       // Stable across updates and relocation: workspace, member profile and conversation only.
       const scope = createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v2', captured.workspaceId, captured.profileId, threadId])).digest('hex');
-      // A 0.1.42 conversation bound its proposals to the helper's runtime context; retries find
-      // those journals only through this binding, verified by their signatures.
-      const legacyScopeIds: string[] = [];
-      try {
-        const legacy = (options.legacyContext ?? nativeMemoryReviewContext)(captured.workspaceId);
-        if (legacy.workspaceId === captured.workspaceId && legacy.profileId === captured.profileId)
-          legacyScopeIds.push(createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', JSON.stringify(legacy), threadId])).digest('hex'));
-      } catch { /* no helper-era runtime: nothing to look up */ }
+      // A 0.1.42 conversation bound its proposals to the helper's runtime context. Retries find
+      // those journals through the contexts saved at import (and the current one, saved now),
+      // so a removed or replaced runtime never turns a decided request into a new proposal.
+      const legacyScopes = async () => {
+        const scope = workerScope(captured.workspaceId, captured.profileId, captured.profileDirectory);
+        const identities = legacyProposalContexts(await readWorkerState(scope, dataDirectory));
+        const current = legacyContextIdentity(captured.workspaceId, captured.profileId);
+        if (current && !identities.includes(current)) { identities.push(current); await recordLegacyProposalContext(scope, current, dataDirectory).catch(() => {}); }
+        return identities.slice(0, 4).map(identity => createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', identity, threadId])).digest('hex'));
+      };
       return { scope, propose: async (raw, signal) => withWorkerProfile(memberKey, async () => {
         const input = parseMemoryProposalInput(raw); if (!input) fail('invalid', 400);
         if (containsCredential(JSON.stringify(input))) fail('blocked-content');
+        const legacyScopeIds = await legacyScopes().catch(() => [] as string[]);
         const work = () => run({ command: 'propose', scopeId: scope, input, ...(legacyScopeIds.length ? { legacyScopeIds } : {}) }, { signal, context: identity, isCurrent });
         const result = options.withActivity ? await options.withActivity(work) : await work();
         const proposal = parseMemoryProposalResult(result); if (!proposal) fail('recovery-required');

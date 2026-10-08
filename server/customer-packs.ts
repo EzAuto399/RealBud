@@ -17,7 +17,7 @@ import { lstatSync, unlinkSync } from 'node:fs';
 import { learningPolicyReady, stagedLearningEnabled, stagedLearningSupported } from './hermes-pack.ts';
 import { parseDocument } from 'yaml';
 import { containsCredential } from './redact.ts';
-import { capturePendingSkill, listPendingSkills, readPendingSkill, type WorkerScope } from './worker-state.ts';
+import { capturePendingSkill, forgetPendingSkill, listPendingSkills, readPendingSkill, type WorkerScope } from './worker-state.ts';
 import { checkPackRecipeStage, packChangeHash, packRecipeClaims, packRecipeWrites, previewPackChange, validatePackUpgradeState,
   archiveSnapshots, packArchivePreviewDigest, packHistoryArchive, nextArchiveHead, validatePackHistoryArchive, packArchivePath, isPackArchivePath, PACK_ARCHIVE_MAX_BYTES, PACK_ARCHIVE_MAX_BATCHES,
   type PackHistoryArchive, type PackSnapshot, type PackConfiguration, type PackUpgradeState, type SkillVersion } from './customer-pack-upgrades.ts';
@@ -703,6 +703,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     const scope = options.workerScope?.();
     return scope ? { workspaceId: scope.workspaceId, scopeId: scope.scopeId, packId, logicalArtifact: logicalArtifact(packId, skillId) } : undefined;
   };
+  /** The decision receipt now holds it; RealBud's working copy is released (bounded storage). */
+  const forgetDecided = async (id: string, digest: string) => { const scope = options.workerScope?.(); if (scope) await forgetPendingSkill(scope, id, digest, options.directory).catch(() => {}); };
   const profileExists = async () => { try { const stat = await lstat(options.profileDirectory()); return stat.isDirectory() && !stat.isSymbolicLink(); } catch { return false; } };
   async function pendingRecord(id: string) {
     if (!/^[a-f0-9]{8}$/.test(id)) return fail('Invalid pending skill identifier.');
@@ -893,14 +895,25 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     const scope = options.workerScope?.();
     if (scope) names = [...new Set([...names, ...(await listPendingSkills(scope, options.directory)).map(id => `${id}.json`)])].sort();
-    // Closed proposals are filtered before the page is cut, so decided ones never hide open ones.
+    // Closed proposals are skipped by a cheap digest check before the page is cut, so decided
+    // ones never hide open ones; only open candidates are fully read.
+    const closed = new Map<string, Set<string>>();
+    for (const entry of Object.values(entries)) for (const receipt of entry.proposalReceipts ?? []) (closed.get(receipt.id) ?? closed.set(receipt.id, new Set()).get(receipt.id)!).add(receipt.digest);
+    const decided = async (id: string) => {
+      const digests = closed.get(id); if (!digests) return false;
+      let raw: string | null = null;
+      try { raw = readPrivateFileSync(join(pendingDirectory(), `${id}.json`), 100_000); } catch { return false; }
+      const digest = raw !== null ? hash(raw) : scope ? (await readPendingSkill(scope, id, options.directory))?.digest : undefined;
+      return digest !== undefined && digests.has(digest);
+    };
     const items: PackSkillProposal[] = []; let hasMore = false, scanned = 0;
     for (const name of names) {
-      if (++scanned > 2000) { hasMore = true; break; } // ponytail: bounded scan of worker-staged names
+      if (++scanned > 20_000) { hasMore = true; break; } // ponytail: bounded scan of worker-staged names
+      if (await decided(name.slice(0, -5))) continue;
       let item: PackSkillProposal;
       try {
         item = await proposal(name.slice(0, -5), entries);
-        if (Object.values(entries).some(entry => entry.proposalReceipts?.some(receipt => receipt.id === item.id && receipt.digest === item.pendingDigest))) continue;
+        if (closed.get(item.id)?.has(item.pendingDigest)) continue;
       } catch { item = { id: name.slice(0, -5), pendingDigest: '', packId: null, skillId: null, name: 'Unreadable skill proposal', state: 'unsupported', reason: 'The record needs service recovery. It was not followed or activated.', current: null, proposed: null, currentDigest: null, activeRevision: 0, origin: 'Worker proposal' }; }
       if (items.length === 100) { hasMore = true; break; }
       items.push(item);
@@ -956,6 +969,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     if (upgrade.pendingId && upgrade.pendingDigest) {
       const record = await pendingRecord(upgrade.pendingId).catch(() => null);
       if (record?.file && record.digest === upgrade.pendingDigest) unlinkOwnPrivate(record.file);
+      await forgetDecided(upgrade.pendingId, upgrade.pendingDigest);
     }
     return status(completed[entry.pack.id]);
   }
@@ -963,14 +977,16 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     const input = fields(body, ['id', 'pendingDigest', 'currentDigest', 'decision']);
     if (!['approve', 'reject'].includes(String(input.decision))) return fail('Choose approve or reject.');
     return exclusive(async () => {
-      const entries = await journals(), item = await proposal(String(input.id), entries);
-      if (!item.pendingDigest || item.pendingDigest !== input.pendingDigest) return fail('The proposal changed. Review it again.', 409);
-      // A decided proposal stays decided, even when RealBud's saved copy outlives the worker's file.
-      const decided = Object.values(entries).flatMap(entry => (entry.proposalReceipts ?? []).filter(receipt => receipt.id === item.id && receipt.digest === item.pendingDigest).map(receipt => ({ entry, receipt })))[0];
+      const entries = await journals();
+      // A decided proposal stays decided, whatever copies remain: a matching retry returns the
+      // saved result, a contrary decision is refused.
+      const decided = Object.values(entries).flatMap(entry => (entry.proposalReceipts ?? []).filter(receipt => receipt.id === input.id && receipt.digest === input.pendingDigest).map(receipt => ({ entry, receipt })))[0];
       if (decided) {
         if (decided.receipt.outcome === (input.decision === 'approve' ? 'applied' : 'rejected')) return status(decided.entry);
         return fail('This proposal was already decided. Refresh the list.', 409);
       }
+      const item = await proposal(String(input.id), entries);
+      if (!item.pendingDigest || item.pendingDigest !== input.pendingDigest) return fail('The proposal changed. Review it again.', 409);
       if (!item.packId || !item.skillId || item.state !== 'reviewable') return fail('This proposal needs service review and cannot be applied here.', 409);
       const entry = entries[item.packId];
       if (item.currentDigest !== input.currentDigest) return fail('The active skill changed. Review the latest instructions first.', 409);
@@ -978,6 +994,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
         entry.proposalReceipts ??= []; entry.proposalReceipts.push({ id: item.id, digest: item.pendingDigest, outcome: 'rejected', at: new Date().toISOString() });
         await persistJournals(entries);
         const record = await pendingRecord(item.id); if (record.file && record.digest === item.pendingDigest) unlinkOwnPrivate(record.file);
+        await forgetDecided(item.id, item.pendingDigest);
         return status(entry);
       }
       if ((entry.overrides?.[item.skillId]?.versions.length ?? 1) >= 100) return fail('Archive older instruction revisions before adding another revision.', 409);

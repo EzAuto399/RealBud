@@ -239,6 +239,29 @@ describe('proposal identity across the update', () => {
     expect(await service.proposalIntegration('fictional-chat', () => true)!.propose(value, new AbortController().signal)).toMatchObject({ id });
     expect((await f.list()).total).toBe(1);
   });
+
+  it('after the helper runtime is removed, an identical rejected request finds its decision through the alias saved at import', async () => {
+    const f = await fixture(), signing = createHmac('sha256', sourceKey).update(`realbud-memory-review-v1\0${f.context.workspaceId}\0property`).digest();
+    const legacy: MemoryReviewContext = { profileDirectory: f.profile, runtimeDirectory: '/synthetic/release/hermes-agent', workspaceId: f.context.workspaceId, profileId: 'property',
+      runtimeId: 'f97608f178d1ffeca59860195ab7da295f7c8e5f-fictional', python: '/synthetic/release/hermes-agent/venv/bin/python' };
+    const value = input({ target: 'user', action: 'add', content: 'Fictional manager prefers phone calls.' });
+    const sortedDeep = (v: unknown): string => Array.isArray(v) ? `[${v.map(sortedDeep).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${sortedDeep((v as Record<string, unknown>)[k])}`).join(',')}}` : JSON.stringify(v);
+    const legacyScope = createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', JSON.stringify(legacy), 'fictional-chat'])).digest('hex');
+    const requestKey = createHmac('sha256', signing).update(`realbud-memory-propose-key-v1\0${legacyScope}\0${value.requestId}`).digest('hex'), id = requestKey.slice(0, 8);
+    const staged = JSON.stringify(pending({ action: 'add', target: 'user', content: 'Fictional manager prefers phone calls.' }, id)), d = (c: string) => c.repeat(64);
+    const reviews = join(f.profile, '.realbud-memory-reviews'); await mkdir(join(reviews, 'proposals'), { recursive: true, mode: 0o700 });
+    await writeFile(join(reviews, 'proposals', `${requestKey}.json`), helperSigned(signing, { version: 1, state: 'published', id, workspaceId: f.context.workspaceId, profileId: 'property',
+      runtimeId: legacy.runtimeId, scopeId: legacyScope, requestKey, requestDigest: createHmac('sha256', signing).update(`realbud-memory-propose-request-v1\0${sortedDeep(value)}`).digest('hex'),
+      pendingDigest: createHash('sha256').update(staged).digest('hex'), createdAt: 1_790_000_000_000 }, 'realbud-memory-propose-v1'), { mode: 0o600 });
+    await writeFile(join(reviews, `${id}.json`), helperSigned(signing, { version: 1, id, workspaceId: f.context.workspaceId, profileId: 'property', runtimeId: legacy.runtimeId,
+      decision: 'reject', state: 'rejected', phase: 'final', pendingDigest: createHash('sha256').update(staged).digest('hex'), configDigest: d('2'), beforeDigest: d('3'), afterDigest: d('4'), reviewDigest: d('5'),
+      target: 'user', action: 'add', origin: 'foreground', createdAt: 1_790_000_000_000, at: 1_790_000_000_500, operationCount: 1, charLimit: 1375 }, 'realbud-memory-receipt-v1'), { mode: 0o600 });
+    await importLegacyProfileFacts([f.scope], { legacyProposalContext: () => JSON.stringify(legacy) });
+    // The runtime is removed: the current helper context can no longer be rebuilt.
+    const service = createHermesMemoryReviewService({ context: () => f.context, key: () => sourceKey, autoReviewIntervalMs: 0, legacyContext: () => { throw new Error('no runtime'); } }); services.push(service);
+    expect(await service.proposalIntegration('fictional-chat', () => true)!.propose(value, new AbortController().signal)).toMatchObject({ id });
+    expect((await f.list()).items.map(item => [item.id, item.state])).toEqual([[id, 'rejected']]);
+  });
 });
 
 /** Sign a record the way the helper did (sorted compact JSON, MAC over the body). */

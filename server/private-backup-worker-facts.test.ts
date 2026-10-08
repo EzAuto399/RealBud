@@ -18,6 +18,7 @@ import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2 } from './private-ba
 import { plantPrivateFile, privateTempRoot, removeFixture, privateDir } from './testing/private-fixture.ts';
 import { createHermesMemoryReviewService, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { OWNED_MEMORY_RUNTIME } from './hermes-memory-owned.ts';
+import { importLegacyProfileFacts, workerScope } from './worker-state.ts';
 import { MEMORY_LEARNING_API, MEMORY_REVIEW_API as api, type MemoryLearningState, type MemoryReviewPage, type MemoryReviewPreview } from '../shared/hermes-memory-review.ts';
 import { MEMORY_RECOVERY_API } from '../shared/hermes-memory-recovery.ts';
 
@@ -93,6 +94,36 @@ async function restoreV2(source: Awaited<ReturnType<typeof installation>>, targe
   await stagePrivateRestoreV2(stage); expect((await applyStagedPrivateRestoreV2(stage)).restored).toBe(true);
   return decoded.receipt;
 }
+
+/** An office just upgraded from the helper era: only the boot import ran, never a review. */
+async function upgradedOnly() {
+  const source = await installation(), profile = 'hermes/profiles/property', at = join(source.directory, profile);
+  const signing = createHmac('sha256', source.key).update(`realbud-memory-review-v1\0${source.workspaceId}\0property`).digest(), d = (c: string) => c.repeat(64);
+  const signed = (record: Record<string, unknown>, domain: string) => sorted({ ...record, mac: createHmac('sha256', signing).update(`${domain}\0${sorted(record)}`).digest('hex') });
+  source.plant(`${profile}/config.yaml`, 'memory:\n  write_approval: true\n'); source.plant(`${profile}/memories/MEMORY.md`, 'Prefers concise updates.');
+  source.plant(`${profile}/.realbud-memory-reviews/aaaa0001.json`, signed({ version: 1, id: 'aaaa0001', workspaceId: source.workspaceId, profileId: 'property', runtimeId: 'f97608f178d1ffeca59860195ab7da295f7c8e5f-fictional',
+    decision: 'reject', state: 'rejected', phase: 'final', pendingDigest: d('1'), configDigest: d('2'), beforeDigest: d('3'), afterDigest: d('4'), reviewDigest: d('5'),
+    target: 'memory', action: 'add', origin: 'foreground', createdAt: 1_790_000_000_000, at: 1_790_000_000_500, operationCount: 1, charLimit: 2200 }, 'realbud-memory-receipt-v1'));
+  const journalKey = `bbbb0002${'c'.repeat(56)}`;
+  source.plant(`${profile}/.realbud-memory-reviews/proposals/${journalKey}.json`, signed({ version: 1, state: 'prepared', id: 'bbbb0002', workspaceId: source.workspaceId, profileId: 'property',
+    runtimeId: 'f97608f178d1ffeca59860195ab7da295f7c8e5f-fictional', scopeId: d('e'), requestKey: journalKey, requestDigest: d('f'), pendingDigest: d('9'), createdAt: 1_790_000_000_000 }, 'realbud-memory-propose-v1'));
+  await importLegacyProfileFacts([workerScope(source.workspaceId, 'property', at)], { dataDir: source.directory });
+  return { source, journalKey };
+}
+
+describe('backup right after the upgrade, before any review', () => {
+  it.each(['v1', 'v2'] as const)('%s restores into another installation key and every legacy signed record still verifies', async version => {
+    const { source, journalKey } = await upgradedOnly(), target = await installation();
+    if (version === 'v1') {
+      const { backup, receipt } = await source.backup.exportBackup(phrase);
+      await target.backup.stageRestore({ backup, passphrase: phrase, expectedDigest: receipt.digest });
+      expect((await applyStagedPrivateRestore({ directory: target.directory, key: target.key })).restored).toBe(true);
+    } else await restoreV2(source, target);
+    const t = service(target, source.workspaceId);
+    expect(await t.list()).toEqual([['aaaa0001', 'rejected']]);
+    expect(((await t.service.handle(MEMORY_RECOVERY_API, 'GET'))!.body as { items: { key: string; state: string }[] }).items).toEqual([expect.objectContaining({ key: journalKey, state: 'interrupted' })]);
+  }, 60_000);
+});
 
 describe('learning restored into another installation key', () => {
   it.each(['v1', 'v2'] as const)('%s keeps decisions, history, pending work, interrupted journals and undo verifiable', async version => {

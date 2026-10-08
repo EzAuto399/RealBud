@@ -9,6 +9,7 @@ import { setImmediate } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { decryptBytes, isEncryptedEnvelope } from './desk-crypto.ts';
 import { PrivateBackupCatalog, type CatalogFile } from './private-backup-catalog.ts';
+import { ensureWorkspaceMemorySigning } from './hermes-memory-signing.ts';
 import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, PRIVATE_WORKER_FACT_ROOTS, privateBackupHistoryStorage, privateBackupFileBytes, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { WINDOWS_FILE_PRIVACY_MAX_BATCH, windowsFilePrivacyBatch, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
@@ -394,6 +395,8 @@ class CaptureReader extends CaptureFilesystem {
 export async function capturePrivateWorkspace(options: PrivateCaptureOptions): Promise<PrivateCaptureReceipt> {
   const before = options.catalog.summary();
   if (before.sealed || before.entries !== 0 || before.workspaceId !== options.workspaceId) fail('Source capture requires a new provisional catalog for this workspace.', 409);
+  // Every signed learning record leaves with the key that verifies it (written before any read).
+  await ensureWorkspaceMemorySigning(options.key, options.workspaceId, options.directory);
   const captured = await new CaptureReader(options, true).run(), after = options.catalog.summary();
   options.assertLease();
   if (after.sealed || after.entries !== captured.fileCount + captured.recordCount) changed();

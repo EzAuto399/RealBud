@@ -337,11 +337,31 @@ export interface ImportResult { scopeId: string; complete: boolean; imported: nu
  * canonical store before anything mutates that profile. Idempotent; never
  * deletes the worker copy; a different canonical value is kept and the worker
  * bytes are preserved beside it. Completion is marked only after read-back. */
-export async function importLegacyProfileFacts(scopes: WorkerScope[], options: { dataDir?: string; now?: () => number; shipped?: ShippedDigests } = {}): Promise<ImportResult[]> {
+export const LEGACY_CONTEXTS_KEY = '.realbud-memory-reviews/legacy-contexts.json';
+/** Helper-era review contexts (their JSON identity) a 0.1.42 conversation's proposals
+ * were bound to, saved so a later retry finds them after the runtime is gone. */
+export function legacyProposalContexts(state: WorkerState): string[] {
+  try { const value = JSON.parse(artifactBytes(state, LEGACY_CONTEXTS_KEY)?.toString('utf8') ?? '[]'); return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').slice(0, 4) : []; } catch { return []; }
+}
+export async function recordLegacyProposalContext(scope: WorkerScope, identity: string, dataDir = DATA_DIR): Promise<void> {
+  if (typeof identity !== 'string' || !identity || identity.length > 4096) return;
+  await updateWorkerState(scope, null, draft => {
+    const saved = legacyProposalContexts(draft);
+    if (saved.includes(identity) || saved.length >= 4) return;
+    putArtifact(draft, LEGACY_CONTEXTS_KEY, Buffer.from(JSON.stringify([...saved, identity])), 'realbud', Date.now());
+  }, dataDir);
+}
+export async function importLegacyProfileFacts(scopes: WorkerScope[], options: { dataDir?: string; now?: () => number; shipped?: ShippedDigests;
+  /** The helper-era review context identity per scope, saved as the legacy proposal alias. */
+  legacyProposalContext?: (scope: WorkerScope) => string | null;
+  /** Called per scope once its facts are imported (e.g. to save its memory-signing key). */
+  afterImport?: (scope: WorkerScope) => Promise<void> } = {}): Promise<ImportResult[]> {
   const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, results: ImportResult[] = [];
   for (const scope of scopes) {
     const existing = await readWorkerState(scope, dataDir);
-    if (existing.migration.complete) { results.push({ scopeId: scope.scopeId, complete: true, imported: 0, preserved: 0, held: 0, skipped: true }); continue; }
+    const legacy = (() => { try { return options.legacyProposalContext?.(scope) ?? null; } catch { return null; } })();
+    if (legacy) await recordLegacyProposalContext(scope, legacy, dataDir);
+    if (existing.migration.complete) { await options.afterImport?.(scope); results.push({ scopeId: scope.scopeId, complete: true, imported: 0, preserved: 0, held: 0, skipped: true }); continue; }
     const listing = await workerFactKeys(scope.profileDirectory), files = await readWorkerFiles(scope.profileDirectory, listing.keys);
     const record = files.get('.realbud-shipped.json'), shipped = shippedWith(options.shipped ?? noneShipped, Buffer.isBuffer(record) ? record : null);
     const lines = [...files].map(([key, bytes]) => `${key} ${Buffer.isBuffer(bytes) ? sha256(bytes) : bytes === 'unsafe' ? 'unsafe' : `oversize:${bytes.oversize}`}`).sort();
@@ -369,12 +389,14 @@ export async function importLegacyProfileFacts(scopes: WorkerScope[], options: {
     const saved = await readWorkerState(scope, dataDir);
     for (const [key, digest] of stored) if (saved.artifacts[key]?.digest !== digest && !saved.preserved.some(row => row.key === key && row.digest === digest)) recovery();
     await updateWorkerState(scope, null, draft => { draft.migration = { sourceDigest, complete: true, at: now() }; }, dataDir);
+    await options.afterImport?.(scope);
     results.push({ scopeId: scope.scopeId, complete: true, ...counts, skipped: false });
   }
   return results;
 }
 
-export interface ProjectionResult { written: string[]; held: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null; discoveryCapped: boolean }
+/** `blocking`: memory files the worker can read that are not RealBud-approved bytes. */
+export interface ProjectionResult { written: string[]; held: string[]; blocking: string[]; skipped: 'profile-missing' | 'migration-incomplete' | null; discoveryCapped: boolean }
 /** Bring the worker profile up to RealBud's canonical copy (before every turn,
  * launch and Repair). A missing copy is regenerated; a copy RealBud wrote, or
  * bytes the pack shipped, are replaced. Worker-side bytes are never promoted:
@@ -383,7 +405,7 @@ export interface ProjectionResult { written: string[]; held: string[]; skipped: 
  * copy returns to the approved memory; skill and SOUL changes stay in place,
  * held. Reads only known keys plus a capped discovery list. */
 export async function projectProfileFacts(scope: WorkerScope, options: { dataDir?: string; now?: () => number; shipped?: ShippedDigests; keys?: readonly string[] } = {}): Promise<ProjectionResult> {
-  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], skipped: null, discoveryCapped: false };
+  const dataDir = options.dataDir ?? DATA_DIR, now = options.now ?? Date.now, result: ProjectionResult = { written: [], held: [], blocking: [], skipped: null, discoveryCapped: false };
   const root = await lstat(scope.profileDirectory).catch(() => null);
   if (!root?.isDirectory() || root.isSymbolicLink()) return { ...result, skipped: 'profile-missing' };
   const state = await readWorkerState(scope, dataDir);
@@ -402,8 +424,8 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
     if (result.discoveryCapped) holdUnlisted(draft, 'skills', 1, at);
     for (const { key } of wanted) {
       const read = files.get(key), canonical = draft.artifacts[key], projected = draft.projected[key];
-      if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(key), 'unsafe', at); result.held.push(key); continue; }
-      if (read && !Buffer.isBuffer(read)) { holdOversize(draft, key, read.oversize, at); result.held.push(key); continue; }
+      if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(key), 'unsafe', at); result.held.push(key); if (memoryKey(key)) result.blocking.push(key); continue; }
+      if (read && !Buffer.isBuffer(read)) { holdOversize(draft, key, read.oversize, at); result.held.push(key); if (memoryKey(key)) result.blocking.push(key); continue; }
       const worker = read;
       if (!worker && !canonical) continue;
       const workerDigest = worker ? sha256(worker) : null;
@@ -415,7 +437,10 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
           if (officeFile(key) && shipped.has(key, workerDigest!)) continue;
           preserveCopy(draft, key, worker, 'worker-changed', at); result.held.push(key); continue;
         }
-        recordWorkerMemoryEdit(draft, key === MEMORY_KEYS.user ? 'user' : 'memory', worker, at); result.held.push(key);
+        const kept = recordWorkerMemoryEdit(draft, key === MEMORY_KEYS.user ? 'user' : 'memory', worker, at); result.held.push(key);
+        // The worker's only copy is replaced only once it is a proposal or a preserved copy
+        // (credential-shaped text is never kept and never stays readable). Otherwise it stays, held.
+        if (kept === 'capacity' || kept === 'unsafe') { result.blocking.push(key); continue; }
       }
       // Memory always returns to the approved copy (empty when nothing was ever approved).
       const bytes = canonical ? Buffer.from(canonical.base64, 'base64') : Buffer.alloc(0);
@@ -439,15 +464,37 @@ export async function projectProfileFacts(scope: WorkerScope, options: { dataDir
 
 /** Explicit Repair replaces these files with the shipped pack: the office copy
  * moves to preserved history so later projections do not restore it. */
-export async function retireRepairedArtifacts(scope: WorkerScope, keys: readonly string[], options: { dataDir?: string; now?: () => number } = {}): Promise<void> {
+export async function retireRepairedArtifacts(scope: WorkerScope, keys: readonly string[], options: { dataDir?: string; now?: () => number } = {}): Promise<{ retired: string[]; kept: string[] }> {
   const at = (options.now ?? Date.now)();
-  await updateWorkerState(scope, null, draft => {
+  const { result } = await updateWorkerState(scope, null, draft => {
+    const retired: string[] = [], kept: string[] = [];
     for (const key of keys) {
       const row = draft.artifacts[key]; if (!row || !officeFile(key)) continue;
-      preserveCopy(draft, key, Buffer.from(row.base64, 'base64'), 'repair-replaced', at);
-      delete draft.artifacts[key]; delete draft.projected[key];
+      // Deleted only once durably preserved: past the cap the office copy stays canonical (held).
+      if (preserveCopy(draft, key, Buffer.from(row.base64, 'base64'), 'repair-replaced', at)) { kept.push(key); continue; }
+      delete draft.artifacts[key]; delete draft.projected[key]; retired.push(key);
     }
+    return { retired, kept };
   }, options.dataDir ?? DATA_DIR);
+  return result;
+}
+
+export const MEMORY_HELD_MESSAGE = 'Bud’s memory file was changed outside RealBud and needs a review before Bud can work. Existing files were kept.';
+/** Memory files the worker would read that are not RealBud-approved bytes (unsafe,
+ * oversize or an unreviewed edit RealBud could not keep). Call after projection,
+ * before a turn: a non-empty list means the turn must not start. */
+export async function memoryHeldForLaunch(scope: WorkerScope, dataDir = DATA_DIR): Promise<string[]> {
+  const root = await lstat(scope.profileDirectory).catch(() => null);
+  if (!root?.isDirectory() || root.isSymbolicLink()) return [];
+  const state = await readWorkerState(scope, dataDir), held: string[] = [];
+  const files = await readWorkerFiles(scope.profileDirectory, [MEMORY_KEYS.memory, MEMORY_KEYS.user].map(key => ({ key, max: MEMORY_BYTES })));
+  for (const key of [MEMORY_KEYS.memory, MEMORY_KEYS.user]) {
+    const read = files.get(key);
+    if (read === undefined) continue;
+    if (!Buffer.isBuffer(read)) { held.push(key); continue; }
+    if (sha256(read) !== (state.artifacts[key]?.digest ?? sha256(Buffer.alloc(0)))) held.push(key);
+  }
+  return held;
 }
 
 /** A pending skill record RealBud captured (`pending/skills/<id>.json`). */
@@ -455,6 +502,11 @@ export async function readPendingSkill(scope: WorkerScope, id: string, dataDir =
   if (!/^[a-f0-9]{8}$/.test(id)) return null;
   const bytes = artifactBytes(await readWorkerState(scope, dataDir), `pending/skills/${id}.json`);
   return bytes ? { bytes, digest: sha256(bytes) } : null;
+}
+/** Release a decided record's working copy once its decision receipt is durable. */
+export async function forgetPendingSkill(scope: WorkerScope, id: string, digest: string, dataDir = DATA_DIR): Promise<void> {
+  if (!/^[a-f0-9]{8}$/.test(id)) return;
+  await updateWorkerState(scope, null, draft => { const key = `pending/skills/${id}.json`; if (draft.artifacts[key]?.digest === digest) delete draft.artifacts[key]; }, dataDir);
 }
 export async function listPendingSkills(scope: WorkerScope, dataDir = DATA_DIR): Promise<string[]> {
   return Object.keys((await readWorkerState(scope, dataDir)).artifacts).flatMap(key => { const m = /^pending\/skills\/([a-f0-9]{8})\.json$/.exec(key); return m ? [m[1]] : []; }).sort();

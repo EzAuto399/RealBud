@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { capturePendingSkill, importLegacyProfileFacts, projectProfileFacts, readPendingSkill, readWorkerState, retireRepairedArtifacts,
+import { capturePendingSkill, importLegacyProfileFacts, memoryHeldForLaunch, projectProfileFacts, readPendingSkill, readWorkerState, retireRepairedArtifacts,
   updateWorkerState, workerScope, workerScopeId, workerStateFile, WORKER_SCOPE_BYTES, WORKER_STATE_MAX_BYTES } from './worker-state.ts';
 
 const roots: string[] = [];
@@ -199,5 +199,35 @@ describe('capped listings are recorded', () => {
     const result = await projectProfileFacts(f.scope, { dataDir: f.data });
     expect(result.discoveryCapped).toBe(true);
     expect((await f.state()).held).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'skills', reason: 'capacity' })]));
+  });
+});
+
+describe('a cap never destroys the only copy', () => {
+  const fill = async (f: Awaited<ReturnType<typeof fixture>>, entries: number) => updateWorkerState(f.scope, null, draft => {
+    for (let i = 0; draft.preserved.length + Object.keys(draft.artifacts).length < entries; i++) draft.artifacts[`skills/filler-${i}/SKILL.md`] = { digest: createHash('sha256').update(`f${i}`).digest('hex'), base64: Buffer.from(`f${i}`).toString('base64'), source: 'office', at: 1 };
+  }, f.data);
+  it('leaves an unkept worker memory edit in place at 3,000 entries, held and blocking launch', async () => {
+    // 3,000 stored entries besides the memory file: the cap is reached.
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data }); await fill(f, 3001);
+    await f.write('memories/MEMORY.md', 'Prefers concise updates.\n§\nEdit RealBud could not keep.');
+    const result = await projectProfileFacts(f.scope, { dataDir: f.data, keys: ['memories/MEMORY.md'] });
+    expect(result.written).toEqual([]); expect(result.blocking).toEqual(['memories/MEMORY.md']);
+    expect(await f.read('memories/MEMORY.md')).toBe('Prefers concise updates.\n§\nEdit RealBud could not keep.');
+    expect((await f.state()).held).toEqual(expect.arrayContaining([expect.objectContaining({ key: expect.stringMatching(/^pending\/memory\//), reason: 'capacity' })]));
+    expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual(['memories/MEMORY.md']);
+    await f.write('memories/MEMORY.md', 'Prefers concise updates.'); expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual([]);
+  });
+  it('blocks launch while a memory file is unsafe or too large to read', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await f.write('memories/USER.md', 'x'.repeat(200 * 1024));
+    expect((await projectProfileFacts(f.scope, { dataDir: f.data })).blocking).toEqual(['memories/USER.md']);
+    expect(await memoryHeldForLaunch(f.scope, f.data)).toEqual(['memories/USER.md']);
+  });
+  it('keeps the office SOUL canonical when Repair cannot preserve it (200 preserved copies)', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await updateWorkerState(f.scope, null, draft => { for (let i = 0; draft.preserved.length < 200; i++) draft.preserved.push({ key: `skills/old-${i}/SKILL.md`, digest: createHash('sha256').update(`p${i}`).digest('hex'), base64: Buffer.from(`p${i}`).toString('base64'), reason: 'worker-changed', at: 1 }); }, f.data);
+    expect(await retireRepairedArtifacts(f.scope, ['SOUL.md'], { dataDir: f.data })).toEqual({ retired: [], kept: ['SOUL.md'] });
+    expect(await f.canonical('SOUL.md')).toBe('Office voice.\n');
+    expect((await f.state()).held).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'SOUL.md', reason: 'capacity' })]));
   });
 });
