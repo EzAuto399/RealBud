@@ -8,6 +8,8 @@
  * is derived from this installation's key exactly as before, so every existing
  * record verifies unchanged. The keys never appear in worker state or logs. */
 import { createHmac } from 'node:crypto';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { createPrivateVault } from './private-vault.ts';
 
@@ -44,4 +46,23 @@ export function memorySigningKey(installationKey: Buffer, workspaceId: string, p
   const tail = work.then(() => undefined, () => undefined);
   tails.set(dataDir, tail); void tail.then(() => { if (tails.get(dataDir) === tail) tails.delete(dataDir); });
   return work;
+}
+
+/** Save the signing key of every profile this workspace has learning for, before a
+ * backup is captured (and at boot import), so a backup made before any review still
+ * carries what its signed records need. Existing slots are never changed. */
+export async function ensureWorkspaceMemorySigning(installationKey: Buffer, workspaceId: string, dataDir = DATA_DIR): Promise<string[]> {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(workspaceId)) throw unavailable();
+  const profiles = new Set<string>();
+  const list = async (path: string) => { try { return await readdir(path, { withFileTypes: true }); } catch { return []; } };
+  for (const entry of await list(join(dataDir, 'memory-learning', workspaceId))) if (entry.isDirectory() && SLOT.test(`${workspaceId}/${entry.name}`)) profiles.add(entry.name);
+  for (const entry of await list(join(dataDir, 'worker-state', workspaceId))) {
+    if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue;
+    try {
+      const profileId = (JSON.parse(await readFile(join(dataDir, 'worker-state', workspaceId, entry.name, 'state.json'), 'utf8')) as { profileId?: unknown }).profileId;
+      if (typeof profileId === 'string' && SLOT.test(`${workspaceId}/${profileId}`)) profiles.add(profileId);
+    } catch { /* unreadable scopes are held by their own owner */ }
+  }
+  for (const profileId of [...profiles].sort().slice(0, SLOTS)) (await memorySigningKey(installationKey, workspaceId, profileId, dataDir)).fill(0);
+  return [...profiles].sort();
 }
