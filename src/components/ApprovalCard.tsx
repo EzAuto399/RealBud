@@ -12,7 +12,7 @@ import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
 import { readBrowserApprovalCard } from "@shared/browser-approval-card";
 import { BrowserApprovalRecord } from "./BrowserApprovalCard";
-import { answeredByLine, ExactRequest, readAnsweredBy } from "./PendingApproval";
+import { answeredByLine, ExactRequest, isPendingApproval, readAnsweredBy } from "./PendingApproval";
 
 const LONG_DETAIL_CHARS = 400;
 const LONG_DETAIL_LINES = 8;
@@ -48,6 +48,14 @@ export function ApprovalCard({
   const [expanded, setExpanded] = useState(false);
   const card = message.card;
   if (!card) return null;
+  // The composer shows the live request and its decisions; here only a marker until it settles.
+  if (isPendingApproval(message)) {
+    return (
+      <p className="flex items-center gap-1.5 py-2 text-[13px] text-ink-secondary">
+        <ShieldCheck size={14} className="shrink-0 text-accent" aria-hidden="true" /> Waiting for your answer below
+      </p>
+    );
+  }
   const settled = card.answered;
   if (card.browserApproval !== undefined) {
     return (

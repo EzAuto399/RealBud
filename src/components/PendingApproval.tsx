@@ -100,10 +100,14 @@ export interface Pending {
 
 const optional = <K extends string, V>(key: K, value: V | null) => (value === null ? {} : { [key]: value }) as Partial<Record<K, V>>;
 
-/** Open approvals on a thread, oldest first — answered/dismissed drop out. */
+/** A live request the composer owns and shows; answered/dismissed ones are transcript records. */
+export const isPendingApproval = (m: Message): boolean =>
+  m.kind === "options" && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
+
+/** Open approvals on a thread, oldest first. */
 export function pendingApprovals(messages: Message[]): Pending[] {
   return messages
-    .filter((m) => m.kind === "options" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
+    .filter(isPendingApproval)
     .map((m) => ({
       message: m,
       requestId: m.card!.requestId!,
