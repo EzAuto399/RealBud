@@ -11,7 +11,7 @@
  * projected is preserved for a person's review (memory as a reviewable proposal);
  * credential-shaped or over-cap bytes are never stored, only a digest, size and
  * reason; every scope shares one byte and entry cap. */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, renameSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -488,9 +488,14 @@ export async function retireRepairedArtifacts(scope: WorkerScope, keys: readonly
 export function keepAsideForRepair(scope: WorkerScope, unkept: readonly string[], now = Date.now): string[] {
   const kept: string[] = [];
   if (!unkept.includes('SOUL.md')) return kept;
+  // Only inside Bud's own folders: the profile, profiles/ and the worker home must
+  // be real folders, never links, or the rename could act outside RealBud's tree.
+  const home = dirname(dirname(scope.profileDirectory));
+  try { for (const folder of [scope.profileDirectory, dirname(scope.profileDirectory), home]) { const stat = lstatSync(folder); if (!stat.isDirectory() || stat.isSymbolicLink()) return kept; } }
+  catch { return kept; }
   const from = join(scope.profileDirectory, 'SOUL.md');
   try { lstatSync(from); } catch { return kept; }
-  const to = `${from}.kept-${new Date(now()).toISOString().replace(/[:.]/g, '-')}`;
+  const to = `${from}.kept-${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}`;
   renameSync(from, to);
   kept.push(to);
   return kept;

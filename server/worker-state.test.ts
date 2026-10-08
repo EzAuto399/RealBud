@@ -241,9 +241,18 @@ describe('a cap never destroys the only copy', () => {
     expect(await f.read('SOUL.md')).toBe('Newest office voice, kept nowhere else.\n');
     // Repair is never blocked: the unkept edit is renamed aside, bytes intact.
     const [aside] = keepAsideForRepair(f.scope, result.unkept, () => 0);
-    expect(aside).toBe(join(f.profile, 'SOUL.md.kept-1970-01-01T00-00-00-000Z'));
+    expect(aside).toMatch(/SOUL\.md\.kept-1970-01-01T00-00-00-000Z-[0-9a-f]{6}$/);
     expect(await readFile(aside!, 'utf8')).toBe('Newest office voice, kept nowhere else.\n');
     expect(keepAsideForRepair(f.scope, ['skills/x/SKILL.md'])).toEqual([]);
+  });
+  it('never renames anything when a folder above the profile is a link elsewhere', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    const outside = await mkdtemp(join(tmpdir(), 'rb-outside-')); roots.push(outside);
+    await mkdir(join(outside, 'property'), { recursive: true }); await writeFile(join(outside, 'property', 'SOUL.md'), 'not RealBud');
+    const profiles = join(f.root, 'hermes', 'profiles');
+    await rm(profiles, { recursive: true, force: true }); await symlink(outside, profiles);
+    expect(keepAsideForRepair(f.scope, ['SOUL.md'])).toEqual([]);
+    expect(await readFile(join(outside, 'property', 'SOUL.md'), 'utf8')).toBe('not RealBud');
   });
   it('keeps the office SOUL canonical when Repair cannot preserve it (200 preserved copies)', async () => {
     const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
