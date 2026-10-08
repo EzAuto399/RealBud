@@ -12,7 +12,7 @@
  * credential-shaped or over-cap bytes are never stored, only a digest, size and
  * reason; every scope shares one byte and entry cap. */
 import { createHash } from 'node:crypto';
-import { lstatSync } from 'node:fs';
+import { lstatSync, renameSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { DATA_DIR } from './config.ts';
@@ -480,6 +480,20 @@ export async function retireRepairedArtifacts(scope: WorkerScope, keys: readonly
     return { retired, kept };
   }, options.dataDir ?? DATA_DIR);
   return result;
+}
+
+/** Repair forces only SOUL.md back to the pack. An office edit RealBud could not
+ * keep is renamed aside in the profile first (never deleted, links never
+ * followed), so Repair is never blocked and never loses those bytes. */
+export function keepAsideForRepair(scope: WorkerScope, unkept: readonly string[], now = Date.now): string[] {
+  const kept: string[] = [];
+  if (!unkept.includes('SOUL.md')) return kept;
+  const from = join(scope.profileDirectory, 'SOUL.md');
+  try { lstatSync(from); } catch { return kept; }
+  const to = `${from}.kept-${new Date(now()).toISOString().replace(/[:.]/g, '-')}`;
+  renameSync(from, to);
+  kept.push(to);
+  return kept;
 }
 
 export const MEMORY_HELD_MESSAGE = 'Bud’s memory file was changed outside RealBud and needs a review before Bud can work. Existing files were kept.';
